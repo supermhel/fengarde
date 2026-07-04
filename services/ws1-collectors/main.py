@@ -24,6 +24,19 @@ from collectors.netflow_collector import NetflowCollector  # noqa: E402
 MOCKS = HERE / "mocks"
 
 
+def _int_env(name: str, default: int, log) -> int:
+    """int(os.getenv(name)) that degrades to `default` (logged) on a
+    malformed value instead of crashing startup over a typo'd env var."""
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        log.warn("malformed env var, using default", name=name, value=raw, default=default)
+        return default
+
+
 def build_collectors():
     syslog = SyslogCollector()
     snmp = SnmpCollector(devices_file=str(MOCKS / "sample_snmp.json"))
@@ -72,6 +85,7 @@ def main() -> None:
     from shared.log import get_logger  # noqa: E402
     from collectors.syslog_udp_server import (  # noqa: E402
         SyslogUDPServer, DEFAULT_HOST, DEFAULT_PORT, DEFAULT_MAX_EVENTS_PER_SEC)
+    from collectors.spool import BoundedSpool, DEFAULT_MAX_BYTES as SPOOL_DEFAULT_MAX_BYTES  # noqa: E402
 
     log = get_logger("ws1-collectors")
 
@@ -85,10 +99,20 @@ def main() -> None:
     syslog_port = int(os.getenv("SYSLOG_UDP_PORT", str(DEFAULT_PORT)))
     max_events_per_sec = float(os.getenv("SYSLOG_MAX_EVENTS_PER_SEC",
                                         str(DEFAULT_MAX_EVENTS_PER_SEC)))
+    # B2 zero-loss-under-flood opt-in (see collectors/spool.py): unset by
+    # default (plain shed-and-count, no disk I/O). Set SYSLOG_SPOOL_PATH to
+    # enable a bounded on-disk replay buffer for shed/dropped events.
+    spool_path = os.getenv("SYSLOG_SPOOL_PATH")
+    spool = None
+    if spool_path:
+        spool_max_bytes = _int_env("SYSLOG_SPOOL_MAX_BYTES", SPOOL_DEFAULT_MAX_BYTES, log)
+        spool = BoundedSpool(spool_path, max_bytes=spool_max_bytes)
+        log.info("syslog zero-loss spool enabled", path=spool_path, max_bytes=spool_max_bytes)
     udp = None
     try:
         udp = SyslogUDPServer(bus, host=syslog_host, port=syslog_port,
-                              max_events_per_sec=max_events_per_sec, logger=log)
+                              max_events_per_sec=max_events_per_sec,
+                              spool=spool, logger=log)
         udp.start()
     except OSError as exc:
         # e.g. port in use, or 514 without elevation. Stay up for /health anyway.

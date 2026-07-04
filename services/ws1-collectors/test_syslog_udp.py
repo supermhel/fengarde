@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 import socket
 import sys
+import tempfile
 import time
 import unittest
 from pathlib import Path
@@ -23,6 +24,7 @@ os.environ["BUS_BACKEND"] = "memory"
 from shared.bus import Bus  # noqa: E402
 from collectors.syslog_udp_server import (  # noqa: E402
     SyslogUDPServer, build_raw_event, _TokenBucket)
+from collectors.spool import BoundedSpool  # noqa: E402
 
 SYSLOG_LINE = "<34>Oct 11 22:14:15 myhost sshd[1234]: Failed password for root"
 
@@ -155,6 +157,165 @@ class TestBusDepth(unittest.TestCase):
         self.assertEqual(bus.depth("raw.events"), 2)
         list(bus.consume("raw.events"))  # drains
         self.assertEqual(bus.depth("raw.events"), 0)
+
+
+class TestBoundedSpool(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.path = Path(self._tmp.name) / "spool.jsonl"
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_append_and_pending_count(self):
+        spool = BoundedSpool(self.path, max_bytes=1_000_000)
+        self.assertEqual(spool.pending_count(), 0)
+        self.assertTrue(spool.append({"a": 1}))
+        self.assertTrue(spool.append({"a": 2}))
+        self.assertEqual(spool.pending_count(), 2)
+        self.assertGreater(spool.pending_bytes(), 0)
+
+    def test_append_refuses_once_full(self):
+        spool = BoundedSpool(self.path, max_bytes=50)  # tiny cap
+        appended = 0
+        for i in range(100):
+            if spool.append({"i": i, "pad": "x" * 10}):
+                appended += 1
+        self.assertGreater(appended, 0)
+        self.assertLess(appended, 100, "spool must refuse once at capacity")
+        # further appends of a larger-than-remaining-space event keep failing,
+        # never raise
+        self.assertFalse(spool.append({"i": "overflow", "pad": "x" * 100}))
+
+    def test_drain_replays_in_fifo_order_and_empties(self):
+        spool = BoundedSpool(self.path, max_bytes=1_000_000)
+        for i in range(5):
+            spool.append({"i": i})
+        replayed = []
+        count = spool.drain_into(lambda ev: replayed.append(ev["i"]))
+        self.assertEqual(count, 5)
+        self.assertEqual(replayed, [0, 1, 2, 3, 4], "must replay in FIFO order")
+        self.assertEqual(spool.pending_count(), 0)
+
+    def test_drain_stops_at_first_failure_preserving_order(self):
+        spool = BoundedSpool(self.path, max_bytes=1_000_000)
+        for i in range(5):
+            spool.append({"i": i})
+
+        def flaky(ev):
+            if ev["i"] == 2:
+                raise RuntimeError("still down")
+            flaky.seen.append(ev["i"])
+        flaky.seen = []
+
+        count = spool.drain_into(flaky)
+        self.assertEqual(count, 2, "only the two entries before the failure replay")
+        self.assertEqual(flaky.seen, [0, 1])
+        self.assertEqual(spool.pending_count(), 3,
+                         "the failed entry and everything after it must remain, in order")
+
+        # a second drain (simulating the outage clearing) replays the rest
+        count2 = spool.drain_into(lambda ev: flaky.seen.append(ev["i"]))
+        self.assertEqual(count2, 3)
+        self.assertEqual(flaky.seen, [0, 1, 2, 3, 4])
+        self.assertEqual(spool.pending_count(), 0)
+
+    def test_drain_skips_corrupt_lines_without_blocking_the_rest(self):
+        spool = BoundedSpool(self.path, max_bytes=1_000_000)
+        spool.append({"i": 0})
+        with self.path.open("a", encoding="utf-8") as f:
+            f.write("not valid json\n")
+        spool.append({"i": 1})
+        replayed = []
+        count = spool.drain_into(lambda ev: replayed.append(ev["i"]))
+        self.assertEqual(count, 2)
+        self.assertEqual(replayed, [0, 1])
+
+
+class TestSyslogUDPServerSpoolFallback(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.spool_path = Path(self._tmp.name) / "spool.jsonl"
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_shed_events_land_in_spool_not_lost(self):
+        spool = BoundedSpool(self.spool_path, max_bytes=1_000_000)
+        bus = Bus()
+        # very slow drain interval so the test can inspect the spool before
+        # the background thread empties it back into the bus
+        server = SyslogUDPServer(bus, host="127.0.0.1", port=0, deterministic_id=True,
+                                 max_events_per_sec=5, spool=spool,
+                                 spool_drain_interval_s=60)
+        server.start()
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            try:
+                for i in range(20):
+                    sock.sendto(f"line {i}".encode(), ("127.0.0.1", server.port))
+            finally:
+                sock.close()
+
+            _poll(lambda: server.events_spooled >= 15, timeout=2.0)
+            self.assertEqual(server.events_shed, 0,
+                             "with a spool configured, rate-limited events go to the "
+                             "spool, not the shed-and-lose counter")
+            self.assertGreater(server.events_spooled, 0)
+            total_accounted = (len(bus.drain("raw.events")) + server.events_spooled
+                               + server.events_shed + server.events_lost)
+            self.assertEqual(total_accounted, 20,
+                             "every datagram is accounted for: produced, spooled, "
+                             "shed, or lost -- never silently vanished")
+        finally:
+            server.stop()
+
+    def test_spooled_events_get_replayed_into_the_bus(self):
+        spool = BoundedSpool(self.spool_path, max_bytes=1_000_000)
+        bus = Bus()
+        server = SyslogUDPServer(bus, host="127.0.0.1", port=0, deterministic_id=True,
+                                 max_events_per_sec=3, spool=spool,
+                                 spool_drain_interval_s=0.05)
+        server.start()
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            try:
+                for i in range(10):
+                    sock.sendto(f"line {i}".encode(), ("127.0.0.1", server.port))
+            finally:
+                sock.close()
+
+            # eventually every datagram lands on the bus: some directly
+            # (under the rate), the rest via the drain thread replaying the spool
+            _poll(lambda: len(bus.drain("raw.events")) >= 10, timeout=3.0)
+            self.assertEqual(len(bus.drain("raw.events")), 10,
+                             "all 10 datagrams eventually reach the bus with zero loss")
+            self.assertEqual(spool.pending_count(), 0, "spool must drain to empty")
+        finally:
+            server.stop()
+
+    def test_full_spool_still_loses_events_but_counts_them_distinctly(self):
+        spool = BoundedSpool(self.spool_path, max_bytes=10)  # tiny: fills almost instantly
+        bus = Bus()
+        server = SyslogUDPServer(bus, host="127.0.0.1", port=0, deterministic_id=True,
+                                 max_events_per_sec=1, spool=spool,
+                                 spool_drain_interval_s=60)
+        server.start()
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            try:
+                for i in range(20):
+                    sock.sendto(f"line {i}".encode(), ("127.0.0.1", server.port))
+            finally:
+                sock.close()
+
+            _poll(lambda: server.events_lost > 0, timeout=2.0)
+            self.assertGreater(server.events_lost, 0,
+                               "once the spool itself is full, events are truly lost "
+                               "-- but distinctly counted, not silently merged into "
+                               "the plain shed counter")
+        finally:
+            server.stop()
 
 
 if __name__ == "__main__":

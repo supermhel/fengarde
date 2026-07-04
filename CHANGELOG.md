@@ -37,6 +37,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Ingest-edge shedding** — `SyslogUDPServer` now sheds excess datagrams via a token bucket (`SYSLOG_MAX_EVENTS_PER_SEC`, default 2000/s) before they ever reach the bus, rather than letting an unbounded flood grow the Redis stream toward OOM. UDP is connectionless, so shedding (not blocking) is the only lever at this edge; the shed-warning log is itself throttled to 1/sec so a flood can't become a logging DoS.
 - **Stream-depth monitoring** — `Bus.depth(topic)` on both backends; `services/ws1-collectors/main.py` runs a background watchdog logging a warning when `raw.events` depth crosses `RAW_EVENTS_DEPTH_WARN` (default 100000). Monitoring-only — the hard cap is the ingest-edge shedding above, not this watchdog.
 - No mid-pipeline `MAXLEN` trimming was added or is planned — trimming would silently drop unconsumed events, an audit-completeness violation for a bank.
+- **Zero-loss-under-flood fallback (opt-in)** — `services/ws1-collectors/collectors/spool.py`'s `BoundedSpool`: a FIFO, byte-capped, disk-backed JSONL queue. A shed or produce-failed datagram is spooled instead of lost when `SYSLOG_SPOOL_PATH` is set (`SYSLOG_SPOOL_MAX_BYTES`, default 64 MiB); a background thread replays it into the bus in order once capacity/connectivity returns. Still bounded — once the spool itself is full, the event is truly lost, but distinctly counted (`events_lost`) rather than silently merged into the plain shed counter. Disabled by default.
 
 ## [0.2.0] - 2026-07-01
 
