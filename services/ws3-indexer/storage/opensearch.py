@@ -78,4 +78,10 @@ class OpenSearchStore(StorageAdapter):
         if not hits:
             return None
         hit = hits[0]
-        return hit.get("_index"), hit.get("_source", {})
+        source = hit.get("_source")
+        if not isinstance(source, dict) or not source:
+            # No/empty _source (e.g. _source disabled on the index or a
+            # corrupted doc): treat as not found rather than letting a triage
+            # update re-index an empty body and wipe the original alert.
+            return None
+        return hit.get("_index"), source

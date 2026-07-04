@@ -264,7 +264,7 @@ function renderSources(){
     <div style="width:60px;text-align:right">${v.toLocaleString()}</div></div>`).join("");
 }
 
-renderGlobal(); renderInventory(); renderSources();
+renderGlobal().catch(err=>console.error("renderGlobal failed:",err)); renderInventory(); renderSources();
 </script>
 </body>
 </html>
