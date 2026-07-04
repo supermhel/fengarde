@@ -12,6 +12,10 @@
 - `cisco_asa` → Network Activity (4001), sector common
 - `active_directory` → Authentication (3002), sector bank
 - `vmware_vsphere` → API Activity (6003), sector datacenter
+- `linux_ssh` → Authentication (3002), sector common
+- `generic_syslog` → catch-all RFC 3164 syslog → OCSF, sector common
+- `windows_eventlog` → Authentication (3002) / Kernel-Process (1002) / Account Change (3003), sector common
+- `db_audit` → Datastore Activity (6005), sector bank
 
 Adding a source = new module + one registry line. `type_uid` always derived.
 

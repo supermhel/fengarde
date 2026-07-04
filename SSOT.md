@@ -10,14 +10,16 @@ Update this file whenever status changes; it's a living index, not an archive.
 
 ---
 
-## 1. Current state (as of 2026-07-02, commit `6fb4a08`)
+## 1. Current state (as of 2026-07-04, commit `0bfeaca`)
 
 | Fact | Value |
 |---|---|
-| Latest release | **v0.2.0** (tag `v0.2.0`, 2026-07-01) |
+| Latest release | **v0.2.0** (tag `v0.2.0`, 2026-07-01); v0.3 Tracks A/B P0-P1 + C1 landed on `main` unreleased |
 | License | Apache-2.0, public, `github.com/supermhel/argus` |
-| Parsers shipped | 6: Linux SSH, Cisco ASA, Active Directory, VMware vSphere, generic syslog, Windows Event Log |
-| Detection rules shipped | 5: brute-force, port-scan, lateral-movement, bank DB priv-esc, DC mass-VM-delete |
+| Parsers shipped | 7: Linux SSH, Cisco ASA, Active Directory, VMware vSphere, generic syslog, Windows Event Log (incl. account-change 4720/4722/4726/4728/4732), DB audit |
+| Detection rules shipped | 7: brute-force, port-scan, lateral-movement, password-spray, privileged-group grant, bank DB priv-esc, DC mass-VM-delete |
+| Rule engine | Boolean grammar + comparison operators (`gt/gte/lt/lte/ne`) + allowlist suppression (`not_in`), class_uid prefilter buckets, anti-dormancy guardrail (`tools/check_rule_producers.py`) in the CI gate |
+| Triage workflow | Status + note per alert (WS-3 triage API port 8013 + dashboard UI). Container nginx path validated by config review only — live-stack smoke test still pending |
 | Proven live | Full 7-workstream stack on real Docker/Redis/OpenSearch (not just zero-infra) — see build plan §"Docker — RESOLVED" |
 | AI triage | Real Ollama integration + StubLLM fallback (`services/ws5-ai/llm_adapter.py::make_llm()`) |
 | Open-core split | **Decided** (2026-07-01, via `/plan-ceo-review`): this repo stays fully open forever; ARGUS-Sec (trained model + regulatory compliance) is the paid, closed layer in a separate repo. No relicensing planned. |
@@ -42,7 +44,9 @@ those words get reused loosely across specs written weeks apart.
 | Deterministic `alert_id` (T7, dedup under redelivery) | **Proven** | `services/ws4-detection/main.py:52`, tested live |
 | 3-tier edge/local/central deployment topology | **Design only** | `2026-06-27-argus-production-roadmap-design.md` — nothing built |
 | Kafka as central-tier bus | **Design only, contradicted by code** | No `_KafkaBus` exists; docstring now corrected |
-| Rule matching scales past ~50 rules | **Known gap, not fixed** | O(rules×events) linear scan, no class_uid pre-filter — flagged in architecture review §4 |
+| Rule matching scales past ~50 rules | **Fixed (v0.3 B1)** | Detector buckets rules by class_uid equality selection, only candidate bucket evaluated per event (`services/ws4-detection/main.py`); byte-identical firing behavior verified |
+| Every shipped rule has a real producer (no dormant rules) | **Proven** | `tools/check_rule_producers.py` in `run_all_tests.sh` — found and fixed `bank_db_priv_esc` dormancy (class 6005 had no emitting parser until the DB-audit parser) |
+| Triage workflow works through the live Docker/nginx stack | **Design/claim** | Zero-infra tests green (`test_triage_api.py`); container-to-container path validated by `docker compose config` + reading only, Docker daemon was down (commit `0bfeaca` message) |
 | Open-core split (this repo free / argus-sec paid) | **Decided, not yet legally documented** | Decision made 2026-07-01; LICENSE/README don't yet state it explicitly (see §4 below) |
 
 ## 3. Doc index — what each file is for, and its trust level
@@ -69,8 +73,7 @@ those words get reused loosely across specs written weeks apart.
 
 ## 4. Known doc debt (don't fix silently, flag before touching)
 
-- **`services/ws2-normalization/INTERFACE.md`** says "3 parsers"; code has 6. Needs an update
-  pass, low urgency (contributors read `docs/adding-a-parser.md`, not this file, for onboarding).
+- ~~`services/ws2-normalization/INTERFACE.md` says "3 parsers"; code has 7.~~ **Fixed 2026-07-04** — now lists all 7.
 - **Open-core decision isn't yet reflected in `README.md`/`LICENSE`/`SECURITY.md`.** The
   decision (§2 above) is real and made, but nothing in the public-facing docs *says* "this
   repo is free forever, there's a paid layer elsewhere." Worth a short README section once

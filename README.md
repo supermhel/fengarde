@@ -54,31 +54,29 @@ make down                                 # stop the stack and remove volumes
 
 ---
 
-## What's real in v0.1
+## What's real (v0.2 shipped, v0.3 in progress)
 
-ARGUS v0.1 ships a **working detection pipeline**. We are deliberate about what is
+ARGUS ships a **working detection pipeline**. We are deliberate about what is
 real versus what is planned — this is a security tool, so accuracy matters more than
 a long feature list.
 
 | Capability | Status | Notes |
 |---|---|---|
-| **Detection pipeline** (collect → normalize → detect → index → dashboard) | ✅ Works | End-to-end, this is the v0.1 product |
-| **Cisco ASA parser** | ✅ Works | Syslog `%ASA` → OCSF |
-| **Active Directory parser** | ✅ Works | Windows EventID 4625 etc. → OCSF |
-| **VMware vSphere parser** | ✅ Works | vCenter operations → OCSF |
-| **Linux SSH parser** | ✅ Works | `sshd` "Failed password" → OCSF Authentication |
-| **Brute-force detection rule** | ✅ Works | 10 failed auth from one IP in 60s |
-| **OCSF normalization + dashboard** | ✅ Works | Single internal schema; alert list in the dashboard |
-| Generic syslog parser | 🚧 v0.2 | Deferred — [good first issue](CONTRIBUTING.md) |
-| SNMP parser | 🚧 v0.2 | Deferred |
-| NetFlow parser | 🚧 v0.2 | Deferred (binary format) |
-| Windows Event Log parser | 🚧 v0.2 | Deferred |
-| Custom JSON parser | 🚧 v0.2 | Deferred |
-| **AI triage** (local Ollama/Qwen) | 🚧 v0.2 | **WS-5 is a passthrough stub in v0.1 — it does NOT classify with AI yet.** Real local-LLM triage lands in v0.2. |
+| **Detection pipeline** (collect → normalize → detect → index → dashboard) | ✅ Works | End-to-end since v0.1 |
+| **Parsers (7)** | ✅ Works | Cisco ASA, Active Directory, VMware vSphere, Linux SSH, generic syslog, Windows Event Log (incl. account-change 4720/4722/4726/4728/4732), DB audit (GRANT/REVOKE/ALTER) — all → OCSF |
+| **Detection rules (7)** | ✅ Works | Brute-force, port-scan, lateral-movement, password-spray, privileged-group grant, bank DB priv-esc, DC mass-VM-delete |
+| **Rule grammar** | ✅ Works | Boolean logic, comparison operators (`gt/gte/lt/lte/ne`), allowlist suppression (`not_in`, CIDR + exact) — all fail closed on malformed input |
+| **Rule prefilter** | ✅ Works | Rules bucketed by `class_uid` equality selection; events only evaluated against candidate rules (fixes the O(rules×events) scan) |
+| **Anti-dormancy guardrail** | ✅ Works | `tools/check_rule_producers.py` in the CI gate proves every rule's selections are satisfiable by values a real parser actually emits |
+| **AI triage** (local Ollama) | ✅ Works | Real local-LLM triage via `OLLAMA_URL`; degrades to a documented passthrough stub with zero infra |
+| **Syslog UDP listener** (WS-1) | ✅ Works | Live datagrams → `raw.events` |
+| **Triage workflow** | ✅ Works (v0.3) | Status + analyst note per alert, persisted via WS-3 triage API, editable in the dashboard. Container-to-container nginx path validated by config review, not yet by a live-stack smoke test |
+| SNMP parser | 🚧 Planned | Deferred — [good first issue](CONTRIBUTING.md) |
+| NetFlow parser | 🚧 Planned | Deferred (binary format) |
+| Custom JSON parser | 🚧 Planned | Deferred |
 
-> **No AI required, no AI claimed.** In v0.1 the "AI" service (WS-5) is a documented
-> passthrough stub. The pipeline produces real alerts without it. Local LLM triage is
-> the v0.2 headline.
+> **No AI required.** The pipeline produces real alerts with zero infra and no LLM;
+> Ollama triage is an optional layer that degrades gracefully to a stub.
 
 ---
 

@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **DB-audit parser** (`db_audit`) — vendor-agnostic database audit logs → OCSF Datastore Activity (6005), activity_id 5 for GRANT/REVOKE/ALTER. Un-dormants the `bank_db_priv_esc` rule, which matched a class no parser emitted.
+- **Windows account-change coverage** — `windows_eventlog` parser extended to EventIDs 4720/4722/4726/4728/4732 (Account Change, class 3003), with acting admin in `actor.user` and target account in `unmapped.target_user`.
+- **Password-spray rule** (`common_password_spray.yml`) — one account failing auth from ≥8 distinct source IPs (inverse of brute-force).
+- **Privileged-group grant rule** (`common_priv_grant.yml`) — single-shot on Account Change activity 5.
+- **Rule grammar: comparison operators + allowlists** — `gt/gte/lt/lte/ne` operators and a `not_in: <allowlist>` suppression clause (`contracts/allowlists/*.yml`, CIDR + exact match) in the boolean evaluator. Operators fail closed on malformed input; a missing/malformed allowlist *file* fails open on the rule (keeps firing) but closed on suppression (never suppresses).
+- **Rule prefilter** — the detector buckets rules by their `class_uid` equality selection and only evaluates candidate rules per event, replacing the O(rules×events) linear scan. Alert-firing behavior verified byte-identical before/after.
+- **Anti-dormancy guardrail** (`tools/check_rule_producers.py`, in `run_all_tests.sh`) — proves each rule's equality selections/`group_by`/`distinct_field` are satisfiable by an actual (path, value) pair some registered parser emits against a real fixture.
+- **Detection coverage map** (`contracts/detection-coverage.md`) — ground truth of OCSF classes emitted by shipped parsers vs. rule coverage.
+- **Triage workflow (v0.3 C1)** — status + analyst note per alert: new WS-3 triage HTTP API (`GET/POST /alerts/{id}/triage`, `TRIAGE_PORT` default 8013), `find_alert()` cross-index lookup in both storage backends, dashboard status dropdown + note field wired via a same-origin `/api/triage` nginx path. Triage field is OCSF-additive with tolerant-reader defaults.
+- **RedisBus test parity** — `services/shared/test_runner.py` parametrized so the full MemoryBus behavioral suite also runs against RedisBus in CI's redis-integration job.
+
+### Fixed
+
+- Dashboard `renderGlobal()` called async `getAlerts()` without `await`, so live-alert rendering operated on a Promise and threw in the browser — silently broken since live alerts shipped.
+- `storage/opensearch.py` used `urllib.parse.quote()` without importing `urllib.parse` — the first real OpenSearch `index()` call would have raised `AttributeError`.
+
 ## [0.2.0] - 2026-07-01
 
 ### Added

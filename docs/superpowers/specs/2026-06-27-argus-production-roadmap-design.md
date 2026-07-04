@@ -318,8 +318,205 @@ ground work before moving on.
 
 ---
 
-## 9. Next step
+## 9. Parallel strategic track — ARGUS-Sec & commercial positioning v2.0
+
+**Status: design only, nothing executed.** Consolidated from three hands-off docs delivered
+2026-07-01 (`ARGUS_hands_off_docs_ARGUS-Sec_positionnement.md`,
+`ARGUS-Sec_architecture_et_plan.md`, `ARGUS-Sec_plan_execution_pas_a_pas.md`). This section is a
+**parallel commercial track**, distinct from the open-source v0.1/v0.2 line already shipped to
+[github.com/supermhel/argus](https://github.com/supermhel/argus) — see the flag below before
+treating the two as one narrative.
+
+### 9.0 Tension — RESOLVED via `/plan-ceo-review` 2026-07-01: open-core
+
+Mid-project the goal was explicitly changed to **"research and open-source"** (Apache-2.0, public
+repo, community parsers/rules). This section described the opposite: a **proprietary** trained
+model (ARGUS-Sec) and a **commercial sovereign-SIEM** positioning. Reviewed with the CEO-review
+lens (Premise Challenge + Dream State Mapping): the real question wasn't "open-source OR
+commercial" — that's a false binary that risks credibility on both sides (a bank evaluating "the
+sovereign SIEM" doesn't want to find "community project" on GitHub; a contributor writing a parser
+doesn't want to discover their PR quietly fuels an undisclosed commercial pitch). The direct path
+is an explicit **open-core** boundary, confirmed by the user 2026-07-01. See §9.7 for the full
+resolution — do not read §9.1–9.6 below as still-unreconciled; they now operate inside that
+boundary.
+
+### 9.1 Positioning v2.0 (commercial/strategic)
+
+- **Pitch (unchanged core):** "From millions of signals to a handful of decisions. Without ever
+  leaving your walls." **New international variant:** "The sovereign SOC that speaks your
+  language and knows your regulator."
+- **5 differentiation pillars** (4 existing + 1 new):
+  1. Sovereignty by construction (local-first, no data leaves the walls)
+  2. Compliance as a pipeline *output* — now backed by a proprietary model, not just intent
+  3. Dual sector specialization (banking + data center)
+  4. Structural economics (local LLM vs. per-seat/per-GB SaaS pricing)
+  5. **[NEW] Proprietary multilingual, multi-regulatory model** — assessed as the most durable
+     moat identified so far
+- **Segmentation:** Germany first → Austria/Switzerland (Wave 2) → English-speaking EU (Wave 3) →
+  GCC/Gulf (international horizon). Each new market = a regulatory *module*, not a new product.
+- **Competitive read:** no incumbent (Datadog, Splunk, Wazuh, LogPoint, Aleph Alpha) currently
+  occupies "native AI triage + sovereignty + multi-regulatory" simultaneously.
+- **Locked decisions (don't reopen without cause):** positioning is "Germany-first, international
+  by design" (not Germany-only); ARGUS-Sec is now an official differentiation pillar, not a
+  research note; the regulatory mapping pillar must **never** be marketed before it is legally
+  validated.
+
+### 9.2 ARGUS-Sec architecture (the proprietary model)
+
+**State: a design specification. Not trained. No corpus assembled at scale. No run started.**
+Never present it otherwise externally.
+
+Four stacked layers, each trained once and composed at inference — the same sector-gating
+principle already used in ARGUS's detection rules, applied to language/regulation instead:
+
+| Layer | Purpose | Candidate / method |
+|---|---|---|
+| 0 — Base | Multilingual European foundation | Teuken-7B / OpenGPT-X (Apache-2.0, 24 EU languages) — candidate, not final |
+| 1 — Universal security | Domain grounding, language-independent | Continued pretraining (CPT) on Sigma, OCSF, MITRE ATT&CK, CVE/NVD |
+| 2 — Regulatory modules | Per-market compliance | LoRA adapters, hot-swappable at inference — DE first, then EN, then AR |
+| 3 — Behavior/output | Analyst-facing format | SFT: summary + verdict + actions, in the analyst's language |
+
+Principle: retrain the core (layers 0+1) once; every new market is a new adapter (layer 2), never
+a full retrain.
+
+**Locked decisions:** base model is not German-only (corrected from v1 — the need is
+European/international); CPT for knowledge (layers 1–2), SFT for behavior (layer 3) — do not
+conflate the two objectives; a security evaluation gate (CyberSecEval / Purple Llama) is
+**blocking** before any deployment, non-negotiable; DeepSeek and other PRC-origin models are
+excluded from the entire ARGUS-Sec stack (documented security degradation).
+
+**Open questions (§9 of the architecture doc):** final base (Teuken-7B vs. Foundation-Sec-8B, to
+be benchmarked); CPT vs. RAG for regulatory content (likely both, ratio TBD); build vs. outsource
+the CPT phase; sequencing against the rest of ARGUS; a dedicated WS-8 vs. extending WS-5.
+
+### 9.3 Execution plan — 5 waves
+
+The real bottleneck is **GPU access** and an **experienced ML/NLP profile**, not code or method —
+so Wave 0 and Wave 1 run in parallel now, and nothing waits on a resource it doesn't yet need.
+
+| Wave | Who | Can start | Blocks on |
+|---|---|---|---|
+| 0 — Prep (data, code, corpus) | Claude, now | Immediately | Nothing |
+| 1 — Structuring decisions | Human | Immediately | Nothing |
+| 2 — Real execution (CPT/LoRA/eval) | Human + GPU | Waves 0 & 1 done | GPU access, ML profile |
+| 3 — Integration into ARGUS (WS-5/Contract D) | Both | Wave 2 done (model passed eval) | Blocking evaluation |
+| 4 — International extension (EN, AR...) | Both | Wave 3 stable in production | Per-market design partner |
+
+**Wave 0 (Claude, no GPU/decision needed) — 6 actions, ~1 session each unless noted:**
+
+| # | Action | Deliverable |
+|---|---|---|
+| 0.1 | Synthetic SFT data from Phase 0 OCSF fixtures (alert → summary + verdict + actions) | `corpus/sft-synthetic-v0/` |
+| 0.2 | Structure German regulatory text (DORA, NIS2, BSI, BaFin) from open sources | `corpus/regulatory-de-v0/` (1–2 sessions) |
+| 0.3 | Training scripts (CPT + LoRA/QLoRA), `transformers`/`peft`/`trl`-based, parameterized | `scripts/cpt_train.py`, `scripts/lora_finetune.py` |
+| 0.4 | Evaluation harness: CyberSecEval integration, an OCSF-fixture benchmark, domain-vs-general perplexity | `eval/run_cybersecval.py`, `eval/benchmark_ocsf.py` |
+| 0.5 | Technical model card (capabilities, limits, training data, eval axes) | `ARGUS-Sec_model_card_v0.md` |
+| 0.6 | Regulatory mapping test set (alert → expected DORA/NIS2 article), draft only — needs legal sign-off before real use | `eval/regulatory_mapping_testset_de.jsonl` |
+| 0.7 *(gap noted in the source plan, not yet scheduled)* | Universal security corpus: SigmaHQ, MITRE ATT&CK, CVE/NVD — required by Wave 2 action 2.2 but missing from the original Wave 0 list | `corpus/security-universal-v0/` |
+
+Claude explicitly **cannot**, in this wave: actually download a base model or run training (no
+GPU/network access in the execution environment). Wave 0's output is code and data ready to use,
+not a trained model.
+
+**Wave 1 — 5 human decisions (parallel, no prerequisite):**
+
+| # | Decision | Options | Plan's recommendation |
+|---|---|---|---|
+| 1.1 | ML/NLP profile: hire, contract, or partner? | Internal hire / specialized freelance / lab partnership (Fraunhofer, DFKI) | The real critical dependency — decide on budget/timeline |
+| 1.2 | GPU budget: buy or rent? | Own hardware (RTX 5090/PRO 6000, ~€2–9k) vs. hourly cloud GPU | Rent for the one-off CPT/SFT phase; buy only if usage becomes regular |
+| 1.3 | Sequencing vs. the rest of ARGUS | Parallel to the 7-workstream build, or after the core product proves value | Open — resource trade-off |
+| 1.4 | Org structure | New dedicated WS-8, or extend WS-5 | Open |
+| 1.5 | Fallback if ARGUS-Sec slips | Foundation-Sec-8B (Cisco) as an interim | Recommended as a safety net |
+
+**Waves 2–4 (summary):** Wave 2 benchmarks candidate bases, runs the security-layer CPT, the
+behavior SFT, the DE regulatory adapter, and the blocking evaluation (2–4 weeks each, needs
+Wave 0's corpus + Wave 1's resourcing decision). Wave 3 serves the model via Ollama/vLLM inside
+WS-5, adds a jurisdiction/market field to alert context to route the right regulatory adapter, and
+starts collecting anonymized analyst feedback for the first real-data retrain. Wave 4 (not urgent)
+adds EN/AR/other-EU adapters, gated on a design partner per market.
+
+**Critical dependencies:** nothing blocks starting Wave 0 today. Wave 2 cannot be planned
+seriously without Decision 1.1 (who runs CPT/SFT). **Action 2.4 (the regulatory adapter) must not
+reach production without legal validation** of test set 0.6 — regulatory hallucination in an audit
+context is a named risk. Wave 4 must not start before Wave 3 is stable in production.
+
+### 9.4 What an AI assistant can and cannot do on this track
+
+Stated explicitly so no future session overestimates it:
+
+- **Can:** write training code (CPT, LoRA/QLoRA), generate synthetic SFT data by distillation,
+  structure regulatory corpora, write evaluation harnesses, document (model cards, plans).
+- **Cannot:** actually run training (no GPU/network access in this execution environment); replace
+  the iterative judgment of an experienced ML profile; legally validate a regulatory mapping;
+  supply real triage data (only a design partner can); sustain operational continuity across
+  weeks of training runs.
+
+### 9.5 New risks this track adds to §6
+
+| ID | Risk | Disposition |
+|----|------|-------------|
+| R-9 | ARGUS-Sec build stalls or slips, undercutting Pillar 5 of the positioning | Foundation-Sec-8B named as an explicit fallback (Decision 1.5); positioning must not promise Pillar 5 ahead of what the architecture/execution plan can actually support |
+| R-10 | Aleph Alpha (or another sovereign-EU-LLM player) competes directly on German soil | Monitor; differentiate on the security-specific CPT + regulatory adapters, not the base model alone |
+| R-11 | Regulatory hallucination in an audit context | Test set 0.6 requires legal/compliance sign-off before any production use; never marketed before validated (locked decision, §9.1) |
+
+### 9.6 Immediate next action (if this track is picked up)
+
+Two non-exclusive options: **(a)** start Wave 0 now — actions 0.1 (synthetic SFT data) and 0.7
+(universal security corpus) need no prior decision and can run in the same Claude session; **(b)**
+rule on Wave 1's five decisions first, especially 1.1 (who executes) and 1.3 (sequencing against
+the open-source v0.1/v0.2 line that has already shipped).
+
+### 9.7 Merged strategy — open-core, confirmed 2026-07-01
+
+**The line, drawn explicitly:**
+
+| Layer | License | What it is |
+|---|---|---|
+| **Free forever** | Apache-2.0, public, as-shipped | The 7-workstream pipeline (WS-1..7), OCSF normalization, the bus abstraction, **all parsers and detection rules** (community-contributed, unlimited, no cap), the dashboard, and WS-5 with `StubLLM`/self-hosted-`Ollama` triage — exactly what's live today at [github.com/supermhel/argus](https://github.com/supermhel/argus) at v0.2.0. Nothing here changes. No relicensing, no feature walk-back, no bait-and-switch risk for existing contributors or users. |
+| **Proprietary, paid** | Closed, separate repo | **ARGUS-Sec** (the trained multilingual security model — layers 0-3 from §9.2) and the **regulatory compliance layer** (the DE/EN/AR LoRA adapters, the legally-validated regulatory mapping test sets, Pillar 2's "compliance as pipeline output" promise). This is Pillar 5 of the positioning doc, sold as an add-on or hosted product. |
+
+**Why this line and not another:** the free tier's value (parser/rule coverage) grows *from
+community contribution* — the flywheel that makes open-source worth doing at all. The paid tier's
+value (a trained model + legally-defensible compliance mapping) requires capital, GPU time, and
+legal sign-off that a community PR cannot supply — that's the actual scarce, defensible thing, not
+the pipeline plumbing around it. Gating the pipeline itself would kill the flywheel for no
+moat benefit; keeping the model open would give away the one thing competitors can't fork.
+
+**No architecture change required.** The seam already exists:
+`services/ws5-ai/llm_adapter.py::make_llm()` today chooses `StubLLM` vs `OllamaLLM` off
+`OLLAMA_URL`. ARGUS-Sec becomes a third branch in that same function (e.g. `ARGUS_SEC_URL` or a
+served-model endpoint) — the open-source WS-5 code calls out to it exactly like it calls Ollama
+today. The proprietary weights/adapters never need to enter the public repo; only the *client*
+code (which model to call) does, and that's already open.
+
+**Concrete recommendation for Wave 0 execution:** do ARGUS-Sec work (corpus, training scripts,
+eval harness, model card, regulatory test sets) in a **separate private repository from day one**,
+not a branch or subdirectory of `supermhel/argus`. Reasons: (1) the regulatory corpus and
+eval/compliance test sets are exactly the proprietary asset being protected — one accidental
+public commit undoes the whole boundary; (2) it keeps the OSS repo's contributor experience clean
+— nobody cloning `argus` for a parser PR needs to see commercial-track scaffolding; (3) it makes
+the license boundary a filesystem boundary, not a discipline problem.
+
+**Sequencing vs. the shipped OSS line (resolves Wave 1 decision 1.3):** no conflict — they're
+different repos, different work. Wave 0's 6 actions (§9.2) need zero GPU/decision and can start
+immediately in the new private repo without touching or pausing the public repo's v0.2/v0.3 work.
+
+**Positioning consistency check:** the locked decision in §9.1 — "the regulatory mapping pillar
+must never be marketed before it is legally validated" — now has teeth: it literally cannot ship
+because it lives in the closed repo, gated on Wave 2 action 2.5's blocking evaluation and legal
+sign-off on test set 0.6. The open-core split enforces that discipline structurally, not just by
+promise.
+
+---
+
+## 10. Next step
 
 On approval of this design, invoke the **writing-plans** skill to convert Phases 1.5–5 into an
 executable, checkbox-level plan file (one section per phase, tasks with verification commands and
 exit-gate checks). No implementation code is written until that plan is reviewed and approved.
+
+Separately, §9 (ARGUS-Sec + commercial positioning): the open-core reconciliation is decided
+(§9.7). Still open before Wave 0 execution starts: create the private ARGUS-Sec repo, then decide
+whether to invoke **writing-plans** for a Wave-0 execution plan (actions 0.1–0.7, §9.2) in that
+new repo. It is not part of the Phases 1.5–5 checklist above and should not be silently folded
+into it — different repo, different plan file, same product.
