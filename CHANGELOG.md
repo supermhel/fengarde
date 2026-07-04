@@ -13,7 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Windows account-change coverage** — `windows_eventlog` parser extended to EventIDs 4720/4722/4726/4728/4732 (Account Change, class 3003), with acting admin in `actor.user` and target account in `unmapped.target_user`.
 - **Password-spray rule** (`common_password_spray.yml`) — one account failing auth from ≥8 distinct source IPs (inverse of brute-force).
 - **Privileged-group grant rule** (`common_priv_grant.yml`) — single-shot on Account Change activity 5.
-- **Rule grammar: comparison operators + allowlists** — `gt/gte/lt/lte/ne` operators and a `not_in: <allowlist>` suppression clause (`contracts/allowlists/*.yml`, CIDR + exact match) in the boolean evaluator. Operators fail closed on malformed input; a missing/malformed allowlist *file* fails open on the rule (keeps firing) but closed on suppression (never suppresses).
+- **After-hours privileged-logon rule** (`common_after_hours_admin.yml`) — Windows 4672 special-privilege assignment (class 1002 activity 2) outside a configurable business-hours window.
+- **Rule grammar: comparison operators + allowlists + time-of-day** — `gt/gte/lt/lte/ne` operators, a `not_in: <allowlist>` suppression clause (`contracts/allowlists/*.yml`, CIDR + exact match), and an `outside_hours` time-of-day/day-of-week predicate (with `tz_offset_minutes` and midnight-wrapping windows) in the boolean evaluator. Operators fail closed on malformed input; a missing/malformed allowlist *file* fails open on the rule (keeps firing) but closed on suppression (never suppresses). Grammar documented in `contracts/sigma-convention.md`.
 - **Rule prefilter** — the detector buckets rules by their `class_uid` equality selection and only evaluates candidate rules per event, replacing the O(rules×events) linear scan. Alert-firing behavior verified byte-identical before/after.
 - **Anti-dormancy guardrail** (`tools/check_rule_producers.py`, in `run_all_tests.sh`) — proves each rule's equality selections/`group_by`/`distinct_field` are satisfiable by an actual (path, value) pair some registered parser emits against a real fixture.
 - **Detection coverage map** (`contracts/detection-coverage.md`) — ground truth of OCSF classes emitted by shipped parsers vs. rule coverage.
@@ -24,6 +25,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Dashboard `renderGlobal()` called async `getAlerts()` without `await`, so live-alert rendering operated on a Promise and threw in the browser — silently broken since live alerts shipped.
 - `storage/opensearch.py` used `urllib.parse.quote()` without importing `urllib.parse` — the first real OpenSearch `index()` call would have raised `AttributeError`.
+- `storage/opensearch.py::find_alert()` returned an empty dict on a hit with missing/empty `_source`; a triage update on such a hit re-indexed only the triage field and wiped the alert's original fields. Now returns `None` (treated as not-found).
+- Runner worker called `bus.consume()` with the default 5 s Redis `block_ms`, leaving it deaf to a shutdown set mid-block so `serve()`'s worker join could time out (CI `redis-integration` hang). Now bounded by a `consume_block_ms` (default 1 s) so shutdown latency stays under the join timeout.
+
+### CI
+
+- Added `.gitleaks.toml` allowlisting canonical-UUID values so rule/entity identifiers (`contracts/rules/*.yml` ids and their test constants) don't trip the `generic-api-key` heuristic. Default ruleset otherwise unchanged; real (non-UUID-shaped) secrets are still detected.
 
 ## [0.2.0] - 2026-07-01
 

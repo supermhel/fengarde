@@ -17,8 +17,8 @@ Update this file whenever status changes; it's a living index, not an archive.
 | Latest release | **v0.2.0** (tag `v0.2.0`, 2026-07-01); v0.3 Tracks A/B P0-P1 + C1 landed on `main` unreleased |
 | License | Apache-2.0, public, `github.com/supermhel/argus` |
 | Parsers shipped | 7: Linux SSH, Cisco ASA, Active Directory, VMware vSphere, generic syslog, Windows Event Log (incl. account-change 4720/4722/4726/4728/4732), DB audit |
-| Detection rules shipped | 7: brute-force, port-scan, lateral-movement, password-spray, privileged-group grant, bank DB priv-esc, DC mass-VM-delete |
-| Rule engine | Boolean grammar + comparison operators (`gt/gte/lt/lte/ne`) + allowlist suppression (`not_in`), class_uid prefilter buckets, anti-dormancy guardrail (`tools/check_rule_producers.py`) in the CI gate |
+| Detection rules shipped | 8: brute-force, port-scan, lateral-movement, password-spray, privileged-group grant, after-hours admin, bank DB priv-esc, DC mass-VM-delete |
+| Rule engine | Boolean grammar + comparison operators (`gt/gte/lt/lte/ne`) + allowlist suppression (`not_in`) + time-of-day predicate (`outside_hours`), class_uid prefilter buckets, anti-dormancy guardrail (`tools/check_rule_producers.py`) in the CI gate. Grammar documented in `contracts/sigma-convention.md` |
 | Triage workflow | Status + note per alert (WS-3 triage API port 8013 + dashboard UI). Container nginx path validated by config review only — live-stack smoke test still pending |
 | Proven live | Full 7-workstream stack on real Docker/Redis/OpenSearch (not just zero-infra) — see build plan §"Docker — RESOLVED" |
 | AI triage | Real Ollama integration + StubLLM fallback (`services/ws5-ai/llm_adapter.py::make_llm()`) |

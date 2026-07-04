@@ -101,7 +101,8 @@ def _process_message(bus, topic, group, msg, handler, max_redeliveries,
 
 
 def _topic_worker(bus_factory, topic, group, handler, *, max_redeliveries,
-                  shutdown, claim_idle_ms, idle_sleep_s, service_name):
+                  shutdown, claim_idle_ms, idle_sleep_s, consume_block_ms,
+                  service_name):
     """Own the consume loop for ONE topic until shutdown is set."""
     bus = bus_factory()
     while not shutdown.is_set():
@@ -119,9 +120,13 @@ def _topic_worker(bus_factory, topic, group, handler, *, max_redeliveries,
         except Exception:
             traceback.print_exc()
 
-        # 2) New messages.
+        # 2) New messages. Bound the blocking read (RedisBus.consume blocks up to
+        # block_ms on XREADGROUP): a long block would leave the worker deaf to a
+        # shutdown set mid-block, so serve()'s worker.join() could time out. A
+        # short block keeps shutdown latency ~= consume_block_ms. MemoryBus
+        # ignores block_ms (drains and returns), so this is Redis-only cost.
         try:
-            for msg in bus.consume(topic, group=group):
+            for msg in bus.consume(topic, group=group, block_ms=consume_block_ms):
                 did_work = True
                 # First delivery == count 1 (the PEL/XPENDING counter starts at 1
                 # once a message is read into a group). Redeliveries are handled by
@@ -143,7 +148,8 @@ def _topic_worker(bus_factory, topic, group, handler, *, max_redeliveries,
 def serve(handlers: Handlers, *, health_port: int | None = None,
           max_redeliveries: int = 5, shutdown: threading.Event | None = None,
           service_name: str | None = None, claim_idle_ms: int = 60000,
-          idle_sleep_s: float = 0.5, install_signal_handlers: bool = True,
+          idle_sleep_s: float = 0.5, consume_block_ms: int = 1000,
+          install_signal_handlers: bool = True,
           bus_factory: Callable | None = None) -> None:
     """Run the bus consume loop for every topic in ``handlers`` until shutdown.
 
@@ -157,6 +163,9 @@ def serve(handlers: Handlers, *, health_port: int | None = None,
         service_name: reported by /health; derived from the topics/groups if None.
         claim_idle_ms: how long a PEL entry must be idle before it is reclaimed.
         idle_sleep_s: pause between empty reads (keeps MemoryBus/Redis from spinning).
+        consume_block_ms: max time a worker's RedisBus.consume() blocks on
+            XREADGROUP before returning to re-check shutdown; bounds shutdown
+            latency (MemoryBus ignores it). Keep < the worker.join() timeout.
         install_signal_handlers: wire SIGTERM/SIGINT to set shutdown (main thread).
         bus_factory: returns a Bus; defaults to shared.bus.Bus. Each worker gets
             its own Bus instance (Redis consumer-name isolation; thread-safety).
@@ -199,6 +208,7 @@ def serve(handlers: Handlers, *, health_port: int | None = None,
             args=(bus_factory, topic, group, handler),
             kwargs=dict(max_redeliveries=max_redeliveries, shutdown=shutdown,
                         claim_idle_ms=claim_idle_ms, idle_sleep_s=idle_sleep_s,
+                        consume_block_ms=consume_block_ms,
                         service_name=service_name),
             name=f"consume:{topic}", daemon=True)
         t.start()

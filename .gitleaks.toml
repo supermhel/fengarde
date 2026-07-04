@@ -1,0 +1,23 @@
+# ARGUS gitleaks configuration.
+#
+# Keeps the full default gitleaks ruleset (all real secret detectors stay on)
+# and adds one allowlist: canonical UUIDs.
+#
+# Why: every detection rule carries a public `id:` UUID (contracts/rules/*.yml)
+# and the tests reference those ids as string constants
+# (e.g. services/ws4-detection/test_v03_new_rules.py). A v4 UUID has high
+# entropy, so the default `generic-api-key` heuristic flags it as a secret —
+# but a rule identifier is a public, non-sensitive value committed on purpose,
+# not a credential. Allowlisting the UUID *shape* suppresses these without
+# weakening detection of real keys (which are not UUID-formatted).
+title = "ARGUS gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Rule/entity identifiers are public UUIDs, not secrets"
+regexTarget = "match"
+regexes = [
+  '''[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}''',
+]
