@@ -45,6 +45,9 @@ echo
 echo "== ws4 v0.3 (A3): rule grammar (comparison ops + allowlist), fail-closed =="
 $PY services/ws4-detection/test_v03_rule_grammar.py || fail=1
 echo
+echo "== ws4 v0.3 (A3): time-of-day predicate (outside_hours) + after-hours rule =="
+$PY services/ws4-detection/test_v03_time_predicate.py || fail=1
+echo
 echo "== ws2 parsers: generic syslog + windows event log (v0.2) =="
 $PY services/ws2-normalization/parsers/test_generic_syslog.py || fail=1
 $PY services/ws2-normalization/parsers/test_windows_eventlog.py || fail=1

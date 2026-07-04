@@ -7,8 +7,9 @@ detection rules. Update this file in the same PR as any parser or rule change.
 
 | class_uid | Class | Emitted by | Rules covering it |
 |---|---|---|---|
-| 1002 | Kernel/Process | generic_syslog, windows_eventlog (4688/4672) | none |
-| 3002 | Authentication | linux_ssh, active_directory, windows_eventlog (4624/4634/4647) | common_bruteforce, common_lateral_movement |
+| 1002 | Kernel/Process | generic_syslog, windows_eventlog (4688/4672) | common_after_hours_admin (4672 activity 2) |
+| 3002 | Authentication | linux_ssh, active_directory, windows_eventlog (4624/4634/4647) | common_bruteforce, common_lateral_movement, common_password_spray |
+| 3003 | Account Change | windows_eventlog (4720/4722/4726/4728/4732, added v0.3) | common_priv_grant |
 | 4001 | Network Activity | cisco_asa | common_port_scan |
 | 6003 | API Activity | vmware_vsphere | dc_mass_vm_delete |
 | 6005 | Datastore Activity | db_audit (v0.3 — fixed the dormancy below) | bank_db_priv_esc |
@@ -17,14 +18,14 @@ detection rules. Update this file in the same PR as any parser or rule change.
 
 | class_uid | Class | Would unlock |
 |---|---|---|
-| 3003 | Account Change | priv-grant, account-lifecycle rules — needs windows_eventlog EventID extension (4720/4722/4726/4728/4732) |
 | 4002 | DNS/HTTP Activity | DNS-exfil, beaconing rules — needs a DNS/proxy parser |
 | 1001 | File System Activity | file-integrity rules — needs an auditd/FIM parser |
 
 ## Gaps — classes WITH a producer but under-covered by rules
 
-- **1002 (Kernel/Process):** two parsers emit it, zero rules consume it. Process-launch
-  anomaly detection (suspicious binary path, unexpected parent) is unbuilt.
+- **1002 (Kernel/Process):** process-launch (4688, activity 1) anomaly detection
+  (suspicious binary path, unexpected parent) is unbuilt; only privilege-use (4672)
+  has a rule (after-hours admin, added v0.3).
 - **6005 (Datastore Activity):** ~~`bank_db_priv_esc.yml` referenced class 6005 with
   no producer — dormant on real data~~ **FIXED (v0.3):** `services/ws2-normalization/
   parsers/db_audit.py` added, a vendor-agnostic DB-audit parser emitting

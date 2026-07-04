@@ -1,0 +1,31 @@
+title: Privileged logon outside business hours
+id: 9b5f2d18-3c7a-4e61-8f24-5a1d7c3e9b06
+status: stable
+description: >
+  Special privileges were assigned to a logon session (Windows EventID 4672,
+  OCSF Kernel/Process class 1002, activity_id 2 privilege use) outside the
+  configured business-hours window (default 08:00-18:00 Mon-Fri, UTC). Admin
+  activity at 03:00 Sunday is not routine; scored high but single-shot rather
+  than critical since legitimate on-call/maintenance work also happens
+  off-hours -- tune the window (and tz_offset_minutes) to the site's actual
+  schedule before trusting the signal.
+level: high
+logsource:
+  category: privilege_use
+detection:
+  after_hours_priv:
+    class_uid: 1002
+    activity_id: 2
+    time:
+      outside_hours:
+        start: "08:00"
+        end: "18:00"
+        days: [mon, tue, wed, thu, fri]
+        tz_offset_minutes: 0
+  condition: after_hours_priv
+fields:
+  - actor.user.name
+  - src_endpoint.hostname
+siem:
+  sector: common
+  score_weight: 60

@@ -143,12 +143,22 @@ def collect_producible() -> tuple[set[str], set[tuple[str, object]]]:
 
 
 def rule_referenced(rule: dict) -> tuple[set[tuple[str, object]], set[str]]:
-    """(equality (path,value) pairs required, path-only fields required)."""
+    """(equality (path,value) pairs required, path-only fields required).
+
+    Operator-shaped selection values ({gt: 60}, {not_in: name},
+    {outside_hours: {...}}) are dicts: unhashable as equality pairs and not
+    equality semantics anyway -- for this tool they only require that the PATH
+    is ever populated (whether the operator can be satisfied is rule semantics,
+    out of scope here)."""
     equality: set[tuple[str, object]] = set()
+    path_only: set[str] = set()
     for sel in (rule.get("detection") or {}).values():
         if isinstance(sel, dict):
-            equality |= {(k, v) for k, v in sel.items()}
-    path_only: set[str] = set()
+            for k, v in sel.items():
+                if isinstance(v, (dict, list)):
+                    path_only.add(k)
+                else:
+                    equality.add((k, v))
     siem = rule.get("siem") or {}
     if siem.get("group_by"):
         path_only.add(siem["group_by"])

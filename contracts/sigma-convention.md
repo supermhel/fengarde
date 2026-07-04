@@ -35,6 +35,36 @@ siem:
   threshold: 10             # optional, stateful
 ```
 
+## Selection operators (v0.3, A3)
+
+A selection maps an OCSF path to either a **scalar** (equality) or an **operator
+dict**. Operators are evaluated by a non-`eval()`, fail-closed evaluator
+(`services/ws4-detection/engine.py`): any malformed argument makes the selection
+*not match* rather than raise — rule files are contributor-supplied.
+
+```yaml
+detection:
+  sel:
+    class_uid: 1002                       # equality (scalar)
+    score: {gt: 60}                       # gt|gte|lt|lte|ne — numeric, non-numeric operand => no match
+    src_endpoint.ip: {not_in: corp_ranges} # suppress if value ∈ contracts/allowlists/corp_ranges.yml (CIDR + exact)
+    time:                                  # time-of-day / day-of-week
+      outside_hours:
+        start: "08:00"                     # HH:MM, 24h
+        end: "18:00"                       # start<end normal window; start>end wraps midnight
+        days: [mon, tue, wed, thu, fri]    # optional, default Mon–Fri
+        tz_offset_minutes: 0               # optional, applied to the event's epoch-ms `time`
+  condition: sel
+```
+
+- `not_in`: a missing/malformed allowlist file fails **open on the rule** (keeps
+  firing — a broken allowlist must not silently blind a SIEM) but **closed on
+  suppression** (never suppresses). A non-string allowlist name is a malformed
+  rule and fails fully closed.
+- `outside_hours`: matches when the event time falls **outside** the business
+  window. `start == end`, unknown keys, bad `HH:MM`, non-int/absurd tz, empty or
+  unknown `days` all fail closed.
+
 ## Scoring model (see scoring.yaml)
 
 Each matching rule contributes `score_weight`. A single event's score is the

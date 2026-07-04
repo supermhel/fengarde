@@ -9,7 +9,11 @@ Supported rule shape (subset of Sigma, per sigma-convention.md):
     detection:
       <selection_name>:
         <ocsf.dotted.path>: <scalar>        # equality
-      condition: "<sel> [and|or] <sel> ..."  # boolean over selection names
+        <ocsf.dotted.path>: {gt|gte|lt|lte|ne: <number>}   # comparison (fail closed)
+        <ocsf.dotted.path>: {not_in: <allowlist-name>}     # suppression via contracts/allowlists/
+        time: {outside_hours: {start: "08:00", end: "18:00",   # time-of-day / day-of-week
+               days: [mon,tue,wed,thu,fri], tz_offset_minutes: 0}}
+      condition: "<sel> [and|or|not] <sel> ..."  # boolean over selection names
     siem:
       score_weight: <int>
       window_seconds: <int>    # optional -> stateful
@@ -117,6 +121,66 @@ def load_allowlist(allowlists_dir: Path, name: str) -> Allowlist:
 
 _NUMERIC_OPS = {"gt", "gte", "lt", "lte", "ne"}
 
+# --- A3: time-of-day / day-of-week predicate ----------------------------------
+_DAY_NAMES = {"mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4, "sat": 5, "sun": 6}
+_WEEKDAYS = ["mon", "tue", "wed", "thu", "fri"]
+_HHMM_RE = re.compile(r"([01]\d|2[0-3]):([0-5]\d)\Z")
+
+
+def _parse_hhmm(s) -> int | None:
+    """'HH:MM' -> minute-of-day, or None on any malformed input."""
+    if not isinstance(s, str):
+        return None
+    m = _HHMM_RE.match(s)
+    if not m:
+        return None
+    return int(m.group(1)) * 60 + int(m.group(2))
+
+
+def _time_outside_hours(spec, actual) -> bool:
+    """True when epoch-ms `actual` falls OUTSIDE the business-hours window in
+    `spec` ({start: "HH:MM", end: "HH:MM", days: [mon..], tz_offset_minutes: N}).
+
+    "Within business hours" = the local weekday is in `days` (default Mon-Fri)
+    AND start <= minute-of-day < end; a start > end window wraps past midnight.
+    Fail closed: a malformed spec or non-numeric event time returns False (the
+    selection doesn't match), never raises -- untrusted contributor rules.
+    """
+    if not isinstance(spec, dict) or not spec:
+        return False
+    if isinstance(actual, bool) or not isinstance(actual, (int, float)):
+        return False
+    start = _parse_hhmm(spec.get("start"))
+    end = _parse_hhmm(spec.get("end"))
+    if start is None or end is None or start == end:
+        return False
+    tz = spec.get("tz_offset_minutes", 0)
+    if isinstance(tz, bool) or not isinstance(tz, int) or not -14 * 60 <= tz <= 14 * 60:
+        return False
+    days_raw = spec.get("days", _WEEKDAYS)
+    if not isinstance(days_raw, list) or not days_raw:
+        return False
+    days: set[int] = set()
+    for d in days_raw:
+        if not isinstance(d, str) or d.lower() not in _DAY_NAMES:
+            return False
+        days.add(_DAY_NAMES[d.lower()])
+    for key in spec:
+        if key not in ("start", "end", "days", "tz_offset_minutes"):
+            return False  # unknown key -> malformed spec -> fail closed
+    local_minutes = int(actual) // 60000 + tz
+    # Epoch day 0 (1970-01-01) was a Thursday; Python floor-division keeps this
+    # correct for pre-1970 (negative) timestamps too.
+    weekday = (local_minutes // 1440 + 3) % 7
+    minute_of_day = local_minutes % 1440
+    if weekday not in days:
+        return True
+    if start < end:
+        within = start <= minute_of_day < end
+    else:  # window wraps midnight, e.g. 22:00-06:00
+        within = minute_of_day >= start or minute_of_day < end
+    return not within
+
 
 def _numeric_compare(op: str, actual, expected) -> bool:
     """Fail-closed numeric comparison: any non-numeric operand -> False, never raise."""
@@ -210,6 +274,9 @@ class Rule:
                 allowlist = load_allowlist(self._allowlists_dir or _default_allowlists_dir(), arg)
                 if allowlist.matches(actual):
                     return False  # value IS in the allowlist -> suppressed -> no match
+            elif op == "outside_hours":
+                if not _time_outside_hours(arg, actual):
+                    return False
             else:
                 return False  # unknown operator -> fail closed
         return True
