@@ -11,11 +11,7 @@ protect against today) and **how to report a vulnerability**.
 
 **Please do not open a public GitHub issue for security vulnerabilities.**
 
-Report privately to: **security@argus-siem.example** *(placeholder — replace with
-the project's real disclosure address before publishing)*.
-
-If GitHub Private Vulnerability Reporting is enabled on this repository, you may
-also use **Security → Report a vulnerability**.
+you may use **Security → Report a vulnerability**.
 
 Please include:
 
