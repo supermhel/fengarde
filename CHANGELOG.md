@@ -32,6 +32,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Added `.gitleaks.toml` allowlisting canonical-UUID values so rule/entity identifiers (`contracts/rules/*.yml` ids and their test constants) don't trip the `generic-api-key` heuristic. Default ruleset otherwise unchanged; real (non-UUID-shaped) secrets are still detected.
 
+### Added (v0.3 B2 — backpressure)
+
+- **Ingest-edge shedding** — `SyslogUDPServer` now sheds excess datagrams via a token bucket (`SYSLOG_MAX_EVENTS_PER_SEC`, default 2000/s) before they ever reach the bus, rather than letting an unbounded flood grow the Redis stream toward OOM. UDP is connectionless, so shedding (not blocking) is the only lever at this edge; the shed-warning log is itself throttled to 1/sec so a flood can't become a logging DoS.
+- **Stream-depth monitoring** — `Bus.depth(topic)` on both backends; `services/ws1-collectors/main.py` runs a background watchdog logging a warning when `raw.events` depth crosses `RAW_EVENTS_DEPTH_WARN` (default 100000). Monitoring-only — the hard cap is the ingest-edge shedding above, not this watchdog.
+- No mid-pipeline `MAXLEN` trimming was added or is planned — trimming would silently drop unconsumed events, an audit-completeness violation for a bank.
+
 ## [0.2.0] - 2026-07-01
 
 ### Added

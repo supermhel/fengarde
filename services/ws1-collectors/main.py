@@ -71,7 +71,7 @@ def main() -> None:
     from shared.runner import serve  # noqa: E402
     from shared.log import get_logger  # noqa: E402
     from collectors.syslog_udp_server import (  # noqa: E402
-        SyslogUDPServer, DEFAULT_HOST, DEFAULT_PORT)
+        SyslogUDPServer, DEFAULT_HOST, DEFAULT_PORT, DEFAULT_MAX_EVENTS_PER_SEC)
 
     log = get_logger("ws1-collectors")
 
@@ -83,9 +83,12 @@ def main() -> None:
     # Live syslog ingestion (env-configurable; 5514 avoids privileged 514).
     syslog_host = os.getenv("SYSLOG_UDP_HOST", DEFAULT_HOST)
     syslog_port = int(os.getenv("SYSLOG_UDP_PORT", str(DEFAULT_PORT)))
+    max_events_per_sec = float(os.getenv("SYSLOG_MAX_EVENTS_PER_SEC",
+                                        str(DEFAULT_MAX_EVENTS_PER_SEC)))
     udp = None
     try:
-        udp = SyslogUDPServer(bus, host=syslog_host, port=syslog_port, logger=log)
+        udp = SyslogUDPServer(bus, host=syslog_host, port=syslog_port,
+                              max_events_per_sec=max_events_per_sec, logger=log)
         udp.start()
     except OSError as exc:
         # e.g. port in use, or 514 without elevation. Stay up for /health anyway.
@@ -93,12 +96,47 @@ def main() -> None:
                   error=str(exc))
 
     shutdown = threading.Event()
+    depth_thread = _start_depth_watchdog(bus, log, shutdown)
     try:
         serve({}, health_port=int(os.getenv("PORT", "8001")),
               service_name="ws1-collectors", shutdown=shutdown)
     finally:
         if udp is not None:
             udp.stop()
+        if depth_thread is not None:
+            depth_thread.join(timeout=5)
+
+
+def _start_depth_watchdog(bus, log, shutdown, *, topic: str = "raw.events",
+                          interval_s: float = 30.0):
+    """B2: periodically sample the ingest topic's stream depth and log a
+    warning when it crosses a threshold, so an operator sees a flood building
+    up before it OOMs Redis -- a signal, not a fix; the actual shedding
+    happens at the ingest edge (SyslogUDPServer's token bucket).
+
+    Env RAW_EVENTS_DEPTH_WARN (default 100000, 0 disables). Depth is checked
+    against Bus.depth(), which is 0 on MemoryBus's untouched topics and a real
+    XLEN on RedisBus -- either way, missing/unreachable never raises here."""
+    import threading as _threading
+
+    warn_at = int(os.getenv("RAW_EVENTS_DEPTH_WARN", "100000"))
+    if warn_at <= 0:
+        return None
+
+    def _loop():
+        while not shutdown.is_set():
+            try:
+                depth = bus.depth(topic)
+                if depth >= warn_at:
+                    log.warn("ingest topic depth crossed warning threshold",
+                            topic=topic, depth=depth, threshold=warn_at)
+            except Exception as exc:
+                log.warn("depth watchdog check failed", topic=topic, error=str(exc))
+            shutdown.wait(interval_s)
+
+    t = _threading.Thread(target=_loop, name="depth-watchdog", daemon=True)
+    t.start()
+    return t
 
 
 if __name__ == "__main__":

@@ -64,6 +64,10 @@ class _MemoryBus:
     def drain(self, topic):
         return list(self._streams[topic])
 
+    def depth(self, topic) -> int:
+        """B2: unconsumed-message count, for the ingest-edge depth watchdog."""
+        return len(self._streams[topic])
+
 
 class _RedisBus:
     def __init__(self, url):
@@ -194,6 +198,17 @@ class _RedisBus:
         if isinstance(row, dict):
             return int(row.get("times_delivered", 0))
         return int(row[3])
+
+    def depth(self, topic) -> int:
+        """B2: total stream length (unconsumed + already-acked entries still
+        retained). No MAXLEN trim is applied here — trimming a stream mid-
+        pipeline would drop unconsumed events, an audit-completeness violation
+        for a bank; see the ingest-edge shedding in SyslogUDPServer instead.
+        Missing stream (never produced to) reads as depth 0, not an error."""
+        try:
+            return int(self.r.xlen(topic))
+        except Exception:
+            return 0
 
 
 def Bus():
