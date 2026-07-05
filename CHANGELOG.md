@@ -32,6 +32,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Added `.gitleaks.toml` allowlisting canonical-UUID values so rule/entity identifiers (`contracts/rules/*.yml` ids and their test constants) don't trip the `generic-api-key` heuristic. Default ruleset otherwise unchanged; real (non-UUID-shaped) secrets are still detected.
 
+### Added (v0.3 B4 — rule validation gate)
+
+- **`tools/validate_rules.py`** — a contributor-facing static validator for `contracts/rules/*.yml`, wired into `run_all_tests.sh`/CI. Reuses the real WS-4 engine's tokenizer/parser and operator set (so "valid" means exactly "the runtime will evaluate this") to check: schema (title, canonical-UUID id, level enum, `siem.score_weight` bounds, stateful window/threshold pairing), that the `condition` parses under the T4 evaluator and references only defined selections, that every selection operator is one the engine implements (unknown operators rejected, not silently fail-closed at runtime), that `not_in` allowlists and `outside_hours` windows are well-formed and reference existing files, and that rule ids are unique. Complements the anti-dormancy `check_rule_producers.py`. 20 unit tests (`tools/test_validate_rules.py`) — every check has an adversarial reject case.
+
 ### Added (v0.3 B2 — backpressure)
 
 - **Ingest-edge shedding** — `SyslogUDPServer` now sheds excess datagrams via a token bucket (`SYSLOG_MAX_EVENTS_PER_SEC`, default 2000/s) before they ever reach the bus, rather than letting an unbounded flood grow the Redis stream toward OOM. UDP is connectionless, so shedding (not blocking) is the only lever at this edge; the shed-warning log is itself throttled to 1/sec so a flood can't become a logging DoS.

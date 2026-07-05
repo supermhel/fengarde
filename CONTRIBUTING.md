@@ -65,6 +65,31 @@ Then verify with `python test_contract.py`. Done.
 
 ---
 
+## Add a detection rule
+
+Rules are YAML (`contracts/rules/*.yml`), evaluated against the normalized OCSF
+schema so one rule works across every source of that class. Copy an existing rule
+(`common_bruteforce.yml` is the simplest) and adjust the `detection` selections,
+`condition`, and `siem` block. Grammar (operators, allowlists, time-of-day) is
+documented in [`contracts/sigma-convention.md`](contracts/sigma-convention.md).
+
+Before opening a PR, run the two rule gates — both are part of `make test`, but
+run them directly for a fast, targeted check:
+
+```sh
+python tools/validate_rules.py        # schema, condition parse, operator safety, references
+python tools/check_rule_producers.py  # anti-dormancy: some parser must actually emit your fields
+```
+
+`validate_rules.py` rejects a malformed rule at contribution time with a clear
+message (unknown operator, undefined selection in the `condition`, missing
+allowlist, broken time window, bad UUID/score) instead of letting it silently
+never fire at runtime. `check_rule_producers.py` catches the opposite trap: a
+rule keyed on a `class_uid`/field no shipped parser produces (a "dormant" rule
+that passes every unit test but can never match real data).
+
+---
+
 ## Project scope — read this before filing a feature request
 
 ARGUS is built in versioned slices. Knowing the scope keeps requests triaged

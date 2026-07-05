@@ -12,6 +12,10 @@ $PY tools/validate_contract.py || fail=1
 echo
 echo "== A6: anti-dormancy check (rules must be satisfiable by a real parser) =="
 $PY tools/check_rule_producers.py || fail=1
+echo
+echo "== B4: rule validation gate (schema, condition parse, operator safety) =="
+$PY tools/validate_rules.py || fail=1
+$PY tools/test_validate_rules.py || fail=1
 
 for ws in ws1-collectors ws2-normalization ws3-indexer ws4-detection ws5-ai ws6-inventory ws7-dashboard; do
   echo
