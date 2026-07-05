@@ -24,7 +24,7 @@
             "product": { "properties": { "name": { "type": "keyword" }, "vendor_name": { "type": "keyword" } } }
           }
         },
-        "src_endpoint": { "properties": { "ip": { "type": "ip" }, "mac": { "type": "keyword" }, "hostname": { "type": "keyword" }, "port": { "type": "integer" } } },
+        "src_endpoint": { "properties": { "ip": { "type": "ip" }, "mac": { "type": "keyword" }, "hostname": { "type": "keyword" }, "port": { "type": "integer" }, "reputation": { "properties": { "score": { "type": "integer" }, "categories": { "type": "keyword" }, "source": { "type": "keyword" } } }, "location": { "properties": { "country": { "type": "keyword" }, "source": { "type": "keyword" } } } } },
         "dst_endpoint": { "properties": { "ip": { "type": "ip" }, "mac": { "type": "keyword" }, "hostname": { "type": "keyword" }, "port": { "type": "integer" } } },
         "actor": { "properties": { "user": { "properties": { "name": { "type": "keyword" }, "uid": { "type": "keyword" }, "domain": { "type": "keyword" } } } } },
         "siem": {

@@ -18,10 +18,18 @@ sys.path.insert(0, str(SERVICES))  # for `shared`
 from shared.bus import Bus  # noqa: E402
 from shared.ocsf import validate  # noqa: E402
 from parsers import resolve  # noqa: E402
+from enrichment import enrich  # noqa: E402
 
 
 def normalize_one(raw_payload: dict):
-    """Return (event, errors). event is None if no parser / unparseable."""
+    """Return (event, errors). event is None if no parser / unparseable.
+
+    Pipeline: parse -> A5 enrich (additive, offline, fail-open) -> validate.
+    Enrichment runs before validate so the enriched event is what's checked
+    against Contract A, but it only ADDS optional src_endpoint.reputation/
+    location -- an event validates identically whether or not a data match adds
+    a field.
+    """
     parser = resolve(raw_payload)
     if parser is None:
         st = raw_payload.get("source_type", "")
@@ -32,6 +40,7 @@ def normalize_one(raw_payload: dict):
     event = parser.parse(raw_payload)
     if event is None:
         return None, ["parser returned None"]
+    event = enrich(event)
     return event, validate(event)
 
 

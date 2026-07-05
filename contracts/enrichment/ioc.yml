@@ -1,0 +1,21 @@
+# A5 enrichment: local IP-reputation / IOC list.
+#
+# Offline, air-gap-safe: enrichment reads THIS file only, never an external
+# service (sovereignty constraint). Each entry adds an OCSF-additive
+# `src_endpoint.reputation` object to a matching event:
+#   {"score": <0-100>, "categories": [...], "source": "local-ioc"}
+#
+# Match: `ip` is an exact address; `cidr` is a network (membership match).
+# Exact-IP entries win over CIDR entries. `score` is a 0-100 badness score
+# (higher = worse); rules threshold on it via the `gte` operator.
+#
+# This is a SEED list for the demo/tests -- replace with your own local IOC
+# feed export (Spamhaus DROP, an internal blocklist, etc.). Documentation-only
+# example values, not live threat intel.
+entries:
+  - ip: "203.0.113.5"
+    score: 90
+    categories: [scanner, brute-force]
+  - cidr: "198.51.100.0/24"
+    score: 75
+    categories: [botnet]

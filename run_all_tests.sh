@@ -56,6 +56,9 @@ echo "== ws2 parsers: generic syslog + windows event log (v0.2) =="
 $PY services/ws2-normalization/parsers/test_generic_syslog.py || fail=1
 $PY services/ws2-normalization/parsers/test_windows_eventlog.py || fail=1
 echo
+echo "== ws2 A5 enrichment (reputation + geo, additive/offline/fail-open) =="
+$PY services/ws2-normalization/enrichment/test_enrichment.py || fail=1
+echo
 echo "== ws2 parsers: db_audit (v0.3, un-dormants bank_db_priv_esc.yml) =="
 $PY services/ws2-normalization/parsers/test_db_audit.py || fail=1
 echo

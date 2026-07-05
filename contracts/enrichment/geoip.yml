@@ -1,0 +1,27 @@
+# A5 enrichment: local CIDR -> country map (a lightweight stand-in for a full
+# GeoIP database).
+#
+# Offline, air-gap-safe: a small hand-maintainable CIDR->country table, NOT a
+# MaxMind binary (that's a large licensed asset + external update feed, out of
+# scope and against the sovereignty constraint). Each matching entry adds an
+# OCSF-additive `src_endpoint.location` object:
+#   {"country": "<ISO-3166 alpha-2 | INTERNAL>", "source": "local-geoip"}
+#
+# This coarse map is enough to unblock a country-keyed rule (e.g.
+# impossible-travel keyed on distinct country). Swap in a real GeoIP resolver
+# behind the same `src_endpoint.location` field when one is available -- the
+# field shape (and any rule reading it) stays the same.
+#
+# `INTERNAL` marks RFC1918 space so a rule can distinguish internal from
+# external sources without a separate flag.
+entries:
+  - cidr: "10.0.0.0/8"
+    country: "INTERNAL"
+  - cidr: "172.16.0.0/12"
+    country: "INTERNAL"
+  - cidr: "192.168.0.0/16"
+    country: "INTERNAL"
+  - cidr: "203.0.113.0/24"
+    country: "RU"
+  - cidr: "198.51.100.0/24"
+    country: "CN"

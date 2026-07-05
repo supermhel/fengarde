@@ -18,7 +18,7 @@
         "severity_id": { "type": "integer" },
         "status": { "type": "keyword" },
         "message": { "type": "text" },
-        "src_endpoint": { "properties": { "ip": { "type": "ip" }, "mac": { "type": "keyword" }, "hostname": { "type": "keyword" }, "port": { "type": "integer" } } },
+        "src_endpoint": { "properties": { "ip": { "type": "ip" }, "mac": { "type": "keyword" }, "hostname": { "type": "keyword" }, "port": { "type": "integer" }, "reputation": { "properties": { "score": { "type": "integer" }, "categories": { "type": "keyword" }, "source": { "type": "keyword" } } }, "location": { "properties": { "country": { "type": "keyword" }, "source": { "type": "keyword" } } } } },
         "dst_endpoint": { "properties": { "ip": { "type": "ip" }, "mac": { "type": "keyword" }, "hostname": { "type": "keyword" }, "port": { "type": "integer" } } },
         "actor": { "properties": { "user": { "properties": { "name": { "type": "keyword" }, "uid": { "type": "keyword" }, "domain": { "type": "keyword" } } } } },
         "siem": { "properties": { "sector": { "type": "keyword" }, "source_type": { "type": "keyword" }, "ingest_id": { "type": "keyword" }, "tenant": { "type": "keyword" }, "score": { "type": "integer" } } }
