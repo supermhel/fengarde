@@ -10,15 +10,16 @@ Update this file whenever status changes; it's a living index, not an archive.
 
 ---
 
-## 1. Current state (as of 2026-07-04, commit `0bfeaca`)
+## 1. Current state (as of 2026-07-05, commit `d1ce1e4`)
 
 | Fact | Value |
 |---|---|
-| Latest release | **v0.2.0** (tag `v0.2.0`, 2026-07-01); v0.3 Tracks A/B P0-P1 + C1 landed on `main` unreleased |
+| Latest release | **v0.2.0** (tag `v0.2.0`, 2026-07-01); v0.3 Tracks A/B (incl. B2 backpressure) + C1 landed on `main` unreleased |
 | License | Apache-2.0, public, `github.com/supermhel/argus` |
 | Parsers shipped | 7: Linux SSH, Cisco ASA, Active Directory, VMware vSphere, generic syslog, Windows Event Log (incl. account-change 4720/4722/4726/4728/4732), DB audit |
 | Detection rules shipped | 8: brute-force, port-scan, lateral-movement, password-spray, privileged-group grant, after-hours admin, bank DB priv-esc, DC mass-VM-delete |
 | Rule engine | Boolean grammar + comparison operators (`gt/gte/lt/lte/ne`) + allowlist suppression (`not_in`) + time-of-day predicate (`outside_hours`), class_uid prefilter buckets, anti-dormancy guardrail (`tools/check_rule_producers.py`) in the CI gate. Grammar documented in `contracts/sigma-convention.md` |
+| Backpressure (B2) | Ingest-edge shedding: WS-1 syslog listener token-bucket (`SYSLOG_MAX_EVENTS_PER_SEC`, default 2000/s) sheds excess datagrams before the bus; no mid-pipeline MAXLEN trim (would drop unconsumed = audit violation). Depth watchdog (`Bus.depth()`, `RAW_EVENTS_DEPTH_WARN`) is monitoring-only. Opt-in zero-loss fallback: `BoundedSpool` (disk-backed, `SYSLOG_SPOOL_PATH`) replays shed/dropped events; bounded, `events_lost` counts overflow. |
 | Triage workflow | Status + note per alert (WS-3 triage API port 8013 + dashboard UI). Container nginx path validated by config review only — live-stack smoke test still pending |
 | Proven live | Full 7-workstream stack on real Docker/Redis/OpenSearch (not just zero-infra) — see build plan §"Docker — RESOLVED" |
 | AI triage | Real Ollama integration + StubLLM fallback (`services/ws5-ai/llm_adapter.py::make_llm()`) |
@@ -47,6 +48,7 @@ those words get reused loosely across specs written weeks apart.
 | Rule matching scales past ~50 rules | **Fixed (v0.3 B1)** | Detector buckets rules by class_uid equality selection, only candidate bucket evaluated per event (`services/ws4-detection/main.py`); byte-identical firing behavior verified |
 | Every shipped rule has a real producer (no dormant rules) | **Proven** | `tools/check_rule_producers.py` in `run_all_tests.sh` — found and fixed `bank_db_priv_esc` dormancy (class 6005 had no emitting parser until the DB-audit parser) |
 | Triage workflow works through the live Docker/nginx stack | **Design/claim** | Zero-infra tests green (`test_triage_api.py`); container-to-container path validated by `docker compose config` + reading only, Docker daemon was down (commit `0bfeaca` message) |
+| B2 backpressure protects Redis under a real flood | **Unit-tested, not load-tested** | Token-bucket shedding + spool replay have unit/integration tests (`test_syslog_udp.py`), but no real high-rate flood against a live Redis was run — the "protects against OOM" claim is by-design, not measured. Rate default (2000/s) and depth threshold (100k) are untuned guesses. |
 | Open-core split (this repo free / argus-sec paid) | **Decided, not yet legally documented** | Decision made 2026-07-01; LICENSE/README don't yet state it explicitly (see §4 below) |
 
 ## 3. Doc index — what each file is for, and its trust level
