@@ -143,6 +143,58 @@ def run():
     check(r.evaluate({"class_uid": 3002, "score": 50}) is True,
           "mixed equality + operator selection must still evaluate correctly")
 
+    # --- B1 bucketing safety (review fix): bucket only when the class is provably
+    # NECESSARY for a match; anything that can fire on another class -> catch-all.
+    # A multi-class OR rule must NOT be bucketed under its first class (the old
+    # first-selection-wins heuristic silently skipped the second class's events).
+    r = make_rule({"a": {"class_uid": 3002, "activity_id": 4},
+                   "b": {"class_uid": 4001, "activity_id": 6},
+                   "condition": "a or b"})
+    check(r.class_uid is None, "multi-class OR rule must land in the catch-all bucket")
+    check(r.evaluate({"class_uid": 4001, "activity_id": 6}) is True,
+          "multi-class OR rule must fire on its SECOND class too")
+
+    # A negated selection can match events of other classes -> catch-all.
+    r = make_rule({"a": {"class_uid": 3002}, "condition": "not a"})
+    check(r.class_uid is None, "'not a' can match any class; must not be bucketed")
+    check(r.evaluate({"class_uid": 4001}) is True,
+          "'not a' fires on a non-3002 event, so bucketing under 3002 would lose it")
+
+    # 'a and b' where b is classless: class 3002 is still necessary -> bucketed.
+    # (This is the shipped bank_db_priv_esc / dc_mass_vm_delete shape.)
+    r = make_rule({"a": {"class_uid": 6005, "activity_id": 5},
+                   "b": {"siem.sector": "bank"}, "condition": "a and b"})
+    check(r.class_uid == 6005, "'a and b' with classless b must stay bucketed (a is required)")
+
+    # 'a or b' where b is classless: b alone can satisfy -> catch-all.
+    r = make_rule({"a": {"class_uid": 3002}, "b": {"siem.sector": "bank"},
+                   "condition": "a or b"})
+    check(r.class_uid is None, "'a or b' with classless b can match any class")
+
+    # Operator-shaped class_uid ({ne: ...}) is not an equality -> catch-all.
+    r = make_rule({"sel": {"class_uid": {"ne": 3002}}, "condition": "sel"})
+    check(r.class_uid is None, "operator class_uid must not be used as a bucket key")
+
+    # End-to-end through the Detector: the multi-class rule must be evaluated
+    # for BOTH classes (the old heuristic dropped the second).
+    sys.path.insert(0, str(HERE))
+    import importlib
+    det_main = importlib.import_module("main")
+    det = det_main.Detector.__new__(det_main.Detector)
+    det.rules = [make_rule({"a": {"class_uid": 3002, "activity_id": 4},
+                            "b": {"class_uid": 4001, "activity_id": 6},
+                            "condition": "a or b"})]
+    det._by_class_uid = {None: []}
+    for rr in det.rules:
+        det._by_class_uid.setdefault(rr.class_uid, []).append(rr)
+    from scoring import Scorer
+    det.scorer = Scorer(det_main.SCORING_YAML)
+    for cls, act in ((3002, 4), (4001, 6)):
+        _ev, matched, _action = det.process({"class_uid": cls, "activity_id": act,
+                                             "siem": {"ingest_id": f"t{cls}"}})
+        check(len(matched) == 1,
+              f"Detector must evaluate the multi-class rule for class {cls}")
+
 
 def main():
     run()

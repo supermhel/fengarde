@@ -214,18 +214,19 @@ class Rule:
         self.condition = det.get("condition", "")
         self.selections = {k: v for k, v in det.items() if k != "condition"}
         self._allowlists_dir = allowlists_dir
-        # B1: if this rule has a plain equality selection on class_uid, remember
-        # the value so Detector can bucket rules by class_uid and skip evaluating
-        # rules that can never match a given event's class_uid. A rule with no
-        # such selection (or a non-scalar/operator class_uid) stays in the
-        # catch-all bucket (self.class_uid stays None) and is always evaluated.
-        self.class_uid = None
-        for sel in self.selections.values():
-            if isinstance(sel, dict) and "class_uid" in sel:
-                val = sel["class_uid"]
-                if isinstance(val, (int, str)):
-                    self.class_uid = val
-                break
+        # B1: bucket this rule under class_uid X only when X is provably
+        # NECESSARY for any match -- i.e. the condition is UNSATISFIABLE when
+        # every selection carrying a plain equality class_uid==X is False and
+        # every other selection is True (most permissive). Probed with the real
+        # T4 parser, so and/or/not are handled exactly like runtime:
+        #   "a and b"      (a=class X, b classless) -> bucketable under X
+        #   "a or b"       (b classless or other class) -> catch-all
+        #   "not a" / any negation that can match other classes -> catch-all
+        # The previous first-selection-wins heuristic mis-bucketed a
+        # multi-class OR rule under its first class, silently skipping events
+        # of the other class -- a missed detection, found in review.
+        # Catch-all (self.class_uid None) is always CORRECT, just unfiltered.
+        self.class_uid = self._bucketable_class_uid()
         siem = raw.get("siem", {})
         self.sector = siem.get("sector", "common")
         self.score_weight = int(siem.get("score_weight", 0))
@@ -241,6 +242,39 @@ class Rule:
         # single replica / tests). main() swaps in a RedisWindowCounter when running
         # on Redis so the count is global across replicas. See window.py.
         self._counter = DequeWindowCounter()
+
+    def _bucketable_class_uid(self):
+        """Return the class_uid this rule can safely be bucketed under, or None
+        for the catch-all. See the B1 comment in __init__ for the criterion."""
+        candidates: list = []
+        for sel in self.selections.values():
+            if isinstance(sel, dict):
+                val = sel.get("class_uid")
+                if isinstance(val, (int, str)) and not isinstance(val, bool):
+                    if val not in candidates:
+                        candidates.append(val)
+        if not candidates:
+            return None
+        expr = self.condition.strip() or " and ".join(self.selections)
+        tokens = re.findall(r"\(|\)|\band\b|\bor\b|\bnot\b|[\w.]+", expr)
+        for cand in candidates:
+            # Probe: class-cand selections False, every other selection True.
+            # (Names the condition references but doesn't define stay absent ->
+            # the parser resolves them to False, same as at runtime.)
+            probe = {}
+            for name, sel in self.selections.items():
+                val = sel.get("class_uid") if isinstance(sel, dict) else None
+                is_cand = (val == cand and isinstance(val, (int, str))
+                           and not isinstance(val, bool))
+                probe[name] = not is_cand
+            try:
+                value, end = _parse_or(tokens, 0, probe)
+                satisfiable_without = bool(value) if end == len(tokens) else True
+            except (ValueError, IndexError, RecursionError):
+                satisfiable_without = True  # can't prove safety -> catch-all
+            if not satisfiable_without:
+                return cand
+        return None
 
     def set_counter(self, counter) -> None:
         """Swap the window backend (e.g. RedisWindowCounter for multi-replica)."""
