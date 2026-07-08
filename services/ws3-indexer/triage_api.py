@@ -20,6 +20,7 @@ it landed in.
 from __future__ import annotations
 
 import json
+import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
@@ -40,6 +41,17 @@ def _default_triage() -> dict:
 def make_handler(store):
     """Returns a Handler class bound to the given store (closure, matches the
     pattern main.py already uses for the bus handler)."""
+    # ThreadingHTTPServer runs one thread per connection. A triage update is a
+    # read (find_alert) -> modify (merge triage dict) -> write (store.index)
+    # sequence across several Python statements; two concurrent POSTs to the
+    # SAME alert_id can interleave and silently lose one side's change (a
+    # classic lost-update race -- e.g. one analyst's status change and
+    # another's note both intended to persist, only the later store.index()
+    # survives). Triage writes are rare and cheap, so one process-wide lock
+    # serializing the read-modify-write section is the simplest correct fix;
+    # it does not block concurrent GETs or POSTs to DIFFERENT alerts in any
+    # way that matters at this volume.
+    write_lock = threading.Lock()
 
     class Handler(BaseHTTPRequestHandler):
         def _send(self, code: int, payload):
@@ -115,25 +127,34 @@ def make_handler(store):
             status = body.get("status")
             if status is not None and status not in _STATUSES:
                 raise _BadRequest(f"status must be one of {sorted(_STATUSES)}")
-            note = body.get("note", "")
-            if not isinstance(note, str):
-                raise _BadRequest("note must be a string")
-            note = note[:_MAX_NOTE_CHARS]
+            # PARTIAL UPDATE: "note" absent from the body must PRESERVE the
+            # existing note, not clear it -- symmetric with how "status" only
+            # updates when provided. Distinguish "key absent" from "key present
+            # with an empty string" (an analyst clearing the note on purpose is
+            # a legitimate, different action from not mentioning note at all).
+            note_present = "note" in body
+            note = body.get("note")
+            if note_present:
+                if not isinstance(note, str):
+                    raise _BadRequest("note must be a string")
+                note = note[:_MAX_NOTE_CHARS]
 
-            found = store.find_alert(alert_id)
-            if found is None:
-                return self._send(404, {"error": "alert not found"})
-            index, doc = found
+            with write_lock:
+                found = store.find_alert(alert_id)
+                if found is None:
+                    return self._send(404, {"error": "alert not found"})
+                index, doc = found
 
-            triage = dict(doc.get("triage") or _default_triage())
-            if status is not None:
-                triage["status"] = status
-            triage["note"] = note
-            triage["updated_at"] = int(time.time() * 1000)
+                triage = dict(doc.get("triage") or _default_triage())
+                if status is not None:
+                    triage["status"] = status
+                if note_present:
+                    triage["note"] = note
+                triage["updated_at"] = int(time.time() * 1000)
 
-            doc = dict(doc)
-            doc["triage"] = triage
-            store.index(index, alert_id, doc)  # idempotent overwrite, same doc_id
+                doc = dict(doc)
+                doc["triage"] = triage
+                store.index(index, alert_id, doc)  # idempotent overwrite, same doc_id
             return self._send(200, triage)
 
     return Handler

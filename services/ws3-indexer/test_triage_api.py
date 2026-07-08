@@ -96,6 +96,23 @@ def run():
         status, body = http("POST", f"{base}/alerts/a-1/triage", {"note": 12345})
         check(status == 400, f"non-string note should 400, got {status}")
 
+        # --- partial update: status-only must PRESERVE the existing note,
+        # not silently clear it (found in review: note was unconditionally
+        # overwritten to "" whenever the request omitted it). ---
+        status, body = http("POST", f"{base}/alerts/a-1/triage", {"status": "closed"})
+        check(status == 200, f"status-only update should 200, got {status}")
+        check(body["status"] == "closed", "status-only update must still update status")
+        check(body["note"] == "looks like a real scan",
+              f"status-only update must NOT clear the existing note, got {body.get('note')!r}")
+
+        # --- explicit empty-string note DOES clear it (a deliberate action,
+        # distinct from simply omitting "note" from the body). ---
+        status, body = http("POST", f"{base}/alerts/a-1/triage", {"note": ""})
+        check(status == 200 and body["note"] == "",
+              "explicitly submitting note='' must clear it")
+        check(body["status"] == "closed",
+              "note-only update must not revert the status set by the previous call")
+
         req = urllib.request.Request(
             f"{base}/alerts/a-1/triage", data=b"not json at all", method="POST",
             headers={"Content-Type": "application/json"})
@@ -121,6 +138,35 @@ def run():
         status, body = http("GET", f"{base}/alerts/a-1/triage")
         check(status == 200, "server must still respond after malformed requests "
                              "(handler thread must never crash)")
+
+        # concurrent POSTs to the SAME alert must not lose an update (read-
+        # modify-write race over ThreadingHTTPServer's one-thread-per-request
+        # model) -- found and fixed in review. Two threads each set a
+        # DIFFERENT field; both must survive regardless of interleaving.
+        alert2 = {"alert_id": "a-race", "time": 1750000000000, "level": "high",
+                  "rule_title": "race rule", "score": 70}
+        idx2, doc_id2 = route(alert2)
+        store.index(idx2, doc_id2, alert2)
+
+        def post_status():
+            http("POST", f"{base}/alerts/a-race/triage", {"status": "triaged"})
+
+        def post_note():
+            http("POST", f"{base}/alerts/a-race/triage", {"note": "investigated"})
+
+        threads = [threading.Thread(target=post_status),
+                  threading.Thread(target=post_note)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=5)
+
+        final_status, final = http("GET", f"{base}/alerts/a-race/triage")
+        check(final_status == 200, "race test: final GET must succeed")
+        check(final.get("status") == "triaged",
+              f"race test: status update lost under concurrency, got {final!r}")
+        check(final.get("note") == "investigated",
+              f"race test: note update lost under concurrency, got {final!r}")
     finally:
         srv.shutdown()
         srv.server_close()
