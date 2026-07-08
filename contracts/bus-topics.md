@@ -15,6 +15,15 @@ Abstraction: Redis Streams in dev, Kafka in prod — same topic names, same payl
 | `alerts`           | WS-4, WS-5      | WS-3, WS-7        | enriched alert                       | `alert_id`               |
 | `assets.updates`   | WS-1, WS-6      | WS-6 Inventory    | `{mac, ip, hostname, seen_at}`       | `mac`                    |
 
+## Enrichment on `normalized.events` (A5, additive)
+
+WS-2 adds optional OCSF-additive fields to events post-normalize (offline, local
+data only): `src_endpoint.reputation` (score + categories, local IOC list) and
+`src_endpoint.location` (country, local CIDR→country map). These are **additive
+extensions** — an event without them is still a valid Contract A event; downstream
+(WS-3/WS-4) are tolerant readers and nothing hard-depends on them. No topic or
+partition-key change.
+
 ## Why partition by `src_endpoint.ip`
 
 `normalized.events` and `scored.events` are partitioned by source IP so that **all

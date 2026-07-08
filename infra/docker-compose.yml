@@ -59,7 +59,13 @@ services:
     restart: unless-stopped
     # Publish the syslog UDP listener so devices (and the smoke test) can send to it.
     ports: ["5514:5514/udp"]
-    environment: [BUS_BACKEND=redis, REDIS_URL=redis://redis:6379/0]
+    environment:
+      - BUS_BACKEND=redis
+      - REDIS_URL=redis://redis:6379/0
+      # B2 ingest-edge shedding (default 2000/s; explicit here for visibility).
+      - SYSLOG_MAX_EVENTS_PER_SEC=2000
+      # Zero-loss spool is opt-in; set SYSLOG_SPOOL_PATH (on a permissioned
+      # volume, see SECURITY.md §8) + optional SYSLOG_SPOOL_MAX_BYTES to enable.
     depends_on: { redis: { condition: service_healthy } }
 
   ws2-normalization:
@@ -76,6 +82,9 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - STORAGE_BACKEND=opensearch
       - OPENSEARCH_URL=http://opensearch:9200
+      # Triage API listener. Internal only -- the dashboard nginx proxies to
+      # ws3-indexer:8013 container-to-container; NOT published to the host.
+      - TRIAGE_PORT=8013
     depends_on:
       redis: { condition: service_healthy }
       opensearch: { condition: service_healthy }

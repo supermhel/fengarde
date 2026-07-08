@@ -63,6 +63,19 @@ class OpenSearchStore(StorageAdapter):
         return int(result.get("count", 0))
 
     # -- C1 triage: cross-index lookup by alert_id --------------------------
+    #
+    # KNOWN LIMITATION (multi-replica lost update): triage_api.py serializes its
+    # find_alert -> merge -> index sequence with an in-PROCESS write lock, which
+    # is correct for a single ws3 replica against this backend (and for the
+    # default MemoryStore). It does NOT protect against two SEPARATE ws3
+    # processes/replicas racing find_alert+index on the same alert_id at
+    # OpenSearch -> the later write silently overwrites the earlier one. A real
+    # multi-replica deployment must use OpenSearch optimistic concurrency
+    # (thread _seq_no/_primary_term from find_alert into the index PUT via
+    # if_seq_no/if_primary_term and retry on 409). Not implemented here because
+    # this backend is a skeleton (no live OpenSearch in the test env) and
+    # multi-replica ws3 is unbuilt (HA is design-only, plan B5). Tracked in
+    # SECURITY.md and SSOT.md §2. Single-replica deployments are unaffected.
     def find_alert(self, alert_id: str) -> tuple[str, dict] | None:
         """Locate an alert doc by id across all daily alerts-* indices via a
         _search with an _id term query (a direct GET needs the exact index

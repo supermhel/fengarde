@@ -86,6 +86,29 @@ def run():
     finally:
         srv.shutdown()
 
+    # --- concurrency: many threads upserting the SAME new mac must not 500
+    # (SELECT-then-INSERT race -> PRIMARY KEY IntegrityError). Found in review.
+    cs = InventoryStore(":memory:")
+    race_mac = "AA:BB:CC:DD:EE:FF"
+    errors: list[str] = []
+    barrier = threading.Barrier(12)
+
+    def hammer(i):
+        barrier.wait()
+        try:
+            cs.upsert({"mac": race_mac, "ip": f"10.1.0.{i}",
+                       "seen_at": "2026-06-16T10:00:00+00:00"})
+        except Exception as e:  # noqa: BLE001
+            errors.append(repr(e))
+
+    ts = [threading.Thread(target=hammer, args=(i,)) for i in range(12)]
+    for th in ts:
+        th.start()
+    for th in ts:
+        th.join(timeout=5)
+    check(not errors, f"concurrent upsert of the same new mac raised: {errors[:2]}")
+    check(cs.get(race_mac) is not None, "asset must exist after concurrent upserts")
+
 
 def main():
     run()

@@ -158,8 +158,10 @@ make down     # stop the stack and remove volumes
 | 5601 | `dashboards` (`siem-dashboards`) | OpenSearch Dashboards |
 | 8000 | `ws6-inventory` | Inventory API (IP/MAC history) |
 | 8080 | `ws7-dashboard` | ARGUS alert console |
+| 5514/udp | `ws1-collectors` | Live syslog ingestion (unauthenticated — trusted segment only) |
+| 8013 | `ws3-indexer` | Triage API — **internal only**, the dashboard proxies to it container-to-container; not published to the host |
 
-`make preflight` checks all of these are free before you start.
+`make preflight` checks the published ports are free before you start.
 
 ---
 

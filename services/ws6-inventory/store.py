@@ -7,6 +7,7 @@ DHCP churn. Pure stdlib (sqlite3) so it runs with no external dependencies.
 from __future__ import annotations
 
 import sqlite3
+import threading
 from datetime import datetime, timezone
 
 
@@ -22,6 +23,14 @@ class InventoryStore:
     def __init__(self, path: str = ":memory:"):
         self.db = sqlite3.connect(path, check_same_thread=False)
         self.db.row_factory = sqlite3.Row
+        # upsert() is a SELECT-then-INSERT/UPDATE read-modify-write on a shared
+        # connection served from the API's request threads. Without
+        # serialization two concurrent observations of the SAME new mac both
+        # see row=None and both INSERT -> the second hits the PRIMARY KEY and
+        # raises IntegrityError (surfaced to the client as a 500). This lock
+        # makes the whole read-modify-write atomic. Writes are cheap; the API
+        # is single-process, so an in-process lock is the right-sized fix.
+        self._write_lock = threading.Lock()
         self._init()
 
     def _init(self):
@@ -49,6 +58,10 @@ class InventoryStore:
         mac = obs.get("mac")
         if not mac:
             return None  # inventory is MAC-keyed (Contract C)
+        with self._write_lock:
+            return self._upsert_locked(obs, mac)
+
+    def _upsert_locked(self, obs: dict, mac: str) -> dict | None:
         ip = obs.get("ip")
         seen = obs.get("seen_at") or _now_iso()
         row = self.db.execute("SELECT * FROM assets WHERE mac=?", (mac,)).fetchone()

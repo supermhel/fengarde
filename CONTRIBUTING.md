@@ -42,15 +42,16 @@ run before and after your change.
 
 ## Add a parser (the best first contribution)
 
-The five parsers below are **deferred to v0.2** and are the obvious first PRs. Each
-is a self-contained module with a clean extension point — adding one never touches
-an existing parser.
+Seven parsers ship today (Linux SSH, Cisco ASA, Active Directory, VMware vSphere,
+generic syslog, Windows Event Log, DB audit). A new source parser is a
+self-contained module with a clean extension point — adding one never touches an
+existing parser. Good candidates still open:
 
-- Generic syslog
 - SNMP
 - NetFlow *(binary format — bigger lift)*
-- Windows Event Log
+- DNS / proxy logs *(unlocks OCSF class 4002 — DNS-exfil/beaconing rules)*
 - Custom JSON
+- Kubernetes audit log
 
 **Step-by-step walkthrough:** [docs/adding-a-parser.md](docs/adding-a-parser.md).
 

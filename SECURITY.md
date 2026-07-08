@@ -89,6 +89,31 @@ default, so malformed/hostile output cannot inject arbitrary data downstream.
 Point `OLLAMA_URL` only at a local/trusted model; treat the triage summary as an
 untrusted hint, not ground truth.
 
+### 7. Triage API (WS-3) is an unauthenticated write surface
+
+v0.3 adds a triage HTTP API in WS-3 (`TRIAGE_PORT`, default `8013`): `POST
+/alerts/{id}/triage` sets a status + analyst note on any alert. Like every other
+service it has **no authentication** (see the out-of-scope list) — anyone who can
+reach the port can set/clear the triage state of any alert (tamper with an
+investigation, clear a note, mark a real alert `false_positive`). Blast radius is
+bounded: it touches only the additive `triage` field (never the alert's detection
+fields), body size and note length are capped, status is enum-validated, the
+handler thread never crashes on malformed input, and concurrent writes to one
+alert are serialized against lost updates within a single replica. Keep the port
+on the Compose/management network only — the dashboard reaches it
+container-to-container; do **not** publish it to untrusted networks. Known gap: a
+**multi-replica lost update** with the OpenSearch backend (two ws3 processes
+racing a triage write can lose one; the in-process lock can't span processes) —
+needs OpenSearch optimistic concurrency, deferred with the unbuilt HA work.
+
+### 8. On-disk spool (WS-1 B2) stores raw events in cleartext
+
+The opt-in zero-loss backpressure spool (`SYSLOG_SPOOL_PATH`, off by default)
+writes shed/undelivered raw syslog events to a local JSONL file, which can contain
+sensitive log content in cleartext. When you enable it, place the spool on a volume
+with restrictive filesystem permissions (not world-readable) and a retention
+policy; it is a local buffer, not an audit store.
+
 ---
 
 ## Out of scope for v0.1
@@ -96,10 +121,13 @@ untrusted hint, not ground truth.
 The following are **known** and **deferred** to later releases (tracked in the
 [build plan](docs/superpowers/specs/2026-06-27-argus-v0.1-build-plan.md)):
 
-- Authentication / authorization on services.
+- Authentication / authorization on services — including the WS-3 triage API
+  (§7), which is an unauthenticated write surface like every other service.
 - TLS between services and for external endpoints.
 - Multi-tenancy and per-tenant isolation.
 - Hardened, production-grade OpenSearch security configuration.
+- Multi-replica / HA correctness — e.g. the triage lost-update window under a
+  multi-process OpenSearch backend (§7). Single-replica deployments are unaffected.
 - AI-triage prompt-injection guardrails. As of v0.2 the AI service calls a local
   LLM; its verdict is advisory and enum-constrained (see threat-boundary §6), but
   robust prompt-injection defenses are still deferred.
