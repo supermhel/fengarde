@@ -45,6 +45,16 @@ class StorageAdapter(abc.ABC):
     def count(self, index: str) -> int:
         """Number of distinct documents currently stored in ``index``."""
 
+    @abc.abstractmethod
+    def find_alert(self, alert_id: str) -> tuple[str, dict] | None:
+        """Locate an alert doc by ``alert_id`` across indices.
+
+        Returns ``(index, doc)`` or ``None``. The triage API holds only an
+        ``alert_id``, not the daily index the alert landed in, so it needs a
+        cross-index lookup. The default :meth:`find_alert_versioned` builds on
+        this, so every adapter must provide it.
+        """
+
     # -- optimistic concurrency (C1 triage read-modify-write) ---------------
     #
     # The triage API mutates an EXISTING alert doc (find -> merge -> write).
@@ -65,7 +75,7 @@ class StorageAdapter(abc.ABC):
         ``version`` is an opaque token to pass to :meth:`index_cas`; ``None``
         means this adapter cannot version the read (CAS degrades to a plain
         write)."""
-        found = self.find_alert(alert_id)  # type: ignore[attr-defined]
+        found = self.find_alert(alert_id)
         if found is None:
             return None
         index, doc = found
