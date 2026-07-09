@@ -26,6 +26,9 @@ done
 echo
 echo "== ws3 v0.3 (C1): triage API (persistence, tolerant defaults, malformed input) =="
 $PY services/ws3-indexer/test_triage_api.py || fail=1
+echo
+echo "== ws3: optimistic concurrency (CAS) for multi-replica triage writes =="
+$PY services/ws3-indexer/test_storage_cas.py || fail=1
 
 # Extended zero-infra suite (runner, window counters, boolean evaluator, e2e).
 # Still no Docker/Redis/OpenSearch — all on the memory bus + in-memory store.

@@ -13,6 +13,9 @@ class MemoryStore(StorageAdapter):
     def __init__(self) -> None:
         # index name -> {doc_id: document}
         self._indices: dict[str, dict[str, dict]] = {}
+        # (index, doc_id) -> monotonically increasing write version, backing
+        # the optimistic-concurrency hooks (find_alert_versioned/index_cas).
+        self._versions: dict[tuple[str, str], int] = {}
         # template name -> template body (for inspection / assertions)
         self.templates: dict[str, dict] = {}
 
@@ -23,6 +26,7 @@ class MemoryStore(StorageAdapter):
         bucket = self._indices.setdefault(index, {})
         is_new = doc_id not in bucket
         bucket[doc_id] = document
+        self._versions[(index, doc_id)] = self._versions.get((index, doc_id), 0) + 1
         return is_new
 
     def count(self, index: str) -> int:
@@ -51,3 +55,20 @@ class MemoryStore(StorageAdapter):
             if doc is not None:
                 return index, doc
         return None
+
+    # -- optimistic concurrency (mirrors OpenSearchStore's seq_no CAS) ------
+    def find_alert_versioned(self, alert_id: str):
+        found = self.find_alert(alert_id)
+        if found is None:
+            return None
+        index, doc = found
+        return index, doc, self._versions.get((index, alert_id), 0)
+
+    def index_cas(self, index: str, doc_id: str, document: dict, version) -> bool:
+        if version is None:  # legacy unconditional write
+            self.index(index, doc_id, document)
+            return True
+        if self._versions.get((index, doc_id), 0) != version:
+            return False  # someone else wrote in between -> caller retries
+        self.index(index, doc_id, document)
+        return True

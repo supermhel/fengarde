@@ -44,3 +44,37 @@ class StorageAdapter(abc.ABC):
     @abc.abstractmethod
     def count(self, index: str) -> int:
         """Number of distinct documents currently stored in ``index``."""
+
+    # -- optimistic concurrency (C1 triage read-modify-write) ---------------
+    #
+    # The triage API mutates an EXISTING alert doc (find -> merge -> write).
+    # An in-process lock serializes that within one replica, but two replicas
+    # against a shared backend can interleave and silently lose one update.
+    # These two hooks close that: ``find_alert_versioned`` returns an opaque
+    # ``version`` token alongside the doc, and ``index_cas`` only writes if the
+    # doc is still at that version (compare-and-swap), returning ``False`` on
+    # a lost race so the caller can re-read and retry.
+    #
+    # Default implementations degrade to the unversioned behavior (version
+    # ``None`` == unconditional write) so a third-party adapter that predates
+    # this contract still works -- with the old single-replica guarantee only.
+
+    def find_alert_versioned(self, alert_id: str):
+        """Return ``(index, doc, version)`` or ``None`` if not found.
+
+        ``version`` is an opaque token to pass to :meth:`index_cas`; ``None``
+        means this adapter cannot version the read (CAS degrades to a plain
+        write)."""
+        found = self.find_alert(alert_id)  # type: ignore[attr-defined]
+        if found is None:
+            return None
+        index, doc = found
+        return index, doc, None
+
+    def index_cas(self, index: str, doc_id: str, document: dict, version) -> bool:
+        """Write ``document`` only if ``(index, doc_id)`` is still at
+        ``version``. Returns ``True`` on success, ``False`` on a version
+        conflict (someone else wrote in between -- re-read and retry).
+        ``version=None`` writes unconditionally (legacy adapters)."""
+        self.index(index, doc_id, document)
+        return True

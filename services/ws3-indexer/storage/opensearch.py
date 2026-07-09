@@ -64,25 +64,18 @@ class OpenSearchStore(StorageAdapter):
 
     # -- C1 triage: cross-index lookup by alert_id --------------------------
     #
-    # KNOWN LIMITATION (multi-replica lost update): triage_api.py serializes its
-    # find_alert -> merge -> index sequence with an in-PROCESS write lock, which
-    # is correct for a single ws3 replica against this backend (and for the
-    # default MemoryStore). It does NOT protect against two SEPARATE ws3
-    # processes/replicas racing find_alert+index on the same alert_id at
-    # OpenSearch -> the later write silently overwrites the earlier one. A real
-    # multi-replica deployment must use OpenSearch optimistic concurrency
-    # (thread _seq_no/_primary_term from find_alert into the index PUT via
-    # if_seq_no/if_primary_term and retry on 409). Not implemented here because
-    # this backend is a skeleton (no live OpenSearch in the test env) and
-    # multi-replica ws3 is unbuilt (HA is design-only, plan B5). Tracked in
-    # SECURITY.md and SSOT.md §2. Single-replica deployments are unaffected.
-    def find_alert(self, alert_id: str) -> tuple[str, dict] | None:
-        """Locate an alert doc by id across all daily alerts-* indices via a
-        _search with an _id term query (a direct GET needs the exact index
-        name, which the client -- only holding alert_id -- doesn't have).
-        Skeleton, like the rest of this module: not exercised by offline
-        tests, but constructs the real request a live deployment needs."""
-        body = {"size": 1, "query": {"term": {"_id": alert_id}}}
+    # Multi-replica safety: triage_api.py serializes its read-modify-write with
+    # an in-PROCESS lock (correct for one replica), and ALSO threads OpenSearch
+    # optimistic concurrency through find_alert_versioned/index_cas below:
+    # the search returns _seq_no/_primary_term, the write passes them back as
+    # if_seq_no/if_primary_term, and OpenSearch rejects a stale write with 409
+    # so the caller re-reads and retries. That closes the cross-replica lost-
+    # update window a process lock cannot. The CAS wire format is unit-tested
+    # against a fake transport (test_storage_cas.py); like the rest of this
+    # skeleton module it has not been exercised against a LIVE OpenSearch yet.
+    def _search_alert(self, alert_id: str) -> dict | None:
+        body = {"size": 1, "query": {"term": {"_id": alert_id}},
+                "seq_no_primary_term": True}
         try:
             result = self._request("POST", "/alerts-*/_search", body)
         except urllib.error.HTTPError:
@@ -97,4 +90,46 @@ class OpenSearchStore(StorageAdapter):
             # corrupted doc): treat as not found rather than letting a triage
             # update re-index an empty body and wipe the original alert.
             return None
-        return hit.get("_index"), source
+        return hit
+
+    def find_alert(self, alert_id: str) -> tuple[str, dict] | None:
+        """Locate an alert doc by id across all daily alerts-* indices via a
+        _search with an _id term query (a direct GET needs the exact index
+        name, which the client -- only holding alert_id -- doesn't have)."""
+        hit = self._search_alert(alert_id)
+        if hit is None:
+            return None
+        return hit.get("_index"), hit["_source"]
+
+    def find_alert_versioned(self, alert_id: str):
+        """(index, doc, version) where version carries OpenSearch's
+        (_seq_no, _primary_term) for a CAS write via index_cas. Version is
+        None when the cluster didn't return them (then CAS degrades to a
+        plain write -- the old single-replica behavior, never worse)."""
+        hit = self._search_alert(alert_id)
+        if hit is None:
+            return None
+        seq_no, primary_term = hit.get("_seq_no"), hit.get("_primary_term")
+        version = (seq_no, primary_term) \
+            if isinstance(seq_no, int) and isinstance(primary_term, int) else None
+        return hit.get("_index"), hit["_source"], version
+
+    def index_cas(self, index: str, doc_id: str, document: dict, version) -> bool:
+        """Conditional write: only succeeds if the doc is still at `version`
+        ((_seq_no, _primary_term) from find_alert_versioned). OpenSearch
+        rejects a stale write with HTTP 409 -> return False so the caller
+        re-reads and retries. version=None falls back to an unconditional
+        write (legacy behavior)."""
+        if version is None:
+            self.index(index, doc_id, document)
+            return True
+        seq_no, primary_term = version
+        path = (f"/{index}/_doc/{urllib.parse.quote(doc_id, safe='')}"
+                f"?if_seq_no={int(seq_no)}&if_primary_term={int(primary_term)}")
+        try:
+            self._request("PUT", path, document)
+        except urllib.error.HTTPError as exc:
+            if exc.code == 409:  # version conflict: someone wrote in between
+                return False
+            raise
+        return True

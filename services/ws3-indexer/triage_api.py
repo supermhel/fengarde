@@ -28,6 +28,7 @@ from urllib.parse import urlparse
 _MAX_BODY_BYTES = 4096  # a triage update is a status enum + a short note.
 _MAX_NOTE_CHARS = 2000
 _STATUSES = {"new", "triaged", "closed", "false_positive", "true_positive"}
+_CAS_MAX_RETRIES = 5  # optimistic-concurrency retry bound (see _route_post)
 
 
 class _BadRequest(Exception):
@@ -139,23 +140,35 @@ def make_handler(store):
                     raise _BadRequest("note must be a string")
                 note = note[:_MAX_NOTE_CHARS]
 
+            # Two layers of lost-update protection:
+            # - write_lock serializes read-modify-write WITHIN this process
+            #   (covers MemoryStore and single-replica deployments outright).
+            # - index_cas (optimistic concurrency) covers writers this lock
+            #   can't see -- another ws3 replica against a shared OpenSearch.
+            #   A stale write comes back as a conflict; re-read and retry.
+            #   Retries are bounded; exhaustion surfaces as 409 to the client
+            #   (retryable), never a silently dropped update.
             with write_lock:
-                found = store.find_alert(alert_id)
-                if found is None:
-                    return self._send(404, {"error": "alert not found"})
-                index, doc = found
+                for _attempt in range(_CAS_MAX_RETRIES):
+                    found = store.find_alert_versioned(alert_id)
+                    if found is None:
+                        return self._send(404, {"error": "alert not found"})
+                    index, doc, version = found
 
-                triage = dict(doc.get("triage") or _default_triage())
-                if status is not None:
-                    triage["status"] = status
-                if note_present:
-                    triage["note"] = note
-                triage["updated_at"] = int(time.time() * 1000)
+                    triage = dict(doc.get("triage") or _default_triage())
+                    if status is not None:
+                        triage["status"] = status
+                    if note_present:
+                        triage["note"] = note
+                    triage["updated_at"] = int(time.time() * 1000)
 
-                doc = dict(doc)
-                doc["triage"] = triage
-                store.index(index, alert_id, doc)  # idempotent overwrite, same doc_id
-            return self._send(200, triage)
+                    doc = dict(doc)
+                    doc["triage"] = triage
+                    if store.index_cas(index, alert_id, doc, version):
+                        return self._send(200, triage)
+                    # conflict: another writer landed between our read and
+                    # write -- loop re-reads the fresh doc and re-applies.
+            return self._send(409, {"error": "conflicting concurrent updates, retry"})
 
     return Handler
 

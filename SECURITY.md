@@ -101,10 +101,13 @@ fields), body size and note length are capped, status is enum-validated, the
 handler thread never crashes on malformed input, and concurrent writes to one
 alert are serialized against lost updates within a single replica. Keep the port
 on the Compose/management network only — the dashboard reaches it
-container-to-container; do **not** publish it to untrusted networks. Known gap: a
-**multi-replica lost update** with the OpenSearch backend (two ws3 processes
-racing a triage write can lose one; the in-process lock can't span processes) —
-needs OpenSearch optimistic concurrency, deferred with the unbuilt HA work.
+container-to-container; do **not** publish it to untrusted networks. Concurrent
+writes are protected at two layers: an in-process lock (single replica) plus
+OpenSearch **optimistic concurrency** (`if_seq_no`/`if_primary_term` CAS with
+bounded retry, surfacing exhaustion as an honest 409) for writers the lock can't
+see — another ws3 replica against a shared cluster. The CAS wire format is
+unit-tested against a fake transport; like the rest of the OpenSearch adapter it
+has not yet been exercised against a live cluster.
 
 ### 8. On-disk spool (WS-1 B2) stores raw events in cleartext
 
@@ -126,8 +129,10 @@ The following are **known** and **deferred** to later releases (tracked in the
 - TLS between services and for external endpoints.
 - Multi-tenancy and per-tenant isolation.
 - Hardened, production-grade OpenSearch security configuration.
-- Multi-replica / HA correctness — e.g. the triage lost-update window under a
-  multi-process OpenSearch backend (§7). Single-replica deployments are unaffected.
+- Multi-replica / HA deployment overall (Redis/OpenSearch single points of
+  failure; HA is design-only). The triage write path is already multi-replica
+  safe via optimistic concurrency (§7), but no other multi-replica behavior has
+  been designed or tested.
 - AI-triage prompt-injection guardrails. As of v0.2 the AI service calls a local
   LLM; its verdict is advisory and enum-constrained (see threat-boundary §6), but
   robust prompt-injection defenses are still deferred.
