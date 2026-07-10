@@ -10,7 +10,7 @@ Update this file whenever status changes; it's a living index, not an archive.
 
 ---
 
-## 1. Current state (as of 2026-07-05, commit `d1ce1e4`)
+## 1. Current state (as of 2026-07-10, commit `0cce7fd`)
 
 | Fact | Value |
 |---|---|
@@ -26,7 +26,8 @@ Update this file whenever status changes; it's a living index, not an archive.
 | AI triage | Real Ollama integration + StubLLM fallback (`services/ws5-ai/llm_adapter.py::make_llm()`) |
 | Open-core split | **Decided** (2026-07-01, via `/plan-ceo-review`): this repo stays fully open forever; ARGUS-Sec (trained model + regulatory compliance) is the paid, closed layer in a separate repo. No relicensing planned. |
 | Bus backend | Redis Streams (real) + in-memory (tests). **Kafka is NOT implemented** despite older docs mentioning it as a "prod backend" — see architecture review §3 R-A. |
-| Security posture | Stored-XSS in dashboard: **fixed** (`35f80fc`). Poison-message DLQ, input validation, prompt bounds: **fixed** (`a60e6d4`). No auth on any service (documented, accepted for v0.1/v0.2, see `SECURITY.md`). |
+| Security posture | Stored-XSS in dashboard: **fixed** (`35f80fc`). Poison-message DLQ, input validation, prompt bounds: **fixed** (`a60e6d4`). No auth on any service (documented, accepted for v0.1/v0.2, see `SECURITY.md`) — opt-in auth is v0.4 Track S. |
+| Forward roadmap | **`docs/superpowers/specs/2026-07-10-argus-v0.4-build-plan.md`** — auth (Track S), niche parser packs: MCP/agent, OPC UA/OT, n8n (Track P), incident-report hook — open half of the NIS2/DORA report split with argus-sec (Track R), quickstart + positioning (Track D). Strategy basis: July-2026 market analysis; wedge = "open-source SIEM for the European industrial Mittelstand". First step: tag v0.3.0. |
 
 ## 2. What's proven vs. what's still a claim
 
@@ -48,7 +49,7 @@ those words get reused loosely across specs written weeks apart.
 | Kafka as central-tier bus | **Design only, contradicted by code** | No `_KafkaBus` exists; docstring now corrected |
 | Rule matching scales past ~50 rules | **Fixed (v0.3 B1)** | Detector buckets rules by class_uid equality selection, only candidate bucket evaluated per event (`services/ws4-detection/main.py`); byte-identical firing behavior verified |
 | Every shipped rule has a real producer (no dormant rules) | **Proven** | `tools/check_rule_producers.py` in `run_all_tests.sh` — found and fixed `bank_db_priv_esc` dormancy (class 6005 had no emitting parser until the DB-audit parser) |
-| Triage workflow works through the live Docker/nginx stack | **Design/claim** | Zero-infra tests green (`test_triage_api.py`, incl. a concurrency regression); container-to-container path (nginx `/api/triage` → `ws3-indexer:8013`) validated by config review + reading only, never live-tested. **Single-replica concurrent writes are lock-serialized; a multi-replica OpenSearch deployment has an unaddressed triage lost-update window** (needs OpenSearch optimistic concurrency, deferred with HA/B5). |
+| Triage workflow works through the live Docker/nginx stack | **Design/claim** | Zero-infra tests green (`test_triage_api.py`, incl. a concurrency regression); container-to-container path (nginx `/api/triage` → `ws3-indexer:8013`) validated by config review + reading only, never live-tested. Concurrent writes protected at two layers (in-process lock + OpenSearch OCC via `_seq_no`/`_primary_term` CAS, `5317e89`); CAS wire format unit-tested against a fake transport, **not yet exercised against a live cluster**. |
 | B2 backpressure protects Redis under a real flood | **Unit-tested, not load-tested** | Token-bucket shedding + spool replay have unit/integration tests (`test_syslog_udp.py`), but no real high-rate flood against a live Redis was run — the "protects against OOM" claim is by-design, not measured. Rate default (2000/s) and depth threshold (100k) are untuned guesses. |
 | Open-core split (this repo free / argus-sec paid) | **Decided, not yet legally documented** | Decision made 2026-07-01; LICENSE/README don't yet state it explicitly (see §4 below) |
 
@@ -70,7 +71,8 @@ those words get reused loosely across specs written weeks apart.
 | `docs/superpowers/specs/2026-06-27-argus-production-roadmap-design.md` | 3-tier production vision + §9 open-core design | **Design/aspiration, not built** — don't read as current architecture |
 | `docs/superpowers/specs/2026-06-28-T3-loop-ownership-decision.md` | Bus/runner design decision | Historical, now annotated RESOLVED (was marked unproven; gaps closed since — see file header) |
 | `docs/superpowers/specs/2026-07-02-argus-architecture-review.md` | Cross-cutting architecture review (v0.2, current) | **Current** — the most up-to-date structural analysis; adversarially reviewed, claims confirmed against code |
-| `docs/superpowers/specs/2026-07-02-argus-v0.3-improvement-plan.md` | v0.3 plan: more rules, robust rule logic, the rule-prefilter architecture fix, triage-first dashboard | **Current** — the forward roadmap; nothing built yet, this is the plan |
+| `docs/superpowers/specs/2026-07-02-argus-v0.3-improvement-plan.md` | v0.3 plan: more rules, robust rule logic, the rule-prefilter architecture fix, triage-first dashboard | **Executed (mostly), annotated** — header lists what landed vs. carried over; superseded as forward roadmap by the v0.4 plan |
+| `docs/superpowers/specs/2026-07-10-argus-v0.4-build-plan.md` | v0.4 plan: auth, MCP/OT/n8n parser packs, incident-report hook (open half of the argus-sec split), quickstart + positioning | **Current** — the forward roadmap; nothing built yet, this is the plan |
 | `docs/posts/launch-drafts.md` | Marketing draft | Draft, not published |
 | `AGENTS.md` | Imported cowork stub | Minimal, ignore |
 
