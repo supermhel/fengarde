@@ -13,6 +13,12 @@ COPY services/ws7-dashboard/templates/default.conf.template /etc/nginx/templates
 # Placeholder htpasswd so auth_basic_user_file always resolves to a real file
 # even when auth is off (S2 override mounts a real one over this path).
 RUN touch /etc/nginx/dashboard.htpasswd
+# Image-level defaults so envsubst never substitutes an EMPTY value into
+# `auth_basic ${DASHBOARD_AUTH_REALM};` (empty -> nginx syntax error, refuses
+# to start). docker-compose.yml also sets these explicitly, but the image
+# must be self-defaulting for anyone running it outside that compose file.
+ENV DASHBOARD_AUTH_REALM=off
+ENV ARGUS_API_KEY=""
 EXPOSE 80
 # DX4: alerts come LIVE from /api/alerts (proxied to OpenSearch). Inventory is
 # fetched from WS-6 via window.INVENTORY_API. Both fall back to mocks/mock_data.js.
