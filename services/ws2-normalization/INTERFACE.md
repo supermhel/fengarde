@@ -16,6 +16,9 @@
 - `generic_syslog` → catch-all RFC 3164 syslog → OCSF, sector common
 - `windows_eventlog` → Authentication (3002) / Kernel-Process (1002) / Account Change (3003), sector common
 - `db_audit` → Datastore Activity (6005), sector bank
+- `mcp_agent` → API Activity (6003), sector common (v0.4: MCP/AI-agent tool-call audit logs)
+- `opcua_audit` → Authentication (3002) / API Activity (6003), sector datacenter (v0.4: OPC UA industrial audit events)
+- `n8n_audit` → API Activity (6003) / Authentication (3002), sector common (v0.4: n8n automation-platform audit logs)
 
 Adding a source = new module + one registry line. `type_uid` always derived.
 

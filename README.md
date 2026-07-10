@@ -97,8 +97,8 @@ a long feature list.
 | Capability | Status | Notes |
 |---|---|---|
 | **Detection pipeline** (collect → normalize → detect → index → dashboard) | ✅ Works | End-to-end since v0.1 |
-| **Parsers (8)** | ✅ Works | Cisco ASA, Active Directory, VMware vSphere, Linux SSH, generic syslog, Windows Event Log (incl. account-change 4720/4722/4726/4728/4732), DB audit (GRANT/REVOKE/ALTER), MCP/AI-agent tool-call audit — all → OCSF |
-| **Detection rules (11)** | ✅ Works | Brute-force, port-scan, lateral-movement, password-spray, privileged-group grant, after-hours admin, bank DB priv-esc, DC mass-VM-delete, agent credential-file access, agent tool-call burst, agent prompt-injection indicator |
+| **Parsers (10)** | ✅ Works | Cisco ASA, Active Directory, VMware vSphere, Linux SSH, generic syslog, Windows Event Log (incl. account-change 4720/4722/4726/4728/4732), DB audit (GRANT/REVOKE/ALTER), MCP/AI-agent tool-call audit, OPC UA/OT audit, n8n automation-platform audit — all → OCSF |
+| **Detection rules (17)** | ✅ Works | Brute-force, port-scan, lateral-movement, password-spray, privileged-group grant, after-hours admin, impossible-travel, bank DB priv-esc, DC mass-VM-delete, agent credential-file access / tool-call burst / prompt-injection indicator, OT write-outside-maintenance / new-engineering-connection / config-change, n8n new-webhook-exposed / workflow-modified-after-hours |
 | **Rule grammar** | ✅ Works | Boolean logic, comparison operators (`gt/gte/lt/lte/ne`), allowlist suppression (`not_in`, CIDR + exact), time-of-day (`outside_hours`) — all fail closed on malformed input |
 | **Rule prefilter** | ✅ Works | Rules bucketed by `class_uid` equality selection; events only evaluated against candidate rules (fixes the O(rules×events) scan) |
 | **Anti-dormancy guardrail** | ✅ Works | `tools/check_rule_producers.py` in the CI gate proves every rule's selections are satisfiable by values a real parser actually emits |

@@ -175,6 +175,37 @@ def run():
     check(bff[:9] == [False] * 9, "brute force: first 9 must NOT fire")
     check(bff[9] is True, "brute force: 10th failed auth MUST fire (count unchanged)")
 
+    # ---- v0.4 fix: unattributable events must NOT count (None group/distinct) ----
+    # (a) events MISSING the group_by field never fire and never pollute a real
+    # group's counter -- previously they all pooled under one shared "None" key.
+    bf2 = rule_by_id(load_rules(RULES_DIR), BRUTEFORCE_ID)
+    for i in range(20):  # 2x threshold -- would fire if pooled under "None"
+        e = {"class_uid": 3002, "activity_id": 4, "time": base + i * 1000,
+             "siem": {"ingest_id": f"nogroup{i}"}}  # no src_endpoint at all
+        check(bf2.evaluate(e) is False,
+              "brute force: an event with NO group_by field must never fire")
+    # a real group is unaffected by the unattributable stream above
+    real = []
+    for i in range(10):
+        e = {"class_uid": 3002, "activity_id": 4, "time": base + i * 1000,
+             "src_endpoint": {"ip": "203.0.113.77"},
+             "siem": {"ingest_id": f"real{i}"}}
+        real.append(bf2.evaluate(e))
+    check(real[9] is True, "brute force: a real group still fires at threshold "
+                           "after unattributable events were rejected")
+
+    # (b) a None DISTINCT value must not count as a distinct value -- previously
+    # the memory backend counted None as one value and the Redis backend turned
+    # EVERY None-valued event into a fresh distinct member (str(now_ms)).
+    ps6 = rule_by_id(load_rules(RULES_DIR), PORT_SCAN_ID)
+    for i in range(30):  # well past threshold -- would fire on Redis semantics
+        e = {"class_uid": 4001, "activity_id": 6, "time": base + i * 100,
+             "src_endpoint": {"ip": "198.51.100.9"},
+             "dst_endpoint": {"ip": "10.0.0.1"},  # NO port -> distinct value None
+             "siem": {"ingest_id": f"noport{i}"}}
+        check(ps6.evaluate(e) is False,
+              "port scan: events with a None distinct value must never fire")
+
 
 def main():
     run()

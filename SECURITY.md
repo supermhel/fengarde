@@ -2,7 +2,7 @@
 
 ARGUS is a Security Information and Event Management (SIEM) tool. We take the
 security of the project — and the safety of anyone running it — seriously. This
-document describes the **v0.1 threat boundary** (what ARGUS does and does not
+document describes the **current threat boundary (v0.4)** (what ARGUS does and does not
 protect against today) and **how to report a vulnerability**.
 
 ---
@@ -27,11 +27,12 @@ Please include:
 
 ---
 
-## v0.1 threat boundary
+## Threat boundary (v0.4)
 
-ARGUS v0.1 is a **local, single-host development and demonstration stack**. It is
-**not** hardened for production or internet exposure. Understand these boundaries
-before running it:
+ARGUS is a **local, single-host development and demonstration stack**. It is
+**not** hardened for production or internet exposure. Sections below carry the
+release that introduced them (v0.1 network boundary → v0.4 opt-in auth);
+everything is current as of v0.4. Understand these boundaries before running it:
 
 ### 1. Localhost / Compose-network only — not internet-exposed
 
@@ -143,13 +144,13 @@ policy; it is a local buffer, not an audit store.
 
 ---
 
-## Out of scope for v0.1
+## Out of scope (as of v0.4)
 
-The following are **known** and **deferred** to later releases (tracked in the
-[build plan](docs/superpowers/specs/2026-06-27-argus-v0.1-build-plan.md)):
+The following are **known** and **deferred** to later releases:
 
-- Authentication / authorization on services — including the WS-3 triage API
-  (§7), which is an unauthenticated write surface like every other service.
+- Full authentication / authorization — v0.4 added an opt-in shared-secret
+  layer (§2), but per-user identity, roles, and default-on auth remain out of
+  scope. The WS-3 triage API (§7) is open by default like every other service.
 - TLS between services and for external endpoints.
 - Multi-tenancy and per-tenant isolation.
 - Hardened, production-grade OpenSearch security configuration.
@@ -162,7 +163,8 @@ The following are **known** and **deferred** to later releases (tracked in the
   robust prompt-injection defenses are still deferred.
 
 Reports about these documented, out-of-scope limitations are welcome as
-**feature requests**, but they are not treated as vulnerabilities against v0.1.
+**feature requests**, but they are not treated as vulnerabilities against the
+current release.
 
 ---
 

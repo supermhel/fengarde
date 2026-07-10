@@ -35,6 +35,13 @@ siem:
   threshold: 10             # optional, stateful
 ```
 
+**Stateful rules require their fields present on the event (v0.4):** an event
+where `group_by` (or `distinct_field`, when set) resolves to nothing is
+*unattributable* — it is never counted, for any group. Fail-closed, same as
+every other malformed-input path: pooling unattributable events under a shared
+bucket (or counting a missing value as a distinct value) fabricates
+correlations across unrelated actors.
+
 ## Selection operators (v0.3, A3)
 
 A selection maps an OCSF path to either a **scalar** (equality) or an **operator

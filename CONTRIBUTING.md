@@ -42,8 +42,8 @@ run before and after your change.
 
 ## Add a parser (the best first contribution)
 
-Seven parsers ship today (Linux SSH, Cisco ASA, Active Directory, VMware vSphere,
-generic syslog, Windows Event Log, DB audit). A new source parser is a
+Ten parsers ship today (Linux SSH, Cisco ASA, Active Directory, VMware vSphere,
+generic syslog, Windows Event Log, DB audit, MCP/AI-agent, OPC UA/OT, n8n). A new source parser is a
 self-contained module with a clean extension point — adding one never touches an
 existing parser. Good candidates still open:
 

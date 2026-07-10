@@ -148,6 +148,35 @@ def test_api_report_not_found_for_missing_alert():
         srv.shutdown(); srv.server_close()
 
 
+def test_api_report_malformed_content_length_is_400():
+    store = MemoryStore()
+    store.index("alerts-2026.07.10", _ALERT["alert_id"], dict(_ALERT))
+    srv, port = _serve(store)
+    try:
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{port}/alerts/{_ALERT['alert_id']}/report",
+            data=b"{}", method="POST",
+            headers={"Content-Type": "application/json"})
+        req.add_unredirected_header("Content-Length", "abc")
+        try:
+            urllib.request.urlopen(req, timeout=5)
+            check(False, "malformed Content-Length should not return 2xx")
+        except urllib.error.HTTPError as e:
+            check(e.code == 400, f"malformed Content-Length should be 400, got {e.code}")
+        except OSError:
+            # some client stacks abort locally on a bogus CL header -- the
+            # server-side contract (reject, don't mis-drain) is what matters;
+            # exercise it with a raw socket instead.
+            import socket
+            with socket.create_connection(("127.0.0.1", port), timeout=5) as s:
+                s.sendall(b"POST /alerts/x/report HTTP/1.1\r\n"
+                          b"Host: t\r\nContent-Length: abc\r\n\r\n")
+                data = s.recv(1024).decode(errors="replace")
+            check(" 400 " in data, f"raw request with bad CL should get 400, got {data[:60]!r}")
+    finally:
+        srv.shutdown(); srv.server_close()
+
+
 def test_api_report_requires_auth_when_key_set():
     os.environ["ARGUS_API_KEY"] = "s3cr3t"
     try:
@@ -171,6 +200,7 @@ def main():
     test_http_backend_degrades_to_template_on_bad_response()
     test_api_generate_store_and_fetch()
     test_api_report_not_found_for_missing_alert()
+    test_api_report_malformed_content_length_is_400()
     test_api_report_requires_auth_when_key_set()
     if FAILS:
         print(f"[FAIL] ws3 reporting: {len(FAILS)} problem(s)")

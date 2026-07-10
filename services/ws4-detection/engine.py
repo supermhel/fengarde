@@ -343,6 +343,9 @@ class Rule:
         stateful rules, (rule, ingest_id) otherwise.
         """
         if self.stateful:
+            # evaluate() gates on group_by being present, so a fired stateful
+            # alert always has a real group here -- str() of None can only
+            # appear if alert_key is called for an event evaluate() rejected.
             group = str(get_path(event, self.group_by))
             now = int(event.get("time", 0) or 0)
             window_ms = int(self.window_seconds) * 1000
@@ -357,7 +360,16 @@ class Rule:
             return False
         if not self.stateful:
             return True
-        group = str(get_path(event, self.group_by))
+        group_value = get_path(event, self.group_by)
+        if group_value is None:
+            # An event without the group_by field cannot be attributed to any
+            # group. Counting it anyway would pool ALL such events under one
+            # shared "None" bucket -- two unrelated agent sessions missing
+            # session_id would sum toward one burst threshold, fabricating a
+            # correlation. Fail closed: no group, no count. (Same convention
+            # as every other malformed-input path in this evaluator.)
+            return False
+        group = str(group_value)
         now = event.get("time", 0)
         member = (event.get("siem") or {}).get("ingest_id") or str(now)
         # Namespace the window by rule id so two rules grouping on the same field
@@ -365,6 +377,15 @@ class Rule:
         window_ms = self.window_seconds * 1000
         if self.distinct_field:
             value = get_path(event, self.distinct_field)
+            if value is None:
+                # A non-value must not count as a distinct value. The two
+                # backends previously DISAGREED here: MemoryStore counted None
+                # as one distinct value, RedisWindowCounter turned every
+                # None-valued event into a FRESH member (str(now_ms)) -- so N
+                # unenriched events alone could satisfy any distinct threshold
+                # (e.g. impossible-travel firing on 2 logins with no geo
+                # enrichment). Fail closed on both.
+                return False
             count = self._counter.hit_distinct(f"{self.id}:{group}", now,
                                                window_ms, value, member)
         else:

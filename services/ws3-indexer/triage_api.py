@@ -137,11 +137,17 @@ def make_handler(store):
             if report_alert_id is not None:
                 # Drain any request body (the client may send one, even
                 # though this endpoint takes none) so the connection doesn't
-                # get reset with unread bytes still buffered.
+                # get reset with unread bytes still buffered. An unparseable
+                # Content-Length is a 400 (mirrors the triage route) -- NOT
+                # silently zeroed, which would leave stray body bytes in the
+                # buffer and corrupt the next request on a keep-alive
+                # connection.
                 try:
                     length = int(self.headers.get("Content-Length", 0))
                 except (TypeError, ValueError):
-                    length = 0
+                    raise _BadRequest("invalid Content-Length")
+                if length < 0:
+                    raise _BadRequest("invalid Content-Length")
                 if length > 0:
                     self.rfile.read(min(length, _MAX_BODY_BYTES))
                 if not report_alert_id:
