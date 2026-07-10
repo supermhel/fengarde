@@ -81,6 +81,9 @@ echo
 echo "== ws2 parsers: opcua_audit (v0.4 P2, OT/industrial control-system rules) =="
 $PY services/ws2-normalization/parsers/test_opcua_audit.py || fail=1
 echo
+echo "== ws2 parsers: n8n_audit (v0.4 P3, automation-platform rules) =="
+$PY services/ws2-normalization/parsers/test_n8n_audit.py || fail=1
+echo
 echo "== ws5 ollama adapter + fallback (v0.2) =="
 $PY services/ws5-ai/test_llm_adapter.py || fail=1
 echo

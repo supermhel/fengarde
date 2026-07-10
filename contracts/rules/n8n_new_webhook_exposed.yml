@@ -1,0 +1,25 @@
+title: n8n new webhook exposed
+id: 8192a3b4-c516-4ef4-9c5f-6a7b8c9d0e13
+status: stable
+description: >
+  A new webhook was created on the n8n automation platform (OCSF API
+  Activity, class 6003, activity 1 Create). A webhook is a new
+  unauthenticated entry point into the automation platform (n8n instances
+  are commonly internet-facing) -- worth logging every time, not just on
+  suspicion. Single-shot.
+level: medium
+logsource:
+  category: application_activity
+detection:
+  webhook_created:
+    class_uid: 6003
+    activity_id: 1
+    api.operation: "webhook.created"
+  condition: webhook_created
+fields:
+  - actor.user.name
+  - unmapped.n8n.webhook_path
+  - unmapped.n8n.workflow_id
+siem:
+  sector: common
+  score_weight: 40

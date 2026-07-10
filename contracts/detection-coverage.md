@@ -8,10 +8,10 @@ detection rules. Update this file in the same PR as any parser or rule change.
 | class_uid | Class | Emitted by | Rules covering it |
 |---|---|---|---|
 | 1002 | Kernel/Process | generic_syslog, windows_eventlog (4688/4672) | common_after_hours_admin (4672 activity 2) |
-| 3002 | Authentication | linux_ssh, active_directory, windows_eventlog (4624/4634/4647), opcua_audit (v0.4 P2, session events) | common_bruteforce, common_lateral_movement, common_password_spray, common_impossible_travel (v0.4 P4), ot_new_engineering_connection |
+| 3002 | Authentication | linux_ssh, active_directory, windows_eventlog (4624/4634/4647), opcua_audit (v0.4 P2, session events), n8n_audit (v0.4 P3, login/logout — no dedicated rule yet) | common_bruteforce, common_lateral_movement, common_password_spray, common_impossible_travel (v0.4 P4), ot_new_engineering_connection |
 | 3003 | Account Change | windows_eventlog (4720/4722/4726/4728/4732, added v0.3) | common_priv_grant |
 | 4001 | Network Activity | cisco_asa | common_port_scan |
-| 6003 | API Activity | vmware_vsphere, mcp_agent (v0.4 P1), opcua_audit (v0.4 P2, write/method events) | dc_mass_vm_delete, agent_credential_file_access, agent_tool_call_burst, agent_prompt_injection_indicator, ot_write_outside_maintenance, ot_config_change |
+| 6003 | API Activity | vmware_vsphere, mcp_agent (v0.4 P1), opcua_audit (v0.4 P2, write/method events), n8n_audit (v0.4 P3) | dc_mass_vm_delete, agent_credential_file_access, agent_tool_call_burst, agent_prompt_injection_indicator, ot_write_outside_maintenance, ot_config_change, n8n_new_webhook_exposed, n8n_workflow_modified_after_hours |
 | 6005 | Datastore Activity | db_audit (v0.3 — fixed the dormancy below) | bank_db_priv_esc |
 
 ## Gaps — classes with NO parser producer at all
@@ -47,6 +47,8 @@ detection rules. Update this file in the same PR as any parser or rule change.
 | ot_new_engineering_connection | class 3002, activity 1, distinct src_endpoint.ip per unmapped.ot.server_id | yes (opcua_audit, added v0.4) |
 | ot_config_change | class 6003, unmapped.ot.is_config_node=true | yes (opcua_audit, added v0.4) |
 | common_impossible_travel | class 3002, activity 1, distinct src_endpoint.location.country | yes (linux_ssh + A5 geo enrichment, added v0.4 -- see A5's note below: `check_rule_producers.py` now runs the real enrich() step too, not just parsers) |
+| n8n_new_webhook_exposed | class 6003, activity 1, api.operation=webhook.created | yes (n8n_audit, added v0.4) |
+| n8n_workflow_modified_after_hours | class 6003, siem.source_type=n8n_audit, time outside_hours | yes (n8n_audit, added v0.4) |
 
 ## A6 guardrail (implemented)
 
@@ -64,6 +66,21 @@ bank_db_priv_esc dormancy above; it will catch the next one before it ships.
 directly) would have looked dormant by this tool's own standard — a false alarm, not a
 real gap. Fields enrichment adds are just as "real" as parser fields once wired into
 the pipeline.
+
+## Cross-source rule scoping (v0.4 lesson)
+
+v0.4 added three new `class_uid: 6003` producers (mcp_agent, opcua_audit, n8n_audit)
+sharing the class with the existing vmware_vsphere. A rule keying only on
+`class_uid`/`activity_id` (or grouping/distinct-counting on a field only ONE source
+sets, e.g. `unmapped.mcp.session_id`) can silently mis-fire or pool unrelated sources
+into one counter once a second producer of that class exists — `agent_tool_call_burst`,
+`ot_write_outside_maintenance`, and `ot_new_engineering_connection` all needed an
+explicit `siem.source_type: <parser>` selection added to stay scoped once n8n_audit
+landed alongside them. `check_rule_producers.py`'s satisfiability check does NOT catch
+this class of bug (it only proves a rule CAN fire, not that it fires on the RIGHT
+source) — a new rule sharing a class_uid with an existing producer should always ask
+"could another source's event also match this selection?" and add `siem.source_type`
+or a source-distinctive field if so.
 
 ## Next-highest-value additions (from the v0.3 plan, Track A)
 

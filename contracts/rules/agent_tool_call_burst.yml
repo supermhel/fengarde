@@ -6,12 +6,16 @@ description: >
   runaway automation loop or an agent whose tool-use has been hijacked into a
   fast, repetitive pattern -- normal interactive agent sessions don't call
   tools at this rate. Threshold is a starting point; tune per agent workload.
+  Scoped to siem.source_type=mcp_agent -- without it, other 6003 producers
+  (OT writes, n8n workflow ops) lacking unmapped.mcp.session_id would all
+  group under the same "None" bucket and pollute this counter.
 level: medium
 logsource:
   category: application_activity
 detection:
   tool_call:
     class_uid: 6003
+    siem.source_type: mcp_agent
   condition: tool_call
 fields:
   - unmapped.mcp.session_id

@@ -1,0 +1,32 @@
+title: n8n automation-platform activity outside business hours
+id: 92a3b4c5-d627-4f05-ad6f-7a8b9c0d1e24
+status: stable
+description: >
+  Any n8n API activity (workflow create/update/activate, webhook create,
+  credential access -- OCSF API Activity, class 6003) outside a configured
+  business-hours window (reuses the existing outside_hours predicate). A
+  workflow/webhook/credential change at 03:00 Sunday on a self-hosted
+  automation platform is not routine. Deliberately broad (any 6003 event,
+  not just workflow-specific ones) -- the rule engine has no "activity_id
+  in [1,3]" operator, and off-hours automation-platform activity of ANY
+  kind is the actual signal worth surfacing.
+level: medium
+logsource:
+  category: application_activity
+detection:
+  workflow_change:
+    class_uid: 6003
+    siem.source_type: n8n_audit
+    time:
+      outside_hours:
+        start: "08:00"
+        end: "18:00"
+        days: [mon, tue, wed, thu, fri]
+        tz_offset_minutes: 0
+  condition: workflow_change
+fields:
+  - actor.user.name
+  - unmapped.n8n.workflow_id
+siem:
+  sector: common
+  score_weight: 45

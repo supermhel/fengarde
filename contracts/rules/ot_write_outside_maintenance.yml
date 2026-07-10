@@ -8,7 +8,10 @@ description: >
   predicate, zero new grammar work). Engineering changes at 03:00 on a
   Sunday are not routine; scored high but single-shot since legitimate
   on-call maintenance also happens off-hours -- tune the window to the
-  plant's real schedule before trusting the signal.
+  plant's real schedule before trusting the signal. Scoped to
+  siem.source_type=opcua_audit -- without it, any other 6003 producer's
+  activity_id-3 event (e.g. an n8n workflow update) outside hours would
+  also match.
 level: high
 logsource:
   category: application_activity
@@ -16,6 +19,7 @@ detection:
   ot_write:
     class_uid: 6003
     activity_id: 3
+    siem.source_type: opcua_audit
     time:
       outside_hours:
         start: "08:00"

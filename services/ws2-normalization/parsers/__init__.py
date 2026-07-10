@@ -20,12 +20,13 @@ from .windows_eventlog import WindowsEventLogParser
 from .db_audit import DbAuditParser
 from .mcp_agent import McpAgentParser
 from .opcua_audit import OpcUaAuditParser
+from .n8n_audit import N8nAuditParser
 
 _REGISTRY: dict[str, Parser] = {
     p.SOURCE_TYPE: p
     for p in (CiscoAsaParser(), ActiveDirectoryParser(), VmwareVsphereParser(),
               LinuxSshParser(), GenericSyslogParser(), WindowsEventLogParser(),
-              DbAuditParser(), McpAgentParser(), OpcUaAuditParser())
+              DbAuditParser(), McpAgentParser(), OpcUaAuditParser(), N8nAuditParser())
 }
 
 
@@ -51,6 +52,8 @@ def resolve(raw_payload: dict) -> Optional[Parser]:
         return _REGISTRY["mcp_agent"]
     if '"eventType"' in text and "Audit" in text:
         return _REGISTRY["opcua_audit"]
+    if '"eventType"' in text and ("workflowId" in text or "webhook" in text or "workflow." in text):
+        return _REGISTRY["n8n_audit"]
     if '"operation"' in text:
         return _REGISTRY["vmware_vsphere"]
     return None

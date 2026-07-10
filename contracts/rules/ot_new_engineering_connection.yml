@@ -7,7 +7,10 @@ description: >
   Logon). A single PLC is normally engineered from one or two known
   workstations; a new source appearing alongside the usual one is worth an
   analyst's attention -- could be a new authorized engineer, or someone
-  reaching a control-system node from an unexpected host.
+  reaching a control-system node from an unexpected host. Scoped to
+  siem.source_type=opcua_audit -- without it, any other 3002/activity-1/
+  Success event (SSH, AD logons) lacking unmapped.ot.server_id would group
+  under the same "None" bucket and pollute this counter.
 level: medium
 logsource:
   category: authentication
@@ -16,6 +19,7 @@ detection:
     class_uid: 3002
     activity_id: 1
     status: Success
+    siem.source_type: opcua_audit
   condition: ot_session
 fields:
   - src_endpoint.ip

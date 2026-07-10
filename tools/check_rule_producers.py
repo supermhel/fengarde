@@ -108,6 +108,12 @@ FIXTURES: dict[str, list[dict]] = {
                  "serverId": "plc-line3", "nodeId": "ns=2;s=Line3.SetpointTemp",
                  "status": True}, "meta": {}},
     ],
+    "n8n_audit": [
+        {"raw": {"eventType": "webhook.created", "user": "alice", "ip": "203.0.113.9",
+                 "workflowId": "wf-42", "path": "/webhook/incoming-order"}, "meta": {}},
+        {"raw": {"eventType": "workflow.updated", "user": "bob", "workflowId": "wf-7"},
+         "meta": {}},
+    ],
 }
 
 
