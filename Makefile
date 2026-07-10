@@ -21,14 +21,16 @@ help:
 preflight:
 	@sh infra/preflight.sh
 
-# One-command Dockerized stack. Honest about what is and isn't wired yet.
+# v0.4 Track D1: the 10-minute quickstart. `devkit-feeder` (DX2-live) injects
+# a real SSH brute-force burst into the live pipeline on every `up`, so a
+# fresh stack shows a REAL alert in the dashboard with no manual step.
 demo: preflight
 	@echo ""
 	@echo "=================================================================="
-	@echo " Services are daemons now (T0 done). For a no-Docker proof that the"
-	@echo " full detection pipeline produces a real alert, run:  make e2e"
-	@echo " Remaining in-stack items: live demo feeder + dashboard reading"
-	@echo " alerts straight from OpenSearch (DX2-live / DX4)."
+	@echo " Bringing up the full stack. Within ~30-60s of every service being"
+	@echo " healthy, a real SSH brute-force alert appears in the dashboard --"
+	@echo " http://localhost:8080 -- no manual step needed (devkit-feeder)."
+	@echo " Zero-Docker proof of the same pipeline logic: make e2e"
 	@echo "=================================================================="
 	@echo ""
 	$(COMPOSE) up

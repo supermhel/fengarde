@@ -1,12 +1,46 @@
 # ARGUS
 
-**An open-source SIEM pipeline that turns raw security logs into real alerts — with a decoupled, contract-first architecture you can extend one parser at a time.**
+**The open-source SIEM for the European industrial Mittelstand — turns your
+factory and IT logs into NIS2/DORA evidence, with AI triage that never leaves
+your network.**
 
 ARGUS ingests logs from multiple sources, normalizes them to a single schema
 ([OCSF](https://schema.ocsf.io/)), runs correlation rules over a sliding window,
 and surfaces alerts in a dashboard. Every service is independent and talks to the
 rest of the system only through a message bus, so you can scale or replace any
 piece without rewriting the others.
+
+Three things make it different from a generic self-hosted SIEM:
+
+- **OCSF-native, not retrofitted.** Every source normalizes to the same open
+  schema from day one — instrument once, stay portable, no vendor log-format
+  lock-in.
+- **OpenSearch, not Elastic.** No license asterisk on the storage engine — the
+  open-source story has no fine print.
+- **AI triage that never leaves your network.** Local Ollama by default, with a
+  documented stub fallback — your alert data is never piped through a
+  third-party LLM API.
+
+New in v0.4: parser packs for the sources this wedge actually needs — MCP/AI-agent
+tool-call audit logs, industrial OPC UA control-system events, and n8n automation-platform
+logs — plus an incident-report draft hook (the open half of a NIS2/DORA
+regulatory-evidence feature; see [`contracts/reporting.md`](contracts/reporting.md)).
+
+---
+
+## Quickstart (10 minutes)
+
+```sh
+git clone https://github.com/supermhel/argus.git && cd argus
+make preflight   # doctor: checks vm.max_map_count, Docker RAM, free ports
+make demo        # docker compose up -- a real SSH brute-force alert appears
+                 # in the dashboard within ~30-60s, no manual step
+# open http://localhost:8080
+```
+
+No Docker on hand? The whole detection pipeline runs zero-infra:
+`make e2e` proves the same SSH brute-force → real alert → idempotent-replay
+path with no Redis/OpenSearch/Docker at all.
 
 ---
 
@@ -54,7 +88,7 @@ make down                                 # stop the stack and remove volumes
 
 ---
 
-## What's real (v0.2 shipped, v0.3 in progress)
+## What's real (v0.3 shipped, v0.4 in progress)
 
 ARGUS ships a **working detection pipeline**. We are deliberate about what is
 real versus what is planned — this is a security tool, so accuracy matters more than
@@ -63,12 +97,15 @@ a long feature list.
 | Capability | Status | Notes |
 |---|---|---|
 | **Detection pipeline** (collect → normalize → detect → index → dashboard) | ✅ Works | End-to-end since v0.1 |
-| **Parsers (7)** | ✅ Works | Cisco ASA, Active Directory, VMware vSphere, Linux SSH, generic syslog, Windows Event Log (incl. account-change 4720/4722/4726/4728/4732), DB audit (GRANT/REVOKE/ALTER) — all → OCSF |
-| **Detection rules (7)** | ✅ Works | Brute-force, port-scan, lateral-movement, password-spray, privileged-group grant, bank DB priv-esc, DC mass-VM-delete |
-| **Rule grammar** | ✅ Works | Boolean logic, comparison operators (`gt/gte/lt/lte/ne`), allowlist suppression (`not_in`, CIDR + exact) — all fail closed on malformed input |
+| **Parsers (8)** | ✅ Works | Cisco ASA, Active Directory, VMware vSphere, Linux SSH, generic syslog, Windows Event Log (incl. account-change 4720/4722/4726/4728/4732), DB audit (GRANT/REVOKE/ALTER), MCP/AI-agent tool-call audit — all → OCSF |
+| **Detection rules (11)** | ✅ Works | Brute-force, port-scan, lateral-movement, password-spray, privileged-group grant, after-hours admin, bank DB priv-esc, DC mass-VM-delete, agent credential-file access, agent tool-call burst, agent prompt-injection indicator |
+| **Rule grammar** | ✅ Works | Boolean logic, comparison operators (`gt/gte/lt/lte/ne`), allowlist suppression (`not_in`, CIDR + exact), time-of-day (`outside_hours`) — all fail closed on malformed input |
 | **Rule prefilter** | ✅ Works | Rules bucketed by `class_uid` equality selection; events only evaluated against candidate rules (fixes the O(rules×events) scan) |
 | **Anti-dormancy guardrail** | ✅ Works | `tools/check_rule_producers.py` in the CI gate proves every rule's selections are satisfiable by values a real parser actually emits |
 | **AI triage** (local Ollama) | ✅ Works | Real local-LLM triage via `OLLAMA_URL`; degrades to a documented passthrough stub with zero infra |
+| **Triage workflow** | ✅ Works | Status + analyst note per alert, persisted via the WS-3 triage API, editable in the dashboard; concurrent writes protected at two layers (in-process lock + OpenSearch optimistic concurrency) |
+| **Incident-report draft hook** | ✅ Works (v0.4) | `POST /alerts/{id}/report` renders a generic markdown incident report from alert facts, always marked `status: draft` with a disclaimer; the regulated-content backend is a paid, optional add-on (`contracts/reporting.md`) |
+| **Opt-in auth** | ✅ Works (v0.4) | Shared-secret `ARGUS_API_KEY` on the triage/inventory APIs, opt-in dashboard basic-auth, opt-in Redis `AUTH` — unset (default) stays fully open, matching v0.1-v0.3 behavior |
 | **Syslog UDP listener** (WS-1) | ✅ Works | Live datagrams → `raw.events` |
 | **Triage workflow** | ✅ Works (v0.3) | Status + analyst note per alert, persisted via WS-3 triage API, editable in the dashboard. Container-to-container nginx path validated by config review, not yet by a live-stack smoke test |
 | SNMP parser | 🚧 Planned | Deferred — [good first issue](CONTRIBUTING.md) |
