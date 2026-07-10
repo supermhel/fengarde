@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (v0.4 Track S — opt-in auth)
+
+- **`ARGUS_API_KEY`** shared-secret auth on the WS-3 triage API and WS-6 inventory API (`X-Api-Key` header, constant-time compare). Unset (default) = every request allowed + a startup warning; set = 401 on missing/wrong key. `services/shared/authz.py` (ws3) + `services/ws6-inventory/authz.py` (ws6 doesn't bundle `shared`, so it gets its own copy).
+- **Dashboard basic-auth**, opt-in via `infra/docker-compose.auth.yml` override (nginx `auth_basic` + htpasswd) — not baked into the main compose file, so `docker compose up` stays zero-prerequisite.
+- **Redis `AUTH`**, opt-in via `REDIS_PASSWORD`, embedded in `REDIS_URL` for every service.
+- Dashboard nginx converted to an envsubst template (`templates/default.conf.template`) so it can inject `X-Api-Key` server-side on the triage proxy — the browser never holds the key.
+- OpenSearch/Redis/OpenSearch-Dashboards ports bound to `127.0.0.1` by default (were `0.0.0.0`). OpenSearch's security plugin stays disabled — a documented scope cut, not an oversight (`SECURITY.md` §2).
+
+### Added (v0.4 Track R — incident-report hook)
+
+- **`contracts/reporting.md`** — frozen cross-repo contract with `argus-sec`: `POST/GET /alerts/{id}/report` on the WS-3 triage port, `REPORT_BACKEND=template|http` seam, frozen response schema. Hard rules enforced structurally: `status` must be `"draft"`, `disclaimer` mandatory non-empty, `citations` optional (additive-field discipline) — a non-conforming backend response is rejected and WS-3 falls back to the builtin template (fail-open).
+- **`services/ws3-indexer/reporting.py`** — generic markdown template renderer (rule/severity/timeline/source/actor/triage state, explicit `[ANALYST MUST PROVIDE]` blocks, zero regulatory claims), HTTP-backend caller + response validator, deterministic `report_id` (idempotent re-generation).
+- Dashboard "Rapport" button per alert row; renders the draft as text (never `innerHTML`, same XSS discipline as the rest of the UI).
+
+### Added (v0.4 Track P — niche parser packs)
+
+- **MCP/AI-agent parser** (`mcp_agent`) — tool-call audit logs → OCSF API Activity (6003). Pattern classification (credential-path access, prompt-injection indicators) happens at parse time as documented heuristic booleans (`unmapped.mcp.*`), since the rule engine has no substring-match operator. Three rules: `agent_credential_file_access`, `agent_tool_call_burst`, `agent_prompt_injection_indicator`.
+- **OPC UA/OT parser** (`opcua_audit`) — industrial control-system audit events (IEC 62541 Part 5) → OCSF Authentication (session/cert events) + API Activity (write/method-call events). First OT source chosen over S7/PROFINET because Part 5 is publicly documented and fixturable honestly; S7 deferred, named not dropped. Three rules: `ot_write_outside_maintenance` (reuses `outside_hours`), `ot_new_engineering_connection` (distinct source IP per PLC), `ot_config_change`.
+- **n8n automation-platform parser** (`n8n_audit`) — workflow/webhook/credential/login events → OCSF. Two rules: `n8n_new_webhook_exposed`, `n8n_workflow_modified_after_hours`.
+- **Impossible-travel rule** (`common_impossible_travel`) — the first rule consuming v0.3's A5 geo enrichment (`src_endpoint.location.country`, distinct-count, no engine change needed). `tools/check_rule_producers.py` updated to run each fixture through the real `enrich()` step too, mirroring the actual parse→enrich pipeline — otherwise this rule would have looked dormant by the tool's own standard.
+
+### Fixed
+
+- **Cross-source rule-scoping bugs** — `agent_tool_call_burst`, `ot_write_outside_maintenance`, and `ot_new_engineering_connection` keyed only on `class_uid`/`activity_id` (or grouped on a field only one source sets). Landing a third `class_uid: 6003` producer (`n8n_audit`) alongside the existing `vmware_vsphere`/`mcp_agent`/`opcua_audit` surfaced the bug: another source's event could silently mis-fire the wrong rule or pool into a shared "None" counter bucket. All three now add an explicit `siem.source_type` selection. `contracts/detection-coverage.md` documents this as a standing lesson for the next shared-class producer — `check_rule_producers.py`'s satisfiability check does not catch this class of bug (it proves a rule *can* fire, not that it fires on the *right* source).
+
+### Added (v0.4 Track D — distribution)
+
+- **`make demo`** banner fixed to reflect reality — `devkit-feeder` already injects a real SSH brute-force burst on every `docker compose up`, but the Makefile still claimed the feeder wasn't built.
+- README repositioned to the validated wedge ("the open-source SIEM for the European industrial Mittelstand"), new "Quickstart (10 minutes)" section, capability table refreshed (10 parsers / 17 rules).
+- Three architecture write-ups (`docs/posts/ocsf-native.md`, `opensearch-not-elastic.md`, `local-ai-triage.md`) + a launch checklist (`docs/posts/launch-checklist.md`).
+
 ## [0.3.0] - 2026-07-10
 
 ### Added
