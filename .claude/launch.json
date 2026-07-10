@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "ws7-dashboard-static",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "http.server", "8090", "--directory", "services/ws7-dashboard"],
+      "port": 8090
+    }
+  ]
+}

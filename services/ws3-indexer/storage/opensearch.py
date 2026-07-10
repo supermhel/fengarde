@@ -101,6 +101,22 @@ class OpenSearchStore(StorageAdapter):
             return None
         return hit.get("_index"), hit["_source"]
 
+    # -- v0.4 Track R: cross-index lookup by report_id -----------------------
+    def find_report(self, alert_id: str) -> dict | None:
+        """Locate a report doc (report_id == f"{alert_id}:report") across all
+        daily reports-* indices. Mirrors _search_alert's shape."""
+        report_id = f"{alert_id}:report"
+        body = {"size": 1, "query": {"term": {"_id": report_id}}}
+        try:
+            result = self._request("POST", "/reports-*/_search", body)
+        except urllib.error.HTTPError:
+            return None
+        hits = result.get("hits", {}).get("hits", [])
+        if not hits:
+            return None
+        source = hits[0].get("_source")
+        return source if isinstance(source, dict) and source else None
+
     def find_alert_versioned(self, alert_id: str):
         """(index, doc, version) where version carries OpenSearch's
         (_seq_no, _primary_term) for a CAS write via index_cas. Version is

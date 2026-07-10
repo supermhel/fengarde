@@ -56,6 +56,19 @@ class MemoryStore(StorageAdapter):
                 return index, doc
         return None
 
+    # -- v0.4 Track R: cross-index lookup by report_id -----------------------
+    def find_report(self, alert_id: str) -> dict | None:
+        """Locate a report doc (report_id == f"{alert_id}:report") across all
+        daily reports-* indices. Mirrors find_alert's lookup shape."""
+        report_id = f"{alert_id}:report"
+        for index in self._indices:
+            if not index.startswith("reports-"):
+                continue
+            doc = self._indices[index].get(report_id)
+            if doc is not None:
+                return doc
+        return None
+
     # -- optimistic concurrency (mirrors OpenSearchStore's seq_no CAS) ------
     def find_alert_versioned(self, alert_id: str):
         found = self.find_alert(alert_id)

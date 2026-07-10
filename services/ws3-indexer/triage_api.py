@@ -32,6 +32,7 @@ for _p in (str(_HERE), str(_HERE.parent)):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 from shared.authz import check_api_key, warn_if_disabled  # noqa: E402
+import reporting  # noqa: E402
 
 _MAX_BODY_BYTES = 4096  # a triage update is a status enum + a short note.
 _MAX_NOTE_CHARS = 2000
@@ -74,10 +75,10 @@ def make_handler(store):
         def log_message(self, *_):  # quiet
             pass
 
-        def _alert_id_from_path(self, path: str) -> str | None:
-            # /alerts/{alert_id}/triage
+        def _alert_id_from_path(self, path: str, resource: str = "triage") -> str | None:
+            # /alerts/{alert_id}/{resource}  (resource: "triage" | "report")
             parts = path.strip("/").split("/")
-            if len(parts) == 3 and parts[0] == "alerts" and parts[2] == "triage":
+            if len(parts) == 3 and parts[0] == "alerts" and parts[2] == resource:
                 return parts[1]
             return None
 
@@ -99,6 +100,15 @@ def make_handler(store):
 
         def _route_get(self):
             u = urlparse(self.path)
+            report_alert_id = self._alert_id_from_path(u.path, "report")
+            if report_alert_id is not None:
+                if not report_alert_id:
+                    raise _BadRequest("alert_id required")
+                report = store.find_report(report_alert_id)
+                if report is None:
+                    return self._send(404, {"error": "report not found"})
+                return self._send(200, report)
+
             alert_id = self._alert_id_from_path(u.path)
             if alert_id is None:
                 return self._send(404, {"error": "no such path"})
@@ -122,6 +132,30 @@ def make_handler(store):
 
         def _route_post(self):
             u = urlparse(self.path)
+
+            report_alert_id = self._alert_id_from_path(u.path, "report")
+            if report_alert_id is not None:
+                # Drain any request body (the client may send one, even
+                # though this endpoint takes none) so the connection doesn't
+                # get reset with unread bytes still buffered.
+                try:
+                    length = int(self.headers.get("Content-Length", 0))
+                except (TypeError, ValueError):
+                    length = 0
+                if length > 0:
+                    self.rfile.read(min(length, _MAX_BODY_BYTES))
+                if not report_alert_id:
+                    raise _BadRequest("alert_id required")
+                found = store.find_alert(report_alert_id)
+                if found is None:
+                    return self._send(404, {"error": "alert not found"})
+                _, alert_doc = found
+                triage = alert_doc.get("triage") or _default_triage()
+                report = reporting.generate_report(alert_doc, triage)
+                report_index = reporting._report_index()
+                store.index(report_index, report["report_id"], report)
+                return self._send(200, report)
+
             alert_id = self._alert_id_from_path(u.path)
             if alert_id is None:
                 return self._send(404, {"error": "no such path"})

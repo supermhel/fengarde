@@ -53,9 +53,16 @@
   <section id="global" class="view active">
     <div class="cards" id="globalCards"></div>
     <h3>Alertes critiques en cours</h3>
-    <table><thead><tr><th>Heure</th><th>Règle</th><th>Secteur</th><th>Niveau</th><th>Score</th><th>Source</th><th>Triage</th><th>Note</th></tr></thead>
+    <table><thead><tr><th>Heure</th><th>Règle</th><th>Secteur</th><th>Niveau</th><th>Score</th><th>Source</th><th>Triage</th><th>Note</th><th>Rapport</th></tr></thead>
       <tbody id="alertRows"></tbody></table>
   </section>
+
+  <!-- v0.4 Track R: incident-report draft panel, hidden until a report is requested -->
+  <div id="reportPanel" class="detail" hidden>
+    <button id="reportClose" style="float:right">Fermer</button>
+    <h3>Rapport d'incident (brouillon)</h3>
+    <pre id="reportBody" style="white-space:pre-wrap;font-family:inherit"></pre>
+  </div>
 
   <!-- LEVEL 2 -->
   <section id="inventory" class="view">
@@ -201,7 +208,8 @@ async function renderGlobal(){
     <td>${esc(a.score)}</td><td class="muted">${esc((a.src_endpoint||{}).ip||"")}</td>
     <td><select class="triage-status" data-alert-id="${aid}">${triageStatusOptions(t.status)}</select></td>
     <td><input class="triage-note" data-alert-id="${aid}" type="text" placeholder="analyst note"
-        value="${esc(t.note||"")}" /></td></tr>`;
+        value="${esc(t.note||"")}" /></td>
+    <td><button class="report-btn" data-alert-id="${aid}">Rapport</button></td></tr>`;
   }).join("");
 
   // wire triage controls: status change + note blur both POST the update.
@@ -219,7 +227,37 @@ async function renderGlobal(){
       await updateTriage(inp.dataset.alertId, selEl ? selEl.value : "new", inp.value);
     };
   });
+
+  // v0.4 Track R: "Rapport" button -> POST to generate (or re-generate) a
+  // draft incident report, then render it. Same fail-open discipline as
+  // triage: a proxy/backend failure shows an inline error, never a crash.
+  document.querySelectorAll("#alertRows .report-btn").forEach(btn => {
+    btn.onclick = async () => {
+      const alertId = btn.dataset.alertId;
+      const panel = document.getElementById("reportPanel");
+      const body = document.getElementById("reportBody");
+      body.textContent = "Génération du rapport…";
+      panel.hidden = false;
+      try{
+        const r = await fetch(`${TRIAGE_API}/alerts/${encodeURIComponent(alertId)}/report`,
+          {method:"POST"});
+        if(r.ok){
+          const report = await r.json();
+          body.textContent = report.body || "(rapport vide)";
+        }else{
+          body.textContent = `Erreur: rapport indisponible (HTTP ${r.status}).`;
+        }
+      }catch(e){
+        body.textContent = "Erreur: service de rapport injoignable.";
+      }
+    };
+  });
 }
+
+document.addEventListener("DOMContentLoaded", () => {
+  const closeBtn = document.getElementById("reportClose");
+  if(closeBtn) closeBtn.onclick = () => { document.getElementById("reportPanel").hidden = true; };
+});
 
 // ---- LEVEL 2: inventory ----
 let ALL=[];
