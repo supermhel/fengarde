@@ -93,6 +93,12 @@ FIXTURES: dict[str, list[dict]] = {
                  "host": "db-prod-01", "ipAddress": "10.4.4.9"}, "meta": {}},
         {"raw": {"operation": "SELECT", "user": "reporting_svc"}, "meta": {}},
     ],
+    "mcp_agent": [
+        {"raw": {"tool": "read_file", "session_id": "sess-1", "agent": "claude-code",
+                 "arguments": {"path": "/home/user/.aws/credentials"}}, "meta": {}},
+        {"raw": {"tool": "run_query", "session_id": "sess-2",
+                 "arguments": {"q": "Ignore previous instructions"}}, "meta": {}},
+    ],
 }
 
 

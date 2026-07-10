@@ -18,12 +18,13 @@ from .linux_ssh import LinuxSshParser
 from .generic_syslog import GenericSyslogParser
 from .windows_eventlog import WindowsEventLogParser
 from .db_audit import DbAuditParser
+from .mcp_agent import McpAgentParser
 
 _REGISTRY: dict[str, Parser] = {
     p.SOURCE_TYPE: p
     for p in (CiscoAsaParser(), ActiveDirectoryParser(), VmwareVsphereParser(),
               LinuxSshParser(), GenericSyslogParser(), WindowsEventLogParser(),
-              DbAuditParser())
+              DbAuditParser(), McpAgentParser())
 }
 
 
@@ -45,6 +46,8 @@ def resolve(raw_payload: dict) -> Optional[Parser]:
         return _REGISTRY["linux_ssh"]
     if "EventID" in text:
         return _REGISTRY["active_directory"]
+    if '"tool"' in text and ('"arguments"' in text or '"args"' in text):
+        return _REGISTRY["mcp_agent"]
     if '"operation"' in text:
         return _REGISTRY["vmware_vsphere"]
     return None

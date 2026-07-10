@@ -1,0 +1,26 @@
+title: AI agent tool call carries a prompt-injection indicator
+id: 3c4d5e6f-7081-48a9-9b1c-3d4e5f6a7b8d
+status: stable
+description: >
+  An MCP/agent tool call's arguments contain phrasing commonly used in
+  prompt-injection attempts (e.g. "ignore previous instructions", "reveal
+  your system prompt"). Detected by the mcp_agent parser as a simple string-
+  match heuristic (unmapped.mcp.injection_indicator), NOT a semantic
+  classifier -- documented as such. Single-shot: one occurrence in tool-call
+  content is itself worth an analyst's attention, whether it originated from
+  a malicious log line, a compromised upstream source, or an over-eager test.
+level: medium
+logsource:
+  category: application_activity
+detection:
+  injection:
+    class_uid: 6003
+    unmapped.mcp.injection_indicator: true
+  condition: injection
+fields:
+  - actor.user.name
+  - api.operation
+  - unmapped.mcp.session_id
+siem:
+  sector: common
+  score_weight: 50

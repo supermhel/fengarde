@@ -1,0 +1,24 @@
+title: AI agent tool-call burst (runaway/abused agent session)
+id: 2b3c4d5e-6f70-4899-8a1b-2c3d4e5f6a7c
+status: stable
+description: >
+  One agent/MCP session issued 50+ tool calls in a 60-second window. Catches a
+  runaway automation loop or an agent whose tool-use has been hijacked into a
+  fast, repetitive pattern -- normal interactive agent sessions don't call
+  tools at this rate. Threshold is a starting point; tune per agent workload.
+level: medium
+logsource:
+  category: application_activity
+detection:
+  tool_call:
+    class_uid: 6003
+  condition: tool_call
+fields:
+  - unmapped.mcp.session_id
+  - api.operation
+siem:
+  sector: common
+  score_weight: 45
+  window_seconds: 60
+  threshold: 50
+  group_by: unmapped.mcp.session_id

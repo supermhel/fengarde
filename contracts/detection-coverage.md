@@ -11,7 +11,7 @@ detection rules. Update this file in the same PR as any parser or rule change.
 | 3002 | Authentication | linux_ssh, active_directory, windows_eventlog (4624/4634/4647) | common_bruteforce, common_lateral_movement, common_password_spray |
 | 3003 | Account Change | windows_eventlog (4720/4722/4726/4728/4732, added v0.3) | common_priv_grant |
 | 4001 | Network Activity | cisco_asa | common_port_scan |
-| 6003 | API Activity | vmware_vsphere | dc_mass_vm_delete |
+| 6003 | API Activity | vmware_vsphere, mcp_agent (v0.4 P1) | dc_mass_vm_delete, agent_credential_file_access, agent_tool_call_burst, agent_prompt_injection_indicator |
 | 6005 | Datastore Activity | db_audit (v0.3 — fixed the dormancy below) | bank_db_priv_esc |
 
 ## Gaps — classes with NO parser producer at all
@@ -40,6 +40,9 @@ detection rules. Update this file in the same PR as any parser or rule change.
 | common_port_scan | class 4001, activity 6 (Deny), dst_endpoint.port | yes (cisco_asa) |
 | dc_mass_vm_delete | class 6003, activity 4, siem.sector=datacenter | yes (vmware_vsphere) |
 | bank_db_priv_esc | class 6005, activity 5, siem.sector=bank | yes (db_audit, added v0.3) |
+| agent_credential_file_access | class 6003, unmapped.mcp.credential_path_access=true | yes (mcp_agent, added v0.4) |
+| agent_tool_call_burst | class 6003, unmapped.mcp.session_id | yes (mcp_agent, added v0.4) |
+| agent_prompt_injection_indicator | class 6003, unmapped.mcp.injection_indicator=true | yes (mcp_agent, added v0.4) |
 
 ## A6 guardrail (implemented)
 
