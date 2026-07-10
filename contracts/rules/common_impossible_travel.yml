@@ -1,0 +1,32 @@
+title: Impossible travel (same account, distinct countries in a short window)
+id: 7081a2b3-c405-4de3-be5f-6a7b8c9d0e12
+status: stable
+description: >
+  The same account authenticated successfully (OCSF Authentication, class
+  3002, activity 1 Logon) from source IPs resolving to 2+ DISTINCT countries
+  within 10 minutes. Simplified impossible-travel: a country-change signal,
+  not real distance/velocity math -- the enrichment substrate
+  (src_endpoint.location.country, added v0.3 A5) is a coarse local CIDR->
+  country map, not a real GeoIP resolver, so treat this as a coarse first
+  filter, not a precise geolocation claim. Classic credential-theft/account-
+  sharing pattern.
+level: high
+logsource:
+  category: authentication
+detection:
+  auth_success:
+    class_uid: 3002
+    activity_id: 1
+    status: Success
+  condition: auth_success
+fields:
+  - actor.user.name
+  - src_endpoint.ip
+  - src_endpoint.location.country
+siem:
+  sector: common
+  score_weight: 70
+  window_seconds: 600
+  threshold: 2
+  group_by: actor.user.name
+  distinct_field: src_endpoint.location.country

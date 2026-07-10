@@ -8,7 +8,7 @@ detection rules. Update this file in the same PR as any parser or rule change.
 | class_uid | Class | Emitted by | Rules covering it |
 |---|---|---|---|
 | 1002 | Kernel/Process | generic_syslog, windows_eventlog (4688/4672) | common_after_hours_admin (4672 activity 2) |
-| 3002 | Authentication | linux_ssh, active_directory, windows_eventlog (4624/4634/4647), opcua_audit (v0.4 P2, session events) | common_bruteforce, common_lateral_movement, common_password_spray, ot_new_engineering_connection |
+| 3002 | Authentication | linux_ssh, active_directory, windows_eventlog (4624/4634/4647), opcua_audit (v0.4 P2, session events) | common_bruteforce, common_lateral_movement, common_password_spray, common_impossible_travel (v0.4 P4), ot_new_engineering_connection |
 | 3003 | Account Change | windows_eventlog (4720/4722/4726/4728/4732, added v0.3) | common_priv_grant |
 | 4001 | Network Activity | cisco_asa | common_port_scan |
 | 6003 | API Activity | vmware_vsphere, mcp_agent (v0.4 P1), opcua_audit (v0.4 P2, write/method events) | dc_mass_vm_delete, agent_credential_file_access, agent_tool_call_burst, agent_prompt_injection_indicator, ot_write_outside_maintenance, ot_config_change |
@@ -46,6 +46,7 @@ detection rules. Update this file in the same PR as any parser or rule change.
 | ot_write_outside_maintenance | class 6003, activity 3, time outside_hours | yes (opcua_audit, added v0.4) |
 | ot_new_engineering_connection | class 3002, activity 1, distinct src_endpoint.ip per unmapped.ot.server_id | yes (opcua_audit, added v0.4) |
 | ot_config_change | class 6003, unmapped.ot.is_config_node=true | yes (opcua_audit, added v0.4) |
+| common_impossible_travel | class 3002, activity 1, distinct src_endpoint.location.country | yes (linux_ssh + A5 geo enrichment, added v0.4 -- see A5's note below: `check_rule_producers.py` now runs the real enrich() step too, not just parsers) |
 
 ## A6 guardrail (implemented)
 
@@ -55,6 +56,14 @@ distinct_field are satisfiable by at least one parser's actual output — not ju
 *paths* (every event has a `class_uid` key) but the specific *values* rules match on
 (`class_uid: 6005` needs some parser to actually emit 6005). This is what caught the
 bank_db_priv_esc dormancy above; it will catch the next one before it ships.
+
+**v0.4 update:** the tool now runs each fixture's parsed event through the real A5
+`enrich()` step too (`services/ws2-normalization/enrichment/`), mirroring
+`normalize_one`'s actual parse → enrich pipeline. Without this, `common_impossible_travel`
+(keyed on `src_endpoint.location.country`, an enrichment-added field no parser emits
+directly) would have looked dormant by this tool's own standard — a false alarm, not a
+real gap. Fields enrichment adds are just as "real" as parser fields once wired into
+the pipeline.
 
 ## Next-highest-value additions (from the v0.3 plan, Track A)
 

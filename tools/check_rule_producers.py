@@ -30,6 +30,7 @@ sys.path.insert(0, str(SERVICES / "ws2-normalization"))
 sys.path.insert(0, str(SERVICES))
 
 from parsers import _REGISTRY  # noqa: E402
+from enrichment import enrich  # noqa: E402  -- v0.4: mirror the real parse->enrich pipeline
 
 RULES_DIR = ROOT / "contracts" / "rules"
 
@@ -144,6 +145,14 @@ def collect_producible() -> tuple[set[str], set[tuple[str, object]]]:
             payload = {"source_type": source_type, **raw}
             event = parser.parse(payload)
             if event is not None:
+                # v0.4: real events go through WS-2's parse -> enrich pipeline
+                # before a rule ever sees them (services/ws2-normalization/
+                # main.py::normalize_one). Fields enrichment adds (e.g.
+                # src_endpoint.location.country) are as "real" as parser
+                # fields for satisfiability purposes -- skipping this step
+                # would make common_impossible_travel look dormant when it
+                # isn't.
+                event = enrich(event)
                 flat = flatten(event)
                 all_paths |= set(flat)
                 all_pairs |= {(k, v) for k, v in flat.items()
