@@ -1,5 +1,12 @@
 # Launch Post Drafts
 
+> **Historical (v0.1.0 era) — facts below are stale** (4 parsers, no AI triage yet).
+> Current architecture write-ups: [`ocsf-native.md`](ocsf-native.md),
+> [`opensearch-not-elastic.md`](opensearch-not-elastic.md),
+> [`local-ai-triage.md`](local-ai-triage.md). Launch sequencing:
+> [`launch-checklist.md`](launch-checklist.md). Keep this file as a draft-style
+> reference for tone/structure, not current facts.
+
 ---
 
 ## Show HN
