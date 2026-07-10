@@ -1,0 +1,32 @@
+title: OT control-system write outside the maintenance window
+id: 4d5e6f70-8192-49b0-8b2c-3d4e5f6a7b8e
+status: stable
+description: >
+  An OPC UA client wrote a value to a PLC/control-system node (OCSF API
+  Activity 6003, activity 3 Update) outside a configured maintenance window
+  (default 08:00-18:00 Mon-Fri UTC -- reuses the existing outside_hours
+  predicate, zero new grammar work). Engineering changes at 03:00 on a
+  Sunday are not routine; scored high but single-shot since legitimate
+  on-call maintenance also happens off-hours -- tune the window to the
+  plant's real schedule before trusting the signal.
+level: high
+logsource:
+  category: application_activity
+detection:
+  ot_write:
+    class_uid: 6003
+    activity_id: 3
+    time:
+      outside_hours:
+        start: "08:00"
+        end: "18:00"
+        days: [mon, tue, wed, thu, fri]
+        tz_offset_minutes: 0
+  condition: ot_write
+fields:
+  - actor.user.name
+  - unmapped.ot.node_id
+  - unmapped.ot.server_id
+siem:
+  sector: datacenter
+  score_weight: 65

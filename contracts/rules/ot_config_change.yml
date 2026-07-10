@@ -1,0 +1,25 @@
+title: OT configuration/firmware node changed
+id: 6f708192-a314-4cd2-ad4e-5f6a7b8c9d01
+status: stable
+description: >
+  A write landed on a PLC node whose id matches a configuration/firmware/
+  setpoint naming pattern (unmapped.ot.is_config_node, set by the
+  opcua_audit parser -- a documented naming heuristic, not a semantic
+  classifier). Single-shot: any config/firmware-shaped write is worth
+  logging distinctly from routine process-value writes, which this rule's
+  companion (ot_write_outside_maintenance) already covers time-of-day for.
+level: high
+logsource:
+  category: application_activity
+detection:
+  config_write:
+    class_uid: 6003
+    unmapped.ot.is_config_node: true
+  condition: config_write
+fields:
+  - actor.user.name
+  - unmapped.ot.node_id
+  - unmapped.ot.server_id
+siem:
+  sector: datacenter
+  score_weight: 60

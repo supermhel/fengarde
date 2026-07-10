@@ -1,0 +1,30 @@
+title: New engineering workstation connecting to a PLC
+id: 5e6f7081-9203-4bc1-9c3d-4e5f6a7b8c9f
+status: stable
+description: >
+  2+ DISTINCT source IPs opened an OPC UA session against the same PLC/server
+  within a 10-minute window (OCSF Authentication, class 3002, activity 1
+  Logon). A single PLC is normally engineered from one or two known
+  workstations; a new source appearing alongside the usual one is worth an
+  analyst's attention -- could be a new authorized engineer, or someone
+  reaching a control-system node from an unexpected host.
+level: medium
+logsource:
+  category: authentication
+detection:
+  ot_session:
+    class_uid: 3002
+    activity_id: 1
+    status: Success
+  condition: ot_session
+fields:
+  - src_endpoint.ip
+  - actor.user.name
+  - unmapped.ot.server_id
+siem:
+  sector: datacenter
+  score_weight: 45
+  window_seconds: 600
+  threshold: 2
+  group_by: unmapped.ot.server_id
+  distinct_field: src_endpoint.ip

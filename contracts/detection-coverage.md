@@ -8,10 +8,10 @@ detection rules. Update this file in the same PR as any parser or rule change.
 | class_uid | Class | Emitted by | Rules covering it |
 |---|---|---|---|
 | 1002 | Kernel/Process | generic_syslog, windows_eventlog (4688/4672) | common_after_hours_admin (4672 activity 2) |
-| 3002 | Authentication | linux_ssh, active_directory, windows_eventlog (4624/4634/4647) | common_bruteforce, common_lateral_movement, common_password_spray |
+| 3002 | Authentication | linux_ssh, active_directory, windows_eventlog (4624/4634/4647), opcua_audit (v0.4 P2, session events) | common_bruteforce, common_lateral_movement, common_password_spray, ot_new_engineering_connection |
 | 3003 | Account Change | windows_eventlog (4720/4722/4726/4728/4732, added v0.3) | common_priv_grant |
 | 4001 | Network Activity | cisco_asa | common_port_scan |
-| 6003 | API Activity | vmware_vsphere, mcp_agent (v0.4 P1) | dc_mass_vm_delete, agent_credential_file_access, agent_tool_call_burst, agent_prompt_injection_indicator |
+| 6003 | API Activity | vmware_vsphere, mcp_agent (v0.4 P1), opcua_audit (v0.4 P2, write/method events) | dc_mass_vm_delete, agent_credential_file_access, agent_tool_call_burst, agent_prompt_injection_indicator, ot_write_outside_maintenance, ot_config_change |
 | 6005 | Datastore Activity | db_audit (v0.3 — fixed the dormancy below) | bank_db_priv_esc |
 
 ## Gaps — classes with NO parser producer at all
@@ -43,6 +43,9 @@ detection rules. Update this file in the same PR as any parser or rule change.
 | agent_credential_file_access | class 6003, unmapped.mcp.credential_path_access=true | yes (mcp_agent, added v0.4) |
 | agent_tool_call_burst | class 6003, unmapped.mcp.session_id | yes (mcp_agent, added v0.4) |
 | agent_prompt_injection_indicator | class 6003, unmapped.mcp.injection_indicator=true | yes (mcp_agent, added v0.4) |
+| ot_write_outside_maintenance | class 6003, activity 3, time outside_hours | yes (opcua_audit, added v0.4) |
+| ot_new_engineering_connection | class 3002, activity 1, distinct src_endpoint.ip per unmapped.ot.server_id | yes (opcua_audit, added v0.4) |
+| ot_config_change | class 6003, unmapped.ot.is_config_node=true | yes (opcua_audit, added v0.4) |
 
 ## A6 guardrail (implemented)
 

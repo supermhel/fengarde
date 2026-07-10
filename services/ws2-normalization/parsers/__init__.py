@@ -19,12 +19,13 @@ from .generic_syslog import GenericSyslogParser
 from .windows_eventlog import WindowsEventLogParser
 from .db_audit import DbAuditParser
 from .mcp_agent import McpAgentParser
+from .opcua_audit import OpcUaAuditParser
 
 _REGISTRY: dict[str, Parser] = {
     p.SOURCE_TYPE: p
     for p in (CiscoAsaParser(), ActiveDirectoryParser(), VmwareVsphereParser(),
               LinuxSshParser(), GenericSyslogParser(), WindowsEventLogParser(),
-              DbAuditParser(), McpAgentParser())
+              DbAuditParser(), McpAgentParser(), OpcUaAuditParser())
 }
 
 
@@ -48,6 +49,8 @@ def resolve(raw_payload: dict) -> Optional[Parser]:
         return _REGISTRY["active_directory"]
     if '"tool"' in text and ('"arguments"' in text or '"args"' in text):
         return _REGISTRY["mcp_agent"]
+    if '"eventType"' in text and "Audit" in text:
+        return _REGISTRY["opcua_audit"]
     if '"operation"' in text:
         return _REGISTRY["vmware_vsphere"]
     return None
