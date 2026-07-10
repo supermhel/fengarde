@@ -29,6 +29,10 @@ $PY services/ws3-indexer/test_triage_api.py || fail=1
 echo
 echo "== ws3: optimistic concurrency (CAS) for multi-replica triage writes =="
 $PY services/ws3-indexer/test_storage_cas.py || fail=1
+echo
+echo "== v0.4 (S1): opt-in API-key auth (ws3 triage, ws6 inventory) =="
+$PY services/ws3-indexer/test_auth.py || fail=1
+$PY services/ws6-inventory/test_auth.py || fail=1
 
 # Extended zero-infra suite (runner, window counters, boolean evaluator, e2e).
 # Still no Docker/Redis/OpenSearch — all on the memory bus + in-memory store.

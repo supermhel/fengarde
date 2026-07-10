@@ -23,6 +23,7 @@ from urllib.parse import urlparse, parse_qs
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 from store import InventoryStore  # noqa: E402
+from authz import check_api_key, warn_if_disabled  # noqa: E402
 
 STORE = InventoryStore(os.getenv("INVENTORY_DB", ":memory:"))
 
@@ -63,11 +64,19 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, *_):  # quiet
         pass
 
+    def _check_auth(self) -> bool:
+        if check_api_key(self.headers):
+            return True
+        self._send(401, {"error": "unauthorized"})
+        return False
+
     def do_GET(self):
         # Any malformed input (bad ?at=, bad ?limit=) becomes a clean 4xx/5xx JSON
         # response instead of an unhandled exception that drops the connection and
         # leaks a stack trace to the client.
         try:
+            if not self._check_auth():
+                return
             self._route_get()
         except _BadRequest as e:
             self._send(400, {"error": str(e)})
@@ -98,6 +107,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         try:
+            if not self._check_auth():
+                return
             self._route_post()
         except _BadRequest as e:
             self._send(400, {"error": str(e)})
@@ -127,6 +138,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def serve(host="0.0.0.0", port=8000):
+    warn_if_disabled("ws6-inventory")
     srv = ThreadingHTTPServer((host, port), Handler)
     # ws6 is a standalone service; its image does NOT bundle `shared`, so emit a
     # structured JSON log line inline rather than importing shared.log.

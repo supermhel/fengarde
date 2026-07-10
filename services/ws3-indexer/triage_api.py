@@ -20,10 +20,18 @@ it landed in.
 from __future__ import annotations
 
 import json
+import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from urllib.parse import urlparse
+
+_HERE = Path(__file__).resolve().parent
+for _p in (str(_HERE), str(_HERE.parent)):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+from shared.authz import check_api_key, warn_if_disabled  # noqa: E402
 
 _MAX_BODY_BYTES = 4096  # a triage update is a status enum + a short note.
 _MAX_NOTE_CHARS = 2000
@@ -73,8 +81,16 @@ def make_handler(store):
                 return parts[1]
             return None
 
+        def _check_auth(self) -> bool:
+            if check_api_key(self.headers):
+                return True
+            self._send(401, {"error": "unauthorized"})
+            return False
+
         def do_GET(self):
             try:
+                if not self._check_auth():
+                    return
                 self._route_get()
             except _BadRequest as e:
                 self._send(400, {"error": str(e)})
@@ -96,6 +112,8 @@ def make_handler(store):
 
         def do_POST(self):
             try:
+                if not self._check_auth():
+                    return
                 self._route_post()
             except _BadRequest as e:
                 self._send(400, {"error": str(e)})
@@ -174,6 +192,7 @@ def make_handler(store):
 
 
 def serve(store, host="0.0.0.0", port=8013):
+    warn_if_disabled("ws3-indexer-triage")
     handler_cls = make_handler(store)
     srv = ThreadingHTTPServer((host, port), handler_cls)
     print(json.dumps({"ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),

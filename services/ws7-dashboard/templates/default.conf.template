@@ -2,11 +2,25 @@
 # Serves the static single-file dashboard AND reverse-proxies a same-origin path
 # to OpenSearch so the browser can fetch LIVE alerts without a cross-origin (CORS)
 # request. The nginx container is on the compose network, so `opensearch` resolves.
+#
+# This file is a TEMPLATE (nginx:alpine's official envsubst-on-templates
+# entrypoint hook renders /etc/nginx/templates/*.template -> conf.d/*.conf at
+# container start, substituting only vars actually present in the container's
+# environment -- nginx's own lowercase $host/$uri/$content_type are untouched).
+# v0.4 Track S1: ${ARGUS_API_KEY} lets nginx inject the shared secret on the
+# triage proxy so the browser never holds the key.
 server {
     listen 80;
     server_name _;
     root /usr/share/nginx/html;
     index index.html;
+
+    # v0.4 Track S2: opt-in basic-auth. Default "off" (main compose file) --
+    # the override compose (docker-compose.auth.yml) sets DASHBOARD_AUTH_REALM
+    # to a quoted realm string and mounts a real htpasswd over the placeholder
+    # baked into the image, so this stays a no-op until explicitly enabled.
+    auth_basic ${DASHBOARD_AUTH_REALM};
+    auth_basic_user_file /etc/nginx/dashboard.htpasswd;
 
     location / {
         try_files $uri $uri/ =404;
@@ -63,6 +77,11 @@ server {
         proxy_pass $ws3_triage;
         proxy_set_header Host $host;
         proxy_set_header Content-Type $content_type;
+        # v0.4 Track S1: forward the shared API key so the browser never holds
+        # it. Empty when ARGUS_API_KEY is unset (auth disabled, unchanged
+        # behavior) -- ws3-indexer's authz check treats an empty header the
+        # same as a missing one.
+        proxy_set_header X-Api-Key "${ARGUS_API_KEY}";
         proxy_connect_timeout 3s;
         proxy_read_timeout 5s;
     }

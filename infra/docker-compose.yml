@@ -5,11 +5,22 @@ services:
   redis:
     image: redis:7-alpine
     container_name: siem-bus
-    ports: ["6379:6379"]
-    command: ["redis-server", "--appendonly", "yes"]
+    ports: ["127.0.0.1:6379:6379"]
+    # v0.4 Track S3: REDIS_PASSWORD is opt-in. Unset (default) = no auth, same
+    # as before. Set it to require AUTH on the bus (:6379 is the spine --
+    # anyone reaching it can inject/consume every topic).
+    environment:
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+    command: >
+      sh -c '
+      if [ -n "$$REDIS_PASSWORD" ]; then
+        exec redis-server --appendonly yes --requirepass "$$REDIS_PASSWORD";
+      else
+        exec redis-server --appendonly yes;
+      fi'
     volumes: ["redis-data:/data"]
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" ping 2>/dev/null || redis-cli ping"]
       interval: 5s
       timeout: 3s
       retries: 5
@@ -24,7 +35,9 @@ services:
       - DISABLE_SECURITY_PLUGIN=true
     ulimits:
       memlock: { soft: -1, hard: -1 }
-    ports: ["9200:9200"]
+    # v0.4 Track S4: security plugin stays OFF (TLS/cert overhead disproportionate
+    # to this stack's scope); the mitigation is not publishing beyond localhost.
+    ports: ["127.0.0.1:9200:9200"]
     volumes: ["os-data:/usr/share/opensearch/data"]
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health || exit 1"]
@@ -38,7 +51,7 @@ services:
     environment:
       - 'OPENSEARCH_HOSTS=["http://opensearch:9200"]'
       - DISABLE_SECURITY_DASHBOARDS_PLUGIN=true
-    ports: ["5601:5601"]
+    ports: ["127.0.0.1:5601:5601"]
     depends_on:
       opensearch: { condition: service_healthy }
 
@@ -61,7 +74,7 @@ services:
     ports: ["5514:5514/udp"]
     environment:
       - BUS_BACKEND=redis
-      - REDIS_URL=redis://redis:6379/0
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0
       # B2 ingest-edge shedding (default 2000/s; explicit here for visibility).
       - SYSLOG_MAX_EVENTS_PER_SEC=2000
       # Zero-loss spool is opt-in; set SYSLOG_SPOOL_PATH (on a permissioned
@@ -71,7 +84,7 @@ services:
   ws2-normalization:
     build: { context: .., dockerfile: services/ws2-normalization/Dockerfile }
     restart: unless-stopped
-    environment: [BUS_BACKEND=redis, REDIS_URL=redis://redis:6379/0]
+    environment: [BUS_BACKEND=redis, REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0]
     depends_on: { redis: { condition: service_healthy } }
 
   ws3-indexer:
@@ -79,12 +92,14 @@ services:
     restart: unless-stopped
     environment:
       - BUS_BACKEND=redis
-      - REDIS_URL=redis://redis:6379/0
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0
       - STORAGE_BACKEND=opensearch
       - OPENSEARCH_URL=http://opensearch:9200
       # Triage API listener. Internal only -- the dashboard nginx proxies to
       # ws3-indexer:8013 container-to-container; NOT published to the host.
       - TRIAGE_PORT=8013
+      # v0.4 Track S1: opt-in shared-secret auth (unset = open + warning log).
+      - ARGUS_API_KEY=${ARGUS_API_KEY:-}
     depends_on:
       redis: { condition: service_healthy }
       opensearch: { condition: service_healthy }
@@ -92,13 +107,13 @@ services:
   ws4-detection:
     build: { context: .., dockerfile: services/ws4-detection/Dockerfile }
     restart: unless-stopped
-    environment: [BUS_BACKEND=redis, REDIS_URL=redis://redis:6379/0]
+    environment: [BUS_BACKEND=redis, REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0]
     depends_on: { redis: { condition: service_healthy } }
 
   ws5-ai:
     build: { context: .., dockerfile: services/ws5-ai/Dockerfile }
     restart: unless-stopped
-    environment: [BUS_BACKEND=redis, REDIS_URL=redis://redis:6379/0]
+    environment: [BUS_BACKEND=redis, REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0]
     depends_on: { redis: { condition: service_healthy } }
     # set OLLAMA_URL to enable the local LLM; otherwise StubLLM
 
@@ -107,12 +122,27 @@ services:
     restart: unless-stopped
     ports: ["8000:8000"]
     volumes: ["inventory-data:/data"]
+    environment:
+      # v0.4 Track S1: opt-in shared-secret auth (unset = open + warning log).
+      - ARGUS_API_KEY=${ARGUS_API_KEY:-}
 
   ws7-dashboard:
     build: { context: .., dockerfile: services/ws7-dashboard/Dockerfile }
     restart: unless-stopped
     ports: ["8080:80"]
     depends_on: [ws6-inventory]
+    environment:
+      # v0.4 Track S1: forwarded to ws3-indexer on the triage proxy so the
+      # browser never holds the key. Must match ws3-indexer's ARGUS_API_KEY.
+      - ARGUS_API_KEY=${ARGUS_API_KEY:-}
+      # v0.4 Track S2: "off" = no dashboard auth (default). See
+      # infra/docker-compose.auth.yml for the opt-in override.
+      - DASHBOARD_AUTH_REALM=off
+    # v0.4 Track S2: dashboard basic-auth is opt-in via a compose OVERRIDE file
+    # (infra/docker-compose.auth.yml), not baked in here -- a conditional bind
+    # mount of a possibly-missing host file would break the zero-friction
+    # `docker compose up` quickstart for everyone who hasn't set it up. See
+    # SECURITY.md and infra/docker-compose.auth.yml for the opt-in path.
 
   # DX2-live: one-shot feeder. Injects an SSH brute-force burst into raw.events
   # so a fresh `docker compose up` yields a REAL alert in the dashboard with no
@@ -121,7 +151,7 @@ services:
     build: { context: .., dockerfile: services/devkit-feeder/Dockerfile }
     restart: "no"
     environment:
-      - REDIS_URL=redis://redis:6379/0
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0
     depends_on:
       redis: { condition: service_healthy }
 

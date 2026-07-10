@@ -1,0 +1,18 @@
+# v0.4 Track S2 — opt-in dashboard basic-auth.
+#
+# The main docker-compose.yml stays foolproof for `docker compose up` (D1
+# quickstart) with zero prerequisites. This override adds nginx basic-auth
+# to the dashboard for anyone exposing it beyond localhost.
+#
+# Setup:
+#   1. htpasswd -c infra/dashboard.htpasswd <username>   (bcrypt: htpasswd -B)
+#   2. docker compose -f infra/docker-compose.yml -f infra/docker-compose.auth.yml up -d
+#
+# infra/dashboard.htpasswd is gitignored -- never commit real credentials.
+
+services:
+  ws7-dashboard:
+    volumes:
+      - ./dashboard.htpasswd:/etc/nginx/dashboard.htpasswd:ro
+    environment:
+      - DASHBOARD_AUTH_REALM='"ARGUS Dashboard"'

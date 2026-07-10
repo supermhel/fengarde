@@ -3,9 +3,16 @@ FROM nginx:alpine
 COPY services/ws7-dashboard /usr/share/nginx/html
 # Reverse-proxy config: serves the static files AND proxies /api/alerts to
 # OpenSearch (same-origin -> no CORS). Lives outside the html root so it is not
-# also served as a static file.
-RUN rm -f /usr/share/nginx/html/nginx.conf /usr/share/nginx/html/Dockerfile
-COPY services/ws7-dashboard/nginx.conf /etc/nginx/conf.d/default.conf
+# also served as a static file. Shipped as a TEMPLATE under
+# /etc/nginx/templates/ -- nginx:alpine's official entrypoint hook renders it
+# to conf.d/default.conf at container start via envsubst, substituting only
+# vars present in the environment (v0.4 Track S1: ${ARGUS_API_KEY}).
+RUN rm -f /usr/share/nginx/html/nginx.conf /usr/share/nginx/html/Dockerfile \
+    /usr/share/nginx/html/templates/default.conf.template
+COPY services/ws7-dashboard/templates/default.conf.template /etc/nginx/templates/default.conf.template
+# Placeholder htpasswd so auth_basic_user_file always resolves to a real file
+# even when auth is off (S2 override mounts a real one over this path).
+RUN touch /etc/nginx/dashboard.htpasswd
 EXPOSE 80
 # DX4: alerts come LIVE from /api/alerts (proxied to OpenSearch). Inventory is
 # fetched from WS-6 via window.INVENTORY_API. Both fall back to mocks/mock_data.js.

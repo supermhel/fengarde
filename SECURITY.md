@@ -40,18 +40,42 @@ network on a trusted machine. They are **not** designed to be reachable from the
 public internet or an untrusted network.
 
 - Do **not** expose the published ports (`6379`, `9200`, `5601`, `8000`, `8080`)
-  to untrusted networks.
+  to untrusted networks. As of v0.4, `6379`/`9200`/`5601` are bound to
+  `127.0.0.1` in `infra/docker-compose.yml` by default — rebinding them to
+  `0.0.0.0` is a deliberate choice you're making, not an accident.
 - The bundled OpenSearch runs with its security plugin **disabled** for
   zero-friction local development (`DISABLE_SECURITY_PLUGIN=true` in
   `infra/docker-compose.yml`). It must not be exposed beyond the local host.
 
-### 2. No authentication in v0.1 — by design
+### 2. Authentication is opt-in (v0.4), not a full identity system
 
-There is **no authentication or authorization** on any ARGUS service in v0.1.
-Anyone who can reach a service's port can call its API. This is an accepted,
-documented limitation for the local demo stack. Authentication is **out of scope
-for v0.1** and is planned for a later release. Until then, the mitigation is the
-network boundary above: keep the stack on a trusted, non-exposed host.
+v0.1/v0.2/v0.3 shipped with **no authentication at all** — anyone who could
+reach a port could call its API. v0.4 adds a minimal, honest, **opt-in**
+layer, not full authN/authZ (no users, roles, or TLS):
+
+- **`ARGUS_API_KEY`** — a shared secret checked via `X-Api-Key` on the WS-3
+  triage API and the WS-6 inventory API (`services/shared/authz.py`,
+  `services/ws6-inventory/authz.py`). **Unset (default) = every request
+  allowed**, with one warning logged at service start
+  (`"auth disabled: ARGUS_API_KEY not set"`). Set it and every write/read on
+  those two APIs requires the matching header; the dashboard's nginx proxy
+  injects it server-side so the browser never holds the key.
+- **Dashboard basic-auth** — opt-in via the `infra/docker-compose.auth.yml`
+  override (nginx `auth_basic` + htpasswd). The main compose file ships this
+  **off by default** so `docker compose up` stays zero-prerequisite.
+- **Redis `AUTH`** — opt-in via `REDIS_PASSWORD`; unset = no password,
+  matching prior behavior.
+- **OpenSearch's security plugin stays disabled** (see §1) — TLS/cert
+  management for it is out of scope for v0.4; the mitigation remains the
+  network boundary (`127.0.0.1`-bound ports, never publish beyond
+  localhost).
+
+**What this does NOT give you:** per-user identity, roles/permissions, TLS
+anywhere, or protection for OpenSearch/Dashboards/the syslog listener. A
+shared static key is a deterrent against opportunistic/accidental exposure,
+not an access-control system. If you need real multi-user auth, put ARGUS
+behind a reverse proxy/VPN you control — don't rely on `ARGUS_API_KEY` alone
+for anything beyond a trusted LAN.
 
 ### 3. Rule files are executed by the detection engine — only run trusted rules
 

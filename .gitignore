@@ -24,6 +24,7 @@ inventory-data/
 *.pem
 *.key
 id_rsa*
+infra/dashboard.htpasswd
 
 # Editors / OS
 .idea/
