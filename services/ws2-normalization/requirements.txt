@@ -1,3 +1,5 @@
-# WS-2 Normalization. Core skeleton is stdlib-only (regex parsers + shared validator).
+# WS-2 Normalization. Parsers are stdlib-only (regex + shared validator), but the
+# A5 enrichment stage loads YAML data files at import time.
 # Production extras:
+#   PyYAML       # A5 enrichment (contracts/enrichment/*.yml) -- required, not optional
 #   redis>=5.0   # bus backend (BUS_BACKEND=redis)

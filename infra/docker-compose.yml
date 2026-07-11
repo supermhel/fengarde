@@ -84,7 +84,7 @@ services:
   ws2-normalization:
     build: { context: .., dockerfile: services/ws2-normalization/Dockerfile }
     restart: unless-stopped
-    environment: [BUS_BACKEND=redis, REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0]
+    environment: ["BUS_BACKEND=redis", "REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0"]
     depends_on: { redis: { condition: service_healthy } }
 
   ws3-indexer:
@@ -107,13 +107,13 @@ services:
   ws4-detection:
     build: { context: .., dockerfile: services/ws4-detection/Dockerfile }
     restart: unless-stopped
-    environment: [BUS_BACKEND=redis, REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0]
+    environment: ["BUS_BACKEND=redis", "REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0"]
     depends_on: { redis: { condition: service_healthy } }
 
   ws5-ai:
     build: { context: .., dockerfile: services/ws5-ai/Dockerfile }
     restart: unless-stopped
-    environment: [BUS_BACKEND=redis, REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0]
+    environment: ["BUS_BACKEND=redis", "REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0"]
     depends_on: { redis: { condition: service_healthy } }
     # set OLLAMA_URL to enable the local LLM; otherwise StubLLM
 
