@@ -163,7 +163,7 @@ counts if the repo moves before you post.
 >
 > Engineering practices I'm most attached to: a CI check that proves every
 > detection rule is satisfiable by real parser output (we shipped "dormant"
-> rules twice before building it); a zero-infra test gate (the whole
+> rules three times before building it); a zero-infra test gate (the whole
 > pipeline runs on an in-memory bus, `make e2e` proves brute-force → alert
 > → idempotent replay with no Docker); and an honest status table in the
 > README because a security tool that overclaims is worse than no tool.
@@ -267,9 +267,12 @@ counts if the repo moves before you post.
 **"No auth?! In a SIEM?"**
 > Default: localhost/compose-network only, documented since v0.1. v0.4 added
 > opt-in shared-key auth on the write APIs, opt-in dashboard basic-auth, and
-> opt-in Redis AUTH; ports bind to 127.0.0.1 by default. Per-user identity,
-> roles, and TLS are documented as out of scope, not hidden. SECURITY.md is
-> the honest version of this answer.
+> opt-in Redis AUTH. The bus and store ports (Redis 6379, OpenSearch 9200,
+> Dashboards 5601) bind to 127.0.0.1; the service ports (dashboard 8080,
+> inventory API 8000, syslog 5514) publish on all interfaces by default, so
+> put them behind your own network boundary until per-host binding lands.
+> Per-user identity, roles, and TLS are documented as out of scope, not
+> hidden. SECURITY.md is the honest version of this answer.
 
 **"MCP log format isn't standardized, so what does the parser parse?"**
 > Correct — there's no standard yet. The parser defines and documents the
