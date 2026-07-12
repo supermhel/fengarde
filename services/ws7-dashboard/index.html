@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="fr">
+<html lang="en">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -43,8 +43,8 @@
   <h1>🛡️ SIEM Console</h1>
   <span class="muted" id="apiStatus">mock data</span>
   <nav>
-    <button data-view="global" class="active">Vue globale</button>
-    <button data-view="inventory">Inventaire</button>
+    <button data-view="global" class="active">Overview</button>
+    <button data-view="inventory">Inventory</button>
     <button data-view="sources">Sources</button>
   </nav>
 </header>
@@ -52,32 +52,32 @@
   <!-- LEVEL 1 -->
   <section id="global" class="view active">
     <div class="cards" id="globalCards"></div>
-    <h3>Alertes critiques en cours</h3>
-    <table><thead><tr><th>Heure</th><th>Règle</th><th>Secteur</th><th>Niveau</th><th>Score</th><th>Source</th><th>Triage</th><th>Note</th><th>Rapport</th></tr></thead>
+    <h3>Active critical alerts</h3>
+    <table><thead><tr><th>Time</th><th>Rule</th><th>Sector</th><th>Level</th><th>Score</th><th>Source</th><th>Triage</th><th>Note</th><th>Report</th></tr></thead>
       <tbody id="alertRows"></tbody></table>
   </section>
 
   <!-- v0.4 Track R: incident-report draft panel, hidden until a report is requested -->
   <div id="reportPanel" class="detail" hidden>
-    <button id="reportClose" style="float:right">Fermer</button>
-    <h3>Rapport d'incident (brouillon)</h3>
+    <button id="reportClose" style="float:right">Close</button>
+    <h3>Incident report (draft)</h3>
     <pre id="reportBody" style="white-space:pre-wrap;font-family:inherit"></pre>
   </div>
 
   <!-- LEVEL 2 -->
   <section id="inventory" class="view">
     <div class="toolbar">
-      <input id="q" placeholder="Filtrer par IP ou MAC…" />
-      <select id="sector"><option value="">Tous secteurs</option><option>bank</option><option>datacenter</option><option>common</option></select>
+      <input id="q" placeholder="Filter by IP or MAC…" />
+      <select id="sector"><option value="">All sectors</option><option>bank</option><option>datacenter</option><option>common</option></select>
     </div>
-    <table><thead><tr><th>MAC</th><th>Hostname</th><th>IP actuelle</th><th>Secteur</th><th>Type</th><th>Statut</th></tr></thead>
+    <table><thead><tr><th>MAC</th><th>Hostname</th><th>Current IP</th><th>Sector</th><th>Type</th><th>Status</th></tr></thead>
       <tbody id="assetRows"></tbody></table>
     <div id="assetDetail"></div>
   </section>
 
   <!-- LEVEL 3 -->
   <section id="sources" class="view">
-    <h3>Événements par protocole / source</h3>
+    <h3>Events by protocol / source</h3>
     <div id="srcBars"></div>
   </section>
 </main>
@@ -188,8 +188,8 @@ async function renderGlobal(){
   const active = assets.filter(a=>a.status==="active").length;
   const crit = alerts.filter(a=>a.level==="critical").length;
   document.getElementById("globalCards").innerHTML = [
-    ["Appareils actifs", active],["Appareils inactifs", assets.length-active],
-    ["Alertes critiques", crit],["Alertes totales", alerts.length]
+    ["Active devices", active],["Inactive devices", assets.length-active],
+    ["Critical alerts", crit],["Total alerts", alerts.length]
   ].map(([l,n])=>`<div class="card"><div class="n">${n}</div><div class="l">${l}</div></div>`).join("");
 
   const sorted = alerts.sort((a,b)=>b.score-a.score);
@@ -209,7 +209,7 @@ async function renderGlobal(){
     <td><select class="triage-status" data-alert-id="${aid}">${triageStatusOptions(t.status)}</select></td>
     <td><input class="triage-note" data-alert-id="${aid}" type="text" placeholder="analyst note"
         value="${esc(t.note||"")}" /></td>
-    <td><button class="report-btn" data-alert-id="${aid}">Rapport</button></td></tr>`;
+    <td><button class="report-btn" data-alert-id="${aid}">Report</button></td></tr>`;
   }).join("");
 
   // wire triage controls: status change + note blur both POST the update.
@@ -228,7 +228,7 @@ async function renderGlobal(){
     };
   });
 
-  // v0.4 Track R: "Rapport" button -> POST to generate (or re-generate) a
+  // v0.4 Track R: "Report" button -> POST to generate (or re-generate) a
   // draft incident report, then render it. Same fail-open discipline as
   // triage: a proxy/backend failure shows an inline error, never a crash.
   document.querySelectorAll("#alertRows .report-btn").forEach(btn => {
@@ -236,19 +236,19 @@ async function renderGlobal(){
       const alertId = btn.dataset.alertId;
       const panel = document.getElementById("reportPanel");
       const body = document.getElementById("reportBody");
-      body.textContent = "Génération du rapport…";
+      body.textContent = "Generating report…";
       panel.hidden = false;
       try{
         const r = await fetch(`${TRIAGE_API}/alerts/${encodeURIComponent(alertId)}/report`,
           {method:"POST"});
         if(r.ok){
           const report = await r.json();
-          body.textContent = report.body || "(rapport vide)";
+          body.textContent = report.body || "(empty report)";
         }else{
-          body.textContent = `Erreur: rapport indisponible (HTTP ${r.status}).`;
+          body.textContent = `Error: report unavailable (HTTP ${r.status}).`;
         }
       }catch(e){
-        body.textContent = "Erreur: service de rapport injoignable.";
+        body.textContent = "Error: report service unreachable.";
       }
     };
   });
@@ -272,16 +272,16 @@ function drawAssets(list){
   document.querySelectorAll("#assetRows tr").forEach(tr=>tr.onclick=()=>showAsset(list[+tr.dataset.i]));
 }
 function showAsset(a){
-  const hist = (a.ip_history||[]).map(h=>`<tr><td>${esc(h.ip)}</td><td class="muted">${esc(h.from)}</td><td class="muted">${esc(h.to||"actuel")}</td></tr>`).join("")||"<tr><td colspan=3 class=muted>—</td></tr>";
+  const hist = (a.ip_history||[]).map(h=>`<tr><td>${esc(h.ip)}</td><td class="muted">${esc(h.from)}</td><td class="muted">${esc(h.to||"current")}</td></tr>`).join("")||"<tr><td colspan=3 class=muted>—</td></tr>";
   document.getElementById("assetDetail").innerHTML = `<div class="detail">
     <h3>${esc(a.hostname||a.mac)} <span class="muted">(${esc(a.mac)})</span></h3>
-    <div class="kv"><div class="k">IP actuelle</div><div>${esc(a.ip_current||"—")}</div>
-    <div class="k">Secteur</div><div>${esc(a.sector||"—")}</div>
+    <div class="kv"><div class="k">Current IP</div><div>${esc(a.ip_current||"—")}</div>
+    <div class="k">Sector</div><div>${esc(a.sector||"—")}</div>
     <div class="k">Type</div><div>${esc(a.type||"—")}</div>
-    <div class="k">Protocoles</div><div>${esc((a.protocols_seen||[]).join(", ")||"—")}</div>
-    <div class="k">Vu pour la dernière fois</div><div>${esc(a.last_seen||"—")}</div></div>
-    <h3 style="margin-top:16px">Historique IP</h3>
-    <table><thead><tr><th>IP</th><th>Depuis</th><th>Jusqu'à</th></tr></thead><tbody>${hist}</tbody></table></div>`;
+    <div class="k">Protocols</div><div>${esc((a.protocols_seen||[]).join(", ")||"—")}</div>
+    <div class="k">Last seen</div><div>${esc(a.last_seen||"—")}</div></div>
+    <h3 style="margin-top:16px">IP history</h3>
+    <table><thead><tr><th>IP</th><th>From</th><th>To</th></tr></thead><tbody>${hist}</tbody></table></div>`;
 }
 function applyFilter(){
   const q=document.getElementById("q").value.trim().toLowerCase();
