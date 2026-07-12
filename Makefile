@@ -1,4 +1,4 @@
-# ARGUS — developer entry points.
+# ARGIEM — developer entry points.
 # Quick start:  make preflight && make demo
 # Contributor loop (no Docker):  make test
 
@@ -9,7 +9,7 @@ COMPOSE := docker compose -f infra/docker-compose.yml
 PYTHON ?= python3
 
 help:
-	@echo "ARGUS targets:"
+	@echo "ARGIEM targets:"
 	@echo "  make preflight  - check this machine is ready (vm.max_map_count, Docker RAM, free ports)"
 	@echo "  make demo       - preflight + bring up the full stack (see banner for current limits)"
 	@echo "  make test       - run the full zero-infra contract test suite (no Docker needed)"

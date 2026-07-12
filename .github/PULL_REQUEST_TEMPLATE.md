@@ -1,5 +1,5 @@
 <!--
-Thanks for contributing to ARGUS! Please fill this out so reviewers can move fast.
+Thanks for contributing to ARGIEM! Please fill this out so reviewers can move fast.
 See CONTRIBUTING.md. For a new parser, see docs/adding-a-parser.md.
 -->
 

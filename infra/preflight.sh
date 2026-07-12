@@ -1,13 +1,13 @@
 #!/bin/sh
-# ARGUS pre-flight "doctor".
+# ARGIEM pre-flight "doctor".
 #
-# Checks this machine is ready to run the ARGUS stack BEFORE Docker starts, so a
+# Checks this machine is ready to run the ARGIEM stack BEFORE Docker starts, so a
 # first run fails with a plain-English remedy instead of a JVM stack trace.
 #
 # Checks:
 #   1. vm.max_map_count >= 262144  (OpenSearch won't boot otherwise on Linux/WSL2)
 #   2. Docker is installed and the daemon is reachable (+ a >= 4 GB RAM hint)
-#   3. The ports ARGUS publishes are free (6379, 9200, 5601, 8000, 8080)
+#   3. The ports ARGIEM publishes are free (6379, 9200, 5601, 8000, 8080)
 #
 # Exits non-zero if a BLOCKER is found. POSIX sh; works on Linux, macOS, WSL2.
 set -u
@@ -26,7 +26,7 @@ fail()  { printf '  [ FAIL ] %s\n' "$1"; problems=$((problems + 1)); }
 # Detect OS so we can tailor remedies / skip Linux-only checks.
 OS="$(uname -s 2>/dev/null || echo unknown)"
 
-echo "ARGUS pre-flight check"
+echo "ARGIEM pre-flight check"
 echo "----------------------"
 
 # --- 1. vm.max_map_count -------------------------------------------------------
@@ -49,7 +49,7 @@ case "$OS" in
       note "         Fix (this boot):"
       note "           sudo sysctl -w vm.max_map_count=$REQUIRED_MAP_COUNT"
       note "         Fix (persist across reboots):"
-      note "           echo 'vm.max_map_count=$REQUIRED_MAP_COUNT' | sudo tee /etc/sysctl.d/99-argus.conf"
+      note "           echo 'vm.max_map_count=$REQUIRED_MAP_COUNT' | sudo tee /etc/sysctl.d/99-argiem.conf"
     fi
     ;;
   Darwin)
@@ -82,7 +82,7 @@ else
     if [ "$mem_gib" -ge 4 ] 2>/dev/null; then
       ok "Docker has ~${mem_gib} GiB RAM (>= 4 GB recommended)."
     else
-      warn "Docker has only ~${mem_gib} GiB RAM; ARGUS needs >= 4 GB."
+      warn "Docker has only ~${mem_gib} GiB RAM; ARGIEM needs >= 4 GB."
       note "         Raise it in Docker Desktop -> Settings -> Resources -> Memory."
     fi
   else
@@ -118,7 +118,7 @@ for p in $PORTS; do
   port_in_use "$p"
   rc=$?
   if [ "$rc" -eq 0 ]; then
-    fail "Port $p is already in use — ARGUS needs it free."
+    fail "Port $p is already in use — ARGIEM needs it free."
     note "         Find the process:  lsof -iTCP:$p -sTCP:LISTEN   (or: ss -ltnp | grep $p)"
     note "         Then stop it, or change the host port mapping in infra/docker-compose.yml."
   elif [ "$rc" -eq 2 ]; then

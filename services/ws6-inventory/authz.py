@@ -11,7 +11,7 @@ import hmac
 import os
 
 
-def check_api_key(headers, env_var: str = "ARGUS_API_KEY") -> bool:
+def check_api_key(headers, env_var: str = "ARGIEM_API_KEY") -> bool:
     expected = os.getenv(env_var)
     if not expected:
         return True
@@ -19,7 +19,7 @@ def check_api_key(headers, env_var: str = "ARGUS_API_KEY") -> bool:
     return hmac.compare_digest(got, expected)
 
 
-def warn_if_disabled(service: str, env_var: str = "ARGUS_API_KEY") -> None:
+def warn_if_disabled(service: str, env_var: str = "ARGIEM_API_KEY") -> None:
     if not os.getenv(env_var):
         print(f'{{"level": "warning", "service": "{service}", '
               f'"msg": "auth disabled: {env_var} not set"}}', flush=True)

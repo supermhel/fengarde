@@ -1,4 +1,4 @@
-# ARGUS terminal demo (Windows / PowerShell) — deterministic, zero-infra.
+# ARGIEM terminal demo (Windows / PowerShell) — deterministic, zero-infra.
 #
 # Same story as tools/demo.sh: a burst of failed SSH logins from one IP becomes a
 # REAL brute-force alert, end to end, with NO Docker, no Redis, no OpenSearch.
@@ -29,7 +29,7 @@ $rule = '------------------------------------------------------------------'
 # --- banner ------------------------------------------------------------------
 Write-Host $rule
 Write-Host @'
-  ARGUS — an open-source SIEM pipeline.
+  ARGIEM — an open-source SIEM pipeline.
 
   Raw security logs in  ->  one schema (OCSF)  ->  correlation rules  ->  real alerts.
   Every service is decoupled and talks only over a message bus.

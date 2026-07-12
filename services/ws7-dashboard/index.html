@@ -185,6 +185,8 @@ function triageStatusOptions(selected){
 // by reading the code, not by a report. renderGlobal is now itself async.
 async function renderGlobal(){
   const assets = window.SIEM_MOCK.assets, alerts = await getAlerts();
+  const statusEl = document.getElementById("apiStatus");
+  if(statusEl) statusEl.textContent = LIVE ? "live data" : "mock data";
   const active = assets.filter(a=>a.status==="active").length;
   const crit = alerts.filter(a=>a.level==="critical").length;
   document.getElementById("globalCards").innerHTML = [

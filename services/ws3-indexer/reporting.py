@@ -2,7 +2,7 @@
 
 Implements the open side of contracts/reporting.md: an alert becomes a
 structured incident-report draft via the builtin template backend (zero
-paid dependency), or via an external `argus-sec`-style HTTP backend when
+paid dependency), or via an external `argiem-sec`-style HTTP backend when
 configured -- with the builtin template as the automatic fallback.
 
 Endpoints (wired into triage_api.py's dispatcher):
@@ -44,7 +44,7 @@ def _default_triage() -> dict:
 def _render_template(alert: dict, triage: dict) -> str:
     """Builtin, open, generic incident-report markdown. Zero regulatory
     claims -- no NIS2/DORA article references here; that content is the paid
-    argus-sec backend's asset (contracts/reporting.md)."""
+    argiem-sec backend's asset (contracts/reporting.md)."""
     rule_title = alert.get("rule_title", "(unknown rule)")
     level = alert.get("level", "unknown")
     score = alert.get("score", "unknown")
@@ -114,7 +114,7 @@ def _validate_backend_response(resp: dict) -> bool:
 
 
 def _call_http_backend(alert: dict, triage: dict, events: list, requested_at: float) -> dict | None:
-    url = os.getenv("ARGUS_SEC_REPORT_URL")
+    url = os.getenv("ARGIEM_SEC_REPORT_URL")
     if not url:
         return None
     payload = json.dumps({
@@ -131,14 +131,14 @@ def _call_http_backend(alert: dict, triage: dict, events: list, requested_at: fl
         return None
     if not _validate_backend_response(body):
         return None
-    body.setdefault("backend", "argus-sec")
+    body.setdefault("backend", "argiem-sec")
     body.setdefault("backend_degraded", False)
     return body
 
 
 def generate_report(alert: dict, triage: dict) -> dict:
     """Produce a report per contracts/reporting.md. Tries the configured
-    backend seam (REPORT_BACKEND=http -> ARGUS_SEC_REPORT_URL), falls back to
+    backend seam (REPORT_BACKEND=http -> ARGIEM_SEC_REPORT_URL), falls back to
     the builtin template on any failure/invalid response -- a report is
     always produced (fail-open)."""
     requested_at = time.time()

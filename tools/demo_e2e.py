@@ -1,4 +1,4 @@
-"""Zero-infra END-TO-END ACCEPTANCE TEST for ARGUS v0.1.
+"""Zero-infra END-TO-END ACCEPTANCE TEST for ARGIEM v0.1.
 
 This is the v0.1 "proven good" gate, runnable with no Docker, no Redis, no
 OpenSearch — everything rides the in-memory bus + in-memory store.
@@ -151,7 +151,7 @@ def main() -> None:
     if fails:
         print("\n[FAIL] demo e2e:", *fails, sep="\n  - ")
         sys.exit(1)
-    print("\n[OK] ARGUS v0.1 acceptance: SSH brute-force -> real alert in the index, "
+    print("\n[OK] ARGIEM v0.1 acceptance: SSH brute-force -> real alert in the index, "
           "idempotent under replay. Zero infra.")
 
 

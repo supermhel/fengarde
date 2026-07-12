@@ -1,6 +1,6 @@
 """B2 fallback: a bounded on-disk spool for true zero-loss-under-flood.
 
-The default B2 answer (docs/superpowers/specs/2026-07-02-argus-v0.3-improvement-
+The default B2 answer (docs/superpowers/specs/2026-07-02-argiem-v0.3-improvement-
 plan.md, and CHANGELOG's "v0.3 B2") is shed-at-the-edge: a token bucket drops
 excess datagrams before they ever reach the bus, protecting Redis from an
 unbounded flood at the cost of losing the shed events. That's the right

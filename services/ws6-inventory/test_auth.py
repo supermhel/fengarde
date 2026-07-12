@@ -1,6 +1,6 @@
 """WS-6 inventory API auth tests (v0.4 Track S1).
 
-Auth is opt-in via ARGUS_API_KEY. Zero-infra default (unset) must stay open
+Auth is opt-in via ARGIEM_API_KEY. Zero-infra default (unset) must stay open
 so existing contract tests/quickstart are unaffected; set it here to prove
 the enforced path too.
 """
@@ -45,7 +45,7 @@ def _get(port, path, api_key=None):
 
 
 def test_auth_disabled_by_default():
-    os.environ.pop("ARGUS_API_KEY", None)
+    os.environ.pop("ARGIEM_API_KEY", None)
     srv, port = _serve()
     try:
         code, _ = _get(port, "/assets")
@@ -55,7 +55,7 @@ def test_auth_disabled_by_default():
 
 
 def test_auth_enforced_when_key_set():
-    os.environ["ARGUS_API_KEY"] = "s3cr3t"
+    os.environ["ARGIEM_API_KEY"] = "s3cr3t"
     try:
         srv, port = _serve()
         try:
@@ -68,7 +68,7 @@ def test_auth_enforced_when_key_set():
         finally:
             srv.shutdown(); srv.server_close()
     finally:
-        os.environ.pop("ARGUS_API_KEY", None)
+        os.environ.pop("ARGIEM_API_KEY", None)
 
 
 def main():

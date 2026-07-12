@@ -1,13 +1,13 @@
-# ARGUS — Architecture & Design Review (v0.2, as-built)
+# ARGIEM — Architecture & Design Review (v0.2, as-built)
 
 **Date:** 2026-07-02
-**Scope:** cross-cutting structural review of the shipped code (github.com/supermhel/argus @ v0.2.0)
-plus the private ARGUS-Sec seam. This is the "design & architecture" lens of the multi-agent
+**Scope:** cross-cutting structural review of the shipped code (github.com/supermhel/argiem @ v0.2.0)
+plus the private ARGIEM-Sec seam. This is the "design & architecture" lens of the multi-agent
 sweep — the one that produces a document, not a diff. Grounded in the actual code, not the
 roadmap's intentions.
 
-Companion docs: `2026-06-27-argus-production-roadmap-design.md` (the 3-tier target + §9 open-core),
-`2026-06-27-argus-v0.1-build-plan.md` (what shipped).
+Companion docs: `2026-06-27-argiem-production-roadmap-design.md` (the 3-tier target + §9 open-core),
+`2026-06-27-argiem-v0.1-build-plan.md` (what shipped).
 
 ---
 
@@ -51,7 +51,7 @@ correctness is a solved problem here, not a TODO.
 
 ### 2.5 The AI backend is a clean seam
 `ws5-ai/llm_adapter.py::make_llm()` selects `StubLLM` / `OllamaLLM` by env. This is the exact
-insertion point for the proprietary ARGUS-Sec model (open-core §9.7) — a third branch, no
+insertion point for the proprietary ARGIEM-Sec model (open-core §9.7) — a third branch, no
 architecture change. The behavior/output contract (`_normalize_verdict` → 3-field enum) means a
 swapped model can't inject bad data downstream. Good boundary.
 
@@ -127,7 +127,7 @@ when tiers actually diverge.
 - **10x events/sec:** WS-3 OpenSearch indexing and WS-5 LLM (R-D) are the first ceilings. WS-4
   detection scales (global windows), but Redis ZSET ops per event become the Redis hotspot.
 - **10x rules:** the detection engine evaluates every rule against every event (linear). At
-  thousands of rules (the SigmaHQ scale ARGUS-Sec trains on) this is O(rules×events) — needs a
+  thousands of rules (the SigmaHQ scale ARGIEM-Sec trains on) this is O(rules×events) — needs a
   pre-filter/index by class_uid so an event only hits candidate rules. Not a problem at 5 rules;
   a real one at 500. **This is the most likely v0.3+ architectural refactor.**
 - **10x sites (edge):** the store-and-forward + mTLS transport is designed (roadmap) but not built.
@@ -162,11 +162,11 @@ when tiers actually diverge.
 
 ---
 
-## 6. Open-core architectural note (ARGUS-Sec seam)
+## 6. Open-core architectural note (ARGIEM-Sec seam)
 
-The `make_llm()` seam is the right and only integration point, and keeping ARGUS-Sec in a separate
+The `make_llm()` seam is the right and only integration point, and keeping ARGIEM-Sec in a separate
 private repo makes the license boundary a filesystem boundary (§9.7). One architectural caution: the
-seam currently swaps the *whole* triage step. When ARGUS-Sec adds the regulatory-mapping output
+seam currently swaps the *whole* triage step. When ARGIEM-Sec adds the regulatory-mapping output
 (jurisdiction → DORA/NIS2 article), that's a *new field* on the alert, which touches Contract E
 (indexer routing) and WS-7 (display) — i.e. it crosses the open/closed boundary. Design that field
 as an *optional, additive* OCSF/alert extension (tolerant readers, R-F) so the open-source pipeline

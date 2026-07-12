@@ -8,9 +8,9 @@ already produce — a per-vendor field name here, an ECS-flavored mapping there,
 a "normalized" event that's really just the least-common-denominator of
 whatever sources happened to exist when the schema was bolted on.
 
-ARGUS does it the other way: [OCSF](https://schema.ocsf.io/) (the Open
+ARGIEM does it the other way: [OCSF](https://schema.ocsf.io/) (the Open
 Cybersecurity Schema Framework) is the *only* shape a normalized event is
-allowed to have, from the very first parser. Every one of ARGUS's parsers —
+allowed to have, from the very first parser. Every one of ARGIEM's parsers —
 Cisco ASA, Active Directory, VMware vSphere, Linux SSH, generic syslog,
 Windows Event Log, DB audit, and as of v0.4 an MCP/AI-agent tool-call parser,
 an OPC UA industrial-control parser, and an n8n automation-platform parser —

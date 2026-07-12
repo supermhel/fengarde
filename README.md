@@ -1,10 +1,10 @@
-# ARGUS
+# ARGIEM
 
 **The open-source SIEM for the European industrial Mittelstand — turns your
 factory and IT logs into NIS2/DORA evidence, with AI triage that never leaves
 your network.**
 
-ARGUS ingests logs from multiple sources, normalizes them to a single schema
+ARGIEM ingests logs from multiple sources, normalizes them to a single schema
 ([OCSF](https://schema.ocsf.io/)), runs correlation rules over a sliding window,
 and surfaces alerts in a dashboard. Every service is independent and talks to the
 rest of the system only through a message bus, so you can scale or replace any
@@ -31,7 +31,7 @@ regulatory-evidence feature; see [`contracts/reporting.md`](contracts/reporting.
 ## Quickstart (10 minutes)
 
 ```sh
-git clone https://github.com/supermhel/argus.git && cd argus
+git clone https://github.com/supermhel/argiem.git && cd argiem
 make preflight   # doctor: checks vm.max_map_count, Docker RAM, free ports
 make demo        # docker compose up -- a real SSH brute-force alert appears
                  # in the dashboard within ~30-60s, no manual step
@@ -46,26 +46,17 @@ path with no Redis/OpenSearch/Docker at all.
 
 ## Demo
 
-See ARGUS turn a real SSH brute-force burst into a real alert — **with zero
+See ARGIEM turn a real SSH brute-force burst into a real alert — **with zero
 infrastructure** (no Docker, no Redis, no OpenSearch):
 
-[![asciicast](https://asciinema.org/a/OORTESTMdagRX7HI.svg)](https://asciinema.org/a/OORTESTMdagRX7HI)
-
-The cast above runs [`tools/demo.sh`](tools/demo.sh): it feeds 10 failed SSH logins
-from one IP through the whole pipeline (normalize → detect → triage → index),
-shows the brute-force **alert** come out, and replays the event to prove the alert
-is **idempotent** (deduped, not duplicated).
-
-**Recording the cast** is a manual, one-time step for a maintainer —
-[asciinema](https://asciinema.org/) records a real interactive terminal, so it
-can't be produced by CI or an automated agent. Run these in a real terminal:
-
 ```sh
-asciinema rec --command "bash tools/demo.sh" argus-demo.cast
-asciinema upload argus-demo.cast   # prints the asciinema.org URL + id
+bash tools/demo.sh
 ```
 
-Then replace `PLACEHOLDER` above with the id from the upload URL.
+This feeds 10 failed SSH logins from one IP through the whole pipeline
+(normalize → detect → triage → index), shows the brute-force **alert** come
+out, and replays the event to prove the alert is **idempotent** (deduped, not
+duplicated).
 
 ### Try it yourself
 
@@ -77,7 +68,7 @@ bash tools/demo.sh                        # same test with banner + story narrat
 
 # Full live stack (collect -> normalize -> detect -> index -> dashboard):
 make up                                   # docker compose up -d
-# ...then open the ARGUS alert console at:
+# ...then open the ARGIEM alert console at:
 #   http://localhost:8080
 make down                                 # stop the stack and remove volumes
 ```
@@ -90,7 +81,7 @@ make down                                 # stop the stack and remove volumes
 
 ## What's real (v0.3 shipped, v0.4 in progress)
 
-ARGUS ships a **working detection pipeline**. We are deliberate about what is
+ARGIEM ships a **working detection pipeline**. We are deliberate about what is
 real versus what is planned — this is a security tool, so accuracy matters more than
 a long feature list.
 
@@ -105,7 +96,7 @@ a long feature list.
 | **AI triage** (local Ollama) | ✅ Works | Real local-LLM triage via `OLLAMA_URL`; degrades to a documented passthrough stub with zero infra |
 | **Triage workflow** | ✅ Works | Status + analyst note per alert, persisted via the WS-3 triage API, editable in the dashboard; concurrent writes protected at two layers (in-process lock + OpenSearch optimistic concurrency) |
 | **Incident-report draft hook** | ✅ Works (v0.4) | `POST /alerts/{id}/report` renders a generic markdown incident report from alert facts, always marked `status: draft` with a disclaimer; the regulated-content backend is a paid, optional add-on (`contracts/reporting.md`) |
-| **Opt-in auth** | ✅ Works (v0.4) | Shared-secret `ARGUS_API_KEY` on the triage/inventory APIs, opt-in dashboard basic-auth, opt-in Redis `AUTH` — unset (default) stays fully open, matching v0.1-v0.3 behavior |
+| **Opt-in auth** | ✅ Works (v0.4) | Shared-secret `ARGIEM_API_KEY` on the triage/inventory APIs, opt-in dashboard basic-auth, opt-in Redis `AUTH` — unset (default) stays fully open, matching v0.1-v0.3 behavior |
 | **Syslog UDP listener** (WS-1) | ✅ Works | Live datagrams → `raw.events` |
 | **Triage workflow** | ✅ Works (v0.3) | Status + analyst note per alert, persisted via WS-3 triage API, editable in the dashboard. Container-to-container nginx path validated by config review, not yet by a live-stack smoke test |
 | SNMP parser | 🚧 Planned | Deferred — [good first issue](CONTRIBUTING.md) |
@@ -140,7 +131,7 @@ sudo sysctl -w vm.max_map_count=262144
 To make it persist across reboots:
 
 ```sh
-echo 'vm.max_map_count=262144' | sudo tee /etc/sysctl.d/99-argus.conf
+echo 'vm.max_map_count=262144' | sudo tee /etc/sysctl.d/99-argiem.conf
 ```
 
 > On **macOS with Docker Desktop** this is handled inside the Docker VM and you can
@@ -165,14 +156,14 @@ make demo
 `make demo` runs the pre-flight check, then starts every service with Docker Compose.
 All services are long-running daemons with a `/health` endpoint and a restart policy.
 
-> **Want to see ARGUS work without Docker?** Run **`make e2e`** — a zero-infra
+> **Want to see ARGIEM work without Docker?** Run **`make e2e`** — a zero-infra
 > acceptance test that feeds a real SSH brute-force burst through the whole pipeline
 > and shows the alert come out the other end (details in
 > [How to see the alert](#how-to-see-the-alert)).
 >
 > **Honest status:** the *in-stack* live feeder and the *live* dashboard (which reads
 > alerts straight from OpenSearch) are the remaining DX2/DX4 items — see
-> [the build plan](docs/superpowers/specs/2026-06-27-argus-v0.1-build-plan.md). The
+> [the build plan](docs/superpowers/specs/2026-06-27-argiem-v0.1-build-plan.md). The
 > end-to-end detection logic itself is proven today by `make e2e`.
 
 Other handy targets:
@@ -194,7 +185,7 @@ make down     # stop the stack and remove volumes
 | 9200 | `opensearch` (`siem-store`) | Event/alert storage + query API |
 | 5601 | `dashboards` (`siem-dashboards`) | OpenSearch Dashboards |
 | 8000 | `ws6-inventory` | Inventory API (IP/MAC history) |
-| 8080 | `ws7-dashboard` | ARGUS alert console |
+| 8080 | `ws7-dashboard` | ARGIEM alert console |
 | 5514/udp | `ws1-collectors` | Live syslog ingestion (unauthenticated — trusted segment only) |
 | 8013 | `ws3-indexer` | Triage API — **internal only**, the dashboard proxies to it container-to-container; not published to the host |
 
@@ -207,7 +198,7 @@ make down     # stop the stack and remove volumes
 The acceptance test for v0.1 is a real **brute-force alert**, not mock data:
 
 1. **The signal.** 10 failed authentication events from a single source IP within
-   60 seconds. ARGUS produces these from a Linux SSH `Failed password` line or a
+   60 seconds. ARGIEM produces these from a Linux SSH `Failed password` line or a
    Windows `EventID 4625` — both normalize to the same OCSF Authentication event
    (`class_uid: 3002`, `activity_id: 4`).
 2. **The rule.** [`contracts/rules/common_bruteforce.yml`](contracts/rules/common_bruteforce.yml)
@@ -231,7 +222,7 @@ Expected tail:
 ```
   ALERT: Authentication brute-force from single source src=203.0.113.5 score=70 id=...
   T7 OK: replay reused alert_id ... -> deduped (alerts count stayed 2)
-[OK] ARGUS v0.1 acceptance: SSH brute-force -> real alert in the index, idempotent under replay. Zero infra.
+[OK] ARGIEM v0.1 acceptance: SSH brute-force -> real alert in the index, idempotent under replay. Zero infra.
 ```
 
 Prefer a unit-level check? The WS-4 detection contract test asserts the rule fires on
@@ -269,7 +260,7 @@ schema (OCSF).
 | 7 | `services/ws7-dashboard` | Alert console | ✅ |
 
 For the full design, scope decisions, and roadmap, see
-[the v0.1 build plan](docs/superpowers/specs/2026-06-27-argus-v0.1-build-plan.md) and
+[the v0.1 build plan](docs/superpowers/specs/2026-06-27-argiem-v0.1-build-plan.md) and
 [`docs/PHASE0_README.md`](docs/PHASE0_README.md).
 
 ---
@@ -292,7 +283,7 @@ are the obvious first PRs.
 
 ## Security
 
-ARGUS v0.1 services are designed for a **localhost / Docker-Compose network only** and
+ARGIEM v0.1 services are designed for a **localhost / Docker-Compose network only** and
 are **not** hardened for internet exposure. There is **no authentication in v0.1 by
 design**, and the detection engine executes rule files — so only run rules you trust.
 See **[SECURITY.md](SECURITY.md)** for the full threat boundary and how to report a
@@ -302,4 +293,4 @@ vulnerability.
 
 ## License
 
-ARGUS is licensed under the **Apache License 2.0**. See [LICENSE](LICENSE).
+ARGIEM is licensed under the **Apache License 2.0**. See [LICENSE](LICENSE).

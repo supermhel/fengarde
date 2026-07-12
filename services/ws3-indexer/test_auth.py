@@ -1,6 +1,6 @@
 """WS-3 triage API auth tests (v0.4 Track S1).
 
-Same opt-in ARGUS_API_KEY discipline as WS-6 (services/shared/authz.py).
+Same opt-in ARGIEM_API_KEY discipline as WS-6 (services/shared/authz.py).
 """
 from __future__ import annotations
 
@@ -46,7 +46,7 @@ def _get(port, alert_id, api_key=None):
 
 
 def test_auth_disabled_by_default():
-    os.environ.pop("ARGUS_API_KEY", None)
+    os.environ.pop("ARGIEM_API_KEY", None)
     store = MemoryStore()
     store.index("alerts-2026.07.10", "a1", {"alert_id": "a1"})
     srv, port = _serve(store)
@@ -58,7 +58,7 @@ def test_auth_disabled_by_default():
 
 
 def test_auth_enforced_when_key_set():
-    os.environ["ARGUS_API_KEY"] = "s3cr3t"
+    os.environ["ARGIEM_API_KEY"] = "s3cr3t"
     try:
         store = MemoryStore()
         store.index("alerts-2026.07.10", "a1", {"alert_id": "a1"})
@@ -73,7 +73,7 @@ def test_auth_enforced_when_key_set():
         finally:
             srv.shutdown(); srv.server_close()
     finally:
-        os.environ.pop("ARGUS_API_KEY", None)
+        os.environ.pop("ARGIEM_API_KEY", None)
 
 
 def main():

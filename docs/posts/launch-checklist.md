@@ -1,7 +1,7 @@
 # Launch checklist (v0.4 Track D3)
 
 Sequencing for the distribution push, per the v0.4 build plan
-(`docs/superpowers/specs/2026-07-10-argus-v0.4-build-plan.md`, Track D). 0
+(`docs/superpowers/specs/2026-07-10-argiem-v0.4-build-plan.md`, Track D). 0
 stars/forks/watchers today — this is genuinely pre-launch. Publishing itself
 is a human action; nothing here fires automatically.
 
@@ -44,9 +44,9 @@ is a human action; nothing here fires automatically.
 
 ## What NOT to do
 
-- Don't lead with the ARGUS-Sec/paid layer anywhere in this round. It's
+- Don't lead with the ARGIEM-Sec/paid layer anywhere in this round. It's
   Wave-0/RAG-stage, no design partner yet — premature to market (per
-  argus-sec's own `docs/STATUS.md` discipline: don't claim what isn't real).
+  argiem-sec's own `docs/STATUS.md` discipline: don't claim what isn't real).
 - Don't claim OT/industrial fixtures are field-validated — they're
   spec-derived (documented in `opcua_audit.py`'s docstring). If asked in
   comments, say so directly; a design partner with a real OPC UA stack is

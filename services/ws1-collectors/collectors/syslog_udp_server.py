@@ -32,7 +32,7 @@ from .spool import BoundedSpool
 
 DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = 5514
-# B2 (backpressure decision, docs/superpowers/specs/2026-07-02-argus-v0.3-improvement-plan.md):
+# B2 (backpressure decision, docs/superpowers/specs/2026-07-02-argiem-v0.3-improvement-plan.md):
 # shed at the ingest edge rather than trim mid-pipeline. UDP is connectionless
 # -- there is no producer to apply backpressure to -- so the only real lever
 # here is dropping excess datagrams before they ever reach bus.produce(),

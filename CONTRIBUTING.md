@@ -1,6 +1,6 @@
-# Contributing to ARGUS
+# Contributing to ARGIEM
 
-Thanks for your interest in ARGUS. This guide gets you productive fast — and the
+Thanks for your interest in ARGIEM. This guide gets you productive fast — and the
 fastest, highest-value contribution is **adding a parser**.
 
 ---
@@ -93,7 +93,7 @@ that passes every unit test but can never match real data).
 
 ## Project scope — read this before filing a feature request
 
-ARGUS is built in versioned slices. Knowing the scope keeps requests triaged
+ARGIEM is built in versioned slices. Knowing the scope keeps requests triaged
 correctly:
 
 - **v0.1 = the detection pipeline.** Collect → normalize (4 parsers: Cisco ASA,
@@ -110,7 +110,7 @@ So:
 - A request for **AI-triage behavior** → that's v0.2; file it, but expect it to be
   triaged against the v0.2 milestone, not v0.1.
 
-See the [build plan](docs/superpowers/specs/2026-06-27-argus-v0.1-build-plan.md) for
+See the [build plan](docs/superpowers/specs/2026-06-27-argiem-v0.1-build-plan.md) for
 the full scope and roadmap.
 
 ---
@@ -138,5 +138,5 @@ the full scope and roadmap.
 
 ## Code of conduct
 
-Be respectful and constructive. We want ARGUS to be a welcoming project for
+Be respectful and constructive. We want ARGIEM to be a welcoming project for
 first-time open-source contributors.

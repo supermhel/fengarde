@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# ARGUS terminal demo — deterministic, zero-infra, asciinema-friendly.
+# ARGIEM terminal demo — deterministic, zero-infra, asciinema-friendly.
 #
-# Tells the ARGUS story in well under 90 seconds: a burst of failed SSH logins
+# Tells the ARGIEM story in well under 90 seconds: a burst of failed SSH logins
 # from one IP becomes a REAL brute-force alert, end to end, with NO Docker, no
 # Redis, no OpenSearch. It also proves the replay is idempotent.
 #
-# Record it:   asciinema rec --command "bash tools/demo.sh" argus-demo.cast
+# Record it:   asciinema rec --command "bash tools/demo.sh" argiem-demo.cast
 # Run it:      bash tools/demo.sh
 #
 # It exits non-zero if the acceptance test fails, so a broken demo can never be
@@ -35,7 +35,7 @@ rule() { printf '%s\n' "--------------------------------------------------------
 # --- banner -------------------------------------------------------------------
 rule
 cat <<'BANNER'
-  ARGUS — an open-source SIEM pipeline.
+  ARGIEM — an open-source SIEM pipeline.
 
   Raw security logs in  ->  one schema (OCSF)  ->  correlation rules  ->  real alerts.
   Every service is decoupled and talks only over a message bus.

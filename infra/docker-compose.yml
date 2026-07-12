@@ -99,7 +99,7 @@ services:
       # ws3-indexer:8013 container-to-container; NOT published to the host.
       - TRIAGE_PORT=8013
       # v0.4 Track S1: opt-in shared-secret auth (unset = open + warning log).
-      - ARGUS_API_KEY=${ARGUS_API_KEY:-}
+      - ARGIEM_API_KEY=${ARGIEM_API_KEY:-}
     depends_on:
       redis: { condition: service_healthy }
       opensearch: { condition: service_healthy }
@@ -124,7 +124,7 @@ services:
     volumes: ["inventory-data:/data"]
     environment:
       # v0.4 Track S1: opt-in shared-secret auth (unset = open + warning log).
-      - ARGUS_API_KEY=${ARGUS_API_KEY:-}
+      - ARGIEM_API_KEY=${ARGIEM_API_KEY:-}
 
   ws7-dashboard:
     build: { context: .., dockerfile: services/ws7-dashboard/Dockerfile }
@@ -133,8 +133,8 @@ services:
     depends_on: [ws6-inventory]
     environment:
       # v0.4 Track S1: forwarded to ws3-indexer on the triage proxy so the
-      # browser never holds the key. Must match ws3-indexer's ARGUS_API_KEY.
-      - ARGUS_API_KEY=${ARGUS_API_KEY:-}
+      # browser never holds the key. Must match ws3-indexer's ARGIEM_API_KEY.
+      - ARGIEM_API_KEY=${ARGIEM_API_KEY:-}
       # v0.4 Track S2: "off" = no dashboard auth (default). See
       # infra/docker-compose.auth.yml for the opt-in override.
       - DASHBOARD_AUTH_REALM=off

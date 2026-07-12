@@ -1,11 +1,11 @@
 # Adding a parser
 
-This is a real, end-to-end walkthrough for adding a new source parser to ARGUS. It
+This is a real, end-to-end walkthrough for adding a new source parser to ARGIEM. It
 takes about 30 minutes and needs **only Python — no Docker, no OpenSearch, no Redis.**
 
 A parser's whole job: turn one raw bus payload (`{source_type, raw, meta}` from the
 `raw.events` topic) into a single **OCSF** event that validates against Contract A.
-All the source-format heterogeneity lives here, at the edge; the rest of ARGUS only
+All the source-format heterogeneity lives here, at the edge; the rest of ARGIEM only
 ever sees clean OCSF.
 
 The extension point is deliberately small. Adding a source = **add one module +

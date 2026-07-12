@@ -7,7 +7,7 @@ assignees: ''
 ---
 
 <!--
-Adding a parser is the best first contribution to ARGUS — and needs NO Docker.
+Adding a parser is the best first contribution to ARGIEM — and needs NO Docker.
 The whole loop is: copy services/ws2-normalization/parsers/linux_ssh.py, make 3
 edits, run `python test_contract.py`. See docs/adding-a-parser.md.
 

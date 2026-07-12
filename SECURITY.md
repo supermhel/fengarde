@@ -1,8 +1,8 @@
 # Security Policy
 
-ARGUS is a Security Information and Event Management (SIEM) tool. We take the
+ARGIEM is a Security Information and Event Management (SIEM) tool. We take the
 security of the project — and the safety of anyone running it — seriously. This
-document describes the **current threat boundary (v0.4)** (what ARGUS does and does not
+document describes the **current threat boundary (v0.4)** (what ARGIEM does and does not
 protect against today) and **how to report a vulnerability**.
 
 ---
@@ -29,7 +29,7 @@ Please include:
 
 ## Threat boundary (v0.4)
 
-ARGUS is a **local, single-host development and demonstration stack**. It is
+ARGIEM is a **local, single-host development and demonstration stack**. It is
 **not** hardened for production or internet exposure. Sections below carry the
 release that introduced them (v0.1 network boundary → v0.4 opt-in auth);
 everything is current as of v0.4. Understand these boundaries before running it:
@@ -54,11 +54,11 @@ v0.1/v0.2/v0.3 shipped with **no authentication at all** — anyone who could
 reach a port could call its API. v0.4 adds a minimal, honest, **opt-in**
 layer, not full authN/authZ (no users, roles, or TLS):
 
-- **`ARGUS_API_KEY`** — a shared secret checked via `X-Api-Key` on the WS-3
+- **`ARGIEM_API_KEY`** — a shared secret checked via `X-Api-Key` on the WS-3
   triage API and the WS-6 inventory API (`services/shared/authz.py`,
   `services/ws6-inventory/authz.py`). **Unset (default) = every request
   allowed**, with one warning logged at service start
-  (`"auth disabled: ARGUS_API_KEY not set"`). Set it and every write/read on
+  (`"auth disabled: ARGIEM_API_KEY not set"`). Set it and every write/read on
   those two APIs requires the matching header; the dashboard's nginx proxy
   injects it server-side so the browser never holds the key.
 - **Dashboard basic-auth** — opt-in via the `infra/docker-compose.auth.yml`
@@ -74,8 +74,8 @@ layer, not full authN/authZ (no users, roles, or TLS):
 **What this does NOT give you:** per-user identity, roles/permissions, TLS
 anywhere, or protection for OpenSearch/Dashboards/the syslog listener. A
 shared static key is a deterrent against opportunistic/accidental exposure,
-not an access-control system. If you need real multi-user auth, put ARGUS
-behind a reverse proxy/VPN you control — don't rely on `ARGUS_API_KEY` alone
+not an access-control system. If you need real multi-user auth, put ARGIEM
+behind a reverse proxy/VPN you control — don't rely on `ARGIEM_API_KEY` alone
 for anything beyond a trusted LAN.
 
 ### 3. Rule files are executed by the detection engine — only run trusted rules
@@ -170,7 +170,7 @@ current release.
 
 ## Supported versions
 
-ARGUS is pre-1.0. Security fixes target the latest `main` and the current
+ARGIEM is pre-1.0. Security fixes target the latest `main` and the current
 release line only.
 
 | Version | Supported |

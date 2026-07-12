@@ -1,4 +1,4 @@
-# ARGUS gitleaks configuration.
+# ARGIEM gitleaks configuration.
 #
 # Keeps the full default gitleaks ruleset (all real secret detectors stay on)
 # and adds one allowlist: canonical UUIDs.
@@ -10,7 +10,7 @@
 # but a rule identifier is a public, non-sensitive value committed on purpose,
 # not a credential. Allowlisting the UUID *shape* suppresses these without
 # weakening detection of real keys (which are not UUID-formatted).
-title = "ARGUS gitleaks config"
+title = "ARGIEM gitleaks config"
 
 [extend]
 useDefault = true

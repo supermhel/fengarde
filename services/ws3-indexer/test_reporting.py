@@ -48,7 +48,7 @@ _ALERT = {
 
 def test_template_backend_renders_and_validates():
     os.environ.pop("REPORT_BACKEND", None)
-    os.environ.pop("ARGUS_SEC_REPORT_URL", None)
+    os.environ.pop("ARGIEM_SEC_REPORT_URL", None)
     report = reporting.generate_report(_ALERT, {"status": "new", "note": ""})
     check(report["status"] == "draft", "template report must be status=draft")
     check(bool(report["disclaimer"]), "template report must carry a disclaimer")
@@ -78,7 +78,7 @@ def test_validator_accepts_missing_citations_as_additive():
 
 def test_http_backend_degrades_to_template_on_bad_response():
     os.environ["REPORT_BACKEND"] = "http"
-    os.environ["ARGUS_SEC_REPORT_URL"] = "http://127.0.0.1:1/does-not-exist"
+    os.environ["ARGIEM_SEC_REPORT_URL"] = "http://127.0.0.1:1/does-not-exist"
     try:
         report = reporting.generate_report(_ALERT, {"status": "new", "note": ""})
         check(report["backend"] == "template", "connection failure must fall back to template")
@@ -86,7 +86,7 @@ def test_http_backend_degrades_to_template_on_bad_response():
         check(report["status"] == "draft", "fallback report must still be draft")
     finally:
         os.environ.pop("REPORT_BACKEND", None)
-        os.environ.pop("ARGUS_SEC_REPORT_URL", None)
+        os.environ.pop("ARGIEM_SEC_REPORT_URL", None)
 
 
 def _serve(store):
@@ -178,7 +178,7 @@ def test_api_report_malformed_content_length_is_400():
 
 
 def test_api_report_requires_auth_when_key_set():
-    os.environ["ARGUS_API_KEY"] = "s3cr3t"
+    os.environ["ARGIEM_API_KEY"] = "s3cr3t"
     try:
         store = MemoryStore()
         store.index("alerts-2026.07.10", _ALERT["alert_id"], dict(_ALERT))
@@ -189,7 +189,7 @@ def test_api_report_requires_auth_when_key_set():
         finally:
             srv.shutdown(); srv.server_close()
     finally:
-        os.environ.pop("ARGUS_API_KEY", None)
+        os.environ.pop("ARGIEM_API_KEY", None)
 
 
 def main():

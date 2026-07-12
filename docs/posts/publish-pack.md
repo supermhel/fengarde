@@ -12,7 +12,7 @@ posting; every factual claim below was checked against the repo at write time
 
 - [x] `bash run_all_tests.sh` green on `main` (`ALL TESTS PASS`) — re-verified
       2026-07-10 at commit `081dabb`
-- [x] Live-stack smoke test done, real Docker/Redis/OpenSearch/nginx, `ARGUS_API_KEY`
+- [x] Live-stack smoke test done, real Docker/Redis/OpenSearch/nginx, `ARGIEM_API_KEY`
       set (2026-07-10, commit `38341ce`): pipeline produces alerts end-to-end;
       report generation through the dashboard nginx proxy → ws3 lands in
       `reports-*` with `status=draft`+disclaimer; 401 with no/wrong key, 200
@@ -39,7 +39,7 @@ posting; every factual claim below was checked against the repo at write time
 ## 1. r/netsec (post FIRST — the attention play)
 
 **Title:**
-> ARGUS: open-source SIEM now ships detection content for AI-agent/MCP tool-call logs (parser + rules, OCSF-normalized)
+> ARGIEM: open-source SIEM now ships detection content for AI-agent/MCP tool-call logs (parser + rules, OCSF-normalized)
 
 **Body:**
 
@@ -48,7 +48,7 @@ posting; every factual claim below was checked against the repo at write time
 > which tool was called, with what arguments, by which session — and as far
 > as I can tell nobody ships open detection rules for it.
 >
-> I added an MCP/agent audit-log parser + a small rule pack to ARGUS, an
+> I added an MCP/agent audit-log parser + a small rule pack to ARGIEM, an
 > Apache-2.0 SIEM pipeline I've been building:
 >
 > - **Parser**: MCP tool-call JSONL → OCSF API Activity (6003). There's no
@@ -69,7 +69,7 @@ posting; every factual claim below was checked against the repo at write time
 > output (we've shipped dead rules before; there's a check for that class of
 > bug now).
 >
-> Repo: https://github.com/supermhel/argus
+> Repo: https://github.com/supermhel/argiem
 > Write-up on the OCSF-native design: <link to docs/posts/ocsf-native.md on GitHub>
 >
 > Limitations, honestly: v0.4, pre-1.0. Auth is an opt-in shared key, no
@@ -81,17 +81,17 @@ posting; every factual claim below was checked against the repo at write time
 ## 2. r/selfhosted (next day)
 
 **Title:**
-> ARGUS – a self-hosted SIEM that shows you a real alert 60 seconds after `docker compose up` (Apache-2.0, OpenSearch, local AI triage optional)
+> ARGIEM – a self-hosted SIEM that shows you a real alert 60 seconds after `docker compose up` (Apache-2.0, OpenSearch, local AI triage optional)
 
 **Body:**
 
 > I kept seeing the same complaint here: Wazuh is too heavy, ELK is a
 > part-time job, and everything lighter isn't really a SIEM. So I built
-> ARGUS with a hard rule: **a stranger must get from clone to a real alert
+> ARGIEM with a hard rule: **a stranger must get from clone to a real alert
 > in the dashboard in under 10 minutes.**
 >
 > ```
-> git clone https://github.com/supermhel/argus.git && cd argus
+> git clone https://github.com/supermhel/argiem.git && cd argiem
 > make preflight   # checks vm.max_map_count, Docker RAM, free ports
 > make demo        # compose up -- a real SSH brute-force alert appears
 >                  # in the dashboard within ~60s, no manual step
@@ -122,12 +122,12 @@ posting; every factual claim below was checked against the repo at write time
 ## 3. Show HN (weekday, ~9am US Eastern, after 1+2 gave signal)
 
 **Title (pick one):**
-> Show HN: ARGUS – open-source SIEM that turns factory and IT logs into NIS2 evidence
-> Show HN: ARGUS – an OCSF-native SIEM with local AI triage (Apache-2.0)
+> Show HN: ARGIEM – open-source SIEM that turns factory and IT logs into NIS2 evidence
+> Show HN: ARGIEM – an OCSF-native SIEM with local AI triage (Apache-2.0)
 
 **Body:**
 
-> ARGUS is an open-source SIEM pipeline: raw security logs → OCSF
+> ARGIEM is an open-source SIEM pipeline: raw security logs → OCSF
 > normalization → sliding-window correlation → OpenSearch → dashboard.
 > Apache-2.0, no open-core feature gates in the pipeline itself.
 >
@@ -167,7 +167,7 @@ posting; every factual claim below was checked against the repo at write time
 > (v0.4), no TLS, single-host, OT parser fixtures are spec-derived rather
 > than captured from live PLCs. It says all of this in SECURITY.md.
 >
-> https://github.com/supermhel/argus
+> https://github.com/supermhel/argiem
 
 ---
 
@@ -178,7 +178,7 @@ posting; every factual claim below was checked against the repo at write time
 
 **Body:**
 
-> Post-mortem-style write-up from building ARGUS (open-source SIEM). Two
+> Post-mortem-style write-up from building ARGIEM (open-source SIEM). Two
 > detection-content bug classes we hit, one we automated away, one that
 > needs review discipline:
 >
@@ -204,7 +204,7 @@ posting; every factual claim below was checked against the repo at write time
 > vs Redis) disagreed about None distinct-values, and memory-only tests
 > masked it. Fail-closed on unattributable events was the fix.
 >
-> Code for all of it (Apache-2.0): https://github.com/supermhel/argus —
+> Code for all of it (Apache-2.0): https://github.com/supermhel/argiem —
 > `tools/check_rule_producers.py` and `contracts/detection-coverage.md`
 > have the details.
 
@@ -214,7 +214,7 @@ posting; every factual claim below was checked against the repo at write time
 
 **"Why not just use Wazuh/Security Onion?"**
 > Different goals. Wazuh is endpoint-first and Elastic-based; Security Onion
-> is network-forensics-heavy. ARGUS is pipeline-first: OCSF normalization +
+> is network-forensics-heavy. ARGIEM is pipeline-first: OCSF normalization +
 > YAML correlation rules + a 10-minute self-hosted path. If Wazuh already
 > works for you, keep it. If it felt like a second job, that's the gap this
 > aims at.
@@ -281,6 +281,6 @@ posting; every factual claim below was checked against the repo at write time
 - Never argue the honest-status point — it's the brand. If someone says
   "this is early," the answer is "yes, and the README says exactly how
   early."
-- Do not mention argus-sec/the paid layer unprompted anywhere except the
+- Do not mention argiem-sec/the paid layer unprompted anywhere except the
   Show HN body (where omitting it would look evasive when someone reads
   `contracts/reporting.md`). If asked, use the business-model answer above.

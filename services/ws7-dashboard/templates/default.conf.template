@@ -7,7 +7,7 @@
 # entrypoint hook renders /etc/nginx/templates/*.template -> conf.d/*.conf at
 # container start, substituting only vars actually present in the container's
 # environment -- nginx's own lowercase $host/$uri/$content_type are untouched).
-# v0.4 Track S1: ${ARGUS_API_KEY} lets nginx inject the shared secret on the
+# v0.4 Track S1: ${ARGIEM_API_KEY} lets nginx inject the shared secret on the
 # triage proxy so the browser never holds the key.
 server {
     listen 80;
@@ -59,7 +59,7 @@ server {
 
     location @alerts_unavailable {
         default_type application/json;
-        return 200 '{"hits":{"hits":[]},"_argus_proxy":"opensearch_unavailable"}';
+        return 200 '{"hits":{"hits":[]},"_argiem_proxy":"opensearch_unavailable"}';
     }
 
     # C1 (v0.3): same-origin proxy for the triage API (ws3-indexer's
@@ -78,10 +78,10 @@ server {
         proxy_set_header Host $host;
         proxy_set_header Content-Type $content_type;
         # v0.4 Track S1: forward the shared API key so the browser never holds
-        # it. Empty when ARGUS_API_KEY is unset (auth disabled, unchanged
+        # it. Empty when ARGIEM_API_KEY is unset (auth disabled, unchanged
         # behavior) -- ws3-indexer's authz check treats an empty header the
         # same as a missing one.
-        proxy_set_header X-Api-Key "${ARGUS_API_KEY}";
+        proxy_set_header X-Api-Key "${ARGIEM_API_KEY}";
         proxy_connect_timeout 3s;
         proxy_read_timeout 5s;
     }

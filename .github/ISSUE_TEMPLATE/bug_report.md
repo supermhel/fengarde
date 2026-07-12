@@ -1,13 +1,13 @@
 ---
 name: Bug report
-about: Something in the ARGUS pipeline isn't working as documented
+about: Something in the ARGIEM pipeline isn't working as documented
 title: "[bug] "
 labels: bug
 assignees: ''
 ---
 
 <!--
-Before filing: ARGUS v0.1 is the detection PIPELINE. The AI service (WS-5) is a
+Before filing: ARGIEM v0.1 is the detection PIPELINE. The AI service (WS-5) is a
 documented passthrough stub and the 5 deferred parsers (generic syslog, SNMP,
 NetFlow, Windows Event Log, custom JSON) are NOT implemented in v0.1 — those are
 feature requests, not bugs. See the "What's real in v0.1" table in the README.

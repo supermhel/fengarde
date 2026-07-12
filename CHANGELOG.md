@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to ARGUS will be documented in this file.
+All notable changes to ARGIEM will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added (v0.4 Track S — opt-in auth)
 
-- **`ARGUS_API_KEY`** shared-secret auth on the WS-3 triage API and WS-6 inventory API (`X-Api-Key` header, constant-time compare). Unset (default) = every request allowed + a startup warning; set = 401 on missing/wrong key. `services/shared/authz.py` (ws3) + `services/ws6-inventory/authz.py` (ws6 doesn't bundle `shared`, so it gets its own copy).
+- **`ARGIEM_API_KEY`** shared-secret auth on the WS-3 triage API and WS-6 inventory API (`X-Api-Key` header, constant-time compare). Unset (default) = every request allowed + a startup warning; set = 401 on missing/wrong key. `services/shared/authz.py` (ws3) + `services/ws6-inventory/authz.py` (ws6 doesn't bundle `shared`, so it gets its own copy).
 - **Dashboard basic-auth**, opt-in via `infra/docker-compose.auth.yml` override (nginx `auth_basic` + htpasswd) — not baked into the main compose file, so `docker compose up` stays zero-prerequisite.
 - **Redis `AUTH`**, opt-in via `REDIS_PASSWORD`, embedded in `REDIS_URL` for every service.
 - Dashboard nginx converted to an envsubst template (`templates/default.conf.template`) so it can inject `X-Api-Key` server-side on the triage proxy — the browser never holds the key.
@@ -17,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added (v0.4 Track R — incident-report hook)
 
-- **`contracts/reporting.md`** — frozen cross-repo contract with `argus-sec`: `POST/GET /alerts/{id}/report` on the WS-3 triage port, `REPORT_BACKEND=template|http` seam, frozen response schema. Hard rules enforced structurally: `status` must be `"draft"`, `disclaimer` mandatory non-empty, `citations` optional (additive-field discipline) — a non-conforming backend response is rejected and WS-3 falls back to the builtin template (fail-open).
+- **`contracts/reporting.md`** — frozen cross-repo contract with `argiem-sec`: `POST/GET /alerts/{id}/report` on the WS-3 triage port, `REPORT_BACKEND=template|http` seam, frozen response schema. Hard rules enforced structurally: `status` must be `"draft"`, `disclaimer` mandatory non-empty, `citations` optional (additive-field discipline) — a non-conforming backend response is rejected and WS-3 falls back to the builtin template (fail-open).
 - **`services/ws3-indexer/reporting.py`** — generic markdown template renderer (rule/severity/timeline/source/actor/triage state, explicit `[ANALYST MUST PROVIDE]` blocks, zero regulatory claims), HTTP-backend caller + response validator, deterministic `report_id` (idempotent re-generation).
 - Dashboard "Rapport" button per alert row; renders the draft as text (never `innerHTML`, same XSS discipline as the rest of the UI).
 
@@ -143,5 +143,5 @@ Full Docker stack (Docker Desktop 4.80.0 / engine 29.6.1): a real UDP syslog pac
 
 - **Apache-2.0 license** — permissive license; use in commercial products, fork freely.
 
-[Unreleased]: https://github.com/supermhel/argus/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/supermhel/argus/releases/tag/v0.1.0
+[Unreleased]: https://github.com/supermhel/argiem/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/supermhel/argiem/releases/tag/v0.1.0

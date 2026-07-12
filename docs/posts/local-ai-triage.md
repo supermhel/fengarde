@@ -10,7 +10,7 @@ observability tool (traces, metrics) that's a defensible trade-off. For a
 would want — who got compromised, from where, doing what — through a
 third-party API, during the incident you're trying to keep quiet about.
 
-ARGUS's WS-5 AI-triage service defaults to
+ARGIEM's WS-5 AI-triage service defaults to
 [Ollama](https://ollama.com/) — a local LLM runtime. Set `OLLAMA_URL` to a
 model running on your own hardware (or your own VPC) and every triage verdict
 is generated without a single byte leaving your network. No `OLLAMA_URL` set?
@@ -38,7 +38,7 @@ v0.4 adds an incident-report hook (`contracts/reporting.md`) — an alert
 becomes a structured markdown draft on request. The **builtin backend is a
 plain template renderer, zero AI, zero network call** — every report is
 demoable and functional with no LLM at all. A paid, optional backend
-(argus-sec) can plug in richer regulatory content later via the same
+(argiem-sec) can plug in richer regulatory content later via the same
 contract, but the open pipeline was never designed to require it.
 
 ## What's still honest to say is missing
