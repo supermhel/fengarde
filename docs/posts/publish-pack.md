@@ -10,19 +10,29 @@ posting; every factual claim below was checked against the repo at write time
 
 ## Pre-publish checklist (do not post until every box is checked)
 
-- [ ] `bash run_all_tests.sh` green on `main` (`ALL TESTS PASS`)
-- [ ] Live-stack smoke test done (`make demo` on a clean machine: alert visible
-      in dashboard ≤60s; with `ARGUS_API_KEY` set: triage + "Rapport" work
-      through nginx, 401 without key) — **or explicitly waived** (SSOT marks
-      the live path config-review-only; waiving means you accept a stranger's
-      first `docker compose up` is your live test)
-- [ ] README renders correctly on github.com (tables, links, quickstart)
-- [ ] GitHub repo settings (manual): description set to the wedge one-liner;
-      topics: `siem`, `security`, `ocsf`, `opensearch`, `detection-engineering`,
-      `nis2`, `self-hosted`, `mcp`; social-preview image optional
+- [x] `bash run_all_tests.sh` green on `main` (`ALL TESTS PASS`) — re-verified
+      2026-07-10 at commit `081dabb`
+- [x] Live-stack smoke test done, real Docker/Redis/OpenSearch/nginx, `ARGUS_API_KEY`
+      set (2026-07-10, commit `38341ce`): pipeline produces alerts end-to-end;
+      report generation through the dashboard nginx proxy → ws3 lands in
+      `reports-*` with `status=draft`+disclaimer; 401 with no/wrong key, 200
+      with the correct one via both the proxy and direct; nginx injects the
+      key server-side. This run also found and fixed two blockers the
+      zero-infra gate can't see: a compose YAML break from `${REDIS_PASSWORD}`
+      inside a flow-style array, and ws2 missing PyYAML for the A5 enrichment
+      import (the stack would not have started at all before the fix).
+- [x] GitHub repo settings: description + topics set live via `gh repo edit`
+      (siem, security, ocsf, opensearch, detection-engineering, nis2,
+      self-hosted, mcp, ocsf-native, blue-team, + the pre-existing ones)
+- [x] Dashboard UI translated from French to v0.1-era leftover labels to
+      English (PR #1, commit `081dabb`) — verified 0 French diacritics remain
+- [ ] README renders correctly on github.com (tables, links, quickstart) —
+      spot-check in a browser before posting, not yet done
 - [ ] Optional: re-record the asciinema cast (`tools/demo.sh`) — current one is
       v0.1-era
-- [ ] Screenshot of the dashboard with a real alert (needed for r/selfhosted)
+- [ ] Screenshot of the dashboard with a real "Report" button + a real alert
+      (needed for r/selfhosted) — dashboard is English now, just needs a live
+      stack up + a capture
 
 ---
 
