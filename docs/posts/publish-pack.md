@@ -4,7 +4,8 @@ Companion to [`launch-checklist.md`](launch-checklist.md) (the sequencing
 authority). This file contains the actual post copy. Posting is a human
 action — nothing here fires automatically. Fill `<PLACEHOLDER>` items before
 posting; every factual claim below was checked against the repo at write time
-(2026-07-10) — re-verify counts if the repo moves before you post.
+(2026-07-10, re-verified 2026-07-12 after the ARGUS→ARGIEM rebrand) — re-verify
+counts if the repo moves before you post.
 
 ---
 
@@ -26,13 +27,17 @@ posting; every factual claim below was checked against the repo at write time
       self-hosted, mcp, ocsf-native, blue-team, + the pre-existing ones)
 - [x] Dashboard UI translated from French to v0.1-era leftover labels to
       English (PR #1, commit `081dabb`) — verified 0 French diacritics remain
-- [ ] README renders correctly on github.com (tables, links, quickstart) —
-      spot-check in a browser before posting, not yet done
-- [ ] Optional: re-record the asciinema cast (`tools/demo.sh`) — current one is
-      v0.1-era
-- [ ] Screenshot of the dashboard with a real "Report" button + a real alert
-      (needed for r/selfhosted) — dashboard is English now, just needs a live
-      stack up + a capture
+- [x] README renders correctly on github.com (tables, links, quickstart) —
+      browser spot-checked 2026-07-12; capability table + quickstart code block
+      + `contracts/reporting.md` link all render; counts (10 parsers / 17 rules)
+      match code
+- [x] Dead asciinema embed removed from the README Demo section (the hosted
+      cast was archived/unplayable); Demo now points to a runnable
+      `bash tools/demo.sh`. Re-recording + re-embedding a fresh cast is still
+      optional polish, not a blocker.
+- [x] Screenshot of the dashboard with a real "Report" button + a real alert
+      captured 2026-07-12 (live Docker stack, 3 real alerts, English UI,
+      header now correctly reads "live data")
 
 ---
 
