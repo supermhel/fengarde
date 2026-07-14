@@ -8,6 +8,13 @@ level: high
 logsource:
   category: authentication
 detection:
+  # NOTE: intentionally fires on ALL sources, internal included -- a compromised
+  # internal host brute-forcing is a real threat and must not be suppressed by
+  # default. If a shared NAT/proxy egress produces benign bursts at your site,
+  # add a suppression here yourself, e.g.:
+  #     src_endpoint.ip: {not_in: corp_ranges}
+  # (or a dedicated known-egress allowlist) -- but understand it blinds this rule
+  # to attacks from those ranges.
   failed_auth:
     class_uid: 3002
     activity_id: 4

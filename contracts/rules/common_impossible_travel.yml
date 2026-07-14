@@ -10,6 +10,13 @@ description: >
   country map, not a real GeoIP resolver, so treat this as a coarse first
   filter, not a precise geolocation claim. Classic credential-theft/account-
   sharing pattern.
+  Tuning caveat (v0.4): threshold is 2 because two countries IS the impossible-
+  travel signal -- do not raise it, or the actual attack pattern stops firing.
+  Expect benign false-fires from VPN/mobile/CGNAT users whose egress flips
+  country; allowlist those known VPN/egress IPs (a not_in suppression on
+  src_endpoint.ip) rather than weakening the threshold. Events whose IP does not
+  resolve to a country are not counted at all (fail-closed since v0.4), so this
+  rule only fires on genuinely known, distinct countries.
 level: high
 logsource:
   category: authentication

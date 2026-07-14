@@ -16,6 +16,13 @@ detection:
   after_hours_priv:
     class_uid: 1002
     activity_id: 2
+    # v0.4: suppress routine service accounts (backup/patching/monitoring) that
+    # log on off-hours by design -- 4672 fires on nearly every such logon, so an
+    # unsuppressed rule floods. Ships empty (nothing suppressed) until an operator
+    # populates contracts/allowlists/service_accounts.yml; human/interactive admin
+    # logons still fire. See that file.
+    actor.user.name:
+      not_in: service_accounts
     time:
       outside_hours:
         start: "08:00"
