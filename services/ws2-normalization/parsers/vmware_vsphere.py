@@ -16,9 +16,21 @@ import json
 import time
 from typing import Optional
 
-from .base import Parser, SEV_CRITICAL, SEV_MEDIUM, SEV_INFO
+from .base import Parser, SEV_CRITICAL, SEV_MEDIUM, SEV_INFO, status_from_outcome
 
 _CLASS = 6003  # API Activity
+
+
+def _safe_int(value):
+    """int() that never raises on hostile input (list/dict/non-numeric string).
+    A bad ``port`` in an attacker-shaped vCenter record must not crash parse()
+    and abort the whole normalization batch -- drop the field instead."""
+    if isinstance(value, bool) or value is None:
+        return None
+    try:
+        return int(value)
+    except (ValueError, TypeError):
+        return None
 
 # operation keyword -> (activity_id, severity)
 _OP_MAP = {
@@ -74,7 +86,7 @@ class VmwareVsphereParser(Parser):
             time_ms=time_ms,
             ingest_id=meta.get("ingest_id"),
             logged_time=self._logged_time(rec, meta),
-            status="Success",
+            status=status_from_outcome(rec),
             message=message,
         )
 
@@ -84,8 +96,9 @@ class VmwareVsphereParser(Parser):
                 sep["ip"] = src_ip
             if src_host:
                 sep["hostname"] = src_host
-            if rec.get("port"):
-                sep["port"] = int(rec["port"])
+            port = _safe_int(rec.get("port"))
+            if port is not None:
+                sep["port"] = port
             event["src_endpoint"] = sep
         if vm:
             event["dst_endpoint"] = {"hostname": vm}

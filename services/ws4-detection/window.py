@@ -46,20 +46,67 @@ from __future__ import annotations
 from collections import defaultdict, deque
 
 
+# How often (in hits) the deque backend sweeps idle group keys. A group that
+# stops producing events is never re-trimmed on its own (we only touch a key on
+# a hit for THAT key), so without a sweep its entry -- and the dict key itself --
+# would live forever. On an internet-facing sensor grouping by src_endpoint.ip
+# that is effectively unbounded and an attacker can force OOM by spraying random
+# source IPs/usernames. The Redis backend self-cleans via EXPIRE; this sweep is
+# the deque equivalent. Amortized O(1): a full scan every _SWEEP_EVERY hits.
+_SWEEP_EVERY = 256
+
+
 class DequeWindowCounter:
-    """In-process sliding window (default; correct for a single replica)."""
+    """In-process sliding window (default; correct for a single replica).
+
+    Two robustness properties the naive version lacked (both fixed here so the
+    deque backend matches ``RedisWindowCounter`` semantics):
+
+    - **Member dedup.** ``hit`` records ``(now_ms, member)`` and ignores a repeat
+      of a ``member`` already alive in the window. Under at-least-once redelivery
+      the same event (same OCSF ``ingest_id``) must count ONCE; the old version
+      appended blindly, so a redelivered event double-counted on memory but not on
+      Redis (ZADD dedups by member) -- the two backends disagreed and thresholds
+      tripped with fewer real events on the backend the test-gate uses.
+    - **Key eviction.** Empty group deques are dropped inline and idle keys are
+      swept periodically, so the key set stays bounded (see ``_SWEEP_EVERY``).
+    """
 
     def __init__(self) -> None:
         self._w: dict[str, deque] = defaultdict(deque)
         self._dw: dict[str, deque] = defaultdict(deque)
+        self._last: dict[str, int] = {}   # key -> most-recent now_ms (for sweeping)
+        self._hits = 0
+
+    def _sweep(self, now_ms: int, window_ms: int) -> None:
+        """Drop keys whose newest event is older than the window (idle groups)."""
+        self._hits += 1
+        if self._hits % _SWEEP_EVERY:
+            return
+        horizon = now_ms - window_ms
+        stale = [k for k, ts in self._last.items() if ts < horizon]
+        for k in stale:
+            self._w.pop(k, None)
+            self._dw.pop(k, None)
+            self._last.pop(k, None)
 
     def hit(self, key: str, now_ms: int, window_ms: int, member=None) -> int:
         w = self._w[key]
-        w.append(now_ms)
         horizon = now_ms - window_ms
-        while w and w[0] < horizon:
+        while w and w[0][0] < horizon:
             w.popleft()
-        return len(w)
+        # Redelivery guard: a member already alive in the window counts once.
+        if member is not None and any(m == member for _, m in w):
+            count = len(w)
+        else:
+            w.append((now_ms, member))
+            count = len(w)
+        self._last[key] = now_ms
+        if not w:
+            self._w.pop(key, None)
+            self._last.pop(key, None)
+        self._sweep(now_ms, window_ms)
+        return count
 
     def hit_distinct(self, key: str, now_ms: int, window_ms: int,
                      value=None, member=None) -> int:
@@ -69,7 +116,13 @@ class DequeWindowCounter:
         horizon = now_ms - window_ms
         while w and w[0][0] < horizon:
             w.popleft()
-        return len({v for _, v in w})
+        count = len({v for _, v in w})
+        self._last[key] = now_ms
+        if not w:
+            self._dw.pop(key, None)
+            self._last.pop(key, None)
+        self._sweep(now_ms, window_ms)
+        return count
 
 
 class RedisWindowCounter:

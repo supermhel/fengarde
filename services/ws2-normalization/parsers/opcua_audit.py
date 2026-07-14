@@ -34,7 +34,7 @@ import json
 import time
 from typing import Optional
 
-from .base import Parser, SEV_HIGH, SEV_INFO, SEV_MEDIUM
+from .base import Parser, SEV_HIGH, SEV_INFO, SEV_MEDIUM, status_from_outcome
 
 _CLASS_AUTH = 3002       # Authentication
 _CLASS_API = 6003        # API Activity
@@ -91,7 +91,9 @@ class OpcUaAuditParser(Parser):
         user = _pick(rec, "clientUserId", "userId")
         client_ip = _pick(rec, "clientAddress", "clientIp") or meta.get("ip")
         server_id = _pick(rec, "serverId", "server")
-        status_ok = bool(_pick(rec, "status", "success"))
+        # Robust outcome parse: a string "false" or 4xx code is a Failure; naive
+        # bool(_pick(...)) treated any non-empty value as truthy -> Success.
+        status_ok = status_from_outcome(rec, keys=("status", "success")) == "Success"
 
         if event_type in _CLOSE_EVENTS:
             activity_id, severity_id = 2, SEV_INFO
@@ -125,7 +127,7 @@ class OpcUaAuditParser(Parser):
         client_ip = _pick(rec, "clientAddress", "clientIp") or meta.get("ip")
         server_id = _pick(rec, "serverId", "server")
         node_id = _pick(rec, "nodeId", "targetNodeId") or ""
-        status_ok = bool(_pick(rec, "status", "success"))
+        status_ok = status_from_outcome(rec, keys=("status", "success")) == "Success"
 
         activity_id = 1 if event_type in _METHOD_EVENTS else 3  # Create : Update
         is_config = any(marker.lower() in str(node_id).lower() for marker in _CONFIG_NODE_MARKERS)

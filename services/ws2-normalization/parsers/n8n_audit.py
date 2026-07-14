@@ -24,7 +24,7 @@ import json
 import time
 from typing import Optional
 
-from .base import Parser, SEV_HIGH, SEV_INFO, SEV_MEDIUM
+from .base import Parser, SEV_HIGH, SEV_INFO, SEV_MEDIUM, status_from_outcome
 
 _CLASS_API = 6003
 _CLASS_AUTH = 3002
@@ -82,15 +82,18 @@ class N8nAuditParser(Parser):
 
     def _auth_event(self, event_type, user, src_ip, time_ms, rec, meta) -> dict:
         activity_id = 1 if event_type in _LOGIN_EVENTS else 2
+        # A failed login MUST NOT be recorded as a successful authentication --
+        # that would suppress the brute-force/credential rules this feeds.
+        status = status_from_outcome(rec)
         message = f"n8n {event_type} for {user or 'unknown user'}"
         event = self.base_event(
             class_uid=_CLASS_AUTH,
             activity_id=activity_id,
-            severity_id=SEV_INFO,
+            severity_id=SEV_HIGH if status == "Failure" else SEV_INFO,
             time_ms=time_ms,
             ingest_id=meta.get("ingest_id"),
             logged_time=self._logged_time(rec, meta),
-            status="Success",
+            status=status,
             message=message,
         )
         if src_ip:
@@ -114,7 +117,7 @@ class N8nAuditParser(Parser):
             time_ms=time_ms,
             ingest_id=meta.get("ingest_id"),
             logged_time=self._logged_time(rec, meta),
-            status="Success",
+            status=status_from_outcome(rec),
             message=message,
         )
         event["api"] = {"operation": str(event_type)}

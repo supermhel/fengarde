@@ -28,13 +28,28 @@ distinct dst hosts for lateral movement) rather than the raw number of events.
 """
 from __future__ import annotations
 
+import hashlib
 import ipaddress
+import json
+import math
 import re
+import time
 from pathlib import Path
 
 import yaml
 
 from window import DequeWindowCounter
+
+# Sliding-window counters use the event's own ``time`` as "now" so historical
+# replay works on event-time. But log time is attacker-influenced (most parsers
+# read it straight off the record), and one event stamped far in the future would
+# push the window horizon past every real entry, collapsing the group's count to 1
+# -- an attacker could hold every brute-force/spray/scan threshold at bay with one
+# spoofed-timestamp event per group. So an event whose time is implausibly ahead of
+# wall-clock (beyond benign source clock-drift) is not allowed to drive a stateful
+# window. Past timestamps are always fine (that IS replay), so this never impedes
+# legitimate historical processing.
+_MAX_CLOCK_SKEW_MS = 300_000  # 5 minutes of tolerated source clock drift
 
 
 def get_path(doc: dict, dotted: str):
@@ -204,6 +219,32 @@ def _numeric_compare(op: str, actual, expected) -> bool:
     return False
 
 
+def _event_fingerprint(event: dict) -> str:
+    """Stable short hash of an event, for deduping non-stateful alerts that lack an
+    ingest_id. Deterministic across processes (sorted-key JSON), so redelivery of the
+    same event yields the same alert id."""
+    try:
+        blob = json.dumps(event, sort_keys=True, default=str)
+    except (TypeError, ValueError):
+        blob = repr(event)
+    return hashlib.sha1(blob.encode("utf-8", "replace")).hexdigest()[:16]
+
+
+def _valid_window_time(value) -> int | None:
+    """Return event ``time`` as epoch-ms int if it can safely drive a stateful
+    window, else None (fail closed). Rejects bool, non-numeric, NaN/inf, and
+    timestamps implausibly far ahead of wall-clock (see _MAX_CLOCK_SKEW_MS).
+    Past timestamps always pass -- that is legitimate historical replay."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    now = int(value)
+    if now > int(time.time() * 1000) + _MAX_CLOCK_SKEW_MS:
+        return None
+    return now
+
+
 class Rule:
     def __init__(self, raw: dict, allowlists_dir: Path | None = None):
         self.raw = raw
@@ -341,6 +382,17 @@ class Rule:
         SAME alert id, never a fresh uuid4 — otherwise at-least-once delivery produces
         undeduplicatable duplicate alerts. Keyed by (rule, group, window-bucket) for
         stateful rules, (rule, ingest_id) otherwise.
+
+        This is a PURE function of the event on purpose: a stateful "open incident"
+        anchor would key the id on processing order, so a redelivery arriving after a
+        later event could get a different id — the exact undeduplicatable-duplicate
+        failure this key exists to prevent. We keep determinism and accept two known
+        edge behaviors of the fixed epoch bucket instead:
+          * two distinct bursts from one group that fall in the same `window`-aligned
+            bucket share an id (deduped as one incident — acceptable for a burst rule);
+          * a single burst straddling a bucket boundary yields two ids (a duplicate
+            alert for one incident).
+        Both are minor and self-healing; neither can drop or fabricate a *detection*.
         """
         if self.stateful:
             # evaluate() gates on group_by being present, so a fired stateful
@@ -351,7 +403,13 @@ class Rule:
             window_ms = int(self.window_seconds) * 1000
             bucket = now // window_ms if window_ms else now
             return f"{self.id}:{group}:{bucket}"
-        ingest = (event.get("siem") or {}).get("ingest_id") or "noingest"
+        # Non-stateful: prefer ingest_id (one alert per source event). When absent,
+        # fall back to a content hash rather than a shared "noingest" constant --
+        # otherwise every ingest_id-less event of this rule collapses onto ONE alert
+        # id and all but the first are silently deduped away downstream.
+        ingest = (event.get("siem") or {}).get("ingest_id")
+        if not ingest:
+            ingest = "sha:" + _event_fingerprint(event)
         return f"{self.id}:{ingest}"
 
     def evaluate(self, event: dict) -> bool:
@@ -370,7 +428,13 @@ class Rule:
             # as every other malformed-input path in this evaluator.)
             return False
         group = str(group_value)
-        now = event.get("time", 0)
+        now = _valid_window_time(event.get("time", 0))
+        if now is None:
+            # Non-numeric/NaN/inf time would crash the counter arithmetic
+            # (now_ms - window_ms) and poison-pill the consumer; a far-future
+            # time would corrupt the window (see _MAX_CLOCK_SKEW_MS). Fail closed
+            # -- same discipline as the time-of-day predicate (_time_outside_hours).
+            return False
         member = (event.get("siem") or {}).get("ingest_id") or str(now)
         # Namespace the window by rule id so two rules grouping on the same field
         # don't share a counter. The counter returns the in-window count after add.

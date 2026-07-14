@@ -23,6 +23,12 @@ from typing import Optional
 
 from shared.ocsf import make_type_uid
 
+# Octet-bounded IPv4 (0-255 per octet). A loose ``\d{1,3}`` accepts 999.999.999.999,
+# which parses fine but then FAILS Contract A's endpoint pattern -> the whole event
+# is dead-lettered. Attacker-controllable via a "from <ip>" field in a log line, so
+# an out-of-range address must simply not be captured (fall back to meta.ip / none).
+IPV4 = r"(?:(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)\.){3}(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)"
+
 
 # OCSF severity_id values (Contract A).
 SEV_UNKNOWN = 0
@@ -32,6 +38,53 @@ SEV_MEDIUM = 3
 SEV_HIGH = 4
 SEV_CRITICAL = 5
 SEV_FATAL = 6
+
+
+# Outcome-token vocabularies for status_from_outcome(). Kept broad on purpose:
+# a security-relevant event (a failed login) recorded as "Success" suppresses the
+# very rules that watch for it, so an explicit failure signal must win.
+_SUCCESS_TOKENS = frozenset({
+    "success", "succeeded", "succeed", "ok", "true", "allow", "allowed",
+    "pass", "passed", "complete", "completed", "granted", "200", "201", "204",
+})
+_FAILURE_TOKENS = frozenset({
+    "failure", "failed", "fail", "error", "denied", "deny", "false", "invalid",
+    "unauthorized", "forbidden", "reject", "rejected", "401", "403", "500",
+})
+
+
+def status_from_outcome(rec: dict,
+                        keys=("status", "result", "outcome", "success"),
+                        default: str = "Success") -> str:
+    """Derive an OCSF ``status`` ("Success"/"Failure") from a record's real outcome
+    field instead of hardcoding it. Robust to the shapes real logs use: bool,
+    HTTP-ish numbers, and success/failure word tokens (incl. the string ``"false"``
+    and ``"succeeded"`` that naive truthiness / exact-match checks get wrong).
+    Returns ``default`` when no recognized outcome field is present -- so absence
+    never fabricates a failure, but an explicit failure signal is always honored."""
+    val = None
+    if isinstance(rec, dict):
+        for k in keys:
+            if rec.get(k) is not None:
+                val = rec.get(k)
+                break
+    if val is None:
+        return default
+    if isinstance(val, bool):
+        return "Success" if val else "Failure"
+    if isinstance(val, (int, float)):
+        n = int(val)
+        if 200 <= n < 400:
+            return "Success"
+        if 400 <= n < 600:
+            return "Failure"
+        return "Success" if n else "Failure"
+    s = str(val).strip().lower()
+    if s in _SUCCESS_TOKENS:
+        return "Success"
+    if s in _FAILURE_TOKENS:
+        return "Failure"
+    return default
 
 
 class Parser:

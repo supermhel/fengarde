@@ -49,6 +49,9 @@ echo
 echo "== ws4 boolean evaluator + alert id (T4/T7) =="
 $PY services/ws4-detection/test_engine_boolean.py || fail=1
 echo
+echo "== ws4 P0 hardening: time-guard (poison/future) + alert-id collapse =="
+$PY services/ws4-detection/test_engine_hardening.py || fail=1
+echo
 echo "== ws4 distinct-count window + port-scan/lateral-movement rules (v0.2) =="
 $PY services/ws4-detection/test_window_distinct.py || fail=1
 $PY services/ws4-detection/test_engine_distinct_rules.py || fail=1
@@ -68,6 +71,12 @@ echo
 echo "== ws2 parsers: generic syslog + windows event log (v0.2) =="
 $PY services/ws2-normalization/parsers/test_generic_syslog.py || fail=1
 $PY services/ws2-normalization/parsers/test_windows_eventlog.py || fail=1
+echo
+echo "== ws2 registry routing (P0.4: non-shadowing content-sniff) =="
+$PY services/ws2-normalization/parsers/test_registry_routing.py || fail=1
+echo
+echo "== ws2 parser hardening (P0.5-7: port guard, IP bounds, status-from-outcome) =="
+$PY services/ws2-normalization/parsers/test_parser_hardening.py || fail=1
 echo
 echo "== ws2 A5 enrichment (reputation + geo, additive/offline/fail-open) =="
 $PY services/ws2-normalization/enrichment/test_enrichment.py || fail=1

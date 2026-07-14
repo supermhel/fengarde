@@ -106,6 +106,28 @@ def run():
     again = rc.hit("k", base + 1000, 60_000, member="dup")
     check(again == 1, f"redis: same member id must not double-count, got {again}")
 
+    # --- P0.2: the DEQUE backend must dedup by member too (redelivery parity) ---
+    # Previously the deque ignored `member` and appended blindly, so a redelivered
+    # event double-counted on memory but not on Redis; thresholds tripped early.
+    dc = DequeWindowCounter()
+    dc.hit("k", base, 60_000, member="dup")
+    dagain = dc.hit("k", base + 1000, 60_000, member="dup")
+    check(dagain == 1, f"deque: same member id must not double-count, got {dagain}")
+    # distinct members still climb
+    dc.hit("k", base + 2000, 60_000, member="x")
+    d3 = dc.hit("k", base + 3000, 60_000, member="y")
+    check(d3 == 3, f"deque: distinct members still counted (dup,x,y -> 3), got {d3}")
+
+    # --- P0.3: idle group keys must be evicted (no unbounded growth / OOM) ---
+    ev = DequeWindowCounter()
+    # spray many one-shot groups, each far apart so every prior group is idle
+    for i in range(1000):
+        ev.hit(f"g{i}", base + i * 10_000_000, 60_000, member=f"m{i}")
+    # after the sweep, only recently-touched keys survive -- not one-per-group-ever
+    live_keys = len(ev._w) + len(ev._dw)
+    check(live_keys < 300,
+          f"deque: idle group keys should be swept, {live_keys} still resident (>=300 = leak)")
+
     # --- the two backends agree on a mixed sequence ---
     d, r = DequeWindowCounter(), RedisWindowCounter(_FakeRedis())
     seq = [(0, "a"), (1000, "b"), (2000, "c"), (70_000, "d")]  # 'd' ages a,b,c out

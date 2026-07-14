@@ -19,10 +19,15 @@ import re
 import time
 from typing import Optional
 
-from .base import Parser, SEV_MEDIUM, SEV_INFO
+from .base import Parser, SEV_MEDIUM, SEV_INFO, IPV4
 
 # Cisco ASA syslog tag: %ASA-<sev>-<msgid>: <text>
 _ASA_TAG = re.compile(r"%ASA-(?P<sev>\d)-(?P<msgid>\d+):\s*(?P<text>.*)$")
+
+# The endpoint IPs are captured loosely below and validated here, so an
+# out-of-range octet in a (possibly injected) log line drops the address instead
+# of producing an event that fails Contract A's endpoint pattern (see base.IPV4).
+_IPV4_FULL = re.compile(IPV4 + r"\Z")
 
 # Endpoints appear in several ASA syntaxes:
 #   ACL deny (106023):        src outside:IP/port ... dst inside:IP/port
@@ -80,12 +85,14 @@ class CiscoAsaParser(Parser):
             message=text.strip(),
         )
 
-        if sm:
-            event["src_endpoint"] = {"ip": sm.group("ip"), "port": int(sm.group("port"))}
+        src_ip = sm.group("ip") if sm else None
+        if src_ip and _IPV4_FULL.match(src_ip):
+            event["src_endpoint"] = {"ip": src_ip, "port": int(sm.group("port"))}
         elif meta.get("ip"):
             event["src_endpoint"] = {"ip": meta["ip"]}
-        if dm:
-            event["dst_endpoint"] = {"ip": dm.group("ip"), "port": int(dm.group("port"))}
+        dst_ip = dm.group("ip") if dm else None
+        if dst_ip and _IPV4_FULL.match(dst_ip):
+            event["dst_endpoint"] = {"ip": dst_ip, "port": int(dm.group("port"))}
 
         return event
 

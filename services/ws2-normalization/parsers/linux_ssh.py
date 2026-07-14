@@ -28,7 +28,7 @@ import re
 import time
 from typing import Optional
 
-from .base import Parser, SEV_HIGH, SEV_INFO
+from .base import Parser, SEV_HIGH, SEV_INFO, IPV4
 
 _CLASS = 3002  # Authentication
 
@@ -37,6 +37,10 @@ _SSHD = re.compile(r"sshd(?:\[\d+\])?:|pam_unix\(sshd:")
 
 # "Accepted password for jdoe from 10.0.0.5 port 50022 ssh2"
 # "Accepted publickey for deploy from 10.0.0.6 port 50022 ssh2"
+# The IP is captured loosely (\d{1,3}) so a line with a malformed octet still
+# MATCHES (we keep the user + the fact of a failed login); the address is then
+# validated in parse() and dropped if out of range, rather than emitting an event
+# that fails Contract A's endpoint pattern and gets dead-lettered (see IPV4).
 _ACCEPTED = re.compile(
     r"Accepted\s+\S+\s+for\s+(?P<user>\S+)\s+from\s+"
     r"(?P<ip>\d{1,3}(?:\.\d{1,3}){3})(?:\s+port\s+(?P<port>\d+))?"
@@ -51,6 +55,14 @@ _INVALID = re.compile(
     r"Invalid user\s+(?P<user>\S+)\s+from\s+"
     r"(?P<ip>\d{1,3}(?:\.\d{1,3}){3})(?:\s+port\s+(?P<port>\d+))?"
 )
+
+_IPV4_FULL = re.compile(IPV4 + r"\Z")
+
+
+def _valid_ip(ip):
+    """True if ``ip`` is a well-formed 0-255-octet IPv4 (else it must be dropped
+    so it can't fail Contract A's endpoint pattern downstream)."""
+    return isinstance(ip, str) and bool(_IPV4_FULL.match(ip))
 # "pam_unix(sshd:session): session closed|opened for user jdoe"
 _SESSION = re.compile(
     r"session\s+(?P<state>opened|closed)\s+for user\s+(?P<user>\S+)"
@@ -77,6 +89,8 @@ class LinuxSshParser(Parser):
         if activity_id is None:
             return None  # an sshd line we don't model (e.g. "Connection closed")
 
+        if not _valid_ip(ip):
+            ip = None  # malformed octet in the log line -> drop, fall back to meta.ip
         ip = ip or meta.get("ip")
         verb = {1: "Logon", 2: "Logoff", 4: "Failed logon"}[activity_id]
         message = f"SSH {verb.lower()} for user {user or '?'}"

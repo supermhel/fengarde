@@ -38,7 +38,7 @@ import re
 import time
 from typing import Optional
 
-from .base import Parser, SEV_HIGH, SEV_INFO, SEV_MEDIUM
+from .base import Parser, SEV_HIGH, SEV_INFO, SEV_MEDIUM, status_from_outcome
 
 _CLASS = 6003  # API Activity
 
@@ -101,7 +101,6 @@ class McpAgentParser(Parser):
         agent = _pick(rec, "agent", "agent_id", "agentId")
         server = _pick(rec, "server", "mcp_server", "server_name")
         arguments = _pick(rec, "arguments", "args", "params") or {}
-        outcome = (_pick(rec, "outcome", "status") or "success")
 
         activity_id, severity_id = self._classify(str(tool))
         args_text = self._args_text(arguments)
@@ -117,7 +116,7 @@ class McpAgentParser(Parser):
             time_ms=time_ms,
             ingest_id=meta.get("ingest_id"),
             logged_time=self._logged_time(rec, meta),
-            status="Success" if str(outcome).lower() in ("success", "ok", "true") else "Failure",
+            status=status_from_outcome(rec, keys=("outcome", "status")),
             message=message,
         )
         event["api"] = {"operation": str(tool),

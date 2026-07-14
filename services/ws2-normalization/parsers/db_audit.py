@@ -25,7 +25,7 @@ import json
 import time
 from typing import Optional
 
-from .base import Parser, SEV_CRITICAL, SEV_MEDIUM, SEV_INFO
+from .base import Parser, SEV_CRITICAL, SEV_MEDIUM, SEV_INFO, status_from_outcome
 
 _CLASS = 6005  # Datastore Activity
 
@@ -90,7 +90,7 @@ class DbAuditParser(Parser):
             time_ms=time_ms,
             ingest_id=meta.get("ingest_id"),
             logged_time=self._logged_time(rec, meta),
-            status="Success",
+            status=status_from_outcome(rec),
             message=message,
         )
         event["siem"]["sector"] = sector

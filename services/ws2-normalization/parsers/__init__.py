@@ -34,29 +34,101 @@ def get_parser(source_type: str) -> Optional[Parser]:
     return _REGISTRY.get(source_type)
 
 
+# --- content-sniff discriminators (used only when source_type is unknown) -----
+# EventIDs the AD parser owns; every OTHER EventID goes to windows_eventlog (its
+# superset producer). Previously ANY "EventID" substring routed to AD, so a
+# windows-only 4688/4720/... hit AD, returned None, and was dropped.
+_AD_EVENTIDS = {4624, 4634, 4647, 4625, 4768, 4771}
+# operation verbs unique to each of the two class-sharing "operation" parsers.
+# Shared verbs (delete/update) are deliberately absent -- a bare "delete" with no
+# discriminating field is genuinely ambiguous and must NOT be silently guessed.
+_DB_ONLY_VERBS = ("grant", "revoke", "alter", "select", "insert", "drop", "query")
+_VMWARE_ONLY_VERBS = ("deploy", "read", "get", "reconfig", "destroy", "remove",
+                      "create", "clone", "migrate", "poweron", "poweroff")
+
+
+def _as_record(raw) -> Optional[dict]:
+    """Return the structured record dict from a raw payload, or None if it isn't
+    JSON-object-shaped (a plain syslog text line is not)."""
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(raw, str) and raw.lstrip().startswith("{"):
+        try:
+            obj = json.loads(raw)
+            return obj if isinstance(obj, dict) else None
+        except (ValueError, TypeError):
+            return None
+    return None
+
+
+def _resolve_structured(rec: dict) -> Optional[Parser]:
+    """Route a structured (JSON) record by SPECIFIC fields/values, never by a
+    substring of a value (which attacker-controlled log content could spoof).
+    Returns None when routing is genuinely ambiguous, so main() dead-letters it
+    with a "set source_type" hint instead of silently mis-parsing."""
+    # MCP/agent tool-call audit
+    if "tool" in rec and ("arguments" in rec or "args" in rec):
+        return _REGISTRY["mcp_agent"]
+    # eventType: OPC UA (CamelCase Audit*EventType) vs n8n (dotted lower-case)
+    et = rec.get("eventType") or rec.get("event_type") or rec.get("type")
+    if isinstance(et, str) and et:
+        if et.startswith("Audit") and et.endswith("EventType"):
+            return _REGISTRY["opcua_audit"]
+        if "." in et or et in ("login", "logout") or "workflowId" in rec or "webhook" in rec:
+            return _REGISTRY["n8n_audit"]
+        if "nodeId" in rec or "sourceName" in rec:
+            return _REGISTRY["opcua_audit"]
+        return _REGISTRY["n8n_audit"]
+    # Windows Event Log vs Active Directory by EventID VALUE
+    eid = rec.get("EventID")
+    if isinstance(eid, (int, str)) and not isinstance(eid, bool):
+        try:
+            eid_i = int(eid)
+        except (ValueError, TypeError):
+            eid_i = None
+        if eid_i is not None:
+            if eid_i in _AD_EVENTIDS:
+                return _REGISTRY["active_directory"]
+            return _REGISTRY["windows_eventlog"]  # superset; None -> honest DLQ
+    # DB audit vs vSphere (both class-share on "operation") by verb + fields
+    if "operation" in rec:
+        op = str(rec.get("operation") or "").lower()
+        db_ish = any(v in op for v in _DB_ONLY_VERBS) or "object" in rec or "table" in rec
+        vm_ish = (any(v in op for v in _VMWARE_ONLY_VERBS) or "." in op
+                  or "vm" in rec or "target" in rec or "createdTime" in rec)
+        if db_ish and not vm_ish:
+            return _REGISTRY["db_audit"]
+        if vm_ish and not db_ish:
+            return _REGISTRY["vmware_vsphere"]
+        return None  # ambiguous -> dead-letter, don't corrupt
+    return None
+
+
 def resolve(raw_payload: dict) -> Optional[Parser]:
-    """Pick a parser for a raw.events payload (exact source_type, else content sniff)."""
-    st = raw_payload.get("source_type", "")
+    """Pick a parser for a raw.events payload.
+
+    ``source_type`` is authoritative (exact registry match). Content-sniff is a
+    best-effort fallback for protocol-level sources whose product isn't named; it
+    routes on specific fields/values, keeps every registered parser reachable, and
+    returns None (-> dead-letter) rather than silently mis-routing an ambiguous
+    payload.
+    """
+    st = raw_payload.get("source_type", "") or ""
     parser = _REGISTRY.get(st)
     if parser is not None:
         return parser
     raw = raw_payload.get("raw")
-    text = raw if isinstance(raw, str) else json.dumps(raw)
-    if st.startswith("syslog") and "%ASA" in text:
-        return _REGISTRY["cisco_asa"]
-    if "sshd[" in text or "pam_unix(sshd:" in text:
-        return _REGISTRY["linux_ssh"]
-    if "EventID" in text:
-        return _REGISTRY["active_directory"]
-    if '"tool"' in text and ('"arguments"' in text or '"args"' in text):
-        return _REGISTRY["mcp_agent"]
-    if '"eventType"' in text and "Audit" in text:
-        return _REGISTRY["opcua_audit"]
-    if '"eventType"' in text and ("workflowId" in text or "webhook" in text or "workflow." in text):
-        return _REGISTRY["n8n_audit"]
-    if '"operation"' in text:
-        return _REGISTRY["vmware_vsphere"]
-    return None
+    # Text-line sources (raw is a syslog string, not JSON).
+    if isinstance(raw, str) and not raw.lstrip().startswith("{"):
+        if "%ASA-" in raw or "%ASA" in raw:
+            return _REGISTRY["cisco_asa"]
+        if "sshd[" in raw or "pam_unix(sshd:" in raw:
+            return _REGISTRY["linux_ssh"]
+        return _REGISTRY["generic_syslog"]  # catch-all syslog is now reachable
+    rec = _as_record(raw)
+    if rec is None:
+        return None
+    return _resolve_structured(rec)
 
 
 def known_sources() -> list[str]:

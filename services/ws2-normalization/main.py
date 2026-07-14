@@ -33,11 +33,20 @@ def normalize_one(raw_payload: dict):
     parser = resolve(raw_payload)
     if parser is None:
         st = raw_payload.get("source_type", "")
-        # Discoverability (DX): name the source and point at the v0.1 scope so an
-        # unknown source reads as "deferred", not "broken". 5 parsers ship in v0.2.
+        # Discoverability (DX): name the source so an unknown/ambiguous payload
+        # reads as "set source_type", not "broken". Content-sniff is best-effort;
+        # source_type is authoritative (see parsers.resolve).
         return None, [f"no parser for source_type={st!r} "
-                      f"(v0.1 ships 4 parsers; see README 'What's real in v0.1')"]
-    event = parser.parse(raw_payload)
+                      f"(unknown source, or content-sniff was ambiguous -- set "
+                      f"source_type explicitly; see known_sources())"]
+    # Defense in depth: a parser bug on hostile input must dead-letter THIS one
+    # record, never raise out of normalize_one and abort the whole batch (or
+    # poison-pill the daemon into 5x redelivery). Parsers should return None on
+    # bad input; this catches the ones that don't.
+    try:
+        event = parser.parse(raw_payload)
+    except Exception as exc:  # noqa: BLE001
+        return None, [f"parser {type(parser).__name__} raised: {type(exc).__name__}: {exc}"]
     if event is None:
         return None, ["parser returned None"]
     event = enrich(event)
