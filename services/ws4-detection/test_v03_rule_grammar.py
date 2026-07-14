@@ -127,6 +127,29 @@ def run():
           "missing/malformed FILE which fails open. Different failure classes: "
           "a bad rule author input vs. a bad ops-owned data file.")
 
+    # --- v0.4 (P2.1): `in` (list membership) ---
+    r = make_rule({"sel": {"activity_id": {"in": [1, 3]}}, "condition": "sel"})
+    check(r.evaluate({"activity_id": 1}) is True, "in: 1 in [1,3] matches")
+    check(r.evaluate({"activity_id": 3}) is True, "in: 3 in [1,3] matches")
+    check(r.evaluate({"activity_id": 2}) is False, "in: 2 not in [1,3]")
+    check(r.evaluate({"activity_id": True}) is False,
+          "in: bool True must NOT match numeric 1 (bool/int distinction)")
+    check(r.evaluate({}) is False, "in: missing field fails closed")
+    r = make_rule({"sel": {"x": {"in": "notalist"}}, "condition": "sel"})
+    check(r.evaluate({"x": "n"}) is False, "in: non-list arg fails closed")
+
+    # --- v0.4 (P2.1): `contains` (bounded substring, no regex) ---
+    r = make_rule({"sel": {"api.operation": {"contains": "credentials."}},
+                   "condition": "sel"})
+    check(r.evaluate({"api": {"operation": "credentials.accessed"}}) is True,
+          "contains: substring present matches")
+    check(r.evaluate({"api": {"operation": "workflow.created"}}) is False,
+          "contains: substring absent does not match")
+    check(r.evaluate({"api": {"operation": 123}}) is False,
+          "contains: non-string actual fails closed")
+    r = make_rule({"sel": {"x": {"contains": ["not", "a", "string"]}}, "condition": "sel"})
+    check(r.evaluate({"x": "abc"}) is False, "contains: non-string needle fails closed")
+
     # --- allowlist direct unit: an entry is ALWAYS exact-matchable even when
     # it's also CIDR-shaped-but-invalid (exact.add happens unconditionally in
     # Allowlist.__init__, independent of whether ip_network() parses it) ---

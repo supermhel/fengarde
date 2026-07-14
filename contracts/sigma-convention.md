@@ -54,6 +54,8 @@ detection:
   sel:
     class_uid: 1002                       # equality (scalar)
     score: {gt: 60}                       # gt|gte|lt|lte|ne — numeric, non-numeric operand => no match
+    activity_id: {in: [1, 3]}             # list membership (bool != int; missing field => no match)
+    api.operation: {contains: "credentials."} # bounded substring, both operands strings, NO regex
     src_endpoint.ip: {not_in: corp_ranges} # suppress if value ∈ contracts/allowlists/corp_ranges.yml (CIDR + exact)
     time:                                  # time-of-day / day-of-week
       outside_hours:
@@ -71,6 +73,12 @@ detection:
 - `outside_hours`: matches when the event time falls **outside** the business
   window. `start == end`, unknown keys, bad `HH:MM`, non-int/absurd tz, empty or
   unknown `days` all fail closed.
+- `in` (v0.4): value must equal one member of the list. `bool` and `int` are kept
+  distinct (`True` does not match `1`). A non-list arg or a missing field fails
+  closed. Use it instead of widening a rule across activity ids.
+- `contains` (v0.4): plain substring test — both operands must be strings and the
+  needle is length-capped; it is **not** a regex (no ReDoS on contributor rules).
+  A non-string operand or empty/oversized needle fails closed.
 
 ## Scoring model (see scoring.yaml)
 

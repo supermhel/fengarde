@@ -135,6 +135,28 @@ def load_allowlist(allowlists_dir: Path, name: str) -> Allowlist:
 
 
 _NUMERIC_OPS = {"gt", "gte", "lt", "lte", "ne"}
+_CONTAINS_MAX = 200  # cap the needle length; contains is a plain (non-regex) match
+
+
+def _in_list(actual, choices: list) -> bool:
+    """True if ``actual`` equals a member of ``choices`` (bool-safe: a bool must
+    not match a numeric member, since bool is an int subtype in Python)."""
+    for c in choices:
+        if isinstance(actual, bool) != isinstance(c, bool):
+            continue
+        if actual == c:
+            return True
+    return False
+
+
+def _contains(actual, needle) -> bool:
+    """Fail-closed substring test: both operands must be strings and the needle
+    bounded. No regex -> no ReDoS on contributor-supplied rules."""
+    if not isinstance(actual, str) or not isinstance(needle, str):
+        return False
+    if not needle or len(needle) > _CONTAINS_MAX:
+        return False
+    return needle in actual
 
 # --- A3: time-of-day / day-of-week predicate ----------------------------------
 _DAY_NAMES = {"mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4, "sat": 5, "sun": 6}
@@ -351,6 +373,15 @@ class Rule:
                     return False  # value IS in the allowlist -> suppressed -> no match
             elif op == "outside_hours":
                 if not _time_outside_hours(arg, actual):
+                    return False
+            elif op == "in":
+                # list membership: actual must equal one of the listed scalars.
+                if not isinstance(arg, list) or not _in_list(actual, arg):
+                    return False
+            elif op == "contains":
+                # bounded substring match (attacker-safe: plain str.__contains__,
+                # no regex, arg length capped). Both operands must be strings.
+                if not _contains(actual, arg):
                     return False
             else:
                 return False  # unknown operator -> fail closed

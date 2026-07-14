@@ -47,7 +47,7 @@ _UUID_RE = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
                       r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
 _LEVELS = {"informational", "low", "medium", "high", "critical"}
 _SECTORS = {"common", "bank", "dc", "datacenter"}
-_KNOWN_OPS = set(_NUMERIC_OPS) | {"not_in", "outside_hours"}
+_KNOWN_OPS = set(_NUMERIC_OPS) | {"not_in", "outside_hours", "in", "contains"}
 _CONDITION_TOKEN_RE = re.compile(r"\(|\)|\band\b|\bor\b|\bnot\b|[\w.]+")
 _KEYWORDS = {"and", "or", "not", "(", ")"}
 _DAY_NAMES = {"mon", "tue", "wed", "thu", "fri", "sat", "sun"}
@@ -130,6 +130,14 @@ def _validate_selection(name: str, sel, errors: list[str]) -> None:
                                       f"'{arg}' but contracts/allowlists/{arg}.yml is missing")
                 elif op == "outside_hours":
                     _validate_outside_hours(arg, errors, f"{where}.{path}")
+                elif op == "in":
+                    if not isinstance(arg, list) or not arg:
+                        errors.append(f"{where}.{path}: 'in' needs a non-empty list, "
+                                      f"got {arg!r}")
+                elif op == "contains":
+                    if not isinstance(arg, str) or not arg:
+                        errors.append(f"{where}.{path}: 'contains' needs a non-empty "
+                                      f"string, got {arg!r}")
         # A non-dict value (scalar OR list) is an EQUALITY match: engine's
         # _selection_matches does `actual != expected`, so a list value like
         # `some.array.field: ["a", "b"]` legitimately matches an event whose
