@@ -4,8 +4,9 @@ A detection rule that filters/groups/distinct-counts on a field NO parser ever
 emits can pass every unit test (synthetic fixtures include the field) yet never
 fire on real data. This exact bug has shipped THREE times: the Windows-parser
 src/dst conflation (fixed), the Cisco-ASA from/to endpoint gap (fixed), and
-bank_db_priv_esc.yml referencing class 6005 with zero real producer (still
-unfixed — see contracts/detection-coverage.md).
+bank_db_priv_esc.yml referencing class 6005 with zero real producer (fixed in
+v0.3 by the db_audit parser — see contracts/detection-coverage.md). This gate
+now runs in CI so a fourth never ships silently.
 
 This tool runs every registered parser against one REAL representative fixture,
 collects the set of dotted field paths each parser's OUTPUT actually populates

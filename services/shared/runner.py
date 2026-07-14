@@ -47,8 +47,41 @@ from typing import Callable
 Handlers = dict[str, "tuple[str, Callable[[dict], None]]"]
 
 
-def _make_health_handler(service_name: str):
+class HealthState:
+    """Shared liveness signal updated by the topic workers and read by /health.
+
+    The old /health returned a static ``{"status":"ok"}`` even when a worker
+    could not reach the bus -- a wedged/deaf service reported healthy, so nothing
+    (orchestrator, compose healthcheck) ever restarted it. Workers now flip
+    ``bus_ok`` on consume/claim exceptions and back on success; /health reports
+    503 + ``status:"degraded"`` while the bus is unreachable so a healthcheck can
+    act on it. Simple flag, no locking needed (single writer per worker, boolean
+    store is atomic enough for a liveness hint)."""
+
+    def __init__(self) -> None:
+        self.bus_ok = True
+        self.last_error = ""
+
+    def mark_ok(self) -> None:
+        self.bus_ok = True
+        self.last_error = ""
+
+    def mark_error(self, exc: BaseException) -> None:
+        self.bus_ok = False
+        self.last_error = f"{type(exc).__name__}: {exc}"
+
+
+# Socket read timeout (seconds) for the stdlib health/API servers. Without it a
+# slow client that opens a connection and dribbles/withholds bytes pins a worker
+# thread indefinitely (slowloris). BaseHTTPRequestHandler.timeout is honored by
+# StreamRequestHandler's socket setup.
+HTTP_TIMEOUT_S = 15
+
+
+def _make_health_handler(service_name: str, state: "HealthState | None" = None):
     class _HealthHandler(BaseHTTPRequestHandler):
+        timeout = HTTP_TIMEOUT_S
+
         def _send(self, code: int, payload: dict):
             body = json.dumps(payload).encode()
             self.send_response(code)
@@ -59,6 +92,9 @@ def _make_health_handler(service_name: str):
 
         def do_GET(self):  # noqa: N802 (stdlib naming)
             if self.path.rstrip("/") in ("/health", ""):
+                if state is not None and not state.bus_ok:
+                    return self._send(503, {"status": "degraded", "service": service_name,
+                                            "error": state.last_error or "bus unreachable"})
                 return self._send(200, {"status": "ok", "service": service_name})
             return self._send(404, {"error": "no such path"})
 
@@ -102,7 +138,7 @@ def _process_message(bus, topic, group, msg, handler, max_redeliveries,
 
 def _topic_worker(bus_factory, topic, group, handler, *, max_redeliveries,
                   shutdown, claim_idle_ms, idle_sleep_s, consume_block_ms,
-                  service_name):
+                  service_name, state=None):
     """Own the consume loop for ONE topic until shutdown is set."""
     bus = bus_factory()
     while not shutdown.is_set():
@@ -117,7 +153,11 @@ def _topic_worker(bus_factory, topic, group, handler, *, max_redeliveries,
                                   max_redeliveries, times_delivered)
                 if shutdown.is_set():
                     break
-        except Exception:
+            if state is not None:
+                state.mark_ok()
+        except Exception as exc:
+            if state is not None:
+                state.mark_error(exc)  # bus unreachable -> /health reports degraded
             traceback.print_exc()
 
         # 2) New messages. Bound the blocking read (RedisBus.consume blocks up to
@@ -135,7 +175,11 @@ def _topic_worker(bus_factory, topic, group, handler, *, max_redeliveries,
                                  max_redeliveries, 1)
                 if shutdown.is_set():
                     break
-        except Exception:
+            if state is not None:
+                state.mark_ok()
+        except Exception as exc:
+            if state is not None:
+                state.mark_error(exc)
             traceback.print_exc()
 
         if not did_work:
@@ -190,12 +234,14 @@ def serve(handlers: Handlers, *, health_port: int | None = None,
                 # not on the main thread (e.g. under a test runner); skip silently
                 pass
 
+    state = HealthState()
+
     # Health thread (stdlib ThreadingHTTPServer, mirrors ws6/app.py).
     health_srv = None
     health_thread = None
     if health_port is not None:
         health_srv = ThreadingHTTPServer(
-            ("0.0.0.0", health_port), _make_health_handler(service_name))
+            ("0.0.0.0", health_port), _make_health_handler(service_name, state))
         health_thread = threading.Thread(
             target=health_srv.serve_forever, name="health", daemon=True)
         health_thread.start()
@@ -209,7 +255,7 @@ def serve(handlers: Handlers, *, health_port: int | None = None,
             kwargs=dict(max_redeliveries=max_redeliveries, shutdown=shutdown,
                         claim_idle_ms=claim_idle_ms, idle_sleep_s=idle_sleep_s,
                         consume_block_ms=consume_block_ms,
-                        service_name=service_name),
+                        service_name=service_name, state=state),
             name=f"consume:{topic}", daemon=True)
         t.start()
         workers.append(t)

@@ -26,6 +26,7 @@ import os
 import sys
 import threading
 import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -381,7 +382,39 @@ def _run_parametrized(name, body, needs_health_port=False):
 
 
 # --------------------------------------------------------------------------- #
+# P1.1: /health reports 503 "degraded" when a worker can't reach the bus, so a
+# compose healthcheck / orchestrator can restart a wedged-but-alive service.
+def _test_health_degraded():
+    from http.server import ThreadingHTTPServer
+    state = runner.HealthState()
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), runner._make_health_handler("t", state))
+    port = srv.server_address[1]
+    th = threading.Thread(target=srv.serve_forever, daemon=True)
+    th.start()
+    try:
+        # healthy -> 200
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=3) as r:
+            check(r.status == 200, "healthy /health should be 200")
+        # bus error -> 503 degraded
+        state.mark_error(RuntimeError("redis down"))
+        code = None
+        try:
+            urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=3)
+        except urllib.error.HTTPError as e:
+            code = e.code
+        check(code == 503, f"degraded /health should be 503, got {code}")
+        # recovery -> 200 again
+        state.mark_ok()
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=3) as r:
+            check(r.status == 200, "recovered /health should be 200 again")
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
+# --------------------------------------------------------------------------- #
 def main():
+    _test_health_degraded()
     parametrized = [
         ("test_handler_called_once_per_message",
          _body_handler_called_once_per_message, False),

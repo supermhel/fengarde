@@ -80,12 +80,26 @@ services:
       # Zero-loss spool is opt-in; set SYSLOG_SPOOL_PATH (on a permissioned
       # volume, see SECURITY.md §8) + optional SYSLOG_SPOOL_MAX_BYTES to enable.
     depends_on: { redis: { condition: service_healthy } }
+    # v0.4: /health now reports 503 when a worker can't reach the bus, so a
+    # wedged-but-alive service is detectable/restartable (was a static "ok").
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8001/health', timeout=3)"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
 
   ws2-normalization:
     build: { context: .., dockerfile: services/ws2-normalization/Dockerfile }
     restart: unless-stopped
     environment: ["BUS_BACKEND=redis", "REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0"]
     depends_on: { redis: { condition: service_healthy } }
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8002/health', timeout=3)"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
 
   ws3-indexer:
     build: { context: .., dockerfile: services/ws3-indexer/Dockerfile }
@@ -103,12 +117,24 @@ services:
     depends_on:
       redis: { condition: service_healthy }
       opensearch: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8003/health', timeout=3)"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
 
   ws4-detection:
     build: { context: .., dockerfile: services/ws4-detection/Dockerfile }
     restart: unless-stopped
     environment: ["BUS_BACKEND=redis", "REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0"]
     depends_on: { redis: { condition: service_healthy } }
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8004/health', timeout=3)"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
 
   ws5-ai:
     build: { context: .., dockerfile: services/ws5-ai/Dockerfile }
@@ -116,11 +142,21 @@ services:
     environment: ["BUS_BACKEND=redis", "REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0"]
     depends_on: { redis: { condition: service_healthy } }
     # set OLLAMA_URL to enable the local LLM; otherwise StubLLM
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8005/health', timeout=3)"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
 
   ws6-inventory:
     build: { context: .., dockerfile: services/ws6-inventory/Dockerfile }
     restart: unless-stopped
-    ports: ["8000:8000"]
+    # v0.4: bind to loopback by default. The inventory API has a WRITE surface
+    # (POST /assets/upsert) that is open unless ARGIEM_API_KEY is set, so it must
+    # not be reachable from the LAN out of the box. Publish on 0.0.0.0 explicitly
+    # only after setting a key (see SECURITY.md).
+    ports: ["127.0.0.1:8000:8000"]
     volumes: ["inventory-data:/data"]
     environment:
       # v0.4 Track S1: opt-in shared-secret auth (unset = open + warning log).
@@ -129,7 +165,12 @@ services:
   ws7-dashboard:
     build: { context: .., dockerfile: services/ws7-dashboard/Dockerfile }
     restart: unless-stopped
-    ports: ["8080:80"]
+    # v0.4: bind to loopback by default. The dashboard nginx proxies triage WRITE
+    # calls to ws3 (injecting the key server-side), so an open dashboard on the
+    # LAN is an open write path. Publish on 0.0.0.0 only behind your own auth/VPN.
+    # (Syslog 5514 deliberately stays on all interfaces -- remote devices must
+    # reach it to ship logs.)
+    ports: ["127.0.0.1:8080:80"]
     depends_on: [ws6-inventory]
     environment:
       # v0.4 Track S1: forwarded to ws3-indexer on the triage proxy so the

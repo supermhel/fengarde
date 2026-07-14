@@ -53,6 +53,10 @@ def _parse_limit(raw) -> int:
 
 
 class Handler(BaseHTTPRequestHandler):
+    # Slowloris guard: drop a client that stalls mid-request instead of pinning
+    # this connection's thread indefinitely.
+    timeout = 15
+
     def _send(self, code: int, payload):
         body = json.dumps(payload).encode()
         self.send_response(code)

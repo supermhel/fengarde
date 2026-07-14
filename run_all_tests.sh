@@ -30,6 +30,9 @@ echo
 echo "== ws3: optimistic concurrency (CAS) for multi-replica triage writes =="
 $PY services/ws3-indexer/test_storage_cas.py || fail=1
 echo
+echo "== ws3 (P1.3): OpenSearch index transient-retry / permanent-surface =="
+$PY services/ws3-indexer/test_opensearch_retry.py || fail=1
+echo
 echo "== v0.4 (S1): opt-in API-key auth (ws3 triage, ws6 inventory) =="
 $PY services/ws3-indexer/test_auth.py || fail=1
 $PY services/ws6-inventory/test_auth.py || fail=1

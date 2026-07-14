@@ -14,11 +14,19 @@ from __future__ import annotations
 
 import json
 import os
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
 
 from .adapter import StorageAdapter
+
+# Bounded retry for a WRITE so a brief OpenSearch blip is absorbed inside one bus
+# delivery instead of leaving the message unacked -> eventually dead-lettered.
+# Transient = connection error / 5xx; permanent = 4xx (bad mapping/doc) and is
+# surfaced immediately (retrying it would just burn redeliveries).
+_INDEX_RETRIES = 3
+_INDEX_BACKOFF_S = 0.5
 
 
 class OpenSearchStore(StorageAdapter):
@@ -52,8 +60,21 @@ class OpenSearchStore(StorageAdapter):
         Returns ``True`` when OpenSearch reports ``created``.
         """
         path = f"/{index}/_doc/{urllib.parse.quote(doc_id, safe='')}"
-        result = self._request("PUT", path, document)
-        return result.get("result") == "created"
+        last_exc: BaseException | None = None
+        for attempt in range(_INDEX_RETRIES):
+            try:
+                result = self._request("PUT", path, document)
+                return result.get("result") == "created"
+            except urllib.error.HTTPError as exc:
+                if 400 <= exc.code < 500:
+                    raise  # permanent: bad mapping/document, don't retry
+                last_exc = exc  # 5xx: server-side transient
+            except urllib.error.URLError as exc:
+                last_exc = exc  # connection refused / timeout: transient
+            if attempt < _INDEX_RETRIES - 1:
+                time.sleep(_INDEX_BACKOFF_S * (2 ** attempt))
+        assert last_exc is not None
+        raise last_exc
 
     def count(self, index: str) -> int:
         try:
