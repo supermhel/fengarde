@@ -84,6 +84,9 @@ echo
 echo "== ws2 A5 enrichment (reputation + geo, additive/offline/fail-open) =="
 $PY services/ws2-normalization/enrichment/test_enrichment.py || fail=1
 echo
+echo "== ws2 timeutil (P1.6: epoch/ISO/FILETIME normalization) =="
+$PY services/ws2-normalization/parsers/test_timeutil.py || fail=1
+echo
 echo "== ws2 parsers: db_audit (v0.3, un-dormants bank_db_priv_esc.yml) =="
 $PY services/ws2-normalization/parsers/test_db_audit.py || fail=1
 echo

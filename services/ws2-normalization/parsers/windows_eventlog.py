@@ -59,6 +59,7 @@ import time
 from typing import Optional
 
 from .base import Parser, SEV_INFO, SEV_MEDIUM, SEV_HIGH
+from .timeutil import to_epoch_ms
 
 _CLS_AUTH = 3002    # Authentication
 _CLS_PROC = 1002    # Kernel / Process
@@ -219,9 +220,9 @@ class WindowsEventLogParser(Parser):
 
     @staticmethod
     def _epoch_ms(value) -> int:
-        if isinstance(value, (int, float)):
-            return int(value * 1000) if value < 1e12 else int(value)
-        return int(time.time() * 1000)
+        # Handles epoch s/ms, ISO-8601 strings, and Windows FILETIME (the native
+        # TimeCreated shape) -- the old int-only path mis-scaled both of the latter.
+        return to_epoch_ms(value) or int(time.time() * 1000)
 
     @staticmethod
     def _parse_pid(value) -> Optional[int]:
