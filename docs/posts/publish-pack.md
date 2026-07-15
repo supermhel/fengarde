@@ -4,7 +4,7 @@ Companion to [`launch-checklist.md`](launch-checklist.md) (the sequencing
 authority). This file contains the actual post copy. Posting is a human
 action — nothing here fires automatically. Fill `<PLACEHOLDER>` items before
 posting; every factual claim below was checked against the repo at write time
-(2026-07-10, re-verified 2026-07-12 after the ARGUS→ARGIEM rebrand) — re-verify
+(2026-07-10, re-verified 2026-07-12 after the ARGUS→FENGARDE rebrand) — re-verify
 counts if the repo moves before you post.
 
 ---
@@ -13,7 +13,7 @@ counts if the repo moves before you post.
 
 - [x] `bash run_all_tests.sh` green on `main` (`ALL TESTS PASS`) — re-verified
       2026-07-10 at commit `081dabb`
-- [x] Live-stack smoke test done, real Docker/Redis/OpenSearch/nginx, `ARGIEM_API_KEY`
+- [x] Live-stack smoke test done, real Docker/Redis/OpenSearch/nginx, `FENGARDE_API_KEY`
       set (2026-07-10, commit `38341ce`): pipeline produces alerts end-to-end;
       report generation through the dashboard nginx proxy → ws3 lands in
       `reports-*` with `status=draft`+disclaimer; 401 with no/wrong key, 200
@@ -44,7 +44,7 @@ counts if the repo moves before you post.
 ## 1. r/netsec (post FIRST — the attention play)
 
 **Title:**
-> ARGIEM: open-source SIEM now ships detection content for AI-agent/MCP tool-call logs (parser + rules, OCSF-normalized)
+> FENGARDE: open-source SIEM now ships detection content for AI-agent/MCP tool-call logs (parser + rules, OCSF-normalized)
 
 **Body:**
 
@@ -53,7 +53,7 @@ counts if the repo moves before you post.
 > which tool was called, with what arguments, by which session — and as far
 > as I can tell nobody ships open detection rules for it.
 >
-> I added an MCP/agent audit-log parser + a small rule pack to ARGIEM, an
+> I added an MCP/agent audit-log parser + a small rule pack to FENGARDE, an
 > Apache-2.0 SIEM pipeline I've been building:
 >
 > - **Parser**: MCP tool-call JSONL → OCSF API Activity (6003). There's no
@@ -86,17 +86,17 @@ counts if the repo moves before you post.
 ## 2. r/selfhosted (next day)
 
 **Title:**
-> ARGIEM – a self-hosted SIEM that shows you a real alert 60 seconds after `docker compose up` (Apache-2.0, OpenSearch, local AI triage optional)
+> FENGARDE – a self-hosted SIEM that shows you a real alert 60 seconds after `docker compose up` (Apache-2.0, OpenSearch, local AI triage optional)
 
 **Body:**
 
 > I kept seeing the same complaint here: Wazuh is too heavy, ELK is a
 > part-time job, and everything lighter isn't really a SIEM. So I built
-> ARGIEM with a hard rule: **a stranger must get from clone to a real alert
+> FENGARDE with a hard rule: **a stranger must get from clone to a real alert
 > in the dashboard in under 10 minutes.**
 >
 > ```
-> git clone https://github.com/supermhel/argiem.git && cd argiem
+> git clone https://github.com/supermhel/argiem.git && cd fengarde
 > make preflight   # checks vm.max_map_count, Docker RAM, free ports
 > make demo        # compose up -- a real SSH brute-force alert appears
 >                  # in the dashboard within ~60s, no manual step
@@ -127,12 +127,12 @@ counts if the repo moves before you post.
 ## 3. Show HN (weekday, ~9am US Eastern, after 1+2 gave signal)
 
 **Title (pick one):**
-> Show HN: ARGIEM – open-source SIEM that turns factory and IT logs into NIS2 evidence
-> Show HN: ARGIEM – an OCSF-native SIEM with local AI triage (Apache-2.0)
+> Show HN: FENGARDE – open-source SIEM that turns factory and IT logs into NIS2 evidence
+> Show HN: FENGARDE – an OCSF-native SIEM with local AI triage (Apache-2.0)
 
 **Body:**
 
-> ARGIEM is an open-source SIEM pipeline: raw security logs → OCSF
+> FENGARDE is an open-source SIEM pipeline: raw security logs → OCSF
 > normalization → sliding-window correlation → OpenSearch → dashboard.
 > Apache-2.0, no open-core feature gates in the pipeline itself.
 >
@@ -183,7 +183,7 @@ counts if the repo moves before you post.
 
 **Body:**
 
-> Post-mortem-style write-up from building ARGIEM (open-source SIEM). Two
+> Post-mortem-style write-up from building FENGARDE (open-source SIEM). Two
 > detection-content bug classes we hit, one we automated away, one that
 > needs review discipline:
 >
@@ -219,7 +219,7 @@ counts if the repo moves before you post.
 
 **"Why not just use Wazuh/Security Onion?"**
 > Different goals. Wazuh is endpoint-first and Elastic-based; Security Onion
-> is network-forensics-heavy. ARGIEM is pipeline-first: OCSF normalization +
+> is network-forensics-heavy. FENGARDE is pipeline-first: OCSF normalization +
 > YAML correlation rules + a 10-minute self-hosted path. If Wazuh already
 > works for you, keep it. If it felt like a second job, that's the gap this
 > aims at.
@@ -289,6 +289,6 @@ counts if the repo moves before you post.
 - Never argue the honest-status point — it's the brand. If someone says
   "this is early," the answer is "yes, and the README says exactly how
   early."
-- Do not mention argiem-sec/the paid layer unprompted anywhere except the
+- Do not mention fengarde-sec/the paid layer unprompted anywhere except the
   Show HN body (where omitting it would look evasive when someone reads
   `contracts/reporting.md`). If asked, use the business-model answer above.

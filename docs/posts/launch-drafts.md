@@ -11,11 +11,11 @@
 
 ## Show HN
 
-**Title:** Show HN: ARGIEM – open-source SIEM with OCSF normalization and brute-force detection
+**Title:** Show HN: FENGARDE – open-source SIEM with OCSF normalization and brute-force detection
 
 **Body:**
 
-I built ARGIEM because I wanted a self-hosted security monitor for my homelab that didn't require a Splunk license or a Zabbix instance bolted onto an ELK stack. Everything runs offline; there is no call-home and no cloud dependency.
+I built FENGARDE because I wanted a self-hosted security monitor for my homelab that didn't require a Splunk license or a Zabbix instance bolted onto an ELK stack. Everything runs offline; there is no call-home and no cloud dependency.
 
 **What it does today (v0.1.0)**
 
@@ -47,15 +47,15 @@ Happy to answer questions about the OCSF normalization layer or the detection ar
 
 ### r/netsec
 
-**Title:** ARGIEM – open-source SIEM with OCSF normalization, brute-force detection, and a full CI-gated detection pipeline
+**Title:** FENGARDE – open-source SIEM with OCSF normalization, brute-force detection, and a full CI-gated detection pipeline
 
 **Body:**
 
-I've been working on an open-source SIEM called ARGIEM and just tagged v0.1.0. Sharing here because the design decisions might be interesting to people who think about detection pipelines.
+I've been working on an open-source SIEM called FENGARDE and just tagged v0.1.0. Sharing here because the design decisions might be interesting to people who think about detection pipelines.
 
 **What it does**
 
-ARGIEM is a self-hosted, offline-capable SIEM. The pipeline is: collect logs → normalize to OCSF → run detection rules → index in OpenSearch → browser dashboard.
+FENGARDE is a self-hosted, offline-capable SIEM. The pipeline is: collect logs → normalize to OCSF → run detection rules → index in OpenSearch → browser dashboard.
 
 Current detection: brute-force rule (10 failed auth / 60 s / per source IP). Threshold and window are YAML-configurable.
 
@@ -79,13 +79,13 @@ Current parsers: Linux SSH auth.log, Cisco ASA syslog, Windows AD EventID 4625 (
 
 ```
 git clone https://github.com/supermhel/argiem
-cd argiem
+cd fengarde
 docker compose up
 ```
 
 The devkit-feeder fires a synthetic brute-force sequence automatically. Open the dashboard and you should see an alert within ~60 seconds.
 
-Asciinema demo: https://github.com/supermhel/argiem/blob/main/argiem-demo.cast
+Asciinema demo: https://github.com/supermhel/argiem/blob/main/fengarde-demo.cast
 
 Apache-2.0. Feedback welcome, especially on the detection architecture and parser coverage gaps.
 
@@ -93,15 +93,15 @@ Apache-2.0. Feedback welcome, especially on the detection architecture and parse
 
 ### r/homelab
 
-**Title:** ARGIEM – self-hosted, offline SIEM for your homelab: brute-force detection, OpenSearch dashboard, one `docker compose up`
+**Title:** FENGARDE – self-hosted, offline SIEM for your homelab: brute-force detection, OpenSearch dashboard, one `docker compose up`
 
 **Body:**
 
-I've been working on an open-source SIEM called ARGIEM and just tagged v0.1.0. Sharing here because the homelab community cares about self-hosted, privacy-respecting tools and I think this fits that ethos.
+I've been working on an open-source SIEM called FENGARDE and just tagged v0.1.0. Sharing here because the homelab community cares about self-hosted, privacy-respecting tools and I think this fits that ethos.
 
 **What it does**
 
-ARGIEM monitors your homelab for security events without sending anything to the cloud. The pipeline is: collect logs → normalize to OCSF → run detection rules → index in OpenSearch → browser dashboard.
+FENGARDE monitors your homelab for security events without sending anything to the cloud. The pipeline is: collect logs → normalize to OCSF → run detection rules → index in OpenSearch → browser dashboard.
 
 Right now it detects brute-force login attempts (10 failed auths from one IP in 60 seconds) and parses logs from: Linux SSH, Cisco ASA, Windows Active Directory, VMware vSphere.
 
@@ -109,7 +109,7 @@ Right now it detects brute-force login attempts (10 failed auths from one IP in 
 
 ```
 git clone https://github.com/supermhel/argiem
-cd argiem
+cd fengarde
 docker compose up
 ```
 
@@ -121,6 +121,6 @@ This is early-stage. Only 4 log parsers today. A local-AI triage feature (classi
 
 If you're running pfSense, OPNsense, or other common homelab gear and want to contribute a parser, contributions are very welcome.
 
-Asciinema demo: https://github.com/supermhel/argiem/blob/main/argiem-demo.cast
+Asciinema demo: https://github.com/supermhel/argiem/blob/main/fengarde-demo.cast
 
 Repo: https://github.com/supermhel/argiem — Apache-2.0.

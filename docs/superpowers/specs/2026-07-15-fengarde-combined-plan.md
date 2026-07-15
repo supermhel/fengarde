@@ -1,9 +1,9 @@
-# ARGIEM Combined Execution Plan — status re-baseline + merged roadmap (v0.5 → launch)
+# FENGARDE Combined Execution Plan — status re-baseline + merged roadmap (v0.5 → launch)
 
 *Merges two owner-supplied planning docs — PLAN_A ("90-Day Build Plan — Agent Execution Spec")
 and PLAN_C ("Engineering Excellence Spec") — re-baselined against the repo as it actually is
 on 2026-07-15 (commit `7ea6010`). Supersedes the v0.4 build plan
-(`2026-07-10-argiem-v0.4-build-plan.md`) as the forward roadmap. Owner: Mel.*
+(`2026-07-10-fengarde-v0.4-build-plan.md`) as the forward roadmap. Owner: Mel.*
 
 **Status of this doc:** current forward roadmap. Everything in §C is **design/claim** (SSOT §2
 sense) until its acceptance gate has actually run — a checked box requires evidence, not intent.
@@ -14,7 +14,7 @@ sense) until its acceptance gate has actually run — a checked box requires evi
 
 1. **NIS2 draft generator is a public template layer in this repo.** PLAN_A Phase 4 as written
    (field schema + deterministic German template + eval harness, disclaimer structurally
-   enforced) lands here; `argiem-sec` keeps only the trained-model / legally-validated layer,
+   enforced) lands here; `fengarde-sec` keeps only the trained-model / legally-validated layer,
    plugged in through the existing `REPORT_BACKEND=http` seam frozen in `contracts/reporting.md`.
    This resolves the apparent conflict between PLAN_A Phase 4 and the v0.4 open-core split:
    the *seam* is unchanged, only "how good the free draft is" moves up.
@@ -36,9 +36,9 @@ sense) until its acceptance gate has actually run — a checked box requires evi
 | Parsers | 10 (SSH, ASA, AD, vSphere, syslog, WinEventLog, DB-audit, MCP/agent, OPC UA, n8n) | `services/ws2-normalization/parsers/` |
 | Detection rules | 17, all with anti-dormancy fixtures | `contracts/rules/`, `tools/check_rule_producers.py` |
 | Bus delivery | Redis Streams + consumer groups + XAUTOCLAIM + DLQ — **proven live** | SSOT §2 |
-| Auth | Opt-in: `ARGIEM_API_KEY`, dashboard basic-auth override, Redis AUTH; loopback binds by default | v0.4 Track S + P1 commit `c84c8f6` |
+| Auth | Opt-in: `FENGARDE_API_KEY`, dashboard basic-auth override, Redis AUTH; loopback binds by default | v0.4 Track S + P1 commit `c84c8f6` |
 | Report hook | `POST/GET /alerts/{id}/report`, generic template + `REPORT_BACKEND=http` seam, draft+disclaimer structurally enforced | v0.4 Track R, `contracts/reporting.md` |
-| Rebrand | ARGUS → ARGIEM done | `717f4ed` |
+| Rebrand | ARGUS → FENGARDE done | `717f4ed` |
 
 ### Landed since SSOT §1's snapshot (`d404acf`) — the 2026-07-14/15 hardening series
 
@@ -70,7 +70,7 @@ A deep-audit P0/P1/P2 pass (numbering from that audit session, not a repo spec d
 |---|---|---|
 | PLAN_A P0 audit | SSOT.md + this doc serve it | — |
 | PLAN_A P1 auth & hardening | ~70%: opt-in API key/basic-auth/Redis AUTH, loopback binds, XSS fixed, gitleaks CI | Session login (argon2/bcrypt + rate limit), first-boot random credential, `docs/deployment.md` TLS/Caddy example, CSRF pass |
-| PLAN_A P2 quickstart | ~80%: README quickstart, `make demo` + devkit-feeder, `docs/adding-a-parser.md`, 3 issue templates, `docs/argiem-demo.cast` | Clean-machine timed validation, new-rule issue template |
+| PLAN_A P2 quickstart | ~80%: README quickstart, `make demo` + devkit-feeder, `docs/adding-a-parser.md`, 3 issue templates, `docs/fengarde-demo.cast` | Clean-machine timed validation, new-rule issue template |
 | PLAN_A P3 MCP/agent parser | Parser + 3 of 5 rules shipped (v0.4 P1) | R4 egress-allowlist rule, R5 destructive-command rule, `docs/agent-monitoring.md`, R1+R3 e2e fixture |
 | PLAN_A P4 NIS2 generator | Seam + generic template shipped (Track R) | Everything NIS2-specific — now scoped public (decision 1), see M5 |
 | PLAN_A P5 OT parser | Done — OPC UA chosen + shipped, 3 rules | Inventory-diff "new device on OT segment" rule, `docs/ot-monitoring.md` |
@@ -89,7 +89,7 @@ A deep-audit P0/P1/P2 pass (numbering from that audit session, not a repo spec d
 
 ## §B Corrections to the source plans (flagged, not silently resolved)
 
-1. **Naming:** both plans say "ARGUS"; the project is **ARGIEM** (`supermhel/argiem`) since `717f4ed`.
+1. **Naming:** both plans say "ARGUS"; the project is **FENGARDE** (`supermhel/argiem`) since `717f4ed`.
 2. **Workstream numbering:** PLAN_A's §0 has WS-3 = detection, WS-4 = indexing, WS-6 = dashboard,
    WS-7 = alerting. Reality: WS-3 **indexer**, WS-4 **detection**, WS-5 ai, WS-6 **inventory**,
    WS-7 **dashboard**; there is no alerting workstream (alerts are a bus topic + index). This doc
@@ -132,7 +132,7 @@ an acceptance gate; "done" means the gate ran, not that code merged. Version tar
 
 ### M2 — Public proof artifacts (PLAN_C Tier 2; ~1.5 weeks)
 
-- **`argiem-bench`**: in-repo reproducible load generator (syslog/Windows/agent events at
+- **`fengarde-bench`**: in-repo reproducible load generator (syslog/Windows/agent events at
   configurable EPS). Publish sustained EPS, p50/p99 ingest→alert latency, resource footprint on
   a defined reference box in README, with methodology. Closes the "B2 never load-tested" flag —
   and re-tunes the guessed defaults (2000/s, 100k depth) with measured numbers.
@@ -150,11 +150,11 @@ an acceptance gate; "done" means the gate ran, not that code merged. Version tar
 
 - Agent rule pack completion: **R4** egress to non-allowlisted domain, **R5** destructive
   command via agent (reuse DC mass-delete logic); `docs/agent-monitoring.md` ("point Claude
-  Code / an MCP server at ARGIEM in 5 minutes"); e2e fixture firing R1+R3 in `make e2e`.
+  Code / an MCP server at FENGARDE in 5 minutes"); e2e fixture firing R1+R3 in `make e2e`.
 - Dashboard **session login** (argon2/bcrypt hashed credentials, login rate-limit, first-boot
   random credential printed once — replaces "basic-auth override or nothing"); CSRF pass;
   `docs/deployment.md` with reverse-proxy TLS (sample Caddyfile).
-- `docs/vs.md` (honest ARGIEM vs Wazuh vs Elastic vs Security Onion — generous to competitors);
+- `docs/vs.md` (honest FENGARDE vs Wazuh vs Elastic vs Security Onion — generous to competitors);
   new-rule issue template; repo hygiene (topics, social preview, CoC, `good first issue` labels
   on deferred parsers, open-core statement in README per SSOT §4); release notes.
 - Clean-machine timed quickstart validation (the unchecked launch-checklist prerequisite).
@@ -189,7 +189,7 @@ Can partially parallelize with M4 (different services: ws3 reporting vs. envelop
   inventory context, extending the existing builtin template backend. Markdown first; PDF
   (weasyprint) is a heavyweight-dep decision flagged for the owner.
 - LLM enhancement stays optional and seam-shaped: free-text summarization/severity-suggestion
-  via the existing WS-5 pattern or a `REPORT_BACKEND=http` backend (argiem-sec's slot).
+  via the existing WS-5 pattern or a `REPORT_BACKEND=http` backend (fengarde-sec's slot).
   Structured fields stay deterministic; graceful degradation to pure template.
 - `eval/report_generator/`: ≥10 synthetic incidents → drafts → checklist assertions (mandatory
   fields present, no facts absent from the alert, banner present). CI-runnable in template mode.
@@ -212,7 +212,7 @@ bench numbers and badges to the posts. **No public posts of any kind before this
 - **Detection quality (Tier 4)**: MITRE ATT&CK + severity/confidence/FP-notes metadata on all
   rules, rendered in dashboard/docs; detection eval harness (labeled public corpora →
   per-rule precision/recall → `docs/detection-quality.md`); no-fire fixture sets per rule
-  (regressions block CI); Sigma import layer (supported subset → ARGIEM grammar; ≥20 rules
+  (regressions block CI); Sigma import layer (supported subset → FENGARDE grammar; ≥20 rules
   importable and passing anti-dormancy).
 - **Self-observability (Tier 5)**: structured JSON logging, Prometheus metrics per WS
   (events in/out, lag, dead-letters, alerts), shipped Grafana dashboard, OTel traces via the
@@ -244,7 +244,7 @@ one fixture less), never tests or honesty docs.
    `make e2e` may not break).
 4. Ask the owner before: heavyweight dependencies (each new dep gets a one-line justification),
    bus message-schema changes (M1 envelope!), user-facing renames, licensing.
-5. No proprietary/argiem-sec content here: regulatory *templates* with public-source citations
+5. No proprietary/fengarde-sec content here: regulatory *templates* with public-source citations
    OK; trained weights, corpora, legally-validated mappings NOT.
 6. Never fabricate log formats, legal requirements, or benchmark numbers; cite sources.
    Keep PRs reviewable on a phone. Each milestone ends with tests green + CHANGELOG entry +

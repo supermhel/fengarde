@@ -15,4 +15,4 @@ services:
     volumes:
       - ./dashboard.htpasswd:/etc/nginx/dashboard.htpasswd:ro
     environment:
-      - DASHBOARD_AUTH_REALM='"ARGIEM Dashboard"'
+      - DASHBOARD_AUTH_REALM='"FENGARDE Dashboard"'

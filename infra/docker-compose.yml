@@ -113,7 +113,7 @@ services:
       # ws3-indexer:8013 container-to-container; NOT published to the host.
       - TRIAGE_PORT=8013
       # v0.4 Track S1: opt-in shared-secret auth (unset = open + warning log).
-      - ARGIEM_API_KEY=${ARGIEM_API_KEY:-}
+      - FENGARDE_API_KEY=${FENGARDE_API_KEY:-}
     depends_on:
       redis: { condition: service_healthy }
       opensearch: { condition: service_healthy }
@@ -153,14 +153,14 @@ services:
     build: { context: .., dockerfile: services/ws6-inventory/Dockerfile }
     restart: unless-stopped
     # v0.4: bind to loopback by default. The inventory API has a WRITE surface
-    # (POST /assets/upsert) that is open unless ARGIEM_API_KEY is set, so it must
+    # (POST /assets/upsert) that is open unless FENGARDE_API_KEY is set, so it must
     # not be reachable from the LAN out of the box. Publish on 0.0.0.0 explicitly
     # only after setting a key (see SECURITY.md).
     ports: ["127.0.0.1:8000:8000"]
     volumes: ["inventory-data:/data"]
     environment:
       # v0.4 Track S1: opt-in shared-secret auth (unset = open + warning log).
-      - ARGIEM_API_KEY=${ARGIEM_API_KEY:-}
+      - FENGARDE_API_KEY=${FENGARDE_API_KEY:-}
 
   ws7-dashboard:
     build: { context: .., dockerfile: services/ws7-dashboard/Dockerfile }
@@ -174,8 +174,8 @@ services:
     depends_on: [ws6-inventory]
     environment:
       # v0.4 Track S1: forwarded to ws3-indexer on the triage proxy so the
-      # browser never holds the key. Must match ws3-indexer's ARGIEM_API_KEY.
-      - ARGIEM_API_KEY=${ARGIEM_API_KEY:-}
+      # browser never holds the key. Must match ws3-indexer's FENGARDE_API_KEY.
+      - FENGARDE_API_KEY=${FENGARDE_API_KEY:-}
       # v0.4 Track S2: "off" = no dashboard auth (default). See
       # infra/docker-compose.auth.yml for the opt-in override.
       - DASHBOARD_AUTH_REALM=off

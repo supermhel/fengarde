@@ -1,6 +1,6 @@
 ---
 name: Feature request
-about: Suggest a new capability or improvement for ARGIEM
+about: Suggest a new capability or improvement for FENGARDE
 title: "[feature] "
 labels: enhancement
 assignees: ''
@@ -21,7 +21,7 @@ What are you trying to do, and what's getting in the way?
 
 ## Proposed solution
 
-What you'd like ARGIEM to do.
+What you'd like FENGARDE to do.
 
 ## Which milestone do you think this targets?
 
