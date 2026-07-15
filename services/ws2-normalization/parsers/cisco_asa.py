@@ -19,7 +19,22 @@ import re
 import time
 from typing import Optional
 
-from .base import Parser, SEV_MEDIUM, SEV_INFO, IPV4
+from .base import (Parser, SEV_INFO, SEV_LOW, SEV_MEDIUM, SEV_HIGH,
+                   SEV_CRITICAL, IPV4)
+
+# Cisco ASA syslog severity (0-7) -> OCSF severity_id. The old two-level map
+# (<=4 -> MEDIUM else INFO) capped emergency/alert/critical (0/1/2) at MEDIUM,
+# losing the most urgent signals; map the full range.
+_ASA_SEV_MAP = {
+    0: SEV_CRITICAL,  # emergency (system unusable)
+    1: SEV_CRITICAL,  # alert
+    2: SEV_CRITICAL,  # critical
+    3: SEV_HIGH,      # error
+    4: SEV_MEDIUM,    # warning
+    5: SEV_LOW,       # notification
+    6: SEV_INFO,      # informational
+    7: SEV_INFO,      # debugging
+}
 
 # Cisco ASA syslog tag: %ASA-<sev>-<msgid>: <text>
 _ASA_TAG = re.compile(r"%ASA-(?P<sev>\d)-(?P<msgid>\d+):\s*(?P<text>.*)$")
@@ -71,8 +86,7 @@ class CiscoAsaParser(Parser):
         dm = _DST.search(text)
 
         time_ms = self._time_ms(meta)
-        # ASA severity 0-4 are notable; map to MEDIUM, else INFO.
-        severity_id = SEV_MEDIUM if asa_sev <= 4 else SEV_INFO
+        severity_id = _ASA_SEV_MAP.get(asa_sev, SEV_INFO)
 
         event = self.base_event(
             class_uid=_CLASS,

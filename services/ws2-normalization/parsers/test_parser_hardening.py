@@ -128,5 +128,38 @@ class TestStatusFromOutcome(unittest.TestCase):
         self.assertEqual(ev["status"], "Failure")
 
 
+class TestParserTail(unittest.TestCase):
+    """P2.5: IPv6 capture + full ASA severity map."""
+
+    def test_ssh_ipv6_source_captured(self):
+        line = "Nov 1 10:00:00 h sshd[7]: Failed password for admin from 2001:db8::1 port 5"
+        ev = LinuxSshParser().parse(_raw(line, st="linux_ssh"))
+        self.assertEqual(validate(ev), [])
+        self.assertEqual(ev["src_endpoint"]["ip"], "2001:db8::1")
+
+    def test_ssh_ipv4_still_captured(self):
+        line = "Nov 1 10:00:00 h sshd[7]: Failed password for admin from 203.0.113.5 port 5"
+        ev = LinuxSshParser().parse(_raw(line, st="linux_ssh"))
+        self.assertEqual(ev["src_endpoint"]["ip"], "203.0.113.5")
+
+    def test_ssh_garbage_ip_still_dropped(self):
+        # not a valid v4 or v6 -> dropped, event still valid
+        line = "Nov 1 10:00:00 h sshd[7]: Failed password for admin from 999.999.999.999 port 5"
+        ev = LinuxSshParser().parse(_raw(line, st="linux_ssh"))
+        self.assertEqual(validate(ev), [])
+        self.assertNotIn("src_endpoint", ev)
+
+    def test_asa_severity_full_range(self):
+        from parsers.base import (SEV_CRITICAL, SEV_HIGH, SEV_MEDIUM,
+                                  SEV_LOW, SEV_INFO)
+        cases = {0: SEV_CRITICAL, 1: SEV_CRITICAL, 2: SEV_CRITICAL, 3: SEV_HIGH,
+                 4: SEV_MEDIUM, 5: SEV_LOW, 6: SEV_INFO, 7: SEV_INFO}
+        for sev, expected in cases.items():
+            line = f"%ASA-{sev}-106023: deny tcp src outside:10.0.0.9/55 dst inside:10.0.0.1/80"
+            ev = CiscoAsaParser().parse(_raw(line, st="cisco_asa"))
+            self.assertEqual(ev["severity_id"], expected,
+                             f"ASA sev {sev} -> {expected}, got {ev['severity_id']}")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=1)

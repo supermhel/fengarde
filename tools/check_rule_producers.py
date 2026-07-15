@@ -197,34 +197,87 @@ def rule_referenced(rule: dict) -> tuple[set[tuple[str, object]], set[str]]:
     return equality, path_only
 
 
+def collect_events() -> list[dict[str, object]]:
+    """One flattened dotted-path map per REAL event a parser produces (post-enrich).
+
+    Per-event (not a global union) so we can check that a rule matches and has its
+    group_by/distinct_field on the SAME event -- see main()."""
+    events: list[dict[str, object]] = []
+    for source_type, raws in FIXTURES.items():
+        parser = _REGISTRY.get(source_type)
+        if parser is None:
+            continue
+        for raw in raws:
+            event = parser.parse({"source_type": source_type, **raw})
+            if event is not None:
+                events.append(flatten(enrich(event)))
+    return events
+
+
+def _event_matches(event: dict, equality: set) -> bool:
+    """True if the event satisfies every equality (path,value) the rule requires."""
+    return all(event.get(k) == v for k, v in equality)
+
+
 def main() -> int:
-    producible_paths, producible_pairs = collect_producible()
+    events = collect_events()
+    # Global sets, kept only to write precise diagnostics.
+    all_paths: set[str] = set()
+    all_pairs: set = set()
+    for e in events:
+        all_paths |= set(e)
+        all_pairs |= {(k, v) for k, v in e.items()
+                      if isinstance(v, (str, int, float, bool)) or v is None}
+
     dormant: list[tuple[str, list[str]]] = []
     for path in sorted(RULES_DIR.glob("*.yml")):
         rule = yaml.safe_load(path.read_text(encoding="utf-8"))
         if not rule:
             continue
         equality, path_only = rule_referenced(rule)
-        problems = [f"{k}={v!r} never produced" for k, v in equality
-                   if (k, v) not in producible_pairs]
-        problems += [f"{f} path never populated" for f in path_only
-                    if f not in producible_paths]
-        if problems:
-            dormant.append((rule.get("title", path.name), problems))
+
+        # P2.7: satisfiability is PER EVENT. A rule fires on events matching its
+        # equality selection; for a stateful rule it must ALSO have group_by/
+        # distinct_field present on those same events, or it can never count. The
+        # old global-union check missed this: it passed a rule whose group/distinct
+        # field is only ever produced by a DIFFERENT class than the rule matches.
+        matching = [e for e in events if _event_matches(e, equality)]
+        satisfied = any(all(f in e for f in path_only) for e in matching)
+        if satisfied:
+            continue
+
+        # Build a precise reason.
+        problems = [f"{k}={v!r} never produced by any parser" for k, v in equality
+                    if (k, v) not in all_pairs]
+        problems += [f"{f} path never populated by any parser" for f in path_only
+                     if f not in all_paths]
+        if not problems:
+            # Every piece is producible in isolation, but not TOGETHER on one event.
+            if not matching:
+                problems.append("no real event matches this rule's equality "
+                                "selection (values produced, but never together)")
+            else:
+                miss = sorted({f for f in path_only
+                               if not any(f in e for e in matching)})
+                problems.append(
+                    f"events matching this rule never carry {miss} "
+                    f"(group_by/distinct_field on a field the matched class "
+                    f"doesn't emit -- rule would silently never count)")
+        dormant.append((rule.get("title", path.name), problems))
 
     if dormant:
-        print("[FAIL] rules that can NEVER fire on real data (no registered "
-              "parser produces a value/field they require):")
+        print("[FAIL] rules that can NEVER fire on real data (no single real event "
+              "both matches the rule AND carries the fields it needs to count):")
         for title, problems in dormant:
             print(f"  - {title!r}:")
             for p in problems:
                 print(f"      {p}")
         return 1
 
-    print(f"[OK] all {len(list(RULES_DIR.glob('*.yml')))} rules are satisfiable "
-          f"by at least one registered parser's output "
-          f"({len(producible_paths)} field paths, {len(producible_pairs)} "
-          f"(path,value) pairs checked)")
+    print(f"[OK] all {len(list(RULES_DIR.glob('*.yml')))} rules are satisfiable by a "
+          f"real event that both matches them and carries their group/distinct "
+          f"fields ({len(events)} events, {len(all_paths)} paths, "
+          f"{len(all_pairs)} (path,value) pairs checked)")
     return 0
 
 

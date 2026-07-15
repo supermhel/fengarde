@@ -25,51 +25,59 @@ back to now.
 from __future__ import annotations
 
 import re
+import ipaddress
 import time
 from typing import Optional
 
-from .base import Parser, SEV_HIGH, SEV_INFO, IPV4
+from .base import Parser, SEV_HIGH, SEV_INFO
 
 _CLASS = 3002  # Authentication
 
 # Only act on sshd / pam_unix(sshd:...) lines.
 _SSHD = re.compile(r"sshd(?:\[\d+\])?:|pam_unix\(sshd:")
 
+# IP token: hex, dots and colons only -> captures BOTH IPv4 (10.0.0.5) and IPv6
+# (2001:db8::1). Captured loosely so a line with a malformed address still MATCHES
+# (we keep the user + the fact of the login); the address is then validated with
+# ipaddress in parse() and dropped if it isn't a real IP, rather than emitting an
+# event that fails Contract A's endpoint pattern and gets dead-lettered.
+_IPTOKEN = r"[0-9A-Fa-f:.]+"
+
 # "Accepted password for jdoe from 10.0.0.5 port 50022 ssh2"
-# "Accepted publickey for deploy from 10.0.0.6 port 50022 ssh2"
-# The IP is captured loosely (\d{1,3}) so a line with a malformed octet still
-# MATCHES (we keep the user + the fact of a failed login); the address is then
-# validated in parse() and dropped if out of range, rather than emitting an event
-# that fails Contract A's endpoint pattern and gets dead-lettered (see IPV4).
+# "Accepted publickey for deploy from 2001:db8::6 port 50022 ssh2"
 _ACCEPTED = re.compile(
     r"Accepted\s+\S+\s+for\s+(?P<user>\S+)\s+from\s+"
-    r"(?P<ip>\d{1,3}(?:\.\d{1,3}){3})(?:\s+port\s+(?P<port>\d+))?"
+    r"(?P<ip>" + _IPTOKEN + r")(?:\s+port\s+(?P<port>\d+))?"
 )
 # "Failed password for [invalid user ]admin from 203.0.113.5 port 51000 ssh2"
 _FAILED = re.compile(
     r"Failed\s+\S+\s+for\s+(?:invalid user\s+)?(?P<user>\S+)\s+from\s+"
-    r"(?P<ip>\d{1,3}(?:\.\d{1,3}){3})(?:\s+port\s+(?P<port>\d+))?"
+    r"(?P<ip>" + _IPTOKEN + r")(?:\s+port\s+(?P<port>\d+))?"
 )
 # "Invalid user admin from 203.0.113.5 port 51000"
 _INVALID = re.compile(
     r"Invalid user\s+(?P<user>\S+)\s+from\s+"
-    r"(?P<ip>\d{1,3}(?:\.\d{1,3}){3})(?:\s+port\s+(?P<port>\d+))?"
+    r"(?P<ip>" + _IPTOKEN + r")(?:\s+port\s+(?P<port>\d+))?"
 )
-
-_IPV4_FULL = re.compile(IPV4 + r"\Z")
 
 
 def _valid_ip(ip):
-    """True if ``ip`` is a well-formed 0-255-octet IPv4 (else it must be dropped
-    so it can't fail Contract A's endpoint pattern downstream)."""
-    return isinstance(ip, str) and bool(_IPV4_FULL.match(ip))
+    """True if ``ip`` is a real IPv4 OR IPv6 address (else it must be dropped so
+    it can't fail Contract A's endpoint pattern downstream)."""
+    if not isinstance(ip, str):
+        return False
+    try:
+        ipaddress.ip_address(ip)
+        return True
+    except ValueError:
+        return False
 # "pam_unix(sshd:session): session closed|opened for user jdoe"
 _SESSION = re.compile(
     r"session\s+(?P<state>opened|closed)\s+for user\s+(?P<user>\S+)"
 )
 # generic "authentication failure ... rhost=203.0.113.5 ... user=admin"
 _PAM_FAIL = re.compile(r"authentication failure")
-_RHOST = re.compile(r"rhost=(?P<ip>\d{1,3}(?:\.\d{1,3}){3})")
+_RHOST = re.compile(r"rhost=(?P<ip>" + _IPTOKEN + r")")
 _PAMUSER = re.compile(r"user=(?P<user>\S+)")
 
 
