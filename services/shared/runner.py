@@ -328,6 +328,40 @@ def serve(handlers: Handlers, *, health_port: int | None = None,
         log.info("shut down cleanly")
 
 
+def start_depth_watchdog(bus, log, shutdown: threading.Event, topics: "list[str]",
+                         *, warn_at: int = 100000, interval_s: float = 30.0
+                         ) -> "threading.Thread | None":
+    """P2.4: periodically sample ``topics``' stream depth and log a warning when
+    any crosses ``warn_at``, so an operator sees a backpressure buildup before it
+    OOMs Redis. Signal only, never a fix: internal topics
+    (normalized.events/scored.events/ai.requests) are deliberately never
+    MAXLEN-trimmed -- see ``bus.py``'s ``_RedisBus.depth()`` docstring -- trimming
+    an unconsumed bank audit event is a completeness violation a SIEM cannot make
+    silently. The only real shedding lever is the ingest edge
+    (``SyslogUDPServer``'s token bucket). ``warn_at<=0`` disables. Originally
+    ws1-only (``raw.events``); shared here so ws2/ws4 can watch their own
+    produced topics too.
+    """
+    if warn_at <= 0 or not topics:
+        return None
+
+    def _loop():
+        while not shutdown.is_set():
+            for topic in topics:
+                try:
+                    depth = bus.depth(topic)
+                    if depth >= warn_at:
+                        log.warn("topic depth crossed warning threshold",
+                                topic=topic, depth=depth, threshold=warn_at)
+                except Exception as exc:
+                    log.warn("depth watchdog check failed", topic=topic, error=str(exc))
+            shutdown.wait(interval_s)
+
+    t = threading.Thread(target=_loop, name="depth-watchdog", daemon=True)
+    t.start()
+    return t
+
+
 def run_once(bus, handlers: Handlers, *, max_redeliveries: int = 5) -> dict:
     """Single-pass drain of every topic (no threads, no daemon loop).
 

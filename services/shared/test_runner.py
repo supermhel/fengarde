@@ -451,9 +451,40 @@ def _test_metrics_counts_outcomes():
 
 
 # --------------------------------------------------------------------------- #
+# P2.4: start_depth_watchdog logs when a topic's depth crosses warn_at, and
+# warn_at<=0 disables it (returns None, spawns no thread).
+def _test_depth_watchdog():
+    bus = _MemoryBus()
+    topic = _unique_topic("t.depth")
+    for i in range(5):
+        bus.produce(topic, key=str(i), payload={"n": i})
+
+    warned = []
+
+    class _FakeLog:
+        def warn(self, msg, **kw):
+            warned.append((msg, kw))
+
+    shutdown = threading.Event()
+    t = runner.start_depth_watchdog(bus, _FakeLog(), shutdown, [topic],
+                                    warn_at=3, interval_s=0.05)
+    check(t is not None, "watchdog thread should start when warn_at > 0")
+    time.sleep(0.2)
+    shutdown.set()
+    t.join(timeout=2)
+    check(any(kw.get("topic") == topic and kw.get("depth") == 5 for _m, kw in warned),
+          f"watchdog did not warn on depth 5 >= warn_at 3: {warned}")
+
+    disabled = runner.start_depth_watchdog(bus, _FakeLog(), threading.Event(),
+                                           [topic], warn_at=0)
+    check(disabled is None, "warn_at<=0 must disable the watchdog (no thread)")
+
+
+# --------------------------------------------------------------------------- #
 def main():
     _test_health_degraded()
     _test_metrics_counts_outcomes()
+    _test_depth_watchdog()
     parametrized = [
         ("test_handler_called_once_per_message",
          _body_handler_called_once_per_message, False),
