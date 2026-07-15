@@ -16,7 +16,7 @@ import json
 import time
 from typing import Optional
 
-from .base import Parser, SEV_CRITICAL, SEV_MEDIUM, SEV_INFO, status_from_outcome
+from .base import Parser, SEV_INFO, SEV_BY_CATEGORY, status_from_outcome
 
 _CLASS = 6003  # API Activity
 
@@ -32,17 +32,18 @@ def _safe_int(value):
     except (ValueError, TypeError):
         return None
 
-# operation keyword -> (activity_id, severity)
+# operation keyword -> (activity_id, severity), severity from the shared
+# cross-source rubric (base.SEV_BY_CATEGORY, P2.2).
 _OP_MAP = {
-    "create": (1, SEV_INFO),
-    "deploy": (1, SEV_INFO),
-    "read": (2, SEV_INFO),
-    "get": (2, SEV_INFO),
-    "update": (3, SEV_MEDIUM),
-    "reconfig": (3, SEV_MEDIUM),
-    "delete": (4, SEV_CRITICAL),
-    "destroy": (4, SEV_CRITICAL),
-    "remove": (4, SEV_CRITICAL),
+    "create": (1, SEV_BY_CATEGORY["write"]),
+    "deploy": (1, SEV_BY_CATEGORY["write"]),
+    "read": (2, SEV_BY_CATEGORY["read"]),
+    "get": (2, SEV_BY_CATEGORY["read"]),
+    "update": (3, SEV_BY_CATEGORY["modify"]),
+    "reconfig": (3, SEV_BY_CATEGORY["modify"]),
+    "delete": (4, SEV_BY_CATEGORY["destroy"]),
+    "destroy": (4, SEV_BY_CATEGORY["destroy"]),
+    "remove": (4, SEV_BY_CATEGORY["destroy"]),
 }
 
 
@@ -88,6 +89,7 @@ class VmwareVsphereParser(Parser):
             logged_time=self._logged_time(rec, meta),
             status=status_from_outcome(rec),
             message=message,
+            sector=self.resolve_sector(meta),
         )
 
         if src_ip or src_host:

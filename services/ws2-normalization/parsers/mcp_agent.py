@@ -118,6 +118,7 @@ class McpAgentParser(Parser):
             logged_time=self._logged_time(rec, meta),
             status=status_from_outcome(rec, keys=("outcome", "status")),
             message=message,
+            sector=self.resolve_sector(meta),
         )
         event["api"] = {"operation": str(tool),
                         "request": {"data": args_text}}

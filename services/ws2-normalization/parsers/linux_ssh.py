@@ -114,6 +114,7 @@ class LinuxSshParser(Parser):
             logged_time=self._logged_time(meta),
             status=status,
             message=message,
+            sector=self.resolve_sector(meta),
         )
 
         if ip:

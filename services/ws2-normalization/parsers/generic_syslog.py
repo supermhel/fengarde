@@ -135,18 +135,14 @@ class GenericSyslogParser(Parser):
         # ingest_id: from meta, else deterministic from raw line
         ingest_id = meta.get("ingest_id") or _deterministic_ingest_id(line)
 
-        # sector: meta override wins
-        sector = meta.get("sector") or self.SECTOR
-
         event = self.base_event(
             class_uid=_CLASS,
             activity_id=_ACTIVITY,
             severity_id=severity_id,
             time_ms=time_ms,
             ingest_id=ingest_id,
+            sector=self.resolve_sector(meta),
         )
-        # override sector from meta if provided
-        event["siem"]["sector"] = sector
         event["message"] = msg or line
 
         event["src_endpoint"] = {"hostname": hostname}

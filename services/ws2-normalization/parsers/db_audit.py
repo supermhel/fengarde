@@ -25,24 +25,27 @@ import json
 import time
 from typing import Optional
 
-from .base import Parser, SEV_CRITICAL, SEV_MEDIUM, SEV_INFO, status_from_outcome
+from .base import Parser, SEV_INFO, SEV_BY_CATEGORY, status_from_outcome
 
 _CLASS = 6005  # Datastore Activity
 
 # operation keyword -> (activity_id, severity). GRANT/ALTER/REVOKE are privileged
-# ops (5) -- the class the bank_db_priv_esc rule targets.
+# ops (5) -- the class the bank_db_priv_esc rule targets. Severities come from
+# the shared cross-source rubric (base.SEV_BY_CATEGORY, P2.2) so "delete a row"
+# and "drop a table" both land as CRITICAL like vmware's delete/destroy does,
+# not a source-specific MEDIUM that dodges the severity floor.
 _OP_MAP = {
-    "select": (1, SEV_INFO),
-    "query": (1, SEV_INFO),
-    "insert": (2, SEV_INFO),
-    "write": (2, SEV_INFO),
-    "update": (3, SEV_MEDIUM),
-    "delete": (4, SEV_MEDIUM),
-    "drop": (4, SEV_CRITICAL),
-    "grant": (5, SEV_CRITICAL),
-    "revoke": (5, SEV_CRITICAL),
-    "alter": (5, SEV_CRITICAL),
-    "create user": (5, SEV_CRITICAL),
+    "select": (1, SEV_BY_CATEGORY["read"]),
+    "query": (1, SEV_BY_CATEGORY["read"]),
+    "insert": (2, SEV_BY_CATEGORY["write"]),
+    "write": (2, SEV_BY_CATEGORY["write"]),
+    "update": (3, SEV_BY_CATEGORY["modify"]),
+    "delete": (4, SEV_BY_CATEGORY["destroy"]),
+    "drop": (4, SEV_BY_CATEGORY["destroy"]),
+    "grant": (5, SEV_BY_CATEGORY["privilege"]),
+    "revoke": (5, SEV_BY_CATEGORY["privilege"]),
+    "alter": (5, SEV_BY_CATEGORY["privilege"]),
+    "create user": (5, SEV_BY_CATEGORY["privilege"]),
 }
 
 
@@ -81,8 +84,6 @@ class DbAuditParser(Parser):
         message = f"{rec.get('operation') or 'DB op'}: {user or '?'} {verb} " \
                   f"{db_object or 'database'}"
 
-        sector = meta.get("sector") or self.SECTOR
-
         event = self.base_event(
             class_uid=_CLASS,
             activity_id=activity_id,
@@ -92,8 +93,8 @@ class DbAuditParser(Parser):
             logged_time=self._logged_time(rec, meta),
             status=status_from_outcome(rec),
             message=message,
+            sector=self.resolve_sector(meta),
         )
-        event["siem"]["sector"] = sector
 
         if src_ip:
             event["src_endpoint"] = {"ip": src_ip}

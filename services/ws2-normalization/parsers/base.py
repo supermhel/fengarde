@@ -40,6 +40,25 @@ SEV_CRITICAL = 5
 SEV_FATAL = 6
 
 
+# Cross-source severity rubric (P2.2): each parser's product-specific verb table
+# maps its own verbs to one of these CATEGORIES, not to a hand-picked severity --
+# otherwise the same real-world action (deleting a resource) lands at CRITICAL
+# for one source and MEDIUM for another, which skews scoring.yaml's weighted
+# sum and the severity-floor rule differently per source for no security reason.
+SEV_BY_CATEGORY = {
+    "read": SEV_INFO,        # view/list/query, no state change
+    "write": SEV_INFO,        # routine create of ordinary data
+    "modify": SEV_MEDIUM,     # update/reconfigure existing state
+    "destroy": SEV_CRITICAL,  # delete/drop/remove -- irreversible loss
+    "privilege": SEV_CRITICAL,  # grant/revoke/alter-permissions/create-principal
+}
+
+# siem.sector enum (Contract A ocsf-event.schema.json). An override outside this
+# set would otherwise reach the schema's enum check unvalidated and fail the
+# WHOLE event (dead-letter) instead of falling back to the parser's own sector.
+_VALID_SECTORS = frozenset({"bank", "datacenter", "common"})
+
+
 # Outcome-token vocabularies for status_from_outcome(). Kept broad on purpose:
 # a security-relevant event (a failed login) recorded as "Success" suppresses the
 # very rules that watch for it, so an explicit failure signal must win.
@@ -124,6 +143,7 @@ class Parser:
         logged_time: Optional[int] = None,
         status: Optional[str] = None,
         message: Optional[str] = None,
+        sector: Optional[str] = None,
     ) -> dict:
         """Build the common OCSF scaffold with a derived ``type_uid``.
 
@@ -144,7 +164,7 @@ class Parser:
             "severity_id": severity_id,
             "time": time_ms,
             "siem": {
-                "sector": self.SECTOR,
+                "sector": sector or self.SECTOR,
                 "source_type": self.SOURCE_TYPE,
                 "ingest_id": ingest_id or str(uuid.uuid4()),
             },
@@ -156,6 +176,16 @@ class Parser:
         if message is not None:
             event["message"] = message
         return event
+
+    def resolve_sector(self, meta: dict) -> str:
+        """``meta.sector`` overrides this parser's default SECTOR, but only when
+        it's a recognized value -- an unvalidated override reaching Contract A's
+        enum-checked ``siem.sector`` field would fail the whole event (dead-letter)
+        instead of degrading to the parser's own sector."""
+        val = meta.get("sector") if isinstance(meta, dict) else None
+        if isinstance(val, str) and val in _VALID_SECTORS:
+            return val
+        return self.SECTOR
 
     @staticmethod
     def partition_key(event: dict) -> str:
