@@ -119,11 +119,23 @@ def main() -> None:
         log.error("syslog UDP bind failed", host=syslog_host, port=syslog_port,
                   error=str(exc))
 
+    def _syslog_metrics() -> dict:
+        if udp is None:
+            return {}
+        return {"syslog_udp": {
+            "events_produced": udp.events_produced,
+            "events_dropped": udp.events_dropped,
+            "events_shed": udp.events_shed,
+            "events_spooled": udp.events_spooled,
+            "events_lost": udp.events_lost,
+        }}
+
     shutdown = threading.Event()
     depth_thread = _start_depth_watchdog(bus, log, shutdown)
     try:
         serve({}, health_port=int(os.getenv("PORT", "8001")),
-              service_name="ws1-collectors", shutdown=shutdown)
+              service_name="ws1-collectors", shutdown=shutdown,
+              metrics_provider=_syslog_metrics)
     finally:
         if udp is not None:
             udp.stop()
