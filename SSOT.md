@@ -10,7 +10,7 @@ Update this file whenever status changes; it's a living index, not an archive.
 
 ---
 
-## 1. Current state (as of 2026-07-15, commit `7ea6010` — v0.4 tracks + P0/P1/P2 hardening executed)
+## 1. Current state (as of 2026-07-16, commit `8b3f450` — M1-M5 of the combined plan executed)
 
 | Fact | Value |
 |---|---|
@@ -30,7 +30,9 @@ Update this file whenever status changes; it's a living index, not an archive.
 | Open-core split | **Decided** (2026-07-01, via `/plan-ceo-review`): this repo stays fully open forever; FENGARDE-Sec (trained model + regulatory compliance) is the paid, closed layer in a separate repo. **v0.4 made this concrete**: `contracts/reporting.md` is the first real additive-field contract between the two repos (fengarde-sec's Track R implements the paid backend side against it). |
 | Bus backend | Redis Streams (real) + in-memory (tests). **Kafka is NOT implemented** despite older docs mentioning it as a "prod backend" — see architecture review §3 R-A. |
 | Security posture | Stored-XSS in dashboard: **fixed** (`35f80fc`). Poison-message DLQ, input validation, prompt bounds: **fixed** (`a60e6d4`). Opt-in auth (v0.4 Track S, see row above) — no auth is still the *default*, same trade-off as before, now with a real opt-in path. |
-| Forward roadmap | **`docs/superpowers/specs/2026-07-15-fengarde-combined-plan.md`** — merges the owner's PLAN_A (90-day execution) + PLAN_C (engineering excellence) re-baselined against actual repo state; supersedes the v0.4 build plan as forward roadmap. Milestones M1-M7: correctness gates (`make chaos`, envelope v1, property/fuzz tests) → proof artifacts (bench, SBOM/signing/Scorecard, quality floor) → product completeness (agent rules R4/R5, session login, vs.md) → MSP-grade (multi-tenancy, RBAC, ops lifecycle — **the launch gate**) → public NIS2 template layer → single-wave launch LAST → continuous detection-quality/observability. Two locked decisions: NIS2 template layer is public in this repo (fengarde-sec keeps model/legal layer via the `contracts/reporting.md` seam); no posting before MSP readiness. v0.4 Track X carry-overs (B3 dual-backend test, B4 hot-reload, B5 HA design, C2 live dashboard updates, C3 MITRE heatmap, remaining A4 parsers — DNS/k8s/CEF/cloud, S7/PROFINET, periodicity primitive) are carried in that doc's deferred backlog — still not silently dropped. |
+| Forward roadmap | **`docs/superpowers/specs/2026-07-15-fengarde-combined-plan.md`** — merges the owner's PLAN_A (90-day execution) + PLAN_C (engineering excellence) re-baselined against actual repo state; supersedes the v0.4 build plan as forward roadmap. Milestones M1-M7, status as of `8b3f450`: **M1 correctness gates — mostly done**, one real open item (`make chaos` is written and reviewed but genuinely NOT RUN — no Docker daemon in any environment this plan has executed in yet; do not treat it as proven until a real run's output lands in a PR). **M2 proof artifacts — mostly done** (bench numbers real and in README; supply-chain root-cause fix + Dependabot/SBOM/CodeQL/Scorecard wired; quality floor: ruff blocking, mypy informational, mutmut not started). **M3 product completeness — done.** **M4 MSP-grade (the launch gate) — done**: multi-tenancy, RBAC, versioned REST API + OpenAPI spec, HMAC-signed webhooks, entry-points plugin interface, ops lifecycle (schema migration, backup/restore, disk guardrails) — see the new summary rows below. **M5 NIS2 public template layer — done**: deterministic German/English generator, eval harness (72 drafts, CI-gated), dashboard button (browser-verified), `make nis2-demo`. **M6 LAUNCH — NOT executed, no posting of any kind has happened** (see §5 below for the honest launch-readiness assessment; M6 requires explicit human approval regardless of gate status, per standing instruction). Two locked decisions: NIS2 template layer is public in this repo (fengarde-sec keeps model/legal layer via the `contracts/reporting.md` seam); no posting before MSP readiness. v0.4 Track X carry-overs (B3 dual-backend test, B4 hot-reload, B5 HA design, C2 live dashboard updates, C3 MITRE heatmap, remaining A4 parsers — DNS/k8s/CEF/cloud, S7/PROFINET, periodicity primitive) are carried in that doc's deferred backlog — still not silently dropped. |
+| MSP-grade (M4, done 2026-07-16) | Multi-tenancy (tenant-scoped indices, per-tenant rule enablement, `tools/test_multi_tenant_isolation.py`); RBAC (`FENGARDE_RBAC_DB` opt-in, SQLite users + scrypt hashing + sessions + roles, `services/shared/{users,sessions,rbac}.py`); versioned REST API (`contracts/triage-api.yaml`, `/api/v1/...` alongside the unchanged bare paths); outbound HMAC-signed webhooks (`contracts/webhooks/`, `services/ws3-indexer/webhooks.py`); entry-points parser/rule plugin interface (`docs/plugin-development.md`); ops lifecycle (`services/shared/users.py` schema migration via `PRAGMA user_version`, `tools/backup.py`/`restore.py`, `tools/migrate_opensearch.py`, `services/shared/diskguard.py`). **A real gap found and disclosed while building this, not hidden**: OpenSearch ILM/retention policies were never actually installable on a live cluster (schema mismatch, see §2 below) — everything else in M4 is real and tested, this one pre-existing issue surfaced during the "versioned index mappings" work. |
+| NIS2 public template layer (M5, done 2026-07-16) | `contracts/nis2-de-schema.json` + `services/ws3-indexer/nis2_template.py` — deterministic German/English NIS2 Art. 23 / §32 BSIG draft generator, additive on the existing `/alerts/{id}/report` route (`?template=nis2`). States its own NIS2-vs-DORA scope caveat inline (financial entities are typically DORA-governed, not NIS2). Zero LLM, zero paid dependency — the paid, legally-validated layer stays `fengarde-sec`'s via the existing `REPORT_BACKEND=http` seam, untouched. `docs/nis2-report-generator.md` has the full honest scope/limits. |
 
 ## 2. What's proven vs. what's still a claim
 
@@ -55,7 +57,10 @@ those words get reused loosely across specs written weeks apart.
 | Triage + report workflow works through the live Docker/nginx stack | **Proven (2026-07-10, `38341ce`)** | Live run on real Docker/Redis/OpenSearch/nginx: dashboard nginx `/api/triage` + `/api/report` proxy → `ws3-indexer:8013` works; report lands in `reports-*` (status=draft+disclaimer); auth 401/200 correct; nginx injects the key server-side. Still unproven at scale: the OCC/CAS multi-replica path (unit-tested against a fake transport only) and any high-concurrency behavior. |
 | B2 backpressure protects Redis under a real flood | **Unit-tested, not load-tested** | Token-bucket shedding + spool replay have unit/integration tests (`test_syslog_udp.py`), but no real high-rate flood against a live Redis was run — the "protects against OOM" claim is by-design, not measured. Rate default (2000/s) and depth threshold (100k) are untuned guesses. |
 | Open-core split (this repo free / fengarde-sec paid) | **Decided, not yet legally documented** | Decision made 2026-07-01; LICENSE/README don't yet state it explicitly (see §4 below) |
-| ILM/retention policies actually enforced on a live OpenSearch cluster | **NOT implemented — discovered 2026-07-16 (M4.6)** | `contracts/opensearch-mappings/ilm-policies.json` is written in Elasticsearch ILM syntax (`phases`/`actions`/`min_age`), but this stack runs OpenSearch, whose Index State Management (ISM) plugin uses a different policy schema (`states`/`transitions`) at a different endpoint. `infra/provision.sh`'s ILM install loop was already an honest no-op placeholder (see its own comments) before this was investigated; every index template's `index.lifecycle.name` reference has therefore never actually attached a working policy on a live cluster. Index TEMPLATES (the mappings themselves) install correctly and are now versioned + diffable via `tools/migrate_opensearch.py`; the ILM/ISM policy schema rewrite is untouched, tracked as an open gap, not silently worked around — fixing it needs a live cluster to verify the real ISM policy bodies against.
+| ILM/retention policies actually enforced on a live OpenSearch cluster | **NOT implemented — discovered 2026-07-16 (M4.6)** | `contracts/opensearch-mappings/ilm-policies.json` is written in Elasticsearch ILM syntax (`phases`/`actions`/`min_age`), but this stack runs OpenSearch, whose Index State Management (ISM) plugin uses a different policy schema (`states`/`transitions`) at a different endpoint. `infra/provision.sh`'s ILM install loop was already an honest no-op placeholder (see its own comments) before this was investigated; every index template's `index.lifecycle.name` reference has therefore never actually attached a working policy on a live cluster. Index TEMPLATES (the mappings themselves) install correctly and are now versioned + diffable via `tools/migrate_opensearch.py`; the ILM/ISM policy schema rewrite is untouched, tracked as an open gap, not silently worked around — fixing it needs a live cluster to verify the real ISM policy bodies against. |
+| `make chaos` (M1 gate: kill each service mid-replay, assert zero lost/dup alerts) | **Written and reviewed, NOT RUN** | `tools/chaos_test.py` + the `make chaos` target exist and are wired against `infra/docker-compose.yml`, but no environment this plan has executed in has had a Docker daemon available. This is the single most important open item before M6 can be called anything more than "gates believed green" — see §5. |
+| RBAC (M4.2) session store at multi-replica scale | **Single-process only, by design, not yet HA** | `services/shared/sessions.py`'s `SessionStore` is in-memory; a real multi-replica RBAC deployment needs a shared session store (e.g. Redis-backed), tracked as a follow-up, not built since it needs a live Redis to test against. Every RBAC test (`test_rbac.py`, `test_rbac_api.py`) is genuinely real HTTP against a real `ThreadingHTTPServer`, just single-process. |
+| Versioned OpenSearch index-template migration (`tools/migrate_opensearch.py`, M4.6) | **Wire-format tested only, not run against a live cluster** | Same standing caveat as the rest of `storage/opensearch.py` (the CAS path, the retry logic) — proven correct at the request-construction level via a fake transport (`tools/test_migrate_opensearch.py`), never exercised against real OpenSearch. |
 
 ## 3. Doc index — what each file is for, and its trust level
 
@@ -78,7 +83,14 @@ those words get reused loosely across specs written weeks apart.
 | `docs/superpowers/specs/2026-07-02-fengarde-v0.3-improvement-plan.md` | v0.3 plan: more rules, robust rule logic, the rule-prefilter architecture fix, triage-first dashboard | **Executed (mostly), annotated** — header lists what landed vs. carried over; superseded as forward roadmap by the v0.4 plan |
 | `docs/superpowers/specs/2026-07-10-fengarde-v0.4-build-plan.md` | v0.4 plan: auth, MCP/OT/n8n parser packs, incident-report hook (open half of the fengarde-sec split), quickstart + positioning | **Mostly executed** — Tracks 0/S/R/P1-P4/D1-D3 landed on `main`; Track X leftovers explicitly deferred to v0.5+ (see §1 forward-roadmap row) |
 | `docs/superpowers/specs/2026-07-15-fengarde-combined-plan.md` | Combined forward roadmap: status re-baseline + merged PLAN_A/PLAN_C milestones M1-M7 (launch gated on MSP readiness) | **Current forward roadmap** — supersedes the v0.4 build plan for planning purposes |
-| `contracts/reporting.md` | Frozen cross-repo contract: incident-report hook request/response schema | **Current** — the fengarde/fengarde-sec seam |
+| `contracts/reporting.md` | Frozen cross-repo contract: incident-report hook request/response schema, incl. M5's additive NIS2 template-mode query params | **Current** — the fengarde/fengarde-sec seam |
+| `contracts/triage-api.yaml` | OpenAPI 3.1 spec for WS-3's versioned REST API (M4.3) | **Current** — spec-vs-code drift is CI-tested (`test_api_v1.py`) |
+| `contracts/nis2-de-schema.json` | Field schema for the NIS2/§32 BSIG report generator (M5) | **Current** |
+| `contracts/tenants/README.md`, `contracts/webhooks/README.md` | Config-file conventions for per-tenant rule enablement (M4.1) and outbound webhooks (M4.4); both ship empty | **Current** |
+| `docs/ops-lifecycle.md` | M4.6: schema migration, backup/restore, disk guardrails | **Current** |
+| `docs/plugin-development.md` | M4.5: writing an external parser/rule-pack plugin (entry points) | **Current** |
+| `docs/webhooks.md` | M4.4: configuring + verifying outbound alert webhooks | **Current** |
+| `docs/nis2-report-generator.md` | M5: NIS2 report generator scope/limits, leads with the NIS2-vs-DORA caveat | **Current** |
 | `docs/posts/ocsf-native.md`, `opensearch-not-elastic.md`, `local-ai-triage.md` | v0.4 architecture write-ups (Track D3) | Draft, not published |
 | `docs/posts/launch-checklist.md` | v0.4 launch sequencing (Track D3) | Current, publishing itself is a pending human action |
 | `docs/posts/launch-drafts.md` | v0.1-era marketing draft | **Historical/stale facts** — annotated, points to the current write-ups above |
@@ -96,6 +108,35 @@ those words get reused loosely across specs written weeks apart.
 - **Production roadmap doc (`2026-06-27-...-design.md`) reads confidently** ("3-tier",
   "edge agents") but is 100% unbuilt design. A future reader skimming only that file would
   overestimate what exists. This SSOT file is the correction.
+
+## 5. M6 launch readiness (as of `8b3f450`, 2026-07-16) — assessment only, NOT a launch
+
+**No public post, PR-for-review-purposes-only exception aside, or announcement of any kind
+has happened.** The combined plan's M6 milestone requires human approval regardless of gate
+status (standing instruction: "no posting before MSP readiness," and more generally every
+consequential/external action needs explicit sign-off). This section is an honest snapshot of
+where the gate criteria actually stand, not a decision to launch.
+
+**Gate criteria (combined plan, M6): M1 chaos gate + M2 bench/badges + M4 MSP-grade green.**
+
+| Gate | Status | Why |
+|---|---|---|
+| M4 MSP-grade | **Green** | Multi-tenancy, RBAC, versioned API, webhooks, plugins, ops lifecycle all built and tested zero-infra (see §1's MSP-grade row). One real, disclosed gap (ILM/ISM policy schema, §2) doesn't block the gate — it was never part of M4's own scope, it's a pre-existing issue M4.6's work happened to surface. |
+| M2 bench numbers | **Green** | Real, reproducible EPS/RSS numbers in README (`tools/fengarde_bench.py`), not fabricated. |
+| M2 badges (CodeQL/Scorecard/Dependabot) | **Wired, not yet fired** | Workflows exist and are correctly configured; badges will reflect real values once each workflow's first run completes on `main` after this branch merges — today they read "unknown," honestly, not a pre-claimed score. |
+| M1 `make chaos` | **RED — not run** | Written, reviewed, wired to `infra/docker-compose.yml`, but genuinely never executed against a live Docker daemon in any environment this plan has run in. This is real, unverified work, not a rubber-stamp gate. |
+
+**Bottom line: three of four gate criteria are green; the fourth (`make chaos`) is the one
+genuinely open item standing between "M4/M5 are done" and "the M6 gate criteria are fully
+met."** Whether that blocks a launch decision, and what (if anything) happens next, is the
+repo owner's call — this file states the facts, not the decision.
+
+M5 (NIS2 template layer) is strongly preferred in the launch narrative per the plan but is
+NOT a hard gate; it is also done (§1).
+
+**Nothing in this session executed any part of `docs/posts/launch-checklist.md`.** That
+remains exactly what it was: a written, unexecuted sequencing plan, pending explicit human
+go-ahead.
 
 ---
 

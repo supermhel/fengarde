@@ -494,6 +494,17 @@ hard gate. Human executes `docs/posts/launch-checklist.md` sequencing (r/netsec 
 → Show HN → r/blueteamsec), including its prerequisites and "what NOT to do" list. Add M2's
 bench numbers and badges to the posts. **No public posts of any kind before this milestone.**
 
+**Status as of `8b3f450`, 2026-07-16: assessed, NOT executed.** M4 (green) and M5 (green,
+done though not a hard gate) are complete; M2's bench numbers are real and in README, its
+badges are wired but not yet fired (first CI run on `main` after merge). **M1's `make chaos`
+is written, reviewed, and wired against `infra/docker-compose.yml`, but has never been run
+against a live Docker daemon** — no environment this plan has executed in has had one
+available. That is the one gate criterion genuinely still red. See `SSOT.md` §5 for the full
+assessment table. Per the standing "no posting before MSP readiness" instruction and the
+general rule that consequential/external actions need explicit sign-off, **nothing in
+`docs/posts/launch-checklist.md` has been executed, and this doc update is not a launch
+decision** — it's an honest status snapshot for the repo owner to act on.
+
 ### M7 — Continuous tracks (start whenever capacity allows; never block M1–M6)
 
 - **Detection quality (Tier 4)**: MITRE ATT&CK + severity/confidence/FP-notes metadata on all
