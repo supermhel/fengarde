@@ -15,7 +15,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-from engine import Rule, load_allowlist, Allowlist  # noqa: E402
+from engine import Rule, Allowlist  # noqa: E402
 
 FAILS: list[str] = []
 

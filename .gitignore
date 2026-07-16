@@ -36,3 +36,8 @@ Thumbs.db
 # CI-cached, not committed; crash-* are local repro files for a live finding.
 tools/fuzz/corpus/
 tools/fuzz/crash-*
+
+# coverage.py output (M2 quality floor)
+.coverage
+.coverage.*
+htmlcov/

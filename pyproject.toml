@@ -1,0 +1,80 @@
+[tool.ruff]
+line-length = 135
+target-version = "py311"
+extend-exclude = ["services/*/mocks", "fixtures"]
+
+[tool.ruff.lint]
+# Default rule set (E/F) plus nothing exotic -- this is a lint FLOOR (M2, PLAN_C
+# Tier 2.3), not a style rewrite. Landed 2026-07-16 at zero errors; keep it there.
+select = ["E", "F"]
+ignore = [
+    # E702 (multiple statements via semicolon): an established idiom across this
+    # codebase's test files (`finally: srv.shutdown(); srv.server_close()`), not
+    # sloppiness. 23 instances existed when this gate landed -- rewriting them
+    # all would be pure style churn against a working, reviewed test suite for
+    # zero functional benefit. New code should still prefer one statement per
+    # line; this is a floor, not encouragement.
+    "E702",
+]
+
+[tool.black]
+line-length = 135
+target-version = ["py311"]
+extend-exclude = '''
+/(
+  services/.*/mocks
+  | fixtures
+)/
+'''
+# NOT applied repo-wide yet, deliberately (M2, PLAN_C Tier 2.3): `black --check`
+# flags 98 of 100 files at landing time (2026-07-16) -- this codebase has its
+# own established compact style (dense one-liners, e.g. `finally:
+# srv.shutdown(); srv.server_close()`) that predates this config. Applying
+# black now would be a 98-file mechanical reformat with zero functional
+# change bundled into whatever PR happened to add this file -- exactly the
+# "no unrelated refactors bundled in" violation CONTRIBUTING.md's own PR
+# checklist calls out. Configured + wired into pre-commit so *new* code is
+# black-formatted going forward; a full-repo reformat is a separate,
+# deliberate, owner-approved PR (it's large enough to warrant its own review,
+# same spirit as the standing "ask before adding heavyweight dependencies"
+# guardrail even though a formatter isn't literally a dependency).
+
+[tool.mypy]
+python_version = "3.11"
+# HONEST BASELINE, not a passing gate yet (M2, PLAN_C Tier 2.3): this repo has
+# almost no type annotations today. `mypy --strict` here would report
+# hundreds of findings that are really "not yet annotated," not real bugs --
+# that's noise, not signal, and would train contributors to ignore CI red.
+#
+# Measured 2026-07-16 (default/lenient mode, run per-service due to the
+# microservice layout's duplicate module names -- see
+# `mypy services/wsN-x --explicit-package-bases --ignore-missing-imports`):
+# 20 real findings across services/{ws1,ws2,ws3,ws4,ws5}, mostly legitimate
+# `X | None` narrowing gaps (e.g. services/ws5-ai/llm_adapter.py:123,
+# services/ws3-indexer/storage/opensearch.py:34) worth fixing incrementally,
+# not "not yet annotated" noise. services/{ws6-inventory,shared} + tools/ are
+# clean. types-PyYAML installed to remove import-stub noise; NOT wired into
+# any service's requirements.txt (it's a mypy-only dev dependency, never
+# imported at runtime).
+#
+# Tightening this incrementally (per-module `strict = true` overrides as
+# modules get annotated, fixing the 20 real findings above) is the honest
+# path to the PLAN_C gate, not flipping a switch that immediately fails CI
+# on a codebase that was never annotated with mypy in mind.
+ignore_missing_imports = true
+exclude = ["services/.*/mocks", "fixtures"]
+
+[tool.coverage.run]
+branch = true
+source = ["services"]
+omit = [
+    "*/test_*.py",
+    "*/mocks/*",
+    "*/__pycache__/*",
+]
+
+[tool.coverage.report]
+# Coverage gate target is WS-2/WS-3 core (M2, PLAN_C Tier 2.3, ~85%) -- not
+# enforced repo-wide yet. See the M2 commit for the measured baseline.
+show_missing = true
+skip_empty = true

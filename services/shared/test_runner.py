@@ -35,7 +35,7 @@ SERVICES = HERE.parent
 sys.path.insert(0, str(SERVICES))
 os.environ.setdefault("BUS_BACKEND", "memory")
 
-from shared.bus import Bus, _MemoryBus, Message  # noqa: E402
+from shared.bus import _MemoryBus, Message  # noqa: E402
 from shared import runner  # noqa: E402
 
 FAILS: list[str] = []

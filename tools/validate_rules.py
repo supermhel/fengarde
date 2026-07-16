@@ -40,7 +40,7 @@ sys.path.insert(0, str(ROOT / "services" / "ws4-detection"))
 
 # Reuse the REAL engine internals so the gate can never drift from runtime.
 from engine import (  # noqa: E402
-    _NUMERIC_OPS, _parse_or, _parse_hhmm, _time_outside_hours, get_path,
+    _NUMERIC_OPS, _parse_or, _parse_hhmm, _time_outside_hours,
 )
 
 _UUID_RE = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"

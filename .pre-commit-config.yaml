@@ -1,0 +1,29 @@
+# M2 code-quality floor (PLAN_C Tier 2.3). Install once: `pre-commit install`.
+# Deliberately NOT running mypy OR black here:
+#   - mypy: see pyproject.toml's [tool.mypy] comment -- a strict hook on a
+#     codebase that's almost entirely unannotated would just train
+#     contributors to `git commit --no-verify`.
+#   - black: see pyproject.toml's [tool.black] comment -- `black --check`
+#     flags 98/100 files against this repo's established (pre-existing,
+#     deliberate) compact style. Wiring it into pre-commit would silently
+#     reformat an ENTIRE file the moment anyone touches it for an unrelated
+#     one-line fix -- the opposite of "one logical change per PR"
+#     (CONTRIBUTING.md's own checklist). It's configured in pyproject.toml
+#     and available (`black services/wsN-x/foo.py`) for the eventual
+#     deliberate full-repo reformat PR, not auto-applied yet.
+# ruff is safe here: it's at zero real findings repo-wide (E702 explicitly
+# ignored, see pyproject.toml), so this hook never rewrites untouched code.
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.21
+    hooks:
+      - id: ruff
+        args: [--fix]
+        files: ^(services|tools)/.*\.py$
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: check-merge-conflict
+      - id: check-yaml

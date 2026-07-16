@@ -59,3 +59,30 @@ jobs:
           BUS_BACKEND: redis
           REDIS_URL: redis://localhost:6379/0
         run: python services/shared/test_runner.py
+
+  # M2 code-quality floor (PLAN_C Tier 2.3). Lint blocks; coverage blocks at the
+  # MEASURED baseline (see tools/coverage_gate.py) not the unmet-for-WS-3 85%
+  # target -- see that file's docstring for why. mypy is informational only
+  # (non-blocking): see pyproject.toml's [tool.mypy] comment.
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install deps
+        run: pip install ruff mypy coverage pyyaml types-PyYAML
+      - name: ruff (blocking)
+        run: ruff check services/ tools/
+      - name: mypy (informational, non-blocking -- see pyproject.toml)
+        run: |
+          fail=0
+          for ws in services/ws1-collectors services/ws2-normalization services/ws3-indexer \
+                    services/ws4-detection services/ws5-ai services/ws6-inventory services/shared tools; do
+            mypy "$ws" --explicit-package-bases --ignore-missing-imports || fail=1
+          done
+          echo "mypy findings are informational (pyproject.toml [tool.mypy]) -- not blocking CI"
+          exit 0
+      - name: coverage gate (WS-2/WS-3 core, blocking at measured baseline)
+        run: python tools/coverage_gate.py

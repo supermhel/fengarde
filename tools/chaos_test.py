@@ -159,7 +159,8 @@ def alert_ids_for(ip: str) -> list[str]:
 
 def verify(scenarios: list[Scenario]) -> int:
     deadline = time.time() + DRAIN_TIMEOUT_S
-    lost, duplicated = [], []
+    lost: list[str] = []
+    duplicated: list[tuple[str, list[str]]] = []
     while time.time() < deadline:
         lost, duplicated = [], []
         for sc in scenarios:

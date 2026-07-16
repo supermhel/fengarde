@@ -9,7 +9,6 @@ from __future__ import annotations
 import json
 import sys
 import threading
-import time
 import urllib.error
 import urllib.request
 from http.server import ThreadingHTTPServer

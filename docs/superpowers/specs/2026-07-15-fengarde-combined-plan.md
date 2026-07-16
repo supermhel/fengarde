@@ -171,12 +171,26 @@ an acceptance gate; "done" means the gate ran, not that code merged. Version tar
 - **Supply chain**: pinned deps with hashes, Dependabot, CycloneDX SBOM per release,
   cosign-signed releases, SLSA provenance via Actions, CodeQL + secret scanning,
   OpenSSF Scorecard ≥ 8.0 + Best Practices badge in README.
-- **Quality floor**: ruff + black + mypy on all services, pre-commit; coverage gate (~85%) on
-  WS-2/WS-3 core; **mutmut on the rule engine**; ADR backfill (`docs/adr/`) for the six standing
-  decisions (Redis bus, OCSF, OpenSearch, microservice split, fail-closed rules, local-LLM
-  triage — sources already exist in `docs/superpowers/specs/`).
-- *Gate:* CI blocks on lint/types/coverage; bench numbers + badges live in README;
-  mutation score reported.
+- **Quality floor — mostly done 2026-07-16**: `pyproject.toml` (ruff/black/mypy/coverage config)
+  + `.pre-commit-config.yaml`. **ruff**: 0 errors repo-wide, wired into CI as a **blocking**
+  `quality` job (`.github/workflows/ci.yml`); E702 (semicolon one-liners) explicitly ignored as
+  an established codebase idiom, not sloppiness — see the config's comment. **black**: configured
+  but deliberately NOT applied repo-wide or wired into pre-commit — `black --check` flags 98/100
+  files against this codebase's pre-existing compact style; forcing that now would be a 98-file
+  mechanical reformat bundled into an unrelated PR, which CONTRIBUTING.md's own checklist forbids.
+  Available for new code + the eventual deliberate full-reformat PR. **mypy**: informational only
+  in CI (non-blocking) — honest baseline is 20 real findings across WS-1/2/3/4/5 (mostly legitimate
+  `X | None` narrowing gaps), WS-6/shared/tools clean; flipping this to a blocking strict gate on a
+  largely-unannotated codebase would train contributors to `--no-verify`, not raise quality.
+  **Coverage**: `tools/coverage_gate.py`, wired into CI as **blocking**. WS-2 measured 90% (above
+  the ~85% target); WS-3 measured 71% (below target — `main.py`'s run loop and
+  `storage/opensearch.py`'s live-cluster paths are the gap). Gate blocks at measured-minus-buffer
+  (88%/68%) as a regression guard, NOT at the unmet 85% for WS-3 — claiming that gate passed would
+  be exactly the overclaiming SSOT.md §2 exists to prevent.
+  Still open: **mutmut on the rule engine** (not started), **ADR backfill** (separate task, below).
+- *Gate:* CI blocks on lint + coverage (both true now); types is informational, not blocking
+  (honest deviation, documented above); bench numbers live in README (done); badges + mutation
+  score still open.
 
 ### M3 — Product completeness (PLAN_A gaps; runs parallel to M1/M2)
 

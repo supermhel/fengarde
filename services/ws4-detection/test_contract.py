@@ -9,7 +9,6 @@ Asserts:
 """
 from __future__ import annotations
 
-import copy
 import os
 import sys
 from pathlib import Path
@@ -74,7 +73,7 @@ def benign():
 def run():
     rules = load_rules(ROOT / "contracts" / "rules")
     check(len(rules) >= 3, f"expected >=3 rules loaded, got {len(rules)}")
-    scorer = Scorer(ROOT / "contracts" / "scoring.yaml")
+    Scorer(ROOT / "contracts" / "scoring.yaml")  # constructing it validates scoring.yaml parses
 
     # --- bank priv-esc: single event, critical ---
     det = ws4.Detector()

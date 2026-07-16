@@ -15,8 +15,7 @@ SERVICES = HERE.parent
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(SERVICES))
 
-from shared.bus import Bus  # noqa: E402
-from router import route, template_for  # noqa: E402
+from router import route  # noqa: E402
 from storage.memory import MemoryStore  # noqa: E402
 
 TOPICS = ["normalized.events", "scored.events", "alerts", "ai.results"]
