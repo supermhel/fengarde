@@ -20,6 +20,7 @@ from shared.bus import Bus  # noqa: E402
 from engine import load_rules  # noqa: E402
 from scoring import Scorer  # noqa: E402
 from tenants import tenant_of, load_disabled_rules  # noqa: E402
+from plugins import discover_rule_pack_dirs  # noqa: E402
 
 # contracts/ lives at repo/contracts (host) or /app/contracts (container). HERE.parent
 # is repo/services (host) or /app (container), so search both it and its parent.
@@ -33,11 +34,33 @@ _CONTRACTS = _contracts_dir()
 RULES_DIR = _CONTRACTS / "rules"
 SCORING_YAML = _CONTRACTS / "scoring.yaml"
 TENANTS_DIR = _CONTRACTS / "tenants"
+ALLOWLISTS_DIR = _CONTRACTS / "allowlists"
 
 
 class Detector:
-    def __init__(self, tenants_dir: Path = TENANTS_DIR):
-        self.rules = load_rules(RULES_DIR)
+    def __init__(self, tenants_dir: Path = TENANTS_DIR,
+                 plugin_rule_dirs: list[Path] | None = None):
+        """``plugin_rule_dirs``: directories of extra rule YAML to merge in,
+        same shape as ``contracts/rules/*.yml``. Defaults to whatever
+        ``plugins.discover_rule_pack_dirs()`` finds installed via the
+        ``fengarde.rule_packs`` entry-point group (M4.5, empty in this repo
+        by default -- pass ``[]`` explicitly to skip discovery, e.g. in a
+        test that wants a deterministic rule set regardless of what's
+        installed in the environment)."""
+        self.rules = load_rules(RULES_DIR, ALLOWLISTS_DIR)
+        # A plugin rule whose id collides with an already-loaded one (built-
+        # in or an earlier plugin) is skipped -- whichever loaded first
+        # wins, so a plugin extends detection but can never silently
+        # replace an existing rule's condition.
+        if plugin_rule_dirs is None:
+            plugin_rule_dirs = [d for _name, d in discover_rule_pack_dirs()]
+        seen_ids = {r.id for r in self.rules}
+        for plugin_dir in plugin_rule_dirs:
+            for rule in load_rules(plugin_dir, ALLOWLISTS_DIR):
+                if rule.id in seen_ids:
+                    continue
+                self.rules.append(rule)
+                seen_ids.add(rule.id)
         self.scorer = Scorer(SCORING_YAML)
         self.tenants_dir = tenants_dir
         # B1: index rules by their (equality) class_uid selection so process()

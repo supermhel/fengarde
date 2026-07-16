@@ -21,6 +21,7 @@ from .db_audit import DbAuditParser
 from .mcp_agent import McpAgentParser
 from .opcua_audit import OpcUaAuditParser
 from .n8n_audit import N8nAuditParser
+from .plugins import discover_plugin_parsers
 
 _REGISTRY: dict[str, Parser] = {
     p.SOURCE_TYPE: p
@@ -28,6 +29,13 @@ _REGISTRY: dict[str, Parser] = {
               LinuxSshParser(), GenericSyslogParser(), WindowsEventLogParser(),
               DbAuditParser(), McpAgentParser(), OpcUaAuditParser(), N8nAuditParser())
 }
+
+# M4.5: external pip packages can register additional parsers (docs/plugin-
+# development.md) via the "fengarde.parsers" entry-point group. Purely
+# additive -- a plugin can never override a built-in SOURCE_TYPE (see
+# discover_plugin_parsers' docstring). No installed plugins -> this is a
+# no-op, zero behavior change (the common case; this repo ships none).
+_REGISTRY.update(discover_plugin_parsers(set(_REGISTRY)))
 
 
 def get_parser(source_type: str) -> Optional[Parser]:

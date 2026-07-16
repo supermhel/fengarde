@@ -337,14 +337,41 @@ an acceptance gate; "done" means the gate ran, not that code merged. Version tar
   anything beyond a trusted local network) and `docs/webhooks.md` (receiver-side verify
   example, honest "what this does NOT give you": no delivery UI, no dead-letter queue for
   exhausted retries yet, no mTLS/IP-allowlisting).
-- **Entry-points-based parser/rule plugin interface (M4.5, open)**: "parser dev kit" —
-  installable from an external pip package without forking.
+- **Entry-points-based parser/rule plugin interface (M4.5) — done 2026-07-16**: an external pip
+  package can ship an additional WS-2 parser and/or WS-4 rule pack WITHOUT forking, via
+  standard Python entry points — no new dependency, `importlib.metadata` is stdlib.
+  `fengarde.parsers` entry points resolve to a `Parser` subclass
+  (`services/ws2-normalization/parsers/plugins.py::discover_plugin_parsers`, wired into
+  `parsers/__init__.py`); `fengarde.rule_packs` entry points resolve to a directory of rule
+  YAML (`services/ws4-detection/plugins.py::discover_rule_pack_dirs`, wired into
+  `Detector.__init__`). Both are purely ADDITIVE and collision-safe by construction: a
+  plugin parser whose `SOURCE_TYPE` matches a built-in's is skipped (built-in wins); a
+  plugin rule whose `id` matches an already-loaded rule (built-in or an earlier plugin) is
+  skipped too — proven, not just asserted, by `test_colliding_rule_id_never_overrides_the_
+  builtin` actually checking the built-in's title/score_weight survived untouched. **Gate
+  passing**: `services/ws2-normalization/parsers/test_plugins.py` +
+  `services/ws4-detection/test_plugins.py`, both using REAL `importlib.metadata.EntryPoint`
+  objects (genuine `.load()` — real `import_module`+`getattr` against fixture modules under
+  each service's `test_fixtures/`) rather than mocking the loading mechanism itself, only
+  substituting where the entry-point LIST comes from. Covers: well-formed plugin
+  discovered and its parser/rule actually runs (not just loads — the fixture rule fires on
+  a real synthetic event through a real `Detector.process()`); a broken entry point (bad
+  module, bad attribute, wrong type, non-directory target) is skipped individually without
+  crashing discovery; and a sanity check that THIS repo's own real environment (zero
+  installed plugins) round-trips to an empty plugin set, proving the "opt-in, zero behavior
+  change" claim rather than assuming it. `docs/plugin-development.md` is the actual "parser
+  dev kit" deliverable — a full worked example (`pyproject.toml` entry-point declarations,
+  parser + rule pack source, `pip install -e`) plus an honest "what this does NOT give you"
+  (no sandboxing — a plugin's code runs at full trust, same posture as SECURITY.md §3's
+  existing "rule files are code, review before trusting"; no plugin marketplace; no
+  versioned plugin ABI; anti-dormancy CI only covers `contracts/rules/*.yml`, not plugin
+  rules — that's the plugin author's own responsibility).
 - **Ops lifecycle (M4.6, open)**: versioned index mappings + migration command (tested upgrade
   with data intact, in CI); scripted backup/restore (snapshots + SQLite + config); per-signal
   retention config + disk guardrails.
 - *Gate:* two-tenant test green (✅ done); RBAC gate green (✅ done); OpenAPI published
   (✅ done, `contracts/triage-api.yaml` + spec-vs-code test); webhook HMAC gate green
-  (✅ done); upgrade test in CI (open).
+  (✅ done); plugin discovery gate green (✅ done); upgrade test in CI (open).
 
 ### M5 — NIS2 public template layer (PLAN_A Phase 4 re-scoped per decision 1; ~3 weeks; → v0.7.0)
 

@@ -1,0 +1,21 @@
+title: Example plugin rule (M4.5 fixture, NOT a real detection)
+id: 9f8e7d6c-5b4a-4930-8271-605948372615
+status: stable
+description: >
+  A minimal rule used ONLY by services/ws4-detection/test_plugins.py to
+  prove that a rule pack discovered via the "fengarde.rule_packs" entry
+  point actually gets merged into a Detector's rule set and fires on a
+  matching event, exactly like a built-in rule would. Do not deploy.
+level: medium
+logsource:
+  category: network_activity
+detection:
+  plugin_marker:
+    class_uid: 4001
+    unmapped.example.plugin_marker: true
+  condition: plugin_marker
+fields:
+  - src_endpoint.ip
+siem:
+  sector: common
+  score_weight: 20

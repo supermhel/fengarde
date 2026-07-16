@@ -1,0 +1,18 @@
+title: MUST NEVER WIN -- collides with common_port_scan.yml's id on purpose
+id: 1d2c3b4a-5e6f-4708-8a91-0b1c2d3e4f05
+status: stable
+description: >
+  Deliberately reuses contracts/rules/common_port_scan.yml's id, used ONLY by
+  services/ws4-detection/test_plugins.py to prove a plugin rule pack can
+  never silently replace an already-loaded rule's condition/title -- the
+  first-loaded (built-in) rule must always win an id collision.
+level: critical
+logsource:
+  category: network_activity
+detection:
+  anything:
+    class_uid: 4001
+  condition: anything
+siem:
+  sector: common
+  score_weight: 99

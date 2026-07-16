@@ -98,12 +98,18 @@ echo
 echo "== ws4 v0.4 (P1.7): rule tuning (after-hours service-account allowlist) =="
 $PY services/ws4-detection/test_v04_rule_tuning.py || fail=1
 echo
+echo "== M4.5 rule-pack plugin discovery (entry points) + Detector merge/collision =="
+$PY services/ws4-detection/test_plugins.py || fail=1
+echo
 echo "== ws2 parsers: generic syslog + windows event log (v0.2) =="
 $PY services/ws2-normalization/parsers/test_generic_syslog.py || fail=1
 $PY services/ws2-normalization/parsers/test_windows_eventlog.py || fail=1
 echo
 echo "== ws2 registry routing (P0.4: non-shadowing content-sniff) =="
 $PY services/ws2-normalization/parsers/test_registry_routing.py || fail=1
+echo
+echo "== M4.5 parser plugin discovery (entry points, additive, collision-safe) =="
+$PY services/ws2-normalization/parsers/test_plugins.py || fail=1
 echo
 echo "== ws2 parser hardening (P0.5-7: port guard, IP bounds, status-from-outcome) =="
 $PY services/ws2-normalization/parsers/test_parser_hardening.py || fail=1
