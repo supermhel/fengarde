@@ -26,6 +26,7 @@ import time
 from typing import Optional
 
 from .base import Parser, SEV_CRITICAL, SEV_MEDIUM, SEV_INFO, status_from_outcome
+from shared.ocsf import valid_ip, safe_str
 
 _CLASS = 6005  # Datastore Activity
 
@@ -96,10 +97,13 @@ class DbAuditParser(Parser):
         )
         event["siem"]["sector"] = sector
 
+        src_ip = valid_ip(src_ip)
+        host = safe_str(host)
         if src_ip:
             event["src_endpoint"] = {"ip": src_ip}
         if host:
             event["dst_endpoint"] = {"hostname": host}
+        user = safe_str(user)
         if user:
             event["actor"] = {"user": {"name": user}}
 

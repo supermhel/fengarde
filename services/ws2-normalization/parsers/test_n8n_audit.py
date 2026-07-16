@@ -89,6 +89,16 @@ class TestN8nAuditParser(unittest.TestCase):
                                 event["class_uid"] * 100 + event["activity_id"])
                 self.assertEqual(validate(event), [])
 
+    def test_wrong_typed_ip_and_user_dropped_not_crashed(self):
+        """Regression for a Hypothesis property-testing finding (M1): see
+        test_db_audit.py's identical regression for the shared root cause
+        (services/shared/ocsf.py::valid_ip/safe_str)."""
+        event = PARSER.parse(_raw({"eventType": "user.login", "ip": 12345, "user": [1, 2]}))
+        self.assertIsNotNone(event)
+        self.assertEqual(validate(event), [])
+        self.assertNotIn("src_endpoint", event)
+        self.assertNotIn("actor", event)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

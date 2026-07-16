@@ -39,6 +39,7 @@ import time
 from typing import Optional
 
 from .base import Parser, SEV_HIGH, SEV_INFO, SEV_MEDIUM, status_from_outcome
+from shared.ocsf import valid_ip
 
 _CLASS = 6003  # API Activity
 
@@ -124,7 +125,7 @@ class McpAgentParser(Parser):
                         "request": {"data": args_text}}
         if agent or session:
             event["actor"] = {"user": {"name": str(agent or session)}}
-        src_ip = _pick(rec, "src_ip", "client_ip", "ip") or meta.get("ip")
+        src_ip = valid_ip(_pick(rec, "src_ip", "client_ip", "ip") or meta.get("ip"))
         if src_ip:
             event["src_endpoint"] = {"ip": src_ip}
 

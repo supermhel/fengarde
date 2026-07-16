@@ -225,6 +225,22 @@ class TestWindowsEventLogParser(unittest.TestCase):
         event = PARSER.parse(_raw(REC_4672))
         self.assertNotIn("unmapped", event)
 
+    def test_wrong_typed_ip_mac_user_dropped_not_crashed(self):
+        """Regression for a Hypothesis property-testing finding (M1): see
+        services/ws2-normalization/parsers/test_db_audit.py's identical
+        regression for the shared root cause (services/shared/ocsf.py::
+        valid_ip/valid_mac/safe_str)."""
+        rec = {
+            "EventID": 4624, "TimeCreated": 1750000000000,
+            "TargetUserName": {"bad": "type"}, "IpAddress": 12345,
+            "MacAddress": "not-a-mac", "WorkstationName": ["also", "bad"],
+        }
+        event = PARSER.parse(_raw(rec))
+        self.assertIsNotNone(event)
+        self.assertEqual(validate(event), [])
+        self.assertNotIn("src_endpoint", event)
+        self.assertNotIn("actor", event)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

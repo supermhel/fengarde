@@ -17,6 +17,7 @@ import time
 from typing import Optional
 
 from .base import Parser, SEV_CRITICAL, SEV_MEDIUM, SEV_INFO, status_from_outcome
+from shared.ocsf import valid_ip, safe_str
 
 _CLASS = 6003  # API Activity
 
@@ -71,10 +72,10 @@ class VmwareVsphereParser(Parser):
                 break
 
         time_ms = self._time_ms(rec, meta)
-        user = rec.get("userName") or rec.get("user")
-        vm = rec.get("vm") or rec.get("target")
-        src_ip = rec.get("ipAddress") or meta.get("ip")
-        src_host = rec.get("host")
+        user = safe_str(rec.get("userName") or rec.get("user"))
+        vm = safe_str(rec.get("vm") or rec.get("target"))
+        src_ip = valid_ip(rec.get("ipAddress") or meta.get("ip"))
+        src_host = safe_str(rec.get("host"))
 
         verb = {1: "created", 2: "read", 3: "updated", 4: "deleted"}[activity_id]
         message = f"{rec.get('operation') or 'API op'}: {vm or '?'} {verb} by {user or '?'}"

@@ -35,6 +35,7 @@ import time
 from typing import Optional
 
 from .base import Parser, SEV_HIGH, SEV_INFO, SEV_MEDIUM, status_from_outcome
+from shared.ocsf import valid_ip, safe_str
 
 _CLASS_AUTH = 3002       # Authentication
 _CLASS_API = 6003        # API Activity
@@ -88,8 +89,8 @@ class OpcUaAuditParser(Parser):
 
     # -- session/certificate audit -> Authentication ------------------------
     def _auth_event(self, rec: dict, meta: dict, event_type: str) -> dict:
-        user = _pick(rec, "clientUserId", "userId")
-        client_ip = _pick(rec, "clientAddress", "clientIp") or meta.get("ip")
+        user = safe_str(_pick(rec, "clientUserId", "userId"))
+        client_ip = valid_ip(_pick(rec, "clientAddress", "clientIp") or meta.get("ip"))
         server_id = _pick(rec, "serverId", "server")
         # Robust outcome parse: a string "false" or 4xx code is a Failure; naive
         # bool(_pick(...)) treated any non-empty value as truthy -> Success.
@@ -124,8 +125,8 @@ class OpcUaAuditParser(Parser):
 
     # -- write/method-call audit -> API Activity -----------------------------
     def _api_event(self, rec: dict, meta: dict, event_type: str) -> dict:
-        user = _pick(rec, "clientUserId", "userId")
-        client_ip = _pick(rec, "clientAddress", "clientIp") or meta.get("ip")
+        user = safe_str(_pick(rec, "clientUserId", "userId"))
+        client_ip = valid_ip(_pick(rec, "clientAddress", "clientIp") or meta.get("ip"))
         server_id = _pick(rec, "serverId", "server")
         node_id = _pick(rec, "nodeId", "targetNodeId") or ""
         status_ok = status_from_outcome(rec, keys=("status", "success")) == "Success"

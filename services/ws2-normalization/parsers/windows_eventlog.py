@@ -59,6 +59,7 @@ import time
 from typing import Optional
 
 from .base import Parser, SEV_INFO, SEV_MEDIUM, SEV_HIGH
+from shared.ocsf import valid_ip, valid_mac, safe_str
 from .timeutil import to_epoch_ms
 
 _CLS_AUTH = 3002    # Authentication
@@ -120,17 +121,17 @@ class WindowsEventLogParser(Parser):
         # Subject = the account performing the action; Target = affected account
         # (4624/4672 carry both; logon classes prefer Target identity).
         if class_uid == _CLS_AUTH:
-            user = rec.get("TargetUserName") or rec.get("SubjectUserName")
-            domain = rec.get("TargetDomainName") or rec.get("SubjectDomainName")
+            user = safe_str(rec.get("TargetUserName") or rec.get("SubjectUserName"))
+            domain = safe_str(rec.get("TargetDomainName") or rec.get("SubjectDomainName"))
             user_sid = rec.get("TargetUserSid") or rec.get("SubjectUserSid")
         else:
-            user = rec.get("SubjectUserName") or rec.get("TargetUserName")
-            domain = rec.get("SubjectDomainName") or rec.get("TargetDomainName")
+            user = safe_str(rec.get("SubjectUserName") or rec.get("TargetUserName"))
+            domain = safe_str(rec.get("SubjectDomainName") or rec.get("TargetDomainName"))
             user_sid = rec.get("SubjectUserSid") or rec.get("TargetUserSid")
 
-        ip = rec.get("IpAddress") or meta.get("ip")
-        src_host = rec.get("WorkstationName")   # origin workstation (logon source)
-        target_host = rec.get("Computer")       # host the event occurred ON
+        ip = valid_ip(rec.get("IpAddress") or meta.get("ip"))
+        src_host = safe_str(rec.get("WorkstationName"))   # origin workstation (logon source)
+        target_host = safe_str(rec.get("Computer"))       # host the event occurred ON
 
         # Account Change events (4720/4722/4726/4728/4732): the acting admin is
         # already captured above as `user` (Subject-first, via the `else` branch).
@@ -176,8 +177,9 @@ class WindowsEventLogParser(Parser):
         src: dict = {}
         if ip:
             src["ip"] = ip
-        if rec.get("MacAddress"):
-            src["mac"] = rec["MacAddress"]
+        mac = valid_mac(rec.get("MacAddress"))
+        if mac:
+            src["mac"] = mac
         if class_uid == _CLS_AUTH:
             if src_host:
                 src["hostname"] = src_host

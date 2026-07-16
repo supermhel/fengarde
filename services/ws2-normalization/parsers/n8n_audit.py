@@ -25,6 +25,7 @@ import time
 from typing import Optional
 
 from .base import Parser, SEV_HIGH, SEV_INFO, SEV_MEDIUM, status_from_outcome
+from shared.ocsf import valid_ip, safe_str
 
 _CLASS_API = 6003
 _CLASS_AUTH = 3002
@@ -72,8 +73,8 @@ class N8nAuditParser(Parser):
         if not event_type:
             return None
 
-        user = _pick(rec, "user", "userEmail", "username")
-        src_ip = _pick(rec, "ip", "src_ip") or meta.get("ip")
+        user = safe_str(_pick(rec, "user", "userEmail", "username"))
+        src_ip = valid_ip(_pick(rec, "ip", "src_ip") or meta.get("ip"))
         time_ms = self._time_ms(rec, meta)
 
         if event_type in _LOGIN_EVENTS or event_type in _LOGOUT_EVENTS:

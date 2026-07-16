@@ -77,6 +77,22 @@ class TestDbAuditParser(unittest.TestCase):
                                 event["class_uid"] * 100 + event["activity_id"])
                 self.assertEqual(validate(event), [])
 
+    def test_wrong_typed_ip_and_user_dropped_not_crashed(self):
+        """Regression for a Hypothesis property-testing finding (M1): a
+        structured record's ipAddress/host/user fields can be any JSON type,
+        not just str. A wrong-typed value must be dropped (field omitted),
+        never assigned raw -- that used to emit a schema-invalid OCSF event
+        (`.src_endpoint.ip: expected string, got int`)."""
+        event = PARSER.parse(_raw({
+            "operation": "SELECT", "ipAddress": 12345, "host": ["not", "a", "string"],
+            "user": {"nested": "dict"},
+        }))
+        self.assertIsNotNone(event)
+        self.assertEqual(validate(event), [])
+        self.assertNotIn("src_endpoint", event)
+        self.assertNotIn("dst_endpoint", event)
+        self.assertNotIn("actor", event)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
