@@ -21,6 +21,8 @@ import time
 from pathlib import Path
 from typing import Iterator, Optional
 
+from shared.envelope import stamp_meta
+
 
 class NetflowCollector:
     """Pluggable NetFlow/IPFIX collector backed by a mock flow file."""
@@ -66,7 +68,7 @@ class NetflowCollector:
         return {
             "source_type": self.SOURCE_TYPE,
             "raw": json.dumps(flow, sort_keys=True),
-            "meta": meta,
+            "meta": stamp_meta(meta),
         }
 
     def asset_observations(self) -> Iterator[dict]:

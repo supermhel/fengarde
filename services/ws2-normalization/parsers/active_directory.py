@@ -80,6 +80,7 @@ class ActiveDirectoryParser(Parser):
             logged_time=self._logged_time(rec, meta),
             status=status,
             message=message,
+            meta=meta,
         )
 
         if ip or host:

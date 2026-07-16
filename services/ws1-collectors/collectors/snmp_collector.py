@@ -17,6 +17,8 @@ import time
 from pathlib import Path
 from typing import Iterator, Optional
 
+from shared.envelope import stamp_meta
+
 # Standard MIB OIDs we care about for asset discovery.
 OID_SYSNAME = "1.3.6.1.2.1.1.5.0"          # sysName.0  -> hostname
 OID_IFPHYSADDRESS = "1.3.6.1.2.1.2.2.1.6"  # ifPhysAddress -> MAC
@@ -77,7 +79,7 @@ class SnmpCollector:
         return {
             "source_type": self.SOURCE_TYPE,
             "raw": json.dumps({"ip": ip, "oids": oids}, sort_keys=True),
-            "meta": meta,
+            "meta": stamp_meta(meta),
         }
 
     def asset_observations(self) -> Iterator[dict]:

@@ -9,7 +9,9 @@ Invariants every parser MUST honour:
 
 * ``type_uid`` is **derived**, never hand-set — use
   :func:`shared.ocsf.make_type_uid`.
-* The ``siem.*`` block (``sector``, ``source_type``, ``ingest_id``) is always set.
+* The ``siem.*`` block (``sector``, ``source_type``, ``ingest_id``, ``trace_id``,
+  ``tenant``) is always set -- the last two via ``base_event(meta=...)``
+  (Envelope v1, ``contracts/bus-topics.md``).
 * ``category_uid`` is ``class_uid // 1000`` (floored), per Contract A.
 * The output validates: ``shared.ocsf.validate(event) == []``.
 
@@ -22,6 +24,7 @@ import uuid
 from typing import Optional
 
 from shared.ocsf import make_type_uid
+from shared.envelope import SCHEMA_VERSION, default_tenant, new_trace_id
 
 # Octet-bounded IPv4 (0-255 per octet). A loose ``\d{1,3}`` accepts 999.999.999.999,
 # which parses fine but then FAILS Contract A's endpoint pattern -> the whole event
@@ -124,16 +127,27 @@ class Parser:
         logged_time: Optional[int] = None,
         status: Optional[str] = None,
         message: Optional[str] = None,
+        meta: Optional[dict] = None,
     ) -> dict:
         """Build the common OCSF scaffold with a derived ``type_uid``.
 
         Parsers fill in ``src_endpoint`` / ``dst_endpoint`` / ``actor`` on the
         returned dict.
+
+        ``meta`` is the raw.events ``meta`` dict (Envelope v1): when it carries
+        ``trace_id``/``tenant_id`` (stamped by WS-1 via
+        ``shared.envelope.stamp_meta``), those propagate onto the event so the
+        same trace_id/tenant follows one source event collector -> alert.
+        Absent (older producers, direct-construction test fixtures) falls back
+        to a fresh trace_id and the deployment's default tenant -- never blocks
+        normalization on a missing envelope field.
         """
         category_uid = class_uid // 1000  # floored, per Contract A
+        meta = meta or {}
         event = {
             "metadata": {
                 "version": "1.1.0",
+                "schema_version": SCHEMA_VERSION,
                 "product": dict(self.PRODUCT),
                 "original_format": self.ORIGINAL_FORMAT,
             },
@@ -147,6 +161,8 @@ class Parser:
                 "sector": self.SECTOR,
                 "source_type": self.SOURCE_TYPE,
                 "ingest_id": ingest_id or str(uuid.uuid4()),
+                "trace_id": meta.get("trace_id") or new_trace_id(),
+                "tenant": meta.get("tenant_id") or default_tenant(),
             },
         }
         if logged_time is not None:

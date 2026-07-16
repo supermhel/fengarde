@@ -29,6 +29,7 @@ import uuid
 from typing import Optional
 
 from .spool import BoundedSpool
+from shared.envelope import stamp_meta
 
 DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = 5514
@@ -87,10 +88,10 @@ def build_raw_event(line: str, *, deterministic_id: bool = False) -> dict:
     return {
         "source_type": "generic_syslog",
         "raw": line,
-        "meta": {
+        "meta": stamp_meta({
             "received_at": int(time.time()),
             "ingest_id": ingest_id,
-        },
+        }),
     }
 
 

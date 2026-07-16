@@ -46,6 +46,9 @@ echo
 echo "== shared runner =="
 $PY services/shared/test_runner.py || fail=1
 echo
+echo "== shared envelope v1 (M1) =="
+$PY services/shared/test_envelope.py || fail=1
+echo
 echo "== ws4 window counters (T6) =="
 $PY services/ws4-detection/test_window.py || fail=1
 echo

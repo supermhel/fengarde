@@ -97,6 +97,7 @@ class CiscoAsaParser(Parser):
             logged_time=self._logged_time(meta),
             status=status,
             message=text.strip(),
+            meta=meta,
         )
 
         src_ip = sm.group("ip") if sm else None

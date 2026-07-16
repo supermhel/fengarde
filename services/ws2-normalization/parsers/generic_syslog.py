@@ -144,6 +144,7 @@ class GenericSyslogParser(Parser):
             severity_id=severity_id,
             time_ms=time_ms,
             ingest_id=ingest_id,
+            meta=meta,
         )
         # override sector from meta if provided
         event["siem"]["sector"] = sector

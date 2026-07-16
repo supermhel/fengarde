@@ -30,8 +30,9 @@
             "version": { "type": "string" }
           }
         },
-        "logged_time": { "type": "integer", "description": "epoch ms when collector received it" },
-        "original_format": { "type": "string", "enum": ["syslog", "snmp", "netflow", "winevent", "cef", "leef", "json", "api"] }
+        "logged_time": { "type": "integer", "description": "epoch ms when collector received it -- this IS ingest_time (Envelope v1); `time` at the event top level is event_time. See contracts/bus-topics.md 'Envelope v1'." },
+        "original_format": { "type": "string", "enum": ["syslog", "snmp", "netflow", "winevent", "cef", "leef", "json", "api"] },
+        "schema_version": { "type": "string", "description": "Envelope v1: version of the SIEM event/bus-envelope contract (this file + bus-topics.md), NOT the OCSF `version` field above. Absent on pre-v1 events -- tolerant readers treat missing as \"1.0\"." }
       }
     },
     "class_uid": {
@@ -91,8 +92,9 @@
       "properties": {
         "sector": { "type": "string", "enum": ["bank", "datacenter", "common"] },
         "source_type": { "type": "string", "description": "e.g. cisco_asa, fortinet, linux_auditd, vmware_vsphere, k8s, oracle_db" },
-        "ingest_id": { "type": "string", "description": "uuid assigned by collector" },
-        "tenant": { "type": "string" },
+        "ingest_id": { "type": "string", "description": "uuid assigned by collector. THE per-event dedup key (Envelope v1) -- consumers must be idempotent on this, not on stream/message id." },
+        "tenant": { "type": "string", "description": "Envelope v1 tenant_id. Stamped by WS-1 from TENANT_ID env (default \"default\") and carried unchanged through every downstream stage. See shared.envelope.default_tenant()." },
+        "trace_id": { "type": "string", "description": "Envelope v1: one value per source event's journey collector -> alert, generated once at WS-1 ingest (shared.envelope.new_trace_id()) and carried through unchanged. Absent on pre-v1 events / events built without going through a WS-1 collector (falls back to a fresh id at normalize time)." },
         "score": { "type": "integer", "minimum": 0, "maximum": 100, "description": "set by WS-4 detection, absent at ingest" }
       }
     }

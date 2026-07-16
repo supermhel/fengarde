@@ -162,6 +162,7 @@ class WindowsEventLogParser(Parser):
             logged_time=self._epoch_ms(meta.get("received_at")) if meta.get("received_at") else None,
             status=status,
             message=message,
+            meta=meta,
         )
         event["siem"]["sector"] = sector
 

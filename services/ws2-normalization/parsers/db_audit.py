@@ -92,6 +92,7 @@ class DbAuditParser(Parser):
             logged_time=self._logged_time(rec, meta),
             status=status_from_outcome(rec),
             message=message,
+            meta=meta,
         )
         event["siem"]["sector"] = sector
 

@@ -95,6 +95,7 @@ class N8nAuditParser(Parser):
             logged_time=self._logged_time(rec, meta),
             status=status,
             message=message,
+            meta=meta,
         )
         if src_ip:
             event["src_endpoint"] = {"ip": src_ip}
@@ -119,6 +120,7 @@ class N8nAuditParser(Parser):
             logged_time=self._logged_time(rec, meta),
             status=status_from_outcome(rec),
             message=message,
+            meta=meta,
         )
         event["api"] = {"operation": str(event_type)}
         if src_ip:

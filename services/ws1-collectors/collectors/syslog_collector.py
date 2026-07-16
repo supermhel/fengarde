@@ -19,6 +19,8 @@ import re
 import time
 from typing import Iterator, Optional
 
+from shared.envelope import stamp_meta
+
 # <PRI>VERSION SP TIMESTAMP SP HOSTNAME SP APP SP PROCID SP MSGID SP (SD|-) SP MSG
 _RFC5424 = re.compile(
     r"^<(?P<pri>\d{1,3})>(?P<version>\d{1,2})\s+"
@@ -96,7 +98,7 @@ class SyslogCollector:
                 }
             )
 
-        return {"source_type": self.SOURCE_TYPE, "raw": line, "meta": meta}
+        return {"source_type": self.SOURCE_TYPE, "raw": line, "meta": stamp_meta(meta)}
 
     def poll(self, lines: Iterator[str]) -> Iterator[dict]:
         """Convenience: run :meth:`handle_line` over an iterable of lines."""
