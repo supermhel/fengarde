@@ -76,7 +76,7 @@ A deep-audit P0/P1/P2 pass (numbering from that audit session, not a repo spec d
 | PLAN_A P5 OT parser | Done — OPC UA chosen + shipped, 3 rules | Inventory-diff "new device on OT segment" rule, `docs/ot-monitoring.md` |
 | PLAN_A P6 launch assets | ~60%: 3 write-ups + launch checklist drafted | `docs/vs.md`, agent/NIS2 posts, repo hygiene, v0.4+ release notes |
 | PLAN_C T1.1 delivery semantics | Streams/groups/XAUTOCLAIM/DLQ done & proven; P0 window hardening | Envelope v1 (`schema_version`/`tenant_id`/`trace_id`), `make chaos` gate |
-| PLAN_C T1.2 parser hardening | Done except fuzz (P0 routing + fail-closed, P2 no-regex operators, XSS fixed, schema validation in CI, Hypothesis property tests + ANSI/control-char sanitize both landed 2026-07-16) | atheris fuzz nightly CI job |
+| PLAN_C T1.2 parser hardening | **Done** (P0 routing + fail-closed, P2 no-regex operators, XSS fixed, schema validation in CI, Hypothesis property tests + ANSI/control-char sanitize + atheris fuzz harnesses all landed 2026-07-16) | Nightly fuzz job needs to actually run in CI once merged (workflow exists, locally spot-verified only) |
 | PLAN_C T1.3 backpressure/outage | Partial: B2 shed+spool, OpenSearch retry, healthchecks | Degradation-matrix doc, chaos outage test |
 | PLAN_C T2.1 bench | Not started | All of it (closes the B2 flag) |
 | PLAN_C T2.2 supply chain | gitleaks only | Pinning+hashes, Dependabot, SBOM, signing, SLSA, CodeQL, Scorecard badges |
@@ -136,9 +136,12 @@ an acceptance gate; "done" means the gate ran, not that code merged. Version tar
   (Hypothesis, added as a test-only dependency). One test per registered parser, 100
   generated examples each (recursive JSON-ish `raw`/`meta` shapes): asserts no crash and
   no schema-invalid OCSF emitted. All 10 parsers pass. Wired into `run_all_tests.sh` (+7s).
-  Still open: **fuzz** (atheris) nightly CI job for the top 3 parsers — bytecode-level
-  fuzzing is a different technique than this structural/value-level property testing and
-  wasn't attempted this pass.
+  **Fuzz — done 2026-07-16**: `tools/fuzz/{fuzz_linux_ssh,fuzz_cisco_asa,fuzz_windows_eventlog}.py`
+  (atheris coverage-guided byte-level fuzzing, chosen as the top 3 by regex complexity +
+  recent bug history) + `.github/workflows/fuzz.yml` (nightly, 10 min/target, corpus cached
+  across runs). Locally verified (not just written): each ran 16s unseeded, 3-7 million
+  execs, zero crashes, zero schema-invalid OCSF emitted -- real evidence, not a claim of
+  the full nightly 10-min budget having run (that only happens in CI once merged).
 - **Log-injection test — done 2026-07-16**: `services/shared/sanitize.py::strip_ansi_and_control()`
   strips ANSI CSI/OSC escapes (blocks OSC-52 clipboard injection and cursor-trick terminal
   spoofing when an analyst views raw event content) and C0/DEL control chars (blocks

@@ -1,0 +1,43 @@
+name: Nightly fuzz (top 3 parsers)
+
+# M1 correctness gate (PLAN_C Tier 1.2): coverage-guided byte-level fuzzing,
+# complementing the value-level Hypothesis property tests that run on every
+# push (see contract-tests in ci.yml). Nightly, not per-push -- a useful fuzz
+# budget is minutes, not seconds, and doesn't belong blocking a PR.
+on:
+  schedule:
+    - cron: "17 3 * * *"  # 03:17 UTC daily -- off the hour, avoids the GH Actions stampede
+  workflow_dispatch: {}     # manual trigger for on-demand runs
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [linux_ssh, cisco_asa, windows_eventlog]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install atheris
+        run: pip install atheris
+      - name: Restore corpus cache
+        uses: actions/cache@v4
+        with:
+          path: tools/fuzz/corpus/${{ matrix.target }}
+          key: fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}
+          restore-keys: fuzz-corpus-${{ matrix.target }}-
+      - name: Fuzz ${{ matrix.target }} for 10 minutes
+        run: |
+          mkdir -p tools/fuzz/corpus/${{ matrix.target }}
+          cd tools/fuzz
+          python fuzz_${{ matrix.target }}.py -max_total_time=600 corpus/${{ matrix.target }}
+      - name: Upload crashing input (if any)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-crash-${{ matrix.target }}
+          path: tools/fuzz/crash-*
+          if-no-files-found: ignore

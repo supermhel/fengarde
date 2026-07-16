@@ -31,3 +31,8 @@ infra/dashboard.htpasswd
 .vscode/
 .DS_Store
 Thumbs.db
+
+# atheris fuzz artifacts (M1, .github/workflows/fuzz.yml) -- corpus is
+# CI-cached, not committed; crash-* are local repro files for a live finding.
+tools/fuzz/corpus/
+tools/fuzz/crash-*
