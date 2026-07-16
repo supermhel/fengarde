@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed / Added (deep-hardening pass — P0+P1+P2, 2026-07-16)
+
+Full audit-and-fix pass across parser logic, the detection engine, and pipeline
+robustness, ahead of public launch. Details and evidence in `SSOT.md` §1.
+
+- **P0 (detection-integrity, `9e2745b`)**: window-poisoning (far-future/non-numeric
+  `time`) now fails closed instead of collapsing sliding-window counts or crashing
+  the daemon; memory-vs-Redis window counters now agree on redelivery dedup; idle
+  window keys are evicted (bounded memory); parser registry routing rewritten
+  (source_type-authoritative — fixes a bank DB privileged op being silently
+  mis-parsed as a vSphere read, meaning `bank_db_priv_esc` could never fire);
+  vmware port-crash guard + any raising parser now dead-letters one record instead
+  of aborting the batch; out-of-range IP octets are dropped, not dead-lettered;
+  `status_from_outcome()` shared helper (vmware/db/n8n no longer hardcode
+  `"Success"`, masking failed logins from the brute-force rules); `alert_id` no
+  longer collapses distinct no-ingest-id events onto one alert.
+- **P1 (robustness, `c84c8f6`/`625f4f8`/`7e354bb`)**: `/health` probes the bus and
+  returns 503 when degraded; compose healthchecks on ws1-5; `tools/dlq_peek.py`
+  DLQ inspector/requeue tool; OpenSearch `index()` retries transient errors with
+  backoff, surfaces 4xx immediately; HTTP servers get read timeouts (slowloris
+  guard); dashboard (8080) + inventory (8000) bind to `127.0.0.1` by default
+  (syslog 5514 stays open, must receive remote logs); shared `to_epoch_ms()`
+  replaces 9 copy-pasted, FILETIME/ISO-mishandling time heuristics; rule tuning
+  (service-account allowlist on after-hours-admin, documented brute-force/
+  impossible-travel tradeoffs).
+- **P2 (enhancements, `b645b13`..`2f807ec`)**: `in`/`contains` grammar operators;
+  cross-source severity rubric (`SEV_BY_CATEGORY`) so the same action (e.g.
+  delete) gets the same severity regardless of source; `siem.sector` override now
+  validated + honored consistently across all 10 parsers; `/metrics` endpoint
+  (per-topic acked/failed/deadlettered + ws1 ingest-edge counters); backpressure
+  depth-watchdog on internal topics; IPv6 capture in ssh/ASA parsers + full 0-7
+  ASA severity map; opt-in live Redis/OpenSearch test lane (`make test-live`);
+  anti-dormancy CI gate now checks per-event satisfiability, not just "producible
+  somewhere across all fixtures" (catches a rule that's dormant in practice
+  because its group_by field is only ever produced by a different class).
+
+### Changed — ARGUS → ARGIEM rebrand (`717f4ed`, 2026-07-15)
+
+Renamed the project after a trademark/domain collision check on the prior name.
+239 occurrences across 42 files, GitHub repo renamed (old clone URLs redirect),
+`ARGUS_API_KEY` → `ARGIEM_API_KEY`. No functional change.
+
 ### Added (v0.4 Track S — opt-in auth)
 
 - **`ARGIEM_API_KEY`** shared-secret auth on the WS-3 triage API and WS-6 inventory API (`X-Api-Key` header, constant-time compare). Unset (default) = every request allowed + a startup warning; set = 401 on missing/wrong key. `services/shared/authz.py` (ws3) + `services/ws6-inventory/authz.py` (ws6 doesn't bundle `shared`, so it gets its own copy).
