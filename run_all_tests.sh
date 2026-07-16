@@ -46,6 +46,9 @@ echo
 echo "== M4.3 versioned REST API: GET /alerts, /events, /rules (+/api/v1 aliases), spec-vs-code =="
 $PY services/ws3-indexer/test_api_v1.py || fail=1
 echo
+echo "== M4.4 outbound webhooks: HMAC sign/verify, delivery, retry policy, tenant/score filtering =="
+$PY services/ws3-indexer/test_webhooks.py || fail=1
+echo
 echo "== v0.4 (R): incident-report hook (template backend, contract, HTTP fallback) =="
 $PY services/ws3-indexer/test_reporting.py || fail=1
 

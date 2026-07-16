@@ -56,6 +56,7 @@ def main():
 
     from shared.runner import serve  # noqa: E402
     import triage_api  # noqa: E402
+    import webhooks  # noqa: E402
 
     store = make_store()
 
@@ -76,6 +77,29 @@ def main():
         daemon=True,
     )
     triage_thread.start()
+
+    # M4.4: outbound webhooks are opt-in (contracts/webhooks/*.yml). No
+    # configs -> no thread started at all, zero behavior change. When
+    # present, dispatch runs under its OWN consumer group (cg-webhook) on
+    # the SAME `alerts` topic WS-3 already indexes under cg-index -- two
+    # independent Streams readers, so a slow/down webhook receiver can never
+    # delay or duplicate indexing (webhooks.py's module docstring).
+    webhook_configs = webhooks.load_webhook_configs()
+    if webhook_configs:
+        def webhook_handler(payload: dict) -> None:
+            webhooks.dispatch_alert(webhook_configs, payload)
+
+        webhook_thread = threading.Thread(
+            target=serve,
+            args=({"alerts": ("cg-webhook", webhook_handler)},),
+            # install_signal_handlers=False: signal.signal() only works on
+            # the main thread: the primary serve() call below (main thread)
+            # already owns SIGTERM/SIGINT for the whole process.
+            kwargs={"health_port": None, "service_name": "ws3-webhooks",
+                    "install_signal_handlers": False},
+            daemon=True,
+        )
+        webhook_thread.start()
 
     handlers = {t: ("cg-index", handler) for t in TOPICS}
     serve(handlers, health_port=int(os.getenv("PORT", "8003")), service_name="ws3-indexer")

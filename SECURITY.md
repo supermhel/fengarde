@@ -163,6 +163,41 @@ sensitive log content in cleartext. When you enable it, place the spool on a vol
 with restrictive filesystem permissions (not world-readable) and a retention
 policy; it is a local buffer, not an audit store.
 
+### 9. Outbound alert webhooks (M4.4, v0.6) send alert content to operator-configured URLs
+
+Opt-in via `contracts/webhooks/*.yml` (ships empty — no files, no outbound
+requests, ever); see `docs/webhooks.md` and `contracts/webhooks/README.md`.
+Each configured webhook POSTs matching alert documents — which can contain
+attacker-influenced fields (source IPs, usernames, rule titles built from log
+content) — to a URL an **operator**, not an attacker, configures in a file
+that ships to disk, never derived from event content itself. This is a data
+egress path you are opting into, same posture as WS-5's outbound LLM calls
+(§6): only point a webhook at a destination you trust with your alert data.
+
+- **Authenticity, not confidentiality**: deliveries are HMAC-SHA256 signed
+  (`X-Fengarde-Signature-256`, verified with `hmac.compare_digest`) so a
+  receiver can confirm a request actually came from this deployment and
+  wasn't tampered with in transit — but the body itself is **not**
+  encrypted beyond whatever TLS the `url` scheme provides. Use `https://`
+  URLs for anything beyond a local trusted network; `http://` is accepted
+  (useful for a same-host/Compose-network receiver in dev) but sends alert
+  content in cleartext.
+- **Secret handling**: `secret_env` in a webhook config names an environment
+  variable, never the secret itself — `contracts/webhooks/*.yml` stays safe
+  to commit (§4). An unset secret env var fails that one webhook closed
+  (never sends an unsigned request); it does not affect other configured
+  webhooks.
+- **No SSRF surface from event content**: the destination URL comes only
+  from the operator-authored config file, never from a field on the alert
+  or the triggering event — a malicious log line cannot redirect a webhook
+  to an attacker-chosen internal address.
+- **At-least-once, not exactly-once**: bounded retries on connection errors
+  and 5xx (never on 4xx) mean a rare duplicate delivery is possible;
+  receivers should dedup on `X-Fengarde-Delivery-Id`. There is no
+  dead-letter queue for exhausted webhook retries yet (unlike the bus's own
+  DLQ) — a receiver down for an extended outage silently misses alerts
+  fired during that window.
+
 ---
 
 ## Out of scope (as of v0.4)

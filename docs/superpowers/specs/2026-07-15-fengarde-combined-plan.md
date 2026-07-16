@@ -312,14 +312,39 @@ an acceptance gate; "done" means the gate ran, not that code merged. Version tar
   `run_all_tests.sh`. `StorageAdapter.list_alerts`/`list_events` implemented in both
   `MemoryStore` (exercised by tests) and `OpenSearchStore` (same "correct request, unverified
   against a live cluster" status as the rest of that skeleton).
-- **Webhooks + plugin interface (M4.4–M4.5, open)**: outbound webhooks with HMAC signing;
-  entry-points-based parser/rule plugin interface ("parser dev kit" — installable from an
-  external pip package without forking).
+- **Outbound webhooks with HMAC signing (M4.4) — done 2026-07-16**: opt-in via
+  `contracts/webhooks/*.yml` (ships empty — no files, no dispatcher thread starts, zero
+  behavior change). `services/ws3-indexer/webhooks.py` dispatches the `alerts` bus topic
+  under its OWN consumer group (`cg-webhook`), independent of WS-3's indexing group
+  (`cg-index`) — a slow/down receiver can never delay or duplicate indexing, and vice versa
+  (two Streams readers on one topic, the same pattern already used for `ai.requests`).
+  Each delivery is HMAC-SHA256 signed (`X-Fengarde-Signature-256: sha256=<hex>`, GitHub's
+  `X-Hub-Signature-256` convention, `hmac.compare_digest` on the verify side) and carries a
+  `X-Fengarde-Delivery-Id` for receiver-side dedup (at-least-once, bounded retries: 4xx is
+  permanent/no-retry, connection errors + 5xx get 3 attempts with backoff, mirroring
+  `OpenSearchStore.index`'s policy). `secret_env` in a config names an ENVIRONMENT VARIABLE
+  holding the real key — never the secret itself — so `contracts/webhooks/*.yml` stays safe
+  to commit; an unset secret fails that one webhook closed without affecting others.
+  Filtering: `tenant_id` (optional) and `min_score` (optional, default 0). **Gate passing**:
+  `services/ws3-indexer/test_webhooks.py` — sign/verify roundtrip + tamper/wrong-secret
+  rejection, config loading (valid + 3 kinds of malformed files skipped individually),
+  tenant/score filtering, real HTTP delivery against a `ThreadingHTTPServer` receiver that
+  independently verifies the signature, 4xx-no-retry vs 5xx-bounded-retry-then-succeed, and
+  a bus-driven end-to-end test proving a two-tenant config only delivers the matching
+  tenant's alert — wired into `run_all_tests.sh`. Documented in `SECURITY.md` §9 (new outbound
+  egress path: operator-configured URL only, never derived from event content, so no SSRF
+  surface from log content; HMAC gives authenticity, not confidentiality — use `https://` for
+  anything beyond a trusted local network) and `docs/webhooks.md` (receiver-side verify
+  example, honest "what this does NOT give you": no delivery UI, no dead-letter queue for
+  exhausted retries yet, no mTLS/IP-allowlisting).
+- **Entry-points-based parser/rule plugin interface (M4.5, open)**: "parser dev kit" —
+  installable from an external pip package without forking.
 - **Ops lifecycle (M4.6, open)**: versioned index mappings + migration command (tested upgrade
   with data intact, in CI); scripted backup/restore (snapshots + SQLite + config); per-signal
   retention config + disk guardrails.
 - *Gate:* two-tenant test green (✅ done); RBAC gate green (✅ done); OpenAPI published
-  (✅ done, `contracts/triage-api.yaml` + spec-vs-code test); upgrade test in CI (open).
+  (✅ done, `contracts/triage-api.yaml` + spec-vs-code test); webhook HMAC gate green
+  (✅ done); upgrade test in CI (open).
 
 ### M5 — NIS2 public template layer (PLAN_A Phase 4 re-scoped per decision 1; ~3 weeks; → v0.7.0)
 
