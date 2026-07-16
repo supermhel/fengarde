@@ -125,6 +125,9 @@ $PY tools/integration_e2e.py || fail=1
 echo
 echo "== acceptance e2e (brute-force -> alert, idempotent) =="
 $PY tools/demo_e2e.py || fail=1
+echo
+echo "== agent_log_shipper e2e (JSONL file -> raw.events -> R1+R3 alerts) =="
+$PY tools/test_agent_log_shipper.py || fail=1
 
 echo
 if [ "$fail" -eq 0 ]; then echo "ALL TESTS PASS"; else echo "SOME TESTS FAILED"; fi
