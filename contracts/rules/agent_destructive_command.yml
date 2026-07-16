@@ -1,0 +1,32 @@
+title: AI agent tool call carries a destructive command pattern
+id: 5e6f7081-92a3-4bc4-ad2e-4f5a6b7c8d9e
+status: stable
+description: >
+  An MCP/agent tool call's arguments contain a catastrophically destructive
+  command or query pattern (rm -rf, DROP TABLE/DATABASE, TRUNCATE TABLE,
+  DELETE FROM with no WHERE clause, format/mkfs, a fork bomb). Detected by
+  the mcp_agent parser as a simple string-match heuristic
+  (unmapped.mcp.destructive_command_indicator), NOT a semantic classifier --
+  documented as such, same discipline as agent_credential_file_access.yml and
+  agent_prompt_injection_indicator.yml. Single-shot rather than a burst
+  threshold (contrast dc_mass_vm_delete.yml's 5-in-120s VM-delete pattern):
+  one destructive command from an agent is already the signal worth an
+  analyst's attention, not something to wait on a repeat for. A legitimate
+  agent workflow that genuinely needs to run `rm -rf` on a scratch directory
+  will also fire this -- tune or suppress per deployment, same tradeoff R1/R3
+  already accept.
+level: critical
+logsource:
+  category: application_activity
+detection:
+  destructive:
+    class_uid: 6003
+    unmapped.mcp.destructive_command_indicator: true
+  condition: destructive
+fields:
+  - actor.user.name
+  - api.operation
+  - unmapped.mcp.session_id
+siem:
+  sector: common
+  score_weight: 85

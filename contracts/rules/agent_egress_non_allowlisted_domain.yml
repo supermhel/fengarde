@@ -1,0 +1,35 @@
+title: AI agent tool call reached a non-allowlisted domain
+id: 6f708192-a3b4-4cd5-be3f-5a6b7c8d9e0f
+status: stable
+description: >
+  An MCP/agent tool call parsed a URL/endpoint argument whose hostname is not
+  on the operator-maintained egress allowlist
+  (contracts/allowlists/agent_egress_domains.yml). An agent that can be
+  steered (via prompt injection, a compromised tool description, or a
+  malicious upstream MCP server) into fetching or POSTing to an arbitrary
+  domain is a real exfiltration/C2 path -- this is the detection for that,
+  reusing the engine's existing not_in/Allowlist mechanism
+  (contracts/sigma-convention.md) rather than adding new engine logic.
+  unmapped.mcp.is_egress_call is only set true when the mcp_agent parser
+  successfully parsed a real hostname from the call's arguments (a tool NAME
+  that merely looks network-related, with no parseable URL, does not gate
+  this open). Ships with an EMPTY allowlist, so it fires on every parseable
+  egress call until an operator populates their known-legitimate domains --
+  the correct default for reviewing a new capability, not a silent no-op.
+level: high
+logsource:
+  category: application_activity
+detection:
+  egress:
+    class_uid: 6003
+    unmapped.mcp.is_egress_call: true
+    unmapped.mcp.egress_domain:
+      not_in: agent_egress_domains
+  condition: egress
+fields:
+  - actor.user.name
+  - unmapped.mcp.egress_domain
+  - unmapped.mcp.session_id
+siem:
+  sector: common
+  score_weight: 70

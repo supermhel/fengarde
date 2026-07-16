@@ -71,7 +71,7 @@ A deep-audit P0/P1/P2 pass (numbering from that audit session, not a repo spec d
 | PLAN_A P0 audit | SSOT.md + this doc serve it | — |
 | PLAN_A P1 auth & hardening | ~70%: opt-in API key/basic-auth/Redis AUTH, loopback binds, XSS fixed, gitleaks CI | Session login (argon2/bcrypt + rate limit), first-boot random credential, `docs/deployment.md` TLS/Caddy example, CSRF pass |
 | PLAN_A P2 quickstart | ~80%: README quickstart, `make demo` + devkit-feeder, `docs/adding-a-parser.md`, 3 issue templates, `docs/fengarde-demo.cast` | Clean-machine timed validation, new-rule issue template |
-| PLAN_A P3 MCP/agent parser | Parser + 3 of 5 rules shipped (v0.4 P1) | R4 egress-allowlist rule, R5 destructive-command rule, `docs/agent-monitoring.md`, R1+R3 e2e fixture |
+| PLAN_A P3 MCP/agent parser | **Rule pack complete 2026-07-16**: all 5 rules (R1-R5) shipped, each proven firing on real mcp_agent parser output (`services/ws4-detection/test_v05_agent_rules.py`), including R1+R3 firing together on one session log (PLAN_A's original e2e-fixture ask, satisfied as a dedicated test rather than bolted onto the SSH-specific `make e2e`) | `docs/agent-monitoring.md` |
 | PLAN_A P4 NIS2 generator | Seam + generic template shipped (Track R) | Everything NIS2-specific — now scoped public (decision 1), see M5 |
 | PLAN_A P5 OT parser | Done — OPC UA chosen + shipped, 3 rules | Inventory-diff "new device on OT segment" rule, `docs/ot-monitoring.md` |
 | PLAN_A P6 launch assets | ~60%: 3 write-ups + launch checklist drafted | `docs/vs.md`, agent/NIS2 posts, repo hygiene, v0.4+ release notes |
@@ -210,9 +210,21 @@ an acceptance gate; "done" means the gate ran, not that code merged. Version tar
 
 ### M3 — Product completeness (PLAN_A gaps; runs parallel to M1/M2)
 
-- Agent rule pack completion: **R4** egress to non-allowlisted domain, **R5** destructive
-  command via agent (reuse DC mass-delete logic); `docs/agent-monitoring.md` ("point Claude
-  Code / an MCP server at FENGARDE in 5 minutes"); e2e fixture firing R1+R3 in `make e2e`.
+- **Agent rule pack — done 2026-07-16**: **R4** (`agent_egress_non_allowlisted_domain.yml`) --
+  mcp_agent parser gains `unmapped.mcp.egress_domain`/`is_egress_call` (parsed from a tool call's
+  url/uri/endpoint argument), rule reuses the engine's existing `not_in`/Allowlist mechanism
+  (`contracts/allowlists/agent_egress_domains.yml`, ships empty -> fires on everything until an
+  operator populates it, fail-toward-visibility). **R5** (`agent_destructive_command.yml`) --
+  `unmapped.mcp.destructive_command_indicator` (rm -rf/DROP TABLE/mkfs/fork-bomb patterns),
+  single-shot severity (not a burst threshold like dc_mass_vm_delete.yml -- one destructive
+  command from an agent is already the signal). All 19 rules (17 + these 2) pass the
+  anti-dormancy gate. `services/ws4-detection/test_v05_agent_rules.py` proves all 5 agent
+  rules (R1/R3/R4/R5, R2 already covered) fire on REAL mcp_agent parser output, including R1+R3
+  firing together on one session log -- satisfies PLAN_A's original e2e-fixture ask as a
+  dedicated test rather than bolted onto the SSH-specific `make e2e`. Also fixed a real bug
+  found along the way (see the M1 property-fuzzing fix commit) in 6 parsers' unguarded
+  IP/hostname/user field types. Still open: `docs/agent-monitoring.md` ("point Claude Code / an
+  MCP server at FENGARDE in 5 minutes").
 - Dashboard **session login** (argon2/bcrypt hashed credentials, login rate-limit, first-boot
   random credential printed once — replaces "basic-auth override or nothing"); CSRF pass;
   `docs/deployment.md` with reverse-proxy TLS (sample Caddyfile).

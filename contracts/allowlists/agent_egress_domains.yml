@@ -1,0 +1,20 @@
+# Agent egress allowlist (v0.5 M3, PLAN_A P3 R4): domains an MCP/AI-agent
+# tool call is EXPECTED to reach (its own model API, an internal service it's
+# integrated with, a documented third-party API the deployment relies on).
+#
+# Matches by EXACT string on unmapped.mcp.egress_domain (hostnames, not CIDRs
+# -- an agent's egress target is a domain name, not an internal IP range;
+# see contracts/allowlists/corp_ranges.yml for the IP-CIDR case).
+#
+# Shipped EMPTY on purpose, but unlike service_accounts.yml this means the
+# rule (agent_egress_non_allowlisted_domain.yml) fires on EVERY parseable
+# egress call until populated -- the correct default for a NEW capability an
+# operator hasn't reviewed yet: fail toward visibility, not toward silence.
+# Populate with domains you've confirmed the deployment's agents legitimately
+# call, e.g.:
+#
+#   entries:
+#     - "api.anthropic.com"
+#     - "api.openai.com"
+#     - "internal-tools.corp.example.com"
+entries: []

@@ -30,12 +30,32 @@ simple booleans the rules equality-match on:
 
 Both are heuristic, string-match classifiers -- labeled as such in the rule
 descriptions, not sold as an ML capability.
+
+v0.5 M3 (combined roadmap, PLAN_A P3 R4/R5) extends the same pattern with two
+more fields:
+
+    unmapped.mcp.destructive_command_indicator: bool  -- R5: rm -rf/DROP
+        TABLE/format/mkfs-shaped content in tool arguments. Single-shot
+        (unlike dc_mass_vm_delete.yml's 5-in-120s burst threshold): a single
+        destructive command from an agent is already the signal, worth
+        flagging immediately rather than waiting for a repeat.
+    unmapped.mcp.egress_domain: str | None  -- R4: the hostname parsed from
+        an arguments.url/uri/endpoint field, when the tool call carries one.
+        unmapped.mcp.is_egress_call: bool -- true only when a real domain was
+        parsed (a tool NAME merely suggesting network egress with no
+        parseable URL does not set this -- would wrongly gate the R4 rule
+        open with nothing to check against the allowlist). Reuses the
+        engine's existing not_in/Allowlist mechanism (contracts/allowlists/)
+        rather than adding new engine logic -- the rule combines the
+        is-egress-call gate with a `not_in` clause against an
+        operator-populated domain allowlist.
 """
 from __future__ import annotations
 
 import json
 import re
 import time
+import urllib.parse
 from typing import Optional
 
 from .base import Parser, SEV_HIGH, SEV_INFO, SEV_MEDIUM, status_from_outcome
@@ -64,6 +84,17 @@ _INJECTION_PATTERNS = re.compile(
     r"(ignore (all )?previous instructions|disregard (the )?system prompt|"
     r"you are now|new instructions:|reveal your (system )?prompt|"
     r"act as if you have no restrictions)",
+    re.IGNORECASE,
+)
+
+# R5: heuristic patterns for a catastrophically destructive command/query in
+# tool-call content. Deliberately simple/documented (bounded alternation, no
+# nested quantifiers -- no ReDoS risk on attacker-controlled arguments),
+# same discipline as the credential/injection patterns above.
+_DESTRUCTIVE_COMMAND_PATTERNS = re.compile(
+    r"(rm\s+-[a-z]*r[a-z]*f|rm\s+-[a-z]*f[a-z]*r|"
+    r"drop\s+(table|database|schema)|truncate\s+table|delete\s+from\s+\w+\s*;?\s*$|"
+    r"format\s+[a-z]:|mkfs(\.\w+)?\s+/dev|:\(\)\{\s*:\|:&\s*\};:)",
     re.IGNORECASE,
 )
 
@@ -129,15 +160,40 @@ class McpAgentParser(Parser):
         if src_ip:
             event["src_endpoint"] = {"ip": src_ip}
 
+        egress_domain = self._egress_domain(str(tool), arguments)
         unmapped: dict = {"mcp": {
             "session_id": session,
             "server": server,
             "credential_path_access": bool(_CREDENTIAL_PATH_PATTERNS.search(args_text)),
             "injection_indicator": bool(_INJECTION_PATTERNS.search(args_text)),
+            "destructive_command_indicator": bool(_DESTRUCTIVE_COMMAND_PATTERNS.search(args_text)),
+            "is_egress_call": egress_domain is not None,
         }}
+        if egress_domain is not None:
+            unmapped["mcp"]["egress_domain"] = egress_domain
         event["unmapped"] = unmapped
 
         return event
+
+    @staticmethod
+    def _egress_domain(tool: str, arguments) -> Optional[str]:
+        """R4: the hostname a network-egress-shaped tool call is reaching, or
+        None if this call isn't recognizable as network egress. Prefers an
+        explicit url/uri/endpoint argument (most MCP fetch-style tools carry
+        one); falls back to nothing if the tool name merely LOOKS like an
+        egress tool but carries no parseable URL -- a false 'is_egress_call'
+        would wrongly gate the R4 rule open on calls with no real domain to
+        check against the allowlist."""
+        if isinstance(arguments, dict):
+            url = _pick(arguments, "url", "uri", "endpoint", "target_url")
+            if isinstance(url, str) and url:
+                try:
+                    host = urllib.parse.urlsplit(url).hostname
+                except ValueError:
+                    host = None
+                if host:
+                    return host.lower()
+        return None
 
     @staticmethod
     def _classify(tool: str):

