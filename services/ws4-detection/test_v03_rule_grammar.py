@@ -212,6 +212,7 @@ def run():
         det._by_class_uid.setdefault(rr.class_uid, []).append(rr)
     from scoring import Scorer
     det.scorer = Scorer(det_main.SCORING_YAML)
+    det.tenants_dir = det_main.TENANTS_DIR  # M4: process() needs this attribute too
     for cls, act in ((3002, 4), (4001, 6)):
         _ev, matched, _action = det.process({"class_uid": cls, "activity_id": act,
                                              "siem": {"ingest_id": f"t{cls}"}})

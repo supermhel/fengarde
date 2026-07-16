@@ -128,6 +128,9 @@ $PY tools/demo_e2e.py || fail=1
 echo
 echo "== agent_log_shipper e2e (JSONL file -> raw.events -> R1+R3 alerts) =="
 $PY tools/test_agent_log_shipper.py || fail=1
+echo
+echo "== M4 gate: two-tenant isolation (separate indices, per-tenant rule enablement) =="
+$PY tools/test_multi_tenant_isolation.py || fail=1
 
 echo
 if [ "$fail" -eq 0 ]; then echo "ALL TESTS PASS"; else echo "SOME TESTS FAILED"; fi

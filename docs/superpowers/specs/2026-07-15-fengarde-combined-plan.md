@@ -237,10 +237,26 @@ an acceptance gate; "done" means the gate ran, not that code merged. Version tar
 
 ### M4 — MSP-grade (PLAN_C Tier 3; ~2–3 weeks; → v0.6.0) ← **the launch gate**
 
-- **Multi-tenancy end-to-end**: `tenant_id` (from M1 envelope) threaded
-  collector→rules→index→alert; per-tenant OpenSearch data streams + ILM retention; per-tenant
-  rule enablement/allowlists. *Gate:* automated two-tenant isolation test — same stack,
-  isolated data, isolated alerts.
+- **Multi-tenancy end-to-end — done 2026-07-16**: `tenant_id` threaded collector(meta
+  override)→WS-2(base_event)→WS-4(alerts, `main.py::make_alert`)→WS-3(`router.py`). Non-`default`
+  tenants get their own `events-{family}-{tenant}-{date}` / `alerts-{tenant}-{date}` indices —
+  ordering chosen so the EXISTING `events-common-*`/`alerts-*` OpenSearch index-template wildcards
+  (`contracts/opensearch-mappings/*.json`) already match tenant-scoped names with zero template
+  changes, and the `default` tenant (every pre-M4 deployment) keeps the exact old naming, zero
+  migration. Per-tenant rule enablement: `contracts/tenants/<id>.yml` lists rule ids disabled for
+  that tenant (`services/ws4-detection/tenants.py`), missing config/file = fail-open to full
+  detection (same convention as `not_in` allowlists). **Gate passing**:
+  `tools/test_multi_tenant_isolation.py`, wired into `run_all_tests.sh` — two tenants on one
+  shared bus/store, proves separate event AND alert indices, correct `tenant_id` on alert docs,
+  and that per-tenant rule disablement actually changes fired-vs-not behavior. Caught and fixed a
+  test-authoring bug along the way (a fixed far-future timestamp tripped P0's clock-skew guard,
+  unrelated to the tenancy logic itself — worth noting since it looked like a product bug first).
+  **Explicitly NOT built**: true OpenSearch Data Streams API (this uses tenant-scoped regular
+  indices + existing ILM policies, not the literal Data Streams feature) and PER-TENANT retention
+  override (all tenants in a family currently share one ILM policy) — both real, open items, not
+  silently dropped. Per-tenant *allowlist* customization (as opposed to rule enablement) also
+  not built — a tenant that needs a different allowlist needs its own rule variant referencing a
+  differently-named allowlist file, no engine change required but no dedicated mechanism either.
 - **RBAC + API surface**: admin/analyst/read-only scoped per tenant (builds on M3 session
   login); versioned REST API with published OpenAPI spec (alerts, event search, rule
   management, report generation); outbound webhooks with HMAC signing; entry-points-based

@@ -19,6 +19,7 @@ sys.path.insert(0, str(SERVICES))
 from shared.bus import Bus  # noqa: E402
 from engine import load_rules  # noqa: E402
 from scoring import Scorer  # noqa: E402
+from tenants import tenant_of, load_disabled_rules  # noqa: E402
 
 # contracts/ lives at repo/contracts (host) or /app/contracts (container). HERE.parent
 # is repo/services (host) or /app (container), so search both it and its parent.
@@ -31,12 +32,14 @@ def _contracts_dir() -> Path:
 _CONTRACTS = _contracts_dir()
 RULES_DIR = _CONTRACTS / "rules"
 SCORING_YAML = _CONTRACTS / "scoring.yaml"
+TENANTS_DIR = _CONTRACTS / "tenants"
 
 
 class Detector:
-    def __init__(self):
+    def __init__(self, tenants_dir: Path = TENANTS_DIR):
         self.rules = load_rules(RULES_DIR)
         self.scorer = Scorer(SCORING_YAML)
+        self.tenants_dir = tenants_dir
         # B1: index rules by their (equality) class_uid selection so process()
         # only evaluates the subset of rules that could possibly match a given
         # event's class_uid, instead of every rule for every event. Rules with
@@ -50,6 +53,14 @@ class Detector:
         """Return (scored_event, matched_rules, action)."""
         class_uid = event.get("class_uid")
         candidates = self._by_class_uid.get(class_uid, []) + self._by_class_uid[None]
+        # M4 multi-tenancy: a tenant's config can disable specific global
+        # rules for their own events (contracts/tenants/<tenant_id>.yml).
+        # Missing config/entry -> nothing disabled (fail open to detection,
+        # same convention as engine.py's allowlist loading).
+        tenant = tenant_of(event)
+        disabled = load_disabled_rules(self.tenants_dir, tenant)
+        if disabled:
+            candidates = [r for r in candidates if r.id not in disabled]
         matched = [r for r in candidates if r.evaluate(event)]
         score = self.scorer.score(matched)
         event.setdefault("siem", {})["score"] = score
@@ -68,6 +79,11 @@ def make_alert(event, rule, score):
         "level": rule.level,
         "score": score,
         "sector": event.get("siem", {}).get("sector"),
+        # M4 multi-tenancy: carries the triggering event's envelope-v1 tenant
+        # onto the alert so WS-3's router can index it into a tenant-scoped
+        # alerts-{tenant}-{date} index (router.py). Absent tenant -> "default",
+        # matching every pre-M4 event/alert (see services/shared/envelope.py).
+        "tenant_id": event.get("siem", {}).get("tenant"),
         "src_endpoint": event.get("src_endpoint", {}),
         "actor": event.get("actor", {}),
         "event_ids": [event.get("siem", {}).get("ingest_id")],

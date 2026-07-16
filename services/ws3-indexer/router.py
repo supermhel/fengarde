@@ -7,12 +7,28 @@ Index selection (Contract E):
 Doc id (idempotency, Contract B at-least-once):
   * events -> siem.ingest_id
   * alerts -> alert_id
+
+M4 multi-tenancy (combined roadmap): a non-"default" tenant_id
+(envelope v1's `siem.tenant`, threaded onto alerts by WS-4's make_alert) gets
+its OWN index per family/day, inserted right after the family/prefix so
+`template_for()` still recognizes it and a tenant-scoped wildcard query
+(`events-common-acme-*`, `alerts-acme-*`) is possible:
+
+  * events -> events-{family}-{tenant}-{YYYY.MM.DD}   (tenant != "default")
+  * alerts -> alerts-{tenant}-{YYYY.MM.DD}             (tenant != "default")
+
+The "default" tenant (every deployment that has never set TENANT_ID, i.e. all
+of them before v0.5) keeps the EXACT pre-M4 naming -- zero migration, zero
+behavior change for a single-tenant deployment. This is the storage-layer
+half of the M4 isolation gate; the read/query half (an API scoping its
+OpenSearch query to the caller's own tenant) is M4.2/M4.3, RBAC + API.
 """
 from __future__ import annotations
 
 from datetime import datetime, timezone
 
 _SECTOR_TO_FAMILY = {"bank": "bank", "datacenter": "dc", "common": "common"}
+DEFAULT_TENANT = "default"
 
 
 def _date_suffix(epoch_ms: int | None) -> str:
@@ -27,7 +43,9 @@ def route(doc: dict) -> tuple[str, str]:
     """Return (index_name, doc_id) for a document. Raises ValueError if unroutable."""
     # alert?
     if "alert_id" in doc:
-        return f"alerts-{_date_suffix(doc.get('time'))}", str(doc["alert_id"])
+        tenant = doc.get("tenant_id") or DEFAULT_TENANT
+        base = "alerts" if tenant == DEFAULT_TENANT else f"alerts-{tenant}"
+        return f"{base}-{_date_suffix(doc.get('time'))}", str(doc["alert_id"])
 
     # OCSF event
     siem = doc.get("siem") or {}
@@ -38,7 +56,9 @@ def route(doc: dict) -> tuple[str, str]:
     doc_id = siem.get("ingest_id")
     if not doc_id:
         raise ValueError("event missing siem.ingest_id (needed for idempotency)")
-    return f"events-{family}-{_date_suffix(doc.get('time'))}", str(doc_id)
+    tenant = siem.get("tenant") or DEFAULT_TENANT
+    base = f"events-{family}" if tenant == DEFAULT_TENANT else f"events-{family}-{tenant}"
+    return f"{base}-{_date_suffix(doc.get('time'))}", str(doc_id)
 
 
 def template_for(index_name: str) -> str:
