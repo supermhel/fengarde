@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (v0.5 M1 — correctness gates)
+
+- **Envelope v1**: `schema_version`, `trace_id`, `tenant_id` (formalizes `siem.tenant`, declared since Phase 0 but never wired), documented `event_time`/`ingest_time`/dedup-key semantics. Additive bus-schema change to `contracts/bus-topics.md` + `contracts/ocsf-event.schema.json`, owner-authorized. `services/shared/envelope.py`; wired through all 10 parsers via `base_event(meta=...)` and all 4 live WS-1 collectors.
+- **`make chaos`** (`tools/chaos_test.py`): kills each of ws1-ws5 mid-replay across 40 independent brute-force scenarios, asserts zero lost/duplicate alerts. Reviewed, not yet run against live Docker (unavailable in the authoring environment) — do not treat as a passed gate until a real run's output lands in a PR.
+- **`docs/degradation-matrix.md`**: every dependency's down-behavior, sourced from the actual fail-open/fail-closed code paths.
+- **Hypothesis property tests** (`parsers/test_property_hardening.py`): 100 generated examples per parser, all 10 pass. Found and fixed a real bug: 6 structured-record parsers (db_audit, mcp_agent, n8n_audit, opcua_audit, vmware_vsphere, windows_eventlog) assigned unguarded JSON-field values into schema-constrained `ip`/`mac`/hostname/name fields; `services/shared/ocsf.py` gains `valid_ip`/`valid_mac`/`safe_str` to fix all six.
+- **Log-injection defense** (`services/shared/sanitize.py`): strips ANSI escapes (blocks terminal/OSC-52 injection when viewing raw event content) and C0/DEL control chars (blocks newline-based log forging), wired into `normalize_one()` as a new sanitize stage between parse and enrich.
+- **atheris fuzz harnesses** for the top 3 parsers by regex complexity (linux_ssh, cisco_asa, windows_eventlog) + nightly CI job (`.github/workflows/fuzz.yml`). Locally spot-verified (millions of executions, zero crashes); full nightly budget runs only once merged to `main`.
+
+### Added (v0.5 M2 — public proof artifacts)
+
+- **`tools/fengarde_bench.py`**: one-command load generator, published real numbers in README (~13,750 EPS / ~84 MB peak RSS, zero-infra baseline — explicitly not a live-stack throughput claim).
+- **Code quality floor**: `pyproject.toml` (ruff/black/mypy/coverage config), `.pre-commit-config.yaml`. ruff clean and CI-blocking; black configured but not force-applied (98/100 files would reformat against this codebase's established style — a deliberate, documented, separate decision); mypy informational-only (20 real findings, honest baseline, not a strict gate on a largely-unannotated codebase); coverage gate blocking at measured baseline (WS-2 90%, WS-3 71% — the latter below the ~85% target, documented as an open gap, not silently lowered).
+- **ADR backfill** (`docs/adr/001-006`): Redis Streams, OCSF, OpenSearch, microservice split, fail-closed rules, local-first LLM triage.
+- **Supply chain**: found and fixed every service's `requirements.txt` being decorative prose, never actually installed from (each Dockerfile hardcoded its own unpinned inline `pip install`). Rewrote all 6 as real pinned manifests, switched Dockerfiles to install from them, dropped two never-imported "extras" (pysnmp, scikit-learn). `.github/dependabot.yml`, `tools/generate_sbom.py` (CycloneDX, CI-blocking freshness check), `.github/workflows/codeql.yml`, `.github/workflows/scorecard.yml`, README badges.
+
+### Added (v0.5 M3 — product completeness)
+
+- **Agent rule pack complete**: R4 (`agent_egress_non_allowlisted_domain.yml`) and R5 (`agent_destructive_command.yml`) join R1-R3, reusing the engine's existing `not_in`/Allowlist mechanism (R4) and single-shot pattern-match (R5, not a burst threshold). All 5 rules proven firing on real `mcp_agent` parser output, including R1+R3 together on one session log (`services/ws4-detection/test_v05_agent_rules.py`).
+- **`tools/agent_log_shipper.py`**: the missing real ingestion path for MCP/agent JSONL logs (file, `--follow`, or stdin) into `raw.events` — found while writing the doc below that this didn't exist yet. Proven end-to-end (`tools/test_agent_log_shipper.py`): a JSONL file with one malformed line ships, normalizes, fires R1+R3, and both alerts reach the index.
+- **`docs/agent-monitoring.md`**, **`docs/deployment.md`** (reverse-proxy TLS via Caddy, documented not built), **`docs/vs.md`** (honest FENGARDE vs Wazuh/Elastic Security/Security Onion comparison), new-rule issue template.
+
 ### Added (v0.4 Track S — opt-in auth)
 
 - **`FENGARDE_API_KEY`** shared-secret auth on the WS-3 triage API and WS-6 inventory API (`X-Api-Key` header, constant-time compare). Unset (default) = every request allowed + a startup warning; set = 401 on missing/wrong key. `services/shared/authz.py` (ws3) + `services/ws6-inventory/authz.py` (ws6 doesn't bundle `shared`, so it gets its own copy).

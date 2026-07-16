@@ -290,16 +290,17 @@ schema (OCSF).
 | WS | Service | Role | v0.1 status |
 |----|---------|------|-------------|
 | 1 | `services/ws1-collectors` | Collect logs → `raw.events` | ✅ |
-| 2 | `services/ws2-normalization` | Parsers → validated OCSF events | ✅ (4 parsers) |
+| 2 | `services/ws2-normalization` | Parsers → validated OCSF events | ✅ (10 parsers as of v0.4) |
 | 3 | `services/ws3-indexer` | Routing + OpenSearch indexing (idempotent) | ✅ |
-| 4 | `services/ws4-detection` | Correlation rules + scoring + windowing | ✅ |
-| 5 | `services/ws5-ai` | Triage | 🚧 passthrough stub (AI in v0.2) |
+| 4 | `services/ws4-detection` | Correlation rules + scoring + windowing | ✅ (17 rules) |
+| 5 | `services/ws5-ai` | Triage | ✅ real local-LLM (Ollama) since v0.2, stub fallback |
 | 6 | `services/ws6-inventory` | IP/MAC inventory API (SQLite) | ✅ |
 | 7 | `services/ws7-dashboard` | Alert console | ✅ |
 
-For the full design, scope decisions, and roadmap, see
-[the v0.1 build plan](docs/superpowers/specs/2026-06-27-fengarde-v0.1-build-plan.md) and
-[`docs/PHASE0_README.md`](docs/PHASE0_README.md).
+For current status and the forward roadmap, see **[SSOT.md](SSOT.md)** (read that first)
+and [the combined execution plan](docs/superpowers/specs/2026-07-15-fengarde-combined-plan.md).
+For historical design context: [the v0.1 build plan](docs/superpowers/specs/2026-06-27-fengarde-v0.1-build-plan.md)
+and [`docs/PHASE0_README.md`](docs/PHASE0_README.md).
 
 ---
 
@@ -314,18 +315,26 @@ cd services/ws2-normalization && python test_contract.py
 
 See **[CONTRIBUTING.md](CONTRIBUTING.md)** for the contribution workflow and
 **[docs/adding-a-parser.md](docs/adding-a-parser.md)** for a step-by-step walkthrough
-(copy `linux_ssh.py`, make three small edits, verify). The five deferred parsers above
-are the obvious first PRs.
+(copy `linux_ssh.py`, make three small edits, verify). The three deferred parsers above
+are the obvious first PRs — or propose a new detection rule via the
+[rule request template](.github/ISSUE_TEMPLATE/rule_request.md).
+
+Monitoring AI agents/MCP servers? See **[docs/agent-monitoring.md](docs/agent-monitoring.md)**.
+Curious how FENGARDE compares to Wazuh/Elastic Security/Security Onion? See
+**[docs/vs.md](docs/vs.md)** — an honest comparison, not a sales pitch.
 
 ---
 
 ## Security
 
-FENGARDE v0.1 services are designed for a **localhost / Docker-Compose network only** and
-are **not** hardened for internet exposure. There is **no authentication in v0.1 by
-design**, and the detection engine executes rule files — so only run rules you trust.
-See **[SECURITY.md](SECURITY.md)** for the full threat boundary and how to report a
-vulnerability.
+FENGARDE services are designed for a **localhost / Docker-Compose network only** and
+are **not** hardened for internet exposure. Authentication is **opt-in** (v0.4+:
+`FENGARDE_API_KEY`, dashboard basic-auth, Redis `AUTH` — all default OFF, matching
+pre-v0.4 behavior until you opt in), not a full identity/RBAC system, and the detection
+engine executes rule files — so only run rules you trust. Need to reach the dashboard
+from outside the host? See **[docs/deployment.md](docs/deployment.md)** for a reverse-proxy
+TLS example. See **[SECURITY.md](SECURITY.md)** for the full threat boundary and how to
+report a vulnerability.
 
 ---
 
