@@ -257,15 +257,43 @@ an acceptance gate; "done" means the gate ran, not that code merged. Version tar
   silently dropped. Per-tenant *allowlist* customization (as opposed to rule enablement) also
   not built — a tenant that needs a different allowlist needs its own rule variant referencing a
   differently-named allowlist file, no engine change required but no dedicated mechanism either.
-- **RBAC + API surface**: admin/analyst/read-only scoped per tenant (builds on M3 session
-  login); versioned REST API with published OpenAPI spec (alerts, event search, rule
-  management, report generation); outbound webhooks with HMAC signing; entry-points-based
-  parser/rule plugin interface ("parser dev kit" — installable from an external pip package
-  without forking).
-- **Ops lifecycle**: versioned index mappings + migration command (tested upgrade with data
-  intact, in CI); scripted backup/restore (snapshots + SQLite + config); per-signal retention
-  config + disk guardrails.
-- *Gate:* two-tenant test green; OpenAPI published; upgrade test in CI.
+- **RBAC (M4.2) — done 2026-07-16**: real per-user identity/roles/tenant scoping, opt-in via
+  `FENGARDE_RBAC_DB` (a SQLite path; unset = pre-M4.2 API-key-only behavior, `/auth/*` routes
+  don't exist). `services/shared/users.py` — `UserStore` (SQLite), passwords hashed with
+  `hashlib.scrypt` (stdlib, no new dependency — argon2/bcrypt considered and rejected per the
+  no-new-heavyweight-deps guardrail), unique salt per hash, constant-time verify,
+  fail-closed on a malformed/foreign stored hash. `services/shared/sessions.py` — in-memory
+  `SessionStore`, 8h TTL, lazy expiry-on-resolve. `services/shared/rbac.py` —
+  `role_at_least()` (three-tier `read_only < analyst < admin`, unrecognized role fails closed),
+  `can_access_tenant()` (a non-default-tenant user can't reach an untenanted/pre-M4 resource
+  either — treated as a different tenant, not a wildcard), `LoginRateLimiter` (5 failures / 5 min
+  lockout per username). Wired into `services/ws3-indexer/triage_api.py`: `/auth/login`
+  (sets an `HttpOnly`/`SameSite=Strict` session cookie), `/auth/logout`, `/auth/me`; role
+  enforcement on the existing triage GET/POST routes (`read_only` blocked from writes);
+  tenant-scoped access returns **404, never 403**, on a cross-tenant alert id, so an
+  out-of-tenant caller can't even confirm the alert exists. First boot with an empty user DB
+  auto-creates one `admin` account with a random password printed once to the service log —
+  no `admin/admin` or any other default credential, ever
+  (`services/shared/users.py::ensure_first_boot_admin`). **Gate passing**:
+  `services/shared/test_rbac.py` (11 unit tests — hashing, sessions, role/tenant logic, rate
+  limiter) + `services/ws3-indexer/test_rbac_api.py` (8 tests over a real `ThreadingHTTPServer`
+  — login/logout/me, write-blocked-for-read-only, cross-tenant 404, admin bypass, RBAC-off
+  default preserved), both wired into `run_all_tests.sh`. **Explicitly NOT built**: TLS
+  anywhere (see `docs/deployment.md` for the reverse-proxy pattern), multi-replica session
+  sharing (sessions are in-process; a real HA deployment needs a shared store — needs a live
+  Redis to test against, not built), and WS-6 inventory API coverage (RBAC is wired into
+  WS-3's triage/report routes only this pass; WS-6 stays `FENGARDE_API_KEY`-only). Documented
+  in `SECURITY.md` §2 with the same "what this does NOT give you" honesty pattern used for
+  every prior auth layer.
+- **API surface (M4.3–M4.5, open)**: versioned REST API with published OpenAPI spec (alerts,
+  event search, rule management, report generation); outbound webhooks with HMAC signing;
+  entry-points-based parser/rule plugin interface ("parser dev kit" — installable from an
+  external pip package without forking).
+- **Ops lifecycle (M4.6, open)**: versioned index mappings + migration command (tested upgrade
+  with data intact, in CI); scripted backup/restore (snapshots + SQLite + config); per-signal
+  retention config + disk guardrails.
+- *Gate:* two-tenant test green (✅ done); RBAC gate green (✅ done); OpenAPI published (open);
+  upgrade test in CI (open).
 
 ### M5 — NIS2 public template layer (PLAN_A Phase 4 re-scoped per decision 1; ~3 weeks; → v0.7.0)
 

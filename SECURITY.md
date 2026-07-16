@@ -48,11 +48,12 @@ public internet or an untrusted network.
   zero-friction local development (`DISABLE_SECURITY_PLUGIN=true` in
   `infra/docker-compose.yml`). It must not be exposed beyond the local host.
 
-### 2. Authentication is opt-in (v0.4), not a full identity system
+### 2. Authentication is opt-in (v0.4+), layered up to real RBAC in v0.6 (M4.2)
 
 v0.1/v0.2/v0.3 shipped with **no authentication at all** — anyone who could
-reach a port could call its API. v0.4 adds a minimal, honest, **opt-in**
-layer, not full authN/authZ (no users, roles, or TLS):
+reach a port could call its API. v0.4 added a minimal, honest, **opt-in**
+shared-secret layer; v0.6 (M4.2) adds a second, independent opt-in layer
+with actual per-user identity and roles:
 
 - **`FENGARDE_API_KEY`** — a shared secret checked via `X-Api-Key` on the WS-3
   triage API and the WS-6 inventory API (`services/shared/authz.py`,
@@ -61,22 +62,42 @@ layer, not full authN/authZ (no users, roles, or TLS):
   (`"auth disabled: FENGARDE_API_KEY not set"`). Set it and every write/read on
   those two APIs requires the matching header; the dashboard's nginx proxy
   injects it server-side so the browser never holds the key.
+- **`FENGARDE_RBAC_DB`** (M4.2, v0.6) — a SQLite file path. Unset (default) =
+  the WS-3 triage/report endpoints stay exactly the pre-M4.2 API-key-only
+  behavior; `/auth/login`, `/auth/logout`, `/auth/me` don't even exist. Set
+  it and: real per-user accounts (`services/shared/users.py`, passwords
+  hashed with `hashlib.scrypt` — stdlib, no new dependency — salted,
+  constant-time verified), a role per user (`read_only` < `analyst` <
+  `admin`, `services/shared/rbac.py`), a tenant per user (M4.1's
+  `tenant_id` — a non-admin user can only reach their OWN tenant's alerts;
+  cross-tenant requests get 404, never 403, so they don't confirm the
+  resource exists), session cookies (`HttpOnly`, `SameSite=Strict`, 8h TTL,
+  in-memory — a restart logs everyone out, no persistence across replicas
+  yet), and per-username login rate limiting (5 failures / 5 min lockout,
+  `services/shared/rbac.py::LoginRateLimiter`). First boot with an empty
+  user DB auto-creates one `admin` account with a random password, printed
+  **once** to the service log — there is no `admin/admin` or any other
+  default credential, ever. See `services/ws3-indexer/test_rbac_api.py` for
+  the full behavior proven over real HTTP.
 - **Dashboard basic-auth** — opt-in via the `infra/docker-compose.auth.yml`
   override (nginx `auth_basic` + htpasswd). The main compose file ships this
   **off by default** so `docker compose up` stays zero-prerequisite.
 - **Redis `AUTH`** — opt-in via `REDIS_PASSWORD`; unset = no password,
   matching prior behavior.
 - **OpenSearch's security plugin stays disabled** (see §1) — TLS/cert
-  management for it is out of scope for v0.4; the mitigation remains the
-  network boundary (`127.0.0.1`-bound ports, never publish beyond
-  localhost).
+  management for it is out of scope; the mitigation remains the network
+  boundary (`127.0.0.1`-bound ports, never publish beyond localhost).
 
-**What this does NOT give you:** per-user identity, roles/permissions, TLS
-anywhere, or protection for OpenSearch/Dashboards/the syslog listener. A
-shared static key is a deterrent against opportunistic/accidental exposure,
-not an access-control system. If you need real multi-user auth, put FENGARDE
-behind a reverse proxy/VPN you control — don't rely on `FENGARDE_API_KEY` alone
-for anything beyond a trusted LAN.
+**What M4.2's RBAC does NOT give you:** TLS anywhere (see
+`docs/deployment.md` for a reverse-proxy example), protection for
+OpenSearch/Dashboards/the syslog listener (still `FENGARDE_API_KEY`/network-
+boundary only), multi-replica session sharing (sessions are in-process —
+a real multi-replica RBAC deployment needs a shared session store, tracked
+as a follow-up, not built since it needs a live Redis to test against), or
+coverage of the WS-6 inventory API (RBAC is wired into WS-3's triage/report
+routes only this pass — WS-6 stays `FENGARDE_API_KEY`-only). If you need
+TLS or don't yet need real per-user accounts, `FENGARDE_API_KEY` behind a
+reverse proxy/VPN you control remains the right minimum for a trusted LAN.
 
 ### 3. Rule files are executed by the detection engine — only run trusted rules
 

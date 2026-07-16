@@ -37,6 +37,12 @@ echo "== v0.4 (S1): opt-in API-key auth (ws3 triage, ws6 inventory) =="
 $PY services/ws3-indexer/test_auth.py || fail=1
 $PY services/ws6-inventory/test_auth.py || fail=1
 echo
+echo "== M4.2 RBAC: users/sessions/roles (unit) =="
+$PY services/shared/test_rbac.py || fail=1
+echo
+echo "== M4.2 RBAC: login/logout/roles/tenant isolation (real HTTP) =="
+$PY services/ws3-indexer/test_rbac_api.py || fail=1
+echo
 echo "== v0.4 (R): incident-report hook (template backend, contract, HTTP fallback) =="
 $PY services/ws3-indexer/test_reporting.py || fail=1
 

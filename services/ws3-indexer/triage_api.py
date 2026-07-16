@@ -1,4 +1,4 @@
-"""WS-3 Triage HTTP API (v0.3, C1).
+"""WS-3 Triage HTTP API (v0.3, C1; M4.2 adds opt-in session RBAC).
 
 The dashboard renders alert rows with no way to act on them. This is the
 minimal real workflow: a status + analyst note per alert, persisted.
@@ -6,6 +6,11 @@ minimal real workflow: a status + analyst note per alert, persisted.
 Endpoints:
   GET  /alerts/{alert_id}/triage        -> current triage state (default "new")
   POST /alerts/{alert_id}/triage        -> {status, note?} -> updates + returns it
+  GET  /alerts/{alert_id}/report        -> existing report, if generated
+  POST /alerts/{alert_id}/report        -> generate + store a draft report
+  POST /auth/login   {username,password} -> session cookie (RBAC mode only)
+  POST /auth/logout                      -> invalidate the session cookie
+  GET  /auth/me                          -> current session identity
 
 Mirrors services/ws6-inventory/app.py's stdlib http.server discipline exactly
 (input validation, body-size cap, clean 4xx on malformed input, handler thread
@@ -16,6 +21,16 @@ additive -- an old alert doc without it defaults to status "new", tolerant
 reader). Uses `store.find_alert(alert_id)` (added to both MemoryStore and
 OpenSearchStore) since the client only holds alert_id, not which daily index
 it landed in.
+
+RBAC (M4.2) is OPT-IN, same convention as every other auth layer in this
+project (FENGARDE_API_KEY, dashboard basic-auth, Redis AUTH -- all default
+off): pass `users_db=None` (the default) and behavior is EXACTLY the pre-M4.2
+shared-secret-only auth, unchanged. Pass a real `UserStore` and the
+triage/report endpoints require a logged-in SESSION (not the API key -- a
+browser session proves more, a shared static key doesn't carry a role or
+tenant) with sufficient role, scoped to the alert's own tenant (or any
+tenant, for role=admin). A cross-tenant or under-privileged request gets 404
+(not 403) so a request never confirms an out-of-scope alert exists.
 """
 from __future__ import annotations
 
@@ -23,6 +38,7 @@ import json
 import sys
 import threading
 import time
+from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
@@ -32,12 +48,15 @@ for _p in (str(_HERE), str(_HERE.parent)):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 from shared.authz import check_api_key, warn_if_disabled  # noqa: E402
+from shared.rbac import role_at_least, can_access_tenant, LoginRateLimiter  # noqa: E402
+from shared.sessions import SessionStore  # noqa: E402
 import reporting  # noqa: E402
 
 _MAX_BODY_BYTES = 4096  # a triage update is a status enum + a short note.
 _MAX_NOTE_CHARS = 2000
 _STATUSES = {"new", "triaged", "closed", "false_positive", "true_positive"}
 _CAS_MAX_RETRIES = 5  # optimistic-concurrency retry bound (see _route_post)
+_SESSION_COOKIE = "fengarde_session"
 
 
 class _BadRequest(Exception):
@@ -48,9 +67,22 @@ def _default_triage() -> dict:
     return {"status": "new", "note": "", "updated_at": None}
 
 
-def make_handler(store):
+def make_handler(store, users_db=None, sessions: SessionStore | None = None,
+                  rate_limiter: LoginRateLimiter | None = None):
     """Returns a Handler class bound to the given store (closure, matches the
-    pattern main.py already uses for the bus handler)."""
+    pattern main.py already uses for the bus handler).
+
+    ``users_db`` is None by default -> RBAC (M4.2) is OFF, the handler is
+    byte-for-byte the pre-M4.2 API-key-only behavior. Pass a real
+    ``shared.users.UserStore`` to turn on session login + role/tenant
+    enforcement on the triage and report routes; ``sessions``/
+    ``rate_limiter`` default to fresh in-process instances when RBAC is on.
+    """
+    rbac_enabled = users_db is not None
+    if rbac_enabled:
+        sessions = sessions or SessionStore()
+        rate_limiter = rate_limiter or LoginRateLimiter()
+
     # ThreadingHTTPServer runs one thread per connection. A triage update is a
     # read (find_alert) -> modify (merge triage dict) -> write (store.index)
     # sequence across several Python statements; two concurrent POSTs to the
@@ -68,11 +100,13 @@ def make_handler(store):
         # pinning this connection's thread indefinitely.
         timeout = 15
 
-        def _send(self, code: int, payload):
+        def _send(self, code: int, payload, extra_headers: dict | None = None):
             body = json.dumps(payload).encode()
             self.send_response(code)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
+            for k, v in (extra_headers or {}).items():
+                self.send_header(k, v)
             self.end_headers()
             self.wfile.write(body)
 
@@ -86,6 +120,51 @@ def make_handler(store):
                 return parts[1]
             return None
 
+        # -- M4.2 session helpers (no-ops when RBAC is off) ------------------
+
+        def _session_token(self) -> str:
+            raw = self.headers.get("Cookie")
+            if not raw:
+                return ""
+            jar = SimpleCookie()
+            jar.load(raw)
+            morsel = jar.get(_SESSION_COOKIE)
+            return morsel.value if morsel else ""
+
+        def _current_session(self):
+            if not rbac_enabled:
+                return None
+            return sessions.resolve(self._session_token())
+
+        def _require_role(self, minimum_role: str):
+            """Return the active session if it satisfies `minimum_role`, or
+            send an error response and return None. When RBAC is off this
+            ALWAYS returns a truthy sentinel (auth already happened via
+            check_api_key at the call site) -- keeps one call site for both
+            modes instead of branching every route."""
+            if not rbac_enabled:
+                return True
+            session = self._current_session()
+            if session is None:
+                self._send(401, {"error": "not logged in"})
+                return None
+            if not role_at_least(session.role, minimum_role):
+                # 404, not 403: don't confirm a resource's existence to a
+                # caller who isn't entitled to act on it at all.
+                self._send(404, {"error": "no such path"})
+                return None
+            return session
+
+        def _tenant_gate(self, session, doc: dict) -> bool:
+            """True if `session` (real Session, or True when RBAC is off) may
+            access `doc`'s tenant. Sends 404 and returns False otherwise."""
+            if session is True:  # RBAC off
+                return True
+            if can_access_tenant(session.role, session.tenant_id, doc.get("tenant_id")):
+                return True
+            self._send(404, {"error": "alert not found"})
+            return False
+
         def _check_auth(self) -> bool:
             if check_api_key(self.headers):
                 return True
@@ -94,6 +173,9 @@ def make_handler(store):
 
         def do_GET(self):
             try:
+                u = urlparse(self.path)
+                if rbac_enabled and u.path == "/auth/me":
+                    return self._route_auth_me()
                 if not self._check_auth():
                     return
                 self._route_get()
@@ -102,15 +184,28 @@ def make_handler(store):
             except Exception:  # noqa: BLE001 - never let a handler crash the thread
                 self._send(500, {"error": "internal error"})
 
+        def _route_auth_me(self):
+            session = self._current_session()
+            if session is None:
+                return self._send(401, {"error": "not logged in"})
+            return self._send(200, {"username": session.username, "role": session.role,
+                                     "tenant_id": session.tenant_id})
+
         def _route_get(self):
             u = urlparse(self.path)
             report_alert_id = self._alert_id_from_path(u.path, "report")
             if report_alert_id is not None:
                 if not report_alert_id:
                     raise _BadRequest("alert_id required")
+                session = self._require_role("read_only")
+                if session is None:
+                    return
                 report = store.find_report(report_alert_id)
                 if report is None:
                     return self._send(404, {"error": "report not found"})
+                found_alert = store.find_alert(report_alert_id)
+                if found_alert is not None and not self._tenant_gate(session, found_alert[1]):
+                    return
                 return self._send(200, report)
 
             alert_id = self._alert_id_from_path(u.path)
@@ -118,14 +213,24 @@ def make_handler(store):
                 return self._send(404, {"error": "no such path"})
             if not alert_id:
                 raise _BadRequest("alert_id required")
+            session = self._require_role("read_only")
+            if session is None:
+                return
             found = store.find_alert(alert_id)
             if found is None:
                 return self._send(404, {"error": "alert not found"})
             _, doc = found
+            if not self._tenant_gate(session, doc):
+                return
             return self._send(200, doc.get("triage") or _default_triage())
 
         def do_POST(self):
             try:
+                u = urlparse(self.path)
+                if rbac_enabled and u.path == "/auth/login":
+                    return self._route_auth_login()
+                if rbac_enabled and u.path == "/auth/logout":
+                    return self._route_auth_logout()
                 if not self._check_auth():
                     return
                 self._route_post()
@@ -133,6 +238,71 @@ def make_handler(store):
                 self._send(400, {"error": str(e)})
             except Exception:  # noqa: BLE001 - never let a handler crash the thread
                 self._send(500, {"error": "internal error"})
+
+        def _read_json_body(self, max_bytes: int) -> dict:
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+            except (TypeError, ValueError):
+                raise _BadRequest("invalid Content-Length")
+            if length < 0:
+                raise _BadRequest("invalid Content-Length")
+            if length > max_bytes:
+                raise _BadRequest("request body too large")
+            try:
+                body = json.loads(self.rfile.read(length) or b"{}")
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                raise _BadRequest("body must be valid JSON")
+            if not isinstance(body, dict):
+                raise _BadRequest("body must be a JSON object")
+            return body
+
+        def _route_auth_login(self):
+            body = self._read_json_body(_MAX_BODY_BYTES)
+            username = body.get("username")
+            password = body.get("password")
+            if not isinstance(username, str) or not isinstance(password, str) or not username:
+                raise _BadRequest("username and password (strings) are required")
+
+            if rate_limiter.is_locked_out(username):
+                # Same response as a wrong password -- a lockout must not be
+                # a distinguishable oracle for "this username exists and is
+                # currently being attacked."
+                return self._send(401, {"error": "invalid credentials"})
+
+            row = users_db.verify_login(username, password)
+            if row is None:
+                rate_limiter.record_failure(username)
+                return self._send(401, {"error": "invalid credentials"})
+            rate_limiter.record_success(username)
+
+            token = sessions.create(row["username"], row["role"], row["tenant_id"])
+            cookie = SimpleCookie()
+            cookie[_SESSION_COOKIE] = token
+            cookie[_SESSION_COOKIE]["httponly"] = True
+            cookie[_SESSION_COOKIE]["path"] = "/"
+            cookie[_SESSION_COOKIE]["samesite"] = "Strict"
+            # `Secure` is deliberately not set: the dashboard's documented
+            # deployment path (docs/deployment.md) terminates TLS at a
+            # reverse proxy in FRONT of this service, which forwards
+            # plaintext HTTP on the compose network -- a `Secure`-only
+            # cookie would never be sent over that hop. TLS termination
+            # closer to this service is the real fix, tracked as an M4
+            # ops-lifecycle follow-up, not silently worked around here.
+            set_cookie = cookie[_SESSION_COOKIE].OutputString()
+            return self._send(200, {"username": row["username"], "role": row["role"],
+                                     "tenant_id": row["tenant_id"]},
+                               extra_headers={"Set-Cookie": set_cookie})
+
+        def _route_auth_logout(self):
+            token = self._session_token()
+            if token:
+                sessions.invalidate(token)
+            cookie = SimpleCookie()
+            cookie[_SESSION_COOKIE] = ""
+            cookie[_SESSION_COOKIE]["path"] = "/"
+            cookie[_SESSION_COOKIE]["max-age"] = 0
+            return self._send(200, {"ok": True},
+                               extra_headers={"Set-Cookie": cookie[_SESSION_COOKIE].OutputString()})
 
         def _route_post(self):
             u = urlparse(self.path)
@@ -156,10 +326,15 @@ def make_handler(store):
                     self.rfile.read(min(length, _MAX_BODY_BYTES))
                 if not report_alert_id:
                     raise _BadRequest("alert_id required")
+                session = self._require_role("analyst")  # report generation is a write action
+                if session is None:
+                    return
                 found = store.find_alert(report_alert_id)
                 if found is None:
                     return self._send(404, {"error": "alert not found"})
                 _, alert_doc = found
+                if not self._tenant_gate(session, alert_doc):
+                    return
                 triage = alert_doc.get("triage") or _default_triage()
                 report = reporting.generate_report(alert_doc, triage)
                 report_index = reporting._report_index()
@@ -171,6 +346,10 @@ def make_handler(store):
                 return self._send(404, {"error": "no such path"})
             if not alert_id:
                 raise _BadRequest("alert_id required")
+
+            session = self._require_role("analyst")  # triage status/note is a write action
+            if session is None:
+                return
 
             try:
                 length = int(self.headers.get("Content-Length", 0))
@@ -216,6 +395,8 @@ def make_handler(store):
                     if found is None:
                         return self._send(404, {"error": "alert not found"})
                     index, doc, version = found
+                    if not self._tenant_gate(session, doc):
+                        return
 
                     triage = dict(doc.get("triage") or _default_triage())
                     if status is not None:
@@ -237,9 +418,35 @@ def make_handler(store):
 
 def serve(store, host="0.0.0.0", port=8013):
     warn_if_disabled("ws3-indexer-triage")
-    handler_cls = make_handler(store)
+
+    # M4.2 RBAC: opt-in via FENGARDE_RBAC_DB (a SQLite file path), same
+    # unset-is-off convention as FENGARDE_API_KEY/dashboard basic-auth/Redis
+    # AUTH. Unset -> make_handler(store) with no users_db -> byte-for-byte
+    # pre-M4.2 behavior.
+    import os as _os
+    users_db = None
+    rbac_db_path = _os.getenv("FENGARDE_RBAC_DB")
+    if rbac_db_path:
+        from shared.users import UserStore, ensure_first_boot_admin  # noqa: E402
+        users_db = UserStore(rbac_db_path)
+        first_boot_password = ensure_first_boot_admin(users_db)
+        if first_boot_password:
+            # Printed exactly once, ever, for this DB -- there is no
+            # admin/admin or any other default credential (PLAN_A's ask).
+            # A restart against the SAME db file does not re-print this
+            # (ensure_first_boot_admin is a no-op once a user exists).
+            print(json.dumps({
+                "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "level": "warning", "service": "ws3-indexer-triage",
+                "msg": "first-boot admin account created -- SAVE THIS PASSWORD, "
+                       "it will not be shown again",
+                "username": "admin", "password": first_boot_password,
+            }), flush=True)
+
+    handler_cls = make_handler(store, users_db=users_db)
     srv = ThreadingHTTPServer((host, port), handler_cls)
     print(json.dumps({"ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                       "level": "info", "service": "ws3-indexer-triage",
-                      "msg": "listening", "url": f"http://{host}:{port}"}), flush=True)
+                      "msg": "listening", "url": f"http://{host}:{port}",
+                      "rbac": "enabled" if users_db else "disabled"}), flush=True)
     srv.serve_forever()
