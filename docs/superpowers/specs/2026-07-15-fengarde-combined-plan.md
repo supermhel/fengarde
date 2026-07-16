@@ -154,14 +154,20 @@ an acceptance gate; "done" means the gate ran, not that code merged. Version tar
   including one driving a real parser end-to-end. Wired into `run_all_tests.sh`.
 - **Degradation matrix — done 2026-07-15**: see M1's first bullet above (`docs/degradation-matrix.md`).
 - *Gate:* `make chaos` green in CI (still open — no Docker daemon available where this pass
-  ran, see the M1 bullet above); fuzz corpus runs 10 min clean (not started).
+  ran, see the M1 bullet above); fuzz corpus runs 10 min clean (harnesses done + locally
+  spot-verified, full nightly budget only runs once merged to `main` — see fuzz bullet above).
 
 ### M2 — Public proof artifacts (PLAN_C Tier 2; ~1.5 weeks)
 
-- **`fengarde-bench`**: in-repo reproducible load generator (syslog/Windows/agent events at
-  configurable EPS). Publish sustained EPS, p50/p99 ingest→alert latency, resource footprint on
-  a defined reference box in README, with methodology. Closes the "B2 never load-tested" flag —
-  and re-tunes the guessed defaults (2000/s, 100k depth) with measured numbers.
+- **`fengarde-bench` — partially done 2026-07-16**: `tools/fengarde_bench.py`, one command
+  (`python tools/fengarde_bench.py --events 20000 --mixed`), no Docker required. Published in
+  README: ~13,750 sustained EPS / ~84 MB peak RSS for a 20k-event mixed-source run, measured
+  on this pass's 4 vCPU/15 GB sandbox host — real numbers, reproducible by a stranger. **Explicitly
+  does NOT close the "B2 never load-tested" flag**: it's a zero-infra CPU-bound batch-processing
+  baseline, not live Redis/OpenSearch throughput, and has no p50/p99 latency (batch processing
+  has no queuing delay to measure). Still open: live-stack numbers on a defined reference box
+  (needs Docker), re-tuning the B2 defaults (2000/s, 100k depth) from measured live numbers, and
+  a before/after comparison for the rule prefilter.
 - **Supply chain**: pinned deps with hashes, Dependabot, CycloneDX SBOM per release,
   cosign-signed releases, SLSA provenance via Actions, CodeQL + secret scanning,
   OpenSSF Scorecard ≥ 8.0 + Best Practices badge in README.

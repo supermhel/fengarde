@@ -108,6 +108,35 @@ a long feature list.
 
 ---
 
+## Performance (`fengarde-bench`)
+
+```sh
+python tools/fengarde_bench.py --events 20000 --mixed
+```
+
+One-command, reproducible by anyone with a clone — no Docker required. Measured
+2026-07-16 on a 4 vCPU / 15 GB sandbox host (not a fixed reference VPS, see caveat
+below):
+
+| Metric | Value |
+|---|---|
+| Sustained EPS (5,000 events, `linux_ssh` only) | ~12,950 events/sec |
+| Sustained EPS (20,000 events, mixed `ssh`/`asa`/`generic_syslog`) | ~13,750 events/sec |
+| Peak resident memory (20,000-event run) | ~84 MB |
+
+**Read before citing these numbers anywhere:** this is a **zero-infra CPU-bound
+baseline** — one process, the in-memory bus, `MemoryStore` — measuring how fast
+WS-2/WS-4/WS-3's Python code processes a batch. It excludes real Redis network
+I/O, OpenSearch indexing latency, and any real queuing/backpressure behavior a
+live stack has. It is **not** a "FENGARDE handles N events/sec in production"
+claim, and there is no p50/p99 ingest→alert latency number yet — batch
+processing has no realistic queuing delay to measure; that number only means
+something against a live bus. The live-stack number on a defined reference box
+is still an open TODO (needs Docker, which this repo's current CI/dev
+environment doesn't always have).
+
+---
+
 ## Prerequisites
 
 - **Docker Desktop** (or Docker Engine + Compose v2) with **≥ 4 GB RAM** allocated to Docker.
