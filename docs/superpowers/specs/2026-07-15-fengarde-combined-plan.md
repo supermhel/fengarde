@@ -76,7 +76,7 @@ A deep-audit P0/P1/P2 pass (numbering from that audit session, not a repo spec d
 | PLAN_A P5 OT parser | Done — OPC UA chosen + shipped, 3 rules | Inventory-diff "new device on OT segment" rule, `docs/ot-monitoring.md` |
 | PLAN_A P6 launch assets | ~60%: 3 write-ups + launch checklist drafted | `docs/vs.md`, agent/NIS2 posts, repo hygiene, v0.4+ release notes |
 | PLAN_C T1.1 delivery semantics | Streams/groups/XAUTOCLAIM/DLQ done & proven; P0 window hardening | Envelope v1 (`schema_version`/`tenant_id`/`trace_id`), `make chaos` gate |
-| PLAN_C T1.2 parser hardening | Substantially done (P0 routing + fail-closed, P2 no-regex operators, XSS fixed, schema validation in CI) | Hypothesis property tests, atheris fuzz nightly, ANSI/control-char strip test |
+| PLAN_C T1.2 parser hardening | Done except fuzz (P0 routing + fail-closed, P2 no-regex operators, XSS fixed, schema validation in CI, Hypothesis property tests + ANSI/control-char sanitize both landed 2026-07-16) | atheris fuzz nightly CI job |
 | PLAN_C T1.3 backpressure/outage | Partial: B2 shed+spool, OpenSearch retry, healthchecks | Degradation-matrix doc, chaos outage test |
 | PLAN_C T2.1 bench | Not started | All of it (closes the B2 flag) |
 | PLAN_C T2.2 supply chain | gitleaks only | Pinning+hashes, Dependabot, SBOM, signing, SLSA, CodeQL, Scorecard badges |
@@ -132,13 +132,26 @@ an acceptance gate; "done" means the gate ran, not that code merged. Version tar
   `fengarde-sec` backend, syslog spool, A5 enrichment, allowlists, poison events, parser
   crashes). Surfaces two open gaps: no documented Redis reconnect/backoff, and the OCC/CAS
   path is still unverified against a live cluster (exactly what `make chaos` needs to close).
-- **Property-based tests** (Hypothesis) per parser: arbitrary/malformed input never crashes,
-  never emits schema-invalid OCSF. **Fuzz** (atheris) nightly CI job for the top 3 parsers.
-- **Log-injection test**: ANSI/control chars in log content stripped/encoded before storage &
-  rendering (extends the existing no-innerHTML discipline with an explicit regression test).
-- **Degradation matrix** doc: every dependency down → documented, tested behavior
-  (LLM→stub and OpenSearch→retry+DLQ exist; complete the matrix).
-- *Gate:* `make chaos` green in CI; fuzz corpus runs 10 min clean.
+- **Property-based tests — done 2026-07-16**: `services/ws2-normalization/parsers/test_property_hardening.py`
+  (Hypothesis, added as a test-only dependency). One test per registered parser, 100
+  generated examples each (recursive JSON-ish `raw`/`meta` shapes): asserts no crash and
+  no schema-invalid OCSF emitted. All 10 parsers pass. Wired into `run_all_tests.sh` (+7s).
+  Still open: **fuzz** (atheris) nightly CI job for the top 3 parsers — bytecode-level
+  fuzzing is a different technique than this structural/value-level property testing and
+  wasn't attempted this pass.
+- **Log-injection test — done 2026-07-16**: `services/shared/sanitize.py::strip_ansi_and_control()`
+  strips ANSI CSI/OSC escapes (blocks OSC-52 clipboard injection and cursor-trick terminal
+  spoofing when an analyst views raw event content) and C0/DEL control chars (blocks
+  newline-based log forging), wired into `normalize_one()` (`services/ws2-normalization/main.py`)
+  as a `parse -> sanitize -> enrich -> validate` stage — one choke point covering every
+  parser's `message`/`actor.user.name`/`actor.process.name`/`src_endpoint.hostname`/
+  `dst_endpoint.hostname` fields, not a per-parser change. Complements (doesn't replace) the
+  dashboard's existing `esc()` HTML-escaping, which covers browser DOM XSS only, not
+  terminal/log-sink injection. 7 tests in `services/ws2-normalization/test_sanitize.py`,
+  including one driving a real parser end-to-end. Wired into `run_all_tests.sh`.
+- **Degradation matrix — done 2026-07-15**: see M1's first bullet above (`docs/degradation-matrix.md`).
+- *Gate:* `make chaos` green in CI (still open — no Docker daemon available where this pass
+  ran, see the M1 bullet above); fuzz corpus runs 10 min clean (not started).
 
 ### M2 — Public proof artifacts (PLAN_C Tier 2; ~1.5 weeks)
 

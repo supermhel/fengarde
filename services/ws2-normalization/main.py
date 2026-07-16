@@ -17,18 +17,51 @@ sys.path.insert(0, str(SERVICES))  # for `shared`
 
 from shared.bus import Bus  # noqa: E402
 from shared.ocsf import validate  # noqa: E402
+from shared.sanitize import strip_ansi_and_control  # noqa: E402
 from parsers import resolve  # noqa: E402
 from enrichment import enrich  # noqa: E402
+
+# Free-text fields any parser may populate from raw, attacker-controlled log
+# content -- sanitized uniformly here (one choke point for all 10 parsers)
+# rather than in each parser individually. (path, is_list) where is_list means
+# "a list of dicts with this key", used for actor.user/process which some
+# parsers may extend; today none do, so this stays a flat dotted-path walk.
+_FREE_TEXT_PATHS = (
+    ("message",),
+    ("actor", "user", "name"),
+    ("actor", "process", "name"),
+    ("src_endpoint", "hostname"),
+    ("dst_endpoint", "hostname"),
+)
+
+
+def _sanitize_free_text(event: dict) -> dict:
+    """M1 log-injection defense (PLAN_C Tier 1.2): strip ANSI escapes and C0
+    control chars from every OCSF free-text field a parser may have populated
+    from raw log content, so a hostile hostname/username/message can't forge
+    terminal output (tools/dlq_peek.py, docker logs) or inject a fake extra
+    log line downstream. Complements (does not replace) the dashboard's HTML
+    escaping, which covers browser DOM XSS, not terminal/log-sink injection."""
+    node = event
+    for *path, leaf in (p for p in _FREE_TEXT_PATHS):
+        cursor = node
+        for key in path:
+            cursor = cursor.get(key) if isinstance(cursor, dict) else None
+            if cursor is None:
+                break
+        if isinstance(cursor, dict) and leaf in cursor:
+            cursor[leaf] = strip_ansi_and_control(cursor[leaf])
+    return event
 
 
 def normalize_one(raw_payload: dict):
     """Return (event, errors). event is None if no parser / unparseable.
 
-    Pipeline: parse -> A5 enrich (additive, offline, fail-open) -> validate.
-    Enrichment runs before validate so the enriched event is what's checked
-    against Contract A, but it only ADDS optional src_endpoint.reputation/
-    location -- an event validates identically whether or not a data match adds
-    a field.
+    Pipeline: parse -> sanitize free text (M1) -> A5 enrich (additive, offline,
+    fail-open) -> validate. Enrichment runs before validate so the enriched
+    event is what's checked against Contract A, but it only ADDS optional
+    src_endpoint.reputation/location -- an event validates identically whether
+    or not a data match adds a field.
     """
     parser = resolve(raw_payload)
     if parser is None:
@@ -49,6 +82,7 @@ def normalize_one(raw_payload: dict):
         return None, [f"parser {type(parser).__name__} raised: {type(exc).__name__}: {exc}"]
     if event is None:
         return None, ["parser returned None"]
+    event = _sanitize_free_text(event)
     event = enrich(event)
     return event, validate(event)
 

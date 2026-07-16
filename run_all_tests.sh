@@ -49,6 +49,12 @@ echo
 echo "== shared envelope v1 (M1) =="
 $PY services/shared/test_envelope.py || fail=1
 echo
+echo "== ws2 property-based parser hardening (M1, Hypothesis) =="
+$PY services/ws2-normalization/parsers/test_property_hardening.py || fail=1
+echo
+echo "== ws2 log-injection defense (M1, ANSI/control-char sanitize) =="
+$PY services/ws2-normalization/test_sanitize.py || fail=1
+echo
 echo "== ws4 window counters (T6) =="
 $PY services/ws4-detection/test_window.py || fail=1
 echo

@@ -30,7 +30,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install deps
-        run: pip install pyyaml
+        run: pip install pyyaml hypothesis
       - name: Full zero-infra gate
         run: PYTHON=python3 bash run_all_tests.sh
 

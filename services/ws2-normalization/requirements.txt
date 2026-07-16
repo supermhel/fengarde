@@ -3,3 +3,5 @@
 # Production extras:
 #   PyYAML       # A5 enrichment (contracts/enrichment/*.yml) -- required, not optional
 #   redis>=5.0   # bus backend (BUS_BACKEND=redis)
+# Test-only extra (M1 correctness gate, not needed to run the service):
+#   hypothesis   # property-based fuzzing, parsers/test_property_hardening.py
