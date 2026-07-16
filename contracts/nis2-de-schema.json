@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://siem.local/contracts/nis2-de-schema.json",
+  "title": "NIS2 (Germany, NIS2UmsuCG/§32 BSIG) incident-report field schema",
+  "description": "DRAFT SCHEMA - NOT LEGAL ADVICE. Field structure for the three-stage NIS2 incident reporting obligation (Directive (EU) 2022/2555, Article 23; German implementation NIS2UmsuCG amending the BSI-Gesetz, §32 BSIG). Sourced from the directive's public text and public secondary guidance (BSI, ENISA); citations are recorded per-report in the generated report's `citations` array (contracts/reporting.md), not hardcoded here as legal fact. This schema describes WHAT A DRAFT SHOULD CONTAIN, derived deterministically from an alert + analyst triage state -- it is not itself a legal determination of what your organization must report, to whom, or under which regime. IMPORTANT SCOPE CAVEAT: entities already covered by sector-specific EU legislation deemed 'at least equivalent' are excluded from NIS2's incident-reporting obligation under the directive's Article 4 lex-specialis clause -- financial entities are the primary example, governed instead by DORA (Regulation (EU) 2022/2554, Article 19), a DIFFERENT reporting regime with different timelines and a different competent authority (typically BaFin in Germany, not BSI). This tool does not determine your organization's regulatory classification; confirm the applicable regime before using any generated draft.",
+  "type": "object",
+  "required": ["stage", "language", "disclaimer", "entity", "incident"],
+  "properties": {
+    "stage": {
+      "type": "string",
+      "enum": ["early_warning", "notification", "final_report"],
+      "description": "Which of the three Art. 23(4) NIS2 / §32 BSIG stages this draft is for: early_warning = 'Erstmeldung' (within 24h of becoming aware -- must state only whether the incident is suspected to be caused by unlawful/malicious acts and whether it may have cross-border impact); notification = 'Meldung'/'Zwischenmeldung' (within 72h -- updates the early warning, adds an initial severity/impact assessment and known indicators of compromise); final_report = 'Abschlussbericht' (no later than 1 month after the notification -- detailed description, root cause/threat type, mitigation measures applied)."
+    },
+    "language": { "type": "string", "enum": ["de", "en"] },
+    "disclaimer": {
+      "type": "string",
+      "description": "Structurally mandatory (contracts/reporting.md hard rule #2) -- a response missing this is rejected, not just discouraged by convention."
+    },
+    "entity": {
+      "type": "object",
+      "description": "The reporting organization's own facts. NONE of this is knowable from an alert document -- every field here is an [ANALYST MUST PROVIDE] placeholder in the rendered draft, never inferred or guessed from event/log content.",
+      "properties": {
+        "name": { "type": "string" },
+        "sector_classification": {
+          "type": "string",
+          "description": "Essential or important entity under NIS2 Annex I/II, OR a different regime entirely (e.g. DORA for financial entities). Must be confirmed by the entity, never inferred from FENGARDE's internal 'sector' tag (bank/datacenter/common), which is a detection-routing label, not a regulatory classification."
+        },
+        "competent_authority": {
+          "type": "string",
+          "description": "Germany: typically BSI (Bundesamt für Sicherheit in der Informationstechnik) as national CSIRT/competent authority under §32 BSIG, EXCEPT for sectors with their own competent authority (e.g. BaFin for DORA-covered financial entities)."
+        }
+      }
+    },
+    "incident": {
+      "type": "object",
+      "required": ["title", "detected_at", "severity"],
+      "properties": {
+        "title": { "type": "string" },
+        "detected_at": { "type": "string", "format": "date-time" },
+        "severity": { "type": "string" },
+        "significant_incident_assessment": {
+          "type": "string",
+          "description": "Art. 23(3): whether the incident meets the 'significant incident' threshold (caused or capable of causing severe operational disruption/financial loss, or affecting other persons with considerable material/non-material damage) is a JUDGMENT CALL for the reporting entity, never auto-derived from a detection rule's score/level alone. Always rendered as an [ANALYST MUST PROVIDE] placeholder."
+        },
+        "suspected_malicious": {
+          "type": ["boolean", "null"],
+          "description": "Art. 23(4)(a): early-warning field -- suspected to be caused by unlawful or malicious acts? null = not yet determined."
+        },
+        "cross_border_impact": {
+          "type": ["boolean", "null"],
+          "description": "Art. 23(4)(a): early-warning field -- could the incident have an impact in other EU Member States?"
+        },
+        "impact_assessment": {
+          "type": "string",
+          "description": "Art. 23(4)(b): notification-stage field -- initial assessment of severity and impact."
+        },
+        "indicators_of_compromise": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Art. 23(4)(b): notification-stage field, where available."
+        },
+        "root_cause": {
+          "type": "string",
+          "description": "Art. 23(4)(d): final-report field -- detailed description, type of threat/root cause."
+        },
+        "mitigation_measures": {
+          "type": "string",
+          "description": "Art. 23(4)(d): final-report field -- mitigation measures applied and ongoing."
+        }
+      }
+    },
+    "source_alert": {
+      "type": "object",
+      "description": "The FENGARDE alert this draft was generated from -- the only part of this schema populated automatically from real, structured data (never fabricated).",
+      "properties": {
+        "alert_id": { "type": "string" },
+        "rule_id": { "type": "string" },
+        "rule_title": { "type": "string" },
+        "score": { "type": "integer" },
+        "triage_status": { "type": "string" }
+      }
+    },
+    "citations": {
+      "type": "array",
+      "description": "Public sources this draft's STRUCTURE (not its content) is based on -- Directive (EU) 2022/2555 Article 23 and, for the German rendering, §32 BSIG (NIS2UmsuCG). Matches contracts/reporting.md's citations shape.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "celex": { "type": "string" },
+          "article": { "type": "string" },
+          "url": { "type": "string" },
+          "retrieved_at": { "type": "string" }
+        }
+      }
+    }
+  }
+}

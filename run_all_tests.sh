@@ -161,6 +161,15 @@ $PY tools/test_backup_restore.py || fail=1
 echo
 echo "== M4.6 ops lifecycle: OpenSearch template migration (versioned, plan-then-apply) =="
 $PY tools/test_migrate_opensearch.py || fail=1
+echo
+echo "== M5 NIS2 template: DE/EN renderer, stage cumulativeness, HTTP wiring =="
+$PY services/ws3-indexer/test_nis2_template.py || fail=1
+echo
+echo "== M5 eval: >=10 synthetic incidents -> NIS2 drafts -> checklist (CI-runnable) =="
+$PY eval/report_generator/run_eval.py || fail=1
+echo
+echo "== M5 demo: bank-DB priv-esc -> real alert -> German NIS2 draft, zero infra =="
+$PY tools/demo_nis2.py || fail=1
 
 echo
 if [ "$fail" -eq 0 ]; then echo "ALL TESTS PASS"; else echo "SOME TESTS FAILED"; fi

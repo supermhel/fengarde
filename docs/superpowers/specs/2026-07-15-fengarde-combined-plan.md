@@ -428,25 +428,63 @@ an acceptance gate; "done" means the gate ran, not that code merged. Version tar
 
 ### M5 — NIS2 public template layer (PLAN_A Phase 4 re-scoped per decision 1; ~3 weeks; → v0.7.0)
 
-Can partially parallelize with M4 (different services: ws3 reporting vs. envelope/API work).
+**Done 2026-07-16.** Research note: WebFetch was blocked (403) on every external source tried
+during this pass (NIS2 directive mirrors, BSI's own site, EU Commission pages — looked like an
+environment-level restriction, not individual site blocking); WebSearch worked and was used
+instead, cross-checked against training knowledge for the directive's well-documented public
+structure (Art. 23's three-stage 24h/72h/1-month framework; §32 BSIG's German terminology
+Erstmeldung/Meldung/Abschlussbericht). Every citation in the generated output points at the
+real, public statute (CELEX `32022L2555` Art. 23; §32 BSIG) — this generator's own STRUCTURE is
+grounded in that research, not asserted as legal fact on its own authority.
 
-- `ws5/report/schema_nis2_de_v0.json` (or alongside `services/ws3-indexer/reporting.py` —
-  decide at PR time): NIS2 Art. 23 / NIS2UmsuCG early-warning (24h) + notification (72h) fields
-  from public sources, citations in comments. **DRAFT — not legal advice** banner structurally
-  enforced, same mechanism as the existing report disclaimer.
-- Deterministic layer: German template (English toggle) filling the schema from alert +
-  inventory context, extending the existing builtin template backend. Markdown first; PDF
-  (weasyprint) is a heavyweight-dep decision flagged for the owner.
-- LLM enhancement stays optional and seam-shaped: free-text summarization/severity-suggestion
-  via the existing WS-5 pattern or a `REPORT_BACKEND=http` backend (fengarde-sec's slot).
-  Structured fields stay deterministic; graceful degradation to pure template.
-- `eval/report_generator/`: ≥10 synthetic incidents → drafts → checklist assertions (mandatory
-  fields present, no facts absent from the alert, banner present). CI-runnable in template mode.
-- Dashboard "Draft NIS2 notification" button on qualifying alerts (extends the Rapport button);
-  `make demo` extension: bank-DB priv-esc (rule exists) → German draft, zero manual steps;
-  `docs/nis2-report-generator.md` with honest scope/limits.
-- *Gate:* PLAN_A Phase 4 acceptance verbatim + PLAN_A's whole-plan DoD (clone → firing
-  detection + German draft <10 min, auth on).
+- `contracts/nis2-de-schema.json` (JSON Schema, matching `contracts/ocsf-event.schema.json`'s
+  style): stage-aware field structure (`early_warning`/`notification`/`final_report`) with a
+  citation and rationale in every field's `description`. **DRAFT — not legal advice** banner
+  structurally required (`required: ["disclaimer", ...]`), same mechanism as the existing report
+  disclaimer. **A real, deliberate scope decision baked into the schema itself**, not just this
+  doc: financial entities are typically governed by DORA (Art. 19), not NIS2 (Art. 4's
+  lex-specialis exclusion) — the schema's top-level `description` and every `entity.*` field
+  state this, and FENGARDE's internal `sector: bank` tag is explicitly documented as a
+  detection-routing label, never a regulatory classification.
+- Deterministic layer: `services/ws3-indexer/nis2_template.py` — German (English toggle)
+  renderer extending the existing builtin template backend via additive query params
+  (`?template=nis2&stage=&lang=`) on the SAME `POST/GET /alerts/{id}/report` route
+  (`contracts/reporting.md`'s "NIS2 template mode" section) — zero contract-breaking change,
+  omitting the params is byte-for-byte the pre-M5 behavior. Every field NOT knowable from the
+  alert+triage documents (entity name/classification/competent authority, the Art. 23(3)
+  "significant incident" judgment call, root cause, mitigation detail) renders as an explicit
+  `[ANALYST MUST PROVIDE]`/`[ANALYST MUSS ANGEBEN]` placeholder — proven, not just claimed, by
+  `test_never_fabricates_entity_facts_always_a_placeholder`. Stages are CUMULATIVE (later stages
+  carry earlier stages' sections too), matching Art. 23(4)(b)'s actual "the notification shall
+  UPDATE the early warning" semantics — also a proven property
+  (`test_stages_are_cumulative`), not assumed. Markdown only; PDF (weasyprint) intentionally
+  NOT built — flagged as a heavyweight-dep decision for the owner, unchanged from the plan.
+- LLM enhancement: NOT built this pass (deferred, still seam-shaped and available via the
+  existing `REPORT_BACKEND=http`/`fengarde-sec` path per `contracts/reporting.md` — untouched by
+  this work). The M5 deliverable is the deterministic layer only, as decision #1 specified.
+- `eval/report_generator/`: 12 synthetic incidents (sourced from this repo's REAL
+  `contracts/rules/*.yml` ids/titles, not invented) × 3 stages × 2 languages = 72 drafts, each
+  checked against a checklist (disclaimer present, status=draft, input alert's `rule_title`/
+  `alert_id` preserved verbatim, DORA scope caveat present, citations present, entity facts
+  always placeholders). **Gate passing**, wired into `run_all_tests.sh` — genuinely CI-runnable
+  in template mode, not just described as such.
+- Dashboard: "NIS2 (DE)" button next to the existing "Report" button
+  (`services/ws7-dashboard/index.html`), same generation flow with `?template=nis2` appended.
+  **Verified in a real browser** (Playwright/Chromium, same-origin harness mimicking the real
+  stack's nginx proxy) — clicked the button, confirmed the rendered panel shows the correct
+  German title, DORA caveat, disclaimer, and source-alert facts, and confirmed the pre-existing
+  generic "Report" button still works unaffected. `make nis2-demo`
+  (`tools/demo_nis2.py`, zero-infra, same in-process wiring style as `tools/demo_e2e.py`): a
+  real privileged-GRANT event fires `contracts/rules/bank_db_priv_esc.yml` end to end
+  (WS-2→WS-4→WS-3) and the resulting alert becomes a German draft — wired into
+  `run_all_tests.sh` too. `docs/nis2-report-generator.md` — honest scope/limits, leading with
+  the NIS2-vs-DORA caveat three times (schema, every generated draft, and the doc itself).
+- *Gate:* eval harness green (✅ done, 72/72 drafts pass every checklist item); HTTP wiring +
+  stage-cumulativeness + never-fabricates-entity-facts tests green (✅ done,
+  `services/ws3-indexer/test_nis2_template.py`); dashboard button verified in a real browser
+  (✅ done); `make nis2-demo` green (✅ done). PLAN_A's original "clone → firing detection +
+  German draft <10 min" DoD is satisfiable today with zero Docker (`make test` +
+  `make nis2-demo`), not just with the full stack.
 
 ### M6 — LAUNCH (single wave, LAST)
 

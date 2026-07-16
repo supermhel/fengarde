@@ -211,7 +211,8 @@ async function renderGlobal(){
     <td><select class="triage-status" data-alert-id="${aid}">${triageStatusOptions(t.status)}</select></td>
     <td><input class="triage-note" data-alert-id="${aid}" type="text" placeholder="analyst note"
         value="${esc(t.note||"")}" /></td>
-    <td><button class="report-btn" data-alert-id="${aid}">Report</button></td></tr>`;
+    <td><button class="report-btn" data-alert-id="${aid}">Report</button>
+    <button class="nis2-btn" data-alert-id="${aid}" title="Draft NIS2 notification (German, Art. 23 NIS2 / §32 BSIG) -- see docs/nis2-report-generator.md">NIS2 (DE)</button></td></tr>`;
   }).join("");
 
   // wire triage controls: status change + note blur both POST the update.
@@ -233,26 +234,38 @@ async function renderGlobal(){
   // v0.4 Track R: "Report" button -> POST to generate (or re-generate) a
   // draft incident report, then render it. Same fail-open discipline as
   // triage: a proxy/backend failure shows an inline error, never a crash.
-  document.querySelectorAll("#alertRows .report-btn").forEach(btn => {
-    btn.onclick = async () => {
-      const alertId = btn.dataset.alertId;
-      const panel = document.getElementById("reportPanel");
-      const body = document.getElementById("reportBody");
-      body.textContent = "Generating report…";
-      panel.hidden = false;
-      try{
-        const r = await fetch(`${TRIAGE_API}/alerts/${encodeURIComponent(alertId)}/report`,
-          {method:"POST"});
-        if(r.ok){
-          const report = await r.json();
-          body.textContent = report.body || "(empty report)";
-        }else{
-          body.textContent = `Error: report unavailable (HTTP ${r.status}).`;
-        }
-      }catch(e){
-        body.textContent = "Error: report service unreachable.";
+  async function generateReport(alertId, query){
+    const panel = document.getElementById("reportPanel");
+    const body = document.getElementById("reportBody");
+    body.textContent = "Generating report…";
+    panel.hidden = false;
+    try{
+      const r = await fetch(`${TRIAGE_API}/alerts/${encodeURIComponent(alertId)}/report${query||""}`,
+        {method:"POST"});
+      if(r.ok){
+        const report = await r.json();
+        // body is markdown, rendered as PLAIN TEXT (never innerHTML) --
+        // contracts/reporting.md hard rule #4: the backend is external
+        // input (a paid backend, or -- for the NIS2 mode -- deterministic
+        // but still just text), stored-XSS discipline applies identically.
+        body.textContent = report.body || "(empty report)";
+      }else{
+        body.textContent = `Error: report unavailable (HTTP ${r.status}).`;
       }
-    };
+    }catch(e){
+      body.textContent = "Error: report service unreachable.";
+    }
+  }
+  document.querySelectorAll("#alertRows .report-btn").forEach(btn => {
+    btn.onclick = () => generateReport(btn.dataset.alertId, "");
+  });
+  // M5: "NIS2 (DE)" button -> the SAME report endpoint, additive query
+  // params select the deterministic NIS2/§32 BSIG German template instead
+  // of the generic one (nis2_template.py). DRAFT -- not legal advice; see
+  // docs/nis2-report-generator.md for the NIS2-vs-DORA scope caveat this
+  // draft itself also states inline.
+  document.querySelectorAll("#alertRows .nis2-btn").forEach(btn => {
+    btn.onclick = () => generateReport(btn.dataset.alertId, "?template=nis2&stage=notification&lang=de");
   });
 }
 

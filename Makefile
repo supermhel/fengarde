@@ -4,7 +4,7 @@
 
 COMPOSE := docker compose -f infra/docker-compose.yml
 
-.PHONY: help preflight demo test e2e up down chaos
+.PHONY: help preflight demo test e2e nis2-demo up down chaos
 
 PYTHON ?= python3
 
@@ -14,6 +14,7 @@ help:
 	@echo "  make demo       - preflight + bring up the full stack (see banner for current limits)"
 	@echo "  make test       - run the full zero-infra contract test suite (no Docker needed)"
 	@echo "  make e2e        - zero-infra ACCEPTANCE test: SSH brute-force -> real alert (no Docker)"
+	@echo "  make nis2-demo  - zero-infra: bank-DB priv-esc alert -> German NIS2 draft (no Docker)"
 	@echo "  make up         - start the stack detached (docker compose up -d)"
 	@echo "  make down       - stop the stack and remove volumes"
 	@echo "  make chaos      - M1 correctness gate: kill each service mid-replay,"
@@ -45,6 +46,12 @@ test:
 # idempotent under replay, with no Docker/Redis/OpenSearch.
 e2e:
 	@$(PYTHON) tools/demo_e2e.py
+
+# M5: proves the NIS2 public template layer end to end -- a real alert
+# (bank_db_priv_esc.yml) becomes a German NIS2/SS32 BSIG notification
+# draft, zero infra, zero manual steps (docs/nis2-report-generator.md).
+nis2-demo:
+	@$(PYTHON) tools/demo_nis2.py
 
 up:
 	$(COMPOSE) up -d

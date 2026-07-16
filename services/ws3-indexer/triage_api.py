@@ -74,6 +74,7 @@ from shared.rbac import role_at_least, can_access_tenant, LoginRateLimiter  # no
 from shared.sessions import SessionStore  # noqa: E402
 import reporting  # noqa: E402
 import rules_view  # noqa: E402
+import nis2_template  # noqa: E402
 
 _MAX_BODY_BYTES = 4096  # a triage update is a status enum + a short note.
 _MAX_NOTE_CHARS = 2000
@@ -447,7 +448,18 @@ def make_handler(store, users_db=None, sessions: SessionStore | None = None,
                 if not self._tenant_gate(session, alert_doc):
                     return
                 triage = alert_doc.get("triage") or _default_triage()
-                report = reporting.generate_report(alert_doc, triage)
+                q = parse_qs(urlparse(self.path).query)
+                template = (q.get("template", ["generic"])[0] or "generic").lower()
+                if template == "nis2":
+                    # M5: additive rendering mode, same response envelope
+                    # (contracts/reporting.md's frozen schema) -- see
+                    # nis2_template.py's module docstring for the DRAFT/
+                    # NOT-LEGAL-ADVICE + NIS2-vs-DORA scope caveat.
+                    stage = q.get("stage", ["notification"])[0]
+                    lang = q.get("lang", ["de"])[0]
+                    report = nis2_template.build_report(alert_doc, triage, stage=stage, lang=lang)
+                else:
+                    report = reporting.generate_report(alert_doc, triage)
                 report_index = reporting._report_index()
                 store.index(report_index, report["report_id"], report)
                 return self._send(200, report)

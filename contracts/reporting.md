@@ -91,6 +91,29 @@ workstream; bus-only coupling between workstreams is untouched.
    `innerHTML`) — the backend is external input; the existing stored-XSS
    discipline (`SECURITY.md`) applies here identically.
 
+## NIS2 template mode (M5, additive)
+
+`POST /alerts/{alert_id}/report` accepts three OPTIONAL query parameters
+that select a second, purely additive rendering mode — the response
+envelope above is unchanged, only `body`/`disclaimer`/`backend`/`citations`
+differ:
+
+| Param | Values | Default | Effect |
+|---|---|---|---|
+| `template` | `generic` \| `nis2` | `generic` | `nis2` renders the deterministic German (or English) NIS2/§32 BSIG draft (`services/ws3-indexer/nis2_template.py`) instead of the generic incident-report template. Omitting it is byte-for-byte the pre-M5 behavior. |
+| `stage` | `early_warning` \| `notification` \| `final_report` | `notification` | Which of NIS2 Art. 23(4)'s three reporting stages to draft. Only meaningful with `template=nis2`. |
+| `lang` | `de` \| `en` | `de` | Draft language. Only meaningful with `template=nis2`. |
+
+`GET /alerts/{alert_id}/report` is unaffected — it returns whatever was
+stored by the most recent POST, regardless of which template produced it.
+
+**This is still a draft, not a legal filing.** The NIS2 mode's `body`
+carries its own inline "DRAFT — not legal advice" banner (top and bottom)
+plus an explicit NIS2-vs-DORA scope caveat (financial entities are
+typically governed by DORA Art. 19, a different regime, not NIS2) — see
+`docs/nis2-report-generator.md` and `contracts/nis2-de-schema.json` for the
+full field-level schema and citations.
+
 ## Storage
 
 Reports are indexed as `reports-YYYY.MM.DD` via the existing storage adapter
