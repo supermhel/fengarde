@@ -149,6 +149,18 @@ $PY tools/test_agent_log_shipper.py || fail=1
 echo
 echo "== M4 gate: two-tenant isolation (separate indices, per-tenant rule enablement) =="
 $PY tools/test_multi_tenant_isolation.py || fail=1
+echo
+echo "== M4.6 ops lifecycle: users.db schema migration (upgrade with data intact) =="
+$PY services/shared/test_users_migration.py || fail=1
+echo
+echo "== M4.6 ops lifecycle: disk-headroom guardrail (real shutil.disk_usage) =="
+$PY services/shared/test_diskguard.py || fail=1
+echo
+echo "== M4.6 ops lifecycle: backup/restore (real SQLite + contracts/, checksum-verified) =="
+$PY tools/test_backup_restore.py || fail=1
+echo
+echo "== M4.6 ops lifecycle: OpenSearch template migration (versioned, plan-then-apply) =="
+$PY tools/test_migrate_opensearch.py || fail=1
 
 echo
 if [ "$fail" -eq 0 ]; then echo "ALL TESTS PASS"; else echo "SOME TESTS FAILED"; fi

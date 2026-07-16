@@ -56,6 +56,45 @@ def verify_password(password: str, stored: str) -> bool:
         return False
 
 
+# M4.6: forward-only schema migrations, tracked via SQLite's built-in
+# `PRAGMA user_version` (an integer stored in the file header -- no extra
+# bookkeeping table needed). Each entry is (version, sql-to-reach-it) applied
+# in order starting from whatever version an existing DB file is already at,
+# so an operator's users.db from an older FENGARDE release upgrades in place
+# instead of needing a hand-run ALTER or a fresh DB (which would silently
+# discard every existing account). Never edit a past migration in place --
+# add a new one, same discipline as any real migration tool.
+_SCHEMA_MIGRATIONS: list[tuple[int, str]] = [
+    (1, """
+        CREATE TABLE IF NOT EXISTS users (
+          username TEXT PRIMARY KEY,
+          password_hash TEXT NOT NULL,
+          role TEXT NOT NULL,
+          tenant_id TEXT NOT NULL DEFAULT 'default',
+          created_at INTEGER NOT NULL
+        );
+        """),
+    (2, "ALTER TABLE users ADD COLUMN last_login_at INTEGER"),
+]
+
+CURRENT_SCHEMA_VERSION = _SCHEMA_MIGRATIONS[-1][0]
+
+
+def migrate(db: sqlite3.Connection) -> int:
+    """Apply every pending migration in order. Returns the version the DB
+    ends up at (== CURRENT_SCHEMA_VERSION on success). A DB already at the
+    latest version is a no-op -- safe to call on every startup."""
+    current = db.execute("PRAGMA user_version").fetchone()[0]
+    for version, sql in _SCHEMA_MIGRATIONS:
+        if version <= current:
+            continue
+        db.executescript(sql)
+        db.execute(f"PRAGMA user_version = {version}")
+        db.commit()
+        current = version
+    return current
+
+
 class UserStore:
     def __init__(self, path: str = ":memory:"):
         self.db = sqlite3.connect(path, check_same_thread=False)
@@ -64,18 +103,7 @@ class UserStore:
         self._init()
 
     def _init(self):
-        self.db.executescript(
-            """
-            CREATE TABLE IF NOT EXISTS users (
-              username TEXT PRIMARY KEY,
-              password_hash TEXT NOT NULL,
-              role TEXT NOT NULL,
-              tenant_id TEXT NOT NULL DEFAULT 'default',
-              created_at INTEGER NOT NULL
-            );
-            """
-        )
-        self.db.commit()
+        migrate(self.db)
 
     def count(self) -> int:
         return self.db.execute("SELECT COUNT(*) FROM users").fetchone()[0]
@@ -112,6 +140,12 @@ class UserStore:
             return None
         if not verify_password(password, row["password_hash"]):
             return None
+        with self._write_lock:
+            self.db.execute(
+                "UPDATE users SET last_login_at = ? WHERE username = ?",
+                (int(time.time()), username),
+            )
+            self.db.commit()
         return row
 
     def set_password(self, username: str, new_password: str) -> None:

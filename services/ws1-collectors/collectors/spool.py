@@ -27,6 +27,10 @@ import threading
 from pathlib import Path
 from typing import Callable, Optional
 
+from shared.diskguard import (
+    check_disk_headroom, DEFAULT_MIN_FREE_BYTES, DEFAULT_MIN_FREE_PCT,
+)
+
 DEFAULT_MAX_BYTES = 64 * 1024 * 1024  # 64 MiB
 
 
@@ -45,9 +49,18 @@ class BoundedSpool:
     SyslogUDPServer's single-process deployment model.
     """
 
-    def __init__(self, path: Path | str, max_bytes: int = DEFAULT_MAX_BYTES):
+    def __init__(self, path: Path | str, max_bytes: int = DEFAULT_MAX_BYTES, *,
+                 min_free_bytes: int = DEFAULT_MIN_FREE_BYTES,
+                 min_free_pct: float = DEFAULT_MIN_FREE_PCT):
         self.path = Path(path)
         self.max_bytes = max_bytes
+        # M4.6: a guardrail on the VOLUME's free space, independent of
+        # max_bytes -- a generous per-spool byte cap still shares its disk
+        # with the OpenSearch data dir, service logs, etc. See
+        # shared/diskguard.py for why both an absolute and a percentage
+        # floor are checked.
+        self.min_free_bytes = min_free_bytes
+        self.min_free_pct = min_free_pct
         self._lock = threading.Lock()
         self.path.parent.mkdir(parents=True, exist_ok=True)
         if not self.path.exists():
@@ -55,12 +68,17 @@ class BoundedSpool:
 
     def append(self, event: dict) -> bool:
         """Append one event. Returns False (event NOT spooled, truly lost) if
-        the spool is at capacity OR the write itself fails (disk full,
-        permission error, etc.) -- both are "this event didn't make it into
-        the spool" to the caller, so neither ever raises out of append()."""
+        the spool is at capacity, the underlying VOLUME is critically low on
+        free space, OR the write itself fails (disk full, permission error,
+        etc.) -- all three are "this event didn't make it into the spool" to
+        the caller, so none of them ever raise out of append()."""
         line = json.dumps(event, ensure_ascii=False) + "\n"
         encoded = line.encode("utf-8")
         with self._lock:
+            disk_ok, _detail = check_disk_headroom(
+                self.path.parent, min_free_bytes=self.min_free_bytes, min_free_pct=self.min_free_pct)
+            if not disk_ok:
+                return False
             try:
                 current = self.path.stat().st_size
             except OSError:

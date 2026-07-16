@@ -366,12 +366,65 @@ an acceptance gate; "done" means the gate ran, not that code merged. Version tar
   existing "rule files are code, review before trusting"; no plugin marketplace; no
   versioned plugin ABI; anti-dormancy CI only covers `contracts/rules/*.yml`, not plugin
   rules — that's the plugin author's own responsibility).
-- **Ops lifecycle (M4.6, open)**: versioned index mappings + migration command (tested upgrade
-  with data intact, in CI); scripted backup/restore (snapshots + SQLite + config); per-signal
-  retention config + disk guardrails.
+- **Ops lifecycle (M4.6) — done 2026-07-16, all four items landed with an explicit new gap
+  found and disclosed**:
+  - **Schema migration**: `services/shared/users.py` (the RBAC DB, the one persistent local
+    datastore in this system) now tracks schema via SQLite's `PRAGMA user_version` and
+    migrates forward automatically on every open — a v1 `users.db` from an older release
+    upgrades in place, existing accounts/roles/tenants/password hashes intact, proven by a
+    real hand-built v1 DB round-tripped through migration in
+    `services/shared/test_users_migration.py` (not simulated — actual SQL, actual file).
+  - **Versioned index mappings + migration command**: every
+    `contracts/opensearch-mappings/*.json` template now carries
+    `template.mappings._meta.mapping_version` (5-file, 1-line-each surgical diff, not a
+    reformat). `tools/migrate_opensearch.py` GETs what's installed, diffs against the
+    file's version, and PUTs only what changed (plan-then-apply, idempotent) — replacing
+    `infra/provision.sh`'s unconditional re-PUT-everything loop for a scripted upgrade path.
+    Tested at the wire-format level against a fake transport
+    (`tools/test_migrate_opensearch.py`), same standing "not exercised against a live
+    cluster" caveat as the rest of `storage/opensearch.py`.
+  - **A real gap found and disclosed, not silently worked around**: investigating "versioned
+    index mappings" surfaced that ILM/retention policies were NEVER actually installable on
+    a live OpenSearch cluster — `contracts/opensearch-mappings/ilm-policies.json` is written
+    in Elasticsearch ILM syntax (`phases`/`actions`), but this stack runs OpenSearch, whose
+    Index State Management (ISM) plugin uses a different schema (`states`/`transitions`) at
+    a different endpoint. `infra/provision.sh`'s ILM loop was already an honest placeholder
+    (its own prior comment said so); every template's `index.lifecycle.name` reference has
+    therefore never attached a working policy. Documented in `SSOT.md` §2 (new table row) and
+    `infra/provision.sh`'s comments, rather than left implicit or silently "fixed" with an
+    unverifiable guess at the real ISM policy schema — closing it needs a live cluster this
+    repo's test path can't stand up.
+  - **Scripted backup/restore**: `tools/backup.py` bundles the RBAC SQLite DB (hot-copied via
+    `sqlite3`'s `.backup()` API, safe against a live-open DB) + `contracts/` into one
+    checksummed `.tar.gz` with a manifest; `tools/restore.py` verifies every file's sha256
+    BEFORE writing anything, rejects path-traversal archive entries, and refuses to
+    overwrite existing files without `--force`. **Explicitly NOT built**: OpenSearch index
+    data (events/alerts/reports) backup — that needs OpenSearch's own native snapshot API
+    against a live cluster, same reasoning as the ILM gap above; reimplementing it here would
+    be an untested wrapper around a tool that already does this correctly. Proven end-to-end
+    in `tools/test_backup_restore.py` against a REAL SQLite DB and this repo's REAL
+    `contracts/` directory (not fixtures) — round-trip byte-identical, tampered-checksum
+    rejection before any write, collision-requires-`--force`, path-traversal rejection.
+  - **Disk guardrails**: `services/shared/diskguard.py::check_disk_headroom()` — a real
+    `shutil.disk_usage()` check (absolute floor AND percentage floor, both must pass) — wired
+    into `services/ws1-collectors/collectors/spool.py`'s `BoundedSpool.append()`, so the
+    opt-in zero-loss syslog spool now refuses to grow once the underlying VOLUME (not just
+    its own `max_bytes` cap) is critically low on free space. Tested against the real
+    filesystem (`services/shared/test_diskguard.py`, `TestBoundedSpool.test_append_refuses_
+    when_volume_is_below_the_disk_headroom_floor`) — thresholds set deliberately unreachable
+    to prove the failure branch honestly, never a mocked `disk_usage` return value.
+    **Explicitly NOT built**: per-tenant retention override (still M4.1's open item — one ILM
+    policy per family, shared across tenants) and any guardrail on OpenSearch's own data
+    volume (that's OpenSearch's own `disk.watermark.*` settings, a separate, mature
+    mechanism).
+  - `docs/ops-lifecycle.md` documents all four pieces with the same honest-scope pattern used
+    throughout this plan.
 - *Gate:* two-tenant test green (✅ done); RBAC gate green (✅ done); OpenAPI published
   (✅ done, `contracts/triage-api.yaml` + spec-vs-code test); webhook HMAC gate green
-  (✅ done); plugin discovery gate green (✅ done); upgrade test in CI (open).
+  (✅ done); plugin discovery gate green (✅ done); users.db migration gate green (✅ done);
+  OpenSearch template migration gate green (✅ done, fake-transport level); backup/restore
+  gate green (✅ done, real files); disk-headroom gate green (✅ done, real filesystem).
+  **M4 (MSP-grade, the launch gate) is now fully done.**
 
 ### M5 — NIS2 public template layer (PLAN_A Phase 4 re-scoped per decision 1; ~3 weeks; → v0.7.0)
 

@@ -4,6 +4,7 @@
   "template": {
     "settings": { "number_of_shards": 1, "number_of_replicas": 1, "index.lifecycle.name": "alerts-365d" },
     "mappings": {
+      "_meta": { "mapping_version": 1 },
       "dynamic": "false",
       "properties": {
         "alert_id": { "type": "keyword" },

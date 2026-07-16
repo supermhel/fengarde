@@ -231,6 +231,22 @@ class TestBoundedSpool(unittest.TestCase):
         self.assertEqual(count, 2)
         self.assertEqual(replayed, [0, 1])
 
+    def test_append_refuses_when_volume_is_below_the_disk_headroom_floor(self):
+        # M4.6: an impossible free-space floor against the REAL filesystem
+        # (never mocked) -- proves BoundedSpool actually consults
+        # shared.diskguard.check_disk_headroom(), not just its own max_bytes
+        # cap, and fails closed (no write, no raise) rather than crashing
+        # the UDP listener thread over a disk problem.
+        spool = BoundedSpool(self.path, max_bytes=1_000_000, min_free_bytes=10**18, min_free_pct=0.0)
+        self.assertFalse(spool.append({"i": 0}), "must refuse when the volume fails the headroom floor")
+        self.assertEqual(spool.pending_count(), 0, "a disk-headroom refusal must not partially write")
+
+        # With a trivial floor (the default-ish, easily satisfied by any
+        # real disk this test runs on), the same spool accepts normally.
+        spool_ok = BoundedSpool(self.path.parent / "ok.jsonl", max_bytes=1_000_000,
+                                min_free_bytes=1, min_free_pct=0.0)
+        self.assertTrue(spool_ok.append({"i": 0}))
+
 
 class TestSyslogUDPServerSpoolFallback(unittest.TestCase):
     def setUp(self):

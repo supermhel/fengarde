@@ -4,6 +4,7 @@
   "template": {
     "settings": { "number_of_shards": 1, "number_of_replicas": 1 },
     "mappings": {
+      "_meta": { "mapping_version": 1 },
       "dynamic": "false",
       "properties": {
         "mac": { "type": "keyword" },

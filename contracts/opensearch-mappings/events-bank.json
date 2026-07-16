@@ -8,6 +8,7 @@
       "index.lifecycle.name": "events-400d-pci"
     },
     "mappings": {
+      "_meta": { "mapping_version": 1 },
       "dynamic": "false",
       "properties": {
         "time": { "type": "date", "format": "epoch_millis" },

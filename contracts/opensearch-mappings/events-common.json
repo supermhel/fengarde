@@ -7,6 +7,7 @@
       "index.lifecycle.name": "events-30d"
     },
     "mappings": {
+      "_meta": { "mapping_version": 1 },
       "dynamic": "false",
       "properties": {
         "time": { "type": "date", "format": "epoch_millis" },
