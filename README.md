@@ -1,5 +1,14 @@
 # FENGARDE
 
+[![CI](https://github.com/supermhel/argiem/actions/workflows/ci.yml/badge.svg)](https://github.com/supermhel/argiem/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/supermhel/argiem/actions/workflows/codeql.yml/badge.svg)](https://github.com/supermhel/argiem/actions/workflows/codeql.yml)
+[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/supermhel/argiem/badge)](https://securityscorecards.dev/viewer/?uri=github.com/supermhel/argiem)
+
+> Scorecard badge reads "unknown" until `.github/workflows/scorecard.yml` runs
+> at least once on `main` (M2, PLAN_C Tier 2.2) — a measured score, not a
+> claimed one. Same for CI/CodeQL: the badge reflects whatever the most recent
+> real run on `main` found, not a promise.
+
 **The open-source SIEM for the European industrial Mittelstand — turns your
 factory and IT logs into NIS2/DORA evidence, with AI triage that never leaves
 your network.**

@@ -168,9 +168,25 @@ an acceptance gate; "done" means the gate ran, not that code merged. Version tar
   has no queuing delay to measure). Still open: live-stack numbers on a defined reference box
   (needs Docker), re-tuning the B2 defaults (2000/s, 100k depth) from measured live numbers, and
   a before/after comparison for the rule prefilter.
-- **Supply chain**: pinned deps with hashes, Dependabot, CycloneDX SBOM per release,
-  cosign-signed releases, SLSA provenance via Actions, CodeQL + secret scanning,
-  OpenSSF Scorecard ≥ 8.0 + Best Practices badge in README.
+- **Supply chain — mostly done 2026-07-16**: found and fixed a real root-cause gap while wiring
+  this up: every service's `requirements.txt` was decorative prose (`#   redis>=5.0   # bus
+  backend`), never actually installed from — each Dockerfile hardcoded its own unpinned inline
+  `pip install redis PyYAML` (or similar). Rewrote all 6 as real, pinned manifests
+  (`redis==5.0.8`, `PyYAML==6.0.2`) and switched every Dockerfile to
+  `pip install -r requirements.txt`, dropping `pysnmp`/`scikit-learn` entirely (declared as
+  "extras" but never actually imported anywhere — dead weight, not a real dependency). This is
+  what makes Dependabot and the SBOM below meaningful instead of decorative themselves.
+  `.github/dependabot.yml` (pip per-service + docker + github-actions ecosystems, weekly).
+  `tools/generate_sbom.py` → `sbom.json` (CycloneDX, merged across services), wired into CI as a
+  **blocking** freshness check (`--check` mode, compares declared components not the
+  always-different `metadata.timestamp`) — verified to actually catch a staged staleness, not
+  just pass trivially. `.github/workflows/codeql.yml` (Python, security-extended queries) +
+  `.github/workflows/scorecard.yml` (weekly + on push) wired, badges live in README (read
+  "unknown"/reflect-whatever-the-real-run-found until each workflow's first run on `main` —
+  not a pre-claimed score). **Still open**: pinning with hashes (`--require-hashes`), cosign
+  release signing, SLSA provenance, OpenSSF Best Practices badge, and CycloneDX-SBOM-per-release
+  (today it's a repo-root snapshot kept fresh by CI, not yet tied to a release workflow — no
+  release workflow exists yet).
 - **Quality floor — mostly done 2026-07-16**: `pyproject.toml` (ruff/black/mypy/coverage config)
   + `.pre-commit-config.yaml`. **ruff**: 0 errors repo-wide, wired into CI as a **blocking**
   `quality` job (`.github/workflows/ci.yml`); E702 (semicolon one-liners) explicitly ignored as

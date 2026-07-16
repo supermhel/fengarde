@@ -9,7 +9,7 @@ COPY services/ws2-normalization /app/ws2-normalization
 # `import yaml` -- a real bug the zero-infra test gate misses (local Python
 # has yaml). `redis` is the bus backend. `|| true` intentionally: an offline
 # build still produces a runnable image for the memory-bus path.
-RUN pip install --no-cache-dir PyYAML redis || true
+RUN pip install --no-cache-dir -r /app/ws2-normalization/requirements.txt || true
 ENV PYTHONPATH=/app
 ENV BUS_BACKEND=redis
 WORKDIR /app/ws2-normalization

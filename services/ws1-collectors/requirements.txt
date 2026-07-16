@@ -1,4 +1,12 @@
-# WS-1 Collectors. Core skeleton is stdlib-only.
-# Production extras (not needed for the contract test):
-#   pysnmp>=5.0      # real SNMP polling
-#   redis>=5.0       # bus backend (BUS_BACKEND=redis)
+# WS-1 Collectors. Core skeleton is stdlib-only (the contract test / zero-infra
+# path needs nothing below); these are the live-stack (BUS_BACKEND=redis) extras,
+# now pinned and actually installed by the Dockerfile (M2 supply-chain, PLAN_C
+# Tier 2.2 -- these used to be unpinned inline `pip install` args with no
+# machine-readable manifest, so Dependabot/SBOM tooling had nothing to track).
+redis==5.0.8       # bus backend (services/shared/bus.py::_RedisBus, lazy-imported)
+
+# NOT installed -- real SNMP polling is unimplemented (collectors/snmp_collector.py
+# reads a mock JSON source; see its docstring). Installing an unused dependency
+# is dead weight and attack surface for zero benefit. Add when SNMP I/O ships
+# (README's "SNMP parser: Planned").
+#   pysnmp>=5.0

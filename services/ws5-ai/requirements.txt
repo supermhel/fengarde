@@ -1,5 +1,12 @@
-# WS-5 AI. Core skeleton is stdlib-only (StubLLM + rule-of-thumb classifier).
-# Production extras:
-#   scikit-learn>=1.3   # real layer-2 classifier (TF-IDF + logreg)
-#   redis>=5.0          # bus backend
-# Local LLM runtime: Ollama (external service), set OLLAMA_URL + OLLAMA_MODEL.
+# WS-5 AI. Core skeleton is stdlib-only (StubLLM + rule-of-thumb classifier;
+# Ollama is an external service reached via urllib, not a Python dependency).
+# Pinned and actually installed by the Dockerfile (M2 supply-chain, PLAN_C
+# Tier 2.2 -- redis used to be an unpinned inline `pip install` arg with no
+# machine-readable manifest, so Dependabot/SBOM tooling had nothing to track).
+redis==5.0.8       # bus backend (services/shared/bus.py::_RedisBus, lazy-imported)
+
+# NOT installed -- classifier.py's real TF-IDF+logreg layer is unimplemented
+# (LightClassifier is a rule-of-thumb stub, no scikit-learn import exists yet).
+# Installing an unused dependency is dead weight and attack surface for zero
+# benefit. Add when the real classifier ships.
+#   scikit-learn>=1.3

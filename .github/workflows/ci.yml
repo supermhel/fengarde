@@ -86,3 +86,7 @@ jobs:
           exit 0
       - name: coverage gate (WS-2/WS-3 core, blocking at measured baseline)
         run: python tools/coverage_gate.py
+      - name: SBOM freshness (blocking -- sbom.json must match requirements.txt)
+        run: |
+          pip install cyclonedx-bom
+          python tools/generate_sbom.py --check

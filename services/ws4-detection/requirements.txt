@@ -1,3 +1,6 @@
-PyYAML>=6.0
-# Production extras:
-#   redis>=5.0   # bus backend (BUS_BACKEND=redis)
+# WS-4 Detection. Pinned and actually installed by the Dockerfile (M2
+# supply-chain, PLAN_C Tier 2.2 -- redis used to be an unpinned inline
+# `pip install` arg with no machine-readable manifest, so Dependabot/SBOM
+# tooling had nothing to track).
+PyYAML==6.0.2      # contracts/rules/*.yml, contracts/scoring.yaml
+redis==5.0.8       # bus backend (services/shared/bus.py::_RedisBus, lazy-imported)

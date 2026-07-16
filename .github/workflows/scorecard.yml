@@ -1,0 +1,40 @@
+name: OpenSSF Scorecard
+
+# M2 supply-chain trust signal (PLAN_C Tier 2.2). Publishes the Scorecard
+# badge referenced in README.md -- score is measured by this job, not
+# claimed; the badge reads "unknown" until this runs at least once on `main`.
+on:
+  branch_protection_rule: {}
+  schedule:
+    - cron: "23 5 * * 3"  # weekly, Wednesday 05:23 UTC
+  push:
+    branches: [main]
+
+permissions: read-all
+
+jobs:
+  analysis:
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write  # to upload SARIF results
+      id-token: write          # to publish results and get a badge (publish_results: true)
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: ossf/scorecard-action@v2
+        with:
+          results_file: results.sarif
+          results_format: sarif
+          publish_results: true
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: SARIF file
+          path: results.sarif
+          retention-days: 5
+
+      - uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: results.sarif

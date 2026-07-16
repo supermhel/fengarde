@@ -3,7 +3,7 @@ WORKDIR /app
 # shared lib + this service
 COPY services/shared /app/shared
 COPY services/ws1-collectors /app/ws1-collectors
-RUN pip install --no-cache-dir redis pysnmp || true
+RUN pip install --no-cache-dir -r /app/ws1-collectors/requirements.txt || true
 ENV PYTHONPATH=/app
 ENV BUS_BACKEND=redis
 WORKDIR /app/ws1-collectors
