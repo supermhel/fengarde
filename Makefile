@@ -4,7 +4,7 @@
 
 COMPOSE := docker compose -f infra/docker-compose.yml
 
-.PHONY: help preflight demo test e2e up down
+.PHONY: help preflight demo test e2e up down chaos
 
 PYTHON ?= python3
 
@@ -16,6 +16,8 @@ help:
 	@echo "  make e2e        - zero-infra ACCEPTANCE test: SSH brute-force -> real alert (no Docker)"
 	@echo "  make up         - start the stack detached (docker compose up -d)"
 	@echo "  make down       - stop the stack and remove volumes"
+	@echo "  make chaos      - M1 correctness gate: kill each service mid-replay,"
+	@echo "                    assert zero lost/duplicate alerts (needs 'make up' first)"
 
 # DX3 — the "doctor". Fails fast with plain-English remedies before anything starts.
 preflight:
@@ -49,3 +51,10 @@ up:
 
 down:
 	$(COMPOSE) down -v
+
+# M1 (combined roadmap) correctness gate: proves effectively-once alerting
+# (at-least-once delivery + idempotent alert_id) survives a service dying
+# mid-replay, not just the zero-infra unit tests. Requires the live stack
+# ('make up') already running -- this is not part of the zero-infra 'make test'.
+chaos:
+	@$(PYTHON) tools/chaos_test.py

@@ -120,8 +120,18 @@ an acceptance gate; "done" means the gate ran, not that code merged. Version tar
   documented dedup key. *Additive* fields on the existing bus payloads — but this is a bus-schema
   change, so per standing guardrail it needs explicit owner sign-off on the contract diff
   (`contracts/bus-topics.md`) before implementation.
-- **`make chaos`**: docker-kill each service mid-load during a 10k-event replay, plus a 60s
-  OpenSearch outage under load → zero lost alerts, zero duplicate alerts, asserted automatically.
+- **`make chaos`** — **started 2026-07-15**: `tools/chaos_test.py` + `make chaos` target land
+  40 independent brute-force scenarios, kill each of ws1/ws2/ws3/ws4/ws5 mid-replay via
+  `docker compose kill`, then assert every scenario's alert appears exactly once in
+  `alerts-*`. Written against `infra/docker-compose.yml` and reviewed, but **not yet run** —
+  no Docker daemon in the environment that authored it. Do not mark this gate closed in
+  SSOT §2 until a real `make chaos` run's output lands in a PR. Still open: the 60s
+  OpenSearch-outage-under-load variant.
+- **Degradation matrix — done 2026-07-15**: `docs/degradation-matrix.md`, sourced from the
+  actual fail-open/fail-closed code paths (Redis, OpenSearch write + OCC, Ollama,
+  `fengarde-sec` backend, syslog spool, A5 enrichment, allowlists, poison events, parser
+  crashes). Surfaces two open gaps: no documented Redis reconnect/backoff, and the OCC/CAS
+  path is still unverified against a live cluster (exactly what `make chaos` needs to close).
 - **Property-based tests** (Hypothesis) per parser: arbitrary/malformed input never crashes,
   never emits schema-invalid OCSF. **Fuzz** (atheris) nightly CI job for the top 3 parsers.
 - **Log-injection test**: ANSI/control chars in log content stripped/encoded before storage &
