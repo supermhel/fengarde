@@ -285,15 +285,41 @@ an acceptance gate; "done" means the gate ran, not that code merged. Version tar
   WS-3's triage/report routes only this pass; WS-6 stays `FENGARDE_API_KEY`-only). Documented
   in `SECURITY.md` §2 with the same "what this does NOT give you" honesty pattern used for
   every prior auth layer.
-- **API surface (M4.3–M4.5, open)**: versioned REST API with published OpenAPI spec (alerts,
-  event search, rule management, report generation); outbound webhooks with HMAC signing;
+- **Versioned REST API + OpenAPI spec (M4.3) — done 2026-07-16**: `contracts/triage-api.yaml`
+  (OpenAPI 3.1) is the published, canonical surface — every route is reachable both bare
+  (`/alerts/...`, unchanged, what the dashboard's nginx proxy already targets) and under
+  `/api/v1/...` (identical handler via `triage_api.py::_strip_api_v1`), so nothing existing
+  broke to introduce versioning. Three new read endpoints close the "browse without a live
+  OpenSearch Dashboards session" gap: `GET /api/v1/alerts` (newest-first, filter by
+  `tenant_id`/`status`, `limit` clamped to 200), `GET /api/v1/events` (same shape, filter by
+  `family`/`tenant_id`), `GET /api/v1/rules` (read-only summaries — id/title/level/sector/
+  scoring/`enabled`-for-tenant — sourced directly from `contracts/rules/*.yml` +
+  `contracts/tenants/<id>.yml` via a NEW, deliberately independent `services/ws3-indexer/
+  rules_view.py`, not an import of `ws4-detection/engine.py`, honoring the "workstreams
+  couple only through the bus" rule). **Two scoped-down-on-purpose decisions, stated not
+  hidden:** (1) list endpoints are bounded/filtered, not free-text search — a real query DSL
+  needs a live OpenSearch cluster this repo's zero-infra test path can't exercise; (2)
+  `GET /rules` never returns a rule's raw `detection.condition` and there is no rule-write
+  endpoint at all — SECURITY.md §3 treats rule files as code an operator must review, so an
+  HTTP surface that could read or inject conditions would be a real regression of that
+  boundary, not a feature. RBAC (M4.2) interaction: a non-admin caller's `tenant_id` on all
+  three list endpoints is ALWAYS forced to their own session tenant — a `tenant_id` query
+  param asking for another tenant is silently overridden, never honored, proven by
+  `test_rbac_non_admin_tenant_forced_not_requested`. **Gate passing**:
+  `services/ws3-indexer/test_api_v1.py` (real HTTP — filtering, limit validation, tenant
+  scoping, and a spec-vs-code drift check that loads `contracts/triage-api.yaml` and confirms
+  every documented GET path actually routes, not a 404 "no such path"), wired into
+  `run_all_tests.sh`. `StorageAdapter.list_alerts`/`list_events` implemented in both
+  `MemoryStore` (exercised by tests) and `OpenSearchStore` (same "correct request, unverified
+  against a live cluster" status as the rest of that skeleton).
+- **Webhooks + plugin interface (M4.4–M4.5, open)**: outbound webhooks with HMAC signing;
   entry-points-based parser/rule plugin interface ("parser dev kit" — installable from an
   external pip package without forking).
 - **Ops lifecycle (M4.6, open)**: versioned index mappings + migration command (tested upgrade
   with data intact, in CI); scripted backup/restore (snapshots + SQLite + config); per-signal
   retention config + disk guardrails.
-- *Gate:* two-tenant test green (✅ done); RBAC gate green (✅ done); OpenAPI published (open);
-  upgrade test in CI (open).
+- *Gate:* two-tenant test green (✅ done); RBAC gate green (✅ done); OpenAPI published
+  (✅ done, `contracts/triage-api.yaml` + spec-vs-code test); upgrade test in CI (open).
 
 ### M5 — NIS2 public template layer (PLAN_A Phase 4 re-scoped per decision 1; ~3 weeks; → v0.7.0)
 

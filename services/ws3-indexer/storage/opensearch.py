@@ -170,3 +170,32 @@ class OpenSearchStore(StorageAdapter):
                 return False
             raise
         return True
+
+    # -- M4.3 versioned REST API: bounded list/browse -----------------------
+    # Same "not yet exercised against a live cluster" caveat as the rest of
+    # this skeleton module -- the request shape is correct, but the offline
+    # contract tests exercise MemoryStore.list_alerts/list_events instead.
+    def _list(self, index_pattern: str, term_filters: dict, limit: int) -> list[dict]:
+        must = [{"term": {k: v}} for k, v in term_filters.items() if v is not None]
+        body = {
+            "size": max(1, min(int(limit), 200)),
+            "query": {"bool": {"must": must}} if must else {"match_all": {}},
+            "sort": [{"time": {"order": "desc", "unmapped_type": "long"}}],
+        }
+        try:
+            result = self._request("POST", f"/{index_pattern}/_search", body)
+        except urllib.error.HTTPError:
+            return []
+        return [hit["_source"] for hit in result.get("hits", {}).get("hits", [])
+                if isinstance(hit.get("_source"), dict)]
+
+    def list_alerts(self, *, tenant_id: str | None = None,
+                     status: str | None = None, limit: int = 50) -> list[dict]:
+        filters = {"tenant_id": tenant_id, "triage.status": status}
+        return self._list("alerts-*", filters, limit)
+
+    def list_events(self, *, family: str | None = None, tenant_id: str | None = None,
+                     limit: int = 50) -> list[dict]:
+        pattern = f"events-{family}*" if family else "events-*"
+        filters = {"siem.tenant": tenant_id}
+        return self._list(pattern, filters, limit)

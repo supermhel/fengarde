@@ -85,3 +85,32 @@ class MemoryStore(StorageAdapter):
             return False  # someone else wrote in between -> caller retries
         self.index(index, doc_id, document)
         return True
+
+    # -- M4.3 versioned REST API: bounded list/browse -----------------------
+    def list_alerts(self, *, tenant_id: str | None = None,
+                     status: str | None = None, limit: int = 50) -> list[dict]:
+        docs: list[dict] = []
+        for index, bucket in self._indices.items():
+            if not index.startswith("alerts"):
+                continue
+            docs.extend(bucket.values())
+        if tenant_id is not None:
+            docs = [d for d in docs if (d.get("tenant_id") or "default") == tenant_id]
+        if status is not None:
+            docs = [d for d in docs if (d.get("triage") or {}).get("status", "new") == status]
+        docs.sort(key=lambda d: d.get("time") or 0, reverse=True)
+        return docs[:limit]
+
+    def list_events(self, *, family: str | None = None, tenant_id: str | None = None,
+                     limit: int = 50) -> list[dict]:
+        docs: list[dict] = []
+        for index, bucket in self._indices.items():
+            if not index.startswith("events"):
+                continue
+            if family is not None and f"events-{family}" not in index:
+                continue
+            docs.extend(bucket.values())
+        if tenant_id is not None:
+            docs = [d for d in docs if ((d.get("siem") or {}).get("tenant") or "default") == tenant_id]
+        docs.sort(key=lambda d: d.get("time") or 0, reverse=True)
+        return docs[:limit]

@@ -12,6 +12,28 @@ Endpoints:
   POST /auth/logout                      -> invalidate the session cookie
   GET  /auth/me                          -> current session identity
 
+M4.3 versioned REST API -- every route above, plus the three below, is also
+reachable under an `/api/v1` prefix (e.g. `/api/v1/alerts/{id}/triage`);
+both forms hit the exact same handler. The bare (unprefixed) paths are NOT
+deprecated -- the dashboard's nginx proxy (services/ws7-dashboard) targets
+them directly and that wiring is not being changed by this pass. `/api/v1`
+is the documented, versioned surface for new integrations going forward.
+See contracts/triage-api.yaml for the full OpenAPI 3.1 spec.
+
+  GET  /alerts   ?tenant_id=&status=&limit=   -> newest-first alert list
+  GET  /events    ?family=&tenant_id=&limit=  -> newest-first event list
+  GET  /rules                                 -> rule summaries (read-only;
+                                                  never exposes a rule's raw
+                                                  `condition` -- see
+                                                  rules_view.py)
+
+All three are bounded listing, not free-text search (no query DSL is
+exposed over HTTP). RBAC (M4.2), when enabled, forces non-admin callers'
+`tenant_id` to their own session tenant regardless of what a `tenant_id`
+query parameter asks for -- it is silently overridden, not merely checked,
+same "never let the caller widen their own scope" posture as the
+per-alert 404 gate below.
+
 Mirrors services/ws6-inventory/app.py's stdlib http.server discipline exactly
 (input validation, body-size cap, clean 4xx on malformed input, handler thread
 never crashes) rather than introducing a new framework/dependency.
@@ -41,7 +63,7 @@ import time
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 _HERE = Path(__file__).resolve().parent
 for _p in (str(_HERE), str(_HERE.parent)):
@@ -51,16 +73,44 @@ from shared.authz import check_api_key, warn_if_disabled  # noqa: E402
 from shared.rbac import role_at_least, can_access_tenant, LoginRateLimiter  # noqa: E402
 from shared.sessions import SessionStore  # noqa: E402
 import reporting  # noqa: E402
+import rules_view  # noqa: E402
 
 _MAX_BODY_BYTES = 4096  # a triage update is a status enum + a short note.
 _MAX_NOTE_CHARS = 2000
 _STATUSES = {"new", "triaged", "closed", "false_positive", "true_positive"}
 _CAS_MAX_RETRIES = 5  # optimistic-concurrency retry bound (see _route_post)
 _SESSION_COOKIE = "fengarde_session"
+_FAMILIES = {"bank", "dc", "common"}
+_DEFAULT_LIST_LIMIT = 50
+_MAX_LIST_LIMIT = 200
+
+
+def _strip_api_v1(path: str) -> str:
+    """`/api/v1/x` and `/x` route identically -- `/api/v1` is the documented
+    versioned surface, the bare path is the pre-existing one the dashboard's
+    nginx proxy already targets. Only a path exactly `/api/v1` or starting
+    `/api/v1/` is affected; `/api/v1foo` is left alone (not a prefix)."""
+    if path == "/api/v1":
+        return "/"
+    if path.startswith("/api/v1/"):
+        return path[len("/api/v1"):]
+    return path
 
 
 class _BadRequest(Exception):
     """Malformed client input; mapped to a 400 by the dispatcher."""
+
+
+def _parse_limit(raw: list[str] | None) -> int:
+    if not raw:
+        return _DEFAULT_LIST_LIMIT
+    try:
+        n = int(raw[0])
+    except (TypeError, ValueError):
+        raise _BadRequest("limit must be an integer")
+    if n < 1:
+        raise _BadRequest("limit must be >= 1")
+    return min(n, _MAX_LIST_LIMIT)
 
 
 def _default_triage() -> dict:
@@ -171,14 +221,31 @@ def make_handler(store, users_db=None, sessions: SessionStore | None = None,
             self._send(401, {"error": "unauthorized"})
             return False
 
+        def _normalized_path(self) -> str:
+            """Request path with an optional leading `/api/v1` stripped --
+            see _strip_api_v1's docstring for why both forms must resolve
+            identically."""
+            return _strip_api_v1(urlparse(self.path).path)
+
+        def _list_tenant_filter(self, session, requested: str | None) -> str | None:
+            """The tenant_id to actually filter a list endpoint by. RBAC off
+            (session is True) or role=admin: use whatever the caller asked
+            for (None = every tenant). Any other role: ALWAYS the caller's
+            own tenant, silently overriding a different requested value --
+            a list endpoint has no single resource to 404 on, so scope
+            narrowing is the only enforcement available."""
+            if session is True or session.role == "admin":
+                return requested
+            return session.tenant_id
+
         def do_GET(self):
             try:
-                u = urlparse(self.path)
-                if rbac_enabled and u.path == "/auth/me":
+                path = self._normalized_path()
+                if rbac_enabled and path == "/auth/me":
                     return self._route_auth_me()
                 if not self._check_auth():
                     return
-                self._route_get()
+                self._route_get(path)
             except _BadRequest as e:
                 self._send(400, {"error": str(e)})
             except Exception:  # noqa: BLE001 - never let a handler crash the thread
@@ -191,9 +258,17 @@ def make_handler(store, users_db=None, sessions: SessionStore | None = None,
             return self._send(200, {"username": session.username, "role": session.role,
                                      "tenant_id": session.tenant_id})
 
-        def _route_get(self):
+        def _route_get(self, path: str):
             u = urlparse(self.path)
-            report_alert_id = self._alert_id_from_path(u.path, "report")
+
+            if path == "/alerts":
+                return self._route_list_alerts(u.query)
+            if path == "/events":
+                return self._route_list_events(u.query)
+            if path == "/rules":
+                return self._route_list_rules(u.query)
+
+            report_alert_id = self._alert_id_from_path(path, "report")
             if report_alert_id is not None:
                 if not report_alert_id:
                     raise _BadRequest("alert_id required")
@@ -208,7 +283,7 @@ def make_handler(store, users_db=None, sessions: SessionStore | None = None,
                     return
                 return self._send(200, report)
 
-            alert_id = self._alert_id_from_path(u.path)
+            alert_id = self._alert_id_from_path(path)
             if alert_id is None:
                 return self._send(404, {"error": "no such path"})
             if not alert_id:
@@ -224,16 +299,54 @@ def make_handler(store, users_db=None, sessions: SessionStore | None = None,
                 return
             return self._send(200, doc.get("triage") or _default_triage())
 
+        def _route_list_alerts(self, raw_query: str):
+            session = self._require_role("read_only")
+            if session is None:
+                return
+            q = parse_qs(raw_query)
+            requested_tenant = q.get("tenant_id", [None])[0]
+            status = q.get("status", [None])[0]
+            if status is not None and status not in _STATUSES:
+                raise _BadRequest(f"status must be one of {sorted(_STATUSES)}")
+            limit = _parse_limit(q.get("limit"))
+            tenant_id = self._list_tenant_filter(session, requested_tenant)
+            alerts = store.list_alerts(tenant_id=tenant_id, status=status, limit=limit)
+            return self._send(200, {"alerts": alerts, "count": len(alerts)})
+
+        def _route_list_events(self, raw_query: str):
+            session = self._require_role("read_only")
+            if session is None:
+                return
+            q = parse_qs(raw_query)
+            family = q.get("family", [None])[0]
+            if family is not None and family not in _FAMILIES:
+                raise _BadRequest(f"family must be one of {sorted(_FAMILIES)}")
+            requested_tenant = q.get("tenant_id", [None])[0]
+            limit = _parse_limit(q.get("limit"))
+            tenant_id = self._list_tenant_filter(session, requested_tenant)
+            events = store.list_events(family=family, tenant_id=tenant_id, limit=limit)
+            return self._send(200, {"events": events, "count": len(events)})
+
+        def _route_list_rules(self, raw_query: str):
+            session = self._require_role("read_only")
+            if session is None:
+                return
+            q = parse_qs(raw_query)
+            requested_tenant = q.get("tenant_id", [None])[0]
+            tenant_id = self._list_tenant_filter(session, requested_tenant)
+            rules = rules_view.list_rule_summaries(tenant_id)
+            return self._send(200, {"rules": rules, "count": len(rules)})
+
         def do_POST(self):
             try:
-                u = urlparse(self.path)
-                if rbac_enabled and u.path == "/auth/login":
+                path = self._normalized_path()
+                if rbac_enabled and path == "/auth/login":
                     return self._route_auth_login()
-                if rbac_enabled and u.path == "/auth/logout":
+                if rbac_enabled and path == "/auth/logout":
                     return self._route_auth_logout()
                 if not self._check_auth():
                     return
-                self._route_post()
+                self._route_post(path)
             except _BadRequest as e:
                 self._send(400, {"error": str(e)})
             except Exception:  # noqa: BLE001 - never let a handler crash the thread
@@ -304,10 +417,8 @@ def make_handler(store, users_db=None, sessions: SessionStore | None = None,
             return self._send(200, {"ok": True},
                                extra_headers={"Set-Cookie": cookie[_SESSION_COOKIE].OutputString()})
 
-        def _route_post(self):
-            u = urlparse(self.path)
-
-            report_alert_id = self._alert_id_from_path(u.path, "report")
+        def _route_post(self, path: str):
+            report_alert_id = self._alert_id_from_path(path, "report")
             if report_alert_id is not None:
                 # Drain any request body (the client may send one, even
                 # though this endpoint takes none) so the connection doesn't
@@ -341,7 +452,7 @@ def make_handler(store, users_db=None, sessions: SessionStore | None = None,
                 store.index(report_index, report["report_id"], report)
                 return self._send(200, report)
 
-            alert_id = self._alert_id_from_path(u.path)
+            alert_id = self._alert_id_from_path(path)
             if alert_id is None:
                 return self._send(404, {"error": "no such path"})
             if not alert_id:

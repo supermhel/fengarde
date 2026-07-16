@@ -43,6 +43,9 @@ echo
 echo "== M4.2 RBAC: login/logout/roles/tenant isolation (real HTTP) =="
 $PY services/ws3-indexer/test_rbac_api.py || fail=1
 echo
+echo "== M4.3 versioned REST API: GET /alerts, /events, /rules (+/api/v1 aliases), spec-vs-code =="
+$PY services/ws3-indexer/test_api_v1.py || fail=1
+echo
 echo "== v0.4 (R): incident-report hook (template backend, contract, HTTP fallback) =="
 $PY services/ws3-indexer/test_reporting.py || fail=1
 

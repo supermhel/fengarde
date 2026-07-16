@@ -1,0 +1,180 @@
+openapi: 3.1.0
+info:
+  title: FENGARDE Triage & Alerts API (WS-3, v1)
+  version: "1.0.0"
+  description: >
+    M4.3: the versioned REST surface for WS-3 (services/ws3-indexer/triage_api.py).
+    Every path below is reachable BOTH bare (e.g. `/alerts`) and under `/api/v1`
+    (e.g. `/api/v1/alerts`) -- identical handler, identical behavior. The bare
+    paths are not deprecated: the dashboard's nginx proxy (services/ws7-dashboard)
+    targets them directly today. `/api/v1` is the documented surface for new
+    integrations going forward, per the M4.3 "versioned REST API" milestone
+    (docs/superpowers/specs/2026-07-15-fengarde-combined-plan.md).
+
+    Two independent, both opt-in auth layers may gate these routes (see
+    SECURITY.md SS2): a shared `X-Api-Key` header (`FENGARDE_API_KEY`), and/or a
+    per-user session cookie with roles and tenant scoping (`FENGARDE_RBAC_DB`,
+    M4.2). When RBAC is enabled, a non-admin caller's `tenant_id` on the three
+    list endpoints below is ALWAYS forced to their own session tenant --
+    an out-of-scope `tenant_id` query parameter is silently overridden, never
+    honored and never a distinguishable error. Per-alert routes instead return
+    404 (never 403) on an out-of-tenant id, so a request never confirms a
+    resource it isn't entitled to see even exists.
+
+    GET /rules is deliberately read-only and never exposes a rule's raw
+    `detection.condition` -- SECURITY.md SS3 treats rule files as code an
+    operator must review before trusting; an API that could read (or worse,
+    write) conditions would let a caller inject detection logic without
+    review. There is no rule-mutation endpoint in this API by design.
+servers:
+  - url: http://ws3-indexer:8013
+    description: Compose network (TRIAGE_PORT, default 8013)
+paths:
+  /api/v1/auth/login:
+    post:
+      summary: Log in (RBAC mode only -- 404 if FENGARDE_RBAC_DB is unset)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username: { type: string }
+                password: { type: string }
+      responses:
+        "200":
+          description: session cookie set (fengarde_session, HttpOnly, SameSite=Strict)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SessionIdentity" }
+        "401": { description: invalid credentials or rate-limited (indistinguishable) }
+  /api/v1/auth/logout:
+    post:
+      summary: Invalidate the current session
+      responses:
+        "200": { description: always succeeds, even with no/expired session }
+  /api/v1/auth/me:
+    get:
+      summary: Current session identity
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SessionIdentity" }
+        "401": { description: not logged in }
+  /api/v1/alerts:
+    get:
+      summary: Newest-first alert listing (not free-text search)
+      parameters:
+        - { name: tenant_id, in: query, schema: { type: string },
+            description: "Non-admin RBAC callers: ALWAYS overridden to the caller's own tenant." }
+        - { name: status, in: query, schema: { type: string,
+              enum: [new, triaged, closed, false_positive, true_positive] } }
+        - { name: limit, in: query, schema: { type: integer, default: 50, minimum: 1, maximum: 200 } }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  count: { type: integer }
+                  alerts: { type: array, items: { type: object } }
+        "400": { description: invalid status/limit }
+        "401": { description: unauthorized (API key or session, per whichever mode is active) }
+  /api/v1/alerts/{alert_id}/triage:
+    get:
+      summary: Current triage state (default "new" if never triaged)
+      parameters: [ { name: alert_id, in: path, required: true, schema: { type: string } } ]
+      responses:
+        "200": { content: { application/json: { schema: { $ref: "#/components/schemas/Triage" } } } }
+        "404": { description: "alert not found, OR (RBAC on) not visible to the caller's tenant/role" }
+    post:
+      summary: Update triage status and/or note (role >= analyst)
+      parameters: [ { name: alert_id, in: path, required: true, schema: { type: string } } ]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                status: { type: string, enum: [new, triaged, closed, false_positive, true_positive] }
+                note: { type: string, maxLength: 2000 }
+      responses:
+        "200": { content: { application/json: { schema: { $ref: "#/components/schemas/Triage" } } } }
+        "404": { description: "not found / not visible; also returned to a read_only caller (RBAC on)" }
+        "409": { description: "lost-update race, bounded CAS retries exhausted -- retry the request" }
+  /api/v1/alerts/{alert_id}/report:
+    get:
+      summary: Existing generated report, if any
+      parameters: [ { name: alert_id, in: path, required: true, schema: { type: string } } ]
+      responses:
+        "200": { description: the report document }
+        "404": { description: report not generated yet, or not visible }
+    post:
+      summary: Generate and store a draft report (role >= analyst)
+      parameters: [ { name: alert_id, in: path, required: true, schema: { type: string } } ]
+      responses:
+        "200": { description: the generated report document }
+        "404": { description: alert not found / not visible }
+  /api/v1/events:
+    get:
+      summary: Newest-first normalized-event listing (not free-text search)
+      parameters:
+        - { name: family, in: query, schema: { type: string, enum: [bank, dc, common] } }
+        - { name: tenant_id, in: query, schema: { type: string },
+            description: "Non-admin RBAC callers: ALWAYS overridden to the caller's own tenant." }
+        - { name: limit, in: query, schema: { type: integer, default: 50, minimum: 1, maximum: 200 } }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  count: { type: integer }
+                  events: { type: array, items: { type: object } }
+        "400": { description: invalid family/limit }
+  /api/v1/rules:
+    get:
+      summary: Read-only rule summaries (never the raw `condition` -- see rules_view.py)
+      parameters:
+        - { name: tenant_id, in: query, schema: { type: string },
+            description: "Applies that tenant's disabled-rules list to `enabled`; non-admin RBAC callers are forced to their own tenant." }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  count: { type: integer }
+                  rules: { type: array, items: { $ref: "#/components/schemas/RuleSummary" } }
+components:
+  schemas:
+    SessionIdentity:
+      type: object
+      properties:
+        username: { type: string }
+        role: { type: string, enum: [read_only, analyst, admin] }
+        tenant_id: { type: string }
+    Triage:
+      type: object
+      properties:
+        status: { type: string, enum: [new, triaged, closed, false_positive, true_positive] }
+        note: { type: string }
+        updated_at: { type: integer, nullable: true, description: epoch milliseconds }
+    RuleSummary:
+      type: object
+      description: Everything about a rule EXCEPT its detection.condition (see security note above).
+      properties:
+        id: { type: string }
+        title: { type: string }
+        level: { type: string }
+        sector: { type: string, enum: [bank, datacenter, common] }
+        score_weight: { type: integer }
+        stateful: { type: boolean, description: "has a window_seconds + threshold (sliding-window correlation)" }
+        mitre: { nullable: true, description: "passthrough of the rule's own `mitre` field, if present" }
+        enabled: { type: boolean, description: "false if disabled for the requested tenant" }

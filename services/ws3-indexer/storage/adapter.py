@@ -88,3 +88,31 @@ class StorageAdapter(abc.ABC):
         ``version=None`` writes unconditionally (legacy adapters)."""
         self.index(index, doc_id, document)
         return True
+
+    # -- M4.3 versioned REST API: bounded list/browse -----------------------
+    #
+    # The triage API (v0.3+) can only look an alert up by exact id. M4.3 adds
+    # GET /api/v1/alerts and /api/v1/events so an operator or MSP integration
+    # can browse without a live OpenSearch Dashboards session. Both are
+    # deliberately NOT free-text search (that needs a real query DSL against
+    # a live cluster, unverified in this repo's zero-infra test path) --
+    # bounded, filtered listing only, newest first.
+
+    @abc.abstractmethod
+    def list_alerts(self, *, tenant_id: str | None = None,
+                     status: str | None = None, limit: int = 50) -> list[dict]:
+        """Newest-first alert documents, optionally filtered by
+        ``tenant_id`` (exact match on the alert's own ``tenant_id`` field)
+        and/or ``triage.status`` (documents with no triage default to
+        ``"new"``). ``tenant_id=None`` means "every tenant" -- callers
+        enforcing RBAC must pass the caller's own tenant, never trust a
+        client-supplied ``None``. ``limit`` is the caller's responsibility
+        to clamp to a sane bound before calling."""
+
+    @abc.abstractmethod
+    def list_events(self, *, family: str | None = None, tenant_id: str | None = None,
+                     limit: int = 50) -> list[dict]:
+        """Newest-first normalized-event documents, optionally filtered by
+        index ``family`` (``bank``/``dc``/``common``) and/or ``tenant_id``.
+        Same "not free-text search" and "caller clamps limit" notes as
+        :meth:`list_alerts` apply."""
