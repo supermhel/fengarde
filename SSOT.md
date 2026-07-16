@@ -81,6 +81,7 @@ those words get reused loosely across specs written weeks apart.
 | `docs/posts/ocsf-native.md`, `opensearch-not-elastic.md`, `local-ai-triage.md` | v0.4 architecture write-ups (Track D3) | Draft, not published |
 | `docs/posts/launch-checklist.md` | v0.4 launch sequencing (Track D3) | Current, publishing itself is a pending human action |
 | `docs/posts/launch-drafts.md` | v0.1-era marketing draft | **Historical/stale facts** — annotated, points to the current write-ups above |
+| `docs/adr/` (6 ADRs + index) | Architecture decision records: Redis bus, OCSF, OpenSearch, microservice split, fail-closed rules, local-LLM triage | Current (M2, backfilled 2026-07-16) — each cites the code/doc proving the decision is live, not aspirational |
 | `AGENTS.md` | Imported cowork stub | Minimal, ignore |
 
 ## 4. Known doc debt (don't fix silently, flag before touching)
