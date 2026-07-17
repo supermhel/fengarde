@@ -21,6 +21,12 @@ false positives are in the review that produced this list; six real bugs were fi
   event counts pooled in one shared window, letting one tenant's traffic trip another
   tenant's threshold and misattribute the resulting alert — a direct breach of the M4.1
   tenant-isolation guarantee. Fixed by namespacing the counter key on `siem.tenant`.
+  **Follow-up caught by a dedicated review of this fix**: `Rule.alert_key()` — which
+  computes the actual `alert_id` persisted to storage, separately from the counter key —
+  was still unnamespaced, so two tenants firing in the same window bucket on a shared
+  `group_by` value got the identical `alert_id` and WS-3's cross-index `find_alert()`
+  lookup could return the wrong tenant's doc. Fixed the same way, with the same
+  revert/run/restore-verified regression test discipline.
 - **F6 (MEDIUM/HIGH)** — `active_directory.py` assigned raw, un-typechecked fields
   (`IpAddress`/`MacAddress`/`TargetUserSid`) straight into OCSF schema-constrained fields,
   unlike every sibling parser, which already goes through `shared/ocsf.py`'s
