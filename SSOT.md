@@ -98,7 +98,6 @@ those words get reused loosely across specs written weeks apart.
 | `docs/posts/launch-checklist.md` | v0.4 launch sequencing (Track D3) | Current, publishing itself is a pending human action |
 | `docs/posts/launch-drafts.md` | v0.1-era marketing draft | **Historical/stale facts** — annotated, points to the current write-ups above |
 | `docs/adr/` (6 ADRs + index) | Architecture decision records: Redis bus, OCSF, OpenSearch, microservice split, fail-closed rules, local-LLM triage | Current (M2, backfilled 2026-07-16) — each cites the code/doc proving the decision is live, not aspirational |
-| `docs/obsidian-vault/` (13 notes) | Cross-linked Markdown knowledge vault (Obsidian-compatible) covering M1-M7 status, the adversarial bug hunt, and PR/merge blockers, navigable via `[[wikilinks]]` | Current (added 2026-07-17) — **derived from this file, not a second source of truth**; refresh it, don't let it drift, whenever §1/§2 here change materially |
 | `AGENTS.md` | Imported cowork stub | Minimal, ignore |
 
 ## 4. Known doc debt (don't fix silently, flag before touching)

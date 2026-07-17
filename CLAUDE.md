@@ -8,8 +8,6 @@ FENGARDE — an open-source SIEM pipeline (Apache-2.0). Remote: https://github.c
 
 **Read `SSOT.md` first for current status.** It is the canonical status/roadmap index; other docs (especially `docs/superpowers/specs/` and per-service `INTERFACE.md` files) may be historical, aspirational, or partially stale — SSOT.md says which is which. If a doc disagrees with SSOT.md, SSOT.md wins.
 
-**`docs/obsidian-vault/`** is a cross-linked Markdown knowledge vault (Obsidian-compatible, but also just plain files — open `Home.md` to start) derived from SSOT.md and the combined plan (`docs/superpowers/specs/2026-07-15-fengarde-combined-plan.md`). It exists to make status/roadmap/bug-hunt/PR-blocker relationships navigable via `[[wikilinks]]` instead of re-deriving them from prose each session. It is a **derived snapshot, not a second source of truth** — SSOT.md still wins on any disagreement, and the vault should be refreshed (not left stale) whenever SSOT.md's §1/§2 change materially. Start at `docs/obsidian-vault/Home.md`.
-
 ## Commands
 
 Everything below the Docker section is **zero-infra** (memory bus, in-memory store, stub LLM) — no Docker/Redis/OpenSearch needed. This is the normal dev loop.
