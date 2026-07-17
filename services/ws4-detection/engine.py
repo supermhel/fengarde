@@ -467,8 +467,16 @@ class Rule:
             # -- same discipline as the time-of-day predicate (_time_outside_hours).
             return False
         member = (event.get("siem") or {}).get("ingest_id") or str(now)
-        # Namespace the window by rule id so two rules grouping on the same field
-        # don't share a counter. The counter returns the in-window count after add.
+        # Namespace the window by rule id AND tenant so two rules (or two
+        # tenants) grouping on the same field don't share a counter. Without
+        # the tenant component, two tenants whose events share a group_by
+        # value (e.g. overlapping RFC1918 source IPs -- the normal case for
+        # an MSP) would pool their event counts into one window, letting one
+        # tenant's traffic push another tenant's rule over threshold. This is
+        # a real isolation gap the M4.1 gate test didn't catch because it
+        # used distinct source IPs per tenant. The counter returns the
+        # in-window count after add.
+        tenant = (event.get("siem") or {}).get("tenant") or "default"
         window_ms = self.window_seconds * 1000
         if self.distinct_field:
             value = get_path(event, self.distinct_field)
@@ -481,10 +489,10 @@ class Rule:
                 # (e.g. impossible-travel firing on 2 logins with no geo
                 # enrichment). Fail closed on both.
                 return False
-            count = self._counter.hit_distinct(f"{self.id}:{group}", now,
+            count = self._counter.hit_distinct(f"{self.id}:{tenant}:{group}", now,
                                                window_ms, value, member)
         else:
-            count = self._counter.hit(f"{self.id}:{group}", now, window_ms, member)
+            count = self._counter.hit(f"{self.id}:{tenant}:{group}", now, window_ms, member)
         return count >= self.threshold
 
 

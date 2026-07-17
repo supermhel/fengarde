@@ -11,6 +11,7 @@ Existing pre-v1 fixtures and payloads keep validating unchanged.
 from __future__ import annotations
 
 import os
+import re
 import uuid
 
 #: Version of the SIEM event/bus-envelope contract (contracts/bus-topics.md +
@@ -22,6 +23,29 @@ SCHEMA_VERSION = "1.0"
 #: "default", matching every event's implicit tenant before this existed.
 _TENANT_ENV = "TENANT_ID"
 _DEFAULT_TENANT = "default"
+
+# M4.1's tenant_id gets embedded directly into an OpenSearch index name
+# (services/ws3-indexer/router.py: f"alerts-{tenant}-...") and a
+# contracts/tenants/<tenant_id>.yml filename
+# (services/ws4-detection/tenants.py). Both uses need a narrow, safe
+# character set: lowercase alphanumeric + hyphen, no leading/trailing
+# hyphen, 1-63 chars (DNS-label-style, the same shape Kubernetes
+# namespaces use -- a convention MSP operators already recognize).
+# Deliberately does NOT normalize (lowercase/slugify) a bad id instead of
+# rejecting it: "Acme" and "ACME" would both normalize to "acme" and
+# silently MERGE two different customers' data into one tenant's index --
+# exactly the cross-tenant isolation bug this whole mechanism exists to
+# prevent. An invalid tenant_id must be rejected at the point it's about
+# to be used, loudly, never silently coerced into something that happens
+# to work.
+_TENANT_ID_PATTERN = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
+
+
+def valid_tenant_id(tenant_id) -> bool:
+    """True if `tenant_id` is safe to embed in an OpenSearch index name or
+    a contracts/tenants/*.yml filename. See module comment above for why
+    an invalid id is rejected, never normalized."""
+    return isinstance(tenant_id, str) and bool(_TENANT_ID_PATTERN.match(tenant_id))
 
 
 def default_tenant() -> str:

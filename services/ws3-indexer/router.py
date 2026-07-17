@@ -27,6 +27,8 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+from shared.envelope import valid_tenant_id
+
 _SECTOR_TO_FAMILY = {"bank": "bank", "datacenter": "dc", "common": "common"}
 DEFAULT_TENANT = "default"
 
@@ -39,11 +41,31 @@ def _date_suffix(epoch_ms: int | None) -> str:
     return dt.strftime("%Y.%m.%d")
 
 
+def _validated_tenant(tenant: str) -> str:
+    """Reject (never normalize) a tenant that isn't safe to embed in an
+    index name. F3 (adversarial repo-wide bug hunt, 2026-07-16): an
+    uppercase or otherwise malformed tenant_id (e.g. "Acme", "ACME Corp")
+    used to flow straight into f"alerts-{tenant}-..." unchecked, producing
+    an OpenSearch-INVALID index name -- OpenSearchStore.index() treats
+    that 4xx as permanent, so the write is never retried and the document
+    is eventually dead-lettered. That tenant's events/alerts would
+    silently receive ZERO detections, an MSP data-loss footgun. Rejecting
+    (not lowercasing) is deliberate: "Acme" and "ACME" both normalizing to
+    "acme" would silently MERGE two different customers' data into one
+    tenant's index, the exact cross-tenant isolation bug this mechanism
+    exists to prevent (see valid_tenant_id's docstring)."""
+    if tenant != DEFAULT_TENANT and not valid_tenant_id(tenant):
+        raise ValueError(
+            f"invalid tenant_id {tenant!r}: must be lowercase alphanumeric/hyphen, "
+            f"1-63 chars, no leading/trailing hyphen")
+    return tenant
+
+
 def route(doc: dict) -> tuple[str, str]:
     """Return (index_name, doc_id) for a document. Raises ValueError if unroutable."""
     # alert?
     if "alert_id" in doc:
-        tenant = doc.get("tenant_id") or DEFAULT_TENANT
+        tenant = _validated_tenant(doc.get("tenant_id") or DEFAULT_TENANT)
         base = "alerts" if tenant == DEFAULT_TENANT else f"alerts-{tenant}"
         return f"{base}-{_date_suffix(doc.get('time'))}", str(doc["alert_id"])
 
@@ -56,7 +78,7 @@ def route(doc: dict) -> tuple[str, str]:
     doc_id = siem.get("ingest_id")
     if not doc_id:
         raise ValueError("event missing siem.ingest_id (needed for idempotency)")
-    tenant = siem.get("tenant") or DEFAULT_TENANT
+    tenant = _validated_tenant(siem.get("tenant") or DEFAULT_TENANT)
     base = f"events-{family}" if tenant == DEFAULT_TENANT else f"events-{family}-{tenant}"
     return f"{base}-{_date_suffix(doc.get('time'))}", str(doc_id)
 

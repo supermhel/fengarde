@@ -5,6 +5,7 @@ Run: python services/shared/test_rbac.py
 from __future__ import annotations
 
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -15,6 +16,7 @@ from shared.users import (  # noqa: E402
     UserStore, hash_password, verify_password, ensure_first_boot_admin,
 )
 from shared.sessions import SessionStore  # noqa: E402
+from shared import rbac as rbac_module  # noqa: E402
 from shared.rbac import role_at_least, can_access_tenant, LoginRateLimiter  # noqa: E402
 
 FAILS: list[str] = []
@@ -140,6 +142,71 @@ def test_login_rate_limiter():
     check(not limiter.is_locked_out("alice"), "a successful login must clear the lockout")
 
 
+def test_login_rate_limiter_lookup_alone_never_plants_an_entry():
+    """F5 regression (adversarial repo-wide bug hunt, 2026-07-16):
+    is_locked_out() is called on EVERY login attempt (see
+    triage_api.py's login route), not just failed ones, and used to
+    unconditionally write `self._attempts[username] = recent` even for a
+    brand-new username with `recent == []`. An attacker spraying distinct
+    random usernames -- none of which even need a wrong password, just an
+    attempt -- grew the dict without bound: a pre-authentication memory-
+    exhaustion DoS. A lookup with no real failure history must never
+    create a dict entry."""
+    limiter = LoginRateLimiter(max_attempts=3, window_s=300)
+    for i in range(500):
+        limiter.is_locked_out(f"never-failed-{i}")
+    check(len(limiter._attempts) == 0,
+          f"500 lookups of usernames with zero failure history must leave the dict "
+          f"empty, got {len(limiter._attempts)} entries")
+
+
+def test_login_rate_limiter_sweeps_stale_failures():
+    """Real failures DO get recorded, but once every one of a username's
+    attempts has aged out of the window, the periodic sweep (mirrors
+    services/ws4-detection/window.py::DequeWindowCounter's _SWEEP_EVERY --
+    same unbounded-growth shape, same fix) must evict that key -- the dict
+    must not grow forever just because SOME usernames genuinely fail once."""
+    limiter = LoginRateLimiter(max_attempts=3, window_s=1)  # 1s window: ages out fast
+    limiter.record_failure("stale-user")
+    check("stale-user" in limiter._attempts, "sanity: a real failure must be recorded")
+    time.sleep(1.05)  # let it age out of the 1s window
+    # Cross the sweep threshold with lookups that themselves plant nothing
+    # (proven by the previous test) -- isolates the sweep as what evicts it.
+    for i in range(rbac_module._SWEEP_EVERY + 1):
+        limiter.is_locked_out(f"filler-{i}")
+    check("stale-user" not in limiter._attempts,
+          "a username whose only failure has aged out of the window must be swept")
+    check(len(limiter._attempts) == 0,
+          f"the dict must be empty after the sweep (fillers plant nothing, stale-user "
+          f"evicted), got {len(limiter._attempts)} entries")
+
+
+def test_login_rate_limiter_thread_safe_under_concurrent_failures():
+    """Concurrency smoke test: is_locked_out is a read-modify-write on
+    _attempts: without a lock, concurrent record_failure calls from
+    multiple handler threads (ThreadingHTTPServer, one thread per
+    connection) can interleave and drop a failure record. Fire many
+    concurrent failures at one username from multiple threads and confirm
+    the final recorded count is exact (none silently lost to a race) and
+    the limiter still locks out correctly."""
+    limiter = LoginRateLimiter(max_attempts=1000000, window_s=300)  # never lock out mid-test
+    n_threads, per_thread = 20, 50
+
+    def hammer():
+        for _ in range(per_thread):
+            limiter.record_failure("hammered")
+
+    threads = [threading.Thread(target=hammer) for _ in range(n_threads)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    check(len(limiter._attempts.get("hammered", [])) == n_threads * per_thread,
+          f"every one of {n_threads * per_thread} concurrent record_failure calls must be "
+          f"recorded, none dropped to a race, got {len(limiter._attempts.get('hammered', []))}")
+
+
 def main():
     test_password_hash_roundtrip()
     test_password_hash_unique_salt()
@@ -152,6 +219,9 @@ def main():
     test_role_at_least()
     test_can_access_tenant()
     test_login_rate_limiter()
+    test_login_rate_limiter_lookup_alone_never_plants_an_entry()
+    test_login_rate_limiter_sweeps_stale_failures()
+    test_login_rate_limiter_thread_safe_under_concurrent_failures()
 
     if FAILS:
         print(f"[FAIL] rbac: {len(FAILS)} problem(s)")

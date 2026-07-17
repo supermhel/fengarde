@@ -167,12 +167,56 @@ def test_path_traversal_in_archive_is_rejected():
         check(raised, "an archive entry attempting to escape the staging directory must be rejected")
 
 
+def test_symlink_member_escaping_staging_is_rejected():
+    """F4 regression (adversarial repo-wide bug hunt, 2026-07-16): the
+    original path-traversal guard only checked each member's NAME resolves
+    inside staging -- it did not stop a SYMLINK member. A symlink member's
+    own name resolves harmlessly inside staging (nothing has been
+    extracted yet when the name is checked), but a LATER member written
+    THROUGH that symlink during extraction can still escape outside
+    staging entirely (the classic CVE-2007-4559 tar class). This proves
+    the fix (filter="data") rejects the symlink itself, before any member
+    -- through it or otherwise -- is ever written."""
+    with tempfile.TemporaryDirectory() as d:
+        d = Path(d)
+        malicious = d / "evil_symlink.tar.gz"
+        payload = b'{"files": []}'
+        outside_target = d / "outside_marker"  # would be the escape target
+
+        with tarfile.open(malicious, "w:gz") as tar:
+            manifest_info = tarfile.TarInfo("manifest.json")
+            manifest_info.size = len(payload)
+            tar.addfile(manifest_info, io.BytesIO(payload))
+
+            # A symlink member pointing OUTSIDE the eventual staging dir.
+            link_info = tarfile.TarInfo("escape_link")
+            link_info.type = tarfile.SYMTYPE
+            link_info.linkname = str(outside_target)
+            tar.addfile(link_info)
+
+            # A file written "through" that symlink, if the extractor
+            # followed it -- this is the actual escape payload.
+            through_info = tarfile.TarInfo("escape_link")
+            through_info.size = 4
+            tar.addfile(through_info, io.BytesIO(b"evil"))
+
+        raised = False
+        try:
+            restore.verify_and_restore(malicious, d / "dest", force=False)
+        except restore.RestoreError:
+            raised = True
+        check(raised, "a symlink member must be rejected by the extraction filter")
+        check(not outside_target.exists(),
+              "nothing must ever be written through the symlink to the outside target")
+
+
 def main():
     test_full_round_trip_rbac_and_contracts()
     test_no_rbac_db_backs_up_contracts_only()
     test_tampered_checksum_is_rejected_before_writing_anything()
     test_collision_requires_force()
     test_path_traversal_in_archive_is_rejected()
+    test_symlink_member_escaping_staging_is_rejected()
 
     if FAILS:
         print(f"[FAIL] backup/restore: {len(FAILS)} problem(s)")

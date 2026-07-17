@@ -22,6 +22,7 @@ sys.path.insert(0, str(HERE.parent))
 
 import reporting  # noqa: E402
 from storage.memory import MemoryStore  # noqa: E402
+from shared.users import UserStore  # noqa: E402
 import triage_api  # noqa: E402
 
 FAILS: list[str] = []
@@ -89,10 +90,27 @@ def test_http_backend_degrades_to_template_on_bad_response():
         os.environ.pop("FENGARDE_SEC_REPORT_URL", None)
 
 
-def _serve(store):
-    srv = ThreadingHTTPServer(("127.0.0.1", 0), triage_api.make_handler(store))
+def _serve(store, users_db=None):
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), triage_api.make_handler(store, users_db=users_db))
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     return srv, srv.server_address[1]
+
+
+def _login(port, username, password):
+    body = json.dumps({"username": username, "password": password}).encode()
+    req = urllib.request.Request(f"http://127.0.0.1:{port}/auth/login", data=body,
+                                  method="POST", headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=5) as resp:
+        return resp.headers.get("Set-Cookie").split(";")[0]
+
+
+def _get_with_cookie(port, path, cookie):
+    req = urllib.request.Request(f"http://127.0.0.1:{port}{path}", headers={"Cookie": cookie})
+    try:
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            return resp.status, json.loads(resp.read().decode())
+    except urllib.error.HTTPError as e:
+        return e.code, json.loads(e.read().decode())
 
 
 def _post(port, path, body=None):
@@ -192,6 +210,61 @@ def test_api_report_requires_auth_when_key_set():
         os.environ.pop("FENGARDE_API_KEY", None)
 
 
+def test_api_report_missing_alert_doc_fails_closed_for_non_admin():
+    """F2 regression (adversarial repo-wide bug hunt, 2026-07-16): the
+    report GET tenant gate only ran `if found_alert is not None`. Reports
+    (reports-*) and alerts (alerts-{tenant}-*) have independent retention,
+    and a report document carries no tenant_id of its own -- so once the
+    backing alert doc ages out or is deleted, the gate was skipped entirely
+    and ANY logged-in caller (any tenant) could read the report. A
+    non-admin must now get 404 when the alert can't be found to verify
+    tenancy against; admin (whose role already grants cross-tenant
+    visibility) and RBAC-off must be unaffected."""
+    store = MemoryStore()
+    # A report with NO backing alert doc -- simulates the alert having
+    # aged out of its own, independent retention window.
+    report_id = "ghost-alert:report"
+    store.index("reports-2026.07.10", report_id, {
+        "report_id": report_id, "alert_id": "ghost-alert", "format": "markdown",
+        "body": "sensitive globex incident details", "status": "draft",
+        "disclaimer": "DRAFT", "generated_at": 0, "backend": "template",
+        "backend_degraded": False, "citations": [],
+    })
+
+    users = UserStore(":memory:")
+    users.create_user("acme_analyst", "pw1", role="analyst", tenant_id="acme")
+    users.create_user("admin_user", "pw2", role="admin", tenant_id="default")
+    srv, port = _serve(store, users_db=users)
+    try:
+        cookie = _login(port, "acme_analyst", "pw1")
+        code, _ = _get_with_cookie(port, "/alerts/ghost-alert/report", cookie)
+        check(code == 404,
+              f"a non-admin must be denied when the backing alert doc can't be found "
+              f"to verify tenancy, got {code}")
+
+        admin_cookie = _login(port, "admin_user", "pw2")
+        code2, body2 = _get_with_cookie(port, "/alerts/ghost-alert/report", admin_cookie)
+        check(code2 == 200 and body2.get("report_id") == report_id,
+              f"admin must still be able to read a report with no backing alert doc, got {code2}")
+    finally:
+        srv.shutdown(); srv.server_close()
+
+    # RBAC entirely off (the pre-M4.2 default) must be completely unaffected.
+    store2 = MemoryStore()
+    store2.index("reports-2026.07.10", report_id, {
+        "report_id": report_id, "alert_id": "ghost-alert", "format": "markdown",
+        "body": "x", "status": "draft", "disclaimer": "DRAFT", "generated_at": 0,
+        "backend": "template", "backend_degraded": False, "citations": [],
+    })
+    srv2, port2 = _serve(store2)
+    try:
+        code3, body3 = _get(port2, "/alerts/ghost-alert/report")
+        check(code3 == 200 and body3.get("report_id") == report_id,
+              f"RBAC-off must be unaffected by this fix, got {code3}")
+    finally:
+        srv2.shutdown(); srv2.server_close()
+
+
 def main():
     test_template_backend_renders_and_validates()
     test_validator_rejects_non_draft_status()
@@ -202,6 +275,7 @@ def main():
     test_api_report_not_found_for_missing_alert()
     test_api_report_malformed_content_length_is_400()
     test_api_report_requires_auth_when_key_set()
+    test_api_report_missing_alert_doc_fails_closed_for_non_admin()
     if FAILS:
         print(f"[FAIL] ws3 reporting: {len(FAILS)} problem(s)")
         for f in FAILS:

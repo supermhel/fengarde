@@ -62,17 +62,20 @@ def _import(ws_dir, mod="main"):
     return importlib.import_module(mod)
 
 
-def _brute_force_events(tenant: str, attacker_ip: str, base_s: int) -> list[dict]:
-    """10 failed SSH logins -- exactly common_bruteforce.yml's threshold --
-    all explicitly tagged with one tenant, shaped like WS-1's real output."""
+def _brute_force_events(tenant: str, attacker_ip: str, base_s: int, count: int = 10,
+                        tag: str = "") -> list[dict]:
+    """`count` failed SSH logins (common_bruteforce.yml's threshold is 10),
+    all explicitly tagged with one tenant, shaped like WS-1's real output.
+    `tag` disambiguates ingest_id/trace_id across calls sharing one tenant+IP
+    combination within a single test."""
     events = []
-    for i in range(10):
+    for i in range(count):
         events.append({
             "source_type": "linux_ssh",
             "raw": (f"Jun 10 13:55:{i:02d} db01 sshd[2154]: Failed password for "
                     f"invalid user admin from {attacker_ip} port 51000 ssh2"),
-            "meta": {"received_at": base_s + i, "ingest_id": f"mt-{tenant}-{i}",
-                     "tenant_id": tenant, "trace_id": f"trace-{tenant}-{i}"},
+            "meta": {"received_at": base_s + i, "ingest_id": f"mt-{tenant}-{tag}-{i}",
+                     "tenant_id": tenant, "trace_id": f"trace-{tenant}-{tag}-{i}"},
         })
     return events
 
@@ -167,8 +170,52 @@ def run():
               "globex's alert must reference globex's attacker IP, not acme's")
 
 
+def run_shared_group_key_isolation():
+    """F1 regression: two tenants sharing a group_by value (the same source
+    IP -- the normal case for an MSP, since RFC1918 ranges overlap across
+    customers) must NOT pool their event counts into one stateful-rule
+    window. Without tenant-namespacing the window counter key
+    (services/ws4-detection/engine.py::evaluate), acme's 6 sub-threshold
+    events + globex's 6 sub-threshold events on the SAME IP would sum to 12
+    >= threshold(10) and fire a brute-force alert neither tenant earned on
+    their own -- attributed to whichever tenant's event crossed the line.
+    """
+    bus = Bus()
+    base_s = int(time.time())
+    shared_ip = "198.51.100.99"
+
+    # Neither tenant alone reaches the threshold (10); pooled, they would.
+    for ev in _brute_force_events("acme", shared_ip, base_s, count=6, tag="a"):
+        bus.produce("raw.events", key="acme", payload=ev)
+    for ev in _brute_force_events("globex", shared_ip, base_s, count=6, tag="b"):
+        bus.produce("raw.events", key="globex", payload=ev)
+
+    ws2 = _import("ws2-normalization")
+    c2 = ws2.run(bus)
+    check(c2["normalized"] == 12, f"expected 12 events normalized (6/tenant), got {c2['normalized']}")
+
+    ws4 = _import("ws4-detection")
+    det = ws4.Detector(tenants_dir=Path(tempfile.mkdtemp()))  # no per-tenant disablement here
+    c4 = ws4.run(bus, det)
+    check(c4["alerts"] == 0,
+          f"neither tenant reached the brute-force threshold alone -- pooling across "
+          f"tenants on a shared IP must NOT fire an alert, got {c4['alerts']}")
+
+    # Now prove each tenant CAN still independently reach ITS OWN threshold
+    # on that same shared IP -- the fix must not just suppress firing
+    # entirely, it must correctly scope the count per tenant.
+    for ev in _brute_force_events("acme", shared_ip, base_s + 100, count=10, tag="c"):
+        bus.produce("raw.events", key="acme", payload=ev)
+    c2b = ws2.run(bus)
+    check(c2b["normalized"] == 10, f"expected 10 more events normalized, got {c2b['normalized']}")
+    c4b = ws4.run(bus, det)
+    check(c4b["alerts"] == 1,
+          f"acme alone reaching 10 events on the shared IP must fire exactly 1 alert, got {c4b['alerts']}")
+
+
 def main():
     run()
+    run_shared_group_key_isolation()
     if FAILS:
         print(f"[FAIL] multi-tenant isolation: {len(FAILS)} problem(s)")
         for f in FAILS:
@@ -176,7 +223,8 @@ def main():
         sys.exit(1)
     print("[OK] M4 gate: two-tenant isolation -- separate indices for events AND "
           "alerts, tenant_id correctly stamped, per-tenant rule disablement verified "
-          "(acme's brute-force suppressed, globex's fires normally)")
+          "(acme's brute-force suppressed, globex's fires normally); shared-group-key "
+          "(same source IP) does NOT pool event counts across tenants (F1 regression)")
 
 
 if __name__ == "__main__":

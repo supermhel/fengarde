@@ -280,8 +280,20 @@ def make_handler(store, users_db=None, sessions: SessionStore | None = None,
                 if report is None:
                     return self._send(404, {"error": "report not found"})
                 found_alert = store.find_alert(report_alert_id)
-                if found_alert is not None and not self._tenant_gate(session, found_alert[1]):
-                    return
+                if found_alert is not None:
+                    if not self._tenant_gate(session, found_alert[1]):
+                        return
+                elif session is not True and session.role != "admin":
+                    # The backing alert doc is gone (aged out under
+                    # independent retention, or deleted) -- report docs
+                    # carry no tenant_id of their own, so there is no way
+                    # to verify which tenant this report belongs to. A
+                    # non-admin caller must be denied (fail-closed), not
+                    # silently let through just because the alert lookup
+                    # came back empty. Same 404-not-403 convention as
+                    # _tenant_gate: never confirm the report exists to a
+                    # caller who isn't entitled to see it.
+                    return self._send(404, {"error": "report not found"})
                 return self._send(200, report)
 
             alert_id = self._alert_id_from_path(path)

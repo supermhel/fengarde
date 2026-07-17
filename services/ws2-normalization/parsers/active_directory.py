@@ -21,6 +21,7 @@ from typing import Optional
 
 from .base import Parser, SEV_HIGH, SEV_INFO
 from .timeutil import to_epoch_ms
+from shared.ocsf import valid_ip, valid_mac, safe_str
 
 _CLASS = 3002  # Authentication
 
@@ -61,10 +62,21 @@ class ActiveDirectoryParser(Parser):
         activity_id, status, severity_id = _EVENT_MAP[event_id]
 
         time_ms = self._time_ms(rec, meta)
-        user = rec.get("TargetUserName") or rec.get("SubjectUserName")
-        domain = rec.get("TargetDomainName") or rec.get("SubjectDomainName")
-        ip = rec.get("IpAddress") or meta.get("ip")
-        host = rec.get("WorkstationName") or rec.get("Computer")
+        # Structured-record parser: rec is attacker-controllable JSON, so any
+        # field bound for a schema-constrained OCSF slot must be validated
+        # before assignment (same M1 fix already applied to db_audit,
+        # linux_ssh, mcp_agent, n8n_audit, opcua_audit, windows_eventlog --
+        # this parser was the one missed). An unguarded int/list/dict here
+        # would fail Contract A's endpoint pattern at validate() and
+        # silently drop a real logon/failure event instead of crashing --
+        # fail-closed, but on this bank-sector Authentication source that's
+        # a missed brute-force/spray/lateral-movement detection, not just a
+        # cosmetic issue.
+        user = safe_str(rec.get("TargetUserName") or rec.get("SubjectUserName"))
+        domain = safe_str(rec.get("TargetDomainName") or rec.get("SubjectDomainName"))
+        ip = valid_ip(rec.get("IpAddress") or meta.get("ip"))
+        host = safe_str(rec.get("WorkstationName") or rec.get("Computer"))
+        mac = valid_mac(rec.get("MacAddress"))
 
         verb = {1: "Logon", 2: "Logoff", 3: "Auth ticket", 4: "Failed logon"}[activity_id]
         message = f"{verb} for user {user or '?'}"
@@ -83,22 +95,31 @@ class ActiveDirectoryParser(Parser):
             meta=meta,
         )
 
-        if ip or host:
+        if ip or host or mac:
             sep: dict = {}
             if ip:
                 sep["ip"] = ip
             if host:
                 sep["hostname"] = host
-            if rec.get("MacAddress"):
-                sep["mac"] = rec["MacAddress"]
+            if mac:
+                sep["mac"] = mac
             event["src_endpoint"] = sep
 
         if user:
             actor_user: dict = {"name": user}
             if domain:
                 actor_user["domain"] = domain
-            if rec.get("TargetUserSid"):
-                actor_user["uid"] = rec["TargetUserSid"]
+            user_sid = rec.get("TargetUserSid")
+            if user_sid:
+                # str(), not safe_str(): a SID is schema-typed as a plain
+                # string (no format pattern), same convention
+                # windows_eventlog.py already uses for this exact field --
+                # str() always produces a valid, schema-conformant value
+                # (never raises) even for a wrong-typed input, so a
+                # non-string TargetUserSid degrades to a stringified
+                # representation rather than silently dropping the whole
+                # actor/user block.
+                actor_user["uid"] = str(user_sid)
             event["actor"] = {"user": actor_user}
 
         return event

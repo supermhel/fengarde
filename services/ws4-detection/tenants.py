@@ -19,6 +19,8 @@ from pathlib import Path
 
 import yaml
 
+from shared.envelope import valid_tenant_id
+
 DEFAULT_TENANT = "default"
 
 _CACHE: dict[str, frozenset] = {}
@@ -39,8 +41,22 @@ def load_disabled_rules(tenants_dir: Path, tenant_id: str) -> frozenset:
     if cache_key in _CACHE:
         return _CACHE[cache_key]
 
-    path = Path(tenants_dir) / f"{tenant_id}.yml"
     disabled: frozenset
+    # F3 (adversarial repo-wide bug hunt, 2026-07-16): tenant_id used to
+    # flow straight into this filename with no validation -- a malformed
+    # value (e.g. "../../../etc/passwd" without the trailing ".yml" this
+    # still requires, or simply something containing "/") could construct
+    # a path outside contracts/tenants/ entirely. Treat an invalid
+    # tenant_id exactly like a missing config file: fail open (nothing
+    # disabled, full detection still runs) rather than ever attempting the
+    # file lookup -- same "a bad/missing config never silently reduces
+    # detection coverage" convention this function already documents,
+    # and it never even constructs the unsafe path.
+    if tenant_id != DEFAULT_TENANT and not valid_tenant_id(tenant_id):
+        _CACHE[cache_key] = disabled = frozenset()
+        return disabled
+
+    path = Path(tenants_dir) / f"{tenant_id}.yml"
     if not path.exists():
         disabled = frozenset()
     else:

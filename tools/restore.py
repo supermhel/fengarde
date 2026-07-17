@@ -42,13 +42,22 @@ def verify_and_restore(archive_path: Path, dest: Path, force: bool = False) -> l
     with tempfile.TemporaryDirectory() as staging_str:
         staging = Path(staging_str)
         with tarfile.open(archive_path, "r:gz") as tar:
-            # Path-traversal guard: a hostile/corrupt archive must not be
-            # able to write outside the staging directory via "../" entries.
-            for member in tar.getmembers():
-                target = (staging / member.name).resolve()
-                if not str(target).startswith(str(staging.resolve())):
-                    raise RestoreError(f"archive entry escapes staging directory: {member.name!r}")
-            tar.extractall(staging)  # noqa: S202 -- traversal already checked above
+            # filter="data" (PEP 706) rejects absolute paths, ".."
+            # traversal, AND symlink/hardlink members pointing outside the
+            # extraction root -- a name-only "does the resolved path start
+            # with staging" check (the previous guard here) does NOT catch
+            # a symlink member: the symlink's own name resolves harmlessly
+            # inside staging, but a LATER member written *through* it can
+            # still escape (the classic CVE-2007-4559 tar class), because
+            # nothing has actually been extracted yet when the name is
+            # checked. filter="data" also strips high-risk permission bits
+            # and rejects device/fifo members. Available since Python
+            # 3.11.4/3.10.12/3.9.17 and unconditional in 3.12+ (every
+            # Dockerfile in this repo runs 3.12 or 3.13).
+            try:
+                tar.extractall(staging, filter="data")
+            except tarfile.FilterError as exc:
+                raise RestoreError(f"archive entry rejected by extraction filter: {exc}") from exc
 
         manifest_path = staging / "manifest.json"
         if not manifest_path.exists():

@@ -51,6 +51,9 @@ $PY services/ws3-indexer/test_webhooks.py || fail=1
 echo
 echo "== v0.4 (R): incident-report hook (template backend, contract, HTTP fallback) =="
 $PY services/ws3-indexer/test_reporting.py || fail=1
+echo
+echo "== F3: router.py rejects (never normalizes) a malformed tenant_id in index names =="
+$PY services/ws3-indexer/test_router.py || fail=1
 
 # Extended zero-infra suite (runner, window counters, boolean evaluator, e2e).
 # Still no Docker/Redis/OpenSearch — all on the memory bus + in-memory store.
@@ -101,9 +104,15 @@ echo
 echo "== M4.5 rule-pack plugin discovery (entry points) + Detector merge/collision =="
 $PY services/ws4-detection/test_plugins.py || fail=1
 echo
+echo "== F3: tenants.py::load_disabled_rules fails open on a malformed/path-traversal tenant_id =="
+$PY services/ws4-detection/test_tenants.py || fail=1
+echo
 echo "== ws2 parsers: generic syslog + windows event log (v0.2) =="
 $PY services/ws2-normalization/parsers/test_generic_syslog.py || fail=1
 $PY services/ws2-normalization/parsers/test_windows_eventlog.py || fail=1
+echo
+echo "== ws2 parsers: active_directory (F6: wrong-typed ip/mac/uid fields must drop, not crash) =="
+$PY services/ws2-normalization/parsers/test_active_directory.py || fail=1
 echo
 echo "== ws2 registry routing (P0.4: non-shadowing content-sniff) =="
 $PY services/ws2-normalization/parsers/test_registry_routing.py || fail=1
