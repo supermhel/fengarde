@@ -433,7 +433,20 @@ class Rule:
             now = int(event.get("time", 0) or 0)
             window_ms = int(self.window_seconds) * 1000
             bucket = now // window_ms if window_ms else now
-            return f"{self.id}:{group}:{bucket}"
+            # F1 follow-up (adversarial review of 6e3fbe4): the window COUNTER
+            # key was namespaced by tenant in evaluate() above, but this id --
+            # the actual alert_id stored in OpenSearch/MemoryStore and returned
+            # to callers -- was not. Two tenants sharing a group_by value whose
+            # bursts land in the same window bucket produced the SAME alert_id;
+            # WS-3's find_alert()/find_report() search alerts-* indices by id
+            # and return the first match, so one tenant's alert could shadow
+            # (become unreachable behind) the other's under find_alert-by-id --
+            # the same cross-tenant pooling class F1 fixed for the counter,
+            # left open here. Tenant-scoped storage (F3's separate
+            # alerts-{tenant}-* indices) does NOT save us: the collision is on
+            # the id used to look a doc up, not on where it's physically stored.
+            tenant = (event.get("siem") or {}).get("tenant") or "default"
+            return f"{self.id}:{tenant}:{group}:{bucket}"
         # Non-stateful: prefer ingest_id (one alert per source event). When absent,
         # fall back to a content hash rather than a shared "noingest" constant --
         # otherwise every ingest_id-less event of this rule collapses onto ONE alert

@@ -213,9 +213,73 @@ def run_shared_group_key_isolation():
           f"acme alone reaching 10 events on the shared IP must fire exactly 1 alert, got {c4b['alerts']}")
 
 
+def run_shared_bucket_alert_id_collision():
+    """F1 follow-up (found by adversarial review of the F1 fix commit,
+    2026-07-17): the window COUNTER key was namespaced by tenant, but
+    Rule.alert_key() -- which computes the actual alert_id stored in
+    OpenSearch/MemoryStore -- was not. Two tenants sharing a group_by value
+    (the same source IP) whose bursts land in the SAME window-aligned time
+    bucket produced the IDENTICAL alert_id. WS-3's find_alert()/find_report()
+    search every alerts-* index by that id and return the FIRST match, so
+    one tenant's alert became unreachable by id behind the other's,
+    regardless of F3's tenant-scoped storage (the collision is on the
+    lookup key, not on which index the doc physically lands in). This
+    proves each tenant now gets a distinct alert_id, and that each tenant's
+    OWN alert_id resolves to THEIR OWN doc via find_alert().
+    """
+    bus = Bus()
+    base_s = int(time.time())
+    shared_ip = "198.51.100.77"
+
+    # Same base_s, same per-event offsets for both tenants -> both bursts
+    # land in the exact same window-aligned bucket, the collision scenario.
+    for ev in _brute_force_events("acme", shared_ip, base_s, count=10, tag="x"):
+        bus.produce("raw.events", key="acme", payload=ev)
+    for ev in _brute_force_events("globex", shared_ip, base_s, count=10, tag="y"):
+        bus.produce("raw.events", key="globex", payload=ev)
+
+    ws2 = _import("ws2-normalization")
+    c2 = ws2.run(bus)
+    check(c2["normalized"] == 20, f"expected 20 events normalized (10/tenant), got {c2['normalized']}")
+
+    ws4 = _import("ws4-detection")
+    det = ws4.Detector(tenants_dir=Path(tempfile.mkdtemp()))
+    c4 = ws4.run(bus, det)
+    check(c4["alerts"] == 2,
+          f"both tenants independently cross threshold on the shared IP in the same "
+          f"window bucket -- expected 2 alerts, got {c4['alerts']}")
+
+    ws3 = _import("ws3-indexer")
+    store = ws3.make_store()
+    ws3.run(bus, store)
+
+    acme_alert_indices = [i for i in store.indices() if i.startswith("alerts-acme-")]
+    globex_alert_indices = [i for i in store.indices() if i.startswith("alerts-globex-")]
+    check(len(acme_alert_indices) == 1, f"acme alert index missing/ambiguous: {acme_alert_indices}")
+    check(len(globex_alert_indices) == 1, f"globex alert index missing/ambiguous: {globex_alert_indices}")
+    if not (acme_alert_indices and globex_alert_indices):
+        return
+
+    acme_alert = store.all_docs(acme_alert_indices[0])[0]
+    globex_alert = store.all_docs(globex_alert_indices[0])[0]
+    check(acme_alert["alert_id"] != globex_alert["alert_id"],
+          f"two tenants firing on the same shared-IP/bucket must get DISTINCT alert_ids, "
+          f"both got {acme_alert['alert_id']!r}")
+
+    # The real-world failure mode: find_alert() by id must resolve EACH
+    # tenant's id to THEIR OWN doc, not be shadowed by the other tenant's.
+    found_acme = store.find_alert(acme_alert["alert_id"])
+    found_globex = store.find_alert(globex_alert["alert_id"])
+    check(found_acme is not None and found_acme[1].get("tenant_id") == "acme",
+          f"find_alert(acme's id) must resolve to acme's own doc, got {found_acme}")
+    check(found_globex is not None and found_globex[1].get("tenant_id") == "globex",
+          f"find_alert(globex's id) must resolve to globex's own doc, got {found_globex}")
+
+
 def main():
     run()
     run_shared_group_key_isolation()
+    run_shared_bucket_alert_id_collision()
     if FAILS:
         print(f"[FAIL] multi-tenant isolation: {len(FAILS)} problem(s)")
         for f in FAILS:
