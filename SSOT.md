@@ -10,7 +10,7 @@ Update this file whenever status changes; it's a living index, not an archive.
 
 ---
 
-## 1. Current state (as of 2026-07-17, commit `6c6f0b2` — M1-M5 of the combined plan executed, plus a post-M5 adversarial bug-hunt pass)
+## 1. Current state (as of 2026-07-17, commit `a4af448` — M1-M5 of the combined plan executed, plus a post-M5 adversarial bug-hunt pass and the M3 dashboard-login/CSRF remainder)
 
 | Fact | Value |
 |---|---|
