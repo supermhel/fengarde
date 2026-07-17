@@ -62,6 +62,28 @@ server {
         return 200 '{"hits":{"hits":[]},"_fengarde_proxy":"opensearch_unavailable"}';
     }
 
+    # M3: same-origin proxy for the RBAC session API (/auth/login, /auth/logout,
+    # /auth/me on ws3-indexer's triage_api.py). Forwards Cookie/Set-Cookie
+    # unmodified (nginx's default proxy behavior) so the HttpOnly session
+    # cookie round-trips exactly as the backend set it. Also forwards
+    # X-Api-Key (empty/no-op when unset) -- needed so GET /auth/me still
+    # reaches ws3-indexer's route dispatch (-> a clean 404, meaning "RBAC is
+    # off, no login system here") rather than being blocked earlier by the
+    # API-key check in the (unusual but valid) deployment combo of
+    # FENGARDE_API_KEY set with RBAC off; the front end tells "not logged in"
+    # (401) apart from "no login system at all" (404) by this exact status.
+    location /api/auth/ {
+        resolver 127.0.0.11 ipv6=off valid=30s;
+        set $ws3_auth "http://ws3-indexer:8013";
+        rewrite ^/api/auth/(.*)$ /auth/$1 break;
+        proxy_pass $ws3_auth;
+        proxy_set_header Host $host;
+        proxy_set_header Content-Type $content_type;
+        proxy_set_header X-Api-Key "${FENGARDE_API_KEY}";
+        proxy_connect_timeout 3s;
+        proxy_read_timeout 5s;
+    }
+
     # C1 (v0.3): same-origin proxy for the triage API (ws3-indexer's
     # triage_api.py, a separate port from the bus/health runner). Unlike the
     # /api/alerts proxy above, this forwards the client's real method/body

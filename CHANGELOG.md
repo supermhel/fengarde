@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (M3 remainder: dashboard session login + CSRF)
+
+Closes two items the M3 milestone had left genuinely open (verified by grep before
+starting, not assumed from the plan doc): the RBAC session API (`/auth/login`,
+`/auth/logout`, `/auth/me`, M4.2) was real and tested at the HTTP level, but nothing
+in `services/ws7-dashboard/` actually called it, and CSRF protection didn't exist.
+
+- **Dashboard login UI** (`services/ws7-dashboard/index.html`) — a login form gates
+  the app behind a real session when `FENGARDE_RBAC_DB` is set; a user badge
+  (username + role + Sign out) replaces it once authenticated. Wired to a new nginx
+  proxy path (`/api/auth/` → ws3-indexer's `/auth/*`, `services/ws7-dashboard/
+  templates/default.conf.template`). **RBAC off (the default, every existing
+  deployment) is byte-for-byte unaffected**: `GET /auth/me` 404s (no such route), the
+  login gate is skipped entirely, and the app renders exactly as before — same
+  "opt-in, zero behavior change" convention as every other auth layer in this
+  project. Found and fixed two real bugs while browser-testing this (Playwright/
+  Chromium, not just the static contract test): a CSS-specificity trap where
+  `#loginScreen`'s own ID-selector rule silently outranked the `hidden` attribute
+  (toggling `.hidden` in JS did nothing), and clearing an inline `style.display` with
+  `""` fell back to a stylesheet rule that was still `none` instead of becoming
+  visible — both fixed by always setting an explicit display value, documented
+  inline where a future edit could easily reintroduce either trap.
+- **CSRF protection** (`services/ws3-indexer/triage_api.py::_check_csrf`,
+  `services/shared/sessions.py`) — a second, independent layer on top of the session
+  cookie's existing `SameSite=Strict`: login now also mints a `csrf_token` (returned
+  in the login/`. /auth/me` response body, never a cookie), and every state-changing
+  (POST) request made with an active session must echo it back as `X-CSRF-Token` or
+  get a 403 — enforced centrally in `do_POST`, a true no-op when RBAC is off or the
+  request carries no session cookie at all (pure API-key callers are unaffected).
+  Verified end-to-end in a real browser: login → write → reload persists; a wrong
+  token 403s; logout invalidates the session and re-locks the app.
+
 ### Fixed (adversarial repo-wide bug hunt, post-M4/M5)
 
 A repo-wide (not PR-only) reviewer/bug-hunter pass over the M4/M5 surface, each finding

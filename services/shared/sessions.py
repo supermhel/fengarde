@@ -30,6 +30,7 @@ class Session:
     role: str
     tenant_id: str
     expires_at: float
+    csrf_token: str
 
 
 class SessionStore:
@@ -39,11 +40,20 @@ class SessionStore:
         self._lock = threading.Lock()
 
     def create(self, username: str, role: str, tenant_id: str) -> str:
+        """Returns the session token (unchanged signature/behavior for
+        existing callers). A second, independent random value --
+        `csrf_token`, readable via resolve(token).csrf_token -- is minted
+        alongside it; the HTTP layer hands that to the browser in a
+        response BODY (never the cookie itself) and requires it echoed
+        back on state-changing requests. See triage_api.py's `_check_csrf`
+        docstring for why this is a second, independent layer on top of
+        the cookie's own SameSite=Strict."""
         token = secrets.token_urlsafe(32)
+        csrf_token = secrets.token_urlsafe(32)
         with self._lock:
             self._sessions[token] = Session(
                 username=username, role=role, tenant_id=tenant_id,
-                expires_at=time.time() + self.ttl_s,
+                expires_at=time.time() + self.ttl_s, csrf_token=csrf_token,
             )
         return token
 

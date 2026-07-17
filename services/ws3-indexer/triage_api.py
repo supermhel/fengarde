@@ -8,9 +8,14 @@ Endpoints:
   POST /alerts/{alert_id}/triage        -> {status, note?} -> updates + returns it
   GET  /alerts/{alert_id}/report        -> existing report, if generated
   POST /alerts/{alert_id}/report        -> generate + store a draft report
-  POST /auth/login   {username,password} -> session cookie (RBAC mode only)
+  POST /auth/login   {username,password} -> session cookie + csrf_token (RBAC mode only)
   POST /auth/logout                      -> invalidate the session cookie
-  GET  /auth/me                          -> current session identity
+  GET  /auth/me                          -> current session identity + csrf_token
+
+Every state-changing (POST) request made with an active session must echo the
+session's csrf_token (from /auth/login or /auth/me) back as an `X-CSRF-Token`
+header, or it's rejected 403 -- see `_check_csrf`'s docstring. A no-op when
+RBAC is off or the request carries no session cookie at all.
 
 M4.3 versioned REST API -- every route above, plus the three below, is also
 reachable under an `/api/v1` prefix (e.g. `/api/v1/alerts/{id}/triage`);
@@ -56,6 +61,7 @@ tenant, for role=admin). A cross-tenant or under-privileged request gets 404
 """
 from __future__ import annotations
 
+import hmac
 import json
 import sys
 import threading
@@ -222,6 +228,33 @@ def make_handler(store, users_db=None, sessions: SessionStore | None = None,
             self._send(401, {"error": "unauthorized"})
             return False
 
+        def _check_csrf(self) -> bool:
+            """CSRF defense-in-depth for state-changing (POST) requests
+            riding on an active browser session. The session cookie already
+            carries SameSite=Strict (services/shared's own comment on that
+            cookie explains it blocks the cookie from ever being attached to
+            a genuine cross-site request in a modern browser) -- this is a
+            SECOND, independent layer: proving the caller can also read a
+            same-origin JSON response body (where csrf_token is handed out,
+            in _route_auth_login/_route_auth_me) and echo it back as a
+            custom header, something a blind cross-site form/img submission
+            cannot do even on a browser/proxy combination where SameSite is
+            somehow not honored.
+
+            A no-op when there is no active session (RBAC off, or the
+            request carries no/an invalid session cookie) -- those requests
+            get their own 401 further down the call chain; this check exists
+            only to protect a request that a valid SESSION would otherwise
+            let through."""
+            session = self._current_session()
+            if session is None:
+                return True
+            token = self.headers.get("X-CSRF-Token", "")
+            if not hmac.compare_digest(token, session.csrf_token):
+                self._send(403, {"error": "missing or invalid CSRF token"})
+                return False
+            return True
+
         def _normalized_path(self) -> str:
             """Request path with an optional leading `/api/v1` stripped --
             see _strip_api_v1's docstring for why both forms must resolve
@@ -256,8 +289,11 @@ def make_handler(store, users_db=None, sessions: SessionStore | None = None,
             session = self._current_session()
             if session is None:
                 return self._send(401, {"error": "not logged in"})
+            # csrf_token is included here too so a page reload (JS state
+            # lost, session cookie still valid) can recover it without a
+            # fresh login.
             return self._send(200, {"username": session.username, "role": session.role,
-                                     "tenant_id": session.tenant_id})
+                                     "tenant_id": session.tenant_id, "csrf_token": session.csrf_token})
 
         def _route_get(self, path: str):
             u = urlparse(self.path)
@@ -355,6 +391,8 @@ def make_handler(store, users_db=None, sessions: SessionStore | None = None,
                 path = self._normalized_path()
                 if rbac_enabled and path == "/auth/login":
                     return self._route_auth_login()
+                if rbac_enabled and not self._check_csrf():
+                    return
                 if rbac_enabled and path == "/auth/logout":
                     return self._route_auth_logout()
                 if not self._check_auth():
@@ -402,6 +440,7 @@ def make_handler(store, users_db=None, sessions: SessionStore | None = None,
             rate_limiter.record_success(username)
 
             token = sessions.create(row["username"], row["role"], row["tenant_id"])
+            csrf_token = sessions.resolve(token).csrf_token
             cookie = SimpleCookie()
             cookie[_SESSION_COOKIE] = token
             cookie[_SESSION_COOKIE]["httponly"] = True
@@ -415,8 +454,11 @@ def make_handler(store, users_db=None, sessions: SessionStore | None = None,
             # closer to this service is the real fix, tracked as an M4
             # ops-lifecycle follow-up, not silently worked around here.
             set_cookie = cookie[_SESSION_COOKIE].OutputString()
+            # csrf_token travels in the response BODY, not a cookie -- the
+            # browser JS reads it here (or from /auth/me on a page reload)
+            # and echoes it back as X-CSRF-Token on writes. See _check_csrf.
             return self._send(200, {"username": row["username"], "role": row["role"],
-                                     "tenant_id": row["tenant_id"]},
+                                     "tenant_id": row["tenant_id"], "csrf_token": csrf_token},
                                extra_headers={"Set-Cookie": set_cookie})
 
         def _route_auth_logout(self):

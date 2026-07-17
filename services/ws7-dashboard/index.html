@@ -36,6 +36,17 @@
   .kv .k{color:var(--muted)} .bar{height:18px;background:var(--bg);border:1px solid var(--border);border-radius:4px;overflow:hidden}
   .bar>span{display:block;height:100%;background:var(--accent)} .src{display:flex;align-items:center;gap:10px;margin:8px 0}
   .src .lbl{width:90px;color:var(--muted)} .muted{color:var(--muted)} a{color:var(--accent);cursor:pointer}
+  /* M3: session login */
+  #loginScreen{display:flex;align-items:center;justify-content:center;min-height:80vh}
+  #loginBox{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:28px;width:280px}
+  #loginBox h2{margin:0 0 16px;font-size:15px}
+  #loginBox label{display:block;font-size:12px;color:var(--muted);margin:12px 0 4px}
+  #loginBox input{width:100%}
+  #loginBox button{width:100%;margin-top:18px;background:var(--accent);color:#fff;border:none;padding:9px;border-radius:6px;cursor:pointer;font-size:13px}
+  #loginError{color:var(--crit);font-size:12px;margin-top:10px;min-height:14px}
+  #userBadge{color:var(--muted);font-size:12px;display:flex;align-items:center;gap:8px}
+  #logoutBtn{background:transparent;border:1px solid var(--border);color:var(--muted);border-radius:6px;padding:4px 10px;cursor:pointer;font-size:12px}
+  #appRoot{display:none}
 </style>
 </head>
 <body>
@@ -47,7 +58,31 @@
     <button data-view="inventory">Inventory</button>
     <button data-view="sources">Sources</button>
   </nav>
+  <!-- M3: only populated/shown once a real RBAC session is confirmed (checkSession());
+       stays empty and invisible when RBAC is off, matching every other opt-in auth
+       layer's "unset = zero behavior change" convention in this project. -->
+  <span id="userBadge" style="display:none;margin-left:12px"></span>
 </header>
+
+<!-- M3: session-login gate. RBAC is opt-in (services/shared/users.py::FENGARDE_RBAC_DB) --
+     when the backend has no RBAC DB configured, GET /auth/me 404s (route doesn't exist)
+     and checkSession() below reveals #appRoot immediately, exactly the pre-M3 behavior.
+     Only a real 401 (RBAC on, no/expired session) ever shows this form. -->
+<div id="loginScreen" hidden>
+  <div id="loginBox">
+    <h2>Sign in</h2>
+    <form id="loginForm">
+      <label for="loginUser">Username</label>
+      <input id="loginUser" name="username" autocomplete="username" required />
+      <label for="loginPass">Password</label>
+      <input id="loginPass" name="password" type="password" autocomplete="current-password" required />
+      <button type="submit">Sign in</button>
+      <div id="loginError"></div>
+    </form>
+  </div>
+</div>
+
+<div id="appRoot">
 <main>
   <!-- LEVEL 1 -->
   <section id="global" class="view active">
@@ -81,6 +116,7 @@
     <div id="srcBars"></div>
   </section>
 </main>
+</div><!-- /#appRoot -->
 
 <script src="mocks/mock_data.js"></script>
 <script>
@@ -91,6 +127,113 @@ const INVENTORY_API = window.INVENTORY_API || null; // e.g. "http://localhost:80
 // window.ALERTS_API = null to force mock-only.
 const ALERTS_API = (window.ALERTS_API !== undefined) ? window.ALERTS_API : "/api/alerts";
 let LIVE = false; // true once live alerts are successfully loaded
+
+// ---- M3: RBAC session login (opt-in backend feature, see services/shared/rbac.py) ----
+// Same-origin proxy to ws3-indexer's /auth/* routes (services/ws7-dashboard/templates/
+// default.conf.template). Override with window.AUTH_API = null to force the pre-M3
+// ungated behavior (useful for the mock-only dev harness).
+const AUTH_API = (window.AUTH_API !== undefined) ? window.AUTH_API : "/api/auth";
+let SESSION = null;      // {username, role, tenant_id} once logged in, else null
+let CSRF_TOKEN = null;   // echoed back as X-CSRF-Token on every write once logged in
+
+// True if the caller should proceed to render the app (RBAC off, or a real
+// session already exists); false if the login form is now showing instead.
+async function checkSession(){
+  if(!AUTH_API){ revealApp(); return true; }
+  try{
+    const r = await fetch(`${AUTH_API}/me`, {credentials:"same-origin"});
+    if(r.status === 404){
+      // No RBAC backend at all (FENGARDE_RBAC_DB unset) -- the pre-M3 default,
+      // zero behavior change, same convention as every other opt-in auth layer.
+      revealApp();
+      return true;
+    }
+    if(r.ok){
+      const body = await r.json();
+      SESSION = {username: body.username, role: body.role, tenant_id: body.tenant_id};
+      CSRF_TOKEN = body.csrf_token || null;
+      showLoggedIn();
+      return true;
+    }
+  }catch(e){
+    // Proxy/backend unreachable: fail toward showing the app rather than
+    // locking a legitimate RBAC-off deployment out over a transient network
+    // blip -- same "never crash, degrade visibly" discipline as getAlerts().
+    revealApp();
+    return true;
+  }
+  showLoginForm();
+  return false;
+}
+
+// .style.display, never the `hidden` attribute and never "" to "unset": both
+// #loginScreen and #appRoot have their own CSS rules (ID selectors), which
+// outrank the UA stylesheet's `[hidden]{display:none}` in specificity, and
+// clearing an inline style with "" falls back to THOSE rules, not to
+// visible -- so both traps silently no-op. Always set an explicit value.
+function revealApp(){
+  document.getElementById("loginScreen").style.display = "none";
+  document.getElementById("appRoot").style.display = "block";
+}
+
+function showLoginForm(){
+  document.getElementById("loginScreen").style.display = "flex";
+  document.getElementById("appRoot").style.display = "none";
+  document.getElementById("loginUser").focus();
+}
+
+function showLoggedIn(){
+  revealApp();
+  const badge = document.getElementById("userBadge");
+  if(SESSION){
+    badge.style.display = "";
+    badge.innerHTML = `${esc(SESSION.username)} <span class="pill low">${esc(SESSION.role)}</span> `
+      + `<button id="logoutBtn">Sign out</button>`;
+    document.getElementById("logoutBtn").onclick = doLogout;
+  }
+}
+
+async function doLogin(username, password){
+  const errEl = document.getElementById("loginError");
+  errEl.textContent = "";
+  try{
+    const r = await fetch(`${AUTH_API}/login`, {
+      method: "POST", credentials: "same-origin",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({username, password})
+    });
+    const body = await r.json();
+    if(!r.ok){
+      errEl.textContent = body.error || "sign-in failed";
+      return;
+    }
+    SESSION = {username: body.username, role: body.role, tenant_id: body.tenant_id};
+    CSRF_TOKEN = body.csrf_token || null;
+    showLoggedIn();
+    boot();
+  }catch(e){
+    errEl.textContent = "sign-in service unreachable";
+  }
+}
+
+async function doLogout(){
+  try{
+    await fetch(`${AUTH_API}/logout`, {
+      method: "POST", credentials: "same-origin",
+      headers: CSRF_TOKEN ? {"X-CSRF-Token": CSRF_TOKEN} : {}
+    });
+  }catch(e){ /* fall through -- clear local state regardless */ }
+  SESSION = null; CSRF_TOKEN = null;
+  showLoginForm();
+}
+
+document.addEventListener("DOMContentLoaded", () => {
+  const form = document.getElementById("loginForm");
+  if(form) form.addEventListener("submit", (e) => {
+    e.preventDefault();
+    doLogin(document.getElementById("loginUser").value, document.getElementById("loginPass").value);
+  });
+});
 
 async function getAssets(){
   if(INVENTORY_API){ try{ return await (await fetch(INVENTORY_API+"/assets?limit=200")).json(); }catch(e){} }
@@ -161,11 +304,20 @@ async function fetchTriage(alertId){
   return {status:"new", note:""};
 }
 
+// M3: a real RBAC session (see checkSession()) must echo its csrf_token back
+// on every write or the backend rejects it 403 (services/ws3-indexer/
+// triage_api.py::_check_csrf) -- a no-op {} when RBAC is off / not logged in,
+// same "unset = zero behavior change" convention as every auth layer here.
+function csrfHeaders(){
+  return CSRF_TOKEN ? {"X-CSRF-Token": CSRF_TOKEN} : {};
+}
+
 async function updateTriage(alertId, status, note){
   if(!TRIAGE_API) return null;
   try{
     const r = await fetch(`${TRIAGE_API}/alerts/${encodeURIComponent(alertId)}/triage`, {
-      method:"POST", headers:{"Content-Type":"application/json"},
+      method:"POST", credentials:"same-origin",
+      headers:{"Content-Type":"application/json", ...csrfHeaders()},
       body: JSON.stringify({status, note})
     });
     if(r.ok) return await r.json();
@@ -241,7 +393,7 @@ async function renderGlobal(){
     panel.hidden = false;
     try{
       const r = await fetch(`${TRIAGE_API}/alerts/${encodeURIComponent(alertId)}/report${query||""}`,
-        {method:"POST"});
+        {method:"POST", credentials:"same-origin", headers: csrfHeaders()});
       if(r.ok){
         const report = await r.json();
         // body is markdown, rendered as PLAIN TEXT (never innerHTML) --
@@ -317,7 +469,18 @@ function renderSources(){
     <div style="width:60px;text-align:right">${v.toLocaleString()}</div></div>`).join("");
 }
 
-renderGlobal().catch(err=>console.error("renderGlobal failed:",err)); renderInventory(); renderSources();
+// M3: gate the app's first render behind the session check -- RBAC off (or
+// already logged in) resolves true immediately and this is byte-for-byte the
+// pre-M3 bootstrap; RBAC on with no session shows the login form instead and
+// boot() is deferred until doLogin() succeeds.
+async function boot(){
+  const ok = await checkSession();
+  if(!ok) return;
+  renderGlobal().catch(err=>console.error("renderGlobal failed:",err));
+  renderInventory();
+  renderSources();
+}
+boot();
 </script>
 </body>
 </html>

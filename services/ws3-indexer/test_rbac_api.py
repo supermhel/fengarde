@@ -36,11 +36,13 @@ def _serve(store, users_db):
     return srv, srv.server_address[1]
 
 
-def _request(port, method, path, body=None, cookie=None):
+def _request(port, method, path, body=None, cookie=None, csrf=None):
     data = json.dumps(body).encode() if body is not None else None
     headers = {"Content-Type": "application/json"}
     if cookie:
         headers["Cookie"] = cookie
+    if csrf is not None:
+        headers["X-CSRF-Token"] = csrf
     req = urllib.request.Request(f"http://127.0.0.1:{port}{path}", data=data,
                                   method=method, headers=headers)
     try:
@@ -81,6 +83,7 @@ def test_login_success_and_failure():
         check(body.get("role") == "analyst", "login response must carry the role")
         check(body.get("tenant_id") == "acme", "login response must carry the tenant")
         check(set_cookie is not None, "login must set a session cookie")
+        check(bool(body.get("csrf_token")), "login response must carry a csrf_token")
 
         code2, body2, _ = _request(port, "POST", "/auth/login",
                                     {"username": "acme_analyst", "password": "wrong"})
@@ -106,6 +109,7 @@ def test_me_requires_session():
         code2, body2, _ = _request(port, "GET", "/auth/me", cookie=cookie)
         check(code2 == 200, "with a valid session, /auth/me must succeed")
         check(body2.get("username") == "acme_analyst", "/auth/me must reflect the logged-in user")
+        check(bool(body2.get("csrf_token")), "/auth/me must also carry a csrf_token (page-reload recovery)")
     finally:
         srv.shutdown(); srv.server_close()
 
@@ -114,12 +118,13 @@ def test_logout_invalidates_session():
     store, users = _make_store_and_users()
     srv, port = _serve(store, users)
     try:
-        _, _, set_cookie = _request(port, "POST", "/auth/login",
-                                     {"username": "acme_analyst", "password": "pw-acme-1"})
+        _, login_body, set_cookie = _request(port, "POST", "/auth/login",
+                                              {"username": "acme_analyst", "password": "pw-acme-1"})
         cookie = _cookie_value(set_cookie)
+        csrf = login_body["csrf_token"]
         check(_request(port, "GET", "/auth/me", cookie=cookie)[0] == 200, "session must work before logout")
 
-        _request(port, "POST", "/auth/logout", cookie=cookie)
+        _request(port, "POST", "/auth/logout", cookie=cookie, csrf=csrf)
         code, _, _ = _request(port, "GET", "/auth/me", cookie=cookie)
         check(code == 401, f"session must be dead after logout, got {code}")
     finally:
@@ -130,15 +135,16 @@ def test_role_enforcement_read_only_cannot_write():
     store, users = _make_store_and_users()
     srv, port = _serve(store, users)
     try:
-        _, _, set_cookie = _request(port, "POST", "/auth/login",
-                                     {"username": "acme_readonly", "password": "pw-acme-2"})
+        _, login_body, set_cookie = _request(port, "POST", "/auth/login",
+                                              {"username": "acme_readonly", "password": "pw-acme-2"})
         cookie = _cookie_value(set_cookie)
+        csrf = login_body["csrf_token"]
 
         code_get, _, _ = _request(port, "GET", "/alerts/a1/triage", cookie=cookie)
         check(code_get == 200, f"read_only must be able to GET their own tenant's alert, got {code_get}")
 
         code_post, body_post, _ = _request(port, "POST", "/alerts/a1/triage",
-                                            {"status": "triaged"}, cookie=cookie)
+                                            {"status": "triaged"}, cookie=cookie, csrf=csrf)
         check(code_post == 404,
               f"read_only must NOT be able to POST (write) a triage update, got {code_post}")
     finally:
@@ -149,11 +155,13 @@ def test_analyst_can_write_own_tenant():
     store, users = _make_store_and_users()
     srv, port = _serve(store, users)
     try:
-        _, _, set_cookie = _request(port, "POST", "/auth/login",
-                                     {"username": "acme_analyst", "password": "pw-acme-1"})
+        _, login_body, set_cookie = _request(port, "POST", "/auth/login",
+                                              {"username": "acme_analyst", "password": "pw-acme-1"})
         cookie = _cookie_value(set_cookie)
+        csrf = login_body["csrf_token"]
         code, body, _ = _request(port, "POST", "/alerts/a1/triage",
-                                  {"status": "triaged", "note": "looked into it"}, cookie=cookie)
+                                  {"status": "triaged", "note": "looked into it"},
+                                  cookie=cookie, csrf=csrf)
         check(code == 200, f"analyst must be able to write their own tenant's alert, got {code}")
         check(body.get("status") == "triaged", "write must actually persist the new status")
     finally:
@@ -164,9 +172,10 @@ def test_tenant_isolation_cross_tenant_404():
     store, users = _make_store_and_users()
     srv, port = _serve(store, users)
     try:
-        _, _, set_cookie = _request(port, "POST", "/auth/login",
-                                     {"username": "acme_analyst", "password": "pw-acme-1"})
+        _, login_body, set_cookie = _request(port, "POST", "/auth/login",
+                                              {"username": "acme_analyst", "password": "pw-acme-1"})
         cookie = _cookie_value(set_cookie)
+        csrf = login_body["csrf_token"]
 
         # acme_analyst tries to read/write GLOBEX's alert (g1) -- must be 404,
         # not 403 (never confirm the alert exists to an out-of-tenant caller).
@@ -174,8 +183,56 @@ def test_tenant_isolation_cross_tenant_404():
         check(code_get == 404, f"cross-tenant GET must be 404, got {code_get}")
 
         code_post, _, _ = _request(port, "POST", "/alerts/g1/triage",
-                                    {"status": "triaged"}, cookie=cookie)
+                                    {"status": "triaged"}, cookie=cookie, csrf=csrf)
         check(code_post == 404, f"cross-tenant POST must be 404, got {code_post}")
+    finally:
+        srv.shutdown(); srv.server_close()
+
+
+def test_csrf_required_for_writes_when_session_active():
+    """New: a POST riding on a real session cookie but with NO X-CSRF-Token
+    header must be rejected (403) -- BEFORE role/tenant enforcement even
+    runs, so this can't be confused with the 404s above. A wrong/stale
+    token must fail the same way; the correct token (already exercised by
+    every write test above) must succeed."""
+    store, users = _make_store_and_users()
+    srv, port = _serve(store, users)
+    try:
+        _, login_body, set_cookie = _request(port, "POST", "/auth/login",
+                                              {"username": "acme_analyst", "password": "pw-acme-1"})
+        cookie = _cookie_value(set_cookie)
+        real_csrf = login_body["csrf_token"]
+
+        code_missing, _, _ = _request(port, "POST", "/alerts/a1/triage",
+                                       {"status": "triaged"}, cookie=cookie)  # no csrf at all
+        check(code_missing == 403, f"write with no CSRF token must be 403, got {code_missing}")
+
+        code_wrong, _, _ = _request(port, "POST", "/alerts/a1/triage",
+                                     {"status": "triaged"}, cookie=cookie, csrf="not-the-real-token")
+        check(code_wrong == 403, f"write with a wrong CSRF token must be 403, got {code_wrong}")
+
+        code_report_missing, _, _ = _request(port, "POST", "/alerts/a1/report", cookie=cookie)
+        check(code_report_missing == 403,
+              f"report generation with no CSRF token must also be 403, got {code_report_missing}")
+
+        code_ok, _, _ = _request(port, "POST", "/alerts/a1/triage",
+                                  {"status": "triaged"}, cookie=cookie, csrf=real_csrf)
+        check(code_ok == 200, f"write with the correct CSRF token must succeed, got {code_ok}")
+    finally:
+        srv.shutdown(); srv.server_close()
+
+
+def test_csrf_not_required_when_rbac_off_or_no_session():
+    """CSRF enforcement must be a true no-op outside an active session --
+    RBAC off (pure API-key mode, no cookie in play at all) is already
+    covered by test_rbac_off_by_default_no_auth_routes' 404 on /auth/login,
+    but this proves a POST with RBAC on and NO session cookie at all still
+    gets its normal 401 (not a 403 that would mask the real reason)."""
+    store, users = _make_store_and_users()
+    srv, port = _serve(store, users)
+    try:
+        code, _, _ = _request(port, "POST", "/alerts/a1/triage", {"status": "triaged"})  # no cookie
+        check(code == 401, f"a write with RBAC on but no session at all must be 401, got {code}")
     finally:
         srv.shutdown(); srv.server_close()
 
@@ -221,6 +278,8 @@ def main():
     test_tenant_isolation_cross_tenant_404()
     test_admin_can_access_any_tenant()
     test_rbac_off_by_default_no_auth_routes()
+    test_csrf_required_for_writes_when_session_active()
+    test_csrf_not_required_when_rbac_off_or_no_session()
 
     if FAILS:
         print(f"[FAIL] rbac api: {len(FAILS)} problem(s)")
@@ -229,7 +288,8 @@ def main():
         sys.exit(1)
     print("[OK] M4.2 RBAC HTTP API: login/logout/me, role enforcement "
           "(read_only blocked from writes), tenant isolation (cross-tenant 404, "
-          "admin bypasses), RBAC-off default preserved -- all real HTTP requests")
+          "admin bypasses), RBAC-off default preserved, CSRF token required for "
+          "every session-authenticated write -- all real HTTP requests")
 
 
 if __name__ == "__main__":
