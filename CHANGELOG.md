@@ -7,6 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed (adversarial repo-wide bug hunt, post-M4/M5)
+
+A repo-wide (not PR-only) reviewer/bug-hunter pass over the M4/M5 surface, each finding
+adversarially verified against the real code path, each fix shipping a regression test
+independently confirmed (via a revert/run/restore cycle on the fix's own diff) to fail
+without the fix and pass with it restored. Full findings + severity ranking + discarded
+false positives are in the review that produced this list; six real bugs were fixed:
+
+- **F1 (HIGH)** — WS-4's stateful window rule counter (`engine.py`) keyed sliding-window
+  state only on `f"{rule_id}:{group}"`, with no tenant component. Two tenants sharing a
+  `group_by` value (e.g. overlapping RFC1918 IPs — the normal case for an MSP) had their
+  event counts pooled in one shared window, letting one tenant's traffic trip another
+  tenant's threshold and misattribute the resulting alert — a direct breach of the M4.1
+  tenant-isolation guarantee. Fixed by namespacing the counter key on `siem.tenant`.
+- **F6 (MEDIUM/HIGH)** — `active_directory.py` assigned raw, un-typechecked fields
+  (`IpAddress`/`MacAddress`/`TargetUserSid`) straight into OCSF schema-constrained fields,
+  unlike every sibling parser, which already goes through `shared/ocsf.py`'s
+  `valid_ip`/`valid_mac`/`safe_str` guards. A malformed upstream field silently
+  dead-lettered the whole event instead of just dropping the bad field, which can blind
+  `common_bruteforce`/`common_password_spray`/`common_lateral_movement` on real AD
+  authentication events.
+- **F2 (MEDIUM)** — `GET /alerts/{id}/report` only applied the tenant gate when the
+  backing alert doc was still present. Once the alert aged out (reports have independent
+  retention), the gate was skipped and any authenticated caller could read another
+  tenant's incident report. Now fails closed (404) for non-admins when the alert doc is
+  absent.
+- **F5 (LOW/MEDIUM)** — `LoginRateLimiter` (`rbac.py`) grew its per-username dict without
+  bound and had no lock despite being mutated from multiple `ThreadingHTTPServer` handler
+  threads — a memory-DoS risk on `/auth/login` plus dropped failure records under
+  concurrency. Added a lock around all three methods plus a periodic sweep, mirroring the
+  pattern `window.py` already uses for its own counters.
+- **F4 (MEDIUM)** — `tools/restore.py` extracted the archive before verifying checksums,
+  and its traversal guard only checked each member's *name* — not enough to stop a
+  symlink member written "through" by a later member (the CVE-2007-4559 class). Switched
+  to `tarfile.extractall(filter="data")` (PEP 706), which rejects symlinks, absolute
+  paths, and `..` traversal before anything is written.
+- **F3 (MEDIUM)** — `tenant_id` flowed unvalidated into an OpenSearch index name
+  (`router.py`) and a `contracts/tenants/<id>.yml` path (`tenants.py`). An uppercase or
+  space-containing tenant_id produced an OpenSearch-invalid index name that silently
+  dead-lettered every event for that tenant; a path-traversal-shaped tenant_id could
+  construct a config path outside `contracts/tenants/`. Added
+  `shared/envelope.py::valid_tenant_id()` (DNS-label-style allowlist): `router.py` now
+  rejects (never normalizes — normalizing "Acme"/"ACME" to the same slug would silently
+  merge two tenants' data) an invalid tenant with a `ValueError` on both the alert and
+  event branches; `tenants.py` fails open (no rules disabled, same as a missing config
+  file) rather than ever constructing the unsafe path.
+
+New/extended tests: `services/ws3-indexer/test_router.py`, `services/ws4-detection/test_tenants.py`,
+`services/ws2-normalization/parsers/test_active_directory.py` (new files), plus extensions to
+`tools/test_multi_tenant_isolation.py`, `services/ws3-indexer/test_reporting.py`,
+`services/shared/test_rbac.py`, `tools/test_backup_restore.py`.
+
 ### Added (v0.5 M1 — correctness gates)
 
 - **Envelope v1**: `schema_version`, `trace_id`, `tenant_id` (formalizes `siem.tenant`, declared since Phase 0 but never wired), documented `event_time`/`ingest_time`/dedup-key semantics. Additive bus-schema change to `contracts/bus-topics.md` + `contracts/ocsf-event.schema.json`, owner-authorized. `services/shared/envelope.py`; wired through all 10 parsers via `base_event(meta=...)` and all 4 live WS-1 collectors.
