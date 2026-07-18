@@ -35,20 +35,21 @@ explicitly `docker compose start` each target after killing it, and by joining
 the killer thread before verify() runs (it used to race replay() finishing
 early and skip the last two kills).
 
-Both of those were real bugs and both are fixed. THIS GATE IS STILL RED,
-THOUGH: a second run, with all 5 targets now genuinely killed AND restarted,
-still lost 34/40 alerts -- an unchanged count from the first run, meaning
-"workers not coming back" was NOT the (or not the only) root cause of the
-loss. `normalized.events`/`scored.events` depths after the run show most
-events DID reach the scoring stage, so the loss point looks like it's between
-scoring and the alert landing queryable in `alerts-*`, or in how the sliding
-brute-force window accumulates across a mid-window container restart -- not
-yet root-caused. The second run also surfaced a NEW inconsistency: one
-scenario produced two alert_ids for the same event that differ only in
-whether the tenant segment is present (`...:default:<ip>:<bucket>` vs
-`...:<ip>:<bucket>`), suggesting alert_id computation isn't using the same
-tenant-resolution path on every code path. Do not mark M1's chaos gate "done"
--- this needs real investigation, not a rubber-stamp rerun.
+Both of those were real bugs and both are fixed. The remaining 34/40 "loss"
+on the second run was then root-caused to a THIRD harness bug, not a pipeline
+bug: the original scenario layout put scenario i's events at `BASE_S + i*60`
+-- up to 39 minutes in the FUTURE -- and the engine's window-poisoning guard
+(`engine.py::_MAX_CLOCK_SKEW_MS`, merged from main's P0 hardening pass) fails
+closed on any event more than 5 minutes ahead of wall clock. Exactly
+scenarios 0-4 alerted and 5-39 were dropped, deterministically, on both runs,
+kills irrelevant -- a semantic merge incompatibility git could never flag
+(harness authored on the PR branch and never run there; guard authored on
+main). Fixed by placing scenarios in past, minute-aligned buckets (see
+build_scenarios). The "alert_id tenant inconsistency" seen alongside it was
+also explained: one alert predated the F1 tenant-namespacing fix (old
+container image, volume not wiped between runs) and devkit-feeder's own
+198.51.100.23 burst collided with scenario 22's IP -- the harness now uses
+TEST-NET-3 and a `make down -v`-fresh stack is required for a clean verdict.
 
 Run:  make chaos
 """
@@ -98,17 +99,29 @@ class Scenario:
 
 
 def attacker_ip(i: int) -> str:
-    # 198.51.100.0/24 (TEST-NET-2, RFC 5737) -- same documentation range the
-    # existing devkit-feeder uses for its single scenario.
-    return f"198.51.100.{(i % 250) + 1}"
+    # 203.0.113.0/24 (TEST-NET-3, RFC 5737). Deliberately NOT TEST-NET-2:
+    # devkit-feeder injects its own brute-force burst from 198.51.100.23 on
+    # every `make up`, so a chaos scenario reusing that IP inherits the
+    # feeder's alert and reads as a false "duplicate" (this actually happened
+    # -- scenario 22's IP collided with the feeder's on the first live runs).
+    return f"203.0.113.{(i % 250) + 1}"
 
 
-def ssh_fail_event(ip: str, seq: int, minute_base: int) -> dict:
-    """Mirrors services/devkit-feeder/feed.py::ssh_fail() exactly."""
+def ssh_fail_event(ip: str, seq: int, minute_base: int, user: str) -> dict:
+    """Mirrors services/devkit-feeder/feed.py::ssh_fail() wire shape.
+
+    ``user`` is per-scenario, NOT the feeder's fixed "admin": with one shared
+    username, 40 scenarios x 12 events reads as a textbook password spray (one
+    user, 40 source IPs) and the spray rule legitimately fires alongside each
+    scenario's brute-force alert -- which verify(), querying by src IP alone,
+    then miscounts as a "duplicate". (Observed live: 7 spray alerts, one per
+    5-minute event-time bucket, all grouped on "admin".) Distinct users keep
+    each scenario's expected outcome exactly one brute-force alert.
+    """
     return {
         "source_type": "linux_ssh",
         "raw": (f"Jun 10 13:55:{seq:02d} db01 sshd[2154]: "
-                f"Failed password for invalid user admin from {ip} port 51000 ssh2"),
+                f"Failed password for invalid user {user} from {ip} port 51000 ssh2"),
         "meta": {"received_at": minute_base + seq, "ingest_id": f"ssh-{ip}-{seq}"},
     }
 
@@ -117,8 +130,26 @@ def build_scenarios() -> list[Scenario]:
     scenarios = []
     for i in range(SCENARIOS):
         ip = attacker_ip(i)
-        minute_base = BASE_S + i * 60  # each scenario in its own 60s window, no cross-scenario pooling
-        events = [ssh_fail_event(ip, s, minute_base) for s in range(EVENTS_PER_SCENARIO)]
+        # Each scenario gets its own 60s window (no cross-scenario pooling) by
+        # living in its own minute -- in the PAST, aligned to a minute boundary.
+        #
+        # Two hard-won constraints (root-caused from the first live runs):
+        #  - PAST, not future: the engine's window-poisoning guard
+        #    (engine.py::_MAX_CLOCK_SKEW_MS) fails closed on any event more
+        #    than 5 minutes ahead of wall clock -- it exists precisely so an
+        #    attacker-controlled timestamp can't corrupt a window. The original
+        #    `BASE_S + i * 60` put scenario i >= 5 entirely in the guarded
+        #    future, so exactly scenarios 0-4 alerted and the rest were
+        #    silently dropped (the deterministic 34/40 "loss" on both first
+        #    runs -- not a redelivery bug at all). Past times are the engine's
+        #    documented replay path and always legal.
+        #  - Minute-ALIGNED: seq 0..EVENTS_PER_SCENARIO-1 seconds must not
+        #    straddle a minute boundary, or one scenario's threshold crossing
+        #    can emit two alert_ids in adjacent buckets and read as a false
+        #    duplicate.
+        minute_base = (BASE_S // 60 - i) * 60
+        user = f"chaos{i:02d}"  # per-scenario user: see ssh_fail_event docstring
+        events = [ssh_fail_event(ip, s, minute_base, user) for s in range(EVENTS_PER_SCENARIO)]
         scenarios.append(Scenario(attacker_ip=ip, events=events))
     return scenarios
 
