@@ -29,9 +29,23 @@ def _disabled_for_tenant(tenant_id: str) -> frozenset:
     # ws4-detection/tenants.py, from the F3 adversarial-bug-hunt fix): an
     # unvalidated tenant_id here is a path-traversal primitive into
     # TENANTS_DIR (CodeQL py/path-injection, alerts #2/#3).
+    #
+    # valid_tenant_id() is a regex check -- CodeQL's dataflow analysis does
+    # not model regex semantics, so it doesn't recognize a regex match as
+    # proof the value can't escape TENANTS_DIR and keeps flagging the taint.
+    # The containment check below is the sanitizer pattern CodeQL's
+    # py/path-injection query does recognize: resolve the path and verify
+    # it's still inside TENANTS_DIR before ever touching the filesystem.
+    # Belt-and-suspenders with valid_tenant_id() (kept for the same
+    # fail-closed-on-anything-unexpected discipline as router.py/tenants.py),
+    # not a replacement for it.
     if not valid_tenant_id(tenant_id):
         return frozenset()
-    path = TENANTS_DIR / f"{tenant_id}.yml"
+    path = (TENANTS_DIR / f"{tenant_id}.yml").resolve()
+    try:
+        path.relative_to(TENANTS_DIR.resolve())
+    except ValueError:
+        return frozenset()
     if not path.exists():
         return frozenset()
     try:
