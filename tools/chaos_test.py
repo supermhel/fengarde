@@ -16,7 +16,7 @@ What it does:
      independently-verifiable "did exactly one alert fire" unit.
   2. Writes them to `raw.events` (same wire shape as devkit-feeder / demo_e2e.py)
      spread over the whole run, while on a separate thread `docker kill -s KILL`-ing
-     each ws1-ws5 container in turn (compose restart policy brings it back).
+     each ws1-ws5 container in turn, then `docker compose start`-ing it back up.
   3. Waits for the pipeline to drain, then queries OpenSearch:
        - every scenario's deterministic alert_id must appear exactly once
          (zero lost alerts -- a killed worker's in-flight events must be
@@ -24,12 +24,31 @@ What it does:
        - no alert_id appears more than once (zero duplicate alerts -- the kill
          must not cause a partial write to double-fire)
 
-Honesty note: this script is written against the compose service/container names
-in infra/docker-compose.yml and the raw-event wire shape in
-services/devkit-feeder/feed.py, but has NOT been run end-to-end in the environment
-that authored it (no Docker daemon available there -- see the commit message).
-Treat it as reviewed-but-unverified until a `make chaos` run's output is pasted
-into a PR. Per SSOT.md sec2, do not mark M1's chaos gate "done" until that happens.
+Honesty note (updated after two live runs, 2026-07-18): the original version of
+this script assumed `restart: unless-stopped` in infra/docker-compose.yml would
+bring a killed service back on its own. That assumption was FALSE for `docker
+compose kill` specifically (Docker Compose v5.1.4 verified) -- unlike a raw
+`docker kill <container_id>`, killing a service *through compose* marks it as
+compose-stopped, which suppresses the restart policy; the container stayed
+Exited(137) with RestartCount 0 indefinitely. Fixed by having the killer
+explicitly `docker compose start` each target after killing it, and by joining
+the killer thread before verify() runs (it used to race replay() finishing
+early and skip the last two kills).
+
+Both of those were real bugs and both are fixed. THIS GATE IS STILL RED,
+THOUGH: a second run, with all 5 targets now genuinely killed AND restarted,
+still lost 34/40 alerts -- an unchanged count from the first run, meaning
+"workers not coming back" was NOT the (or not the only) root cause of the
+loss. `normalized.events`/`scored.events` depths after the run show most
+events DID reach the scoring stage, so the loss point looks like it's between
+scoring and the alert landing queryable in `alerts-*`, or in how the sliding
+brute-force window accumulates across a mid-window container restart -- not
+yet root-caused. The second run also surfaced a NEW inconsistency: one
+scenario produced two alert_ids for the same event that differ only in
+whether the tenant segment is present (`...:default:<ip>:<bucket>` vs
+`...:<ip>:<bucket>`), suggesting alert_id computation isn't using the same
+tenant-resolution path on every code path. Do not mark M1's chaos gate "done"
+-- this needs real investigation, not a rubber-stamp rerun.
 
 Run:  make chaos
 """
@@ -114,6 +133,19 @@ def killer_thread(stop: threading.Event) -> None:
             ["docker", "compose", "-f", COMPOSE_FILE, "kill", "-s", "KILL", name],
             check=False, capture_output=True,
         )
+        # `docker compose kill` records the service as compose-stopped, which
+        # SUPPRESSES `restart: unless-stopped` -- unlike a raw `docker kill` on
+        # the container id, a killed-via-compose service does NOT come back on
+        # its own (verified live: RestartCount stayed 0, container stayed
+        # Exited(137) indefinitely). `docker compose start` is what actually
+        # revives it; this is not optional cleanup, it's the mechanism this
+        # whole gate depends on to prove redelivery-after-restart, not
+        # redelivery-after-permanent-death.
+        print(f"[chaos] docker compose start {name}")
+        subprocess.run(
+            ["docker", "compose", "-f", COMPOSE_FILE, "start", name],
+            check=False, capture_output=True,
+        )
 
 
 def replay(scenarios: list[Scenario]) -> None:
@@ -193,6 +225,19 @@ def main() -> int:
     try:
         replay(scenarios)
     finally:
+        # `stop` is an abort switch (e.g. replay() raised), not a "replay
+        # finished" signal -- replay() reliably finishes well before the
+        # killer thread works through all 5 targets (kill+restart per target
+        # takes longer than 480 xadds do), so setting `stop` here unconditionally
+        # used to cut the kill sequence short after ~3 of 5 targets. Only abort
+        # early on an actual exception; on the normal path, let the killer run
+        # to completion and join it below instead.
+        if sys.exc_info()[0] is not None:
+            stop.set()
+    killer.join(timeout=KILL_INTERVAL_S * len(KILL_TARGETS) + 30)
+    if killer.is_alive():
+        print("[chaos] WARNING -- killer thread did not finish within its budget; "
+              "verify() results below may reflect a partial kill sequence")
         stop.set()
     return verify(scenarios)
 
