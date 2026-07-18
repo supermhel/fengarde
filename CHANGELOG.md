@@ -119,10 +119,10 @@ New/extended tests: `services/ws3-indexer/test_router.py`, `services/ws4-detecti
 - **`tools/agent_log_shipper.py`**: the missing real ingestion path for MCP/agent JSONL logs (file, `--follow`, or stdin) into `raw.events` — found while writing the doc below that this didn't exist yet. Proven end-to-end (`tools/test_agent_log_shipper.py`): a JSONL file with one malformed line ships, normalizes, fires R1+R3, and both alerts reach the index.
 - **`docs/agent-monitoring.md`**, **`docs/deployment.md`** (reverse-proxy TLS via Caddy, documented not built), **`docs/vs.md`** (honest FENGARDE vs Wazuh/Elastic Security/Security Onion comparison), new-rule issue template.
 
-### Changed — ARGIEM → FENGARDE rebrand
+### Changed — product rebrand to FENGARDE
 
-Second rename in two months (ARGUS → ARGIEM landed 2026-07-15, see below). Adopted
-while merging the M1-M6 roadmap branch into `main`; branch-local env vars/identifiers
+Second rename in two months (see the ARGUS rename below). Adopted while merging
+the M1-M6 roadmap branch into `main`; branch-local env vars/identifiers
 (`FENGARDE_API_KEY`, `FENGARDE_RBAC_DB`) already used the new name before the merge,
 `main` did not — this merge is what makes the rename repo-wide. No functional change.
 
@@ -162,11 +162,11 @@ robustness, ahead of public launch. Details and evidence in `SSOT.md` §1.
   somewhere across all fixtures" (catches a rule that's dormant in practice
   because its group_by field is only ever produced by a different class).
 
-### Changed — ARGUS → ARGIEM rebrand (`717f4ed`, 2026-07-15)
+### Changed — ARGUS rebrand (`717f4ed`, 2026-07-15)
 
 Renamed the project after a trademark/domain collision check on the prior name.
 239 occurrences across 42 files, GitHub repo renamed (old clone URLs redirect),
-`ARGUS_API_KEY` → `ARGIEM_API_KEY`. No functional change.
+`ARGUS_API_KEY` → `FENGARDE_API_KEY`. No functional change.
 
 ### Added (v0.4 Track S — opt-in auth)
 
@@ -304,5 +304,5 @@ Full Docker stack (Docker Desktop 4.80.0 / engine 29.6.1): a real UDP syslog pac
 
 - **Apache-2.0 license** — permissive license; use in commercial products, fork freely.
 
-[Unreleased]: https://github.com/supermhel/argiem/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/supermhel/argiem/releases/tag/v0.1.0
+[Unreleased]: https://github.com/supermhel/fengarde/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/supermhel/fengarde/releases/tag/v0.1.0

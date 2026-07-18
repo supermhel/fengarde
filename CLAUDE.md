@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-FENGARDE — an open-source SIEM pipeline (Apache-2.0). Remote: https://github.com/supermhel/argiem.git. Raw security logs are collected, normalized to OCSF, run through correlation rules, and indexed as alerts.
+FENGARDE — an open-source SIEM pipeline (Apache-2.0). Remote: https://github.com/supermhel/fengarde.git. Raw security logs are collected, normalized to OCSF, run through correlation rules, and indexed as alerts.
 
 **Read `SSOT.md` first for current status.** It is the canonical status/roadmap index; other docs (especially `docs/superpowers/specs/` and per-service `INTERFACE.md` files) may be historical, aspirational, or partially stale — SSOT.md says which is which. If a doc disagrees with SSOT.md, SSOT.md wins.
 

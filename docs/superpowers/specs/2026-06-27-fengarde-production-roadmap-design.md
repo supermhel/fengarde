@@ -324,7 +324,7 @@ ground work before moving on.
 2026-07-01 (`FENGARDE_hands_off_docs_FENGARDE-Sec_positionnement.md`,
 `FENGARDE-Sec_architecture_et_plan.md`, `FENGARDE-Sec_plan_execution_pas_a_pas.md`). This section is a
 **parallel commercial track**, distinct from the open-source v0.1/v0.2 line already shipped to
-[github.com/supermhel/argiem](https://github.com/supermhel/argiem) — see the flag below before
+[github.com/supermhel/fengarde](https://github.com/supermhel/fengarde) — see the flag below before
 treating the two as one narrative.
 
 ### 9.0 Tension — RESOLVED via `/plan-ceo-review` 2026-07-01: open-core
@@ -472,7 +472,7 @@ the open-source v0.1/v0.2 line that has already shipped).
 
 | Layer | License | What it is |
 |---|---|---|
-| **Free forever** | Apache-2.0, public, as-shipped | The 7-workstream pipeline (WS-1..7), OCSF normalization, the bus abstraction, **all parsers and detection rules** (community-contributed, unlimited, no cap), the dashboard, and WS-5 with `StubLLM`/self-hosted-`Ollama` triage — exactly what's live today at [github.com/supermhel/argiem](https://github.com/supermhel/argiem) at v0.2.0. Nothing here changes. No relicensing, no feature walk-back, no bait-and-switch risk for existing contributors or users. |
+| **Free forever** | Apache-2.0, public, as-shipped | The 7-workstream pipeline (WS-1..7), OCSF normalization, the bus abstraction, **all parsers and detection rules** (community-contributed, unlimited, no cap), the dashboard, and WS-5 with `StubLLM`/self-hosted-`Ollama` triage — exactly what's live today at [github.com/supermhel/fengarde](https://github.com/supermhel/fengarde) at v0.2.0. Nothing here changes. No relicensing, no feature walk-back, no bait-and-switch risk for existing contributors or users. |
 | **Proprietary, paid** | Closed, separate repo | **FENGARDE-Sec** (the trained multilingual security model — layers 0-3 from §9.2) and the **regulatory compliance layer** (the DE/EN/AR LoRA adapters, the legally-validated regulatory mapping test sets, Pillar 2's "compliance as pipeline output" promise). This is Pillar 5 of the positioning doc, sold as an add-on or hosted product. |
 
 **Why this line and not another:** the free tier's value (parser/rule coverage) grows *from
@@ -491,7 +491,7 @@ code (which model to call) does, and that's already open.
 
 **Concrete recommendation for Wave 0 execution:** do FENGARDE-Sec work (corpus, training scripts,
 eval harness, model card, regulatory test sets) in a **separate private repository from day one**,
-not a branch or subdirectory of `supermhel/argiem`. Reasons: (1) the regulatory corpus and
+not a branch or subdirectory of `supermhel/fengarde`. Reasons: (1) the regulatory corpus and
 eval/compliance test sets are exactly the proprietary asset being protected — one accidental
 public commit undoes the whole boundary; (2) it keeps the OSS repo's contributor experience clean
 — nobody cloning `fengarde` for a parser PR needs to see commercial-track scaffolding; (3) it makes

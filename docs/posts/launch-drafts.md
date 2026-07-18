@@ -37,7 +37,7 @@ The message bus is abstracted behind a single interface. Tests use an in-memory 
 
 Alert IDs are deterministic hashes of the triggering evidence. Re-processing the same log stream produces identical alert IDs, which makes the pipeline idempotent under at-least-once delivery without a deduplication table.
 
-Apache-2.0. Repo: https://github.com/supermhel/argiem
+Apache-2.0. Repo: https://github.com/supermhel/fengarde
 
 Happy to answer questions about the OCSF normalization layer or the detection architecture.
 
@@ -78,14 +78,14 @@ Current parsers: Linux SSH auth.log, Cisco ASA syslog, Windows AD EventID 4625 (
 **Try it**
 
 ```
-git clone https://github.com/supermhel/argiem
+git clone https://github.com/supermhel/fengarde
 cd fengarde
 docker compose up
 ```
 
 The devkit-feeder fires a synthetic brute-force sequence automatically. Open the dashboard and you should see an alert within ~60 seconds.
 
-Asciinema demo: https://github.com/supermhel/argiem/blob/main/fengarde-demo.cast
+Asciinema demo: https://github.com/supermhel/fengarde/blob/main/fengarde-demo.cast
 
 Apache-2.0. Feedback welcome, especially on the detection architecture and parser coverage gaps.
 
@@ -108,7 +108,7 @@ Right now it detects brute-force login attempts (10 failed auths from one IP in 
 **Getting started**
 
 ```
-git clone https://github.com/supermhel/argiem
+git clone https://github.com/supermhel/fengarde
 cd fengarde
 docker compose up
 ```
@@ -121,6 +121,6 @@ This is early-stage. Only 4 log parsers today. A local-AI triage feature (classi
 
 If you're running pfSense, OPNsense, or other common homelab gear and want to contribute a parser, contributions are very welcome.
 
-Asciinema demo: https://github.com/supermhel/argiem/blob/main/fengarde-demo.cast
+Asciinema demo: https://github.com/supermhel/fengarde/blob/main/fengarde-demo.cast
 
-Repo: https://github.com/supermhel/argiem — Apache-2.0.
+Repo: https://github.com/supermhel/fengarde — Apache-2.0.

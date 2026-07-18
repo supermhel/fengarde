@@ -74,7 +74,7 @@ counts if the repo moves before you post.
 > output (we've shipped dead rules before; there's a check for that class of
 > bug now).
 >
-> Repo: https://github.com/supermhel/argiem
+> Repo: https://github.com/supermhel/fengarde
 > Write-up on the OCSF-native design: <link to docs/posts/ocsf-native.md on GitHub>
 >
 > Limitations, honestly: v0.4, pre-1.0. Auth is an opt-in shared key, no
@@ -96,7 +96,7 @@ counts if the repo moves before you post.
 > in the dashboard in under 10 minutes.**
 >
 > ```
-> git clone https://github.com/supermhel/argiem.git && cd fengarde
+> git clone https://github.com/supermhel/fengarde.git && cd fengarde
 > make preflight   # checks vm.max_map_count, Docker RAM, free ports
 > make demo        # compose up -- a real SSH brute-force alert appears
 >                  # in the dashboard within ~60s, no manual step
@@ -172,7 +172,7 @@ counts if the repo moves before you post.
 > (v0.4), no TLS, single-host, OT parser fixtures are spec-derived rather
 > than captured from live PLCs. It says all of this in SECURITY.md.
 >
-> https://github.com/supermhel/argiem
+> https://github.com/supermhel/fengarde
 
 ---
 
@@ -209,7 +209,7 @@ counts if the repo moves before you post.
 > vs Redis) disagreed about None distinct-values, and memory-only tests
 > masked it. Fail-closed on unattributable events was the fix.
 >
-> Code for all of it (Apache-2.0): https://github.com/supermhel/argiem —
+> Code for all of it (Apache-2.0): https://github.com/supermhel/fengarde —
 > `tools/check_rule_producers.py` and `contracts/detection-coverage.md`
 > have the details.
 

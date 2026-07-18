@@ -1,8 +1,8 @@
 # FENGARDE
 
-[![CI](https://github.com/supermhel/argiem/actions/workflows/ci.yml/badge.svg)](https://github.com/supermhel/argiem/actions/workflows/ci.yml)
-[![CodeQL](https://github.com/supermhel/argiem/actions/workflows/codeql.yml/badge.svg)](https://github.com/supermhel/argiem/actions/workflows/codeql.yml)
-[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/supermhel/argiem/badge)](https://securityscorecards.dev/viewer/?uri=github.com/supermhel/argiem)
+[![CI](https://github.com/supermhel/fengarde/actions/workflows/ci.yml/badge.svg)](https://github.com/supermhel/fengarde/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/supermhel/fengarde/actions/workflows/codeql.yml/badge.svg)](https://github.com/supermhel/fengarde/actions/workflows/codeql.yml)
+[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/supermhel/fengarde/badge)](https://securityscorecards.dev/viewer/?uri=github.com/supermhel/fengarde)
 
 > Scorecard badge reads "unknown" until `.github/workflows/scorecard.yml` runs
 > at least once on `main` (M2, PLAN_C Tier 2.2) — a measured score, not a
@@ -40,7 +40,7 @@ regulatory-evidence feature; see [`contracts/reporting.md`](contracts/reporting.
 ## Quickstart (10 minutes)
 
 ```sh
-git clone https://github.com/supermhel/argiem.git && cd argiem
+git clone https://github.com/supermhel/fengarde.git && cd fengarde
 make preflight   # doctor: checks vm.max_map_count, Docker RAM, free ports
 make demo        # docker compose up -- a real SSH brute-force alert appears
                  # in the dashboard within ~30-60s, no manual step

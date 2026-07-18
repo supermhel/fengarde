@@ -89,7 +89,7 @@ A deep-audit P0/P1/P2 pass (numbering from that audit session, not a repo spec d
 
 ## §B Corrections to the source plans (flagged, not silently resolved)
 
-1. **Naming:** both plans say "ARGUS"; the project is **FENGARDE** (`supermhel/argiem`) since `717f4ed`.
+1. **Naming:** both plans say "ARGUS"; the project is **FENGARDE** (`supermhel/fengarde`) since `717f4ed`.
 2. **Workstream numbering:** PLAN_A's §0 has WS-3 = detection, WS-4 = indexing, WS-6 = dashboard,
    WS-7 = alerting. Reality: WS-3 **indexer**, WS-4 **detection**, WS-5 ai, WS-6 **inventory**,
    WS-7 **dashboard**; there is no alerting workstream (alerts are a bus topic + index). This doc

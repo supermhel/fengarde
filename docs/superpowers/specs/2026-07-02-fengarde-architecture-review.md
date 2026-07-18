@@ -1,7 +1,7 @@
 # FENGARDE — Architecture & Design Review (v0.2, as-built)
 
 **Date:** 2026-07-02
-**Scope:** cross-cutting structural review of the shipped code (github.com/supermhel/argiem @ v0.2.0)
+**Scope:** cross-cutting structural review of the shipped code (github.com/supermhel/fengarde @ v0.2.0)
 plus the private FENGARDE-Sec seam. This is the "design & architecture" lens of the multi-agent
 sweep — the one that produces a document, not a diff. Grounded in the actual code, not the
 roadmap's intentions.
