@@ -330,6 +330,19 @@ def _body_serve_threaded_and_health_and_shutdown(make_bus, unique, health_port):
         FAILS.append(f"/health request failed: {e!r}")
     check(health_ok, "/health did not return {'status':'ok','service':'test-svc'}")
 
+    # /metrics (P2.3): the daemon path must count the message it just acked.
+    metrics_ok = False
+    try:
+        with urllib.request.urlopen(
+                f"http://127.0.0.1:{health_port}/metrics", timeout=3) as resp:
+            import json
+            body = json.loads(resp.read().decode())
+            metrics_ok = (body.get("service") == "test-svc" and
+                         body.get("topics", {}).get(topic, {}).get("acked") == 1)
+    except Exception as e:  # pragma: no cover - diagnostic
+        FAILS.append(f"/metrics request failed: {e!r}")
+    check(metrics_ok, f"/metrics did not report 1 acked for {topic}")
+
     # clean shutdown
     shutdown.set()
     serve_thread.join(timeout=5)
@@ -413,8 +426,65 @@ def _test_health_degraded():
 
 
 # --------------------------------------------------------------------------- #
+# P2.3: Metrics counts _process_message outcomes per topic, snapshot() is a
+# plain dict (JSON-able for /metrics).
+def _test_metrics_counts_outcomes():
+    bus = _MemoryBus()
+    topic = _unique_topic("t.metrics")
+    m = runner.Metrics()
+
+    bus.produce(topic, key="1", payload={"x": 1})
+    msg = next(iter(bus.consume(topic, group="cg-m")))
+    runner._process_message(bus, topic, "cg-m", msg, lambda p: None,
+                            max_redeliveries=5, delivery_count=1, metrics=m)
+
+    def boom(_p):
+        raise RuntimeError("always fails")
+    bus.produce(topic, key="2", payload={"x": 2})
+    msg2 = next(iter(bus.consume(topic, group="cg-m")))
+    runner._process_message(bus, topic, "cg-m", msg2, boom,
+                            max_redeliveries=5, delivery_count=1, metrics=m)
+
+    snap = m.snapshot()
+    check(snap[topic]["acked"] == 1, f"expected 1 acked, got {snap}")
+    check(snap[topic]["failed"] == 1, f"expected 1 failed, got {snap}")
+
+
+# --------------------------------------------------------------------------- #
+# P2.4: start_depth_watchdog logs when a topic's depth crosses warn_at, and
+# warn_at<=0 disables it (returns None, spawns no thread).
+def _test_depth_watchdog():
+    bus = _MemoryBus()
+    topic = _unique_topic("t.depth")
+    for i in range(5):
+        bus.produce(topic, key=str(i), payload={"n": i})
+
+    warned = []
+
+    class _FakeLog:
+        def warn(self, msg, **kw):
+            warned.append((msg, kw))
+
+    shutdown = threading.Event()
+    t = runner.start_depth_watchdog(bus, _FakeLog(), shutdown, [topic],
+                                    warn_at=3, interval_s=0.05)
+    check(t is not None, "watchdog thread should start when warn_at > 0")
+    time.sleep(0.2)
+    shutdown.set()
+    t.join(timeout=2)
+    check(any(kw.get("topic") == topic and kw.get("depth") == 5 for _m, kw in warned),
+          f"watchdog did not warn on depth 5 >= warn_at 3: {warned}")
+
+    disabled = runner.start_depth_watchdog(bus, _FakeLog(), threading.Event(),
+                                           [topic], warn_at=0)
+    check(disabled is None, "warn_at<=0 must disable the watchdog (no thread)")
+
+
+# --------------------------------------------------------------------------- #
 def main():
     _test_health_degraded()
+    _test_metrics_counts_outcomes()
+    _test_depth_watchdog()
     parametrized = [
         ("test_handler_called_once_per_message",
          _body_handler_called_once_per_message, False),

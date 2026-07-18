@@ -24,7 +24,7 @@ import json
 import time
 from typing import Optional
 
-from .base import Parser, SEV_HIGH, SEV_INFO, SEV_MEDIUM, status_from_outcome
+from .base import Parser, SEV_HIGH, SEV_INFO, SEV_BY_CATEGORY, status_from_outcome
 from shared.ocsf import valid_ip, safe_str
 
 _CLASS_API = 6003
@@ -33,15 +33,17 @@ _CLASS_AUTH = 3002
 _LOGIN_EVENTS = {"user.login", "login"}
 _LOGOUT_EVENTS = {"user.logout", "logout"}
 
-# eventType verb -> (activity_id, severity)
+# eventType verb -> (activity_id, severity), severity from the shared
+# cross-source rubric (base.SEV_BY_CATEGORY, P2.2) so "deleted" lands as
+# CRITICAL like vmware/db's delete, not a source-specific MEDIUM.
 _VERB_MAP = {
-    "created": (1, SEV_MEDIUM),
-    "activated": (1, SEV_MEDIUM),
-    "read": (2, SEV_INFO),
-    "viewed": (2, SEV_INFO),
-    "updated": (3, SEV_MEDIUM),
+    "created": (1, SEV_BY_CATEGORY["write"]),
+    "activated": (1, SEV_BY_CATEGORY["write"]),
+    "read": (2, SEV_BY_CATEGORY["read"]),
+    "viewed": (2, SEV_BY_CATEGORY["read"]),
+    "updated": (3, SEV_BY_CATEGORY["modify"]),
     "accessed": (3, SEV_HIGH),   # credential access -- treated as sensitive
-    "deleted": (4, SEV_MEDIUM),
+    "deleted": (4, SEV_BY_CATEGORY["destroy"]),
 }
 
 
@@ -97,6 +99,7 @@ class N8nAuditParser(Parser):
             status=status,
             message=message,
             meta=meta,
+            sector=self.resolve_sector(meta),
         )
         if src_ip:
             event["src_endpoint"] = {"ip": src_ip}
@@ -122,6 +125,7 @@ class N8nAuditParser(Parser):
             status=status_from_outcome(rec),
             message=message,
             meta=meta,
+            sector=self.resolve_sector(meta),
         )
         event["api"] = {"operation": str(event_type)}
         if src_ip:

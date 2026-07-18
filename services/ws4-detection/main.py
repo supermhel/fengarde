@@ -154,7 +154,9 @@ def run(bus, detector: "Detector") -> dict:
 
 
 def main():
-    from shared.runner import serve  # noqa: E402  (lazy: keeps run() import-light)
+    import threading  # noqa: E402
+    from shared.runner import serve, start_depth_watchdog  # noqa: E402  (lazy: keeps run() import-light)
+    from shared.log import get_logger  # noqa: E402
 
     detector = Detector()
 
@@ -180,9 +182,20 @@ def main():
     def handler(payload: dict) -> None:
         detect_one(Bus(), detector, payload)
 
-    serve({"normalized.events": ("cg-detect", handler)},
-          health_port=int(os.getenv("PORT", "8004")),
-          service_name="ws4-detection")
+    # P2.4: watch WS-4's own output topics for backpressure buildup (signal-only;
+    # see start_depth_watchdog's docstring for why internal topics aren't trimmed).
+    log = get_logger("ws4-detection")
+    shutdown = threading.Event()
+    warn_at = int(os.getenv("DETECTION_OUTPUT_DEPTH_WARN", "100000"))
+    watchdog = start_depth_watchdog(Bus(), log, shutdown,
+                                    ["scored.events", "ai.requests"], warn_at=warn_at)
+    try:
+        serve({"normalized.events": ("cg-detect", handler)},
+              health_port=int(os.getenv("PORT", "8004")),
+              service_name="ws4-detection", shutdown=shutdown)
+    finally:
+        if watchdog is not None:
+            watchdog.join(timeout=5)
 
 
 if __name__ == "__main__":

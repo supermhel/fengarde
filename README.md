@@ -40,7 +40,7 @@ regulatory-evidence feature; see [`contracts/reporting.md`](contracts/reporting.
 ## Quickstart (10 minutes)
 
 ```sh
-git clone https://github.com/supermhel/argiem.git && cd fengarde
+git clone https://github.com/supermhel/argiem.git && cd argiem
 make preflight   # doctor: checks vm.max_map_count, Docker RAM, free ports
 make demo        # docker compose up -- a real SSH brute-force alert appears
                  # in the dashboard within ~30-60s, no manual step

@@ -93,6 +93,7 @@ class ActiveDirectoryParser(Parser):
             status=status,
             message=message,
             meta=meta,
+            sector=self.resolve_sector(meta),
         )
 
         if ip or host or mac:

@@ -105,7 +105,9 @@ def run(bus) -> dict:
 def main():
     # Daemon (T0): consume raw.events via the shared runner. run() above stays the
     # batch path used by tests / the e2e harness.
-    from shared.runner import serve  # noqa: E402
+    import threading  # noqa: E402
+    from shared.runner import serve, start_depth_watchdog  # noqa: E402
+    from shared.log import get_logger  # noqa: E402
 
     def handler(payload: dict) -> None:
         bus = Bus()
@@ -117,8 +119,20 @@ def main():
         key = (event.get("src_endpoint") or {}).get("ip", "0.0.0.0")
         bus.produce("normalized.events", key=key, payload=event)
 
-    serve({"raw.events": ("cg-normalize", handler)},
-          health_port=int(os.getenv("PORT", "8002")), service_name="ws2-normalization")
+    # P2.4: watch WS-2's own output topic for backpressure buildup (see
+    # start_depth_watchdog's docstring for why this is signal-only, never a trim).
+    log = get_logger("ws2-normalization")
+    shutdown = threading.Event()
+    warn_at = int(os.getenv("NORMALIZED_EVENTS_DEPTH_WARN", "100000"))
+    watchdog = start_depth_watchdog(Bus(), log, shutdown, ["normalized.events"],
+                                    warn_at=warn_at)
+    try:
+        serve({"raw.events": ("cg-normalize", handler)},
+              health_port=int(os.getenv("PORT", "8002")),
+              service_name="ws2-normalization", shutdown=shutdown)
+    finally:
+        if watchdog is not None:
+            watchdog.join(timeout=5)
 
 
 if __name__ == "__main__":

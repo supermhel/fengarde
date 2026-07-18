@@ -152,8 +152,6 @@ class WindowsEventLogParser(Parser):
         elif ip:
             message += f" from {ip}"
 
-        sector = meta.get("sector") or self.SECTOR
-
         event = self.base_event(
             class_uid=class_uid,
             activity_id=activity_id,
@@ -164,8 +162,8 @@ class WindowsEventLogParser(Parser):
             status=status,
             message=message,
             meta=meta,
+            sector=self.resolve_sector(meta),
         )
-        event["siem"]["sector"] = sector
 
         # Endpoint direction matters for detection. For an AUTHENTICATION event,
         # IpAddress/WorkstationName is where the logon came FROM (source) and

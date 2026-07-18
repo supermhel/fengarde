@@ -4,7 +4,7 @@
 
 COMPOSE := docker compose -f infra/docker-compose.yml
 
-.PHONY: help preflight demo test e2e nis2-demo up down chaos
+.PHONY: help preflight demo test e2e nis2-demo up down chaos test-live
 
 PYTHON ?= python3
 
@@ -19,6 +19,7 @@ help:
 	@echo "  make down       - stop the stack and remove volumes"
 	@echo "  make chaos      - M1 correctness gate: kill each service mid-replay,"
 	@echo "                    assert zero lost/duplicate alerts (needs 'make up' first)"
+	@echo "  make test-live  - OPT-IN: real Redis + OpenSearch (needs 'make up' or REDIS_URL/OPENSEARCH_URL)"
 
 # DX3 — the "doctor". Fails fast with plain-English remedies before anything starts.
 preflight:
@@ -65,3 +66,16 @@ down:
 # ('make up') already running -- this is not part of the zero-infra 'make test'.
 chaos:
 	@$(PYTHON) tools/chaos_test.py
+
+# P2.6 — opt-in live-infra lane. The default `make test` gate is entirely
+# zero-infra (MemoryBus + MemoryStore); this exercises the two paths that
+# only exist against real backends: _RedisBus consume/ack/XAUTOCLAIM/DLQ
+# (services/shared/test_runner.py, redis-parametrized) and OpenSearchStore's
+# real HTTP wire format + optimistic-concurrency 409
+# (services/ws3-indexer/storage/test_opensearch_live.py). Both SKIP cleanly
+# (not fail) if their backend isn't reachable, so this target is safe to run
+# without infra up -- it just proves nothing that time. Bring up real infra
+# first: `make up`, or point REDIS_URL/OPENSEARCH_URL at your own instances.
+test-live:
+	@BUS_BACKEND=redis $(PYTHON) services/shared/test_runner.py
+	@$(PYTHON) services/ws3-indexer/storage/test_opensearch_live.py

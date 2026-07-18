@@ -115,6 +115,7 @@ class OpcUaAuditParser(Parser):
             status="Success" if status_ok else "Failure",
             message=message,
             meta=meta,
+            sector=self.resolve_sector(meta),
         )
         if client_ip:
             event["src_endpoint"] = {"ip": client_ip}
@@ -146,6 +147,7 @@ class OpcUaAuditParser(Parser):
             status="Success" if status_ok else "Failure",
             message=message,
             meta=meta,
+            sector=self.resolve_sector(meta),
         )
         event["api"] = {"operation": event_type}
         if client_ip:

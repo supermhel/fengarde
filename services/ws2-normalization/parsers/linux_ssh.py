@@ -115,6 +115,7 @@ class LinuxSshParser(Parser):
             status=status,
             message=message,
             meta=meta,
+            sector=self.resolve_sector(meta),
         )
 
         if ip:

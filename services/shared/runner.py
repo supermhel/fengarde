@@ -40,8 +40,9 @@ import json
 import signal
 import threading
 import traceback
+from collections import defaultdict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Callable
+from typing import Callable, Optional
 
 # topic -> (consumer_group, handler).  handler(payload: dict) -> None; raise to fail.
 Handlers = dict[str, "tuple[str, Callable[[dict], None]]"]
@@ -71,6 +72,29 @@ class HealthState:
         self.last_error = f"{type(exc).__name__}: {exc}"
 
 
+class Metrics:
+    """Per-topic acked/failed/deadlettered counters (P2.3).
+
+    The batch ``stats`` dicts only ever existed in ``run_once``/the old
+    per-service batch ``run()``; the daemon path (``serve()``/``_topic_worker``)
+    counted nothing, so an operator watching a production container had no way
+    to see drops (redeliveries piling up, messages dead-lettering) short of
+    reading raw logs. One counter per (topic, result), exported on ``/metrics``.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._counts: "dict[str, dict[str, int]]" = defaultdict(lambda: defaultdict(int))
+
+    def incr(self, topic: str, result: str) -> None:
+        with self._lock:
+            self._counts[topic][result] += 1
+
+    def snapshot(self) -> dict:
+        with self._lock:
+            return {topic: dict(results) for topic, results in self._counts.items()}
+
+
 # Socket read timeout (seconds) for the stdlib health/API servers. Without it a
 # slow client that opens a connection and dribbles/withholds bytes pins a worker
 # thread indefinitely (slowloris). BaseHTTPRequestHandler.timeout is honored by
@@ -78,7 +102,9 @@ class HealthState:
 HTTP_TIMEOUT_S = 15
 
 
-def _make_health_handler(service_name: str, state: "HealthState | None" = None):
+def _make_health_handler(service_name: str, state: "HealthState | None" = None,
+                         metrics: "Metrics | None" = None,
+                         extra_metrics_fn: "Callable[[], dict] | None" = None):
     class _HealthHandler(BaseHTTPRequestHandler):
         timeout = HTTP_TIMEOUT_S
 
@@ -91,11 +117,21 @@ def _make_health_handler(service_name: str, state: "HealthState | None" = None):
             self.wfile.write(body)
 
         def do_GET(self):  # noqa: N802 (stdlib naming)
-            if self.path.rstrip("/") in ("/health", ""):
+            path = self.path.rstrip("/")
+            if path in ("/health", ""):
                 if state is not None and not state.bus_ok:
                     return self._send(503, {"status": "degraded", "service": service_name,
                                             "error": state.last_error or "bus unreachable"})
                 return self._send(200, {"status": "ok", "service": service_name})
+            if path == "/metrics":
+                payload = {"service": service_name,
+                          "topics": metrics.snapshot() if metrics is not None else {}}
+                if extra_metrics_fn is not None:
+                    try:
+                        payload["extra"] = extra_metrics_fn()
+                    except Exception as exc:  # a broken provider must not break /metrics
+                        payload["extra_error"] = str(exc)
+                return self._send(200, payload)
             return self._send(404, {"error": "no such path"})
 
         def log_message(self, *_):  # quiet
@@ -105,7 +141,7 @@ def _make_health_handler(service_name: str, state: "HealthState | None" = None):
 
 
 def _process_message(bus, topic, group, msg, handler, max_redeliveries,
-                     delivery_count):
+                     delivery_count, metrics: "Metrics | None" = None):
     """Process one delivery of one message.
 
     ``delivery_count`` is how many times this message has now been delivered
@@ -124,6 +160,8 @@ def _process_message(bus, topic, group, msg, handler, max_redeliveries,
                              "delivery_count": delivery_count,
                              "payload": msg.payload})
         bus.ack(msg, group)
+        if metrics is not None:
+            metrics.incr(topic, "deadlettered")
         return "deadlettered"
     try:
         from shared.log import set_trace_id  # noqa: E402
@@ -131,14 +169,18 @@ def _process_message(bus, topic, group, msg, handler, max_redeliveries,
         handler(msg.payload)
     except Exception:  # handler signalled failure -> do NOT ack; leave for redelivery
         traceback.print_exc()
+        if metrics is not None:
+            metrics.incr(topic, "failed")
         return "failed"
     bus.ack(msg, group)
+    if metrics is not None:
+        metrics.incr(topic, "acked")
     return "acked"
 
 
 def _topic_worker(bus_factory, topic, group, handler, *, max_redeliveries,
                   shutdown, claim_idle_ms, idle_sleep_s, consume_block_ms,
-                  service_name, state=None):
+                  service_name, state=None, metrics=None):
     """Own the consume loop for ONE topic until shutdown is set."""
     bus = bus_factory()
     while not shutdown.is_set():
@@ -150,7 +192,7 @@ def _topic_worker(bus_factory, topic, group, handler, *, max_redeliveries,
                     topic, group, claim_idle_ms, max_redeliveries):
                 did_work = True
                 _process_message(bus, topic, group, msg, handler,
-                                  max_redeliveries, times_delivered)
+                                  max_redeliveries, times_delivered, metrics)
                 if shutdown.is_set():
                     break
             if state is not None:
@@ -172,7 +214,7 @@ def _topic_worker(bus_factory, topic, group, handler, *, max_redeliveries,
                 # once a message is read into a group). Redeliveries are handled by
                 # the claim_pending branch above, which carries the real count.
                 _process_message(bus, topic, group, msg, handler,
-                                 max_redeliveries, 1)
+                                 max_redeliveries, 1, metrics)
                 if shutdown.is_set():
                     break
             if state is not None:
@@ -194,7 +236,8 @@ def serve(handlers: Handlers, *, health_port: int | None = None,
           service_name: str | None = None, claim_idle_ms: int = 60000,
           idle_sleep_s: float = 0.5, consume_block_ms: int = 1000,
           install_signal_handlers: bool = True,
-          bus_factory: Callable | None = None) -> None:
+          bus_factory: Callable | None = None,
+          metrics_provider: "Callable[[], dict] | None" = None) -> None:
     """Run the bus consume loop for every topic in ``handlers`` until shutdown.
 
     Args:
@@ -213,6 +256,10 @@ def serve(handlers: Handlers, *, health_port: int | None = None,
         install_signal_handlers: wire SIGTERM/SIGINT to set shutdown (main thread).
         bus_factory: returns a Bus; defaults to shared.bus.Bus. Each worker gets
             its own Bus instance (Redis consumer-name isolation; thread-safety).
+        metrics_provider: optional zero-arg callable returning a JSON-able dict
+            merged into ``/metrics`` under ``"extra"`` (e.g. an ingest-edge
+            server's produced/dropped/shed counters) alongside the per-topic
+            acked/failed/deadlettered counts this runner tracks itself.
     """
     if shutdown is None:
         shutdown = threading.Event()
@@ -235,13 +282,15 @@ def serve(handlers: Handlers, *, health_port: int | None = None,
                 pass
 
     state = HealthState()
+    metrics = Metrics()
 
     # Health thread (stdlib ThreadingHTTPServer, mirrors ws6/app.py).
     health_srv = None
     health_thread = None
     if health_port is not None:
         health_srv = ThreadingHTTPServer(
-            ("0.0.0.0", health_port), _make_health_handler(service_name, state))
+            ("0.0.0.0", health_port),
+            _make_health_handler(service_name, state, metrics, metrics_provider))
         health_thread = threading.Thread(
             target=health_srv.serve_forever, name="health", daemon=True)
         health_thread.start()
@@ -255,7 +304,7 @@ def serve(handlers: Handlers, *, health_port: int | None = None,
             kwargs=dict(max_redeliveries=max_redeliveries, shutdown=shutdown,
                         claim_idle_ms=claim_idle_ms, idle_sleep_s=idle_sleep_s,
                         consume_block_ms=consume_block_ms,
-                        service_name=service_name, state=state),
+                        service_name=service_name, state=state, metrics=metrics),
             name=f"consume:{topic}", daemon=True)
         t.start()
         workers.append(t)
@@ -277,6 +326,40 @@ def serve(handlers: Handlers, *, health_port: int | None = None,
             health_srv.shutdown()
             health_srv.server_close()
         log.info("shut down cleanly")
+
+
+def start_depth_watchdog(bus, log, shutdown: threading.Event, topics: "list[str]",
+                         *, warn_at: int = 100000, interval_s: float = 30.0
+                         ) -> "threading.Thread | None":
+    """P2.4: periodically sample ``topics``' stream depth and log a warning when
+    any crosses ``warn_at``, so an operator sees a backpressure buildup before it
+    OOMs Redis. Signal only, never a fix: internal topics
+    (normalized.events/scored.events/ai.requests) are deliberately never
+    MAXLEN-trimmed -- see ``bus.py``'s ``_RedisBus.depth()`` docstring -- trimming
+    an unconsumed bank audit event is a completeness violation a SIEM cannot make
+    silently. The only real shedding lever is the ingest edge
+    (``SyslogUDPServer``'s token bucket). ``warn_at<=0`` disables. Originally
+    ws1-only (``raw.events``); shared here so ws2/ws4 can watch their own
+    produced topics too.
+    """
+    if warn_at <= 0 or not topics:
+        return None
+
+    def _loop():
+        while not shutdown.is_set():
+            for topic in topics:
+                try:
+                    depth = bus.depth(topic)
+                    if depth >= warn_at:
+                        log.warn("topic depth crossed warning threshold",
+                                topic=topic, depth=depth, threshold=warn_at)
+                except Exception as exc:
+                    log.warn("depth watchdog check failed", topic=topic, error=str(exc))
+            shutdown.wait(interval_s)
+
+    t = threading.Thread(target=_loop, name="depth-watchdog", daemon=True)
+    t.start()
+    return t
 
 
 def run_once(bus, handlers: Handlers, *, max_redeliveries: int = 5) -> dict:

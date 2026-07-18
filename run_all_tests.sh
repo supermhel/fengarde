@@ -123,6 +123,9 @@ echo
 echo "== ws2 parser hardening (P0.5-7: port guard, IP bounds, status-from-outcome) =="
 $PY services/ws2-normalization/parsers/test_parser_hardening.py || fail=1
 echo
+echo "== ws2 severity rubric + sector override (P2.2) =="
+$PY services/ws2-normalization/parsers/test_v05_severity_sector.py || fail=1
+echo
 echo "== ws2 A5 enrichment (reputation + geo, additive/offline/fail-open) =="
 $PY services/ws2-normalization/enrichment/test_enrichment.py || fail=1
 echo

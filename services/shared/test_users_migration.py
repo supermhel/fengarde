@@ -84,11 +84,14 @@ def test_existing_v1_db_upgrades_in_place_data_survives():
         check(after_login["last_login_at"] is not None,
               "a successful login must populate the new column going forward")
 
+        store.db.close()  # release the sqlite handle before TemporaryDirectory cleanup (Windows locks open files)
+
 
 def test_migrate_on_already_current_db_is_a_noop():
     with tempfile.TemporaryDirectory() as d:
         db_path = os.path.join(d, "users.db")
-        UserStore(db_path)  # creates it at the latest version
+        store = UserStore(db_path)  # creates it at the latest version
+        store.db.close()  # release the sqlite handle (Windows locks open files)
 
         # Re-opening (simulating a service restart against the same file)
         # must not error and must not re-run migrations.

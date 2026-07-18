@@ -98,6 +98,7 @@ class CiscoAsaParser(Parser):
             status=status,
             message=text.strip(),
             meta=meta,
+            sector=self.resolve_sector(meta),
         )
 
         src_ip = sm.group("ip") if sm else None

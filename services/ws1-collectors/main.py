@@ -119,11 +119,23 @@ def main() -> None:
         log.error("syslog UDP bind failed", host=syslog_host, port=syslog_port,
                   error=str(exc))
 
+    def _syslog_metrics() -> dict:
+        if udp is None:
+            return {}
+        return {"syslog_udp": {
+            "events_produced": udp.events_produced,
+            "events_dropped": udp.events_dropped,
+            "events_shed": udp.events_shed,
+            "events_spooled": udp.events_spooled,
+            "events_lost": udp.events_lost,
+        }}
+
     shutdown = threading.Event()
     depth_thread = _start_depth_watchdog(bus, log, shutdown)
     try:
         serve({}, health_port=int(os.getenv("PORT", "8001")),
-              service_name="ws1-collectors", shutdown=shutdown)
+              service_name="ws1-collectors", shutdown=shutdown,
+              metrics_provider=_syslog_metrics)
     finally:
         if udp is not None:
             udp.stop()
@@ -133,34 +145,12 @@ def main() -> None:
 
 def _start_depth_watchdog(bus, log, shutdown, *, topic: str = "raw.events",
                           interval_s: float = 30.0):
-    """B2: periodically sample the ingest topic's stream depth and log a
-    warning when it crosses a threshold, so an operator sees a flood building
-    up before it OOMs Redis -- a signal, not a fix; the actual shedding
-    happens at the ingest edge (SyslogUDPServer's token bucket).
-
-    Env RAW_EVENTS_DEPTH_WARN (default 100000, 0 disables). Depth is checked
-    against Bus.depth(), which is 0 on MemoryBus's untouched topics and a real
-    XLEN on RedisBus -- either way, missing/unreachable never raises here."""
-    import threading as _threading
-
+    """B2/P2.4: thin wrapper over the shared watchdog (shared.runner) that keeps
+    ws1's own env var name (RAW_EVENTS_DEPTH_WARN, default 100000, 0 disables)."""
+    from shared.runner import start_depth_watchdog
     warn_at = int(os.getenv("RAW_EVENTS_DEPTH_WARN", "100000"))
-    if warn_at <= 0:
-        return None
-
-    def _loop():
-        while not shutdown.is_set():
-            try:
-                depth = bus.depth(topic)
-                if depth >= warn_at:
-                    log.warn("ingest topic depth crossed warning threshold",
-                            topic=topic, depth=depth, threshold=warn_at)
-            except Exception as exc:
-                log.warn("depth watchdog check failed", topic=topic, error=str(exc))
-            shutdown.wait(interval_s)
-
-    t = _threading.Thread(target=_loop, name="depth-watchdog", daemon=True)
-    t.start()
-    return t
+    return start_depth_watchdog(bus, log, shutdown, [topic], warn_at=warn_at,
+                                interval_s=interval_s)
 
 
 if __name__ == "__main__":
