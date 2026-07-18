@@ -17,12 +17,20 @@ from pathlib import Path
 
 import yaml
 
+from shared.envelope import valid_tenant_id
+
 _HERE = Path(__file__).resolve().parent
 RULES_DIR = _HERE.parent.parent / "contracts" / "rules"
 TENANTS_DIR = _HERE.parent.parent / "contracts" / "tenants"
 
 
 def _disabled_for_tenant(tenant_id: str) -> frozenset:
+    # reject-at-edge, never normalize (same convention as router.py /
+    # ws4-detection/tenants.py, from the F3 adversarial-bug-hunt fix): an
+    # unvalidated tenant_id here is a path-traversal primitive into
+    # TENANTS_DIR (CodeQL py/path-injection, alerts #2/#3).
+    if not valid_tenant_id(tenant_id):
+        return frozenset()
     path = TENANTS_DIR / f"{tenant_id}.yml"
     if not path.exists():
         return frozenset()
