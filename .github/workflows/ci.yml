@@ -80,13 +80,11 @@ jobs:
         run: ruff check services/ tools/
       - name: mypy (informational, non-blocking -- see pyproject.toml)
         run: |
-          fail=0
           for ws in services/ws1-collectors services/ws2-normalization services/ws3-indexer \
                     services/ws4-detection services/ws5-ai services/ws6-inventory services/shared tools; do
-            mypy "$ws" --explicit-package-bases --ignore-missing-imports || fail=1
+            mypy "$ws" --explicit-package-bases --ignore-missing-imports || true
           done
           echo "mypy findings are informational (pyproject.toml [tool.mypy]) -- not blocking CI"
-          exit 0
       - name: coverage gate (WS-2/WS-3 core, blocking at measured baseline)
         run: python tools/coverage_gate.py
       - name: SBOM freshness (blocking -- sbom.json must match requirements.txt)

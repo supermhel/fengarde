@@ -5,14 +5,16 @@ for a service (not a blind `unittest discover`, which misses this repo's
 check()/main()-pattern test files -- see this file's TARGETS for the mapping,
 kept in sync with run_all_tests.sh by hand since there's no shared manifest).
 
-HONEST THRESHOLDS, not the PLAN_C target itself: measured 2026-07-16, WS-2 is
-at 90% (above the ~85% target) and WS-3 is at 71% (below it -- main.py's
-run() loop and storage/opensearch.py's live-cluster paths are the gap, see
-the M2 commit message). This gate enforces those MEASURED numbers minus a
-small buffer as a regression guard, not the unmet 85% target -- claiming a
-gate "blocks CI on 85%" when WS-3 demonstrably doesn't meet it would be
-exactly the overclaiming SSOT.md sec2 exists to prevent. Raise WS-3's
-threshold as real tests close the gap; don't lower WS-2's.
+HONEST THRESHOLDS, not the PLAN_C target itself: re-measured 2026-07-19 after
+the PR#2 merge (and after syncing TARGETS with the merged run_all_tests.sh --
+the gate briefly read WS-3 at 50% because the M4 code was in --source while
+its test suites weren't in this list). WS-2 is at 90% (above the ~85% target);
+WS-3 at 77% (below it -- main.py's run() loop and storage/opensearch.py's
+live-cluster paths remain the gap). This gate enforces those MEASURED numbers
+minus a small buffer as a regression guard, not the unmet 85% target --
+claiming a gate "blocks CI on 85%" when WS-3 demonstrably doesn't meet it
+would be exactly the overclaiming SSOT.md sec2 exists to prevent. Raise
+WS-3's threshold as real tests close the gap; don't lower WS-2's.
 
 Run:  python tools/coverage_gate.py
 """
@@ -42,6 +44,8 @@ TARGETS: dict[str, tuple[str, list[str], float]] = {
             "parsers/test_mcp_agent.py",
             "parsers/test_opcua_audit.py",
             "parsers/test_n8n_audit.py",
+            "parsers/test_active_directory.py",
+            "parsers/test_plugins.py",
         ],
         88.0,  # measured 90% (2026-07-16); 2pt buffer, not the unmet-elsewhere 85% target
     ),
@@ -54,8 +58,16 @@ TARGETS: dict[str, tuple[str, list[str], float]] = {
             "test_opensearch_retry.py",
             "test_auth.py",
             "test_reporting.py",
+            # M4/M5 suites (post-merge sync with run_all_tests.sh -- the gate
+            # measured 50% after the PR#2 merge precisely because the M4 code
+            # was in --source but these, its tests, weren't run):
+            "test_api_v1.py",
+            "test_rbac_api.py",
+            "test_router.py",
+            "test_webhooks.py",
+            "test_nis2_template.py",
         ],
-        68.0,  # measured 71% (2026-07-16); BELOW the 85% target, open gap -- see module docstring
+        75.0,  # measured 77% (2026-07-19, post-M4-suite sync); still below the 85% target, gap open
     ),
 }
 
