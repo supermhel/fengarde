@@ -72,7 +72,10 @@ jobs:
         with:
           python-version: "3.11"
       - name: Install deps
-        run: pip install ruff mypy coverage pyyaml types-PyYAML
+        # hypothesis: the coverage gate runs parsers/test_property_hardening.py
+        # (tools/coverage_gate.py line ~33), which imports it -- without it the
+        # gate dies on ModuleNotFoundError before measuring anything.
+        run: pip install ruff mypy coverage pyyaml types-PyYAML hypothesis
       - name: ruff (blocking)
         run: ruff check services/ tools/
       - name: mypy (informational, non-blocking -- see pyproject.toml)
@@ -106,12 +109,15 @@ jobs:
       - name: Audit all pinned service dependencies
         run: |
           pip install pip-audit
-          fail=0
+          failed=""
           for req in services/*/requirements.txt; do
             echo "=== $req ==="
-            pip-audit --requirement "$req" --strict || fail=1
+            pip-audit --requirement "$req" --strict || failed="$failed $req"
           done
-          exit $fail
+          if [ -n "$failed" ]; then
+            echo "vulnerable pins in:$failed"
+            exit 1
+          fi
 
   # Build every service image. Nothing else in CI proves the Dockerfiles
   # actually build (the zero-infra gate never touches them; PR#2's live runs
