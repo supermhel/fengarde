@@ -606,36 +606,32 @@ def serve(store, host="0.0.0.0", port=8013):
     if rbac_db_path:
         from shared.users import UserStore, ensure_first_boot_admin  # noqa: E402
         users_db = UserStore(rbac_db_path)
-        first_boot_password = ensure_first_boot_admin(users_db)
-        if first_boot_password:
-            # Written exactly once, ever, for this DB -- there is no
-            # admin/admin or any other default credential (PLAN_A's ask).
-            # A restart against the SAME db file does not re-print this
-            # (ensure_first_boot_admin is a no-op once a user exists).
-            #
-            # Deliberately NOT logged (CodeQL py/clear-text-logging,
-            # alert #1): stdout in a container gets captured by `docker
-            # logs` and typically shipped verbatim to a log aggregator/
-            # SIEM with long retention -- "printed once to the console"
-            # in practice means "written to persistent log storage
-            # forever." Written instead to a local file next to the RBAC
-            # db, chmod 0600 (owner-read-only), and only its path is
-            # logged -- never the secret itself.
-            cred_path = _os.path.join(_os.path.dirname(rbac_db_path) or ".",
-                                       ".first-boot-admin-password")
-            with open(cred_path, "w", encoding="utf-8") as f:
-                f.write(first_boot_password + "\n")
-            try:
-                _os.chmod(cred_path, 0o600)
-            except OSError:
-                pass  # best-effort on filesystems without POSIX permissions
+        # First-boot bootstrap: the admin password comes from the operator
+        # via FENGARDE_ADMIN_PASSWORD -- the service never generates, logs,
+        # or stores a plaintext credential (only the scrypt hash reaches
+        # disk). Closes CodeQL py/clear-text-logging AND
+        # py/clear-text-storage at the design level: there is simply no
+        # plaintext secret in this process's output or filesystem, ever.
+        created = ensure_first_boot_admin(users_db)
+        if created:
+            print(json.dumps({
+                "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "level": "info", "service": "ws3-indexer-triage",
+                "msg": "first-boot admin account created from "
+                       "FENGARDE_ADMIN_PASSWORD (unset it now -- it is no "
+                       "longer needed and env vars leak via inspect/exec)",
+                "username": created,
+            }), flush=True)
+        elif users_db.count() == 0:
+            # RBAC is on but no account exists and no bootstrap password was
+            # provided: fail-closed (nobody can log in), and say so loudly.
             print(json.dumps({
                 "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                 "level": "warning", "service": "ws3-indexer-triage",
-                "msg": "first-boot admin account created -- password written to "
-                       "the file below (owner-read-only), read it and delete it; "
-                       "it will not be written again",
-                "username": "admin", "password_file": cred_path,
+                "msg": "RBAC enabled but the user store is empty and "
+                       "FENGARDE_ADMIN_PASSWORD is unset -- no one can log "
+                       "in. Set FENGARDE_ADMIN_PASSWORD and restart to "
+                       "create the first admin account.",
             }), flush=True)
 
     handler_cls = make_handler(store, users_db=users_db)

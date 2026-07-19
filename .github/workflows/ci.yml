@@ -90,3 +90,47 @@ jobs:
         run: |
           pip install cyclonedx-bom
           python tools/generate_sbom.py --check
+
+  # Dependency-vulnerability audit of every service's pinned requirements.txt.
+  # This deliberately replaces what Dependabot's PRs used to signal (Dependabot
+  # is disabled by owner decision -- no auto-bump PRs): a known CVE in a pinned
+  # dependency fails CI loudly instead of silently aging. Fixing it is a manual,
+  # reviewed version bump, which is exactly the point.
+  pip-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Audit all pinned service dependencies
+        run: |
+          pip install pip-audit
+          fail=0
+          for req in services/*/requirements.txt; do
+            echo "=== $req ==="
+            pip-audit --requirement "$req" --strict || fail=1
+          done
+          exit $fail
+
+  # Build every service image. Nothing else in CI proves the Dockerfiles
+  # actually build (the zero-infra gate never touches them; PR#2's live runs
+  # did, but only on a developer machine). A broken Dockerfile should fail
+  # here, not on an operator's first `make up`.
+  docker-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build all service images
+        run: docker compose -f infra/docker-compose.yml build
+
+  # Lint the workflow files themselves (this directory is executable config;
+  # the unresolvable `ossf/scorecard-action@v2` tag shipped broken and sat
+  # undetected until its first live run -- actionlint-class checks are the
+  # gate for that file class).
+  actionlint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: actionlint
+        uses: raven-actions/actionlint@v2

@@ -18,7 +18,6 @@ from __future__ import annotations
 import hashlib
 import hmac
 import os
-import secrets
 import sqlite3
 import threading
 import time
@@ -161,12 +160,26 @@ class UserStore:
 
 
 def ensure_first_boot_admin(store: UserStore, username: str = "admin") -> Optional[str]:
-    """If the user store is empty, create one admin user with a random
-    password and return it (caller prints it ONCE, per PLAN_A's ask -- no
-    default admin/admin credential ever exists). Returns None if users
-    already exist (nothing to do, not a first boot)."""
+    """First-boot bootstrap: if the user store is empty, create one admin.
+
+    The initial password comes from the operator via FENGARDE_ADMIN_PASSWORD
+    (read here at first boot only). The service itself never generates,
+    stores, logs, or returns a plaintext credential -- only the scrypt hash
+    ever touches disk. This closes both CodeQL findings the earlier designs
+    hit in turn (py/clear-text-logging for print-the-password, then
+    py/clear-text-storage for write-it-to-a-0600-file): the only party that
+    ever holds the plaintext is the operator who chose it. Still no
+    admin/admin or any other default credential (PLAN_A's ask) -- env var
+    unset means NO account is created and RBAC stays fail-closed (nobody
+    can log in) until the operator provides one and restarts.
+
+    Returns the username if an account was created by this call, else None
+    (users already exist, or the env var is unset). Never the password.
+    """
     if store.count() > 0:
         return None
-    password = secrets.token_urlsafe(18)  # ~24 chars, printable, no shell-quoting surprises
+    password = os.getenv("FENGARDE_ADMIN_PASSWORD")
+    if not password:
+        return None
     store.create_user(username, password, role="admin", tenant_id=DEFAULT_TENANT)
-    return password
+    return username

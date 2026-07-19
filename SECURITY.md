@@ -75,10 +75,14 @@ with actual per-user identity and roles:
   in-memory — a restart logs everyone out, no persistence across replicas
   yet), and per-username login rate limiting (5 failures / 5 min lockout,
   `services/shared/rbac.py::LoginRateLimiter`). First boot with an empty
-  user DB auto-creates one `admin` account with a random password, printed
-  **once** to the service log — there is no `admin/admin` or any other
-  default credential, ever. See `services/ws3-indexer/test_rbac_api.py` for
-  the full behavior proven over real HTTP.
+  user DB creates one `admin` account **only if** the operator supplies
+  `FENGARDE_ADMIN_PASSWORD` (read once at first boot; unset it afterwards).
+  The service never generates, logs, or stores a plaintext credential —
+  only the scrypt hash reaches disk — and there is no `admin/admin` or any
+  other default credential, ever. Env var unset + empty store = fail-closed
+  (nobody can log in) with a loud startup warning. See
+  `services/ws3-indexer/test_rbac_api.py` for the full behavior proven over
+  real HTTP.
 - **Dashboard basic-auth** — opt-in via the `infra/docker-compose.auth.yml`
   override (nginx `auth_basic` + htpasswd). The main compose file ships this
   **off by default** so `docker compose up` stays zero-prerequisite.

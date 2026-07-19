@@ -25,28 +25,23 @@ TENANTS_DIR = _HERE.parent.parent / "contracts" / "tenants"
 
 
 def _disabled_for_tenant(tenant_id: str) -> frozenset:
-    # reject-at-edge, never normalize (same convention as router.py /
-    # ws4-detection/tenants.py, from the F3 adversarial-bug-hunt fix): an
-    # unvalidated tenant_id here is a path-traversal primitive into
-    # TENANTS_DIR (CodeQL py/path-injection, alerts #2/#3).
+    # The request-controlled tenant_id NEVER becomes part of a path
+    # expression. Instead of building `TENANTS_DIR / f"{tenant_id}.yml"`
+    # (a path-traversal primitive -- CodeQL py/path-injection; two earlier
+    # attempts at sanitizing the constructed path still left taint reaching
+    # resolve()/exists()/read_text()), we enumerate the trusted directory
+    # and select by exact stem match. Every path opened comes from
+    # TENANTS_DIR.glob() -- untainted by construction -- so escape is
+    # structurally impossible, not merely checked for.
     #
-    # valid_tenant_id() is a regex check -- CodeQL's dataflow analysis does
-    # not model regex semantics, so it doesn't recognize a regex match as
-    # proof the value can't escape TENANTS_DIR and keeps flagging the taint.
-    # The containment check below is the sanitizer pattern CodeQL's
-    # py/path-injection query does recognize: resolve the path and verify
-    # it's still inside TENANTS_DIR before ever touching the filesystem.
-    # Belt-and-suspenders with valid_tenant_id() (kept for the same
-    # fail-closed-on-anything-unexpected discipline as router.py/tenants.py),
-    # not a replacement for it.
+    # valid_tenant_id() stays as the first gate: same reject-at-edge,
+    # never-normalize convention as router.py / ws4-detection/tenants.py
+    # (the F3 adversarial-bug-hunt fix).
     if not valid_tenant_id(tenant_id):
         return frozenset()
-    path = (TENANTS_DIR / f"{tenant_id}.yml").resolve()
-    try:
-        path.relative_to(TENANTS_DIR.resolve())
-    except ValueError:
-        return frozenset()
-    if not path.exists():
+    path = next((p for p in TENANTS_DIR.glob("*.yml") if p.stem == tenant_id),
+                None)
+    if path is None:
         return frozenset()
     try:
         raw = yaml.safe_load(path.read_text(encoding="utf-8"))

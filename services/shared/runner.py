@@ -42,7 +42,7 @@ import threading
 import traceback
 from collections import defaultdict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Callable, Optional
+from typing import Callable
 
 # topic -> (consumer_group, handler).  handler(payload: dict) -> None; raise to fail.
 Handlers = dict[str, "tuple[str, Callable[[dict], None]]"]

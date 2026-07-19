@@ -69,20 +69,37 @@ def test_user_store_rejects_unknown_role():
 
 
 def test_first_boot_admin_created_once():
-    store = UserStore(":memory:")
-    check(store.count() == 0, "fresh store must have zero users")
-    password = ensure_first_boot_admin(store)
-    check(password is not None, "first boot must return a generated password")
-    check(store.count() == 1, "first boot must create exactly one user")
-    admin = store.get_user("admin")
-    check(admin["role"] == "admin", "first-boot user must be role=admin")
-    check(store.verify_login("admin", password) is not None,
-          "the returned first-boot password must actually work")
+    import os as _os
 
-    # second call (simulating a restart against the same DB) must be a no-op
-    second = ensure_first_boot_admin(store)
-    check(second is None, "first boot must not re-fire once a user exists (no second admin)")
-    check(store.count() == 1, "user count must stay at 1 after a simulated restart")
+    # No FENGARDE_ADMIN_PASSWORD -> NO account, fail-closed (the service
+    # never generates a credential of its own -- CodeQL clear-text
+    # logging/storage fixes made operator-supplied the only bootstrap path).
+    _os.environ.pop("FENGARDE_ADMIN_PASSWORD", None)
+    empty = UserStore(":memory:")
+    check(ensure_first_boot_admin(empty) is None,
+          "without FENGARDE_ADMIN_PASSWORD no first-boot account may be created")
+    check(empty.count() == 0, "user store must stay empty without a bootstrap password")
+
+    # With the env var set: exactly one admin, password taken from the
+    # operator, username (never the password) returned.
+    _os.environ["FENGARDE_ADMIN_PASSWORD"] = "operator-chosen-secret"
+    try:
+        store = UserStore(":memory:")
+        check(store.count() == 0, "fresh store must have zero users")
+        created = ensure_first_boot_admin(store)
+        check(created == "admin", "first boot must return the created username, not a password")
+        check(store.count() == 1, "first boot must create exactly one user")
+        admin = store.get_user("admin")
+        check(admin["role"] == "admin", "first-boot user must be role=admin")
+        check(store.verify_login("admin", "operator-chosen-secret") is not None,
+              "the operator-supplied first-boot password must actually work")
+
+        # second call (simulating a restart against the same DB) must be a no-op
+        second = ensure_first_boot_admin(store)
+        check(second is None, "first boot must not re-fire once a user exists (no second admin)")
+        check(store.count() == 1, "user count must stay at 1 after a simulated restart")
+    finally:
+        _os.environ.pop("FENGARDE_ADMIN_PASSWORD", None)
 
 
 def test_session_lifecycle():
