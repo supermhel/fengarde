@@ -19,24 +19,24 @@ jobs:
       security-events: write  # to upload SARIF results
       id-token: write          # to publish results and get a badge (publish_results: true)
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
         with:
           persist-credentials: false
 
       # Pinned to an exact tag: ossf/scorecard-action publishes no floating
       # `v2` major tag (unlike actions/*), so `@v2` fails to resolve at all.
-      - uses: ossf/scorecard-action@v2.4.3
+      - uses: ossf/scorecard-action@4eaacf0543bb3f2c246792bd56e8cdeffafb205a  # v2.4.3
         with:
           results_file: results.sarif
           results_format: sarif
           publish_results: true
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
         with:
           name: SARIF file
           path: results.sarif
           retention-days: 5
 
-      - uses: github/codeql-action/upload-sarif@v3
+      - uses: github/codeql-action/upload-sarif@b7351df727350dca84cb9d725d57dcf5bc82ba26  # v3
         with:
           sarif_file: results.sarif
