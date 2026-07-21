@@ -2,8 +2,8 @@
 
 *Every dependency FENGARDE has, what happens when it's down, and where that behavior is
 implemented. Written from the actual code paths below, not aspirational — a row with no
-implementation reference is a gap, not a claim. Part of PLAN_C Tier 1.3 / the combined
-roadmap's M1 (`docs/superpowers/specs/2026-07-15-fengarde-combined-plan.md`).*
+implementation reference is a gap, not a claim. Part of the M1 correctness-gates milestone
+(see SSOT.md §1).*
 
 | Dependency | Down / unreachable | Recovery | Where |
 |---|---|---|---|

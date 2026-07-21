@@ -1,5 +1,5 @@
 """M4 gate: automated two-tenant isolation test -- same stack, isolated data,
-isolated alerts (docs/superpowers/specs/2026-07-15-fengarde-combined-plan.md).
+isolated alerts (see SSOT.md sec1's MSP-grade row).
 
 Proves, on ONE shared bus + ONE shared store (exactly what a real MSP
 deployment runs -- multiple tenants on shared infrastructure, not one stack

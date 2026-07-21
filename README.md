@@ -297,8 +297,7 @@ schema (OCSF).
 | 6 | `services/ws6-inventory` | IP/MAC inventory API (SQLite) | ✅ |
 | 7 | `services/ws7-dashboard` | Alert console | ✅ |
 
-For current status and the forward roadmap, see **[SSOT.md](SSOT.md)** (read that first)
-and [the combined execution plan](docs/superpowers/specs/2026-07-15-fengarde-combined-plan.md).
+For current status and the forward roadmap, see **[SSOT.md](SSOT.md)** (read that first).
 For historical design context: [the v0.1 build plan](docs/superpowers/specs/2026-06-27-fengarde-v0.1-build-plan.md)
 and [`docs/PHASE0_README.md`](docs/PHASE0_README.md).
 

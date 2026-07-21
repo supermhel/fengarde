@@ -12,8 +12,8 @@ redelivery after a crashed consumer, and a path to run with zero external
 infrastructure for the contributor test loop (`make test`).
 
 Kafka was the original "prod backend" named in early docs and is still the
-assumed central-tier bus in the (unbuilt) 3-tier production-roadmap design
-(`docs/superpowers/specs/2026-06-27-fengarde-production-roadmap-design.md`).
+assumed central-tier bus in the (unbuilt) 3-tier production-roadmap design.
+No `_KafkaBus` exists in this codebase — see SSOT.md §2.
 
 ## Decision
 

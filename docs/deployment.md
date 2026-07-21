@@ -88,9 +88,10 @@ layer if you want both.
 
 - **Per-user identity/RBAC.** Caddy's `basicauth` here is one shared
   username/password for "an analyst," same class of limitation as
-  `FENGARDE_API_KEY` — not real multi-user access control. That's tracked
-  separately (the combined roadmap's M4 milestone,
-  `docs/superpowers/specs/2026-07-15-fengarde-combined-plan.md`).
+  `FENGARDE_API_KEY` — not real multi-user access control. Real per-user
+  RBAC now exists at the application layer (`FENGARDE_RBAC_DB`, see
+  SSOT.md §1's MSP-grade row) — this doc is about the reverse-proxy
+  layer specifically, which is unaffected.
 - **TLS between FENGARDE's own containers**, or for OpenSearch/Redis/
   Dashboards directly — those stay loopback-bound and reached only by other
   containers on the compose network, per SECURITY.md §1/§2's existing
