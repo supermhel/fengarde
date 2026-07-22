@@ -5,9 +5,14 @@ source, not S7/PROFINET: Part 5 of the spec defines a PUBLICLY documented,
 structured audit-event model (AuditCreateSessionEventType,
 AuditActivateSessionEventType, AuditCertificateEventType,
 AuditWriteUpdateEventType, AuditUpdateMethodEventType) that a server exports
-as a JSON audit-log line. S7/PROFINET telemetry is proprietary-shaped and
-needs hardware access to fixture honestly -- deferred to a later release,
-named here rather than silently dropped.
+as a JSON audit-log line. S7/PROFINET was picked second -- not because its
+telemetry is unconditionally "proprietary-shaped" (a 2026-07-21 re-check,
+docs/superpowers/specs/2026-07-21-s7-profinet-decision-gate.md, found S7-1500
+actually ships a real RFC 5424 syslog security-event feed), but because the
+concrete event-classification vocabulary needed to parse it honestly sits
+behind a Siemens support login this repo's maintainers didn't have access to
+at either pass. Still deferred, now for a narrower, evidenced reason -- see
+that file before re-deferring it again.
 
 Fixtures in this module/its tests are SPEC-DERIVED (built from the OPC UA
 Part 5 event field definitions), not captured from a live PLC/SCADA stack --

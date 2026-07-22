@@ -3,11 +3,10 @@
   "template": {
     "settings": {
       "number_of_shards": 1,
-      "number_of_replicas": 1,
-      "index.lifecycle.name": "events-30d"
+      "number_of_replicas": 1
     },
     "mappings": {
-      "_meta": { "mapping_version": 1 },
+      "_meta": { "mapping_version": 2 },
       "dynamic": "false",
       "properties": {
         "time": { "type": "date", "format": "epoch_millis" },

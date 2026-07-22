@@ -80,6 +80,31 @@ detection:
   needle is length-capped; it is **not** a regex (no ReDoS on contributor rules).
   A non-string operand or empty/oversized needle fails closed.
 
+## Periodicity / beaconing (v0.5, A3)
+
+An optional `siem.periodicity` block on a stateful rule additionally requires
+the matching events to arrive at a REGULAR interval, not just frequently
+enough:
+
+```yaml
+siem:
+  window_seconds: 3600
+  threshold: 6
+  group_by: src_endpoint.ip
+  periodicity:
+    max_cv: 0.25     # required, (0, 1] -- lower = stricter regularity
+```
+
+The rule fires only when BOTH `count >= threshold` AND the coefficient of
+variation (stdev / mean) of the in-window events' inter-arrival deltas is
+`<= max_cv`. Fewer than 3 in-window events never fires (not enough data to
+judge regularity — see `services/ws4-detection/window.py`'s design note and
+`docs/superpowers/specs/2026-07-21-periodicity-primitive.md` for the full
+rationale and stated limitations, chiefly: trivially evaded by jitter, and
+`group_by` is single-field so it can't group by (src, dst) pairs).
+`periodicity` cannot be combined with `distinct_field` — the two window
+semantics don't compose.
+
 ## Scoring model (see scoring.yaml)
 
 Each matching rule contributes `score_weight`. A single event's score is the

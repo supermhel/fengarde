@@ -20,3 +20,6 @@ fields:
 siem:
   sector: bank
   score_weight: 85
+mitre:
+  tactic: TA0004      # Privilege Escalation
+  technique: T1548    # Abuse Elevation Control Mechanism

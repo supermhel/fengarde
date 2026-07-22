@@ -1,0 +1,48 @@
+title: Authentication brute-force against one host (source IP not recorded)
+id: 8c2f5a91-4d16-4e8b-9c3a-1f6b2e7d5a83
+status: stable
+description: >
+  5+ DISTINCT accounts failing authentication against the same host within 120
+  seconds, with no reliance on src_endpoint.ip.
+
+  P0-2 (2026-07-21 audit fix plan): common_bruteforce.yml groups by
+  src_endpoint.ip and common_password_spray.yml counts distinct src_endpoint.ip
+  per account -- both fail closed (correctly; see engine.py's group_by-None
+  guard) when a failed logon carries no source IP at all. Windows logs exactly
+  this for local/NTLM and Kerberos pre-authentication failures: IpAddress="-".
+  Live-proven on real attack data (Splunk attack_data T1110.003 purplesharp
+  "invalid_users"/"disabled_users"/"multiple_users_from_process" datasets): 50+
+  DISTINCT invalid accounts failing authentication against one host in under a
+  second, zero of them carrying a source IP -- a real brute-force/credential-
+  stuffing pattern the per-IP rules never see.
+
+  This rule groups on src_endpoint.hostname instead of src_endpoint.ip. For
+  Windows Security auth events (active_directory.py, the sole producer of
+  failed-auth 4625/4771), that field holds WorkstationName when present, else
+  Computer (the target host) -- so when a source workstation IS recorded,
+  distinct legitimate client workstations naturally don't pool together; only
+  when the source is genuinely absent does this collapse onto the shared
+  target host, which is exactly the brute-force shape being detected. Complements
+  (does not replace) common_bruteforce.yml and common_password_spray.yml.
+level: high
+logsource:
+  category: authentication
+detection:
+  failed_auth:
+    class_uid: 3002
+    activity_id: 4
+  condition: failed_auth
+fields:
+  - src_endpoint.hostname
+  - actor.user.name
+siem:
+  sector: common
+  score_weight: 70
+  window_seconds: 120
+  threshold: 5
+  group_by: src_endpoint.hostname
+  distinct_field: actor.user.name
+mitre:
+  framework: attack
+  tactic: TA0006
+  technique: T1110

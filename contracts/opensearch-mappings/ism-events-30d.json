@@ -1,0 +1,23 @@
+{
+  "policy": {
+    "description": "FENGARDE retention: common events, delete 30 days after index creation. Age-based only -- WS-3 writes daily date-suffixed indices (events-common-YYYY.MM.DD) directly, no write alias, so ES-style rollover does not apply. ism_template auto-attaches this policy to matching indices at creation time (including tenant-scoped events-common-<tenant>-* indices).",
+    "default_state": "hot",
+    "states": [
+      {
+        "name": "hot",
+        "actions": [],
+        "transitions": [
+          { "state_name": "delete", "conditions": { "min_index_age": "30d" } }
+        ]
+      },
+      {
+        "name": "delete",
+        "actions": [ { "delete": {} } ],
+        "transitions": []
+      }
+    ],
+    "ism_template": [
+      { "index_patterns": ["events-common-*"], "priority": 100 }
+    ]
+  }
+}

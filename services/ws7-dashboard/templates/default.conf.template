@@ -107,4 +107,20 @@ server {
         proxy_connect_timeout 3s;
         proxy_read_timeout 5s;
     }
+
+    # C3 (v0.5): read-only proxy for GET /rules (rule summaries incl. the
+    # optional mitre passthrough, services/ws3-indexer/rules_view.py) -- the
+    # dashboard's coverage heatmap reads this. Same ws3-indexer triage port
+    # as /api/triage/ above, GET-only in practice (rules_view.py has no
+    # write route), no CSRF/body forwarding needed.
+    location /api/rules {
+        resolver 127.0.0.11 ipv6=off valid=30s;
+        set $ws3_rules "http://ws3-indexer:8013";
+        rewrite ^/api/rules$ /rules break;
+        proxy_pass $ws3_rules;
+        proxy_set_header Host $host;
+        proxy_set_header X-Api-Key "${FENGARDE_API_KEY}";
+        proxy_connect_timeout 3s;
+        proxy_read_timeout 5s;
+    }
 }

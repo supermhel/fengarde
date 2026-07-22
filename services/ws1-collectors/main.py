@@ -84,7 +84,8 @@ def main() -> None:
     from shared.runner import serve  # noqa: E402
     from shared.log import get_logger  # noqa: E402
     from collectors.syslog_udp_server import (  # noqa: E402
-        SyslogUDPServer, DEFAULT_HOST, DEFAULT_PORT, DEFAULT_MAX_EVENTS_PER_SEC)
+        SyslogUDPServer, DEFAULT_HOST, DEFAULT_PORT, DEFAULT_MAX_EVENTS_PER_SEC,
+        DEFAULT_WORKERS, DEFAULT_QUEUE_MAXSIZE, DEFAULT_SO_RCVBUF, udp_rcvbuf_errors)
     from collectors.spool import BoundedSpool, DEFAULT_MAX_BYTES as SPOOL_DEFAULT_MAX_BYTES  # noqa: E402
 
     log = get_logger("ws1-collectors")
@@ -108,11 +109,20 @@ def main() -> None:
         spool_max_bytes = _int_env("SYSLOG_SPOOL_MAX_BYTES", SPOOL_DEFAULT_MAX_BYTES, log)
         spool = BoundedSpool(spool_path, max_bytes=spool_max_bytes)
         log.info("syslog zero-loss spool enabled", path=spool_path, max_bytes=spool_max_bytes)
+    # P0-4 (2026-07-21 audit): recv/dispatch decoupling knobs -- see
+    # syslog_udp_server.py's module docstring for the live-proven kernel-drop
+    # issue these exist to fix.
+    udp_workers = _int_env("SYSLOG_UDP_WORKERS", DEFAULT_WORKERS, log)
+    udp_queue_maxsize = _int_env("SYSLOG_UDP_QUEUE_MAXSIZE", DEFAULT_QUEUE_MAXSIZE, log)
+    udp_so_rcvbuf = _int_env("SYSLOG_UDP_SO_RCVBUF", DEFAULT_SO_RCVBUF, log)
+
     udp = None
     try:
         udp = SyslogUDPServer(bus, host=syslog_host, port=syslog_port,
                               max_events_per_sec=max_events_per_sec,
-                              spool=spool, logger=log)
+                              spool=spool, logger=log,
+                              workers=udp_workers, queue_maxsize=udp_queue_maxsize,
+                              so_rcvbuf=udp_so_rcvbuf)
         udp.start()
     except OSError as exc:
         # e.g. port in use, or 514 without elevation. Stay up for /health anyway.
@@ -122,13 +132,22 @@ def main() -> None:
     def _syslog_metrics() -> dict:
         if udp is None:
             return {}
-        return {"syslog_udp": {
+        m = {
             "events_produced": udp.events_produced,
             "events_dropped": udp.events_dropped,
             "events_shed": udp.events_shed,
             "events_spooled": udp.events_spooled,
             "events_lost": udp.events_lost,
-        }}
+            "events_queue_full": udp.events_queue_full,
+        }
+        # P0-4: the kernel-level drop counter (RcvbufErrors) -- the loss
+        # class that reads as a healthy events_shed=0/events_dropped=0 at the
+        # app layer alone (live-proven). None off-Linux / procfs unavailable;
+        # omitted rather than reported as a misleading 0.
+        kernel_rcvbuf_errors = udp_rcvbuf_errors()
+        if kernel_rcvbuf_errors is not None:
+            m["udp_rcvbuf_errors_cumulative"] = kernel_rcvbuf_errors
+        return {"syslog_udp": m}
 
     shutdown = threading.Event()
     depth_thread = _start_depth_watchdog(bus, log, shutdown)

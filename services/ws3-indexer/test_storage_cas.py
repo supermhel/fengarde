@@ -221,10 +221,55 @@ def test_triage_retry_on_conflict():
         srv2.shutdown(); srv2.server_close()
 
 
+def test_concurrent_writers_same_alert_no_lost_update():
+    """P2-5 (2026-07-21 audit): triage_api no longer holds a process-wide
+    lock across the CAS retry loop (removed -- see triage_api.py's comment on
+    why index_cas alone is sufficient). This proves that removal didn't
+    reopen the lost-update race: N real threads POSTing concurrently to the
+    SAME alert_id, each via a real HTTP request against a real
+    ThreadingHTTPServer + MemoryStore, must all either land (200) or get a
+    honest 409 to retry -- never a silent drop, and the final version count
+    must equal the number of writes that actually won (no double-counted or
+    skipped versions)."""
+    store = MemoryStore()
+    store.index("alerts-2026.07.08", "a3", {"alert_id": "a3", "score": 70})
+    srv, port = _serve(store)
+    n = 20
+    results = []
+    results_lock = threading.Lock()
+
+    def worker(i):
+        code, body = _post(port, "a3", {"note": f"analyst-{i}"})
+        with results_lock:
+            results.append(code)
+
+    try:
+        threads = [threading.Thread(target=worker, args=(i,)) for i in range(n)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=10)
+
+        check(len(results) == n, f"expected {n} responses, got {len(results)}")
+        check(all(c in (200, 409) for c in results),
+              f"every concurrent write must resolve 200 or 409, got {results}")
+        wins = results.count(200)
+        final_version = store._versions.get(("alerts-2026.07.08", "a3"), 0)
+        # version starts at 1 from the initial store.index() seed above; each
+        # winning CAS write bumps it by exactly 1.
+        check(final_version == 1 + wins,
+              f"final version ({final_version}) must equal 1 (initial seed) + the "
+              f"number of writes that actually won ({wins}) -- a mismatch means a "
+              f"lost or double-applied update slipped through without the old lock")
+    finally:
+        srv.shutdown(); srv.server_close()
+
+
 def main():
     test_memory_cas()
     test_opensearch_cas_wire_format()
     test_triage_retry_on_conflict()
+    test_concurrent_writers_same_alert_no_lost_update()
     if FAILS:
         print(f"[FAIL] storage CAS: {len(FAILS)} problem(s)")
         for f in FAILS:

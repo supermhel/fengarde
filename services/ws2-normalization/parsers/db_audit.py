@@ -108,6 +108,14 @@ class DbAuditParser(Parser):
         if user:
             event["actor"] = {"user": {"name": user}}
 
+        # v0.5 A4: expose the accessed object/table so a distinct-count rule
+        # can watch for one account touching many DIFFERENT tables in a
+        # window (contracts/rules/bank_mass_card_read.yml) -- additive field,
+        # doesn't change any existing behavior/test.
+        db_object = safe_str(db_object)
+        if db_object:
+            event["unmapped"] = {"db": {"object": db_object}}
+
         return event
 
     @staticmethod

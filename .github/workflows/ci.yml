@@ -64,6 +64,21 @@ jobs:
           BUS_BACKEND: redis
           REDIS_URL: redis://localhost:6379/0
         run: python services/shared/test_runner.py
+      - name: P0-5 acked-stream reaper (trim_acked) on real Redis
+        env:
+          BUS_BACKEND: redis
+          REDIS_URL: redis://localhost:6379/0
+        run: python services/shared/test_bus_trim_acked.py
+      - name: P1-7 real consumer backlog signal (lag) on real Redis
+        env:
+          BUS_BACKEND: redis
+          REDIS_URL: redis://localhost:6379/0
+        run: python services/shared/test_bus_lag.py
+      - name: P1-8 XREADGROUP batch size on real Redis
+        env:
+          BUS_BACKEND: redis
+          REDIS_URL: redis://localhost:6379/0
+        run: python services/shared/test_bus_read_count.py
 
   # M2 code-quality floor (PLAN_C Tier 2.3). Lint blocks; coverage blocks at the
   # MEASURED baseline (see tools/coverage_gate.py) not the unmet-for-WS-3 85%
@@ -132,6 +147,39 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
       - name: Build all service images
         run: docker compose -f infra/docker-compose.yml build
+
+  # P3-2/P3-3 (2026-07-21 audit fix plan): declared ATT&CK/ATLAS coverage
+  # scorecard, published as a CI artifact every run (SigmaHQ does the
+  # equivalent for its rule repo). Zero infra, zero prerequisites -- pure
+  # metadata parsed from contracts/rules/*.yml's mitre: blocks. See
+  # eval/attack/coverage_layer.py's module docstring for why this is
+  # DECLARED coverage only, not proof a technique's mapped rule actually
+  # fires (that's the separate, dataset-gated `make eval-detection` lane,
+  # deliberately not run in CI -- see eval/detection_accuracy/README.md).
+  attack-scorecard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
+        with:
+          python-version: "3.12"
+      - name: Install deps
+        run: pip install pyyaml
+      - name: Coverage scorecard tests
+        run: python eval/attack/test_coverage_layer.py
+      - name: Build scorecard + Navigator layers
+        run: python eval/attack/coverage_layer.py
+      # NOTE: not SHA-pinned like this file's other actions (checkout/setup-
+      # python/gitleaks-action/actionlint) -- this was authored offline with
+      # no way to verify a real commit SHA for actions/upload-artifact, and
+      # the actionlint job's own docstring exists precisely because a wrong/
+      # unresolvable pin here would ship broken and sit undetected. Pin this
+      # to a verified SHA before relying on it in a security-sensitive context.
+      - name: Upload Navigator layer artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: attack-navigator-layers
+          path: eval/attack/out/
 
   # Lint the workflow files themselves (this directory is executable config;
   # the unresolvable `ossf/scorecard-action@v2` tag shipped broken and sat

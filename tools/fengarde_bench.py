@@ -35,10 +35,20 @@ import argparse
 import importlib
 import json
 import os
-import resource
 import sys
 import time
 from pathlib import Path
+
+# P2-2 (2026-07-21 audit): `resource` is Unix-only (POSIX), so an unconditional
+# `import resource` crashed this tool with ModuleNotFoundError on Windows --
+# the exact host this repo's dev environment runs on, making the README's
+# published numbers unreproducible there. Imported lazily/optionally instead;
+# peak_rss_mb() falls back to a Windows-native reading (or None) rather than
+# crashing the whole benchmark over an RSS metric.
+try:
+    import resource  # type: ignore
+except ImportError:  # Windows
+    resource = None  # type: ignore[assignment]
 
 ROOT = Path(__file__).resolve().parents[1]
 SERVICES = ROOT / "services"
@@ -95,10 +105,54 @@ def generate_events(n: int, mixed: bool) -> list[dict]:
     return events
 
 
-def peak_rss_mb() -> float:
-    # ru_maxrss is KB on Linux, bytes on macOS -- this repo's CI/dev targets
-    # are Linux, so KB is the documented assumption here.
-    return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024
+def peak_rss_mb() -> float | None:
+    """Peak resident memory in MB, or None if it can't be measured on this
+    platform (never crashes the benchmark over an RSS reading)."""
+    if resource is not None:
+        # ru_maxrss is KB on Linux, bytes on macOS -- this repo's CI/dev
+        # targets are Linux, so KB is the documented assumption here.
+        return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024
+    if sys.platform == "win32":
+        # P2-2: stdlib-only Windows equivalent via the psapi PROCESS_MEMORY_
+        # COUNTERS struct (ctypes, no third-party dependency, same "no dep"
+        # constraint the Linux path already documents).
+        import ctypes
+        from ctypes import wintypes
+
+        class PROCESS_MEMORY_COUNTERS(ctypes.Structure):
+            _fields_ = [
+                ("cb", wintypes.DWORD),
+                ("PageFaultCount", wintypes.DWORD),
+                ("PeakWorkingSetSize", ctypes.c_size_t),
+                ("WorkingSetSize", ctypes.c_size_t),
+                ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+                ("QuotaPagedPoolUsage", ctypes.c_size_t),
+                ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+                ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+                ("PagefileUsage", ctypes.c_size_t),
+                ("PeakPagefileUsage", ctypes.c_size_t),
+            ]
+
+        # restype/argtypes MUST be set explicitly: ctypes' default restype
+        # (c_int, 32-bit) truncates GetCurrentProcess()'s 64-bit pseudo-
+        # handle on 64-bit Python, corrupting it before GetProcessMemoryInfo
+        # ever sees it (verified live: silently returns ok=0,
+        # GetLastError()=6/ERROR_INVALID_HANDLE without this).
+        kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+        psapi = ctypes.windll.psapi  # type: ignore[attr-defined]
+        kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+        psapi.GetProcessMemoryInfo.argtypes = [
+            wintypes.HANDLE, ctypes.c_void_p, wintypes.DWORD]
+        psapi.GetProcessMemoryInfo.restype = wintypes.BOOL
+
+        counters = PROCESS_MEMORY_COUNTERS()
+        counters.cb = ctypes.sizeof(PROCESS_MEMORY_COUNTERS)
+        handle = kernel32.GetCurrentProcess()
+        ok = psapi.GetProcessMemoryInfo(handle, ctypes.byref(counters), counters.cb)
+        if not ok:
+            return None
+        return counters.PeakWorkingSetSize / (1024 * 1024)
+    return None
 
 
 def run_bench(n: int, mixed: bool) -> dict:
@@ -144,7 +198,7 @@ def run_bench(n: int, mixed: bool) -> dict:
                            "detect": round(t_detect, 4), "index": round(t_index, 4)},
         "total_seconds": round(total_s, 4),
         "sustained_eps": round(n / total_s, 1) if total_s > 0 else None,
-        "peak_rss_mb": round(peak_rss_mb(), 1),
+        "peak_rss_mb": round(_rss, 1) if (_rss := peak_rss_mb()) is not None else None,
     }
 
 
@@ -174,7 +228,8 @@ def main() -> int:
           f"detect={result['stage_seconds']['detect']} "
           f"index={result['stage_seconds']['index']}")
     print(f"  sustained EPS:     {result['sustained_eps']}")
-    print(f"  peak RSS:          {result['peak_rss_mb']} MB")
+    rss = result["peak_rss_mb"]
+    print(f"  peak RSS:          {f'{rss} MB' if rss is not None else 'not available on this platform'}")
     return 0
 
 

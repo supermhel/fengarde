@@ -1,0 +1,36 @@
+title: One account reading many distinct database objects (bank)
+id: d4e5f607-8192-4a31-8b4c-5d6e7f809104
+status: stable
+description: >
+  One account running 20+ SELECT/query operations against 20+ DISTINCT
+  database objects/tables within 300 seconds (OCSF Datastore Activity, class
+  6005, activity 1 Query), scoped to the bank sector. A proxy for mass
+  cardholder-data enumeration -- the PCI-DSS headline scenario this repo's
+  bank vertical exists for -- not a precise "read N distinct PANs" signal
+  (this repo's OCSF profile doesn't carry per-row/per-column read detail,
+  only which database object was touched). A legitimate reporting job that
+  scans many tables will also trip this; tune the threshold or add an
+  allowlist for known batch-report service accounts before trusting it as a
+  strong signal.
+level: high
+logsource:
+  category: datastore_activity
+detection:
+  query:
+    class_uid: 6005
+    activity_id: 1
+    siem.sector: bank
+  condition: query
+fields:
+  - actor.user.name
+  - unmapped.db.object
+siem:
+  sector: bank
+  score_weight: 65
+  window_seconds: 300
+  threshold: 20
+  group_by: actor.user.name
+  distinct_field: unmapped.db.object
+mitre:
+  tactic: TA0009      # Collection
+  technique: T1005    # Data from Local System

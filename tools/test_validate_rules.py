@@ -140,6 +140,93 @@ class TestValidateRule(unittest.TestCase):
         self.assertTrue(any("window_seconds" in e for e in self._errs(
             lambda r: r["siem"].update(window_seconds=-5))))
 
+    # -- C3: optional mitre block --------------------------------------
+
+    def test_mitre_absent_is_fine(self):
+        self.assertEqual(validate_rule(_base_rule()), [])
+
+    def test_mitre_valid_attack(self):
+        self.assertEqual(self._errs(
+            lambda r: r.update(mitre={"tactic": "TA0006", "technique": "T1110"})), [])
+
+    def test_mitre_valid_attack_subtechnique(self):
+        self.assertEqual(self._errs(
+            lambda r: r.update(mitre={"tactic": "TA0006", "technique": "T1110.003"})), [])
+
+    def test_mitre_valid_ics(self):
+        self.assertEqual(self._errs(
+            lambda r: r.update(mitre={"framework": "attack-ics", "tactic": "TA0106",
+                                      "technique": "T0836"})), [])
+
+    def test_mitre_valid_atlas(self):
+        self.assertEqual(self._errs(
+            lambda r: r.update(mitre={"framework": "atlas", "tactic": "AML.TA0004",
+                                      "technique": "AML.T0051"})), [])
+
+    def test_mitre_missing_technique(self):
+        self.assertTrue(any("technique" in e for e in self._errs(
+            lambda r: r.update(mitre={"tactic": "TA0006"}))))
+
+    def test_mitre_bad_technique_shape(self):
+        self.assertTrue(any("technique" in e for e in self._errs(
+            lambda r: r.update(mitre={"technique": "not-a-technique-id"}))))
+
+    def test_mitre_bad_tactic_shape(self):
+        self.assertTrue(any("tactic" in e for e in self._errs(
+            lambda r: r.update(mitre={"technique": "T1110", "tactic": "bogus"}))))
+
+    def test_mitre_bad_framework(self):
+        self.assertTrue(any("framework" in e for e in self._errs(
+            lambda r: r.update(mitre={"technique": "T1110", "framework": "made-up"}))))
+
+    def test_mitre_unknown_key(self):
+        self.assertTrue(any("unknown key" in e for e in self._errs(
+            lambda r: r.update(mitre={"technique": "T1110", "url": "https://example.com"}))))
+
+    def test_mitre_not_a_mapping(self):
+        self.assertTrue(any("mitre" in e for e in self._errs(
+            lambda r: r.update(mitre="T1110"))))
+
+    # -- v0.5 A3: optional periodicity block -----------------------------
+
+    def test_periodicity_valid(self):
+        self.assertEqual(self._errs(
+            lambda r: r["siem"].update(periodicity={"max_cv": 0.3})), [])
+
+    def test_periodicity_not_a_mapping(self):
+        self.assertTrue(any("periodicity must be a mapping" in e for e in self._errs(
+            lambda r: r["siem"].update(periodicity=0.3))))
+
+    def test_periodicity_max_cv_out_of_range(self):
+        self.assertTrue(any("max_cv" in e for e in self._errs(
+            lambda r: r["siem"].update(periodicity={"max_cv": 1.5}))))
+
+    def test_periodicity_max_cv_zero_rejected(self):
+        self.assertTrue(any("max_cv" in e for e in self._errs(
+            lambda r: r["siem"].update(periodicity={"max_cv": 0}))))
+
+    def test_periodicity_missing_max_cv(self):
+        self.assertTrue(any("max_cv" in e for e in self._errs(
+            lambda r: r["siem"].update(periodicity={}))))
+
+    def test_periodicity_unknown_key(self):
+        self.assertTrue(any("unknown key" in e for e in self._errs(
+            lambda r: r["siem"].update(periodicity={"max_cv": 0.3, "bogus": 1}))))
+
+    def test_periodicity_requires_window_and_threshold(self):
+        def mutate(r):
+            r["siem"].pop("window_seconds")
+            r["siem"].pop("threshold")
+            r["siem"]["periodicity"] = {"max_cv": 0.3}
+        self.assertTrue(any("periodicity requires" in e for e in self._errs(mutate)))
+
+    def test_periodicity_cannot_combine_with_distinct_field(self):
+        def mutate(r):
+            r["siem"]["periodicity"] = {"max_cv": 0.3}
+            r["siem"]["distinct_field"] = "dst_endpoint.port"
+        self.assertTrue(any("cannot be combined with distinct_field" in e
+                            for e in self._errs(mutate)))
+
 
 class TestShippedRules(unittest.TestCase):
     def test_all_shipped_rules_pass(self):

@@ -109,15 +109,22 @@ def main():
     from shared.runner import serve, start_depth_watchdog  # noqa: E402
     from shared.log import get_logger  # noqa: E402
 
+    # P1-3 (2026-07-21 audit): ONE Bus() per worker, not one per event. Safe
+    # because runner.py's _topic_worker owns exactly one topic per thread and
+    # calls this handler serially in a loop on that single thread -- there is
+    # no cross-thread sharing to guard against. Constructing Bus() per event
+    # on the redis backend meant a fresh redis-py client (fresh TCP connect)
+    # per event, the single biggest avoidable per-event cost in this stage.
+    handler_bus = Bus()
+
     def handler(payload: dict) -> None:
-        bus = Bus()
         event, errors = normalize_one(payload)
         if event is None or errors:
-            bus.produce("raw.events.deadletter", key=None,
-                        payload={"raw": payload, "errors": errors})
+            handler_bus.produce("raw.events.deadletter", key=None,
+                                payload={"raw": payload, "errors": errors})
             return
         key = (event.get("src_endpoint") or {}).get("ip", "0.0.0.0")
-        bus.produce("normalized.events", key=key, payload=event)
+        handler_bus.produce("normalized.events", key=key, payload=event)
 
     # P2.4: watch WS-2's own output topic for backpressure buildup (see
     # start_depth_watchdog's docstring for why this is signal-only, never a trim).

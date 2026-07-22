@@ -1,0 +1,35 @@
+title: DNS query volume to many distinct domains from one source
+id: a1b2c3d4-5e6f-4708-9a1b-2c3d4e5f6071
+status: stable
+description: >
+  One source IP resolving 40+ DISTINCT domain names within 60 seconds (OCSF
+  DNS/HTTP Activity, class 4002, activity 1). A coarse proxy for DNS
+  tunneling/exfiltration and C2 beaconing over DNS -- NOT the more precise
+  "many distinct subdomain labels under one parent domain" signal a real
+  DNS-tunneling detector would use (that needs a parent-domain-grouping
+  primitive the current rule grammar doesn't have); this counts distinct
+  fully-qualified names queried by one source instead. A host resolving many
+  unrelated legitimate domains in a burst (e.g. a browser opening many tabs)
+  can also trip this -- tune the threshold to the site's real DNS volume
+  before trusting it as a strong signal.
+level: medium
+logsource:
+  category: network_activity
+detection:
+  dns_query:
+    class_uid: 4002
+    activity_id: 1
+  condition: dns_query
+fields:
+  - src_endpoint.ip
+  - dst_endpoint.hostname
+siem:
+  sector: common
+  score_weight: 45
+  window_seconds: 60
+  threshold: 40
+  group_by: src_endpoint.ip
+  distinct_field: dst_endpoint.hostname
+mitre:
+  tactic: TA0011      # Command and Control
+  technique: T1071.004  # Application Layer Protocol: DNS

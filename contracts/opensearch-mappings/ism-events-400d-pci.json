@@ -1,0 +1,33 @@
+{
+  "policy": {
+    "description": "FENGARDE retention: banking events, PCI-DSS minimum 1 year -- kept 400 days. force_merge + read_only at 30 days, delete 400 days after index creation. Age-based only (daily date-suffixed indices, no write alias -- see ism-events-30d.json).",
+    "default_state": "hot",
+    "states": [
+      {
+        "name": "hot",
+        "actions": [],
+        "transitions": [
+          { "state_name": "warm", "conditions": { "min_index_age": "30d" } }
+        ]
+      },
+      {
+        "name": "warm",
+        "actions": [
+          { "force_merge": { "max_num_segments": 1 } },
+          { "read_only": {} }
+        ],
+        "transitions": [
+          { "state_name": "delete", "conditions": { "min_index_age": "400d" } }
+        ]
+      },
+      {
+        "name": "delete",
+        "actions": [ { "delete": {} } ],
+        "transitions": []
+      }
+    ],
+    "ism_template": [
+      { "index_patterns": ["events-bank-*"], "priority": 100 }
+    ]
+  }
+}

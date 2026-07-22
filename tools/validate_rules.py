@@ -48,6 +48,13 @@ _UUID_RE = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
 _LEVELS = {"informational", "low", "medium", "high", "critical"}
 _SECTORS = {"common", "bank", "dc", "datacenter"}
 _KNOWN_OPS = set(_NUMERIC_OPS) | {"not_in", "outside_hours", "in", "contains"}
+# C3: optional MITRE tagging. Enterprise ATT&CK ("Txxxx"/"Txxxx.xxx", "TAxxxx"),
+# ATT&CK for ICS (same shape, different id space, OT rules), and ATLAS
+# (AI/ML-specific attacks, "AML.Txxxx"/"AML.Txxxx.xxx", "AML.TAxxxx") --
+# framework is informational only, the id shape is what's validated.
+_MITRE_TECHNIQUE_RE = re.compile(r"^(AML\.)?T\d{4}(\.\d{3})?$")
+_MITRE_TACTIC_RE = re.compile(r"^(AML\.)?TA\d{4}$")
+_MITRE_FRAMEWORKS = {"attack", "attack-ics", "atlas"}
 _CONDITION_TOKEN_RE = re.compile(r"\(|\)|\band\b|\bor\b|\bnot\b|[\w.]+")
 _KEYWORDS = {"and", "or", "not", "(", ")"}
 _DAY_NAMES = {"mon", "tue", "wed", "thu", "fri", "sat", "sun"}
@@ -89,6 +96,33 @@ def _validate_outside_hours(spec, errors: list[str], where: str) -> None:
         if sample_true == sample_false and sample_true is False:
             errors.append(f"{where}: outside_hours window never matches any time "
                           f"(both probe timestamps returned False) -- likely a mistake")
+
+
+def _validate_mitre(mitre, errors: list[str]) -> None:
+    """Optional top-level `mitre` block: {framework?, tactic?, technique?}.
+    Absent entirely is fine (not every rule has an honest mapping -- see
+    contracts/detection-coverage.md for the rules that deliberately omit
+    it). When present, technique is required and must look like a real
+    ATT&CK/ATLAS id; framework/tactic are optional but shape-checked if
+    given. This is a SHAPE check only -- it does not verify the id is a
+    real entry in MITRE's current corpus, only that it isn't garbage."""
+    if not isinstance(mitre, dict):
+        errors.append(f"'mitre' must be a mapping, got {type(mitre).__name__}")
+        return
+    unknown = set(mitre) - {"framework", "tactic", "technique"}
+    if unknown:
+        errors.append(f"'mitre' has unknown key(s) {sorted(unknown)}")
+    technique = mitre.get("technique")
+    if not isinstance(technique, str) or not _MITRE_TECHNIQUE_RE.match(technique):
+        errors.append(f"mitre.technique must look like 'Txxxx', 'Txxxx.xxx', or "
+                      f"'AML.Txxxx[.xxx]', got {technique!r}")
+    tactic = mitre.get("tactic")
+    if tactic is not None and not (isinstance(tactic, str) and _MITRE_TACTIC_RE.match(tactic)):
+        errors.append(f"mitre.tactic must look like 'TAxxxx' or 'AML.TAxxxx', got {tactic!r}")
+    framework = mitre.get("framework", "attack")
+    if framework not in _MITRE_FRAMEWORKS:
+        errors.append(f"mitre.framework must be one of {sorted(_MITRE_FRAMEWORKS)}, "
+                      f"got {framework!r}")
 
 
 def _validate_selection(name: str, sel, errors: list[str]) -> None:
@@ -222,6 +256,30 @@ def validate_rule(rule: dict) -> list[str]:
             v = siem.get(f)
             if v is not None and (not isinstance(v, str) or not v):
                 errors.append(f"siem.{f} must be a non-empty dotted path, got {v!r}")
+
+        if "periodicity" in siem:
+            periodicity = siem["periodicity"]
+            if not isinstance(periodicity, dict):
+                errors.append(f"siem.periodicity must be a mapping, got "
+                              f"{type(periodicity).__name__}")
+            else:
+                unknown = set(periodicity) - {"max_cv"}
+                if unknown:
+                    errors.append(f"siem.periodicity has unknown key(s) {sorted(unknown)}")
+                max_cv = periodicity.get("max_cv")
+                if (isinstance(max_cv, bool) or not isinstance(max_cv, (int, float))
+                        or not 0 < max_cv <= 1):
+                    errors.append(f"siem.periodicity.max_cv must be a number in "
+                                  f"(0, 1], got {max_cv!r}")
+            if win is None or thr is None:
+                errors.append("siem.periodicity requires window_seconds and threshold "
+                              "to also be set (periodicity is a stateful-rule feature)")
+            if siem.get("distinct_field"):
+                errors.append("siem.periodicity cannot be combined with distinct_field "
+                              "-- the two window semantics don't compose")
+
+    if "mitre" in rule:
+        _validate_mitre(rule["mitre"], errors)
     return errors
 
 

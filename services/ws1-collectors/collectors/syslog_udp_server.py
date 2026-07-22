@@ -12,17 +12,37 @@ The source datagram's peer IP is used as the ``raw.events`` partition key so all
 events from one device land on the same partition.
 
 This complements (does not replace) the bundled mock collection in ``main.py``.
-It is stdlib-only: a ``socketserver.UDPServer`` running on its own thread, with a
-graceful ``stop()``. ``main.py`` runs it as the daemon's real ingestion path
-alongside the runner's /health endpoint.
+``main.py`` runs it as the daemon's real ingestion path alongside the runner's
+/health endpoint.
 
 Default bind port is 5514 (not the privileged 514) so it runs without elevation.
 Binding to 514 requires root/admin (or CAP_NET_BIND_SERVICE on Linux).
+
+P0-4 (2026-07-21 audit): this used to be a plain ``socketserver.UDPServer``,
+whose default dispatch is single-threaded and serial -- one datagram's handler
+(which does a blocking ``bus.produce`` Redis round-trip) had to finish before
+the next `recvfrom` even happened. Live-proven on the real Docker stack: at
+~7,350 EPS offered, the kernel silently dropped ~62,000 datagrams
+(``/proc/net/snmp``'s ``Udp: RcvbufErrors``) while the app's own counters read
+``events_shed=0 events_dropped=0`` -- the token bucket and spool fallback below
+never even saw the traffic, because it never survived the recv queue. Fixed by
+decoupling the two costs: a dedicated thread does nothing but a tight
+``recvfrom`` loop (so the kernel's receive buffer drains as fast as possible),
+handing datagrams to a bounded queue that a small worker pool drains at its own
+pace running the existing token-bucket/spool/produce logic unchanged. A large
+``SO_RCVBUF`` gives the kernel more slack while a burst is being drained, and
+the real kernel-level drop counter is now surfaced via :func:`udp_rcvbuf_errors`
+(exposed on ``/metrics`` by ``main.py``) so an operator sees loss below the
+app, not just at it. The old per-datagram ``log.info`` (a JSON-dumps + stdout
+flush syscall pair per event, roughly doubling per-event cost -- see
+``shared/log.py``) is gone; ``events_produced`` already counts the same thing
+on ``/metrics`` without the per-event I/O tax.
 """
 from __future__ import annotations
 
 import hashlib
-import socketserver
+import queue
+import socket
 import threading
 import time
 import uuid
@@ -40,6 +60,53 @@ DEFAULT_PORT = 5514
 # bounding stream growth at the source instead of an unbounded XADD flood that
 # would otherwise grow Redis until OOM. 0/negative disables the limit.
 DEFAULT_MAX_EVENTS_PER_SEC = 2000
+
+# P0-4: recv/dispatch decoupling knobs. The recv thread's only job is
+# `recvfrom` + `queue.put` -- no bus I/O, so it can drain the kernel buffer far
+# faster than any single handler could. DEFAULT_WORKERS handlers pull from the
+# queue and do the actual (token-bucket / spool / bus.produce) work in
+# parallel. DEFAULT_QUEUE_MAXSIZE bounds memory if handlers fall behind a
+# sustained flood; a full queue is a THIRD distinct drop reason (see
+# events_queue_full below) -- distinguishable from a token-bucket shed (rate
+# policy) or a kernel-level RcvbufErrors drop (never reached this process at
+# all).
+DEFAULT_WORKERS = 4
+DEFAULT_QUEUE_MAXSIZE = 20000
+# Best-effort kernel receive-buffer size (bytes). Linux typically caps this via
+# net.core.rmem_max unless raised; setsockopt succeeding doesn't guarantee the
+# full value was actually granted, but asking for headroom is still strictly
+# better than leaving the OS default (often as low as 128KB) during a burst.
+DEFAULT_SO_RCVBUF = 8 * 1024 * 1024
+
+
+def udp_rcvbuf_errors() -> Optional[int]:
+    """Cumulative kernel-level UDP receive-buffer-overflow count for this
+    host/container, i.e. datagrams the OS dropped BEFORE any Python code ever
+    saw them -- the exact loss class that reads as a healthy `events_shed=0
+    events_dropped=0` at the app layer (live-proven, see the module
+    docstring). Returns None off-Linux or if `/proc/net/snmp` isn't readable
+    (never raises); the caller degrades to omitting the metric rather than
+    crashing /metrics over an unavailable procfs.
+
+    Cumulative since boot, not a rate -- a caller wanting a rate must diff two
+    samples over a known interval, same convention as any other /proc counter.
+    """
+    try:
+        with open("/proc/net/snmp", "r", encoding="ascii") as f:
+            header = value = None
+            for line in f:
+                if line.startswith("Udp:"):
+                    if header is None:
+                        header = line.split()
+                    else:
+                        value = line.split()
+                        break
+        if header is None or value is None:
+            return None
+        idx = header.index("RcvbufErrors")
+        return int(value[idx])
+    except (OSError, ValueError, IndexError):
+        return None
 
 
 class _TokenBucket:
@@ -119,6 +186,20 @@ class SyslogUDPServer:
         is now an explicit, configurable byte cap instead of "everything
         over the rate limit, forever." None (default) preserves the plain
         shed-and-count behavior with no disk I/O.
+    :param workers: P0-4: number of handler threads draining the internal
+        queue (env ``SYSLOG_UDP_WORKERS``, default :data:`DEFAULT_WORKERS`).
+        Decoupled from the single recv thread so a slow `bus.produce` never
+        blocks the kernel-buffer drain.
+    :param queue_maxsize: P0-4: bound on the internal recv-to-worker queue
+        (env ``SYSLOG_UDP_QUEUE_MAXSIZE``, default
+        :data:`DEFAULT_QUEUE_MAXSIZE`). A full queue means every worker is
+        already saturated; the datagram is counted in ``events_queue_full``
+        rather than blocking the recv thread (which would just push the
+        kernel-drop problem back).
+    :param so_rcvbuf: P0-4: requested kernel receive-buffer size in bytes
+        (env ``SYSLOG_UDP_SO_RCVBUF``, default :data:`DEFAULT_SO_RCVBUF`).
+        Best-effort (``setsockopt`` failures are swallowed) -- more headroom
+        during a burst, not a correctness guarantee.
     :param logger: optional shared.log Logger.
     """
 
@@ -126,7 +207,10 @@ class SyslogUDPServer:
                  topic: str = "raw.events", deterministic_id: bool = False,
                  max_events_per_sec: float = 0,
                  spool: Optional[BoundedSpool] = None,
-                 spool_drain_interval_s: float = 5.0, logger=None):
+                 spool_drain_interval_s: float = 5.0, logger=None,
+                 workers: int = DEFAULT_WORKERS,
+                 queue_maxsize: int = DEFAULT_QUEUE_MAXSIZE,
+                 so_rcvbuf: int = DEFAULT_SO_RCVBUF):
         self.bus = bus
         self.topic = topic
         self.deterministic_id = deterministic_id
@@ -136,30 +220,34 @@ class SyslogUDPServer:
         self.events_shed = 0        # rate-limited AND no spool (or spool full)
         self.events_spooled = 0     # written to the fallback spool, pending replay
         self.events_lost = 0        # spool configured but itself at capacity
+        self.events_queue_full = 0  # P0-4: worker pool saturated, queue.put_nowait refused
         self._bucket = _TokenBucket(max_events_per_sec)
         self._last_shed_log = 0.0   # throttles the shed-warning log itself: a
                                     # real flood must not turn into a log flood
-        # UDPServer's default handler dispatch is single-threaded (one request
-        # at a time), but this lock makes events_shed/_last_shed_log correct
-        # even if a future ThreadingUDPServer swap makes handling concurrent.
+        # P0-4: genuinely concurrent now (a fixed pool of worker threads all
+        # call _handle_datagram), so this lock is load-bearing, not defensive.
         self._shed_lock = threading.Lock()
         self._spool = spool
         self._spool_drain_interval_s = spool_drain_interval_s
         self._spool_shutdown = threading.Event()
         self._spool_thread: Optional[threading.Thread] = None
 
-        server = self  # capture for the handler closure
+        # P0-4: raw socket, not socketserver.UDPServer -- gives us a tight
+        # recv loop decoupled from per-datagram handling (see module
+        # docstring) and a place to raise SO_RCVBUF before the first recv.
+        self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, so_rcvbuf)
+        except OSError:
+            pass  # platform refused/capped it; proceed with whatever we got
+        self._sock.bind((host, port))
+        self.host, self.port = self._sock.getsockname()[0], self._sock.getsockname()[1]
 
-        class _Handler(socketserver.BaseRequestHandler):
-            def handle(self):  # noqa: D401
-                data, _sock = self.request
-                peer_ip = self.client_address[0]
-                server._handle_datagram(data, peer_ip)
-
-        self._udp = socketserver.UDPServer((host, port), _Handler)
-        # bound address (host, port) — port resolves the real one when 0 was asked
-        self.host, self.port = self._udp.server_address[0], self._udp.server_address[1]
-        self._thread: Optional[threading.Thread] = None
+        self._queue: "queue.Queue" = queue.Queue(maxsize=max(1, queue_maxsize))
+        self._num_workers = max(1, workers)
+        self._recv_thread: Optional[threading.Thread] = None
+        self._worker_threads: list[threading.Thread] = []
+        self._running = threading.Event()
 
     def _handle_datagram(self, data: bytes, peer_ip: str) -> None:
         line = data.decode("utf-8", errors="replace").rstrip("\r\n")
@@ -191,9 +279,10 @@ class SyslogUDPServer:
                               spool_full=self._spool is not None)
             return
         self.events_produced += 1
-        if self.log is not None:
-            self.log.info("syslog datagram", src=peer_ip,
-                          ingest_id=event["meta"]["ingest_id"])
+        # P0-4: no per-datagram log here anymore -- a JSON-dumps + stdout
+        # flush syscall pair per event roughly doubled per-event cost (see
+        # shared/log.py) and turned line-rate ingest into a log flood.
+        # events_produced already counts the same fact on /metrics.
 
     def _try_spool(self, peer_ip: str, event: dict) -> bool:
         """Best-effort spool write. False on no-spool-configured, spool-full,
@@ -233,18 +322,68 @@ class SyslogUDPServer:
                 events_lost_total=lost_total, spool_full=lost_to_full_spool)
 
     def start(self) -> None:
-        """Start serving on a background daemon thread (non-blocking)."""
-        if self._thread is not None:
+        """Start serving on background daemon threads (non-blocking).
+
+        P0-4: one recv thread (tight `recvfrom` + `queue.put_nowait` loop,
+        never touches the bus) plus a fixed pool of worker threads draining
+        the queue via `_handle_datagram` (the actual token-bucket/spool/
+        `bus.produce` work). Decoupling these is the fix for the live-proven
+        kernel-drop issue -- see the module docstring."""
+        if self._running.is_set():
             return
-        self._thread = threading.Thread(
-            target=self._udp.serve_forever, name="syslog-udp", daemon=True)
-        self._thread.start()
+        self._running.set()
+        self._recv_thread = threading.Thread(
+            target=self._recv_loop, name="syslog-udp-recv", daemon=True)
+        self._recv_thread.start()
+        for i in range(self._num_workers):
+            t = threading.Thread(target=self._worker_loop,
+                                 name=f"syslog-udp-worker-{i}", daemon=True)
+            t.start()
+            self._worker_threads.append(t)
         if self._spool is not None and self._spool_thread is None:
             self._spool_thread = threading.Thread(
                 target=self._drain_spool_loop, name="syslog-spool-drain", daemon=True)
             self._spool_thread.start()
         if self.log is not None:
-            self.log.info("syslog UDP listening", host=self.host, port=self.port)
+            self.log.info("syslog UDP listening", host=self.host, port=self.port,
+                          workers=self._num_workers)
+
+    def _recv_loop(self) -> None:
+        """Tight loop: only `recvfrom` and a non-blocking queue put. No bus
+        I/O here on purpose -- see the module docstring's P0-4 note. A full
+        queue means every worker is already saturated; count it distinctly
+        (events_queue_full) rather than blocking here, which would just
+        re-create the exact coupling this fix removes."""
+        while self._running.is_set():
+            try:
+                data, addr = self._sock.recvfrom(65535)
+            except OSError:
+                # socket closed (stop()) or a transient recv error; either
+                # way, re-check _running rather than assuming shutdown.
+                continue
+            if not self._running.is_set():
+                break
+            try:
+                self._queue.put_nowait((data, addr[0]))
+            except queue.Full:
+                with self._shed_lock:
+                    self.events_queue_full += 1
+
+    def _worker_loop(self) -> None:
+        while self._running.is_set():
+            try:
+                item = self._queue.get(timeout=0.5)
+            except queue.Empty:
+                continue
+            if item is None:  # stop() sentinel
+                break
+            data, peer_ip = item
+            try:
+                self._handle_datagram(data, peer_ip)
+            except Exception as exc:  # a handler bug must not kill the worker
+                if self.log is not None:
+                    self.log.warn("syslog datagram handler raised",
+                                  src=peer_ip, error=str(exc))
 
     def _drain_spool_loop(self) -> None:
         """Periodically replay spooled events into the bus. Runs until stop()
@@ -268,11 +407,27 @@ class SyslogUDPServer:
 
     def stop(self) -> None:
         """Stop serving and release the socket (graceful)."""
-        self._udp.shutdown()
-        self._udp.server_close()
-        if self._thread is not None:
-            self._thread.join(timeout=5)
-            self._thread = None
+        self._running.clear()
+        # Closing the socket unblocks the recv thread's blocking recvfrom()
+        # (it raises OSError, caught in _recv_loop, which then re-checks
+        # _running and exits).
+        try:
+            self._sock.close()
+        except OSError:
+            pass
+        if self._recv_thread is not None:
+            self._recv_thread.join(timeout=5)
+            self._recv_thread = None
+        # Wake every worker blocked in queue.get() so they notice _running is
+        # clear promptly rather than waiting out their own 0.5s poll timeout.
+        for _ in self._worker_threads:
+            try:
+                self._queue.put_nowait(None)
+            except queue.Full:
+                pass
+        for t in self._worker_threads:
+            t.join(timeout=5)
+        self._worker_threads = []
         self._spool_shutdown.set()
         if self._spool_thread is not None:
             self._spool_thread.join(timeout=5)

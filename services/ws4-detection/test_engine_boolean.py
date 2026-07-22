@@ -119,7 +119,8 @@ def run():
     one = Rule({"id": "x", "title": "t", "level": "high",
                 "detection": {"s": {"class_uid": 1}, "condition": "s"},
                 "siem": {"score_weight": 80}})
-    check(one.alert_key({"siem": {"ingest_id": "abc"}}) == "x:abc", "T7: non-stateful keys on ingest_id")
+    check(one.alert_key({"siem": {"ingest_id": "abc"}}) == "x:default:abc",
+          "T7: non-stateful keys on ingest_id (P1-1: tenant-namespaced, default tenant here)")
 
 
 def main():

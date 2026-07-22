@@ -48,8 +48,30 @@ class InventoryStore:
             CREATE TABLE IF NOT EXISTS protocols (
               mac TEXT, protocol TEXT, UNIQUE(mac, protocol)
             );
+            -- P2-6 (2026-07-21 audit): _hydrate() (called by every get/list/
+            -- resolve row) ran "WHERE mac=?" against ip_history/protocols with
+            -- no index -- a full table scan per hydrated asset. resolve()
+            -- separately scanned all of ip_history by ip with no index either.
+            -- These three cover both access patterns without changing any
+            -- query's shape.
+            CREATE INDEX IF NOT EXISTS idx_ip_history_mac ON ip_history(mac);
+            CREATE INDEX IF NOT EXISTS idx_ip_history_ip ON ip_history(ip);
+            CREATE INDEX IF NOT EXISTS idx_protocols_mac ON protocols(mac);
             """
         )
+        # P2-6: WAL journal mode batches the fsync cost across commits instead
+        # of one fsync-the-whole-file per upsert() (the default DELETE/
+        # rollback-journal mode's durability model) -- still crash-safe (WAL
+        # is SQLite's recommended mode for concurrent single-writer/multi-
+        # reader use, which is exactly this store's access pattern), just
+        # without paying a full-file fsync on every single observation.
+        # NOT attempted: batching multiple upsert()s into one commit --
+        # nothing in this codebase calls upsert() more than once per request
+        # (app.py:139 is the only caller, one observation per HTTP POST), so
+        # there is no existing call site to batch across without inventing an
+        # API nobody uses yet.
+        self.db.execute("PRAGMA journal_mode=WAL")
+        self.db.execute("PRAGMA synchronous=NORMAL")
         self.db.commit()
 
     # ---- writes ---------------------------------------------------------

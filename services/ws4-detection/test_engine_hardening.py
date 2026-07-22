@@ -87,11 +87,13 @@ def run():
           "P0.8: same no-ingest event -> same id (deterministic)")
     check(one.alert_key(a) != one.alert_key(b),
           "P0.8: different no-ingest events -> different ids (no shared-bucket collapse)")
-    check(one.alert_key(a).startswith("x:sha:"),
-          "P0.8: no-ingest fallback uses a content hash, not a shared constant")
+    check(one.alert_key(a).startswith("x:default:sha:"),
+          "P0.8: no-ingest fallback uses a content hash, not a shared constant "
+          "(P1-1: and is tenant-namespaced, default tenant here)")
     # ingest_id still preferred when present
-    check(one.alert_key({"siem": {"ingest_id": "abc"}}) == "x:abc",
-          "P0.8: ingest_id still preferred over the hash fallback")
+    check(one.alert_key({"siem": {"ingest_id": "abc"}}) == "x:default:abc",
+          "P0.8: ingest_id still preferred over the hash fallback "
+          "(P1-1: tenant-namespaced, default tenant here)")
 
 
 def main():

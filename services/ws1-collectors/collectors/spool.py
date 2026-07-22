@@ -113,6 +113,31 @@ class BoundedSpool:
         rewrites the spool file to contain only the un-replayed remainder --
         so a crash between drain and rewrite re-replays at most the batch
         already in flight, never silently drops it. Returns count replayed.
+
+        P1-6 (2026-07-21 audit): two fixes to the flood-recovery path itself:
+
+        1. **O(n) instead of O(n^2).** The old version did
+           ``remaining = remaining[1:]`` once per line -- a full list
+           reallocation per iteration, O(n) work times n lines. Every line in
+           ``lines`` is visited in order exactly once and either "consumed"
+           (blank/corrupt/produced) or left as the stopping point, so the
+           final remainder is always a single contiguous slice of the
+           original list -- computed once via one index, not incrementally.
+        2. **`produce()` (network I/O -- `bus.produce`, a Redis round-trip)
+           no longer runs under ``self._lock``.** The lock used to be held
+           for the entire drain, so ``SyslogUDPServer._try_spool()`` (called
+           from every UDP handler while the rate limit is active) blocked on
+           it for as long as the whole batch took -- stalling live datagram
+           handling, i.e. re-creating kernel-level drops (P0-4) via a
+           different path. The file is snapshotted under the lock, produced
+           against OUTSIDE it, then the lock is re-acquired only to compute
+           and write the final remainder. Concurrent `append()`s during that
+           window are never lost: since this is the only method that ever
+           rewrites the file (append() only appends) and only one
+           drain thread exists (single-process spool-drain loop), the
+           snapshot's line count `n` is guaranteed to be a stable prefix of
+           the file when the lock is re-acquired -- any new content is simply
+           `current_lines[n:]`, appended after our replayed/remaining split.
         """
         with self._lock:
             try:
@@ -121,33 +146,42 @@ class BoundedSpool:
                 return 0
             if not lines:
                 return 0
+        n = len(lines)
 
-            replayed = 0
-            remaining = list(lines)
-            for line in lines:
-                if limit is not None and replayed >= limit:
-                    break
-                if not line.strip():
-                    remaining = remaining[1:]
-                    continue
-                try:
-                    event = json.loads(line)
-                except (ValueError, TypeError):
-                    # corrupt line (e.g. a torn write from a crash mid-append)
-                    # -- drop just this one line, don't block the rest of the
-                    # spool behind unparseable data forever.
-                    remaining = remaining[1:]
-                    continue
-                try:
-                    produce(event)
-                except Exception:
-                    break  # bus still unavailable / still over capacity; stop here
-                replayed += 1
-                remaining = remaining[1:]
+        replayed = 0
+        i = 0
+        while i < n:
+            if limit is not None and replayed >= limit:
+                break
+            line = lines[i]
+            if not line.strip():
+                i += 1
+                continue
+            try:
+                event = json.loads(line)
+            except (ValueError, TypeError):
+                # corrupt line (e.g. a torn write from a crash mid-append)
+                # -- drop just this one line, don't block the rest of the
+                # spool behind unparseable data forever.
+                i += 1
+                continue
+            try:
+                produce(event)  # network I/O -- deliberately outside the lock
+            except Exception:
+                break  # bus still unavailable / still over capacity; stop here
+            replayed += 1
+            i += 1
 
-            if replayed or (len(remaining) != len(lines)):
+        with self._lock:
+            try:
+                current_lines = self.path.read_text(encoding="utf-8").splitlines()
+            except OSError:
+                current_lines = lines  # best-effort: fall back to our snapshot
+            newly_appended = current_lines[n:]  # anything appended since our read
+            remaining = lines[i:] + newly_appended
+            if replayed or remaining != current_lines:
                 self._rewrite(remaining)
-            return replayed
+        return replayed
 
     def _rewrite(self, lines: list[str]) -> None:
         """Atomically replace the spool file's contents (temp file + os.replace)

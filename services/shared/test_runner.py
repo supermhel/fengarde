@@ -451,8 +451,12 @@ def _test_metrics_counts_outcomes():
 
 
 # --------------------------------------------------------------------------- #
-# P2.4: start_depth_watchdog logs when a topic's depth crosses warn_at, and
+# P2.4: start_depth_watchdog logs when a topic's backlog crosses warn_at, and
 # warn_at<=0 disables it (returns None, spawns no thread).
+# P1-7 (2026-07-21 audit): the watchdog now samples bus.lag() (true consumer
+# backlog), not bus.depth()/XLEN -- on MemoryBus the two are numerically
+# identical (lag() just reuses depth(), see bus.py), so this test's assertion
+# only needed the log kwarg renamed (depth= -> backlog=) to match the fix.
 def _test_depth_watchdog():
     bus = _MemoryBus()
     topic = _unique_topic("t.depth")
@@ -472,8 +476,8 @@ def _test_depth_watchdog():
     time.sleep(0.2)
     shutdown.set()
     t.join(timeout=2)
-    check(any(kw.get("topic") == topic and kw.get("depth") == 5 for _m, kw in warned),
-          f"watchdog did not warn on depth 5 >= warn_at 3: {warned}")
+    check(any(kw.get("topic") == topic and kw.get("backlog") == 5 for _m, kw in warned),
+          f"watchdog did not warn on backlog 5 >= warn_at 3: {warned}")
 
     disabled = runner.start_depth_watchdog(bus, _FakeLog(), threading.Event(),
                                            [topic], warn_at=0)

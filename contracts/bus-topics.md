@@ -1,7 +1,12 @@
 # Contract B — Message Bus Topics
 
 The bus is the **only** coupling between workstreams. No service calls another directly.
-Abstraction: Redis Streams in dev, Kafka in prod — same topic names, same payloads.
+Abstraction: Redis Streams (the only implemented backend, in dev AND production —
+this is the same stack `infra/docker-compose.yml` runs). Kafka is a CANDIDATE for a
+future scaled/central tier, not implemented (there is no `_KafkaBus` in
+`services/shared/bus.py`) — this contract's topic names/payloads are chosen to be
+backend-agnostic so a third backend could slot in without a schema change, but
+nothing here should be read as "Kafka already works."
 
 ## Topics
 
@@ -64,6 +69,9 @@ Consumer groups: one group per workstream (`cg-normalize`, `cg-index`, `cg-detec
 
 ## Dev adapter
 
-`infra/docker-compose.yml` runs Redis. The shared `bus.py` helper (provided in each
-service skeleton) exposes `produce(topic, key, payload)` and `consume(topic, group)`,
-backed by Redis Streams locally and swappable to Kafka via env `BUS_BACKEND`.
+`infra/docker-compose.yml` runs Redis (the same instance used in production, not a
+dev-only stand-in). The shared `bus.py` helper (provided in each service skeleton)
+exposes `produce(topic, key, payload)` and `consume(topic, group)`, with `BUS_BACKEND`
+selecting between the two IMPLEMENTED backends: `redis` (real deployments) and
+`memory` (zero-infra tests). See the note at the top of this file — Kafka is not one
+of the options `BUS_BACKEND` currently accepts.

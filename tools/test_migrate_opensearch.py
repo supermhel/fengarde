@@ -73,9 +73,10 @@ def test_mapping_version_extraction():
 
 # -- load_templates (real repo sanity) -------------------------------------
 
-def test_load_templates_reads_the_real_repo_and_skips_ilm():
+def test_load_templates_reads_the_real_repo_and_skips_ism():
     templates = mig.load_templates()
-    check("ilm-policies" not in templates, "the ILM policies file must never be treated as a template")
+    check(not any(name.startswith("ism-") for name in templates),
+          "ISM policy files must never be treated as index templates")
     expected = {"alerts", "assets", "events-bank", "events-common", "events-dc"}
     check(expected.issubset(set(templates)), f"the real 5 template files must all load, got {set(templates)}")
     for name in expected:
@@ -138,7 +139,7 @@ def test_apply_only_puts_the_apply_steps():
 
 def main():
     test_mapping_version_extraction()
-    test_load_templates_reads_the_real_repo_and_skips_ilm()
+    test_load_templates_reads_the_real_repo_and_skips_ism()
     test_plan_marks_nothing_installed_as_apply()
     test_plan_skips_already_current_and_applies_stale()
     test_apply_only_puts_the_apply_steps()
@@ -149,8 +150,8 @@ def main():
             print("   -", f)
         sys.exit(1)
     print("[OK] M4.6 OpenSearch template migration: mapping_version extraction, real repo's "
-          "5 template files all carry a real version and ilm-policies.json is correctly "
-          "excluded, plan() correctly distinguishes nothing-installed/stale/current, apply() "
+          "5 template files all carry a real version and the ism-*.json policy files are "
+          "correctly excluded, plan() correctly distinguishes nothing-installed/stale/current, apply() "
           "only PUTs the templates actually marked for it -- fake-transport wire-format level, "
           "same standing caveat as the rest of the OpenSearch storage adapter")
 

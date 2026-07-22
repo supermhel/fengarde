@@ -1,0 +1,31 @@
+title: AWS root console login without MFA
+id: c3d4e5f6-7081-4920-9a3b-4c5d6e7f8093
+status: stable
+description: >
+  The AWS account ROOT identity signed in to the console (CloudTrail
+  ConsoleLogin, OCSF Authentication class 3002, activity 1 Logon) with
+  additionalEventData.MFAUsed=No. Root should essentially never be used
+  day-to-day (AWS's own guidance), and an unprotected root login is one of
+  the highest-blast-radius events a cloud account can produce. Single-shot:
+  one such login is itself the signal, no threshold needed. Scoped to
+  siem.source_type=cloudtrail to avoid pooling with any other 3002 producer.
+level: critical
+logsource:
+  category: authentication
+detection:
+  root_login_no_mfa:
+    class_uid: 3002
+    activity_id: 1
+    siem.source_type: cloudtrail
+    unmapped.cloud.identity_type: Root
+    unmapped.cloud.mfa_used: "No"
+  condition: root_login_no_mfa
+fields:
+  - actor.user.name
+  - src_endpoint.ip
+siem:
+  sector: common
+  score_weight: 90
+mitre:
+  tactic: TA0001        # Initial Access
+  technique: T1078.004  # Valid Accounts: Cloud Accounts

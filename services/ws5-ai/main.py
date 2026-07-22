@@ -1,11 +1,19 @@
 """WS-5 AI worker entrypoint.
 
 Decoupled funnel consumer (Contract B): reads the buffered `ai.requests` topic at
-its own pace, runs the LLM (local Ollama) on each, and publishes `ai.results` and an
-enriched `alerts` entry. Scale = run more of these workers; nothing else changes.
-
-The light classifier (layer 2) is also exposed for the 20..59 band, used by WS-4 or
-called inline here when an event carries no LLM reason.
+its own pace and runs one of two tiers per request's `tier` field (set by WS-4's
+Scorer.route(), contracts/scoring.yaml):
+  - "llm" (score >= llm_min): full LLM triage (local Ollama, StubLLM fallback) +
+    the light classifier, same as before this fix.
+  - "classifier" (classifier_min <= score < llm_min): ONLY the light classifier
+    (classifier.py) runs -- no LLM call. This is the whole point of a cheap
+    second tier (P1-2, 2026-07-21 audit): calling the LLM on every 20-59-score
+    event would just reintroduce the cost the tier exists to avoid. A request
+    with no `tier` field defaults to "llm" (back-compat with any producer that
+    predates this).
+Both tiers publish `ai.results` and an enriched `alerts` entry; the classifier
+tier's alert carries no `ai` (LLM verdict) block, only `classification`, and its
+`level` is the classifier's own priority (low/medium/high), not an LLM verdict.
 """
 from __future__ import annotations
 
@@ -30,15 +38,46 @@ class AiWorker:
 
     def handle(self, request: dict) -> dict:
         event = request.get("event", {})
+        tier = request.get("tier", "llm")
+        classification = self.classifier.predict(event)
+        if tier == "classifier":
+            return {
+                "event_id": request.get("event_id"),
+                "tier": tier,
+                "verdict": None,
+                "summary": None,
+                "level": classification["priority"],
+                "classification": classification,
+            }
         reasons = request.get("reason", [])
         verdict = self.llm.analyze(event, reasons)
         return {
             "event_id": request.get("event_id"),
+            "tier": tier,
             "verdict": verdict.get("verdict"),
             "summary": verdict.get("summary"),
             "level": verdict.get("level"),
-            "classification": self.classifier.predict(event),
+            "classification": classification,
         }
+
+
+def _alert_payload(result: dict, event: dict) -> dict:
+    """Build the enriched-alert doc for one ai.results record. The
+    classifier tier never called an LLM, so its alert carries no `ai`
+    (verdict/summary) block -- only `classification` -- rather than
+    fabricating a verdict that was never actually computed."""
+    alert = {
+        "alert_id": f"ai-{result['event_id']}",
+        "time": event.get("time"),
+        "level": result["level"],
+        "classification": result["classification"],
+        "sector": event.get("siem", {}).get("sector"),
+        "event_ids": [result["event_id"]],
+    }
+    if result["tier"] != "classifier":
+        alert["ai"] = {"verdict": result["verdict"], "summary": result["summary"],
+                       "level": result["level"]}
+    return alert
 
 
 def run(bus, worker: "AiWorker") -> dict:
@@ -47,14 +86,7 @@ def run(bus, worker: "AiWorker") -> dict:
         result = worker.handle(msg.payload)
         bus.produce("ai.results", key=result["event_id"] or "unknown", payload=result)
         bus.produce("alerts", key=result["event_id"] or "unknown",
-                    payload={"alert_id": f"ai-{result['event_id']}",
-                             "time": msg.payload.get("event", {}).get("time"),
-                             "level": result["level"],
-                             "ai": {"verdict": result["verdict"],
-                                    "summary": result["summary"],
-                                    "level": result["level"]},
-                             "sector": msg.payload.get("event", {}).get("siem", {}).get("sector"),
-                             "event_ids": [result["event_id"]]})
+                    payload=_alert_payload(result, msg.payload.get("event", {})))
         stats["analyzed"] += 1
     return stats
 
@@ -75,14 +107,7 @@ def main():
         result = worker.handle(payload)
         bus.produce("ai.results", key=result["event_id"] or "unknown", payload=result)
         bus.produce("alerts", key=result["event_id"] or "unknown",
-                    payload={"alert_id": f"ai-{result['event_id']}",
-                             "time": payload.get("event", {}).get("time"),
-                             "level": result["level"],
-                             "ai": {"verdict": result["verdict"],
-                                    "summary": result["summary"],
-                                    "level": result["level"]},
-                             "sector": payload.get("event", {}).get("siem", {}).get("sector"),
-                             "event_ids": [result["event_id"]]})
+                    payload=_alert_payload(result, payload.get("event", {})))
 
     serve({"ai.requests": ("cg-ai", handler)},
           health_port=int(os.getenv("PORT", "8005")), service_name="ws5-ai")

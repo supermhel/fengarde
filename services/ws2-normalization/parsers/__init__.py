@@ -21,13 +21,20 @@ from .db_audit import DbAuditParser
 from .mcp_agent import McpAgentParser
 from .opcua_audit import OpcUaAuditParser
 from .n8n_audit import N8nAuditParser
+from .dns_query import DnsQueryParser
+from .k8s_audit import K8sAuditParser
+from .cef import CefParser
+from .cloudtrail import CloudTrailParser
+from .sysmon import SysmonParser
 from .plugins import discover_plugin_parsers
 
 _REGISTRY: dict[str, Parser] = {
     p.SOURCE_TYPE: p
     for p in (CiscoAsaParser(), ActiveDirectoryParser(), VmwareVsphereParser(),
               LinuxSshParser(), GenericSyslogParser(), WindowsEventLogParser(),
-              DbAuditParser(), McpAgentParser(), OpcUaAuditParser(), N8nAuditParser())
+              DbAuditParser(), McpAgentParser(), OpcUaAuditParser(), N8nAuditParser(),
+              DnsQueryParser(), K8sAuditParser(), CefParser(), CloudTrailParser(),
+              SysmonParser())
 }
 
 # M4.5: external pip packages can register additional parsers (docs/plugin-
@@ -47,6 +54,13 @@ def get_parser(source_type: str) -> Optional[Parser]:
 # superset producer). Previously ANY "EventID" substring routed to AD, so a
 # windows-only 4688/4720/... hit AD, returned None, and was dropped.
 _AD_EVENTIDS = {4624, 4634, 4647, 4625, 4768, 4771}
+# P0-3: Sysmon (Microsoft-Windows-Sysmon/Operational) uses the SAME "EventID"
+# field name as the Security channel but a disjoint, low-numbered ID space
+# (1-29ish vs. Security's 4-thousand range) -- no numeric collision with
+# _AD_EVENTIDS or windows_eventlog._EVENT_MAP. Checked explicitly (not left to
+# the windows_eventlog fallback) so a sysmon.py-shaped payload without an
+# explicit source_type doesn't silently dead-letter through the wrong parser.
+_SYSMON_EVENTIDS = {1, 3, 11}
 # operation verbs unique to each of the two class-sharing "operation" parsers.
 # Shared verbs (delete/update) are deliberately absent -- a bare "delete" with no
 # discriminating field is genuinely ambiguous and must NOT be silently guessed.
@@ -77,6 +91,12 @@ def _resolve_structured(rec: dict) -> Optional[Parser]:
     # MCP/agent tool-call audit
     if "tool" in rec and ("arguments" in rec or "args" in rec):
         return _REGISTRY["mcp_agent"]
+    # k8s audit event: auditID is unique to the k8s audit-log schema.
+    if "auditID" in rec:
+        return _REGISTRY["k8s_audit"]
+    # AWS CloudTrail record: this exact field combo is CloudTrail-specific.
+    if "eventName" in rec and "eventSource" in rec and "eventTime" in rec:
+        return _REGISTRY["cloudtrail"]
     # eventType: OPC UA (CamelCase Audit*EventType) vs n8n (dotted lower-case)
     et = rec.get("eventType") or rec.get("event_type") or rec.get("type")
     if isinstance(et, str) and et:
@@ -97,6 +117,8 @@ def _resolve_structured(rec: dict) -> Optional[Parser]:
         if eid_i is not None:
             if eid_i in _AD_EVENTIDS:
                 return _REGISTRY["active_directory"]
+            if eid_i in _SYSMON_EVENTIDS:
+                return _REGISTRY["sysmon"]
             return _REGISTRY["windows_eventlog"]  # superset; None -> honest DLQ
     # DB audit vs vSphere (both class-share on "operation") by verb + fields
     if "operation" in rec:
@@ -128,10 +150,14 @@ def resolve(raw_payload: dict) -> Optional[Parser]:
     raw = raw_payload.get("raw")
     # Text-line sources (raw is a syslog string, not JSON).
     if isinstance(raw, str) and not raw.lstrip().startswith("{"):
+        if raw.startswith("CEF:"):
+            return _REGISTRY["cef"]
         if "%ASA-" in raw or "%ASA" in raw:
             return _REGISTRY["cisco_asa"]
         if "sshd[" in raw or "pam_unix(sshd:" in raw:
             return _REGISTRY["linux_ssh"]
+        if "query[" in raw and " from " in raw:
+            return _REGISTRY["dns_query"]
         return _REGISTRY["generic_syslog"]  # catch-all syslog is now reachable
     rec = _as_record(raw)
     if rec is None:

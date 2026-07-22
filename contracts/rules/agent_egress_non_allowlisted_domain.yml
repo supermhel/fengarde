@@ -33,3 +33,6 @@ fields:
 siem:
   sector: common
   score_weight: 70
+mitre:
+  tactic: TA0011      # Command and Control
+  technique: T1071    # Application Layer Protocol

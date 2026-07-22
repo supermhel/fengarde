@@ -29,3 +29,6 @@ siem:
   threshold: 15
   group_by: src_endpoint.ip
   distinct_field: dst_endpoint.port
+mitre:
+  tactic: TA0007      # Discovery
+  technique: T1046    # Network Service Discovery

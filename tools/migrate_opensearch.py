@@ -10,21 +10,16 @@ unconditional "always re-PUT everything" loop, and the thing a real
 upgrade step calls.
 
 **Honest scope:** this manages TEMPLATES only (``events-bank``,
-``events-common``, ``events-dc``, ``assets``, ``alerts``).
-``ilm-policies.json`` is deliberately NOT installed by this tool: its
-policy bodies are written in Elasticsearch ILM syntax (``phases``/
-``actions``), but this stack runs OpenSearch, whose Index State Management
-(ISM) plugin uses a DIFFERENT policy schema (``states``/``transitions``) --
-PUTting the current file as-is to OpenSearch's ISM API would be rejected
-as malformed. This was already true before this tool existed
-(``infra/provision.sh``'s ILM loop is a documented no-op placeholder, see
-its comments); fixing the schema mismatch needs a live cluster to verify
-against and is tracked as a separate, open gap (SSOT.md), not silently
-worked around here.
+``events-common``, ``events-dc``, ``assets``, ``alerts``). The
+``ism-*.json`` files in the same directory are ISM *retention policies*
+(a different resource at ``_plugins/_ism/policies/<name>``, installed by
+``infra/provision.sh``) and are skipped here -- they are not index
+templates and have no ``mapping_version``.
 
-Like the rest of ``storage/opensearch.py``, the logic here is proven at the
-wire-format level against a fake transport (``tools/test_migrate_opensearch.py``);
-it has not been exercised against a live cluster.
+The logic here is proven at the wire-format level against a fake
+transport (``tools/test_migrate_opensearch.py``) and, since 2026-07-21,
+exercised against a live OpenSearch cluster by the ``make test-live``
+lane (``services/ws3-indexer/storage/test_opensearch_live.py``).
 
 Usage:
     python tools/migrate_opensearch.py              # plan + apply drifted templates
@@ -46,7 +41,7 @@ sys.path.insert(0, str(ROOT / "services" / "ws3-indexer"))
 from storage.opensearch import OpenSearchStore  # noqa: E402
 
 MAPPINGS_DIR = ROOT / "contracts" / "opensearch-mappings"
-_SKIP = {"ilm-policies.json"}  # see module docstring
+_SKIP_PREFIX = "ism-"  # ISM policy files are not index templates; see module docstring
 
 
 def _mapping_version(template: dict) -> int:
@@ -56,12 +51,12 @@ def _mapping_version(template: dict) -> int:
 
 def load_templates(mappings_dir: Path = MAPPINGS_DIR) -> dict[str, dict]:
     """{template_name: template_body} for every *.json in mappings_dir
-    except the ILM-policies file (a different shape entirely, see module
+    except the ISM policy files (a different resource entirely, see module
     docstring). template_name == filename minus ``.json``, matching
     infra/provision.sh's existing naming convention."""
     templates = {}
     for path in sorted(Path(mappings_dir).glob("*.json")):
-        if path.name in _SKIP:
+        if path.name.startswith(_SKIP_PREFIX):
             continue
         templates[path.stem] = json.loads(path.read_text(encoding="utf-8"))
     return templates

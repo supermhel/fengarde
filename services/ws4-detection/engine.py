@@ -300,6 +300,12 @@ class Rule:
         # raw event count (port scan -> distinct dst ports; lateral movement ->
         # distinct dst hosts). None => plain count (brute-force, mass-delete).
         self.distinct_field = siem.get("distinct_field")
+        # v0.5 A3: optional periodicity/beaconing check on top of the plain
+        # count -- {"max_cv": <float>}. Mutually meaningful only alongside
+        # window_seconds/threshold; validate_rules.py enforces the shape and
+        # that it isn't combined with distinct_field (the two window
+        # semantics don't compose). See window.py's design note.
+        self.periodicity = siem.get("periodicity")
         self.stateful = self.window_seconds is not None and self.threshold is not None
         # Sliding-window counter (T6). Defaults to an in-process deque (correct for a
         # single replica / tests). main() swaps in a RedisWindowCounter when running
@@ -451,10 +457,24 @@ class Rule:
         # fall back to a content hash rather than a shared "noingest" constant --
         # otherwise every ingest_id-less event of this rule collapses onto ONE alert
         # id and all but the first are silently deduped away downstream.
+        #
+        # P1-1 (2026-07-21 audit): this branch was missing the tenant namespacing
+        # the stateful branch above already has (the F1 follow-up). Two tenants
+        # whose ingest-less events hash to the same content fingerprint -- or,
+        # simpler, two tenants who happen to reuse the same ingest_id value --
+        # got the IDENTICAL alert_id; storage/opensearch.py's _search_alert()
+        # queries alerts-* by _id and returns the first match, so one tenant's
+        # alert could shadow (become unreachable behind) the other's. Same
+        # class of bug F1 fixed for the counter and its own follow-up fixed for
+        # the stateful id; this was the one spot it was missed. Always include
+        # tenant, matching the stateful branch's unconditional format (no
+        # special-casing "default" -- consistency matters more than a few
+        # bytes for the common single-tenant case).
+        tenant = (event.get("siem") or {}).get("tenant") or "default"
         ingest = (event.get("siem") or {}).get("ingest_id")
         if not ingest:
             ingest = "sha:" + _event_fingerprint(event)
-        return f"{self.id}:{ingest}"
+        return f"{self.id}:{tenant}:{ingest}"
 
     def evaluate(self, event: dict) -> bool:
         """Return True if this rule fires for the event (incl. stateful threshold)."""
@@ -504,6 +524,15 @@ class Rule:
                 return False
             count = self._counter.hit_distinct(f"{self.id}:{tenant}:{group}", now,
                                                window_ms, value, member)
+        elif self.periodicity:
+            count, cv = self._counter.hit_periodic(f"{self.id}:{tenant}:{group}", now,
+                                                   window_ms, member)
+            if cv is None:
+                # Fewer than 3 events in-window yet -- not enough data to judge
+                # regularity. Fail closed: never treat "can't tell" as "is
+                # periodic" (that would fabricate a beacon signal from noise).
+                return False
+            return count >= self.threshold and cv <= self.periodicity.get("max_cv", 1.0)
         else:
             count = self._counter.hit(f"{self.id}:{tenant}:{group}", now, window_ms, member)
         return count >= self.threshold

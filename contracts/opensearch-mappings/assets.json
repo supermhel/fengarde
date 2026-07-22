@@ -1,10 +1,9 @@
 {
   "index_patterns": ["assets"],
-  "_comment": "Permanent inventory index. MAC is the document _id in WS-6.",
   "template": {
     "settings": { "number_of_shards": 1, "number_of_replicas": 1 },
     "mappings": {
-      "_meta": { "mapping_version": 1 },
+      "_meta": { "mapping_version": 1, "_comment": "Permanent inventory index. MAC is the document _id in WS-6." },
       "dynamic": "false",
       "properties": {
         "mac": { "type": "keyword" },

@@ -64,7 +64,6 @@ from __future__ import annotations
 import hmac
 import json
 import sys
-import threading
 import time
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -77,7 +76,7 @@ for _p in (str(_HERE), str(_HERE.parent)):
         sys.path.insert(0, _p)
 from shared.authz import check_api_key, warn_if_disabled  # noqa: E402
 from shared.rbac import role_at_least, can_access_tenant, LoginRateLimiter  # noqa: E402
-from shared.sessions import SessionStore  # noqa: E402
+from shared.sessions import SessionStore, make_session_store  # noqa: E402
 import reporting  # noqa: E402
 import rules_view  # noqa: E402
 import nis2_template  # noqa: E402
@@ -137,20 +136,11 @@ def make_handler(store, users_db=None, sessions: SessionStore | None = None,
     """
     rbac_enabled = users_db is not None
     if rbac_enabled:
-        sessions = sessions or SessionStore()
+        # make_session_store() honors FENGARDE_SESSION_BACKEND (memory default,
+        # redis for multi-replica) and fails loud if redis is asked for but
+        # unreachable -- see shared/sessions.py's module docstring.
+        sessions = sessions or make_session_store()
         rate_limiter = rate_limiter or LoginRateLimiter()
-
-    # ThreadingHTTPServer runs one thread per connection. A triage update is a
-    # read (find_alert) -> modify (merge triage dict) -> write (store.index)
-    # sequence across several Python statements; two concurrent POSTs to the
-    # SAME alert_id can interleave and silently lose one side's change (a
-    # classic lost-update race -- e.g. one analyst's status change and
-    # another's note both intended to persist, only the later store.index()
-    # survives). Triage writes are rare and cheap, so one process-wide lock
-    # serializing the read-modify-write section is the simplest correct fix;
-    # it does not block concurrent GETs or POSTs to DIFFERENT alerts in any
-    # way that matters at this volume.
-    write_lock = threading.Lock()
 
     class Handler(BaseHTTPRequestHandler):
         # Slowloris guard: drop a client that stalls mid-request instead of
@@ -558,36 +548,47 @@ def make_handler(store, users_db=None, sessions: SessionStore | None = None,
                     raise _BadRequest("note must be a string")
                 note = note[:_MAX_NOTE_CHARS]
 
-            # Two layers of lost-update protection:
-            # - write_lock serializes read-modify-write WITHIN this process
-            #   (covers MemoryStore and single-replica deployments outright).
-            # - index_cas (optimistic concurrency) covers writers this lock
-            #   can't see -- another ws3 replica against a shared OpenSearch.
-            #   A stale write comes back as a conflict; re-read and retry.
-            #   Retries are bounded; exhaustion surfaces as 409 to the client
-            #   (retryable), never a silently dropped update.
-            with write_lock:
-                for _attempt in range(_CAS_MAX_RETRIES):
-                    found = store.find_alert_versioned(alert_id)
-                    if found is None:
-                        return self._send(404, {"error": "alert not found"})
-                    index, doc, version = found
-                    if not self._tenant_gate(session, doc):
-                        return
+            # P2-5 (2026-07-21 audit): this used to hold write_lock (a
+            # process-wide lock) across the entire retry loop below,
+            # including find_alert_versioned/index_cas -- both real network
+            # I/O against OpenSearch (up to ~60s under a slow cluster). That
+            # serialized triage writes to EVERY alert, in EVERY tenant,
+            # through this one process, one at a time, for as long as the
+            # slowest concurrent write's I/O took -- vastly wider than the
+            # lost-update race it existed to prevent (which is only ever
+            # between two writers touching the SAME alert_id).
+            #
+            # index_cas (optimistic concurrency) is already sufficient
+            # cross-writer protection on its own: MemoryStore's version
+            # counter and OpenSearch's (_seq_no, _primary_term) are each
+            # checked-and-incremented atomically by the store itself, so two
+            # threads racing on the same alert_id can each safely
+            # find_alert_versioned/compute/index_cas with NO external lock --
+            # the loser's index_cas simply returns False and it retries. The
+            # lock added nothing beyond what CAS already guarantees, so it is
+            # dropped rather than narrowed: there is no read-modify-write
+            # section left that needs one.
+            for _attempt in range(_CAS_MAX_RETRIES):
+                found = store.find_alert_versioned(alert_id)
+                if found is None:
+                    return self._send(404, {"error": "alert not found"})
+                index, doc, version = found
+                if not self._tenant_gate(session, doc):
+                    return
 
-                    triage = dict(doc.get("triage") or _default_triage())
-                    if status is not None:
-                        triage["status"] = status
-                    if note_present:
-                        triage["note"] = note
-                    triage["updated_at"] = int(time.time() * 1000)
+                triage = dict(doc.get("triage") or _default_triage())
+                if status is not None:
+                    triage["status"] = status
+                if note_present:
+                    triage["note"] = note
+                triage["updated_at"] = int(time.time() * 1000)
 
-                    doc = dict(doc)
-                    doc["triage"] = triage
-                    if store.index_cas(index, alert_id, doc, version):
-                        return self._send(200, triage)
-                    # conflict: another writer landed between our read and
-                    # write -- loop re-reads the fresh doc and re-applies.
+                doc = dict(doc)
+                doc["triage"] = triage
+                if store.index_cas(index, alert_id, doc, version):
+                    return self._send(200, triage)
+                # conflict: another writer landed between our read and
+                # write -- loop re-reads the fresh doc and re-applies.
             return self._send(409, {"error": "conflicting concurrent updates, retry"})
 
     return Handler

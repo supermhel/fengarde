@@ -19,6 +19,10 @@
 - `mcp_agent` → API Activity (6003), sector common (v0.4: MCP/AI-agent tool-call audit logs)
 - `opcua_audit` → Authentication (3002) / API Activity (6003), sector datacenter (v0.4: OPC UA industrial audit events)
 - `n8n_audit` → API Activity (6003) / Authentication (3002), sector common (v0.4: n8n automation-platform audit logs)
+- `dns_query` → DNS/HTTP Activity (4002), sector common (v0.5: dnsmasq/BIND query logs; first class-4002 producer)
+- `k8s_audit` → API Activity (6003), sector datacenter (v0.5: Kubernetes audit-webhook events)
+- `cef` → Authentication (3002) / Network Activity (4001), sector common (v0.5: generic CEF-emitting appliances; feeds existing common_* rules)
+- `cloudtrail` → Authentication (3002) / API Activity (6003), sector common (v0.5: AWS CloudTrail; first cloud-control-plane producer)
 
 Adding a source = new module + one registry line. `type_uid` always derived.
 

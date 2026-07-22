@@ -20,8 +20,33 @@ import yaml
 from shared.envelope import valid_tenant_id
 
 _HERE = Path(__file__).resolve().parent
-RULES_DIR = _HERE.parent.parent / "contracts" / "rules"
-TENANTS_DIR = _HERE.parent.parent / "contracts" / "tenants"
+_SERVICES = _HERE.parent
+_ROOT = _SERVICES.parent
+
+
+def _contracts_dir() -> Path:
+    """contracts/ lives at repo/contracts on a host checkout (_HERE =
+    repo/services/ws3-indexer, so two parents up) but at /app/contracts in
+    the container (Dockerfile COPYs it straight to /app, and _HERE there is
+    /app/ws3-indexer -- only ONE parent up). A fixed parent-count breaks one
+    of the two layouts; probe both, same pattern as
+    services/ws4-detection/main.py::_contracts_dir(). This was a real,
+    previously undetected bug: GET /rules returned zero rules on every live
+    Docker deployment (silently -- RULES_DIR.is_dir() was False, and
+    list_rule_summaries() returns [] for a missing dir, the same fail-open
+    convention as a missing tenant config), only masked because the
+    zero-infra contract tests run on a host checkout where the old two-
+    parents-up math happened to be correct.
+    """
+    for base in (_SERVICES, _ROOT):
+        if (base / "contracts" / "rules").is_dir():
+            return base / "contracts"
+    return _ROOT / "contracts"
+
+
+_CONTRACTS = _contracts_dir()
+RULES_DIR = _CONTRACTS / "rules"
+TENANTS_DIR = _CONTRACTS / "tenants"
 
 
 def _disabled_for_tenant(tenant_id: str) -> frozenset:

@@ -10,8 +10,8 @@
 > real run on `main` found, not a promise.
 
 **The open-source SIEM for the European industrial Mittelstand — turns your
-factory and IT logs into NIS2/DORA evidence, with AI triage that never leaves
-your network.**
+factory and IT logs into draft NIS2 incident notifications, with AI triage that
+never leaves your network.**
 
 FENGARDE ingests logs from multiple sources, normalizes them to a single schema
 ([OCSF](https://schema.ocsf.io/)), runs correlation rules over a sliding window,
@@ -88,7 +88,7 @@ make down                                 # stop the stack and remove volumes
 
 ---
 
-## What's real (v0.3 shipped, v0.4 in progress)
+## What's real (v0.1-v0.5 shipped)
 
 FENGARDE ships a **working detection pipeline**. We are deliberate about what is
 real versus what is planned — this is a security tool, so accuracy matters more than
@@ -97,8 +97,9 @@ a long feature list.
 | Capability | Status | Notes |
 |---|---|---|
 | **Detection pipeline** (collect → normalize → detect → index → dashboard) | ✅ Works | End-to-end since v0.1 |
-| **Parsers (10)** | ✅ Works | Cisco ASA, Active Directory, VMware vSphere, Linux SSH, generic syslog, Windows Event Log (incl. account-change 4720/4722/4726/4728/4732), DB audit (GRANT/REVOKE/ALTER), MCP/AI-agent tool-call audit, OPC UA/OT audit, n8n automation-platform audit — all → OCSF |
-| **Detection rules (17)** | ✅ Works | Brute-force, port-scan, lateral-movement, password-spray, privileged-group grant, after-hours admin, impossible-travel, bank DB priv-esc, DC mass-VM-delete, agent credential-file access / tool-call burst / prompt-injection indicator, OT write-outside-maintenance / new-engineering-connection / config-change, n8n new-webhook-exposed / workflow-modified-after-hours |
+| **Parsers (14)** | ✅ Works | Cisco ASA, Active Directory, VMware vSphere, Linux SSH, generic syslog, Windows Event Log (incl. account-change 4720/4722/4726/4728/4732), DB audit (GRANT/REVOKE/ALTER), MCP/AI-agent tool-call audit, OPC UA/OT audit, n8n automation-platform audit, DNS query log, Kubernetes audit, CEF (generic appliance), AWS CloudTrail — all → OCSF |
+| **Detection rules (26)** | ✅ Works | Brute-force (per-IP and sourceless/per-target-host), port-scan, lateral-movement, password-spray, privileged-group grant, after-hours admin, impossible-travel, bank DB priv-esc, DC mass-VM-delete, agent credential-file access / tool-call burst / prompt-injection indicator / destructive-command / egress-non-allowlisted-domain, OT write-outside-maintenance / new-engineering-connection / config-change, n8n new-webhook-exposed / workflow-modified-after-hours, DNS exfil, privileged-container-create, cloud root console login, mass DB-object read, rapid account create/delete, beaconing (periodicity primitive) |
+| **Multi-tenancy / RBAC / webhooks / plugins** (v0.5, M4) | ✅ Works, opt-in | Tenant-scoped indices, per-tenant rule enablement; `FENGARDE_RBAC_DB` opt-in identity/RBAC (SQLite, scrypt, sessions, CSRF); outbound HMAC-signed webhooks; entry-points parser/rule plugin interface. All default OFF — zero behavior change unless you opt in |
 | **Rule grammar** | ✅ Works | Boolean logic, comparison operators (`gt/gte/lt/lte/ne`), allowlist suppression (`not_in`, CIDR + exact), time-of-day (`outside_hours`) — all fail closed on malformed input |
 | **Rule prefilter** | ✅ Works | Rules bucketed by `class_uid` equality selection; events only evaluated against candidate rules (fixes the O(rules×events) scan) |
 | **Anti-dormancy guardrail** | ✅ Works | `tools/check_rule_producers.py` in the CI gate proves every rule's selections are satisfiable by values a real parser actually emits |
@@ -290,9 +291,9 @@ schema (OCSF).
 | WS | Service | Role | v0.1 status |
 |----|---------|------|-------------|
 | 1 | `services/ws1-collectors` | Collect logs → `raw.events` | ✅ |
-| 2 | `services/ws2-normalization` | Parsers → validated OCSF events | ✅ (10 parsers as of v0.4) |
+| 2 | `services/ws2-normalization` | Parsers → validated OCSF events | ✅ (15 parsers) |
 | 3 | `services/ws3-indexer` | Routing + OpenSearch indexing (idempotent) | ✅ |
-| 4 | `services/ws4-detection` | Correlation rules + scoring + windowing | ✅ (17 rules) |
+| 4 | `services/ws4-detection` | Correlation rules + scoring + windowing | ✅ (26 rules) |
 | 5 | `services/ws5-ai` | Triage | ✅ real local-LLM (Ollama) since v0.2, stub fallback |
 | 6 | `services/ws6-inventory` | IP/MAC inventory API (SQLite) | ✅ |
 | 7 | `services/ws7-dashboard` | Alert console | ✅ |
@@ -327,13 +328,34 @@ Curious how FENGARDE compares to Wazuh/Elastic Security/Security Onion? See
 ## Security
 
 FENGARDE services are designed for a **localhost / Docker-Compose network only** and
-are **not** hardened for internet exposure. Authentication is **opt-in** (v0.4+:
-`FENGARDE_API_KEY`, dashboard basic-auth, Redis `AUTH` — all default OFF, matching
-pre-v0.4 behavior until you opt in), not a full identity/RBAC system, and the detection
-engine executes rule files — so only run rules you trust. Need to reach the dashboard
+are **not** hardened for internet exposure. Authentication is **opt-in**
+(`FENGARDE_API_KEY` shared-secret, dashboard basic-auth, Redis `AUTH` — all default
+OFF, matching pre-v0.4 behavior until you opt in). A real identity/RBAC layer
+(`FENGARDE_RBAC_DB` — SQLite users, scrypt hashing, sessions, roles, CSRF-protected
+writes, tenant isolation) exists as of v0.5/M4, also opt-in and off by default
+(single-process session store, not yet HA — see SSOT.md §2). The detection engine
+executes rule files — so only run rules you trust. Need to reach the dashboard
 from outside the host? See **[docs/deployment.md](docs/deployment.md)** for a reverse-proxy
 TLS example. See **[SECURITY.md](SECURITY.md)** for the full threat boundary and how to
 report a vulnerability.
+
+---
+
+## Open core — what's free, what's paid
+
+**This repository is free and open source forever, under Apache-2.0.** Everything in it
+— the pipeline, every parser, every detection rule, the dashboard, the triage API, the
+generic and NIS2 report templates — is the complete product, not a crippled trial.
+
+There is a separate, closed companion product, **FENGARDE-Sec**, developed in a private
+repository: a paid layer for regulated deployments (legally-validated report content and
+model-assisted compliance tooling). It plugs into this repo only through one frozen,
+documented seam — the report-backend contract in
+[`contracts/reporting.md`](contracts/reporting.md) (`REPORT_BACKEND=http`). Nothing in
+this repo requires it, phones home to it, or degrades without it.
+
+Practically: features never move from this repo to the paid layer. New capability that
+fits the seam ships here open; only the regulated/legal content layer is paid.
 
 ---
 

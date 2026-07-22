@@ -30,3 +30,6 @@ fields:
 siem:
   sector: common
   score_weight: 85
+mitre:
+  tactic: TA0040      # Impact
+  technique: T1485    # Data Destruction

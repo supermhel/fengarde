@@ -29,19 +29,19 @@ python tools/migrate_opensearch.py --dry-run    # see what would change
 python tools/migrate_opensearch.py              # apply it
 ```
 
-**Honest scope:** this manages index TEMPLATES (mappings) only. It does
-NOT install ILM/retention policies — `contracts/opensearch-mappings/
-ilm-policies.json` is written in Elasticsearch ILM syntax, but this stack
-runs OpenSearch, whose Index State Management (ISM) plugin uses a
-different policy schema at a different endpoint. This was already an
-honest no-op placeholder in `infra/provision.sh` before this tool existed;
-see `SSOT.md` §2 for the tracked gap. Fixing it needs a live cluster to
-verify the real ISM policy bodies against — out of scope for a repo whose
-test path can't stand one up.
+**Honest scope:** this manages index TEMPLATES (mappings) only. Retention
+is handled separately by real OpenSearch ISM policies
+(`contracts/opensearch-mappings/ism-*.json`, installed idempotently by
+`infra/provision.sh` at `_plugins/_ism/policies/<name>`); each policy
+carries an `ism_template` block so it auto-attaches to matching indices
+at creation time. The old Elasticsearch-syntax `ilm-policies.json` and
+the templates' dead `index.lifecycle.name` settings were removed
+2026-07-21 when the ISM rewrite landed.
 
-Like the rest of `storage/opensearch.py`, `migrate_opensearch.py`'s logic
-is proven at the wire-format level against a fake transport
-(`tools/test_migrate_opensearch.py`), not against a live cluster.
+`migrate_opensearch.py`'s logic is proven at the wire-format level
+against a fake transport (`tools/test_migrate_opensearch.py`) and
+exercised against a live cluster by `make test-live`
+(`services/ws3-indexer/storage/test_opensearch_live.py`).
 
 ## Backup and restore
 

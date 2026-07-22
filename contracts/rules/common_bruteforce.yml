@@ -28,3 +28,6 @@ siem:
   window_seconds: 60
   threshold: 10
   group_by: src_endpoint.ip
+mitre:
+  tactic: TA0006      # Credential Access
+  technique: T1110    # Brute Force

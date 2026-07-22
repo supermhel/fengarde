@@ -1,14 +1,12 @@
 {
   "index_patterns": ["events-dc-*"],
-  "_comment": "Same field mappings as events-common; data-center events, 90d ILM.",
   "template": {
     "settings": {
       "number_of_shards": 1,
-      "number_of_replicas": 1,
-      "index.lifecycle.name": "events-90d"
+      "number_of_replicas": 1
     },
     "mappings": {
-      "_meta": { "mapping_version": 1 },
+      "_meta": { "mapping_version": 2, "_comment": "Same field mappings as events-common; data-center events, 90d retention via ISM (ism-events-90d.json attaches by index pattern, not by a template setting)." },
       "dynamic": "false",
       "properties": {
         "time": { "type": "date", "format": "epoch_millis" },

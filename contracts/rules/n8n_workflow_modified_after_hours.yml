@@ -30,3 +30,6 @@ fields:
 siem:
   sector: common
   score_weight: 45
+mitre:
+  tactic: TA0004      # Privilege Escalation
+  technique: T1078    # Valid Accounts

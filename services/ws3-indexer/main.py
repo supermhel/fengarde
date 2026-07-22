@@ -34,16 +34,65 @@ def index_doc(store, doc: dict) -> bool:
 
 
 def run(bus, store) -> dict:
+    """Drain every topic and index every message.
+
+    P1-4 (2026-07-21 audit): when the store supports batch indexing
+    (OpenSearchStore.bulk_index -- MemoryStore does not), each topic's
+    messages are routed then indexed in ONE /_bulk request instead of one
+    HTTP PUT per doc. Safe here specifically because this is the batch/
+    tooling path (tools/integration_e2e.py, demo_e2e.py, tests) -- it drains
+    a topic fully before returning and has no per-message ack tied to a live
+    Redis PEL to preserve (unlike the daemon's handler(), which still
+    indexes one doc per call -- see storage/opensearch.py's module
+    docstring for why that path is NOT batched this pass).
+    """
     stats = {"indexed": 0, "duplicates": 0, "unroutable": 0}
+    bulk_index = getattr(store, "bulk_index", None)
     for topic in TOPICS:
-        for msg in bus.consume(topic, group="cg-index"):
+        msgs = list(bus.consume(topic, group="cg-index"))
+        if not msgs:
+            continue
+        if bulk_index is None:
+            for msg in msgs:
+                try:
+                    created = index_doc(store, msg.payload)
+                except ValueError:
+                    stats["unroutable"] += 1
+                    continue
+                stats["indexed" if created else "duplicates"] += 1
+            continue
+
+        items = []
+        for msg in msgs:
             try:
-                created = index_doc(store, msg.payload)
+                index, doc_id = route(msg.payload)
             except ValueError:
                 stats["unroutable"] += 1
                 continue
-            stats["indexed" if created else "duplicates"] += 1
+            items.append((index, doc_id, msg.payload))
+        if not items:
+            continue
+        result = bulk_index(items)
+        for r in result["results"]:
+            stats["indexed" if r["created"] else "duplicates"] += 1
+        # A per-item /_bulk failure (e.g. a mapping conflict on one doc) is
+        # NOT an "unroutable" document -- it routed fine, OpenSearch itself
+        # rejected the write. Distinct failure class; not silently folded
+        # into either existing counter.
+        if result["errors"]:
+            stats["bulk_errors"] = stats.get("bulk_errors", 0) + len(result["errors"])
     return stats
+
+
+# P0-5 (2026-07-21 audit): the full bus-topics.md topic list, reaped from here
+# regardless of which of these WS-3 itself consumes -- trim_acked() queries
+# Redis's XINFO GROUPS/XPENDING directly (a global view of every consumer
+# group on a stream, not just the caller's own), so correctness only needs
+# ONE service to run the reaper, not one per producer/consumer. WS-3 is the
+# most terminal/always-running service, so it owns this. `.deadletter`
+# siblings are excluded by start_stream_reaper itself.
+_ALL_BUS_TOPICS = ["raw.events", "normalized.events", "scored.events",
+                   "ai.requests", "ai.results", "alerts", "assets.updates"]
 
 
 def main():
@@ -54,7 +103,9 @@ def main():
     # backend in compose.
     import threading  # noqa: E402
 
-    from shared.runner import serve  # noqa: E402
+    from shared.bus import Bus  # noqa: E402
+    from shared.log import get_logger  # noqa: E402
+    from shared.runner import serve, start_stream_reaper  # noqa: E402
     import triage_api  # noqa: E402
     import webhooks  # noqa: E402
 
@@ -101,8 +152,25 @@ def main():
         )
         webhook_thread.start()
 
+    # P0-5: reap acked-by-every-group stream entries so Redis memory doesn't
+    # grow unboundedly forever (live-proven: raw.events XLEN stayed frozen
+    # after a full drain with nothing ever calling XTRIM). Interval is
+    # deliberately coarser than the depth watchdog's -- trimming is cheap but
+    # not free (XINFO GROUPS + XPENDING per group per topic).
+    log = get_logger("ws3-indexer")
+    shutdown = threading.Event()
+    reap_interval = float(os.getenv("STREAM_REAP_INTERVAL_S", "300"))
+    reaper = start_stream_reaper(Bus(), log, shutdown, _ALL_BUS_TOPICS,
+                                 interval_s=reap_interval)
+
     handlers = {t: ("cg-index", handler) for t in TOPICS}
-    serve(handlers, health_port=int(os.getenv("PORT", "8003")), service_name="ws3-indexer")
+    try:
+        serve(handlers, health_port=int(os.getenv("PORT", "8003")),
+              service_name="ws3-indexer", shutdown=shutdown)
+    finally:
+        shutdown.set()
+        if reaper is not None:
+            reaper.join(timeout=5)
 
 
 if __name__ == "__main__":

@@ -1,10 +1,9 @@
 {
   "index_patterns": ["alerts-*"],
-  "_comment": "Correlated/enriched alerts, 1-year ILM.",
   "template": {
-    "settings": { "number_of_shards": 1, "number_of_replicas": 1, "index.lifecycle.name": "alerts-365d" },
+    "settings": { "number_of_shards": 1, "number_of_replicas": 1 },
     "mappings": {
-      "_meta": { "mapping_version": 1 },
+      "_meta": { "mapping_version": 3, "_comment": "Correlated/enriched alerts, 1-year retention via ISM (ism-alerts-365d.json attaches by index pattern, not by a template setting)." },
       "dynamic": "false",
       "properties": {
         "alert_id": { "type": "keyword" },
@@ -17,6 +16,13 @@
         "src_endpoint": { "properties": { "ip": { "type": "ip" }, "mac": { "type": "keyword" } } },
         "actor": { "properties": { "user": { "properties": { "name": { "type": "keyword" } } } } },
         "event_ids": { "type": "keyword" },
+        "mitre": {
+          "properties": {
+            "framework": { "type": "keyword" },
+            "tactic": { "type": "keyword" },
+            "technique": { "type": "keyword" }
+          }
+        },
         "ai": {
           "properties": {
             "verdict": { "type": "keyword" },

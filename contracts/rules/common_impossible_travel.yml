@@ -37,3 +37,6 @@ siem:
   threshold: 2
   group_by: actor.user.name
   distinct_field: src_endpoint.location.country
+mitre:
+  tactic: TA0001      # Initial Access
+  technique: T1078    # Valid Accounts

@@ -1,0 +1,23 @@
+{
+  "policy": {
+    "description": "FENGARDE retention: alerts, delete 365 days after index creation. Age-based only (daily date-suffixed indices, no write alias -- see ism-events-30d.json). Pattern alerts-* also covers tenant-scoped alerts-<tenant>-* indices; reports-* is deliberately NOT covered (independent retention, no policy yet).",
+    "default_state": "hot",
+    "states": [
+      {
+        "name": "hot",
+        "actions": [],
+        "transitions": [
+          { "state_name": "delete", "conditions": { "min_index_age": "365d" } }
+        ]
+      },
+      {
+        "name": "delete",
+        "actions": [ { "delete": {} } ],
+        "transitions": []
+      }
+    ],
+    "ism_template": [
+      { "index_patterns": ["alerts-*"], "priority": 100 }
+    ]
+  }
+}

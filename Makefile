@@ -4,7 +4,7 @@
 
 COMPOSE := docker compose -f infra/docker-compose.yml
 
-.PHONY: help preflight demo test e2e nis2-demo up down chaos test-live
+.PHONY: help preflight demo test e2e nis2-demo up down chaos test-live attack-scorecard eval-detection
 
 PYTHON ?= python3
 
@@ -20,6 +20,8 @@ help:
 	@echo "  make chaos      - M1 correctness gate: kill each service mid-replay,"
 	@echo "                    assert zero lost/duplicate alerts (needs 'make up' first)"
 	@echo "  make test-live  - OPT-IN: real Redis + OpenSearch (needs 'make up' or REDIS_URL/OPENSEARCH_URL)"
+	@echo "  make attack-scorecard - P3-2: declared ATT&CK/ATLAS coverage + Navigator layer export (zero infra)"
+	@echo "  make eval-detection   - P3 eval lane: EVTX/Splunk oracle-replay detection accuracy (needs datasets, see eval/detection_accuracy/README.md)"
 
 # DX3 — the "doctor". Fails fast with plain-English remedies before anything starts.
 preflight:
@@ -78,4 +80,28 @@ chaos:
 # first: `make up`, or point REDIS_URL/OPENSEARCH_URL at your own instances.
 test-live:
 	@BUS_BACKEND=redis $(PYTHON) services/shared/test_runner.py
+	@BUS_BACKEND=redis $(PYTHON) services/shared/test_bus_trim_acked.py
+	@BUS_BACKEND=redis $(PYTHON) services/shared/test_bus_lag.py
+	@BUS_BACKEND=redis $(PYTHON) services/shared/test_bus_read_count.py
 	@$(PYTHON) services/ws3-indexer/storage/test_opensearch_live.py
+	@SESSION_TEST_REDIS=1 $(PYTHON) services/shared/test_sessions.py
+
+# P3-2 (2026-07-21 audit fix plan) -- declared ATT&CK/ATLAS coverage
+# scorecard + MITRE ATT&CK Navigator layer export. Zero infra, zero
+# prerequisites: pure metadata parsed from contracts/rules/*.yml's `mitre:`
+# blocks. This is DECLARED coverage only -- see eval/attack/coverage_layer.py's
+# module docstring for why that's a different (and lesser) claim than the
+# empirical `make eval-detection` number below.
+attack-scorecard:
+	@$(PYTHON) eval/attack/coverage_layer.py
+
+# P3 eval lane (Test-data integration section of the audit fix plan) --
+# independent-oracle detection-accuracy replay against real EVTX-ATTACK-
+# SAMPLES / Splunk attack_data corpora. OPT-IN and dataset-gated: these
+# corpora are third-party (their own licenses, not vendored into this repo --
+# see eval/detection_accuracy/README.md), so this target SKIPS cleanly (not
+# fail) when the datasets aren't present locally, same "safe to run with no
+# setup, just proves nothing that time" convention as `make test-live`.
+eval-detection:
+	@$(PYTHON) eval/detection_accuracy/evtx_eval.py
+	@$(PYTHON) eval/detection_accuracy/splunk_eval.py

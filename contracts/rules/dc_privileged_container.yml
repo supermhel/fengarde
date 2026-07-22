@@ -1,0 +1,32 @@
+title: Privileged container created via the Kubernetes API
+id: b2c3d4e5-6f70-4819-8a2b-3c4d5e6f7082
+status: stable
+description: >
+  A pod was created with a privileged security context, hostNetwork/hostPID,
+  or a hostPath volume mount (OCSF API Activity, class 6003, activity 1
+  Create) -- a container with this shape can escape to the underlying node,
+  the classic container-breakout precondition. Single-shot: one such create
+  is itself notable. Scoped to siem.source_type=k8s_audit -- without it, any
+  other 6003 producer's activity_id-1 event (mcp_agent, cloudtrail, ...) could
+  also match once a second producer shares the class (see
+  contracts/detection-coverage.md's "Cross-source rule scoping" note).
+level: high
+logsource:
+  category: api_activity
+detection:
+  privileged_create:
+    class_uid: 6003
+    activity_id: 1
+    siem.source_type: k8s_audit
+    unmapped.k8s.is_privileged: true
+  condition: privileged_create
+fields:
+  - actor.user.name
+  - unmapped.k8s.namespace
+  - unmapped.k8s.resource
+siem:
+  sector: datacenter
+  score_weight: 70
+mitre:
+  tactic: TA0002      # Execution
+  technique: T1610    # Deploy Container

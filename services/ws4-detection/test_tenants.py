@@ -86,11 +86,40 @@ def test_valid_tenant_and_default_still_load_normally():
     check(default_disabled == frozenset(), f"default tenant with no config file must be empty, got {default_disabled!r}")
 
 
+def test_invalid_tenant_id_never_cached():
+    """P2-1 (2026-07-21 audit): an invalid tenant_id must NOT be written to
+    _CACHE -- caching it would let an attacker grow the dict for free with
+    unlimited distinct garbage strings, defeating the LRU cap's purpose."""
+    tenants_dir, _ = _fresh_dir_and_secret()
+    tenants._CACHE.clear()
+
+    tenants.load_disabled_rules(tenants_dir, "../secret")
+    cache_key = f"{Path(tenants_dir).resolve()}::../secret"
+    check(cache_key not in tenants._CACHE,
+          "invalid tenant_id must not be written to _CACHE at all")
+
+
+def test_cache_is_bounded_under_many_distinct_tenants():
+    """P2-1: valid-shaped but distinct tenant_id values must not grow
+    _CACHE past _CACHE_MAXSIZE (LRU eviction caps memory)."""
+    tenants_dir, _ = _fresh_dir_and_secret()
+    tenants._CACHE.clear()
+
+    n = tenants._CACHE_MAXSIZE + 200
+    for i in range(n):
+        tenants.load_disabled_rules(tenants_dir, f"tenant{i:06d}")
+
+    check(len(tenants._CACHE) <= tenants._CACHE_MAXSIZE,
+          f"_CACHE grew to {len(tenants._CACHE)}, expected <= {tenants._CACHE_MAXSIZE}")
+
+
 def run():
     test_path_traversal_tenant_id_fails_open_no_exception()
     test_path_traversal_tenant_id_never_reads_outside_tenants_dir()
     test_malformed_tenant_id_shapes_fail_open()
     test_valid_tenant_and_default_still_load_normally()
+    test_invalid_tenant_id_never_cached()
+    test_cache_is_bounded_under_many_distinct_tenants()
 
 
 def main():

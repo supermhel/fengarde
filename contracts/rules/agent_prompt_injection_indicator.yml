@@ -24,3 +24,7 @@ fields:
 siem:
   sector: common
   score_weight: 50
+mitre:
+  framework: atlas
+  tactic: AML.TA0004    # Initial Access
+  technique: AML.T0051  # LLM Prompt Injection

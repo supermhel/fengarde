@@ -1,14 +1,12 @@
 {
   "index_patterns": ["events-bank-*"],
-  "_comment": "Same field mappings as events-common; isolated index with 400d ILM for PCI-DSS retention.",
   "template": {
     "settings": {
       "number_of_shards": 1,
-      "number_of_replicas": 1,
-      "index.lifecycle.name": "events-400d-pci"
+      "number_of_replicas": 1
     },
     "mappings": {
-      "_meta": { "mapping_version": 1 },
+      "_meta": { "mapping_version": 2, "_comment": "Same field mappings as events-common; isolated index with 400d PCI-DSS retention via ISM (ism-events-400d-pci.json attaches by index pattern, not by a template setting)." },
       "dynamic": "false",
       "properties": {
         "time": { "type": "date", "format": "epoch_millis" },

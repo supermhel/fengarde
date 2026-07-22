@@ -1,0 +1,33 @@
+title: Rapid account create-then-delete (same target account)
+id: e5f60718-92a3-4b42-9c5d-6e7f80910415
+status: stable
+description: >
+  The SAME target account was created AND deleted (OCSF Account Change,
+  class 3003, activity_id 1 Create or 4 Delete) within one hour -- 2+ of
+  either activity for one target account in the window. The classic
+  "create a backdoor account, use it, clean up" pattern; also fires on the
+  inverse (delete then re-create), which is equally worth an analyst's
+  attention. Not a strict create-THEN-delete ORDERING check -- the rule
+  grammar counts occurrences within a window, it doesn't assert sequence --
+  so two creates of the same (recycled) username in an hour would also
+  trip this; documented as a known over-approximation, not a bug.
+level: high
+logsource:
+  category: account_change
+detection:
+  lifecycle_event:
+    class_uid: 3003
+    activity_id: {in: [1, 4]}
+  condition: lifecycle_event
+fields:
+  - actor.user.name
+  - unmapped.target_user.name
+siem:
+  sector: common
+  score_weight: 70
+  window_seconds: 3600
+  threshold: 2
+  group_by: unmapped.target_user.name
+mitre:
+  tactic: TA0003      # Persistence
+  technique: T1136    # Create Account

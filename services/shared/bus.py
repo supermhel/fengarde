@@ -34,6 +34,26 @@ class Message:
     id: str
 
 
+def _stream_id_lt(a: str, b: str) -> bool:
+    """True if Redis stream id ``a`` sorts before ``b``. IDs are
+    "<ms>-<seq>"; compare numerically on both parts (a lexicographic string
+    compare breaks once the millisecond part's digit count differs)."""
+    def _parts(x):
+        ms, _, seq = str(x).partition("-")
+        return int(ms), int(seq or 0)
+    return _parts(a) < _parts(b)
+
+
+def _next_stream_id(id_str: str) -> str:
+    """The smallest stream id strictly greater than ``id_str``. Needed because
+    ``XTRIM MINID <id>`` is INCLUSIVE (keeps entries >= id): a "safe to trim
+    everything through and including this id" boundary (e.g. a group's own
+    last-delivered-id, when it has nothing pending) must be advanced by one
+    before use, or that one entry is retained forever instead of trimmed."""
+    ms, _, seq = str(id_str).partition("-")
+    return f"{ms}-{int(seq or 0) + 1}"
+
+
 class _MemoryBus:
     """Process-local bus for tests / no-infra dev."""
     def __init__(self):
@@ -68,11 +88,33 @@ class _MemoryBus:
         """B2: unconsumed-message count, for the ingest-edge depth watchdog."""
         return len(self._streams[topic])
 
+    def trim_acked(self, topic) -> int:
+        """MemoryBus has no PEL / no retained-after-consume entries (see the
+        module docstring's NOTE on backend fidelity) -- consume() already
+        removes a message the moment it's yielded, so there is nothing an
+        acked-entry reaper could ever find to trim. No-op, always 0."""
+        return 0
+
+    def lag(self, topic) -> int:
+        """P1-7: MemoryBus.consume() removes an entry the instant it's
+        yielded (no retained-after-consume history, no PEL) -- so depth()
+        already IS the true unconsumed backlog here, unlike _RedisBus where
+        depth()/XLEN also counts everything ever acked. Just reuse it."""
+        return self.depth(topic)
+
 
 class _RedisBus:
     def __init__(self, url):
         import redis  # type: ignore
         self.r = redis.Redis.from_url(url, decode_responses=True)
+        # P1-8 (2026-07-21 audit): the old hardcoded count=10 meant 1 XREADGROUP
+        # round-trip per 10 messages -- at real production rates this was
+        # measured as ~10-15% RTT overhead in the audit's perf review. Raising
+        # the batch size cuts read RTTs roughly proportionally with no
+        # correctness change (still delivered-not-yet-acked into the group's
+        # PEL exactly as before, just more per read). Configurable since a very
+        # large batch trades read-RTT count for per-batch memory/latency.
+        self._read_count = int(os.getenv("BUS_XREADGROUP_COUNT", "100"))
 
     def produce(self, topic, key, payload):
         self.r.xadd(topic, {"key": key or "", "payload": json.dumps(payload)})
@@ -128,8 +170,8 @@ class _RedisBus:
         self._ensure_group(topic, group)
         consumer = self._consumer_name(group)
         try:
-            resp = self.r.xreadgroup(group, consumer, {topic: ">"}, count=10,
-                                     block=block_ms)
+            resp = self.r.xreadgroup(group, consumer, {topic: ">"},
+                                     count=self._read_count, block=block_ms)
         except redis.exceptions.TimeoutError:
             # A blocking XREADGROUP can race its own socket read-timeout against the
             # BLOCK window (redis-py raises before the empty-result comes back). An
@@ -207,6 +249,139 @@ class _RedisBus:
         Missing stream (never produced to) reads as depth 0, not an error."""
         try:
             return int(self.r.xlen(topic))
+        except Exception:
+            return 0
+
+    def lag(self, topic) -> int:
+        """P1-7 (2026-07-21 audit): the real per-topic backlog signal for
+        backpressure alerting, as opposed to ``depth()``/XLEN which -- even
+        with P0-5's reaper running -- reflects the SLOWEST registered
+        group's frontier, not "how far behind is anyone actually". Worse,
+        before P0-5 existed, XLEN only ever grew: once a topic passed
+        ``warn_at`` from lifetime volume alone, the depth watchdog warned
+        forever regardless of whether any consumer was actually behind.
+
+        A group's true backlog is TWO independent numbers that must be
+        SUMMED, not chosen between -- an earlier version of this method got
+        that wrong (verified live, see test_bus_lag.py's "behind" case):
+          - **undelivered**: entries added to the stream this group hasn't
+            even read yet. Redis 7's native ``lag`` field on ``XINFO GROUPS``
+            (entries-added minus entries-read) when the server can track it.
+          - **pending**: entries this group HAS read (XREADGROUP) but not
+            yet acked -- native ``lag`` does NOT include these (it only
+            tracks delivery, not acknowledgment), so a group that has read
+            everything but acked nothing would otherwise report a
+            misleadingly healthy lag of 0. Always fetched via XPENDING's
+            summary form regardless of whether native lag was available.
+        Returns the MAX, across every consumer group on this stream, of
+        (undelivered + pending) for that group. A topic with no consumer
+        groups yet falls back to ``depth()`` (nothing has read it, so total
+        length IS the backlog).
+        """
+        try:
+            groups = self.r.xinfo_groups(topic)
+        except Exception:
+            return 0
+        if not groups:
+            return self.depth(topic)
+        worst = 0
+        for g in groups:
+            if not isinstance(g, dict):
+                continue
+            name = g.get("name")
+            if not name:
+                continue
+            native_lag = g.get("lag")
+            undelivered = native_lag if isinstance(native_lag, int) else 0
+            try:
+                summary = self.r.xpending(topic, name)
+            except Exception:
+                summary = None
+            pending = 0
+            if summary is not None:
+                pending = int((summary.get("pending") if isinstance(summary, dict)
+                              else summary[0]) or 0)
+            worst = max(worst, undelivered + pending)
+        return worst
+
+    def trim_acked(self, topic) -> int:
+        """P0-5 (2026-07-21 audit): trim entries every consumer group has
+        already finished with, so the stream doesn't retain acked history
+        forever. ``depth()``'s docstring above is about NOT trimming
+        unconsumed events (an audit-completeness violation); this is the
+        opposite case -- entries no group can ever need again -- so it's a
+        different (and safe) operation from that "no MAXLEN" decision.
+
+        Live-proven root cause: after a full send-then-drain cycle on the
+        real Docker stack, ``raw.events`` XLEN stayed frozen (7968) even
+        though every entry had been consumed AND acked by every group --
+        nothing ever called XTRIM. Redis memory grows monotonically with
+        every event ever produced, across every topic, forever; a long
+        soak run OOMs Redis even though every stage keeps up with its rate.
+
+        Safety: only entries strictly older than the SAFE boundary are
+        removed, where SAFE = the minimum, across every consumer group
+        currently registered on this stream, of:
+          - the smallest still-PENDING (delivered but not yet acked) entry
+            id for that group, if it has any pending entries -- because
+            that entry must survive for redelivery/DLQ; or
+          - that group's own last-delivered id, if it has nothing pending
+            (everything it's read so far is acked) -- entries at or before
+            that are done for this group.
+        A topic with ZERO consumer groups (nothing has ever consumed from
+        it) is left untouched -- there is no "acked" boundary to compute,
+        and trimming would risk dropping data before anyone has read it.
+        A concurrent producer/consumer racing this computation can only make
+        the computed boundary MORE conservative (an entry becomes pending or
+        a new group appears after the snapshot), never less -- so a stale
+        read is safe, just possibly under-trims until the next pass.
+
+        Returns the number of entries removed (0 if nothing was eligible or
+        the topic doesn't exist yet)."""
+        try:
+            groups = self.r.xinfo_groups(topic)
+        except Exception:
+            return 0  # stream doesn't exist yet, or a transient Redis error
+        if not groups:
+            return 0  # nobody has ever consumed this topic -- don't touch it
+
+        safe_boundary = None  # smallest-so-far "everything before this is done"
+        for g in groups:
+            name = g.get("name") if isinstance(g, dict) else None
+            if not name:
+                continue
+            try:
+                # XPENDING <key> <group> (summary form): (count, min_id, max_id, consumers)
+                summary = self.r.xpending(topic, name)
+            except Exception:
+                return 0  # can't prove safety for this group -> don't trim at all
+            count = summary.get("pending") if isinstance(summary, dict) else summary[0]
+            if count:
+                # This id is still PENDING (delivered, not yet acked) -- it must
+                # be KEPT. XTRIM MINID is inclusive-keep, so using it directly as
+                # the boundary is correct: nothing at or after it gets removed.
+                min_id = summary.get("min") if isinstance(summary, dict) else summary[1]
+                boundary = min_id
+            else:
+                # Nothing pending -> this group is fully done through (and
+                # including) last-delivered-id, so THAT entry itself is safe to
+                # remove too. XTRIM MINID keeps entries >= the boundary, so the
+                # boundary must be advanced past it or it survives forever.
+                last_delivered = g.get("last-delivered-id") if isinstance(g, dict) else None
+                if last_delivered is None:
+                    return 0  # can't prove safety -> don't trim at all
+                boundary = _next_stream_id(last_delivered)
+            if safe_boundary is None or _stream_id_lt(boundary, safe_boundary):
+                safe_boundary = boundary
+
+        if safe_boundary is None:
+            return 0
+        try:
+            # approximate=False: exact trim, so the safety proof above (nothing
+            # pending or undelivered is ever below safe_boundary) holds precisely
+            # rather than Redis's "~" approximate variant retaining an unknown
+            # few extra entries near the boundary (harmless, but untestable).
+            return int(self.r.xtrim(topic, minid=safe_boundary, approximate=False))
         except Exception:
             return 0
 

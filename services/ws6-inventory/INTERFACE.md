@@ -6,7 +6,11 @@
 
 ## Produces
 - HTTP API (Contract C): `GET /assets`, `GET /assets/resolve`, `GET /assets/{mac}`,
-  `POST /assets/upsert`. Consumed by WS-2 (enrichment) and WS-7 (dashboard).
+  `POST /assets/upsert`. Optionally consumed by WS-7 (dashboard, via the
+  `INVENTORY_API` config). **Not consumed by WS-2**: `services/ws2-normalization/
+  enrichment/` (A5) is local-file-only (an IOC list + a static CIDR→country map) —
+  it never calls this API. This was previously documented as consumed by both;
+  corrected 2026-07-21.
 
 ## Model
 - MAC = primary key (stable). IP historised as intervals → `/assets/resolve?ip=&at=`

@@ -34,3 +34,7 @@ fields:
 siem:
   sector: datacenter
   score_weight: 65
+mitre:
+  framework: attack-ics
+  tactic: TA0106      # Impair Process Control
+  technique: T0836    # Modify Parameter

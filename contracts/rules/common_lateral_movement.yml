@@ -26,3 +26,6 @@ siem:
   threshold: 5
   group_by: actor.user.name
   distinct_field: dst_endpoint.hostname
+mitre:
+  tactic: TA0008      # Lateral Movement
+  technique: T1021    # Remote Services

@@ -1,0 +1,37 @@
+title: Regular-interval outbound connections from one source (beaconing)
+id: f6071829-a3b4-4c53-9d6e-7f8091a2b526
+status: stable
+description: >
+  One source IP made 6+ accepted outbound connections (OCSF Network Activity,
+  class 4001, activity 7 Accept) within an hour at a REGULAR interval
+  (coefficient of variation of inter-arrival times <= 0.25) -- the classic
+  C2-beacon shape. This is a coarse proxy, not a robust beacon detector: it
+  is trivially evaded by an attacker adding random jitter to their callback
+  interval, and it doesn't group by destination (a host that regularly
+  polls several unrelated legitimate services at similar cadences -- e.g. an
+  NTP client plus a health-check agent -- can coincidentally look regular
+  too). See docs/superpowers/specs/2026-07-21-periodicity-primitive.md for
+  the full design rationale and limitations. Tune max_cv tighter (lower) to
+  reduce false positives at the cost of missing jittered beacons.
+level: medium
+logsource:
+  category: network_activity
+detection:
+  outbound_accept:
+    class_uid: 4001
+    activity_id: 7
+  condition: outbound_accept
+fields:
+  - src_endpoint.ip
+  - dst_endpoint.ip
+siem:
+  sector: common
+  score_weight: 40
+  window_seconds: 3600
+  threshold: 6
+  group_by: src_endpoint.ip
+  periodicity:
+    max_cv: 0.25
+mitre:
+  tactic: TA0011      # Command and Control
+  technique: T1071    # Application Layer Protocol

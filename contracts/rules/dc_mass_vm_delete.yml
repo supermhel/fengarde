@@ -23,3 +23,6 @@ siem:
   window_seconds: 120
   threshold: 5
   group_by: actor.user.name
+mitre:
+  tactic: TA0040      # Impact
+  technique: T1485    # Data Destruction

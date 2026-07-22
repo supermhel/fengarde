@@ -15,6 +15,7 @@ single global rule set per tenant.
 """
 from __future__ import annotations
 
+from collections import OrderedDict
 from pathlib import Path
 
 import yaml
@@ -23,7 +24,35 @@ from shared.envelope import valid_tenant_id
 
 DEFAULT_TENANT = "default"
 
-_CACHE: dict[str, frozenset] = {}
+# P2-1 (2026-07-21 audit): tenant_id comes straight from event data
+# (siem.tenant), so an external producer stuffing many DISTINCT tenant
+# strings into events grows this cache once per distinct value seen --
+# unbounded before this fix. Two-part mitigation:
+#   1. An INVALID tenant_id (fails valid_tenant_id()) is never cached at
+#      all -- re-validating a malformed string is a cheap regex match, and
+#      caching it would let an attacker grow the dict for free with
+#      arbitrary garbage (the cheapest possible exploit of this bug).
+#   2. Even VALID-shaped tenant strings are capped at _CACHE_MAXSIZE via
+#      simple LRU eviction (OrderedDict.move_to_end + popitem(last=False)):
+#      an attacker could still spray many distinct VALID-shaped strings
+#      (regex compliance doesn't bound cardinality), so the cache itself
+#      needs a hard ceiling, not just a garbage filter.
+_CACHE_MAXSIZE = 1000
+_CACHE: "OrderedDict[str, frozenset]" = OrderedDict()
+
+
+def _cache_get(key: str):
+    if key not in _CACHE:
+        return None
+    _CACHE.move_to_end(key)  # LRU: most-recently-used moves to the end
+    return _CACHE[key]
+
+
+def _cache_put(key: str, value: frozenset) -> None:
+    _CACHE[key] = value
+    _CACHE.move_to_end(key)
+    while len(_CACHE) > _CACHE_MAXSIZE:
+        _CACHE.popitem(last=False)  # evict least-recently-used
 
 
 def tenant_of(event: dict) -> str:
@@ -38,8 +67,9 @@ def tenant_of(event: dict) -> str:
 def load_disabled_rules(tenants_dir: Path, tenant_id: str) -> frozenset:
     """Load (and cache) the set of rule ids disabled for one tenant."""
     cache_key = f"{Path(tenants_dir).resolve()}::{tenant_id}"
-    if cache_key in _CACHE:
-        return _CACHE[cache_key]
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return cached
 
     disabled: frozenset
     # F3 (adversarial repo-wide bug hunt, 2026-07-16): tenant_id used to
@@ -53,8 +83,7 @@ def load_disabled_rules(tenants_dir: Path, tenant_id: str) -> frozenset:
     # detection coverage" convention this function already documents,
     # and it never even constructs the unsafe path.
     if tenant_id != DEFAULT_TENANT and not valid_tenant_id(tenant_id):
-        _CACHE[cache_key] = disabled = frozenset()
-        return disabled
+        return frozenset()  # invalid tenant_id never cached (see module note above)
 
     path = Path(tenants_dir) / f"{tenant_id}.yml"
     if not path.exists():
@@ -69,5 +98,5 @@ def load_disabled_rules(tenants_dir: Path, tenant_id: str) -> frozenset:
                   f"load ({exc}); no rules disabled for this tenant (fail open).")
             disabled = frozenset()
 
-    _CACHE[cache_key] = disabled
+    _cache_put(cache_key, disabled)
     return disabled

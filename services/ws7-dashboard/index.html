@@ -47,6 +47,12 @@
   #userBadge{color:var(--muted);font-size:12px;display:flex;align-items:center;gap:8px}
   #logoutBtn{background:transparent;border:1px solid var(--border);color:var(--muted);border-radius:6px;padding:4px 10px;cursor:pointer;font-size:12px}
   #appRoot{display:none}
+  /* C3: coverage heatmap */
+  .covRow{display:flex;gap:12px;align-items:flex-start;margin-bottom:10px}
+  .covTactic{width:170px;flex-shrink:0;color:var(--muted);font-size:12px;padding-top:10px}
+  .covCells{display:flex;flex-wrap:wrap;gap:8px;flex:1}
+  .covCell{border:1px solid var(--border);border-radius:6px;padding:8px 10px;min-width:110px}
+  .covTech{font-size:12px;font-weight:600}.covCount{font-size:11px;color:var(--muted);margin-top:2px}
 </style>
 </head>
 <body>
@@ -57,6 +63,7 @@
     <button data-view="global" class="active">Overview</button>
     <button data-view="inventory">Inventory</button>
     <button data-view="sources">Sources</button>
+    <button data-view="coverage">Coverage</button>
   </nav>
   <!-- M3: only populated/shown once a real RBAC session is confirmed (checkSession());
        stays empty and invisible when RBAC is off, matching every other opt-in auth
@@ -114,6 +121,20 @@
   <section id="sources" class="view">
     <h3>Events by protocol / source</h3>
     <div id="srcBars"></div>
+  </section>
+
+  <!-- C3 (v0.5): MITRE ATT&CK/ATLAS/ICS coverage heatmap, sourced from A1's
+       matrix via the rules API's existing `mitre` passthrough (rules_view.py)
+       plus real alert counts. A gap (no rule tags that technique) is a real
+       gap, not a rendering omission -- see contracts/detection-coverage.md's
+       C3 note on why some rules deliberately carry no mitre block. -->
+  <section id="coverage" class="view">
+    <h3>Detection coverage (MITRE)</h3>
+    <p class="muted">One cell per rule that carries a <code>mitre</code> tag; darker = more alerts
+      fired by that rule. Rules with no honest single-technique mapping (see
+      <code>contracts/detection-coverage.md</code>) are listed separately, not silently dropped.</p>
+    <div id="coverageGrid"></div>
+    <div id="coverageUntagged" class="muted" style="margin-top:12px"></div>
   </section>
 </main>
 </div><!-- /#appRoot -->
@@ -255,13 +276,15 @@ async function getAlerts(){
           .filter(s=>s && s.rule_title)
           .map(s=>({
             alert_id: s.alert_id,
+            rule_id: s.rule_id,
             time: s.time,
             rule_title: s.rule_title,
             level: s.level,
             score: s.score,
             sector: s.sector,
             src_endpoint: s.src_endpoint||{},
-            actor: s.actor||{}
+            actor: s.actor||{},
+            mitre: s.mitre||null
           }));
         LIVE = true;
         return alerts;
@@ -335,8 +358,14 @@ function triageStatusOptions(selected){
 // .map below would throw (a Promise has none of those methods). The static
 // contract test never executes JS so this never surfaced -- confirmed broken
 // by reading the code, not by a report. renderGlobal is now itself async.
-async function renderGlobal(){
-  const assets = window.SIEM_MOCK.assets, alerts = await getAlerts();
+// C2 (v0.5): auto-refresh. `alerts` is optional so the poll loop below can
+// fetch once, decide nothing changed, and skip a DOM rebuild entirely --
+// rebuilding on every tick would blow away an in-progress (unsaved) edit in
+// a triage-note <input>, so we only touch the DOM when the alert set (or
+// any triage status now returned with it) actually differs.
+async function renderGlobal(alerts){
+  const assets = window.SIEM_MOCK.assets;
+  if(!alerts) alerts = await getAlerts();
   const statusEl = document.getElementById("apiStatus");
   if(statusEl) statusEl.textContent = LIVE ? "live data" : "mock data";
   const active = assets.filter(a=>a.status==="active").length;
@@ -426,6 +455,90 @@ document.addEventListener("DOMContentLoaded", () => {
   if(closeBtn) closeBtn.onclick = () => { document.getElementById("reportPanel").hidden = true; };
 });
 
+// C2 (v0.5): poll for new alerts every POLL_INTERVAL_MS, but only when data
+// is actually live (mock mode has nothing new to fetch) and the tab is
+// visible (no point re-rendering a backgrounded tab, and it avoids fighting
+// an analyst who's mid-edit in a hidden tab's triage-note field). Skips a
+// re-render entirely when the fetched alert set is byte-identical to what's
+// already on screen -- see renderGlobal()'s docstring for why that matters.
+const POLL_INTERVAL_MS = 10000;
+let lastAlertsSnapshot = null;
+let pollInFlight = false;
+async function pollGlobal(){
+  if(document.hidden || pollInFlight) return;
+  pollInFlight = true;
+  try{
+    const alerts = await getAlerts();
+    if(!LIVE) return; // nothing to poll against in mock mode
+    const snapshot = JSON.stringify(alerts);
+    if(snapshot === lastAlertsSnapshot) return;
+    lastAlertsSnapshot = snapshot;
+    await renderGlobal(alerts);
+  }catch(e){ /* transient fetch/proxy hiccup -- next tick retries */ }
+  finally{ pollInFlight = false; }
+}
+setInterval(pollGlobal, POLL_INTERVAL_MS);
+
+// ---- C3: coverage heatmap ----
+// Same-origin proxy to ws3-indexer's GET /rules (services/ws3-indexer/
+// rules_view.py); returns rule summaries incl. the optional mitre passthrough.
+// Override with window.RULES_API = null to force the mock-only dev harness.
+const RULES_API = (window.RULES_API !== undefined) ? window.RULES_API : "/api/rules";
+
+async function getRules(){
+  if(RULES_API){
+    try{
+      const r = await fetch(RULES_API, {headers:{Accept:"application/json"}});
+      if(r.ok){ const data = await r.json(); return data.rules || []; }
+    }catch(e){ /* fall through to mock */ }
+  }
+  return (window.SIEM_MOCK && window.SIEM_MOCK.rules) || [];
+}
+
+async function renderCoverage(){
+  const [rules, alerts] = await Promise.all([getRules(), getAlerts()]);
+  const alertCountByRuleId = {};
+  alerts.forEach(a => {
+    if(a.rule_id) alertCountByRuleId[a.rule_id] = (alertCountByRuleId[a.rule_id]||0) + 1;
+  });
+
+  const tagged = rules.filter(r => r.mitre && r.mitre.technique);
+  const untagged = rules.filter(r => !(r.mitre && r.mitre.technique));
+
+  // Group by tactic (row) -> technique (cell), one cell per distinct
+  // technique actually covered -- this is coverage-by-rule, not a full
+  // ATT&CK matrix walk (that would need every possible tactic/technique,
+  // most of which nothing here could ever cover).
+  const byTactic = {};
+  tagged.forEach(r => {
+    const tactic = r.mitre.tactic || "(no tactic)";
+    byTactic[tactic] = byTactic[tactic] || {};
+    const tech = r.mitre.technique;
+    byTactic[tactic][tech] = byTactic[tactic][tech] || [];
+    byTactic[tactic][tech].push(r);
+  });
+
+  const maxCount = Math.max(1, ...tagged.map(r => alertCountByRuleId[r.id] || 0));
+  const shade = n => n===0 ? "rgba(56,139,253,.08)" : `rgba(56,139,253,${(0.2 + 0.6*n/maxCount).toFixed(2)})`;
+
+  const rows = Object.keys(byTactic).sort().map(tactic => {
+    const cells = Object.entries(byTactic[tactic]).map(([tech, rs]) => {
+      const count = rs.reduce((sum,r) => sum + (alertCountByRuleId[r.id]||0), 0);
+      const titles = rs.map(r => esc(r.title||r.id)).join(", ");
+      return `<div class="covCell" style="background:${shade(count)}" title="${titles}">
+        <div class="covTech">${esc(tech)}</div><div class="covCount">${count} alert${count===1?"":"s"}</div></div>`;
+    }).join("");
+    return `<div class="covRow"><div class="covTactic">${esc(tactic)}</div>
+      <div class="covCells">${cells}</div></div>`;
+  }).join("") || `<p class="muted">No rule currently carries a mitre tag.</p>`;
+
+  document.getElementById("coverageGrid").innerHTML = rows;
+  document.getElementById("coverageUntagged").innerHTML = untagged.length
+    ? `${untagged.length} rule(s) with no MITRE mapping (omitted rather than forced): `
+      + untagged.map(r => esc(r.title||r.id)).join(", ")
+    : "";
+}
+
 // ---- LEVEL 2: inventory ----
 let ALL=[];
 async function renderInventory(){
@@ -479,6 +592,7 @@ async function boot(){
   renderGlobal().catch(err=>console.error("renderGlobal failed:",err));
   renderInventory();
   renderSources();
+  renderCoverage().catch(err=>console.error("renderCoverage failed:",err));
 }
 boot();
 </script>

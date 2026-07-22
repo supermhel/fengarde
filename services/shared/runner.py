@@ -38,7 +38,9 @@ from __future__ import annotations
 
 import json
 import signal
+import sys
 import threading
+import time
 import traceback
 from collections import defaultdict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -46,6 +48,37 @@ from typing import Callable
 
 # topic -> (consumer_group, handler).  handler(payload: dict) -> None; raise to fail.
 Handlers = dict[str, "tuple[str, Callable[[dict], None]]"]
+
+# P2-4 (2026-07-21 audit): a poison message redelivered in a tight loop used to
+# call traceback.print_exc() on every single delivery -- turning one bad
+# message into an unbounded stderr flood (and the syscall/format cost that
+# goes with it) until it hit max_redeliveries. This throttles: print the full
+# traceback at most once per _THROTTLE_WINDOW_S per (topic, exception type),
+# with a count of how many were suppressed in between.
+_THROTTLE_WINDOW_S = 30.0
+_throttle_lock = threading.Lock()
+_throttle_state: "dict[tuple[str, str], dict]" = {}
+
+
+def _throttled_print_exc(topic: str, exc: BaseException) -> None:
+    key = (topic, type(exc).__name__)
+    now = time.monotonic()
+    with _throttle_lock:
+        st = _throttle_state.get(key)
+        if st is None or now - st["last"] >= _THROTTLE_WINDOW_S:
+            suppressed = st["suppressed"] if st else 0
+            _throttle_state[key] = {"last": now, "suppressed": 0}
+            emit = True
+        else:
+            st["suppressed"] += 1
+            emit = False
+            suppressed = 0
+    if emit:
+        if suppressed:
+            print(f"[runner] {suppressed} more {type(exc).__name__} on topic "
+                  f"'{topic}' suppressed in the last {_THROTTLE_WINDOW_S:.0f}s",
+                  file=sys.stderr)
+        traceback.print_exc()
 
 
 class HealthState:
@@ -167,8 +200,8 @@ def _process_message(bus, topic, group, msg, handler, max_redeliveries,
         from shared.log import set_trace_id  # noqa: E402
         set_trace_id(getattr(msg, "id", None))  # follow this event across services
         handler(msg.payload)
-    except Exception:  # handler signalled failure -> do NOT ack; leave for redelivery
-        traceback.print_exc()
+    except Exception as exc:  # handler signalled failure -> do NOT ack; leave for redelivery
+        _throttled_print_exc(topic, exc)
         if metrics is not None:
             metrics.incr(topic, "failed")
         return "failed"
@@ -200,7 +233,7 @@ def _topic_worker(bus_factory, topic, group, handler, *, max_redeliveries,
         except Exception as exc:
             if state is not None:
                 state.mark_error(exc)  # bus unreachable -> /health reports degraded
-            traceback.print_exc()
+            _throttled_print_exc(topic, exc)
 
         # 2) New messages. Bound the blocking read (RedisBus.consume blocks up to
         # block_ms on XREADGROUP): a long block would leave the worker deaf to a
@@ -222,7 +255,7 @@ def _topic_worker(bus_factory, topic, group, handler, *, max_redeliveries,
         except Exception as exc:
             if state is not None:
                 state.mark_error(exc)
-            traceback.print_exc()
+            _throttled_print_exc(topic, exc)
 
         if not did_work:
             # consume() returned empty (MemoryBus drained, or Redis block expired
@@ -331,16 +364,24 @@ def serve(handlers: Handlers, *, health_port: int | None = None,
 def start_depth_watchdog(bus, log, shutdown: threading.Event, topics: "list[str]",
                          *, warn_at: int = 100000, interval_s: float = 30.0
                          ) -> "threading.Thread | None":
-    """P2.4: periodically sample ``topics``' stream depth and log a warning when
-    any crosses ``warn_at``, so an operator sees a backpressure buildup before it
-    OOMs Redis. Signal only, never a fix: internal topics
+    """P2.4: periodically sample ``topics``' real consumer BACKLOG and log a
+    warning when any crosses ``warn_at``, so an operator sees a backpressure
+    buildup before it OOMs Redis. Signal only, never a fix: internal topics
     (normalized.events/scored.events/ai.requests) are deliberately never
-    MAXLEN-trimmed -- see ``bus.py``'s ``_RedisBus.depth()`` docstring -- trimming
-    an unconsumed bank audit event is a completeness violation a SIEM cannot make
-    silently. The only real shedding lever is the ingest edge
-    (``SyslogUDPServer``'s token bucket). ``warn_at<=0`` disables. Originally
-    ws1-only (``raw.events``); shared here so ws2/ws4 can watch their own
-    produced topics too.
+    MAXLEN-trimmed on the unconsumed side -- see ``bus.py``'s
+    ``_RedisBus.depth()`` docstring -- trimming an unconsumed bank audit event
+    is a completeness violation a SIEM cannot make silently. The only real
+    shedding lever is the ingest edge (``SyslogUDPServer``'s token bucket).
+    ``warn_at<=0`` disables. Originally ws1-only (``raw.events``); shared here
+    so ws2/ws4 can watch their own produced topics too.
+
+    P1-7 (2026-07-21 audit): uses ``bus.lag()`` (true per-group backlog), not
+    ``bus.depth()``/XLEN. Before this fix, XLEN only ever grew (nothing
+    trimmed acked history), so once a topic's LIFETIME volume alone passed
+    ``warn_at`` this warned on every single check forever, whether or not any
+    consumer was actually behind -- pure noise, real lag was never measured.
+    P0-5's reaper narrows that gap for depth() too now, but lag() is still the
+    correct signal: it reflects backlog, not retained-history size.
     """
     if warn_at <= 0 or not topics:
         return None
@@ -349,15 +390,65 @@ def start_depth_watchdog(bus, log, shutdown: threading.Event, topics: "list[str]
         while not shutdown.is_set():
             for topic in topics:
                 try:
-                    depth = bus.depth(topic)
-                    if depth >= warn_at:
-                        log.warn("topic depth crossed warning threshold",
-                                topic=topic, depth=depth, threshold=warn_at)
+                    backlog = bus.lag(topic)
+                    if backlog >= warn_at:
+                        log.warn("topic backlog crossed warning threshold",
+                                topic=topic, backlog=backlog, threshold=warn_at)
                 except Exception as exc:
                     log.warn("depth watchdog check failed", topic=topic, error=str(exc))
             shutdown.wait(interval_s)
 
     t = threading.Thread(target=_loop, name="depth-watchdog", daemon=True)
+    t.start()
+    return t
+
+
+def start_stream_reaper(bus, log, shutdown: threading.Event, topics: "list[str]",
+                        *, interval_s: float = 300.0
+                        ) -> "threading.Thread | None":
+    """P0-5 (2026-07-21 audit): periodically call ``bus.trim_acked(topic)`` on
+    each of ``topics`` so entries every consumer group has finished with don't
+    accumulate in Redis forever.
+
+    This is a DIFFERENT operation from the "no MAXLEN trim" decision documented
+    on ``start_depth_watchdog``/``_RedisBus.depth()`` -- that decision is about
+    never dropping an UNCONSUMED event (an audit-completeness violation).
+    ``trim_acked`` only ever removes entries every registered consumer group has
+    already consumed AND acknowledged (see its docstring for the exact safety
+    proof); a topic no group has ever consumed is left untouched.
+
+    ``.deadletter`` topics are excluded here -- they're an operator-facing
+    inspection queue (``tools/dlq_peek.py``), not a normal processing topic, and
+    should be cleared deliberately, not swept on a timer.
+
+    Any one service can run this for a topic; correctness doesn't depend on
+    which service calls it (``trim_acked`` queries Redis directly via
+    ``XINFO GROUPS``/``XPENDING``, a global view of every consumer group on the
+    stream, not just the caller's own). Safe to run redundantly from multiple
+    services on overlapping topic lists.
+
+    MemoryBus's ``trim_acked`` is a no-op (see its docstring), so this is a
+    harmless no-op loop under BUS_BACKEND=memory -- callers don't need to
+    special-case it. ``interval_s<=0`` disables."""
+    if interval_s <= 0 or not topics:
+        return None
+    reap_topics = [t for t in topics if not t.endswith(".deadletter")]
+    if not reap_topics:
+        return None
+
+    def _loop():
+        while not shutdown.is_set():
+            for topic in reap_topics:
+                try:
+                    trimmed = bus.trim_acked(topic)
+                    if trimmed:
+                        log.info("trimmed acked stream entries",
+                                topic=topic, trimmed=trimmed)
+                except Exception as exc:
+                    log.warn("stream reaper failed", topic=topic, error=str(exc))
+            shutdown.wait(interval_s)
+
+    t = threading.Thread(target=_loop, name="stream-reaper", daemon=True)
     t.start()
     return t
 

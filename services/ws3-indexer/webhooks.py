@@ -43,7 +43,23 @@ from pathlib import Path
 import yaml
 
 _HERE = Path(__file__).resolve().parent
-WEBHOOKS_DIR = _HERE.parent.parent / "contracts" / "webhooks"
+_SERVICES = _HERE.parent
+_ROOT = _SERVICES.parent
+
+
+def _contracts_dir() -> Path:
+    """Same host-vs-container path-layout mismatch as rules_view.py's
+    ``_contracts_dir()`` (see its docstring): _HERE is repo/services/
+    ws3-indexer on a host checkout (two parents up to repo root) but
+    /app/ws3-indexer in the container (one parent up to /app, where the
+    Dockerfile COPYs contracts/). Probe both rather than hardcoding either."""
+    for base in (_SERVICES, _ROOT):
+        if (base / "contracts" / "webhooks").is_dir():
+            return base / "contracts"
+    return _ROOT / "contracts"
+
+
+WEBHOOKS_DIR = _contracts_dir() / "webhooks"
 
 _TIMEOUT_S = 5.0
 _MAX_RETRIES = 3

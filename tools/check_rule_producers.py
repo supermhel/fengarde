@@ -89,11 +89,14 @@ FIXTURES: dict[str, list[dict]] = {
                  "TargetUserName": "new_svc", "Computer": "dc01"}, "meta": {}},
         {"raw": {"EventID": 4732, "SubjectUserName": "admin",
                  "TargetUserName": "new_svc", "Computer": "dc01"}, "meta": {}},
+        {"raw": {"EventID": 4726, "SubjectUserName": "admin",
+                 "TargetUserName": "new_svc", "Computer": "dc01"}, "meta": {}},
     ],
     "db_audit": [
         {"raw": {"operation": "GRANT", "object": "customers", "user": "dba_svc",
                  "host": "db-prod-01", "ipAddress": "10.4.4.9"}, "meta": {}},
-        {"raw": {"operation": "SELECT", "user": "reporting_svc"}, "meta": {}},
+        {"raw": {"operation": "SELECT", "object": "card_numbers",
+                 "user": "reporting_svc"}, "meta": {}},
     ],
     "mcp_agent": [
         {"raw": {"tool": "read_file", "session_id": "sess-1", "agent": "claude-code",
@@ -118,6 +121,27 @@ FIXTURES: dict[str, list[dict]] = {
                  "workflowId": "wf-42", "path": "/webhook/incoming-order"}, "meta": {}},
         {"raw": {"eventType": "workflow.updated", "user": "bob", "workflowId": "wf-7"},
          "meta": {}},
+    ],
+    "dns_query": [
+        {"raw": "query[A] evil-c2.example.com from 10.0.0.5", "meta": {}},
+    ],
+    "k8s_audit": [
+        {"raw": {"auditID": "abc-123", "verb": "create", "user": {"username": "alice"},
+                 "sourceIPs": ["10.0.0.5"],
+                 "objectRef": {"resource": "pods", "namespace": "default", "name": "x"},
+                 "requestObject": {"spec": {"securityContext": {"privileged": True}}},
+                 "responseStatus": {"code": 201}}, "meta": {}},
+    ],
+    "cef": [
+        {"raw": "CEF:0|Acme|Firewall|1.0|100|Auth failure|5|"
+                "suser=admin src=203.0.113.5 spt=51000 outcome=failure", "meta": {}},
+    ],
+    "cloudtrail": [
+        {"raw": {"eventTime": "2026-07-20T10:00:00Z", "eventSource": "signin.amazonaws.com",
+                 "eventName": "ConsoleLogin", "sourceIPAddress": "203.0.113.9",
+                 "userIdentity": {"type": "Root", "arn": "arn:aws:iam::123456789012:root"},
+                 "responseElements": {"ConsoleLogin": "Success"},
+                 "additionalEventData": {"MFAUsed": "No"}}, "meta": {}},
     ],
 }
 

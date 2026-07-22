@@ -46,6 +46,12 @@ TARGETS: dict[str, tuple[str, list[str], float]] = {
             "parsers/test_n8n_audit.py",
             "parsers/test_active_directory.py",
             "parsers/test_plugins.py",
+            "parsers/test_dns_query.py",
+            "parsers/test_k8s_audit.py",
+            "parsers/test_cef.py",
+            "parsers/test_cloudtrail.py",
+            "parsers/test_sysmon.py",
+            "parsers/test_v05_severity_sector.py",
         ],
         88.0,  # measured 90% (2026-07-16); 2pt buffer, not the unmet-elsewhere 85% target
     ),
@@ -66,6 +72,9 @@ TARGETS: dict[str, tuple[str, list[str], float]] = {
             "test_router.py",
             "test_webhooks.py",
             "test_nis2_template.py",
+            "test_bulk_index.py",
+            "test_rules_view.py",
+            "test_adapter_defaults.py",
         ],
         75.0,  # measured 77% (2026-07-19, post-M4-suite sync); still below the 85% target, gap open
     ),
