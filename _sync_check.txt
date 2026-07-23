@@ -1,2 +1,0 @@
-This file was created by an automated night-work run to verify filesystem sync.
-It is safe to delete.

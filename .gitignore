@@ -56,3 +56,7 @@ eval/attack/out/
 eval/detection_accuracy/evtx-samples/
 eval/detection_accuracy/splunk-attack-data/
 eval/detection_accuracy/*_eval_results.json
+
+# Claude Code local/editor files (not project artifacts)
+.claude/settings.local.json
+.claude/launch.json
