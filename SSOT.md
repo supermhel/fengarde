@@ -118,6 +118,25 @@ those words get reused loosely across specs written weeks apart.
 
 ## 4. Known doc debt (don't fix silently, flag before touching)
 
+- **Open, not fixed**: only 2 real git tags exist on this repo — `v0.2.0`
+  (`50aa433`) and `v0.3.0` (`b7f174b`), both confirmed live on GitHub via
+  `list_tags`, both matching real `CHANGELOG.md` release sections. Two real
+  gaps, neither silently caused by "waiting for M6 launch" — tagging and
+  launching are explicitly two separate actions per the (relocated) combined
+  plan ("**Cut v0.5.0** — signed, with SBOM. A release tag, not a promotion:
+  no posting"), so nothing here is gated on the launch decision:
+  1. `CHANGELOG.md` has a `## [0.1.0] - 2026-06-30` section, but **no
+     `v0.1.0` git tag was ever cut** (confirmed via both local `git tag -l`
+     and GitHub's `list_tags` — genuinely absent, not just unfetched).
+  2. Everything shipped since `v0.3.0` — 16 parsers, 27 rules,
+     multi-tenancy, RBAC, versioned API, webhooks, plugins, the chaos gate,
+     NIS2 template, all of M4/M5/M7 — has sat under `## [Unreleased]` in
+     CHANGELOG.md this whole time. The v0.4 build plan's own first line item
+     was "tag v0.3.0... do this before anything else" to unblock clean
+     version history for the next release; that step was simply never
+     repeated for v0.4 or v0.5 even though the combined plan explicitly
+     called for cutting v0.5.0 once M3 completed (2026-07-17). Not a
+     deliberate withhold — a real, undone step.
 - ~~`SECURITY.md` said "current threat boundary (v0.4)" in its header and "Out
   of scope (as of v0.4)" listed multi-tenancy and RBAC as deferred, when M4
   shipped both.~~ **Fixed 2026-07-23** — version claims genericized to
