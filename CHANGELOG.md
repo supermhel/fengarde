@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-07-23
+
 ### Added (M2 proof artifacts + M7 continuous tracks, 2026-07-22)
 
 - **mypy blocking gate**: re-measured the stale "20 findings" baseline before
@@ -336,6 +338,8 @@ robustness, ahead of public launch. Details and evidence in `SSOT.md` §1.
 Renamed the project after a trademark/domain collision check on the prior name.
 239 occurrences across 42 files, GitHub repo renamed (old clone URLs redirect),
 `ARGUS_API_KEY` → `FENGARDE_API_KEY`. No functional change.
+
+## [0.4.0] - 2026-07-12
 
 ### Added (v0.4 Track S — opt-in auth)
 
