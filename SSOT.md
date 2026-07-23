@@ -17,7 +17,7 @@ Update this file whenever status changes; it's a living index, not an archive.
 | Deep-hardening pass (v0.4→v0.5 bridge, 2026-07-16) | Full P0+P1+P2 audit-and-fix pass across parser logic / detection engine / pipeline robustness, `717f4ed`..`2f807ec`. **P0** (detection-integrity bugs, one commit `9e2745b`): window-poisoning + non-numeric-time fail-closed, deque/Redis window-counter redelivery parity (member dedup), unbounded window-key eviction, parser-registry routing rewrite (source_type-authoritative, no more silent mis-route/drop), vmware port-crash guard + any-parser-exception-dead-letters-one-record, IP-octet bounds (bad IP dropped not dead-lettered), `status_from_outcome()` shared helper (no more hardcoded `"Success"` masking failed logins), content-hash fallback for `alert_key()` (no-ingest-id events no longer collapse onto one alert). **P1** (`c84c8f6`, `625f4f8`, `7e354bb`): `/health` now probes the bus (503 when degraded) + compose healthchecks on ws1-5, `tools/dlq_peek.py` DLQ inspector, OpenSearch index() transient-vs-permanent retry, HTTP server read timeouts, dashboard+inventory bound to `127.0.0.1` (syslog 5514 stays open — must receive remote logs), shared `to_epoch_ms()` (epoch/ISO/FILETIME, replaces 9 copy-pasted heuristics), rule noise tuning (service-account allowlist on after-hours-admin, documented brute-force/impossible-travel tradeoffs). **P2** (`b645b13`..`2f807ec`): `in`/`contains` grammar operators, cross-source severity rubric (`SEV_BY_CATEGORY`) + validated `siem.sector` override across all 10 parsers, `/metrics` endpoint (per-topic acked/failed/deadlettered + ws1 ingest-edge counters), backpressure depth-watchdog on internal topics (`normalized.events`/`scored.events`/`ai.requests`), IPv6 capture + full 0-7 ASA severity map, opt-in live Redis/OpenSearch test lane (`make test-live`), per-event anti-dormancy gate rewrite (`check_rule_producers.py` now proves group_by/distinct_field satisfiability on an event that ALSO matches the rule's own selection, not just satisfiable somewhere across all fixtures). **Live-verified 2026-07-16**: real Docker stack up, `make test-live` PASS against real Redis (XAUTOCLAIM/PEL/DLQ) + real OpenSearch (idempotent upsert, real 409 CAS conflict), devkit-feeder → real brute-force burst → real alert landed in `alerts-*` with AI triage, replay deduped. |
 | ARGUS rebrand | Complete (`717f4ed`, 2026-07-15): 239 occurrences across 42 files, GitHub repo renamed (old URL redirects), `ARGUS_API_KEY`→`FENGARDE_API_KEY`. Second rename since (see below) landed the FENGARDE name; both are one continuous history, not two separate products. |
 | FENGARDE rebrand | Adopted on PR#2's branch ahead of `main` (`FENGARDE_API_KEY`, `FENGARDE_RBAC_DB`, `fengarde-sec` throughout); made repo-wide by this merge, including the GitHub repo itself (renamed to `github.com/supermhel/fengarde` 2026-07-18, old URL auto-redirects). |
-| Latest release | **v0.3.0** (tag `v0.3.0`, 2026-07-10); v0.4 Tracks 0/S/R/P/D + v0.5 M1-M6 landed on `main` via PR#2, unreleased |
+| Latest release | **v0.5.0** (tag `v0.5.0`, 2026-07-23, commit `c3ec328`) — `v0.4.0` (2026-07-12, commit `153da94`) tagged retroactively in the same pass; both pushed and confirmed live on GitHub. Release notes: `docs/releases/v0.4.0.md`, `docs/releases/v0.5.0.md` |
 | License | Apache-2.0, public, `github.com/supermhel/fengarde` |
 | Parsers shipped | 16: Linux SSH, Cisco ASA, Active Directory, VMware vSphere, generic syslog, Windows Event Log (incl. account-change 4720/4722/4726/4728/4732), DB audit, MCP/AI-agent tool-call audit (v0.4 P1), OPC UA/OT audit (v0.4 P2), n8n automation-platform audit (v0.4 P3), DNS query log / Kubernetes audit / CEF / AWS CloudTrail (v0.5 A4), Sysmon process/network/file (P0-3, 2026-07-21 audit fix plan — the first class-1001 File System Activity producer, closing a documented total gap), Modbus/TCP protocol-anomaly detector (M7 OT expansion, 2026-07-22 — see the dedicated row below) |
 | v0.5 Track A4: DNS/k8s/CEF/cloud parsers (done) | `services/ws2-normalization/parsers/{dns_query,k8s_audit,cef,cloudtrail}.py` — closes the long-standing class-4002 (DNS/HTTP Activity) gap flagged since v0.3 (`contracts/detection-coverage.md`), adds the first Kubernetes and cloud-control-plane producers, and a vendor-neutral CEF parser that feeds existing `common_*` rules rather than adding a new one (documented as its actual value, not an oversight). 5 new rules ship with real producers and pass the A6 anti-dormancy gate on the first try: `common_dns_exfil`, `dc_privileged_container`, `cloud_root_console_login`, `bank_mass_card_read` (needed one additive field, `unmapped.db.object`, added to the existing `db_audit.py` parser — zero behavior change to its existing output), `common_rapid_account_lifecycle` (reuses `windows_eventlog`'s existing 4720/4726 producers with one new fixture). All 24 shipped rules pass `tools/validate_rules.py` + `tools/check_rule_producers.py`; `tools/coverage_gate.py`'s hand-synced WS-2 test list was updated for the 4 new parser test files (measured 90%, floor 88%, same "keep the list in sync" lesson as the 2026-07-19 CI-gate incident). |
@@ -121,23 +121,21 @@ those words get reused loosely across specs written weeks apart.
 - ~~Only 2 real git tags existed (`v0.2.0`, `v0.3.0`); `CHANGELOG.md` had a
   `## [0.1.0]` section with no corresponding tag, and everything since
   `v0.3.0` sat under `## [Unreleased]` because nobody re-ran the tagging
-  step the v0.4 build plan itself calls for.~~ **Partially fixed 2026-07-23**
-  — `CHANGELOG.md`'s `[Unreleased]` split into dated `[0.4.0]` (2026-07-12,
+  step the v0.4 build plan itself calls for.~~ **Fixed 2026-07-23** —
+  `CHANGELOG.md`'s `[Unreleased]` split into dated `[0.4.0]` (2026-07-12,
   commit `153da94` — the last commit before the ARGUS rebrand SSOT.md calls
   the "v0.4→v0.5 bridge") and `[0.5.0]` (2026-07-23, commit `c3ec328` —
-  current `main`) sections; annotated `v0.4.0`/`v0.5.0` tags created locally
-  with full release notes at `docs/releases/v0.4.0.md`/`v0.5.0.md`.
-  **Still open**: `git push origin v0.4.0 v0.5.0` returns HTTP 403 in this
-  session's environment — confirmed tag-ref-specific, not a general auth
-  failure (a same-session branch push to `main` succeeds normally), and no
-  available tool (raw git or the GitHub MCP server, which only exposes
-  read-only tag/release tools here) can complete it. Someone with real push
-  access needs to run `git push origin v0.4.0 v0.5.0` (or recreate both tags
-  via GitHub's release UI at commits `153da94`/`c3ec328`) to actually
-  publish them. The `v0.1.0` tag gap is untouched — no commit in history
-  documents that boundary as cleanly as `153da94`/`c3ec328` do for v0.4/v0.5,
-  so retroactively tagging it would need someone to pick a commit by
-  judgment call, not evidence; left as a known gap, not guessed at.
+  current `main`) sections; annotated `v0.4.0`/`v0.5.0` tags created and
+  **pushed to `github.com/supermhel/fengarde`** (confirmed live via the
+  GitHub API: `v0.4.0`→`153da94`, `v0.5.0`→`c3ec328`), with full release
+  notes at `docs/releases/v0.4.0.md`/`v0.5.0.md` ready to paste into GitHub
+  Releases. (An earlier attempt in a different session's environment hit an
+  HTTP 403 pushing tag refs specifically — resolved this session; the 403
+  was environment-specific, not a repo-side restriction.) The `v0.1.0` tag
+  gap is untouched — no commit in history documents that boundary as
+  cleanly as `153da94`/`c3ec328` do for v0.4/v0.5, so retroactively tagging
+  it would need someone to pick a commit by judgment call, not evidence;
+  left as a known gap, not guessed at.
 - ~~`SECURITY.md` said "current threat boundary (v0.4)" in its header and "Out
   of scope (as of v0.4)" listed multi-tenancy and RBAC as deferred, when M4
   shipped both.~~ **Fixed 2026-07-23** — version claims genericized to
