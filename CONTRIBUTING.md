@@ -93,25 +93,29 @@ that passes every unit test but can never match real data).
 
 ## Project scope — read this before filing a feature request
 
-FENGARDE is built in versioned slices. Knowing the scope keeps requests triaged
-correctly:
+FENGARDE is built in versioned slices; the pipeline, AI triage, and the parsers
+described elsewhere in this doc are **all shipped today**, not aspirational —
+see [README.md](README.md)'s capability table for the current parser/rule
+counts (they change often enough that hardcoding a number here would go stale
+fast). For
+current status, what's real vs. still a claim, and the forward roadmap, **read
+[SSOT.md](SSOT.md) first** — it's the canonical, continuously updated index and
+supersedes any version scope described in an individual spec doc under
+`docs/superpowers/specs/`.
 
-- **v0.1 = the detection pipeline.** Collect → normalize (4 parsers: Cisco ASA,
-  Active Directory, VMware vSphere, Linux SSH) → detect (correlation rules + scoring)
-  → index → dashboard. This is what works today.
-- **AI triage is v0.2.** The AI service (WS-5) is a **passthrough stub** in v0.1 — it
-  does not classify with a model yet. Local Ollama/Qwen triage is the v0.2 headline.
-- **The 5 parsers above are v0.2** and are tracked as good first issues.
+In short, for triage purposes:
 
-So:
+- A request to **improve the pipeline, a parser, a rule, the dashboard, AI
+  triage, multi-tenancy, RBAC, or the report/NIS2 generator** → all in scope,
+  very welcome; these are existing, working subsystems, not future milestones.
+- The three parsers listed as 🚧 Planned in the README (SNMP, NetFlow, custom
+  JSON) are the current deferred/"good first issue" set — check there for
+  what's actually still open before filing a duplicate.
 
-- A request to **improve the pipeline, a parser, a rule, or the dashboard** → in scope
-  for v0.1, very welcome.
-- A request for **AI-triage behavior** → that's v0.2; file it, but expect it to be
-  triaged against the v0.2 milestone, not v0.1.
-
-See the [build plan](docs/superpowers/specs/2026-06-27-fengarde-v0.1-build-plan.md) for
-the full scope and roadmap.
+See [SSOT.md](SSOT.md) §3 for the full current doc index and each doc's trust
+level, and the [v0.1 build plan](docs/superpowers/specs/2026-06-27-fengarde-v0.1-build-plan.md)
+for historical context only (it describes the project's first slice, not its
+current scope).
 
 ---
 

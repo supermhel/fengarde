@@ -2,7 +2,7 @@
 
 FENGARDE is a Security Information and Event Management (SIEM) tool. We take the
 security of the project — and the safety of anyone running it — seriously. This
-document describes the **current threat boundary (v0.4)** (what FENGARDE does and does not
+document describes the **current threat boundary** (what FENGARDE does and does not
 protect against today) and **how to report a vulnerability**.
 
 ---
@@ -27,12 +27,14 @@ Please include:
 
 ---
 
-## Threat boundary (v0.4)
+## Threat boundary
 
 FENGARDE is a **local, single-host development and demonstration stack**. It is
 **not** hardened for production or internet exposure. Sections below carry the
-release that introduced them (v0.1 network boundary → v0.4 opt-in auth);
-everything is current as of v0.4. Understand these boundaries before running it:
+milestone that introduced them (v0.1 network boundary → v0.4 opt-in shared-secret
+auth → M4/v0.6 multi-tenancy + RBAC + webhooks + plugins) — each section's own
+label is the accurate version marker; don't infer an overall repo version from
+this file's title. Understand these boundaries before running it:
 
 ### 1. Localhost / Compose-network only — not internet-exposed
 
@@ -204,23 +206,31 @@ egress path you are opting into, same posture as WS-5's outbound LLM calls
 
 ---
 
-## Out of scope (as of v0.4)
+## Out of scope
 
 The following are **known** and **deferred** to later releases:
 
-- Full authentication / authorization — v0.4 added an opt-in shared-secret
-  layer (§2), but per-user identity, roles, and default-on auth remain out of
-  scope. The WS-3 triage API (§7) is open by default like every other service.
-- TLS between services and for external endpoints.
-- Multi-tenancy and per-tenant isolation.
-- Hardened, production-grade OpenSearch security configuration.
+- Full authentication / authorization is still **opt-in everywhere**, never
+  default-on. v0.4 added a shared-secret layer (§2); M4.2 (v0.6) added a second,
+  independent opt-in layer with real per-user identity/roles/tenant scoping —
+  but nothing forces either on, and the WS-3 triage API (§7) and WS-6 inventory
+  API stay open by default like every other service unless an operator sets the
+  relevant env var.
+- TLS between services and for external endpoints (see `docs/deployment.md` for
+  a reverse-proxy TLS example — documented, not built-in).
+- Hardened, production-grade OpenSearch security configuration (§1 — the
+  security plugin stays disabled; mitigation is the network boundary only).
 - Multi-replica / HA deployment overall (Redis/OpenSearch single points of
-  failure; HA is design-only). The triage write path is already multi-replica
-  safe via optimistic concurrency (§7), but no other multi-replica behavior has
-  been designed or tested.
-- AI-triage prompt-injection guardrails. As of v0.2 the AI service calls a local
-  LLM; its verdict is advisory and enum-constrained (see threat-boundary §6), but
-  robust prompt-injection defenses are still deferred.
+  failure; HA is design-only). The triage write path is multi-replica-safe via
+  optimistic concurrency (§7) and RBAC sessions are single-process only (§2) —
+  no other multi-replica behavior has been designed or tested.
+- AI-triage prompt-injection guardrails. The AI service calls a local LLM; its
+  verdict is advisory and enum-constrained (see threat-boundary §6), but robust
+  prompt-injection defenses are still deferred.
+
+**No longer out of scope, moved to §2/§9 above:** multi-tenancy and per-tenant
+isolation (M4.1) and per-user RBAC (M4.2) shipped and are documented as opt-in
+layers, not absent features — don't cite this section as saying otherwise.
 
 Reports about these documented, out-of-scope limitations are welcome as
 **feature requests**, but they are not treated as vulnerabilities against the
@@ -235,5 +245,6 @@ release line only.
 
 | Version | Supported |
 |---------|-----------|
-| v0.1 (`main`) | ✅ |
-| < v0.1 | ❌ |
+| `main` (unreleased work past v0.3.0) | ✅ |
+| v0.3.0 (latest tag) | ✅ |
+| < v0.3.0 | ❌ |

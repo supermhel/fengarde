@@ -4,10 +4,12 @@
 [![CodeQL](https://github.com/supermhel/fengarde/actions/workflows/codeql.yml/badge.svg)](https://github.com/supermhel/fengarde/actions/workflows/codeql.yml)
 [![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/supermhel/fengarde/badge)](https://securityscorecards.dev/viewer/?uri=github.com/supermhel/fengarde)
 
-> Scorecard badge reads "unknown" until `.github/workflows/scorecard.yml` runs
-> at least once on `main` (M2, PLAN_C Tier 2.2) — a measured score, not a
-> claimed one. Same for CI/CodeQL: the badge reflects whatever the most recent
-> real run on `main` found, not a promise.
+> Badges above reflect the most recent real run on `main`, not a promise —
+> CI/CodeQL/Scorecard have all run at least once as of 2026-07-19 (post-merge
+> of PR#2); Scorecard's own findings drove a supply-chain pinning pass
+> (workflow SHAs, Docker base image digests) that took its score from an
+> initial ~54 open alerts down to 19, all of which are accepted policy-level
+> trade-offs (see `SSOT.md` §1), not unaddressed gaps.
 
 **The open-source SIEM for the European industrial Mittelstand — turns your
 factory and IT logs into draft NIS2 incident notifications, with AI triage that
@@ -88,18 +90,18 @@ make down                                 # stop the stack and remove volumes
 
 ---
 
-## What's real (v0.1-v0.5 shipped)
+## What's real (v0.3.0 released; v0.4/v0.5-scope work landed on `main`, unreleased)
 
 FENGARDE ships a **working detection pipeline**. We are deliberate about what is
 real versus what is planned — this is a security tool, so accuracy matters more than
-a long feature list.
+a long feature list. See [SSOT.md](SSOT.md) for the authoritative, continuously
+updated status — this table is a snapshot, that file is the source of truth.
 
 | Capability | Status | Notes |
 |---|---|---|
 | **Detection pipeline** (collect → normalize → detect → index → dashboard) | ✅ Works | End-to-end since v0.1 |
-| **Parsers (14)** | ✅ Works | Cisco ASA, Active Directory, VMware vSphere, Linux SSH, generic syslog, Windows Event Log (incl. account-change 4720/4722/4726/4728/4732), DB audit (GRANT/REVOKE/ALTER), MCP/AI-agent tool-call audit, OPC UA/OT audit, n8n automation-platform audit, DNS query log, Kubernetes audit, CEF (generic appliance), AWS CloudTrail — all → OCSF |
-| **Detection rules (26)** | ✅ Works | Brute-force (per-IP and sourceless/per-target-host), port-scan, lateral-movement, password-spray, privileged-group grant, after-hours admin, impossible-travel, bank DB priv-esc, DC mass-VM-delete, agent credential-file access / tool-call burst / prompt-injection indicator / destructive-command / egress-non-allowlisted-domain, OT write-outside-maintenance / new-engineering-connection / config-change, n8n new-webhook-exposed / workflow-modified-after-hours, DNS exfil, privileged-container-create, cloud root console login, mass DB-object read, rapid account create/delete, beaconing (periodicity primitive) |
-| **Multi-tenancy / RBAC / webhooks / plugins** (v0.5, M4) | ✅ Works, opt-in | Tenant-scoped indices, per-tenant rule enablement; `FENGARDE_RBAC_DB` opt-in identity/RBAC (SQLite, scrypt, sessions, CSRF); outbound HMAC-signed webhooks; entry-points parser/rule plugin interface. All default OFF — zero behavior change unless you opt in |
+| **Parsers (16)** | ✅ Works | Cisco ASA, Active Directory, VMware vSphere, Linux SSH, generic syslog, Windows Event Log (incl. account-change 4720/4722/4726/4728/4732), DB audit (GRANT/REVOKE/ALTER), MCP/AI-agent tool-call audit, OPC UA/OT audit, n8n automation-platform audit, DNS query log, Kubernetes audit, CEF (generic appliance), AWS CloudTrail, Sysmon (process/network/file), Modbus/TCP protocol-anomaly detector — all → OCSF |
+| **Detection rules (27)** | ✅ Works | Brute-force (per-IP and sourceless/per-target-host), port-scan, lateral-movement, password-spray, privileged-group grant, after-hours admin, impossible-travel, bank DB priv-esc, DC mass-VM-delete, agent credential-file access / tool-call burst / prompt-injection indicator / destructive-command / egress-non-allowlisted-domain, OT write-outside-maintenance / new-engineering-connection / config-change / Modbus unauthorized-write, n8n new-webhook-exposed / workflow-modified-after-hours, DNS exfil, privileged-container-create, cloud root console login, mass DB-object read, rapid account create/delete, beaconing (periodicity primitive) |
 | **Rule grammar** | ✅ Works | Boolean logic, comparison operators (`gt/gte/lt/lte/ne`), allowlist suppression (`not_in`, CIDR + exact), time-of-day (`outside_hours`) — all fail closed on malformed input |
 | **Rule prefilter** | ✅ Works | Rules bucketed by `class_uid` equality selection; events only evaluated against candidate rules (fixes the O(rules×events) scan) |
 | **Anti-dormancy guardrail** | ✅ Works | `tools/check_rule_producers.py` in the CI gate proves every rule's selections are satisfiable by values a real parser actually emits |
@@ -108,7 +110,13 @@ a long feature list.
 | **Incident-report draft hook** | ✅ Works (v0.4) | `POST /alerts/{id}/report` renders a generic markdown incident report from alert facts, always marked `status: draft` with a disclaimer; the regulated-content backend is a paid, optional add-on (`contracts/reporting.md`) |
 | **Opt-in auth** | ✅ Works (v0.4) | Shared-secret `FENGARDE_API_KEY` on the triage/inventory APIs, opt-in dashboard basic-auth, opt-in Redis `AUTH` — unset (default) stays fully open, matching v0.1-v0.3 behavior |
 | **Syslog UDP listener** (WS-1) | ✅ Works | Live datagrams → `raw.events` |
-| **Triage workflow** | ✅ Works (v0.3) | Status + analyst note per alert, persisted via WS-3 triage API, editable in the dashboard. Container-to-container nginx path validated by config review, not yet by a live-stack smoke test |
+| **Multi-tenancy** | ✅ Works | `tenant_id` threaded collector→normalize→detect→index; per-tenant OpenSearch indices, per-tenant rule enablement; isolation proven by `tools/test_multi_tenant_isolation.py` |
+| **RBAC** | ✅ Works, opt-in | Per-user accounts/roles/tenant scoping via `FENGARDE_RBAC_DB`; session cookies, CSRF protection, dashboard login UI; unset (default) = pre-RBAC API-key-only behavior, byte-for-byte unchanged |
+| **Versioned REST API** | ✅ Works | `contracts/triage-api.yaml` (OpenAPI 3.1); every route reachable bare or under `/api/v1/...`; spec-vs-code drift is CI-tested |
+| **Outbound alert webhooks** | ✅ Works, opt-in | HMAC-SHA256-signed deliveries to operator-configured URLs (`contracts/webhooks/*.yml`, ships empty); see `docs/webhooks.md` |
+| **Parser/rule plugin interface** | ✅ Works | External pip package can ship a parser or rule pack via Python entry points, no fork needed; see `docs/plugin-development.md` |
+| **Chaos-tested delivery** | ✅ Works | `make chaos`: 40 scenarios, each pipeline service SIGKILLed mid-replay — zero lost, zero duplicate alerts (2026-07-18 run) |
+| **NIS2 (DE) report template** | ✅ Works | Deterministic German/English NIS2 Art. 23 / §32 BSIG draft, additive on the report hook (`?template=nis2`); every entity-specific fact renders as an explicit `[ANALYST MUST PROVIDE]` placeholder, never fabricated |
 | SNMP parser | 🚧 Planned | Deferred — [good first issue](CONTRIBUTING.md) |
 | NetFlow parser | 🚧 Planned | Deferred (binary format) |
 | Custom JSON parser | 🚧 Planned | Deferred |
