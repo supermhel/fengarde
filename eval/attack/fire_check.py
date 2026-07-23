@@ -46,6 +46,7 @@ sys.path.insert(0, str(ROOT / "tools"))
 from parsers import _REGISTRY  # noqa: E402
 from enrichment import enrich  # noqa: E402
 from main import Detector  # noqa: E402  -- ws4-detection's real Detector
+from engine import _time_outside_hours  # noqa: E402  -- reuse the engine's own predicate
 import check_rule_producers as crp  # noqa: E402  -- reuse the same FIXTURES
 
 OUT_DIR = Path(__file__).resolve().parent / "out"
@@ -82,12 +83,56 @@ def _real_events() -> list[dict]:
     return events
 
 
+def _outside_hours_specs(rule) -> list[tuple[str, dict]]:
+    """[(dotted_field, spec)] for every ``outside_hours`` predicate in the
+    rule's selections -- empty for rules with no time-of-day predicate.
+
+    Such a rule ONLY fires when its driving field falls OUTSIDE the configured
+    business-hours window, so the harness must stamp an off-hours timestamp
+    deterministically. Otherwise a stateless rule inherits the fixture's
+    parse-time "now" and the whole gate flips green/red by the wall clock:
+    fire on a weekend/night CI run, "SILENT" (false defect) on a weekday-
+    daytime run. That is exactly the flake this function exists to kill."""
+    specs: list[tuple[str, dict]] = []
+    detection = rule.raw.get("detection", {})
+    if isinstance(detection, dict):
+        for name, sel in detection.items():
+            if name == "condition" or not isinstance(sel, dict):
+                continue
+            for field, ops in sel.items():
+                if isinstance(ops, dict) and "outside_hours" in ops:
+                    specs.append((field, ops["outside_hours"]))
+    return specs
+
+
+def _outside_hours_anchor(spec: dict) -> int:
+    """A deterministic epoch-ms instant that is BOTH in the past (accepted by
+    the engine's P0 anti-poisoning guard -- past timestamps always pass) AND
+    outside ``spec``'s window, verified with the engine's OWN
+    ``_time_outside_hours`` so it can never drift from the predicate it must
+    satisfy. Steps back hour by hour from now; any business-hours window
+    leaves most of the week outside, so this resolves within a few days."""
+    now = int(time.time() * 1000)
+    for hours_back in range(1, 8 * 24 + 1):
+        ts = now - hours_back * 3_600_000
+        if _time_outside_hours(spec, ts):
+            return ts
+    return now - 3 * 24 * 3_600_000  # unreachable for any real window; safe past fallback
+
+
 def _try_fire(rule, events: list[dict]) -> tuple[bool, str]:
     """(fired, note) -- replay real events against one rule until it fires
     or the fixtures are exhausted."""
+    # Time-of-day rules only fire off-hours: stamp a deterministic
+    # off-hours-and-past timestamp on each driving field so the result never
+    # depends on what time this gate happens to run (see _outside_hours_*).
+    oh = [(f, _outside_hours_anchor(s)) for f, s in _outside_hours_specs(rule)]
     for base_event in events:
         if not rule.stateful:
-            if rule.evaluate(copy.deepcopy(base_event)):
+            ev = copy.deepcopy(base_event)
+            for field, anchor in oh:
+                _set_path(ev, field, anchor)
+            if rule.evaluate(ev):
                 return True, "fired on a single real event (stateless rule)"
             continue
 
@@ -96,16 +141,21 @@ def _try_fire(rule, events: list[dict]) -> tuple[bool, str]:
         # ahead of wall-clock (P0 anti-poisoning guard) -- an earlier version
         # of this loop stepped FORWARD from the fixture's own (already
         # "now") timestamp and silently tripped that guard on every rep past
-        # the first, which is why this comment exists. Step backward from
-        # wall-clock "now" instead, so every synthetic timestamp is in the
-        # past (always accepted) and the last rep lands at "now".
-        now_ms = int(time.time() * 1000)
+        # the first, which is why this comment exists. Step backward instead,
+        # so every synthetic timestamp is in the past (always accepted). When
+        # the rule keys outside_hours on `time`, anchor the whole window
+        # inside an off-hours span rather than at wall-clock now.
+        time_anchor = next((a for f, a in oh if f == "time"), None)
+        base_ms = time_anchor if time_anchor is not None else int(time.time() * 1000)
         step_ms = max(1000, int((rule.window_seconds or 60) * 1000 / max(reps, 1) / 2))
         fired = False
         for i in range(reps):
             ev = copy.deepcopy(base_event)
             ev.setdefault("siem", {})["ingest_id"] = f"firecheck:{rule.id}:{i}"
-            ev["time"] = now_ms - (reps - 1 - i) * step_ms
+            ev["time"] = base_ms - (reps - 1 - i) * step_ms
+            for field, anchor in oh:
+                if field != "time":
+                    _set_path(ev, field, anchor)
             if rule.distinct_field:
                 _set_path(ev, rule.distinct_field, f"firecheck-value-{i}")
             fired = rule.evaluate(ev)
