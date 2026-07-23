@@ -23,6 +23,7 @@
 - `k8s_audit` → API Activity (6003), sector datacenter (v0.5: Kubernetes audit-webhook events)
 - `cef` → Authentication (3002) / Network Activity (4001), sector common (v0.5: generic CEF-emitting appliances; feeds existing common_* rules)
 - `cloudtrail` → Authentication (3002) / API Activity (6003), sector common (v0.5: AWS CloudTrail; first cloud-control-plane producer)
+- `modbus_anomaly` → Network Activity (4001), sector datacenter (M7, 2026-07-22: Modbus/TCP protocol-anomaly detector -- NOT a vendor audit-log parser, see its module docstring; second OT source after opcua_audit)
 
 Adding a source = new module + one registry line. `type_uid` always derived.
 

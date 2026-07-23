@@ -26,7 +26,7 @@ from shared.ocsf import validate  # noqa: E402
 from parsers import get_parser, known_sources  # noqa: E402
 import main as ws2  # noqa: E402
 
-FAILS = []
+FAILS: list[str] = []
 
 
 def check(c, m):

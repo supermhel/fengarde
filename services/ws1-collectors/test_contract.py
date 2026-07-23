@@ -19,7 +19,7 @@ os.environ["BUS_BACKEND"] = "memory"
 from shared.bus import Bus  # noqa: E402
 import main as ws1  # noqa: E402
 
-FAILS = []
+FAILS: list[str] = []
 
 
 def check(cond, msg):

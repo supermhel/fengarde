@@ -35,7 +35,6 @@ import argparse
 import hashlib
 import json
 import os
-import sys
 import tarfile
 import tempfile
 import time
@@ -127,4 +126,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    main()

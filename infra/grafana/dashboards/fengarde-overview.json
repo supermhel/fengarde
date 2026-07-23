@@ -1,0 +1,47 @@
+{
+  "title": "FENGARDE overview",
+  "uid": "fengarde-overview",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "time": { "from": "now-1h", "to": "now" },
+  "refresh": "15s",
+  "panels": [
+    {
+      "id": 1,
+      "title": "Per-topic throughput (acked/s)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "expr": "sum by (service, topic) (rate(fengarde_topic_events_total{result=\"acked\"}[1m]))",
+          "legendFormat": "{{service}} / {{topic}}"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "DLQ depth (deadlettered, cumulative)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "targets": [
+        {
+          "expr": "sum by (service, topic) (fengarde_topic_events_total{result=\"deadlettered\"})",
+          "legendFormat": "{{service}} / {{topic}}"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Failed (unacked, awaiting redelivery)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 8 },
+      "targets": [
+        {
+          "expr": "sum by (service, topic) (rate(fengarde_topic_events_total{result=\"failed\"}[1m]))",
+          "legendFormat": "{{service}} / {{topic}}"
+        }
+      ]
+    }
+  ]
+}

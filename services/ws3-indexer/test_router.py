@@ -23,7 +23,7 @@ sys.path.insert(0, str(SERVICES))
 
 from router import route  # noqa: E402
 
-FAILS = []
+FAILS: list[str] = []
 
 
 def check(c, m):

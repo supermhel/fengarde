@@ -167,7 +167,9 @@ class _ConflictingStore(MemoryStore):
         if self.conflicts_left > 0:
             self.conflicts_left -= 1
             # emulate the other replica's interleaved write bumping the version
-            super().index(index, doc_id, dict(self.find_alert(doc_id)[1]))
+            found = self.find_alert(doc_id)
+            assert found is not None
+            super().index(index, doc_id, dict(found[1]))
             return False
         return super().index_cas(index, doc_id, document,
                                  self._versions.get((index, doc_id), 0))

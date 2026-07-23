@@ -41,28 +41,41 @@ extend-exclude = '''
 
 [tool.mypy]
 python_version = "3.11"
-# HONEST BASELINE, not a passing gate yet (M2, PLAN_C Tier 2.3): this repo has
-# almost no type annotations today. `mypy --strict` here would report
-# hundreds of findings that are really "not yet annotated," not real bugs --
-# that's noise, not signal, and would train contributors to ignore CI red.
-#
-# Measured 2026-07-16 (default/lenient mode, run per-service due to the
-# microservice layout's duplicate module names -- see
-# `mypy services/wsN-x --explicit-package-bases --ignore-missing-imports`):
-# 20 real findings across services/{ws1,ws2,ws3,ws4,ws5}, mostly legitimate
-# `X | None` narrowing gaps (e.g. services/ws5-ai/llm_adapter.py:123,
-# services/ws3-indexer/storage/opensearch.py:34) worth fixing incrementally,
-# not "not yet annotated" noise. services/{ws6-inventory,shared} + tools/ are
-# clean. types-PyYAML installed to remove import-stub noise; NOT wired into
-# any service's requirements.txt (it's a mypy-only dev dependency, never
-# imported at runtime).
-#
-# Tightening this incrementally (per-module `strict = true` overrides as
-# modules get annotated, fixing the 20 real findings above) is the honest
-# path to the PLAN_C gate, not flipping a switch that immediately fails CI
-# on a codebase that was never annotated with mypy in mind.
+# M2 gate CLOSED (2026-07-22): re-measured the 2026-07-16 baseline before
+# trusting it (the "20 findings" comment above had drifted -- a live re-run
+# found 47 across all 8 workstreams, not 20, since new v0.5 parsers/tests had
+# landed since the comment was written). All 47 fixed with narrow, behavior-
+# preserving changes (Optional-narrowing, explicit dict/str casts on parser
+# fields, two `# type: ignore` comments on genuinely platform-guarded code --
+# tools/fengarde_bench.py's Windows-vs-POSIX `resource` fallback and a test
+# double that intentionally violates the Parser protocol). Verified via
+# `mypy services/wsN-x --explicit-package-bases --ignore-missing-imports` per
+# workstream (0 errors, all 8) + a full `run_all_tests.sh` pass (no behavior
+# changed). CI's mypy step (.github/workflows/ci.yml) is now BLOCKING, not
+# informational -- the `|| true` suffix was removed once every workstream hit
+# zero. Regressions fail CI the same way ruff/coverage already do.
 ignore_missing_imports = true
 exclude = ["services/.*/mocks", "fixtures"]
+
+[tool.mutmut]
+# M2, PLAN_C Tier 2.3: mutation-testing gate, deliberately scoped narrow for
+# its FIRST pass rather than repo-wide (mutmut requires no prior footprint
+# here -- this is the honest starting baseline, not a target). Native Windows
+# mutmut isn't supported (upstream issue #397); run under WSL:
+#   wsl -e bash -lc "cd '<repo>' && python3 -m mutmut run"
+# Scope: services/shared/sessions.py only -- smallest, mypy-clean (see
+# [tool.mypy] above), highest security-relevance module in services/shared
+# (session tokens/CSRF/expiry -- a security boundary, per its own module
+# docstring). Each mutant re-runs the test command below, so scoping to one
+# file (not all 12 zero-infra test scripts in services/shared) keeps a single
+# `mutmut run` bounded to minutes, not hours, in this environment.
+# Informational in CI for now (see .github/workflows/ci.yml) -- same "measure
+# first, gate later" sequencing mypy went through, so a real number lands
+# before any pass/fail threshold is chosen.
+source_paths = ["services/shared/sessions.py"]
+do_not_mutate = ["*test_*.py"]
+pytest_add_cli_args_test_selection = ["tools/test_mutmut_shared.py"]
+also_copy = ["tools"]
 
 [tool.coverage.run]
 branch = true

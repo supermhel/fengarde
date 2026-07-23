@@ -135,6 +135,43 @@ class Metrics:
 HTTP_TIMEOUT_S = 15
 
 
+def _sanitize_label(value: str) -> str:
+    """Escape a Prometheus label value per the exposition-format spec
+    (backslash, double-quote, newline) -- topic/service names are internal
+    constants today, but this keeps the endpoint safe if that ever changes."""
+    return value.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
+
+
+def render_prometheus(service_name: str, topics: dict, extra: dict | None = None) -> str:
+    """M7 observability (2026-07-22): plain-text Prometheus exposition format,
+    hand-rolled against stdlib only -- no ``prometheus_client`` dependency
+    added to every service's requirements.txt for what is, today, a handful
+    of counters this module already tracks. Same per-topic acked/failed/
+    deadlettered counts as the existing JSON ``/metrics`` route (unchanged,
+    byte-identical, for any existing consumer); this is a second, additive
+    route, not a replacement.
+    """
+    lines = [
+        "# HELP fengarde_topic_events_total Per-topic bus event outcomes.",
+        "# TYPE fengarde_topic_events_total counter",
+    ]
+    for topic, results in sorted(topics.items()):
+        for result, count in sorted(results.items()):
+            lines.append(
+                f'fengarde_topic_events_total{{service="{_sanitize_label(service_name)}",'
+                f'topic="{_sanitize_label(topic)}",result="{_sanitize_label(result)}"}} {count}')
+    if extra:
+        lines.append("# HELP fengarde_extra Service-specific gauges (see /metrics JSON for detail).")
+        lines.append("# TYPE fengarde_extra gauge")
+        for key, value in sorted(extra.items()):
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                continue  # only numeric leaves render as a gauge; nested/text detail stays in /metrics
+            lines.append(
+                f'fengarde_extra{{service="{_sanitize_label(service_name)}",'
+                f'field="{_sanitize_label(key)}"}} {value}')
+    return "\n".join(lines) + "\n"
+
+
 def _make_health_handler(service_name: str, state: "HealthState | None" = None,
                          metrics: "Metrics | None" = None,
                          extra_metrics_fn: "Callable[[], dict] | None" = None):
@@ -145,6 +182,14 @@ def _make_health_handler(service_name: str, state: "HealthState | None" = None,
             body = json.dumps(payload).encode()
             self.send_response(code)
             self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def _send_text(self, code: int, text: str):
+            body = text.encode()
+            self.send_response(code)
+            self.send_header("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
@@ -165,6 +210,16 @@ def _make_health_handler(service_name: str, state: "HealthState | None" = None,
                     except Exception as exc:  # a broken provider must not break /metrics
                         payload["extra_error"] = str(exc)
                 return self._send(200, payload)
+            if path == "/metrics/prom":
+                extra = None
+                if extra_metrics_fn is not None:
+                    try:
+                        extra = extra_metrics_fn()
+                    except Exception:
+                        extra = None  # same "a broken provider must not break metrics" rule as above
+                text = render_prometheus(
+                    service_name, metrics.snapshot() if metrics is not None else {}, extra)
+                return self._send_text(200, text)
             return self._send(404, {"error": "no such path"})
 
         def log_message(self, *_):  # quiet

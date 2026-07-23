@@ -14,6 +14,7 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
+from typing import Any, Callable
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
@@ -42,7 +43,9 @@ def _redis_reachable():
         return False
 
 
-_BACKENDS = [("memory", lambda ttl_s=None: SessionStore(**({"ttl_s": ttl_s} if ttl_s is not None else {})))]
+_BACKENDS: list[tuple[str, Callable[..., Any] | None]] = [
+    ("memory", lambda ttl_s=None: SessionStore(**({"ttl_s": ttl_s} if ttl_s is not None else {}))),
+]
 if _redis_reachable():
     _BACKENDS.append(("redis", lambda ttl_s=None: RedisSessionStore(**({"ttl_s": ttl_s} if ttl_s is not None else {}))))
 else:

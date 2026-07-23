@@ -54,7 +54,7 @@ class ActiveDirectoryParser(Parser):
         meta = raw.get("meta") or {}
 
         try:
-            event_id = int(rec.get("EventID"))
+            event_id = int(str(rec.get("EventID")))
         except (TypeError, ValueError):
             return None
         if event_id not in _EVENT_MAP:

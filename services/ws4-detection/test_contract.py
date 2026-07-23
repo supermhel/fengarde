@@ -25,7 +25,7 @@ from engine import load_rules  # noqa: E402
 from scoring import Scorer  # noqa: E402
 import main as ws4  # noqa: E402
 
-FAILS = []
+FAILS: list[str] = []
 
 
 def check(c, m):

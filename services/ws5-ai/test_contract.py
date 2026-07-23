@@ -23,7 +23,7 @@ from shared.bus import Bus  # noqa: E402
 from classifier import LightClassifier  # noqa: E402
 import main as ws5  # noqa: E402
 
-FAILS = []
+FAILS: list[str] = []
 
 
 def check(c, m):

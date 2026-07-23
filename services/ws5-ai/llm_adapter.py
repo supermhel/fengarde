@@ -120,7 +120,7 @@ class OllamaLLM:
 
     def __init__(self, url: str | None = None, model: str | None = None,
                  timeout: float = 8.0):
-        self.url = (url or os.getenv("OLLAMA_URL", "http://localhost:11434")).rstrip("/")
+        self.url = (url or os.getenv("OLLAMA_URL") or "http://localhost:11434").rstrip("/")
         self.model = model or os.getenv("OLLAMA_MODEL", "qwen2.5")
         self.timeout = timeout
 

@@ -4,7 +4,7 @@
 
 COMPOSE := docker compose -f infra/docker-compose.yml
 
-.PHONY: help preflight demo test e2e nis2-demo up down chaos test-live attack-scorecard eval-detection
+.PHONY: help preflight demo test e2e nis2-demo up down chaos test-live attack-scorecard eval-detection mutation-test
 
 PYTHON ?= python3
 
@@ -94,6 +94,7 @@ test-live:
 # empirical `make eval-detection` number below.
 attack-scorecard:
 	@$(PYTHON) eval/attack/coverage_layer.py
+	@$(PYTHON) eval/attack/fire_check.py
 
 # P3 eval lane (Test-data integration section of the audit fix plan) --
 # independent-oracle detection-accuracy replay against real EVTX-ATTACK-
@@ -105,3 +106,12 @@ attack-scorecard:
 eval-detection:
 	@$(PYTHON) eval/detection_accuracy/evtx_eval.py
 	@$(PYTHON) eval/detection_accuracy/splunk_eval.py
+
+# M2 mutation-testing gate (see pyproject.toml [tool.mutmut]). Scoped narrow
+# for its first pass (services/shared/sessions.py only) -- informational in
+# CI, not blocking, until a real number exists to gate against. Native
+# Windows mutmut isn't supported (upstream issue #397); this target assumes
+# a POSIX shell (Linux CI, macOS, or WSL on Windows).
+mutation-test:
+	@python3 -m mutmut run || true
+	@python3 -m mutmut results

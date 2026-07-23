@@ -196,7 +196,39 @@ services:
     depends_on:
       redis: { condition: service_healthy }
 
+  # M7 observability (2026-07-22). Opt-in profile -- `docker compose up`
+  # (no --profile flag) is byte-for-byte unaffected, same convention as
+  # infra/docker-compose.auth.yml's opt-in dashboard auth override. Bring up
+  # with: docker compose -f infra/docker-compose.yml --profile observability up
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    container_name: siem-prometheus
+    profiles: [observability]
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports: ["127.0.0.1:9090:9090"]
+    depends_on: [ws1-collectors, ws2-normalization, ws3-indexer, ws4-detection, ws5-ai]
+
+  grafana:
+    image: grafana/grafana:11.1.0
+    container_name: siem-grafana
+    profiles: [observability]
+    environment:
+      # Opt-in profile, loopback-only port -- same "no auth surprise" posture
+      # as every other opt-in layer in this stack (SECURITY.md). Change this
+      # before exposing Grafana beyond localhost.
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports: ["127.0.0.1:3000:3000"]
+    depends_on: [prometheus]
+
 volumes:
   redis-data:
   os-data:
   inventory-data:
+  prometheus-data:
+  grafana-data:

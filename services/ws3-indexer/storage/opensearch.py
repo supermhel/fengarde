@@ -63,15 +63,15 @@ class _HTTPError(urllib.error.HTTPError):
         super().__init__(url="", code=code, msg=msg, hdrs=None, fp=None)  # type: ignore[arg-type]
         self._body = body
 
-    def read(self) -> bytes:
+    def read(self, n: int = -1) -> bytes:
         return self._body
 
 
 class OpenSearchStore(StorageAdapter):
     def __init__(self, url: str | None = None, timeout: float = 10.0) -> None:
-        parsed = urllib.parse.urlsplit(
-            url or os.getenv("OPENSEARCH_URL", "http://localhost:9200"))
-        self._host = parsed.hostname or "localhost"
+        url_str: str = url or os.getenv("OPENSEARCH_URL") or "http://localhost:9200"
+        parsed = urllib.parse.urlsplit(url_str)
+        self._host: str = parsed.hostname or "localhost"
         self._port = parsed.port or (443 if parsed.scheme == "https" else 9200)
         self._https = parsed.scheme == "https"
         self.base = f"{parsed.scheme}://{parsed.netloc}".rstrip("/")
@@ -252,7 +252,10 @@ class OpenSearchStore(StorageAdapter):
         hit = self._search_alert(alert_id)
         if hit is None:
             return None
-        return hit.get("_index"), hit["_source"]
+        index, source = hit.get("_index"), hit["_source"]
+        if not isinstance(index, str) or not isinstance(source, dict):
+            return None
+        return index, source
 
     # -- v0.4 Track R: cross-index lookup by report_id -----------------------
     def find_report(self, alert_id: str) -> dict | None:

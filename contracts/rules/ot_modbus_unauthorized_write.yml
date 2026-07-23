@@ -1,0 +1,35 @@
+title: Modbus/TCP write outside the expected address range (unauthorized write)
+id: 9c1d2e3f-4a5b-4c6d-8e7f-1a2b3c4d5e6f
+status: stable
+description: >
+  A Modbus/TCP write function code (Write Single Coil/Register, Write
+  Multiple Coils/Registers) targeted an address outside a small, explicitly
+  declared "expected safe" range -- see modbus_anomaly.py's module docstring
+  for why this is a coarse, documented heuristic (not real per-device
+  knowledge this repo doesn't have) and why Modbus itself has no vendor
+  audit-log format to derive a stronger signal from. Single-shot: unlike
+  brute-force, one unexpected write to industrial control logic is already
+  worth an analyst's attention. A legitimate engineering change outside the
+  declared range will also fire this -- tune the parser's
+  `_EXPECTED_WRITE_ADDRESSES` per deployment, same tradeoff opcua_audit.py's
+  `_CONFIG_NODE_MARKERS` heuristic already accepts.
+level: high
+logsource:
+  category: network_activity
+detection:
+  unauthorized_write:
+    class_uid: 4001
+    unmapped.ot.anomaly_type: unauthorized_write
+  condition: unauthorized_write
+fields:
+  - src_endpoint.ip
+  - dst_endpoint.ip
+  - unmapped.ot.function_code
+  - unmapped.ot.address
+siem:
+  sector: datacenter
+  score_weight: 75
+mitre:
+  framework: attack-ics
+  tactic: TA0106      # Impair Process Control
+  technique: T0855    # Unauthorized Command Message

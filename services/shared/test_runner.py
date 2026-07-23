@@ -450,6 +450,31 @@ def _test_metrics_counts_outcomes():
     check(snap[topic]["failed"] == 1, f"expected 1 failed, got {snap}")
 
 
+def _test_prometheus_metrics_endpoint():
+    # M7 observability (2026-07-22): render_prometheus() is the hand-rolled
+    # exposition-format renderer behind the new /metrics/prom route -- same
+    # per-topic counts as the JSON /metrics route, plus numeric `extra`
+    # fields as gauges.
+    topics = {"normalized.events": {"acked": 3, "failed": 1}}
+    text = runner.render_prometheus("ws4-detection", topics, {"queue_depth": 7, "note": "skip-me"})
+    check("fengarde_topic_events_total" in text, f"missing counter family: {text!r}")
+    check('service="ws4-detection"' in text, f"missing service label: {text!r}")
+    check('topic="normalized.events"' in text, f"missing topic label: {text!r}")
+    check('result="acked"} 3' in text, f"acked count wrong: {text!r}")
+    check('result="failed"} 1' in text, f"failed count wrong: {text!r}")
+    check('field="queue_depth"} 7' in text, f"missing numeric extra gauge: {text!r}")
+    check("note" not in text, f"non-numeric extra field must not render as a gauge: {text!r}")
+
+    # A label value containing a quote/backslash/newline must not break the
+    # exposition format for every OTHER metric on the same scrape: exactly
+    # one metric line (plus 2 HELP/TYPE header lines) must come out, not
+    # more, which is what a raw unescaped "\n" inside a label would produce.
+    hostile = runner.render_prometheus('svc"x\\y\nz', {"t\"opic": {"acked": 1}}, None)
+    lines = [ln for ln in hostile.split("\n") if ln]
+    check(len(lines) == 3, f"a hostile label value must not inject extra lines: {lines!r}")
+    check("\\n" in hostile, f"the raw newline must be escaped to the literal chars \\n: {hostile!r}")
+
+
 # --------------------------------------------------------------------------- #
 # P2.4: start_depth_watchdog logs when a topic's backlog crosses warn_at, and
 # warn_at<=0 disables it (returns None, spawns no thread).
@@ -488,6 +513,7 @@ def _test_depth_watchdog():
 def main():
     _test_health_degraded()
     _test_metrics_counts_outcomes()
+    _test_prometheus_metrics_endpoint()
     _test_depth_watchdog()
     parametrized = [
         ("test_handler_called_once_per_message",

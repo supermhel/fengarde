@@ -72,7 +72,7 @@ def route(doc: dict) -> tuple[str, str]:
     # OCSF event
     siem = doc.get("siem") or {}
     sector = siem.get("sector")
-    family = _SECTOR_TO_FAMILY.get(sector)
+    family = _SECTOR_TO_FAMILY.get(sector) if isinstance(sector, str) else None
     if family is None:
         raise ValueError(f"unroutable document: sector={sector!r}")
     doc_id = siem.get("ingest_id")

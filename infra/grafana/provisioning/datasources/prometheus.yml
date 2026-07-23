@@ -1,0 +1,11 @@
+# M7 observability (2026-07-22). Auto-provisions the Prometheus datasource
+# so `docker compose --profile observability up` needs zero manual Grafana
+# UI setup.
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true

@@ -85,8 +85,10 @@ class K8sAuditParser(Parser):
         severity_id = SEV_BY_CATEGORY[_VERB_TO_CATEGORY[verb]]
 
         status = status_from_outcome(rec.get("responseStatus") or {}, keys=("code",))
-        obj_ref = rec.get("objectRef") if isinstance(rec.get("objectRef"), dict) else {}
-        user = rec.get("user") if isinstance(rec.get("user"), dict) else {}
+        _obj_ref_raw = rec.get("objectRef")
+        obj_ref: dict = _obj_ref_raw if isinstance(_obj_ref_raw, dict) else {}
+        _user_raw = rec.get("user")
+        user: dict = _user_raw if isinstance(_user_raw, dict) else {}
 
         event = self.base_event(
             class_uid=_CLASS,

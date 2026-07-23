@@ -291,9 +291,9 @@ schema (OCSF).
 | WS | Service | Role | v0.1 status |
 |----|---------|------|-------------|
 | 1 | `services/ws1-collectors` | Collect logs → `raw.events` | ✅ |
-| 2 | `services/ws2-normalization` | Parsers → validated OCSF events | ✅ (15 parsers) |
+| 2 | `services/ws2-normalization` | Parsers → validated OCSF events | ✅ (16 parsers) |
 | 3 | `services/ws3-indexer` | Routing + OpenSearch indexing (idempotent) | ✅ |
-| 4 | `services/ws4-detection` | Correlation rules + scoring + windowing | ✅ (26 rules) |
+| 4 | `services/ws4-detection` | Correlation rules + scoring + windowing | ✅ (27 rules) |
 | 5 | `services/ws5-ai` | Triage | ✅ real local-LLM (Ollama) since v0.2, stub fallback |
 | 6 | `services/ws6-inventory` | IP/MAC inventory API (SQLite) | ✅ |
 | 7 | `services/ws7-dashboard` | Alert console | ✅ |

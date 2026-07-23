@@ -392,14 +392,17 @@ class SyslogUDPServer:
         next interval -- no busy-spinning, no event loss from a mid-drain
         failure (drain_into rewrites only the successfully-replayed prefix)."""
         while not self._spool_shutdown.is_set():
+            spool = self._spool
+            if spool is None:
+                return
             try:
-                drained = self._spool.drain_into(
+                drained = spool.drain_into(
                     lambda item: self.bus.produce(
                         self.topic, key=item["key"], payload=item["event"]))
                 if drained and self.log is not None:
                     self.log.info("replayed spooled syslog events",
                                   count=drained,
-                                  pending=self._spool.pending_count())
+                                  pending=spool.pending_count())
             except Exception as exc:  # never let the drain loop die silently
                 if self.log is not None:
                     self.log.warn("spool drain failed", error=str(exc))

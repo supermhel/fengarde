@@ -61,7 +61,7 @@ class TestPortGuard(unittest.TestCase):
 
         orig = main.resolve
         try:
-            main.resolve = lambda payload: _Boom()
+            main.resolve = lambda payload: _Boom()  # type: ignore[return-value]  # deliberately not a real Parser
             event, errors = main.normalize_one({"source_type": "x", "raw": {}})
             self.assertIsNone(event)
             self.assertTrue(errors and "raised" in errors[0])

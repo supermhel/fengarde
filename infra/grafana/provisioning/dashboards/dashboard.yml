@@ -1,0 +1,10 @@
+# M7 observability (2026-07-22). Auto-loads every dashboard JSON in
+# infra/grafana/dashboards/ on startup -- no manual import step.
+apiVersion: 1
+
+providers:
+  - name: fengarde
+    type: file
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dashboards

@@ -371,6 +371,8 @@ class _RedisBus:
                 if last_delivered is None:
                     return 0  # can't prove safety -> don't trim at all
                 boundary = _next_stream_id(last_delivered)
+            if not isinstance(boundary, str):
+                continue  # can't prove safety without a real stream id -> skip this group
             if safe_boundary is None or _stream_id_lt(boundary, safe_boundary):
                 safe_boundary = boundary
 

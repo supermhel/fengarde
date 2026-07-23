@@ -111,7 +111,7 @@ def peak_rss_mb() -> float | None:
     if resource is not None:
         # ru_maxrss is KB on Linux, bytes on macOS -- this repo's CI/dev
         # targets are Linux, so KB is the documented assumption here.
-        return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024
+        return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024  # type: ignore[attr-defined]  # POSIX-only, guarded above
     if sys.platform == "win32":
         # P2-2: stdlib-only Windows equivalent via the psapi PROCESS_MEMORY_
         # COUNTERS struct (ctypes, no third-party dependency, same "no dep"

@@ -61,7 +61,7 @@ class _FakeConnection:
 def _store_with_fake_connection(response: _FakeResponse) -> tuple[OpenSearchStore, _FakeConnection]:
     store = OpenSearchStore(url="http://fake:9200")
     fake = _FakeConnection(response)
-    store._connection = lambda: fake  # patch the connection seam
+    store._connection = lambda: fake  # type: ignore[method-assign,assignment,return-value]  # patch the connection seam
     return store, fake
 
 

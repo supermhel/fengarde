@@ -22,7 +22,7 @@ sys.path.insert(0, str(HERE))
 import app as ws6  # noqa: E402
 from store import InventoryStore  # noqa: E402
 
-FAILS = []
+FAILS: list[str] = []
 
 
 def check(c, m):

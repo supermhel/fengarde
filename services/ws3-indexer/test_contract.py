@@ -21,7 +21,7 @@ sys.path.insert(0, str(SERVICES))
 from router import route, template_for  # noqa: E402
 from storage.memory import MemoryStore  # noqa: E402
 
-FAILS = []
+FAILS: list[str] = []
 
 
 def check(c, m):

@@ -82,8 +82,9 @@ jobs:
 
   # M2 code-quality floor (PLAN_C Tier 2.3). Lint blocks; coverage blocks at the
   # MEASURED baseline (see tools/coverage_gate.py) not the unmet-for-WS-3 85%
-  # target -- see that file's docstring for why. mypy is informational only
-  # (non-blocking): see pyproject.toml's [tool.mypy] comment.
+  # target -- see that file's docstring for why. mypy is BLOCKING as of
+  # 2026-07-22 (0 findings across all 8 workstreams): see pyproject.toml's
+  # [tool.mypy] comment.
   quality:
     runs-on: ubuntu-latest
     steps:
@@ -98,15 +99,20 @@ jobs:
         run: pip install ruff mypy coverage pyyaml types-PyYAML hypothesis
       - name: ruff (blocking)
         run: ruff check services/ tools/
-      - name: mypy (informational, non-blocking -- see pyproject.toml)
+      - name: mypy (blocking -- see pyproject.toml)
         run: |
           for ws in services/ws1-collectors services/ws2-normalization services/ws3-indexer \
                     services/ws4-detection services/ws5-ai services/ws6-inventory services/shared tools; do
-            mypy "$ws" --explicit-package-bases --ignore-missing-imports || true
+            mypy "$ws" --explicit-package-bases --ignore-missing-imports
           done
-          echo "mypy findings are informational (pyproject.toml [tool.mypy]) -- not blocking CI"
       - name: coverage gate (WS-2/WS-3 core, blocking at measured baseline)
         run: python tools/coverage_gate.py
+      - name: mutmut (informational, non-blocking -- see pyproject.toml [tool.mutmut])
+        run: |
+          pip install mutmut
+          python -m mutmut run || true
+          python -m mutmut results || true
+          echo "mutmut survival rate is informational (pyproject.toml [tool.mutmut]) -- not blocking CI, same first-measurement sequencing mypy went through before it was flipped blocking"
       - name: SBOM freshness (blocking -- sbom.json must match requirements.txt)
         run: |
           pip install cyclonedx-bom
@@ -156,6 +162,11 @@ jobs:
   # DECLARED coverage only, not proof a technique's mapped rule actually
   # fires (that's the separate, dataset-gated `make eval-detection` lane,
   # deliberately not run in CI -- see eval/detection_accuracy/README.md).
+  # M7 (2026-07-22): eval/attack/fire_check.py closes the narrower gap in
+  # between -- proves a tagged rule fires on its OWN real producer fixture
+  # (zero infra, no dataset needed, so it DOES run here, unlike
+  # eval-detection). Still not real-world validation; see that file's
+  # module docstring for the declared-vs-fired-vs-real-world distinction.
   attack-scorecard:
     runs-on: ubuntu-latest
     steps:
@@ -169,6 +180,8 @@ jobs:
         run: python eval/attack/test_coverage_layer.py
       - name: Build scorecard + Navigator layers
         run: python eval/attack/coverage_layer.py
+      - name: MITRE empirical firing check (blocking -- a tagged rule that never fires is a real defect)
+        run: python eval/attack/fire_check.py
       # NOTE: not SHA-pinned like this file's other actions (checkout/setup-
       # python/gitleaks-action/actionlint) -- this was authored offline with
       # no way to verify a real commit SHA for actions/upload-artifact, and

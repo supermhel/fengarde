@@ -26,6 +26,7 @@ from .k8s_audit import K8sAuditParser
 from .cef import CefParser
 from .cloudtrail import CloudTrailParser
 from .sysmon import SysmonParser
+from .modbus_anomaly import ModbusAnomalyParser
 from .plugins import discover_plugin_parsers
 
 _REGISTRY: dict[str, Parser] = {
@@ -34,7 +35,7 @@ _REGISTRY: dict[str, Parser] = {
               LinuxSshParser(), GenericSyslogParser(), WindowsEventLogParser(),
               DbAuditParser(), McpAgentParser(), OpcUaAuditParser(), N8nAuditParser(),
               DnsQueryParser(), K8sAuditParser(), CefParser(), CloudTrailParser(),
-              SysmonParser())
+              SysmonParser(), ModbusAnomalyParser())
 }
 
 # M4.5: external pip packages can register additional parsers (docs/plugin-
@@ -97,6 +98,10 @@ def _resolve_structured(rec: dict) -> Optional[Parser]:
     # AWS CloudTrail record: this exact field combo is CloudTrail-specific.
     if "eventName" in rec and "eventSource" in rec and "eventTime" in rec:
         return _REGISTRY["cloudtrail"]
+    # Modbus/TCP observed frame: functionCode is unique to this parser's shape
+    # (no other registered parser uses that field name).
+    if "functionCode" in rec:
+        return _REGISTRY["modbus_anomaly"]
     # eventType: OPC UA (CamelCase Audit*EventType) vs n8n (dotted lower-case)
     et = rec.get("eventType") or rec.get("event_type") or rec.get("type")
     if isinstance(et, str) and et:

@@ -59,10 +59,12 @@ class CloudTrailParser(Parser):
         event_name = str(rec.get("eventName") or "")
         if not event_name:
             return None
-        user_identity = rec.get("userIdentity") if isinstance(rec.get("userIdentity"), dict) else {}
+        _user_identity_raw = rec.get("userIdentity")
+        user_identity: dict = _user_identity_raw if isinstance(_user_identity_raw, dict) else {}
 
         if event_name == "ConsoleLogin":
-            response = rec.get("responseElements") if isinstance(rec.get("responseElements"), dict) else {}
+            _response_raw = rec.get("responseElements")
+            response: dict = _response_raw if isinstance(_response_raw, dict) else {}
             status = status_from_outcome(response, keys=("ConsoleLogin",))
             activity_id = 1
             severity_id = SEV_INFO if status == "Success" else SEV_HIGH
@@ -94,7 +96,8 @@ class CloudTrailParser(Parser):
         if valid_ip(src_ip):
             event["src_endpoint"] = {"ip": src_ip}
 
-        additional = rec.get("additionalEventData") if isinstance(rec.get("additionalEventData"), dict) else {}
+        _additional_raw = rec.get("additionalEventData")
+        additional: dict = _additional_raw if isinstance(_additional_raw, dict) else {}
         event["unmapped"] = {
             "cloud": {
                 "identity_type": user_identity.get("type"),

@@ -101,14 +101,18 @@ class CiscoAsaParser(Parser):
             sector=self.resolve_sector(meta),
         )
 
-        src_ip = sm.group("ip") if sm else None
-        if src_ip and _IPV4_FULL.match(src_ip):
-            event["src_endpoint"] = {"ip": src_ip, "port": int(sm.group("port"))}
+        if sm is not None:
+            src_ip = sm.group("ip")
+            if src_ip and _IPV4_FULL.match(src_ip):
+                event["src_endpoint"] = {"ip": src_ip, "port": int(sm.group("port"))}
+            elif meta.get("ip"):
+                event["src_endpoint"] = {"ip": meta["ip"]}
         elif meta.get("ip"):
             event["src_endpoint"] = {"ip": meta["ip"]}
-        dst_ip = dm.group("ip") if dm else None
-        if dst_ip and _IPV4_FULL.match(dst_ip):
-            event["dst_endpoint"] = {"ip": dst_ip, "port": int(dm.group("port"))}
+        if dm is not None:
+            dst_ip = dm.group("ip")
+            if dst_ip and _IPV4_FULL.match(dst_ip):
+                event["dst_endpoint"] = {"ip": dst_ip, "port": int(dm.group("port"))}
 
         return event
 

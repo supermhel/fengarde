@@ -52,6 +52,7 @@ TARGETS: dict[str, tuple[str, list[str], float]] = {
             "parsers/test_cloudtrail.py",
             "parsers/test_sysmon.py",
             "parsers/test_v05_severity_sector.py",
+            "parsers/test_modbus_anomaly.py",
         ],
         88.0,  # measured 90% (2026-07-16); 2pt buffer, not the unmet-elsewhere 85% target
     ),

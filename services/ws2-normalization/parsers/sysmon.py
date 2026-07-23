@@ -95,7 +95,7 @@ class SysmonParser(Parser):
         meta = raw.get("meta") or {}
 
         try:
-            event_id = int(rec.get("EventID"))
+            event_id = int(str(rec.get("EventID")))
         except (TypeError, ValueError):
             return None
         mapping = _EVENT_MAP.get(event_id)

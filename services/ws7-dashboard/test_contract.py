@@ -14,7 +14,7 @@ import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-FAILS = []
+FAILS: list[str] = []
 
 
 def check(c, m):

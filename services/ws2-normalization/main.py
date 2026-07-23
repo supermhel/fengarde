@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
+from typing import Any
 
 HERE = Path(__file__).resolve().parent
 SERVICES = HERE.parent
@@ -44,7 +45,7 @@ def _sanitize_free_text(event: dict) -> dict:
     escaping, which covers browser DOM XSS, not terminal/log-sink injection."""
     node = event
     for *path, leaf in (p for p in _FREE_TEXT_PATHS):
-        cursor = node
+        cursor: Any = node
         for key in path:
             cursor = cursor.get(key) if isinstance(cursor, dict) else None
             if cursor is None:

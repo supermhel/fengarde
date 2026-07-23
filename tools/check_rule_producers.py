@@ -143,6 +143,12 @@ FIXTURES: dict[str, list[dict]] = {
                  "responseElements": {"ConsoleLogin": "Success"},
                  "additionalEventData": {"MFAUsed": "No"}}, "meta": {}},
     ],
+    "modbus_anomaly": [
+        {"raw": {"unitId": 1, "functionCode": 3, "address": 40001,
+                 "sourceIp": "10.20.0.50", "destIp": "10.20.0.5"}, "meta": {}},
+        {"raw": {"unitId": 1, "functionCode": 6, "address": 41999,
+                 "sourceIp": "10.20.0.99", "destIp": "10.20.0.5"}, "meta": {}},
+    ],
 }
 
 

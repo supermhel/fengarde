@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (M2 proof artifacts + M7 continuous tracks, 2026-07-22)
+
+- **mypy blocking gate**: re-measured the stale "20 findings" baseline before
+  trusting it — a live re-run found 47 across all 8 workstreams, not 20.
+  Fixed all 47 with narrow, behavior-preserving changes; CI's `|| true` on
+  the mypy step removed. Regressions now fail CI the same way ruff/coverage
+  already do.
+- **Mutation-testing gate (mutmut)**: first-ever run in this repo, scoped to
+  `services/shared/sessions.py` (a directory-wide run would take hours per
+  mutant re-run here). Measured baseline: 142 mutants, 50 covered, 36
+  killed / 14 survived (72% kill rate) — informational in CI, same
+  measure-first sequencing mypy went through before it was flipped blocking.
+- **MITRE empirical firing check** (`eval/attack/fire_check.py`): closes the
+  gap between the existing declared-coverage scorecard and the dataset-gated
+  real-world replay lane — every MITRE-tagged rule is replayed against its
+  own real producer fixture through the actual detection engine. 26/26
+  tagged rules fire. Found and fixed a real harness bug along the way
+  (synthetic timestamps stepping into the future tripped the anti-poisoning
+  clock-skew guard, falsely showing 2 real rules as silent).
+- **Observability: Prometheus + Grafana**: new `/metrics/prom` exposition-
+  format route (hand-rolled, stdlib-only — no new runtime dependency),
+  opt-in `observability` compose profile with auto-provisioned Grafana
+  dashboard. Live-verified: all 5 scrape targets up, real pipeline counters
+  queryable. OTel tracing stays explicitly out of scope (bigger lift, still
+  an ADR-only aspiration).
+- **Modbus/TCP protocol-anomaly detector** (`modbus_anomaly.py`), the second
+  OT source after OPC UA — deliberately scoped as an anomaly detector over
+  the protocol's own public function-code table, not a vendor-log parser
+  (Modbus has no audit-log format to parse). New rule
+  `ot_modbus_unauthorized_write.yml` (ATT&CK-ICS T0855) ships with a real
+  producer and passes both the anti-dormancy gate and the new firing check.
+
 ### Added (post-merge CI hardening, PR#2 → `main`)
 
 - **CodeQL's first-ever live scan (2026-07-18/19)** found 5 HIGH alerts, all fixed at

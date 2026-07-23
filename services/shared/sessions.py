@@ -110,7 +110,7 @@ class RedisSessionStore:
         import redis  # lazy, same idiom as shared/bus.py
         self.ttl_s = ttl_s
         self.r = redis.Redis.from_url(
-            url or os.getenv("REDIS_URL", "redis://localhost:6379/0"),
+            url or os.getenv("REDIS_URL") or "redis://localhost:6379/0",
             decode_responses=True, socket_connect_timeout=2)
         self.r.ping()  # fail-loud at construction, not on first request
 
@@ -136,10 +136,10 @@ class RedisSessionStore:
         if not data:
             return None
         return Session(
-            username=data["username"], role=data["role"],
-            tenant_id=data["tenant_id"],
+            username=str(data["username"]), role=str(data["role"]),
+            tenant_id=str(data["tenant_id"]),
             expires_at=float(data["expires_at"]),
-            csrf_token=data["csrf_token"],
+            csrf_token=str(data["csrf_token"]),
         )
 
     def invalidate(self, token: str) -> None:

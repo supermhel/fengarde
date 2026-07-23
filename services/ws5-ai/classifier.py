@@ -24,7 +24,7 @@ _CATEGORY = {
 class LightClassifier:
     def predict(self, event: dict) -> dict:
         cls = event.get("class_uid")
-        category = _CATEGORY.get(cls, "other")
+        category = _CATEGORY.get(cls, "other") if isinstance(cls, int) else "other"
         sev = event.get("severity_id", 0)
         score = event.get("siem", {}).get("score", 0)
         if score >= 60 or sev >= 5:
