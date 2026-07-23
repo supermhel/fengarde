@@ -312,6 +312,26 @@ and [`docs/PHASE0_README.md`](docs/PHASE0_README.md).
 
 ---
 
+## Evaluation & detection quality
+
+"A rule passes CI" and "a rule actually fires on real attack traffic" are
+different claims — this repo keeps them separate rather than conflating them,
+across three eval lanes under `eval/`:
+
+| Command | What it proves | Needs |
+|---|---|---|
+| `make attack-scorecard` | **Declared** MITRE ATT&CK/ATT&CK-ICS/ATLAS coverage (which techniques a rule's `mitre:` block claims) plus an **empirical** check that every tagged rule actually fires on its own real producer fixture through the live detection engine — kept as two distinct claims, never merged into one number | Zero infra |
+| `make eval-detection` | Independent-oracle replay: real Windows Security/Sysmon attack corpora (EVTX-ATTACK-SAMPLES, splunk/attack_data) fed through the live pipeline, alerts checked against a ground truth computed separately from the engine's own logic — this is what catches a bug a unit test mirroring the engine's own code cannot. See [`eval/detection_accuracy/README.md`](eval/detection_accuracy/README.md) for dataset licensing and setup (both corpora are third-party, not vendored; the target skips cleanly with no datasets fetched) | Real datasets fetched separately |
+| `make nis2-demo` | End-to-end proof that a real alert becomes a structurally-compliant NIS2 draft (disclaimer, draft status, no fabricated entity facts) — the same checklist `eval/report_generator/`'s harness runs across 12 synthetic scenarios × 3 stages × 2 languages in CI | Zero infra |
+
+None of these are optional add-ons bolted on for show — `attack-scorecard` and
+the report-generator eval both run in `run_all_tests.sh`; `eval-detection`
+is deliberately excluded from the zero-infra gate (a target that always
+skips would be noise there) but is the harness that actually caught real
+false negatives in the brute-force rule during the 2026-07-21 audit pass.
+
+---
+
 ## Contributing
 
 The fastest way to contribute is to **add a parser** — and you do **not** need Docker
