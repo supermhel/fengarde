@@ -90,7 +90,7 @@ make down                                 # stop the stack and remove volumes
 
 ---
 
-## What's real (v0.3.0 released; v0.4/v0.5-scope work landed on `main`, unreleased)
+## What's real (v0.5.0 released — v0.4.0/v0.5.0 tags live on `main`)
 
 FENGARDE ships a **working detection pipeline**. We are deliberate about what is
 real versus what is planned — this is a security tool, so accuracy matters more than
