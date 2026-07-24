@@ -1,5 +1,7 @@
 # OCSF-native SIEM: normalize once, stay portable
 
+![FENGARDE architecture: AI-agent/MCP tool-call logs and OT protocol data normalize into OCSF, then flow through the detection engine into AI-abuse, Modbus-anomaly, and OCSF-normalization rule sets, each independently verified against the CI gate.](fengarde-architecture.png)
+
 *Draft technical write-up — v0.4. Facts checked against the codebase as of this
 commit; update if the pipeline changes before publishing.*
 
