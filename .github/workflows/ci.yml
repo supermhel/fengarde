@@ -182,6 +182,13 @@ jobs:
         run: python eval/attack/coverage_layer.py
       - name: MITRE empirical firing check (blocking -- a tagged rule that never fires is a real defect)
         run: python eval/attack/fire_check.py
+      # Must run in CI, not just locally: the boundary probes assert that a
+      # rule does NOT fire, and a broken harness makes that assertion pass.
+      # These tests mutate real rules until they ARE too loose and require
+      # each probe to go red, so they are what keeps the boundary numbers
+      # above from being unfalsifiable.
+      - name: fire_check boundary-probe sensitivity (blocking -- a green negative must be able to go red)
+        run: python eval/attack/test_fire_check.py
       # NOTE: not SHA-pinned like this file's other actions (checkout/setup-
       # python/gitleaks-action/actionlint) -- this was authored offline with
       # no way to verify a real commit SHA for actions/upload-artifact, and

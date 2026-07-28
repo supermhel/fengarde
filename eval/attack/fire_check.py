@@ -231,7 +231,15 @@ def _hours_confound(rule, oh: list[tuple[str, int]], reps: int,
     that stays silent is ambiguous -- "the threshold correctly held" and "the
     events drifted into business hours so the condition never matched" look
     identical from outside. Rather than score an ambiguous silence as a pass,
-    the caller skips the check and says so."""
+    the caller skips the check and says so.
+
+    Unreachable on the rule set as it ships today: all three `outside_hours`
+    rules (after-hours admin, n8n after-hours workflow edit, OT write outside
+    maintenance) are stateless, so none reaches a boundary probe at all. This
+    guard exists for the first STATEFUL outside_hours rule -- at which point
+    a silent probe would otherwise be scored as a pass on a rule the harness
+    had quietly stopped exercising. Do not delete it as dead code without
+    re-checking that predicate."""
     specs = [s for f, s in _outside_hours_specs(rule) if f == "time"]
     if not specs:
         return False
@@ -324,7 +332,12 @@ def _boundary_probe(rule, base_event: dict | None,
                 else f"held ({reps} events spanning {span_s:g}s did not fire a "
                      f"window_seconds={rule.window_seconds} rule)")
 
+    # "held" counts only probes that actually ran. A rule whose probes were
+    # ALL skipped has not been boundary-tested and must not be reported as
+    # having held one -- that is the difference between a measured result and
+    # a number that merely looks like one.
     return {"applicable": True, "probes": probes,
+            "held": [n for n, v in probes.items() if v.startswith("held")],
             "too_loose": [n for n, v in probes.items() if v == "FIRED"]}
 
 
@@ -352,8 +365,14 @@ def main() -> int:
 
     tagged_not_firing = [r for r in results if not r["fired"]]
     too_loose = [r for r in results if r["boundary"].get("too_loose")]
-    probed = [r for r in results if r["boundary"].get("applicable")]
-    unprobed = len(results) - len(probed)
+    held = [r for r in results if r["boundary"].get("held")]
+    # Applicable but every probe skipped -> not boundary-tested either. Zero
+    # today (no stateful rule has threshold 1, the only skip a non-
+    # outside_hours rule can hit), but counted separately so that a rule
+    # added tomorrow cannot quietly inflate the "held" number.
+    skipped_only = [r for r in results
+                    if r["boundary"].get("applicable") and not r["boundary"].get("held")]
+    untested = len(results) - len(held)
 
     print(f"MITRE empirical firing check -- {len(results)} tagged rule(s) checked "
           f"against their own real producer fixtures (declared-vs-fired, not "
@@ -388,10 +407,12 @@ def main() -> int:
 
     print(f"\n[OK] all {len(results)} MITRE-tagged rules fire on their own real "
           f"producer fixture")
-    print(f"[OK] {len(probed)} stateful rule(s) also held their boundary "
-          f"(threshold-1 and window-overrun stayed silent); {unprobed} stateless "
-          f"rule(s) NOT boundary-tested -- untested, not passing; see "
-          f"'boundary.reason' in the JSON")
+    print(f"[OK] {len(held)} stateful rule(s) also held their boundary "
+          f"(threshold-1 and window-overrun stayed silent); {untested} rule(s) "
+          f"NOT boundary-tested -- untested, not passing"
+          + (f", of which {len(skipped_only)} stateful rule(s) had every probe "
+             f"skipped" if skipped_only else "")
+          + " -- see 'boundary' in the JSON")
     return 0
 
 

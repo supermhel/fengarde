@@ -146,6 +146,31 @@ def test_stateless_rules_are_reported_untested_not_passing(rules, events):
           f"{stateless.id}: stateless rule produced probe verdicts it cannot support")
 
 
+def test_all_probes_skipped_is_not_counted_as_held(rules, events):
+    """A rule whose every probe was skipped has NOT been boundary-tested and
+    must not report a held boundary.
+
+    No shipped rule hits this today (no stateful rule has threshold 1), but
+    the scorecard's headline number is only honest if an untestable rule
+    cannot quietly inflate it -- the failure mode would be a number that
+    still looks measured after the measurement stopped happening."""
+    rule = rules[RULE_BRUTE]
+    fixture, oh = _fixture_for(rule, events)
+    if fixture is None:
+        return
+    declared = rule.threshold
+    rule.threshold = 1  # every probe becomes inapplicable
+    try:
+        probe = fc._boundary_probe(rule, fixture, oh)
+    finally:
+        rule.threshold = declared
+    check(probe.get("held") == [],
+          f"{RULE_BRUTE}: threshold-1 rule reported a held boundary {probe.get('held')} "
+          f"when every probe was skipped")
+    check(all(v.startswith("skipped") for v in probe.get("probes", {}).values()),
+          f"{RULE_BRUTE}: expected every probe skipped, got {probe.get('probes')}")
+
+
 def main():
     events = fc._real_events()
     detector = fc.Detector(plugin_rule_dirs=[])
@@ -160,6 +185,7 @@ def main():
     test_window_overrun_probe_catches_a_window_wider_than_declared(rules, events)
     test_probes_are_isolated_from_each_other(rules, events)
     test_stateless_rules_are_reported_untested_not_passing(rules, events)
+    test_all_probes_skipped_is_not_counted_as_held(rules, events)
 
     if FAILS:
         print(f"[FAIL] eval/attack/fire_check.py boundary probes: {len(FAILS)} problem(s)")
