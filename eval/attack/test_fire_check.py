@@ -28,6 +28,7 @@ Run: python eval/attack/test_fire_check.py
 from __future__ import annotations
 
 import contextlib
+import copy
 import io
 import sys
 import tempfile
@@ -416,6 +417,99 @@ def test_stateless_rules_are_reported_untested_not_passing():
           f"{stateless.id}: stateless rule produced probe verdicts it cannot support")
 
 
+def _run_main_capturing() -> tuple[int, str]:
+    """main() with stdout captured and the JSON artifact redirected to a temp
+    dir, so a test can never overwrite eval/attack/out/fire_check.json."""
+    buf = io.StringIO()
+    with tempfile.TemporaryDirectory() as tmp:
+        real_out, fc.OUT_DIR = fc.OUT_DIR, Path(tmp)
+        try:
+            with contextlib.redirect_stdout(buf):
+                rc = fc.main()
+        finally:
+            fc.OUT_DIR = real_out
+    return rc, buf.getvalue()
+
+
+def test_gate_fails_when_zero_rules_are_checked():
+    """The real 'the suite silently stopped testing anything' failure.
+
+    Every check in main() is vacuously true over an empty result list, so
+    without a count floor the run prints "all 0 MITRE-tagged rules fire" and
+    exits 0 -- and the liveness canary is GREEN throughout, because the
+    fixtures and the evaluate() path are both fine. It is the rule set that
+    vanished. Reachable in practice: load_rules() on a missing directory
+    returns [] without raising, and a rename of the `mitre:` key would make
+    every rule skip the tagged-rule filter."""
+    real_detector = fc.Detector
+
+    class NoRules(real_detector):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.rules = []
+
+    fc.Detector = NoRules
+    try:
+        rc, out = _run_main_capturing()
+    finally:
+        fc.Detector = real_detector
+    check(rc == 1,
+          f"gate exited {rc} having checked ZERO rules -- a suite that tests "
+          f"nothing must not pass")
+    check("ZERO MITRE-tagged rules were checked" in out,
+          "gate did not explain that zero rules were checked")
+
+
+def test_gate_fails_when_every_rule_loses_its_mitre_block():
+    """Same blind spot by a different route: the rules load fine but no longer
+    carry a `mitre:` block (schema key renamed), so every one is skipped by
+    the tagged-rule filter and the results list is empty."""
+    real_detector = fc.Detector
+
+    class Untagged(real_detector):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            for r in self.rules:
+                r.raw = {k: v for k, v in r.raw.items() if k != "mitre"}
+
+    fc.Detector = Untagged
+    try:
+        rc, out = _run_main_capturing()
+    finally:
+        fc.Detector = real_detector
+    check(rc == 1,
+          f"gate exited {rc} when no rule carried a mitre: block -- zero rules "
+          f"were actually checked")
+    check("ZERO MITRE-tagged rules were checked" in out,
+          "gate did not explain that zero rules were checked")
+
+
+def test_canary_is_green_while_zero_rules_are_checked():
+    """Pins the canary's real scope, so nobody re-derives the claim this
+    replaced: the canary passes in the zero-rule scenario. It probes the
+    EVENT side of the harness, never the rule side. The count floor is what
+    catches that failure; the canary is for attribution."""
+    ok, _ = fc._canary_check(events())
+    check(ok is True,
+          "canary should be green with a healthy fixture pipeline regardless "
+          "of how many rules loaded -- if this changed, the scope note in "
+          "_canary_check's docstring is now wrong")
+
+
+def test_canary_does_not_mutate_the_shared_template():
+    """`Rule(dict(template))` is a SHALLOW copy sharing `detection`/`siem`.
+    Nothing mutates them today, but this repo already contains the write
+    pattern that would (rule.raw.setdefault("detection", {})[...] = ...), and
+    a poisoned template would silently change the canary for the whole
+    process."""
+    before = copy.deepcopy(fc._CANARY_RULE_RAW)
+    r = fc.Rule(copy.deepcopy(fc._CANARY_RULE_RAW))
+    r.raw.setdefault("detection", {})["injected"] = {"x": 1}
+    check(fc._CANARY_RULE_RAW == before,
+          f"constructing a canary and writing to its raw mutated the shared "
+          f"template: {fc._CANARY_RULE_RAW}")
+
+
 def test_canary_fires_on_the_real_fixture_set():
     """The liveness canary must pass on the tree as it stands -- otherwise it
     is not a canary, it is a permanently-red light nobody will look at."""
@@ -500,6 +594,10 @@ def main():
     test_overrun_replay_always_lands_past_its_window()
     test_replay_reports_a_fire_on_any_event_not_just_the_last()
     test_stateless_rules_are_reported_untested_not_passing()
+    test_gate_fails_when_zero_rules_are_checked()
+    test_gate_fails_when_every_rule_loses_its_mitre_block()
+    test_canary_is_green_while_zero_rules_are_checked()
+    test_canary_does_not_mutate_the_shared_template()
     test_canary_fires_on_the_real_fixture_set()
     test_canary_detects_an_empty_fixture_pipeline()
     test_canary_detects_a_broken_evaluate_path()
