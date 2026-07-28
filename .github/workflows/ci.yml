@@ -119,10 +119,13 @@ jobs:
           python tools/generate_sbom.py --check
 
   # Dependency-vulnerability audit of every service's pinned requirements.txt.
-  # This deliberately replaces what Dependabot's PRs used to signal (Dependabot
-  # is disabled by owner decision -- no auto-bump PRs): a known CVE in a pinned
-  # dependency fails CI loudly instead of silently aging. Fixing it is a manual,
-  # reviewed version bump, which is exactly the point.
+  # Dependabot IS enabled (.github/dependabot.yml, pip + github-actions) -- an
+  # earlier version of this comment said it was disabled by owner decision,
+  # which stopped being true when that config landed. The two are
+  # complementary, not redundant: Dependabot opens PRs when a NEWER version
+  # exists, this job fails CI when a PINNED version has a known CVE, which is
+  # the case that would otherwise sit and age quietly if nobody merges the
+  # bump. Fixing either is still a manual, reviewed version bump.
   pip-audit:
     runs-on: ubuntu-latest
     steps:
@@ -189,14 +192,15 @@ jobs:
       # above from being unfalsifiable.
       - name: fire_check boundary-probe sensitivity (blocking -- a green negative must be able to go red)
         run: python eval/attack/test_fire_check.py
-      # NOTE: not SHA-pinned like this file's other actions (checkout/setup-
-      # python/gitleaks-action/actionlint) -- this was authored offline with
-      # no way to verify a real commit SHA for actions/upload-artifact, and
-      # the actionlint job's own docstring exists precisely because a wrong/
-      # unresolvable pin here would ship broken and sit undetected. Pin this
-      # to a verified SHA before relying on it in a security-sensitive context.
+      # Now SHA-pinned like this file's other actions. It was previously left
+      # on a floating tag with a NOTE saying it had been authored offline with
+      # no way to verify a real commit SHA -- that blocker is gone: the pin
+      # below is `refs/tags/v7.0.1` on actions/upload-artifact, resolved and
+      # checked against the tag rather than copied from a release page. The
+      # same SHA already pins this action in fuzz.yml and scorecard.yml, so
+      # all three now agree.
       - name: Upload Navigator layer artifacts
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: attack-navigator-layers
           path: eval/attack/out/
