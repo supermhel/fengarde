@@ -263,6 +263,10 @@ $PY eval/attack/fire_check.py || fail=1
 echo
 echo "== M7 follow-up: fire_check boundary probes are sensitive (a green negative must be able to go red) =="
 $PY eval/attack/test_fire_check.py || fail=1
+echo
+echo "== action-pin gate: every workflow SHA-pinned, incl. workflows with no pull_request trigger =="
+$PY tools/test_verify_action_pins.py || fail=1
+$PY tools/verify_action_pins.py --offline || fail=1
 
 echo
 if [ "$fail" -eq 0 ]; then echo "ALL TESTS PASS"; else echo "SOME TESTS FAILED"; fi
