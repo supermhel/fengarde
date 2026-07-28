@@ -7,6 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Boundary (negative) probes in the MITRE firing check**
+  (`eval/attack/fire_check.py`): the existing check proved every tagged rule
+  fires AT its threshold. A rule that is too **loose** — off-by-one count, a
+  window wider than declared — fires at threshold too, passes the
+  anti-dormancy gate too, and is invisible to both; it surfaces months later
+  as false-positive volume nobody traces back to the rule. Every stateful
+  rule that fires is now also replayed at `threshold - 1` in-window, and at
+  a full `threshold` spread so its total span lands just past
+  `window_seconds`, and must stay silent for both. **12/12 stateful rules
+  hold their boundary; the 14 stateless rules are reported NOT
+  boundary-tested rather than counted as passing** — the near-miss of a
+  single-event field match is the entire remaining value space, so no
+  near-miss fixture is generatable and each needs a hand-authored one.
+- **`eval/attack/test_fire_check.py`**: mutation tests that make the probes
+  falsifiable — real rules are mutated until they ARE too loose (engine
+  fires one event early, window 10% wider than declared) and the gate is
+  required to exit 1 **end to end through `main()`**, with a control
+  asserting exit 0 unmutated. A negative assertion that cannot fail is not a
+  test. Wired into `run_all_tests.sh`, `make attack-scorecard`, and CI's
+  blocking `attack-scorecard` job.
+
+### Fixed
+
+- `fire_check.py` reported a rule as having held its boundary when some or
+  all of its probes had been **skipped** rather than run, and selected its
+  FAILING verdict by exact-matching the prose string `"FIRED"` while the
+  passing verdict used a prefix match — so editing the failure message
+  disarmed the gate with every test still green. Verdicts are now a machine
+  `status` field and coverage is counted only from probes that actually ran.
+- Off-hours anchoring is span-aware: a replay is not an instant, and an
+  anchor that is itself off-hours could still drag its oldest event back
+  into business hours, which made a healthy stateful `outside_hours` rule
+  report as dead-on-arrival. An unconstructable replay is now reported as a
+  **harness** failure, distinct from a rule defect. The anchor search steps
+  by minutes, not hours — stepping by hours held minute-of-hour fixed across
+  the whole search and made the result depend on what minute CI started.
+
+### Changed
+
+- SSOT.md and `docs/superpowers/specs/2026-07-22-mitre-fire-check.md`
+  corrected on two overclaims: the firing check exercises `Rule.evaluate()`,
+  **not** `Detector.process()`'s `class_uid` prefilter or per-tenant disable
+  (a mis-bucketed rule still reports FIRED); and the boundary probes prove
+  the engine agrees with each rule's **declared** threshold, not that any
+  threshold is well *chosen* — lowering a declared threshold keeps the gate
+  green.
+
 ## [0.5.0] - 2026-07-23
 
 ### Added (M2 proof artifacts + M7 continuous tracks, 2026-07-22)
