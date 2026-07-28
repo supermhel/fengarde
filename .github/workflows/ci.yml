@@ -215,3 +215,14 @@ jobs:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
       - name: actionlint
         uses: raven-actions/actionlint@3d39aea434753780c3b3d4a1a31c854b4dbf49d7  # v2
+      # actionlint catches malformed workflows; it does not check that a pin
+      # points at a commit that exists. That is the `ossf/scorecard-action@v2`
+      # failure verbatim, and it matters most for scorecard.yml, which has no
+      # `pull_request` trigger -- nothing else in PR CI reads that file. This
+      # step does, because a workflow with no PR trigger is still just a file
+      # on disk and can be validated without executing it.
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Action pins resolve to the versions their comments claim
+        run: python tools/verify_action_pins.py

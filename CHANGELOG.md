@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Action-pin gate** (`tools/verify_action_pins.py`, blocking in CI and in
+  `run_all_tests.sh`): every `uses:` in every workflow must be SHA-pinned, and
+  any trailing `# vX.Y.Z` comment must actually resolve upstream to the pinned
+  commit. Closes a structural hole rather than an instance of one:
+  `scorecard.yml` has no `pull_request` trigger, so **nothing in PR CI ever
+  read that file** and a bad edit reached `main` unexamined — which is exactly
+  how `ossf/scorecard-action@v2`'s unresolvable tag shipped broken and sat
+  until its first live run. A workflow with no PR trigger is still a file on
+  disk, and this validates it without executing it. Mutation-tested against
+  three defect classes (stale version comment, floating tag, nonexistent
+  commit); `tools/test_verify_action_pins.py` requires each to exit non-zero.
+  Scope stated honestly: it proves a pin **resolves**, not that an action still
+  **behaves** — the `codeql-action` init/analyze split that broke #26 resolves
+  perfectly.
+- **`workflow_dispatch` on the Scorecard workflow**, so a change to it can be
+  exercised on demand right after merging instead of waiting for the weekly
+  cron to discover a problem. Adding a `pull_request` trigger would be the
+  wrong fix — that workflow runs with `publish_results: true` and
+  `id-token: write`.
+
 - **Boundary (negative) probes in the MITRE firing check**
   (`eval/attack/fire_check.py`): the existing check proved every tagged rule
   fires AT its threshold. A rule that is too **loose** — off-by-one count, a

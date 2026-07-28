@@ -9,6 +9,15 @@ on:
     - cron: "23 5 * * 3"  # weekly, Wednesday 05:23 UTC
   push:
     branches: [main]
+  # Run on demand. This workflow has no `pull_request` trigger (it publishes
+  # results and needs id-token: write, which a PR run must not have), so a
+  # change to it is never executed before it lands on main -- exactly how
+  # `ossf/scorecard-action@v2`'s unresolvable tag shipped broken and sat
+  # undetected until its first live run. `workflow_dispatch` makes the first
+  # run something you choose right after merging, instead of something the
+  # weekly cron discovers. The file's CONTENT is checked on every PR by
+  # tools/verify_action_pins.py; this covers the part only execution can.
+  workflow_dispatch: {}
 
 permissions: read-all
 
