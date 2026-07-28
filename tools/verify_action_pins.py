@@ -194,8 +194,8 @@ def main(argv: list[str]) -> int:
         return 1
 
     if offline:
-        print(f"[OK] every action reference is SHA-pinned "
-              f"(tags NOT resolved -- run without --offline in CI)")
+        print("[OK] every action reference is SHA-pinned "
+              "(tags NOT resolved -- run without --offline in CI)")
     else:
         print(f"[OK] every action reference is SHA-pinned and all {checked_tags} "
               f"version comment(s) resolve to the commit they claim")
