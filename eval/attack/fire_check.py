@@ -60,6 +60,18 @@ field match is the entire rest of the value space, so no near-miss fixture
 is generatable and each one has to be hand-authored. They are reported as
 untested rather than counted as passing.
 
+**Liveness canary (`_canary_check`).** Since the 14 stateless rules get NO
+boundary probe at all, they have no equivalent of the stateful positive
+replay proving the harness can still make a rule fire -- "untested" and "the
+harness silently stopped running" would print identically for every one of
+them. `main()` runs a synthetic, unconditionally-satisfiable rule (empty
+selection, matches any event, no field/time dependency) against every real
+fixture event BEFORE reporting any rule result, and refuses to report
+anything if it fails. This does not close the stateless boundary gap --
+it still needs per-rule hand-authored near-miss fixtures -- but it separates
+two failure modes that currently look identical from outside: "the rule is
+fine and untested" vs. "the measurement stopped being possible."
+
 Run: python eval/attack/fire_check.py
      make attack-scorecard   (fire_check runs alongside coverage_layer.py)
 """
@@ -81,7 +93,7 @@ sys.path.insert(0, str(ROOT / "tools"))
 from parsers import _REGISTRY  # noqa: E402
 from enrichment import enrich  # noqa: E402
 from main import Detector  # noqa: E402  -- ws4-detection's real Detector
-from engine import _time_outside_hours  # noqa: E402  -- reuse the engine's own predicate
+from engine import _time_outside_hours, Rule  # noqa: E402  -- reuse the engine's own predicate
 import check_rule_producers as crp  # noqa: E402  -- reuse the same FIXTURES
 
 OUT_DIR = Path(__file__).resolve().parent / "out"
@@ -116,6 +128,58 @@ def _real_events() -> list[dict]:
             if event is not None:
                 events.append(enrich(event))
     return events
+
+
+# A synthetic rule, never loaded from contracts/rules/*.yml, that exists only
+# to answer one question: is this HARNESS still alive? An empty selection
+# (`{}`) matches unconditionally in Rule._selection_matches -- the for loop
+# over its (zero) keys never runs, so it returns True regardless of the
+# event's shape or content. No field, no time-of-day, no fixture-specific
+# dependency of any kind: this must fire on every event, on every run,
+# forever, or something below Rule.evaluate() itself has broken.
+_CANARY_RULE_RAW = {
+    "id": "firecheck-canary-0000-not-a-real-rule",
+    "title": "[internal] fire_check liveness canary -- not a MITRE-tagged rule",
+    "level": "info",
+    "detection": {"always": {}, "condition": "always"},
+    "siem": {},
+}
+
+
+def _canary_check(events: list[dict]) -> tuple[bool, str]:
+    """Liveness probe for the harness itself, independent of any real rule's
+    condition or threshold.
+
+    Exists specifically for the 14 stateless MITRE-tagged rules, which have
+    NO boundary probe of any kind (see _boundary_probe's stateless branch) --
+    without something like this, "untested" and "the harness silently stopped
+    running" print as the identical result. A rule-content bug can only ever
+    be found by testing that rule; a harness-liveness bug can be caught once,
+    here, for every rule this file will never be able to boundary-test.
+
+    Two failure conditions, both real and both distinct from "a rule is
+    dead": the fixture loader returned nothing (`_real_events()` empty --
+    parser registry broken, fixtures dict empty, enrich() raising), or the
+    canary itself did not fire on some real event (Rule construction changed
+    shape, `_selection_matches`/`_eval_condition` regressed, `evaluate()`
+    itself broke). Either one invalidates every other result in this run,
+    which is why main() checks this FIRST and refuses to report rule results
+    if it fails -- a "12/12 held" printed alongside a dead harness is worse
+    than no number at all.
+
+    Deliberately independent of `_oh_anchors`/wall-clock machinery. A canary
+    that could itself flake on the wrong minute would just relocate the exact
+    confusion (real defect vs. harness artifact) it exists to eliminate --
+    see this file's own clock-skew history above for why that risk is not
+    theoretical here."""
+    if not events:
+        return False, "no real fixture events were loaded at all -- the fixture pipeline itself is broken"
+    canary = Rule(dict(_CANARY_RULE_RAW))
+    if not all(canary.evaluate(ev) for ev in events):
+        return False, ("the unconditionally-satisfiable canary rule did not fire on every "
+                       "real fixture event -- Rule.evaluate() or the fixture pipeline has "
+                       "regressed, independent of any real MITRE-tagged rule")
+    return True, f"canary fired on all {len(events)} real fixture event(s)"
 
 
 def _outside_hours_specs(rule) -> list[tuple[str, dict]]:
@@ -432,6 +496,15 @@ def _boundary_probe(rule, base_event: dict | None, blocked: bool = False) -> dic
 
 def main() -> int:
     events = _real_events()
+
+    canary_ok, canary_note = _canary_check(events)
+    print(f"harness liveness canary -- {canary_note}")
+    if not canary_ok:
+        print(f"\n[FAIL] HARNESS ITSELF is broken, not any real rule: {canary_note}")
+        print("       Every result below would be meaningless -- not reported.")
+        return 1
+    print()
+
     detector = Detector(plugin_rule_dirs=[])
 
     results = []

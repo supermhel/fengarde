@@ -416,6 +416,71 @@ def test_stateless_rules_are_reported_untested_not_passing():
           f"{stateless.id}: stateless rule produced probe verdicts it cannot support")
 
 
+def test_canary_fires_on_the_real_fixture_set():
+    """The liveness canary must pass on the tree as it stands -- otherwise it
+    is not a canary, it is a permanently-red light nobody will look at."""
+    ok, note = fc._canary_check(events())
+    check(ok is True, f"canary failed on the real fixture set: {note}")
+
+
+def test_canary_detects_an_empty_fixture_pipeline():
+    """The failure this exists for: the fixture loader silently returns
+    nothing. Every rule would then be 'untested' or 'silent' and look exactly
+    like today's honest 14-stateless-untested result."""
+    ok, note = fc._canary_check([])
+    check(ok is False,
+          "canary passed on an EMPTY fixture set -- it cannot detect the "
+          "fixture pipeline going dark, which is its entire purpose")
+    check("no real fixture events" in note,
+          f"canary gave a misleading reason for an empty fixture set: {note}")
+
+
+def test_canary_detects_a_broken_evaluate_path():
+    """The other failure: fixtures load fine but Rule.evaluate() regressed.
+    Constructed by making the canary's own evaluate() return False, which is
+    what a regression below the rule layer would look like from here."""
+    real_rule_cls = fc.Rule
+
+    class DeadRule(real_rule_cls):
+        def evaluate(self, event):
+            return False
+
+    fc.Rule = DeadRule
+    try:
+        ok, note = fc._canary_check(events())
+    finally:
+        fc.Rule = real_rule_cls
+    check(ok is False,
+          "canary passed while Rule.evaluate() returned False for everything "
+          "-- it cannot detect the evaluation path going dark")
+    check("canary rule did not fire" in note,
+          f"canary gave a misleading reason for a dead evaluate(): {note}")
+
+
+def test_canary_is_independent_of_event_content():
+    """A canary that depends on fixture shape would flake as parsers evolve
+    and get misread as 'a rule broke'. It must fire on anything, including an
+    empty dict -- no field, no timestamp, no tenant."""
+    canary = fc.Rule(dict(fc._CANARY_RULE_RAW))
+    for shape in ({}, {"x": 1}, {"time": 0}, {"src_endpoint": {"ip": "1.2.3.4"}}):
+        check(canary.evaluate(shape) is True,
+              f"canary failed to fire on {shape!r} -- it has an accidental "
+              f"dependency on event content and will flake")
+    check(canary.stateful is False,
+          "canary became stateful -- it would then depend on window/threshold "
+          "state and stop being a pure liveness signal")
+
+
+def test_canary_is_not_mistaken_for_a_real_tagged_rule():
+    """It must never be counted in the MITRE numbers it exists to protect."""
+    check(not isinstance(fc._CANARY_RULE_RAW.get("mitre"), dict),
+          "canary carries a mitre: block and would be counted as a real "
+          "tagged rule in the scorecard")
+    rules = fresh_rules()
+    check(fc._CANARY_RULE_RAW["id"] not in rules,
+          "canary id collides with a real rule loaded from contracts/rules/")
+
+
 def main():
     rules = fresh_rules()
     for rid in (RULE_BRUTE, RULE_MASS_CARD):
@@ -435,6 +500,11 @@ def main():
     test_overrun_replay_always_lands_past_its_window()
     test_replay_reports_a_fire_on_any_event_not_just_the_last()
     test_stateless_rules_are_reported_untested_not_passing()
+    test_canary_fires_on_the_real_fixture_set()
+    test_canary_detects_an_empty_fixture_pipeline()
+    test_canary_detects_a_broken_evaluate_path()
+    test_canary_is_independent_of_event_content()
+    test_canary_is_not_mistaken_for_a_real_tagged_rule()
 
     if FAILS:
         print(f"[FAIL] eval/attack/fire_check.py boundary probes: {len(FAILS)} problem(s)")

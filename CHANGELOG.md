@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Harness liveness canary** in `eval/attack/fire_check.py`: a synthetic,
+  unconditionally-satisfiable rule (empty selection, no field/time/fixture
+  dependency) replayed against every real fixture event *before* any rule
+  result is reported — `main()` exits 1 and reports **the harness** as broken
+  rather than printing rule numbers over a dead pipeline. Motivated by the 14
+  stateless rules, which have no boundary probe and therefore no equivalent of
+  the stateful positive replay proving the harness can still fire anything:
+  without this, "correctly untested" and "silently stopped testing" printed
+  identically for all 14. It does **not** close the stateless boundary gap
+  (that still needs hand-authored per-rule near-miss fixtures) — it separates
+  two failure modes that were indistinguishable from outside. Verified to go
+  red on both an empty fixture pipeline and a regressed `Rule.evaluate()`.
+
 - **Action-pin gate** (`tools/verify_action_pins.py`, blocking in CI and in
   `run_all_tests.sh`): every `uses:` in every workflow must be SHA-pinned, and
   any trailing `# vX.Y.Z` comment must actually resolve upstream to the pinned
