@@ -17,20 +17,30 @@ never leaves your network.**
 
 FENGARDE ingests logs from multiple sources, normalizes them to a single schema
 ([OCSF](https://schema.ocsf.io/)), runs correlation rules over a sliding window,
-and surfaces alerts in a dashboard. Every service is independent and talks to the
-rest of the system only through a message bus, so you can scale or replace any
-piece without rewriting the others.
+and surfaces alerts in a dashboard. Storage is OpenSearch. Every service is
+independent and talks to the rest of the system only through a message bus, so
+you can scale or replace any piece without rewriting the others.
 
 Three things make it different from a generic self-hosted SIEM:
 
 - **OCSF-native, not retrofitted.** Every source normalizes to the same open
-  schema from day one — instrument once, stay portable, no vendor log-format
-  lock-in.
-- **OpenSearch, not Elastic.** No license asterisk on the storage engine — the
-  open-source story has no fine print.
+  schema from day one, so one rule covers every source that emits the event —
+  an SSH login, a Windows login and an Active Directory login are one
+  brute-force detection, not three. Instrument once, stay portable, no vendor
+  log-format lock-in.
+- **OT and IT in one pipeline.** OPC UA and Modbus/TCP normalize into the same
+  OCSF schema as Active Directory, Windows and your firewall, so the plant floor
+  runs through the same detection engine, dashboard and report path as the
+  office network — not a second toolchain.
 - **AI triage that never leaves your network.** Local Ollama by default, with a
   documented stub fallback — your alert data is never piped through a
   third-party LLM API.
+
+> **On OpenSearch vs. Elastic:** storing in OpenSearch means there is no license
+> asterisk on the storage engine ([ADR 003](docs/adr/003-opensearch-not-elasticsearch.md)),
+> which is worth knowing but is *not* a differentiator against the comparison
+> people actually make — Wazuh's indexer is an OpenSearch fork too. It only
+> distinguishes FENGARDE from Elastic-based stacks, so it is not listed above.
 
 New in v0.4: parser packs for the sources this wedge actually needs — MCP/AI-agent
 tool-call audit logs, industrial OPC UA control-system events, and n8n automation-platform
