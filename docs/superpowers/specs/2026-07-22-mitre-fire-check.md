@@ -99,16 +99,52 @@ Two properties of the negative half are load-bearing:
    would have looked like a pass. The positive replay is therefore the
    control for the negative ones and must not be a separate code path that
    can drift from them.
-2. **Silence is only scored as a pass when it is unambiguous.** A probe that
-   would drag an `outside_hours` rule's replay across its business-hours
-   boundary reports `skipped`, not a boundary it did not test. Likewise a
-   rule whose every probe was skipped reports no held boundary at all, so an
-   untestable rule cannot inflate the headline count.
+2. **Silence is only scored as a pass when it is unambiguous.** Off-hours
+   anchoring is span-aware: the harness searches for an anchor that keeps a
+   replay off-hours for its whole length, rather than anchoring an instant
+   and discovering afterwards that the oldest event drifted into business
+   hours. When no such anchor exists the probe reports `skipped`, and a rule
+   is counted as having held its boundary only when EVERY probe ran and held
+   — one held plus one skipped is its own category, because the headline
+   sentence claims both probes stayed silent.
 
 `eval/attack/test_fire_check.py` is what licenses any of this being cited:
 it mutates real rules until they ARE too loose (engine fires one event
-early; window 10% wider than declared) and asserts each probe goes red. A
+early; window 10% wider than declared) and asserts the gate **exits 1
+through `main()`**, with a control asserting it exits 0 unmutated. A
 negative assertion that cannot fail is not a test.
+
+### What the second review caught that the first did not
+
+The first (self-) review fixed four issues and declared the work solid. An
+adversarial re-review, briefed to hunt what that review missed, found four
+more — all confirmed by reproduction, all fixed:
+
+* **The gate's failing path was unfalsifiable.** `held` was matched with
+  `startswith("held")` but `too_loose` with `== "FIRED"`, and nothing
+  exercised `main()`'s exit code. Editing the failure verdict's prose left
+  every test green while the gate exited 0 on a genuinely too-loose rule.
+  The fragile comparison was guarding the wrong side. Verdicts are now
+  `{"status": ..., "detail": ...}` and the exit code is asserted end to end.
+* **Partial coverage counted as full.** One probe held + one skipped was
+  reported as a held boundary, falsifying this doc's own claim that an
+  untestable rule cannot inflate the count.
+* **The positive replay was unguarded.** `_hours_confound` protected both
+  negative probes but not `_try_fire`, so the first stateful `outside_hours`
+  rule would have been reported `[FAIL] ... dead-on-arrival` — loud, but
+  blaming a healthy rule for a harness limitation. Anchoring is span-aware
+  now, and an unconstructable replay is reported as a HARNESS failure.
+* **The isolation test tested the wrong mechanism.** It reused one tag for
+  both replays, so `DequeWindowCounter`'s `ingest_id` redelivery guard
+  flattened the second run; it proved the dedup path while its docstring
+  described tenant isolation. It now uses distinct tags.
+
+Two lower-severity findings were also fixed: `_replay` reported only the
+LAST event's verdict (an intermediate fire inside a negative probe was
+discarded — reachable in principle for `periodicity` rules, whose
+coefficient of variation is not monotone), and a 1s floor on the positive
+step silently broke any rule with `threshold > window_seconds + 1`. Both are
+now pinned by property tests over a grid of (window, threshold) shapes.
 
 ### What the boundary probes still do not prove
 
@@ -118,6 +154,20 @@ threshold and stays one event under it is not detected, and this gate now
 demonstrates that on every run rather than leaving it as prose. Closing that
 gap needs different machinery (decay/scoring across windows), not a tighter
 threshold.
+
+They also do not say a threshold is well CHOSEN. The probes take their event
+count from `rule.threshold` — the same declared number the engine compares
+against — so they prove the engine and the declaration agree, and nothing
+more. Lower a rule's declared threshold and this gate stays green; whether
+that threshold is too permissive for real traffic is `eval/detection_accuracy/`'s
+question, on real corpora, not this one.
+
+Finally, three of the twelve stateful rules have `threshold: 2`, so their
+`under_threshold` probe replays exactly one event. "1 event did not fire a
+threshold-2 rule" is true but nearly vacuous; those rules' `window_overrun`
+probes carry the real weight. The scorecard prints the degenerate case
+explicitly rather than letting it read as equivalent to the 39-event probe
+on `common_dns_exfil`.
 
 ## Known limitation, disclosed not hidden
 
