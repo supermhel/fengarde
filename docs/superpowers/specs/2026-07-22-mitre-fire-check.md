@@ -143,8 +143,32 @@ Two lower-severity findings were also fixed: `_replay` reported only the
 LAST event's verdict (an intermediate fire inside a negative probe was
 discarded — reachable in principle for `periodicity` rules, whose
 coefficient of variation is not monotone), and a 1s floor on the positive
-step silently broke any rule with `threshold > window_seconds + 1`. Both are
-now pinned by property tests over a grid of (window, threshold) shapes.
+step silently broke any rule with `threshold > window_seconds + 1`. The step
+arithmetic is pinned by property tests over a grid of (window, threshold)
+shapes; the any-fired semantics are pinned by a separate test that replays a
+rule firing only on event 3 of 5. (A third review pass caught that sentence
+originally claiming the grid covered both: reverting `_replay` to last-fired
+left the whole suite green.)
+
+### Third pass: the fix for one flake introduced another
+
+Re-reviewing the fixes above found that span-aware anchoring stepped its
+candidate search backward in whole HOURS, holding minute-of-hour fixed for
+the entire 8-day search. For a rule whose off-hours span is close to its
+replay span, whether an anchor exists then depends on what minute the gate
+happens to run at — measured on a synthetic 2h-window rule in a 1h off-hours
+span: blocked at minutes 0–27, fine at 30–57. A deterministic 50% CI
+coin-flip, i.e. the false dead-rule report of finding 3 traded for a
+wall-clock flake in the same function. The search now steps by 60s (0/60
+minutes blocked, verified by sweep).
+
+The same lock had quietly disabled the test guarding the partial-coverage
+fix: for 48 of 60 minutes both its probes came back `skipped`, so it
+degenerated into a duplicate of the all-skipped test and still passed,
+because it only asserted the skip and not the hold. It now asserts both, and
+is non-degenerate at all 60 minutes. Worth recording as the file's own
+stated failure mode — a probe that stopped being exercised looks exactly
+like a probe that passed — reappearing inside the test written to prevent it.
 
 ### What the boundary probes still do not prove
 

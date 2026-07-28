@@ -274,11 +274,24 @@ def test_partly_skipped_rule_is_not_counted_as_having_held():
     rule.window_seconds = 7200  # 2h window vs a 1h off-hours span
     probe = fc._boundary_probe(rule, fixture)
     statuses = {n: v["status"] for n, v in probe.get("probes", {}).items()}
+    # BOTH assertions matter. Without the `held` one this test silently
+    # degenerates into a duplicate of the all-skipped test whenever the
+    # sub-threshold span also fails to find an anchor -- it would still pass,
+    # while no longer testing the partial-vs-full distinction it exists for.
+    # That is this file's own stated failure mode (a probe that stopped being
+    # exercised looks exactly like a probe that passed) reappearing inside
+    # the test written to prevent it, so the degeneration must be loud.
+    check(statuses.get("under_threshold") == "held",
+          f"expected under_threshold to still RUN and hold (its span fits the "
+          f"off-hours window) -- got {statuses}; this test is no longer "
+          f"exercising the partial-coverage case it was written for")
     check(statuses.get("window_overrun") == "skipped",
           f"expected window_overrun skipped for a 2h span in a 1h off-hours "
           f"window, got {statuses}")
     check(probe.get("fully_held") is False,
           f"partly-skipped rule reported fully_held with statuses {statuses}")
+    check(probe.get("held") == ["under_threshold"],
+          f"partly-skipped rule reported held={probe.get('held')}")
 
 
 def test_all_probes_skipped_is_not_counted_as_held():
@@ -300,25 +313,43 @@ def test_all_probes_skipped_is_not_counted_as_held():
 
 def test_positive_replay_always_fits_inside_its_own_window():
     """The positive replay must span LESS than the rule's window for every
-    plausible (window, threshold) shape.
+    (window, threshold) shape a rule can actually express.
 
     A 1s floor on the step used to break this for any rule with
     `threshold > window_seconds + 1`: the replay would span past the window
     and a healthy rule would be reported dead-on-arrival, with the blame
     landing on the rule. No shipped rule is that dense, so only a property
-    test over synthetic shapes catches it."""
+    test over synthetic shapes catches it.
+
+    The bound is explicit, not "every plausible shape": with a 1ms floor the
+    property necessarily fails once a rule demands more events than its
+    window has milliseconds (threshold > window_seconds * 1000), because the
+    replay cannot place them at distinct integer-ms timestamps at all. The
+    grid below stays inside that representable region and the boundary case
+    is asserted separately, rather than the docstring claiming a coverage
+    the grid does not have."""
     class Shape:
         def __init__(self, w, t):
             self.window_seconds, self.threshold = w, t
 
     for window in (1, 5, 10, 20, 30, 60, 120, 300, 3600):
         for threshold in (2, 3, 5, 10, 12, 22, 40, 100, 500):
+            if threshold > window * 1000:
+                continue  # more events than the window has milliseconds
             step = fc._positive_step_ms(Shape(window, threshold), threshold)
             span_ms = (threshold - 1) * step
             check(span_ms < window * 1000,
                   f"positive replay for window={window}s threshold={threshold} "
                   f"spans {span_ms}ms >= its own {window * 1000}ms window -- a "
                   f"healthy rule of this shape would be reported dead")
+
+    # The representable boundary itself: densest shape that must still work.
+    for window in (1, 5, 60):
+        threshold = window * 1000 // 2
+        step = fc._positive_step_ms(Shape(window, threshold), threshold)
+        check(step >= 1 and (threshold - 1) * step < window * 1000,
+              f"positive replay degenerates at the density boundary "
+              f"window={window}s threshold={threshold}: step={step}")
 
 
 def test_overrun_replay_always_lands_past_its_window():
@@ -336,6 +367,37 @@ def test_overrun_replay_always_lands_past_its_window():
             check(span_ms > window * 1000,
                   f"overrun replay for window={window}s threshold={threshold} "
                   f"spans {span_ms}ms, inside its own {window * 1000}ms window")
+
+
+def test_replay_reports_a_fire_on_any_event_not_just_the_last():
+    """`_replay` must return True when ANY event in the replay fires, not
+    only the final one.
+
+    A rule that fires partway through a replay meant to stay silent is the
+    too-loose defect being hunted; reporting only the last verdict discards
+    it. Reachable in principle for `periodicity` rules, whose coefficient of
+    variation is not monotone in the way an in-window count is.
+
+    Pinned here because reverting `_replay` to last-fired left the entire
+    rest of this suite green -- the spec claimed this behaviour was covered
+    by the (window, threshold) grid tests, which only pin step arithmetic."""
+    rules = fresh_rules()
+    rule = rules[RULE_BRUTE]
+    fixture = _fixture_for(rule)
+    if fixture is None:
+        return
+    calls = {"n": 0}
+
+    def fires_only_in_the_middle(_event):
+        calls["n"] += 1
+        return calls["n"] == 3
+
+    rule.evaluate = fires_only_in_the_middle
+    outcome = fc._replay(rule, fixture, 5, 1000, "test-any-fired")
+    check(calls["n"] == 5, f"expected 5 evaluate() calls, got {calls['n']}")
+    check(outcome is True,
+          "a rule that fired on event 3 of 5 was reported as not having fired "
+          "-- an intermediate fire inside a negative probe is being discarded")
 
 
 def test_stateless_rules_are_reported_untested_not_passing():
@@ -371,6 +433,7 @@ def main():
     test_all_probes_skipped_is_not_counted_as_held()
     test_positive_replay_always_fits_inside_its_own_window()
     test_overrun_replay_always_lands_past_its_window()
+    test_replay_reports_a_fire_on_any_event_not_just_the_last()
     test_stateless_rules_are_reported_untested_not_passing()
 
     if FAILS:

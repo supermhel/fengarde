@@ -140,21 +140,6 @@ def _outside_hours_specs(rule) -> list[tuple[str, dict]]:
     return specs
 
 
-def _outside_hours_anchor(spec: dict) -> int:
-    """A deterministic epoch-ms instant that is BOTH in the past (accepted by
-    the engine's P0 anti-poisoning guard -- past timestamps always pass) AND
-    outside ``spec``'s window, verified with the engine's OWN
-    ``_time_outside_hours`` so it can never drift from the predicate it must
-    satisfy. Steps back hour by hour from now; any business-hours window
-    leaves most of the week outside, so this resolves within a few days."""
-    now = int(time.time() * 1000)
-    for hours_back in range(1, 8 * 24 + 1):
-        ts = now - hours_back * 3_600_000
-        if _time_outside_hours(spec, ts):
-            return ts
-    return now - 3 * 24 * 3_600_000  # unreachable for any real window; safe past fallback
-
-
 def _oh_anchors(rule, span_ms: int) -> list[tuple[str, int]] | None:
     """[(dotted_field, epoch_ms)] to stamp for this rule's ``outside_hours``
     predicates, or None if no anchor exists that keeps a ``span_ms``-long
@@ -168,11 +153,28 @@ def _oh_anchors(rule, span_ms: int) -> list[tuple[str, int]] | None:
     an anchor whose entire span stays off-hours removes that ambiguity at the
     source instead of detecting it afterwards.
 
-    Sampled every 60s across the span: `_time_outside_hours` specs are
-    expressed in whole hours, so a minute-granularity sweep cannot step over
-    a business-hours sliver. Returning None is a HARNESS limitation (the
-    rule's off-hours span is shorter than the replay needs), never evidence
-    about the rule -- callers must report it as such."""
+    Both the candidate search and the span sweep step by 60s, and neither
+    number is arbitrary:
+
+    * The SEARCH must step by minutes, not hours. Stepping back whole hours
+      holds minute-of-hour fixed for the entire search, so for a rule whose
+      off-hours span is close to its replay span an anchor exists only if
+      the wall clock happens to sit in the right part of the hour -- the
+      gate would pass at :35 and report the same healthy rule blocked at
+      :05. A 50% CI coin-flip is a worse failure than the false dead-rule
+      report this function was written to remove.
+    * The SWEEP steps by 60s because specs are `HH:MM` (`_parse_hhmm`) with
+      a minute-resolution `tz_offset_minutes` -- NOT whole hours, as an
+      earlier version of this comment wrongly claimed. Minute resolution is
+      what makes the sweep exact: 60_000ms steps preserve the millisecond
+      remainder, so every consecutive minute-of-day inside the span is
+      visited and no business-hours sliver can be stepped over. Coarsening
+      this to hours would silently hand back anchors whose span crosses a
+      window like `09:00-09:30`.
+
+    Returning None is a HARNESS limitation (the rule's off-hours span is
+    shorter than the replay needs), never evidence about the rule -- callers
+    must report it as such."""
     anchors: list[tuple[str, int]] = []
     for field, spec in _outside_hours_specs(rule):
         # Only the `time` field is stepped across a replay; every other
@@ -180,12 +182,12 @@ def _oh_anchors(rule, span_ms: int) -> list[tuple[str, int]] | None:
         # needs no span clearance.
         needed = span_ms if field == "time" else 0
         now = int(time.time() * 1000)
+        offsets = list(range(0, needed + 1, 60_000))
+        if needed and offsets[-1] != needed:
+            offsets.append(needed)
         found = None
-        for hours_back in range(1, 8 * 24 + 1):
-            ts = now - hours_back * 3_600_000
-            offsets = list(range(0, needed + 1, 60_000))
-            if needed and offsets[-1] != needed:
-                offsets.append(needed)
+        for minutes_back in range(1, 8 * 24 * 60 + 1):
+            ts = now - minutes_back * 60_000
             if all(_time_outside_hours(spec, ts - o) for o in offsets):
                 found = ts
                 break
@@ -329,7 +331,7 @@ def _try_fire(rule, events: list[dict]) -> tuple[bool, str, dict | None, bool]:
     return False, "never fired on any of its own real fixture events", None, False
 
 
-def _boundary_probe(rule, base_event: dict | None) -> dict:
+def _boundary_probe(rule, base_event: dict | None, blocked: bool = False) -> dict:
     """Negative half of the gate: the rule fires AT its threshold (proven by
     _try_fire) -- prove it does NOT fire just below it.
 
@@ -367,8 +369,14 @@ def _boundary_probe(rule, base_event: dict | None) -> dict:
                 "reason": "stateless rule -- near-miss undefined without a "
                           "hand-authored fixture; not boundary-tested"}
     if base_event is None:
+        # Both cases arrive here with no fixture, but they mean opposite
+        # things and the JSON is what a reader consults after the fact --
+        # recording "the rule never fired" for a rule the HARNESS could not
+        # exercise sends someone hunting a rule bug that does not exist.
         return {"applicable": False,
-                "reason": "rule never fired -- no fixture to probe the boundary with"}
+                "reason": ("harness could not construct a replay for this rule -- "
+                           "no evidence about the rule either way" if blocked else
+                           "rule never fired -- no fixture to probe the boundary with")}
 
     reps = rule.threshold or 1
     probes: dict[str, dict] = {}
@@ -437,7 +445,7 @@ def main() -> int:
             "framework": mitre.get("framework", "attack"),
             "tactic": mitre.get("tactic"), "technique": mitre["technique"],
             "fired": fired, "note": note, "harness_blocked": blocked,
-            "boundary": _boundary_probe(rule, fixture),
+            "boundary": _boundary_probe(rule, fixture, blocked),
         })
 
     tagged_not_firing = [r for r in results if not r["fired"] and not r["harness_blocked"]]
