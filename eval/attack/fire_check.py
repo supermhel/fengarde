@@ -60,6 +60,24 @@ field match is the entire rest of the value space, so no near-miss fixture
 is generatable and each one has to be hand-authored. They are reported as
 untested rather than counted as passing.
 
+**Two harness-integrity guards, doing different jobs.**
+
+`main()` refuses to report `[OK]` over an empty result set (the count floor).
+Every check in this file is vacuously true over zero rules, so a rule set
+that failed to load would otherwise print "all 0 MITRE-tagged rules fire"
+and exit 0. That is the real "the suite silently stopped testing anything"
+failure, and only a count floor catches it -- the canary below is GREEN
+throughout it, because the fixtures and the evaluate() path are both healthy;
+it is the rules that vanished.
+
+`_canary_check` is about ATTRIBUTION, not detection. A dead fixture pipeline
+already turned this gate red before it existed (all 26 tagged rules must
+fire, including the 14 stateless ones -- so those DO have a blocking positive
+replay of their own, contrary to this docstring's first version). What the
+canary changes is that the failure reads "the harness is broken" instead of
+"26 rules are dead-on-arrival". See its own docstring for what it does not
+cover -- notably partial harness death, where it stays green.
+
 Run: python eval/attack/fire_check.py
      make attack-scorecard   (fire_check runs alongside coverage_layer.py)
 """
@@ -81,7 +99,7 @@ sys.path.insert(0, str(ROOT / "tools"))
 from parsers import _REGISTRY  # noqa: E402
 from enrichment import enrich  # noqa: E402
 from main import Detector  # noqa: E402  -- ws4-detection's real Detector
-from engine import _time_outside_hours  # noqa: E402  -- reuse the engine's own predicate
+from engine import _time_outside_hours, Rule  # noqa: E402  -- reuse the engine's own predicate
 import check_rule_producers as crp  # noqa: E402  -- reuse the same FIXTURES
 
 OUT_DIR = Path(__file__).resolve().parent / "out"
@@ -116,6 +134,95 @@ def _real_events() -> list[dict]:
             if event is not None:
                 events.append(enrich(event))
     return events
+
+
+# A synthetic rule, never loaded from contracts/rules/*.yml, that exists only
+# to answer one question: is this HARNESS still alive? An empty selection
+# (`{}`) matches unconditionally in Rule._selection_matches -- the for loop
+# over its (zero) keys never runs, so it returns True regardless of the
+# event's shape or content. No field, no time-of-day, no fixture-specific
+# dependency of any kind: this must fire on every event, on every run,
+# forever, or something below Rule.evaluate() itself has broken.
+#
+# KNOWN COUPLING, deliberate: this shape depends on the engine's empty-dict
+# asymmetry -- an empty SELECTION matches everything (fail open) while an
+# empty OPERATOR dict returns False (fail closed, _operator_matches). The
+# repo's own tools/validate_rules.py rejects this shape for real rule files
+# ("an empty selection matches EVERY event") and documents itself as
+# "deliberately stricter than the runtime here", i.e. the runtime behaviour
+# this canary relies on is already flagged as unintended. If the engine is
+# ever hardened to fail closed on an empty selection -- a defensible change
+# -- this canary goes permanently red and blocks the whole attack-scorecard
+# job. That is loud and correctly attributed, not silent, but whoever makes
+# that change must update this fixture (give it a selection that matches a
+# field every fixture provably emits) rather than deleting the canary.
+_CANARY_RULE_RAW = {
+    "id": "firecheck-canary-0000-not-a-real-rule",
+    "title": "[internal] fire_check liveness canary -- not a MITRE-tagged rule",
+    "level": "info",
+    "detection": {"always": {}, "condition": "always"},
+    "siem": {},
+}
+
+
+def _canary_check(events: list[dict]) -> tuple[bool, str]:
+    """ATTRIBUTION probe for the harness itself, independent of any real
+    rule's condition or threshold.
+
+    **What this is and is not.** An adversarial review corrected the original
+    claim here, which was wrong and is worth recording: this does NOT close a
+    detection blind spot, because there was no blind spot of that shape. Every
+    one of the 26 tagged rules -- including all 14 stateless ones -- must fire
+    on its own fixture or `main()` returns 1 at `tagged_not_firing`. So the
+    stateless rules DO have a blocking positive replay of their own, and a
+    dead fixture pipeline or a broken `Rule.evaluate()` already turned the
+    gate red before this function existed. Verified by bypassing the canary
+    and re-running: exit 1, no "N/N held" line, in every such scenario.
+
+    What it actually buys is ATTRIBUTION, the same class of fix as
+    `harness_blocked`: without it a dead harness reports "26 rule(s) declare a
+    MITRE technique but never fire -- a real defect (dead-on-arrival
+    detection)", sending someone to hunt 26 rule bugs that do not exist. With
+    it, the run says the harness is broken and refuses to print rule results
+    at all. Cheaper to read, and it cannot be mistaken for a rule regression.
+
+    **It does not catch partial harness death, and that is the likelier
+    regression.** If `enrich()` degrades events instead of raising, or one
+    parser drops out of `_REGISTRY` while the rest still work, this canary
+    stays GREEN (it fires on any event, by design -- that is what keeps it
+    flake-free) while real rules are falsely accused of being dead. In that
+    scenario the report is arguably worse than without it: a confident
+    all-clear beside false accusations. The genuine "suite tested nothing"
+    failure -- zero rules reaching the loop -- is caught by the non-zero
+    count floor in `main()`, not by this function.
+
+    Two failure conditions, both real and both distinct from "a rule is
+    dead": the fixture loader returned nothing (`_real_events()` empty --
+    total registry death, fixtures dict empty, enrich() raising), or the
+    canary itself did not fire on some real event (Rule construction changed
+    shape, `_selection_matches`/`_eval_condition` regressed, `evaluate()`
+    itself broke). Either one invalidates every other result in this run,
+    which is why main() checks this FIRST and refuses to report rule results
+    if it fails -- a "12/12 held" printed alongside a dead harness is worse
+    than no number at all.
+
+    Deliberately independent of `_oh_anchors`/wall-clock machinery. A canary
+    that could itself flake on the wrong minute would just relocate the exact
+    confusion (real defect vs. harness artifact) it exists to eliminate --
+    see this file's own clock-skew history above for why that risk is not
+    theoretical here."""
+    if not events:
+        return False, "no real fixture events were loaded at all -- the fixture pipeline itself is broken"
+    # deepcopy, not dict(): a shallow copy shares `detection`/`siem` with the
+    # module-level template, and this repo already contains the write pattern
+    # that would poison it for the rest of the process (test_fire_check.py
+    # does rule.raw.setdefault("detection", {})[...] = ... on a real rule).
+    canary = Rule(copy.deepcopy(_CANARY_RULE_RAW))
+    if not all(canary.evaluate(ev) for ev in events):
+        return False, ("the unconditionally-satisfiable canary rule did not fire on every "
+                       "real fixture event -- Rule.evaluate() or the fixture pipeline has "
+                       "regressed, independent of any real MITRE-tagged rule")
+    return True, f"canary fired on all {len(events)} real fixture event(s)"
 
 
 def _outside_hours_specs(rule) -> list[tuple[str, dict]]:
@@ -432,6 +539,23 @@ def _boundary_probe(rule, base_event: dict | None, blocked: bool = False) -> dic
 
 def main() -> int:
     events = _real_events()
+
+    canary_ok, canary_note = _canary_check(events)
+    print(f"harness liveness canary -- {canary_note}")
+    if not canary_ok:
+        print(f"\n[FAIL] HARNESS ITSELF is broken, not any real rule: {canary_note}")
+        print("       Every result below would be meaningless -- not reported.")
+        # Overwrite the artifact rather than leaving the previous run's green
+        # JSON on disk to be read as current. "Refuses to report" has to mean
+        # the stale report stops being believable, not just that we skip a
+        # print -- a developer with a red terminal and a green fire_check.json
+        # is exactly the ambiguity this whole file exists to remove.
+        OUT_DIR.mkdir(parents=True, exist_ok=True)
+        (OUT_DIR / "fire_check.json").write_text(json.dumps(
+            {"harness_ok": False, "reason": canary_note, "results": []}, indent=2))
+        return 1
+    print()
+
     detector = Detector(plugin_rule_dirs=[])
 
     results = []
@@ -472,6 +596,22 @@ def main() -> int:
     out_path = OUT_DIR / "fire_check.json"
     out_path.write_text(json.dumps(results, indent=2))
     print(f"\nwrote {out_path}")
+
+    # The actual "the suite silently stopped testing anything" failure, and
+    # the one the canary does NOT catch: zero rules reached the loop at all.
+    # Reachable without anyone noticing -- main.py::_contracts_dir() falls
+    # through to a path that need not exist, load_rules() on a missing
+    # directory returns [] without raising, and a rename of the `mitre:` key
+    # would make every rule skip the `continue` above. Every downstream check
+    # is vacuously true over an empty list, so the run prints "all 0 rules
+    # fire" and exits 0. A count floor is the only thing that catches it.
+    if not results:
+        print("\n[FAIL] ZERO MITRE-tagged rules were checked -- every result below "
+              "is vacuously true over an empty set. The rule set did not load, or "
+              "no rule carries a `mitre:` block any more (schema rename?). This is "
+              "the suite having stopped testing anything, which passes every other "
+              "check in this file.")
+        return 1
 
     if harness_blocked:
         print(f"\n[FAIL] {len(harness_blocked)} rule(s) could not be exercised by "

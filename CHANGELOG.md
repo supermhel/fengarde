@@ -9,6 +9,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Non-zero rule-count floor** in `eval/attack/fire_check.py` and
+  `tools/check_rule_producers.py`: both gates passed while examining **zero
+  rules**. Every check in either is vacuously true over an empty set, so a
+  rule set that failed to load printed `[OK] all 0 rules ...` and exited 0 —
+  with the event-side counts still large and convincing (`32 events, 83 paths,
+  297 (path,value) pairs checked`). Reachable without anyone noticing:
+  `load_rules()` on a missing directory returns `[]` without raising,
+  `_contracts_dir()` falls through to a path that need not exist, and renaming
+  the `mitre:` key would make every rule skip the tagged-rule filter. This is
+  the genuine "the suite silently stopped testing anything" failure, and a
+  one-line count floor is the only thing that catches it.
+- **Harness attribution canary** in `eval/attack/fire_check.py`: a synthetic,
+  unconditionally-satisfiable rule replayed against every fixture event before
+  any rule result is reported; on failure `main()` exits 1 blaming **the
+  harness** and overwrites the JSON artifact so a stale green report cannot be
+  read as current. Scope, corrected by adversarial review after the first
+  version of this entry overstated it: this does **not** close a detection
+  blind spot. A dead fixture pipeline or broken `Rule.evaluate()` *already*
+  turned the gate red — all 26 tagged rules, including the 14 stateless ones,
+  must fire or `main()` returns 1. What it buys is attribution: without it a
+  dead harness reports "26 rule(s) ... never fire -- a real defect
+  (dead-on-arrival detection)", sending someone to hunt 26 rule bugs that do
+  not exist. It also does not catch *partial* harness death (a degraded
+  `enrich()`, one parser dropping out of `_REGISTRY`), where it stays green
+  while real rules are falsely accused — documented in its docstring rather
+  than left to be discovered.
+
 - **Action-pin gate** (`tools/verify_action_pins.py`, blocking in CI and in
   `run_all_tests.sh`): every `uses:` in every workflow must be SHA-pinned, and
   any trailing `# vX.Y.Z` comment must actually resolve upstream to the pinned

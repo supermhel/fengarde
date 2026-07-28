@@ -308,7 +308,21 @@ def main() -> int:
                 print(f"      {p}")
         return 1
 
-    print(f"[OK] all {len(list(RULES_DIR.glob('*.yml')))} rules are satisfiable by a "
+    # Non-zero floor. Every check above is vacuously true over an empty rule
+    # set, and the event-side numbers below stay large and convincing while
+    # zero rules were actually examined -- pointed at an empty RULES_DIR this
+    # printed "[OK] all 0 rules are satisfiable ... (32 events, 83 paths, 297
+    # (path,value) pairs checked)" and exited 0. Same blind spot as
+    # eval/attack/fire_check.py's, and the same one-line fix.
+    checked = len(list(RULES_DIR.glob("*.yml")))
+    if not checked:
+        print(f"[FAIL] ZERO rule files were checked in {RULES_DIR} -- the anti-dormancy "
+              f"gate passed without examining a single rule. Every check above is "
+              f"vacuously true over an empty set; the event-side counts below say "
+              f"nothing about rule coverage.")
+        return 1
+
+    print(f"[OK] all {checked} rules are satisfiable by a "
           f"real event that both matches them and carries their group/distinct "
           f"fields ({len(events)} events, {len(all_paths)} paths, "
           f"{len(all_pairs)} (path,value) pairs checked)")
