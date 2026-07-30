@@ -6,13 +6,21 @@ actual product here (`SSOT.md` §2's proven-vs-claim discipline applies to
 this doc as much as anywhere else). If something below is wrong or has
 changed, that's a bug in this doc — open an issue.
 
+This page compares detection-pipeline products. It does not cover managed
+services or SME-focused platforms sold on sovereignty positioning rather
+than as a self-hostable SIEM — see "German-native sovereignty players"
+below for that adjacent category.
+
 **Read the whole table before picking anything.** The honest summary: Wazuh
 and Elastic Security are mature, broadly-adopted platforms with far more
 integrations, community rule content, and battle-testing than FENGARDE has
 today. FENGARDE's case is narrower — OCSF-native normalization, a
 genuinely open-source (no SSPL) storage layer, local-first AI triage, and
-detection content for a source class (AI-agent/MCP telemetry) nobody else
-covers yet — not "does everything those do, plus more."
+detection content for a source class (AI-agent/MCP telemetry) no other
+open-source, OCSF-integrated SIEM covers yet — not "does everything those
+do, plus more." (Commercial AI-agent-security products exist — Palo Alto
+Prisma AIRS, Nightfall AI, Cyera, Lasso Security, CrowdStrike Falcon among
+them — just not as an OCSF-normalized SIEM parser/rule-pack.)
 
 | | **FENGARDE** | **Wazuh** | **Elastic Security** | **Security Onion** |
 |---|---|---|---|---|
@@ -40,6 +48,31 @@ checkable fact about their dependency graph, not a knock on their quality.
 FENGARDE's answer is OpenSearch; the trade-off is that FENGARDE hasn't
 earned the years of production hardening and community content those
 projects have.
+
+## German-native sovereignty players
+
+The comparisons above are all self-hostable SIEM/detection products. FENGARDE's
+"sovereignty by construction" positioning (local-first, no data leaves the
+network) also runs directly into two German-native players who compete on the
+same claim in the same market, and belong in this doc for the same reason
+Wazuh/Elastic/Security Onion do — a skeptical reader should be able to check
+the honest comparison here rather than find it themselves:
+
+- **[DCSO](https://dcso.de/en/service/managed-detection-response/)** — "Managed
+  Detection & Response, made in Germany," data stored exclusively on-site, sold
+  explicitly on full digital sovereignty. It's a managed service, not a
+  self-hostable open-source SIEM — the overlap is the sovereignty claim, not
+  the deployment model.
+- **[Enginsight](https://sitsi.pacanalyst.com/enginsight-a-german-cybersecurity-platform-focused-on-the-sme-segment/)**
+  — Jena-founded, German-developed, SME-focused, GDPR/BSI/KRITIS-native, with
+  explicit "independence from non-European technology stacks" positioning —
+  the closest existing competitor to FENGARDE's Mittelstand target segment.
+
+Neither is Apache-2.0/open-source, so FENGARDE's openness + no-SSPL-storage
+argument still holds against both. But "sovereignty" alone is not an empty
+category either of them has left uncontested — FENGARDE's honest differentiator
+in this specific comparison is open-source + self-hostable + free, not being
+first or alone on data residency.
 
 ## What would change this table
 

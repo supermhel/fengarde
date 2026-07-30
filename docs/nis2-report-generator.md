@@ -9,6 +9,25 @@ incident-reporting obligation (§32 BSIG, implementing NIS2 Directive
 
 **Read this whole page before using a generated draft for anything real.**
 
+## Why this matters now
+
+Germany's NIS2UmsuCG entered force 2025-12-06 with no transition period,
+expanding scope from ~4,500 KRITIS entities to roughly 29,000-29,500
+essential/important entities who must now meet the 24h/72h/1-month reporting
+timeline above. Two figures from that expansion are worth stating plainly for
+the exact segment this generator targets:
+
+- **84% of in-scope organizations report they are not ready** for NIS2 (only
+  16% feel fully prepared). [morethandigital.info](https://morethandigital.info/en/nis2-in-detail-for-small-and-medium-sized-enterprises/), [Schwarz Digits Cyber Security Report 2026](https://xpert.digital/en/cyber-security-report/)
+- **A NIS2 gap assessment typically costs €50k-200k** — a heavy lift against
+  the ~6-8% profit margins typical of German Mittelstand precision-engineering
+  firms, the sector this generator's `bank`/`datacenter`/`common` sector
+  tagging and free, self-hostable model are built for. [ad-hoc-news.de](https://www.ad-hoc-news.de/boerse/news/ueberblick/german-smes-hit-by-investment-slump-as-nis2-and-workplace-safety-deadlines/69763237)
+
+This generator doesn't close that gap on its own (see "What this is NOT"
+below), but it removes the report-drafting cost from it at zero price and
+zero AI/network dependency.
+
 ## What this is
 
 - `contracts/nis2-de-schema.json` — the field schema, with citations to the
