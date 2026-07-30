@@ -108,7 +108,6 @@ those words get reused loosely across specs written weeks apart.
 | `docs/superpowers/specs/2026-07-21-ha-design.md` | B5 central-tier HA design: Redis Sentinel + OpenSearch multi-node recommendation, accounting of what's already multi-replica-safe | **Current** — design record, no code |
 | `docs/superpowers/specs/2026-07-22-mitre-fire-check.md` | M7: empirical MITRE firing check design -- declared vs. fired vs. real-world-validated, kept as three separate claims | **Current** |
 | `docs/superpowers/specs/2026-07-22-modbus-anomaly-scope.md` | M7: why the Modbus/TCP parser is a protocol-anomaly detector, not a vendor-log parser -- Modbus has no audit-log format to parse | **Current** |
-| `docs/superpowers/specs/2026-07-29-fengarde-strategy-marketing-review.md` | Sourced audit of launch positioning/competitive claims against real market data (market size, NIS2 numbers, competitors incl. DCSO/Enginsight) — flags the dual banking+data-center sector bet as ungrounded, the "no incumbent occupies this space" claim as false. **Placement flagged, not fully resolved**: this is business/marketing material, the same category §4 records was deliberately moved OUT of this public repo on 2026-07-21 — kept here per explicit owner instruction rather than that standing convention; revisit if that tension matters going forward | **Current** — recommendations partially actioned (see `docs/vs.md`, `docs/nis2-report-generator.md`); the strategic calls (sector bet, MSSP channel) are explicitly still open |
 | `contracts/reporting.md` | Frozen cross-repo contract: incident-report hook request/response schema, incl. M5's additive NIS2 template-mode query params | **Current** — the seam to the paid layer's report backend |
 | `contracts/triage-api.yaml` | OpenAPI 3.1 spec for WS-3's versioned REST API (M4.3) | **Current** — spec-vs-code drift is CI-tested (`test_api_v1.py`) |
 | `contracts/nis2-de-schema.json` | Field schema for the NIS2/§32 BSIG report generator (M5) | **Current** |
@@ -185,6 +184,15 @@ those words get reused loosely across specs written weeks apart.
   git history still has them (rewriting history was explicitly declined — breaks every existing
   clone/fork). This SSOT file remains the authoritative status source; nothing substantive was
   lost from what a reader needs to trust this repo's claims.
+- **Near-miss of the same mistake (2026-07-29):** a sourced strategy/marketing review
+  (`strategy_marketing_review.md`) was briefly committed to `docs/superpowers/specs/` and pushed
+  to `main` (commit `b037962`) before being caught as the same category the 2026-07-21 move
+  above exists to keep out — removed from the tree the same day. Its objective, factual
+  recommendations (not the strategic analysis itself) were already applied to `docs/vs.md` and
+  `docs/nis2-report-generator.md` before removal and those edits stand. The review content
+  itself is still recoverable from git history (`git show b037962:docs/superpowers/specs/2026-07-29-fengarde-strategy-marketing-review.md`)
+  unless/until a history rewrite purges it — that's a separate, not-yet-made decision, since
+  rewriting shared history needs explicit sign-off the same way the 2026-07-21 move declined it.
 
 ## 5. M6 launch readiness (as of 2026-07-23, post-PR#24) — assessment only, NOT a launch
 
