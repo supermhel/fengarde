@@ -35,7 +35,13 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install deps
-        run: pip install pyyaml hypothesis
+        # redis: services/shared/test_bus_redis_fallback.py needs the client
+        # lib importable to exercise its non-ImportError propagation case (no
+        # server required -- see that file's module docstring). Without it,
+        # `import redis` inside _RedisBus.__init__ raises ImportError before
+        # the test's forced ValueError is ever reached, so the test can only
+        # ever hit the fallback branch and always fails.
+        run: pip install pyyaml hypothesis redis
       - name: Full zero-infra gate
         run: PYTHON=python3 bash run_all_tests.sh
 

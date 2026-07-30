@@ -65,7 +65,7 @@ def _get_path_parts(doc: dict, parts: tuple):
 
 
 def get_path(doc: dict, dotted: str):
-    return _get_path_parts(doc, dotted.split("."))
+    return _get_path_parts(doc, tuple(dotted.split(".")))
 
 
 # --- A3: allowlists -----------------------------------------------------------
@@ -622,6 +622,7 @@ class Rule:
         window_key = f"{self.id}:{self._namespaced_group(tenant, group)}"
         window_ms = self.window_seconds * 1000
         if self.distinct_field:
+            assert self._distinct_field_parts is not None
             value = _get_path_parts(event, self._distinct_field_parts)
             if value is None:
                 # A non-value must not count as a distinct value. The two
