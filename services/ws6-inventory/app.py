@@ -23,9 +23,14 @@ from urllib.parse import urlparse, parse_qs
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 from store import InventoryStore, InvalidTenantId  # noqa: E402
-from authz import check_api_key, check_tenant_scoped_auth, warn_if_disabled  # noqa: E402
+from keystore import TenantKeyStore, ensure_legacy_keys_migrated  # noqa: E402
+from authz import warn_if_disabled  # noqa: E402
 
 STORE = InventoryStore(os.getenv("INVENTORY_DB", ":memory:"))
+# Same file as STORE by default (one DB to back up), separate connection --
+# TenantKeyStore owns its own table/schema, see keystore.py.
+KEYSTORE = TenantKeyStore(os.getenv("INVENTORY_KEYSTORE_DB", os.getenv("INVENTORY_DB", ":memory:")))
+MIGRATED_TENANTS = ensure_legacy_keys_migrated(KEYSTORE)
 
 # Bounds on client-controlled inputs. `limit` is clamped so a hostile/typo value
 # can't ask SQLite for an unbounded scan; the POST body is capped so an oversized
@@ -70,26 +75,21 @@ class Handler(BaseHTTPRequestHandler):
 
     def _check_auth(self):
         """Returns (True, bound_tenant) on success, or sends 401 and returns
-        (False, None). bound_tenant is None when this request's own
-        ?tenant_id= should be trusted as-is (FENGARDE_API_KEYS not
-        configured, legacy FENGARDE_API_KEY path, or the caller
-        authenticated with the '*' admin key) -- exactly pre-existing F1
-        behavior. A non-None value means the caller authenticated as one
-        specific tenant and every tenant_id this request touches must be
-        forced to it (F1 follow-up: closes the "guess another tenant_id
-        with the one shared key" gap -- see authz.check_tenant_scoped_auth).
-        """
-        scoped = check_tenant_scoped_auth(self.headers)
-        if scoped is not None:
-            ok, bound = scoped
-            if not ok:
-                self._send(401, {"error": "unauthorized"})
-                return False, None
-            return True, bound
-        if check_api_key(self.headers):
+        (False, None). An empty keystore means auth is fully disabled --
+        the zero-infra/quickstart default, unchanged since before F1.
+        Otherwise every request must present a key that verifies against
+        KEYSTORE (hashed at rest, see keystore.py). bound_tenant is None
+        for the '*' admin key (unrestricted, this request's own
+        ?tenant_id= trusted as-is) or a specific tenant_id for a
+        tenant-scoped key -- every tenant_id this request touches must
+        then be forced to it, regardless of what the caller asked for."""
+        if KEYSTORE.count() == 0:
             return True, None
-        self._send(401, {"error": "unauthorized"})
-        return False, None
+        ok, bound = KEYSTORE.verify(self.headers.get("X-Api-Key", ""))
+        if not ok:
+            self._send(401, {"error": "unauthorized"})
+            return False, None
+        return True, bound
 
     def do_GET(self):
         # Any malformed input (bad ?at=, bad ?limit=) becomes a clean 4xx/5xx JSON
@@ -185,12 +185,17 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def serve(host="0.0.0.0", port=8000):
-    warn_if_disabled("ws6-inventory")
+    warn_if_disabled("ws6-inventory", KEYSTORE)
     srv = ThreadingHTTPServer((host, port), Handler)
     # ws6 is a standalone service; its image does NOT bundle `shared`, so emit a
     # structured JSON log line inline rather than importing shared.log.
     import json as _json
     import time as _time
+    if MIGRATED_TENANTS:
+        # Never the key values -- see keystore.py::ensure_legacy_keys_migrated.
+        print(_json.dumps({"level": "info", "service": "ws6-inventory",
+                           "msg": "migrated legacy API key(s) into the hashed keystore",
+                           "tenants": MIGRATED_TENANTS}), flush=True)
     print(_json.dumps({"ts": _time.strftime("%Y-%m-%dT%H:%M:%SZ", _time.gmtime()),
                        "level": "info", "service": "ws6-inventory",
                        "msg": "listening", "url": f"http://{host}:{port}"}), flush=True)

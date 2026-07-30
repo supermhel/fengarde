@@ -49,6 +49,9 @@ echo
 echo "== ws6 tenant isolation (F1, 2026-07-29 audit): schema/route/migration scoping =="
 $PY services/ws6-inventory/test_tenant_isolation.py || fail=1
 echo
+echo "== ws6 per-tenant API keys, hashed at rest (F1 2nd follow-up, 2026-07-30 audit) =="
+$PY services/ws6-inventory/test_keystore.py || fail=1
+echo
 echo "== M4.2 RBAC: users/sessions/roles (unit) =="
 $PY services/shared/test_rbac.py || fail=1
 echo
