@@ -6,6 +6,8 @@ count, which is exactly the idempotency guarantee the bus relies on.
 """
 from __future__ import annotations
 
+import threading
+
 from .adapter import StorageAdapter
 
 
@@ -18,11 +20,24 @@ class MemoryStore(StorageAdapter):
         self._versions: dict[tuple[str, str], int] = {}
         # template name -> template body (for inspection / assertions)
         self.templates: dict[str, dict] = {}
+        # H3 (2026-07-29 audit): guards _indices/_versions across index()
+        # and index_cas() -- triage_api.py's threaded HTTP server calls both
+        # concurrently, and index_cas's check-then-write was previously
+        # unsynchronized, so two concurrent CAS writes on the same version
+        # could both pass the version check and both report True while one
+        # silently overwrote the other. A plain index() interleaving between
+        # a CAS's check and write would cause the same lost-update shape, so
+        # both methods share this one lock rather than just index_cas.
+        self._lock = threading.Lock()
 
     def ensure_template(self, name: str, template: dict) -> None:
         self.templates[name] = template
 
     def index(self, index: str, doc_id: str, document: dict) -> bool:
+        with self._lock:
+            return self._index_locked(index, doc_id, document)
+
+    def _index_locked(self, index: str, doc_id: str, document: dict) -> bool:
         bucket = self._indices.setdefault(index, {})
         is_new = doc_id not in bucket
         bucket[doc_id] = document
@@ -78,17 +93,23 @@ class MemoryStore(StorageAdapter):
         return index, doc, self._versions.get((index, alert_id), 0)
 
     def index_cas(self, index: str, doc_id: str, document: dict, version) -> bool:
-        if version is None:  # legacy unconditional write
-            self.index(index, doc_id, document)
+        with self._lock:
+            if version is None:  # legacy unconditional write
+                self._index_locked(index, doc_id, document)
+                return True
+            if self._versions.get((index, doc_id), 0) != version:
+                return False  # someone else wrote in between -> caller retries
+            self._index_locked(index, doc_id, document)
             return True
-        if self._versions.get((index, doc_id), 0) != version:
-            return False  # someone else wrote in between -> caller retries
-        self.index(index, doc_id, document)
-        return True
 
     # -- M4.3 versioned REST API: bounded list/browse -----------------------
     def list_alerts(self, *, tenant_id: str | None = None,
-                     status: str | None = None, limit: int = 50) -> list[dict]:
+                     status: str | None = None, limit: int = 50,
+                     actor: str | None = None, src_ip: str | None = None) -> list[dict]:
+        # Design-C (2026-07-29 audit): actor/src_ip let an analyst manually
+        # pull every alert for one actor/source IP across time -- see
+        # opensearch.py's list_alerts for the full rationale (the safe scoped
+        # improvement in place of a full cross-alert correlation engine).
         docs: list[dict] = []
         for index, bucket in self._indices.items():
             if not index.startswith("alerts"):
@@ -98,6 +119,10 @@ class MemoryStore(StorageAdapter):
             docs = [d for d in docs if (d.get("tenant_id") or "default") == tenant_id]
         if status is not None:
             docs = [d for d in docs if (d.get("triage") or {}).get("status", "new") == status]
+        if actor is not None:
+            docs = [d for d in docs if (d.get("actor") or {}).get("user", {}).get("name") == actor]
+        if src_ip is not None:
+            docs = [d for d in docs if (d.get("src_endpoint") or {}).get("ip") == src_ip]
         docs.sort(key=lambda d: d.get("time") or 0, reverse=True)
         return docs[:limit]
 

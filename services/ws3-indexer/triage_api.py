@@ -349,7 +349,22 @@ def make_handler(store, users_db=None, sessions: SessionStore | None = None,
                 raise _BadRequest(f"status must be one of {sorted(_STATUSES)}")
             limit = _parse_limit(q.get("limit"))
             tenant_id = self._list_tenant_filter(session, requested_tenant)
-            alerts = store.list_alerts(tenant_id=tenant_id, status=status, limit=limit)
+            # Design-C (2026-07-29 audit): manual cross-alert correlation --
+            # let an analyst pull every alert for one actor/source IP across
+            # time (the safe scoped improvement in place of a full
+            # correlation engine, see storage/opensearch.py's list_alerts).
+            # Passed conditionally, not as an always-present kwarg: a
+            # third-party StorageAdapter written against the pre-Design-C
+            # 3-parameter signature keeps working for every call that
+            # doesn't actually ask for this filter.
+            extra = {}
+            actor = q.get("actor", [None])[0]
+            if actor is not None:
+                extra["actor"] = actor
+            src_ip = q.get("src_ip", [None])[0]
+            if src_ip is not None:
+                extra["src_ip"] = src_ip
+            alerts = store.list_alerts(tenant_id=tenant_id, status=status, limit=limit, **extra)
             return self._send(200, {"alerts": alerts, "count": len(alerts)})
 
         def _route_list_events(self, raw_query: str):

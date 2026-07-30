@@ -73,6 +73,42 @@ def test_memory_cas():
           "version=None must degrade to an unconditional write")
 
 
+def test_memory_cas_check_then_write_is_atomic():
+    """H3 (2026-07-29 audit): index_cas's check-then-write must be atomic
+    even when two threads read the SAME version before either writes --
+    the exact interleaving the audit reproduced (both threads see version=1,
+    both call index_cas(version=1), and without a lock spanning the
+    check+write both used to return True while one silently discarded the
+    other's update). Uses a Barrier to force the race deterministically
+    rather than relying on it showing up under the GIL by chance."""
+    store = MemoryStore()
+    store.index("alerts-2026.07.08", "a1", {"alert_id": "a1", "score": 70})
+    v1 = store.find_alert_versioned("a1")[2]
+
+    barrier = threading.Barrier(2)
+    outcomes: dict[str, bool] = {}
+
+    def writer(name, status):
+        barrier.wait()  # both threads pass their version check at the same instant
+        ok = store.index_cas("alerts-2026.07.08", "a1",
+                             {"alert_id": "a1", "score": 70, "triage": {"status": status}}, v1)
+        outcomes[name] = ok
+
+    ta = threading.Thread(target=writer, args=("A", "A-status"))
+    tb = threading.Thread(target=writer, args=("B", "B-status"))
+    ta.start(); tb.start()
+    ta.join(timeout=5); tb.join(timeout=5)
+
+    check(sorted(outcomes.values()) == [False, True],
+          f"exactly one concurrent CAS at the same version must win, got {outcomes}")
+    winner_status = "A-status" if outcomes["A"] else "B-status"
+    stored_status = store.find_alert("a1")[1]["triage"]["status"]
+    check(stored_status == winner_status,
+          f"the winner's write must be the one actually stored, got {stored_status!r} "
+          f"but winner wrote {winner_status!r} (a lost update means the loser's write "
+          f"landed anyway despite index_cas reporting False)")
+
+
 # --------------------------------------------------------------------------- #
 # 2. OpenSearchStore CAS wire format (fake transport, no live cluster)
 # --------------------------------------------------------------------------- #
@@ -269,6 +305,7 @@ def test_concurrent_writers_same_alert_no_lost_update():
 
 def main():
     test_memory_cas()
+    test_memory_cas_check_then_write_is_atomic()
     test_opensearch_cas_wire_format()
     test_triage_retry_on_conflict()
     test_concurrent_writers_same_alert_no_lost_update()

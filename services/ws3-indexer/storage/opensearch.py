@@ -325,8 +325,19 @@ class OpenSearchStore(StorageAdapter):
                 if isinstance(hit.get("_source"), dict)]
 
     def list_alerts(self, *, tenant_id: str | None = None,
-                     status: str | None = None, limit: int = 50) -> list[dict]:
-        filters = {"tenant_id": tenant_id, "triage.status": status}
+                     status: str | None = None, limit: int = 50,
+                     actor: str | None = None, src_ip: str | None = None) -> list[dict]:
+        # Design-C (2026-07-29 audit): a full cross-alert correlation engine
+        # (rolling risk score per actor/ip across hours-to-days, surfaced as
+        # an "incident") is a real, larger design effort -- deferred, see
+        # SSOT.md. This is the safe scoped improvement in the meantime: let
+        # an analyst manually pull every alert for one actor/source IP,
+        # newest-first, across the retention window -- the exact query a
+        # human needs to spot a low-and-slow multi-stage attack that stays
+        # under any single rule's own threshold, without inventing a new
+        # aggregation subsystem or window state.
+        filters = {"tenant_id": tenant_id, "triage.status": status,
+                  "actor.user.name": actor, "src_endpoint.ip": src_ip}
         return self._list("alerts-*", filters, limit)
 
     def list_events(self, *, family: str | None = None, tenant_id: str | None = None,

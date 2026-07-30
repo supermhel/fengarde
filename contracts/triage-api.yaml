@@ -72,6 +72,10 @@ paths:
             description: "Non-admin RBAC callers: ALWAYS overridden to the caller's own tenant." }
         - { name: status, in: query, schema: { type: string,
               enum: [new, triaged, closed, false_positive, true_positive] } }
+        - { name: actor, in: query, schema: { type: string },
+            description: "Design-C (2026-07-29 audit): exact match on actor.user.name. Manual cross-alert correlation for one actor across time -- see SSOT.md for why this is scoped down from a full correlation engine." }
+        - { name: src_ip, in: query, schema: { type: string },
+            description: "Design-C (2026-07-29 audit): exact match on src_endpoint.ip. Same rationale as `actor`." }
         - { name: limit, in: query, schema: { type: integer, default: 50, minimum: 1, maximum: 200 } }
       responses:
         "200":

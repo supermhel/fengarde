@@ -63,12 +63,15 @@ def _seed_store():
     store = MemoryStore()
     now = int(time.time() * 1000)
     store.index("alerts-acme-2026.07.16", "a1",
-                {"alert_id": "a1", "tenant_id": "acme", "time": now, "rule_title": "r1"})
+                {"alert_id": "a1", "tenant_id": "acme", "time": now, "rule_title": "r1",
+                 "actor": {"user": {"name": "jdoe"}}, "src_endpoint": {"ip": "203.0.113.5"}})
     store.index("alerts-acme-2026.07.16", "a2",
                 {"alert_id": "a2", "tenant_id": "acme", "time": now - 1000, "rule_title": "r2",
-                 "triage": {"status": "closed"}})
+                 "triage": {"status": "closed"},
+                 "actor": {"user": {"name": "jdoe"}}, "src_endpoint": {"ip": "198.51.100.9"}})
     store.index("alerts-globex-2026.07.16", "g1",
-                {"alert_id": "g1", "tenant_id": "globex", "time": now, "rule_title": "r3"})
+                {"alert_id": "g1", "tenant_id": "globex", "time": now, "rule_title": "r3",
+                 "actor": {"user": {"name": "asmith"}}, "src_endpoint": {"ip": "203.0.113.5"}})
     store.index("events-common-acme-2026.07.16", "e1",
                 {"siem": {"ingest_id": "e1", "tenant": "acme", "sector": "common"}, "time": now})
     store.index("events-common-globex-2026.07.16", "e2",
@@ -109,6 +112,38 @@ def test_list_alerts_filters():
 
         code5, _ = _get(port, "/alerts?limit=abc")
         check(code5 == 400, f"a non-integer limit must be a 400, got {code5}")
+    finally:
+        srv.shutdown(); srv.server_close()
+
+
+def test_list_alerts_actor_src_ip_filters():
+    """Design-C (2026-07-29 audit): manual cross-alert correlation -- pull
+    every alert for one actor or source IP across tenants/time, the scoped
+    substitute for a full correlation engine (see SSOT.md)."""
+    store = _seed_store()
+    srv, port = _serve(store)
+    try:
+        code, body = _get(port, "/alerts?actor=jdoe")
+        check(code == 200 and body["count"] == 2,
+              f"actor=jdoe must return both of jdoe's alerts (a1, a2), got {body}")
+        check({a["alert_id"] for a in body["alerts"]} == {"a1", "a2"},
+              f"actor filter returned the wrong alerts: {body['alerts']}")
+
+        code2, body2 = _get(port, "/alerts?src_ip=203.0.113.5")
+        check(code2 == 200 and body2["count"] == 2,
+              f"src_ip=203.0.113.5 must return a1 AND g1 (crosses tenants -- "
+              f"this is a manual correlation query, not tenant-scoped by "
+              f"itself), got {body2}")
+        check({a["alert_id"] for a in body2["alerts"]} == {"a1", "g1"},
+              f"src_ip filter returned the wrong alerts: {body2['alerts']}")
+
+        code3, body3 = _get(port, "/alerts?actor=jdoe&status=closed")
+        check(code3 == 200 and body3["count"] == 1 and body3["alerts"][0]["alert_id"] == "a2",
+              f"actor+status must compose (AND), got {body3}")
+
+        code4, body4 = _get(port, "/alerts?actor=nobody-such-user")
+        check(code4 == 200 and body4["count"] == 0,
+              f"an actor with no alerts must return an empty list, not an error, got {body4}")
     finally:
         srv.shutdown(); srv.server_close()
 
@@ -209,6 +244,7 @@ def test_openapi_spec_get_paths_are_actually_wired():
 def main():
     test_list_alerts_no_rbac_sees_everything()
     test_list_alerts_filters()
+    test_list_alerts_actor_src_ip_filters()
     test_list_events_filters()
     test_list_rules_reads_real_contract_files()
     test_rbac_non_admin_tenant_forced_not_requested()
