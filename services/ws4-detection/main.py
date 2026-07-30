@@ -132,7 +132,11 @@ class Detector:
         matched = [r for r in candidates if r.evaluate(event)]
         score = self.scorer.score(matched)
         event.setdefault("siem", {})["score"] = score
-        action = self.scorer.route(score)
+        # Design-B (2026-07-29 audit): route off routing_score, NOT the
+        # analyst-facing score -- routing_score is the one that respects a
+        # matched rule's llm_gate:false opt-out. The stored/displayed score
+        # above is unaffected either way.
+        action = self.scorer.route(self.scorer.routing_score(matched))
         return event, matched, action
 
 
@@ -203,7 +207,14 @@ def make_alert(event, rule, score):
         "tenant_id": event.get("siem", {}).get("tenant"),
         "src_endpoint": event.get("src_endpoint", {}),
         "actor": event.get("actor", {}),
-        "event_ids": [event.get("siem", {}).get("ingest_id")],
+        # Design-A (2026-07-29 audit): a stateful alert's window counter
+        # already remembers which events/values contributed (window.py's
+        # members()/distinct_members()) -- Rule.contributing_event_ids()
+        # reads that back instead of recording only the one event that
+        # happened to cross the threshold. Falls back to the single
+        # triggering id for non-stateful rules or when the counter has
+        # nothing to report (never fabricates an id).
+        "event_ids": rule.contributing_event_ids(event),
     }
 
 

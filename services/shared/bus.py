@@ -393,6 +393,18 @@ def Bus():
     if backend == "redis":
         try:
             return _RedisBus(os.getenv("REDIS_URL", "redis://localhost:6379/0"))
-        except Exception:
-            pass
+        except ImportError:
+            # Code-quality #1 (2026-07-29 audit): only the documented case --
+            # the redis-py lib isn't installed, e.g. a zero-infra dev env --
+            # falls back silently. Any other constructor failure (malformed
+            # REDIS_URL, a non-numeric BUS_XREADGROUP_COUNT) used to be
+            # swallowed here too, silently downgrading a service that asked
+            # for BUS_BACKEND=redis to an isolated in-memory bus with no log
+            # line -- every produce()/consume() after that point talks to a
+            # bus nothing else reads. Let those propagate instead: a broken
+            # config should crash loudly at startup, not degrade silently.
+            from shared.log import get_logger
+            get_logger("bus").warn(
+                "BUS_BACKEND=redis requested but redis-py is not installed; "
+                "falling back to in-memory bus (not shared across processes)")
     return _MemoryBus()
