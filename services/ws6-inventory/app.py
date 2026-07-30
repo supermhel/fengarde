@@ -23,7 +23,7 @@ from urllib.parse import urlparse, parse_qs
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 from store import InventoryStore, InvalidTenantId  # noqa: E402
-from authz import check_api_key, warn_if_disabled  # noqa: E402
+from authz import check_api_key, check_tenant_scoped_auth, warn_if_disabled  # noqa: E402
 
 STORE = InventoryStore(os.getenv("INVENTORY_DB", ":memory:"))
 
@@ -68,20 +68,38 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, *_):  # quiet
         pass
 
-    def _check_auth(self) -> bool:
+    def _check_auth(self):
+        """Returns (True, bound_tenant) on success, or sends 401 and returns
+        (False, None). bound_tenant is None when this request's own
+        ?tenant_id= should be trusted as-is (FENGARDE_API_KEYS not
+        configured, legacy FENGARDE_API_KEY path, or the caller
+        authenticated with the '*' admin key) -- exactly pre-existing F1
+        behavior. A non-None value means the caller authenticated as one
+        specific tenant and every tenant_id this request touches must be
+        forced to it (F1 follow-up: closes the "guess another tenant_id
+        with the one shared key" gap -- see authz.check_tenant_scoped_auth).
+        """
+        scoped = check_tenant_scoped_auth(self.headers)
+        if scoped is not None:
+            ok, bound = scoped
+            if not ok:
+                self._send(401, {"error": "unauthorized"})
+                return False, None
+            return True, bound
         if check_api_key(self.headers):
-            return True
+            return True, None
         self._send(401, {"error": "unauthorized"})
-        return False
+        return False, None
 
     def do_GET(self):
         # Any malformed input (bad ?at=, bad ?limit=) becomes a clean 4xx/5xx JSON
         # response instead of an unhandled exception that drops the connection and
         # leaks a stack trace to the client.
         try:
-            if not self._check_auth():
+            ok, bound_tenant = self._check_auth()
+            if not ok:
                 return
-            self._route_get()
+            self._route_get(bound_tenant)
         except _BadRequest as e:
             self._send(400, {"error": str(e)})
         except InvalidTenantId as e:
@@ -89,14 +107,19 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:  # noqa: BLE001 - never let a handler crash the thread
             self._send(500, {"error": "internal error"})
 
-    def _route_get(self):
+    def _route_get(self, bound_tenant: str | None = None):
         u = urlparse(self.path)
         q = {k: v[0] for k, v in parse_qs(u.query).items()}
         # F1 (2026-07-29 audit): every read is scoped to ?tenant_id=, defaulting
         # to "default" -- the pre-fix, single-tenant behavior -- when absent,
         # so an existing caller (WS-2 enrichment, WS-7 dashboard) that never
         # sends tenant_id keeps seeing exactly what it saw before this fix.
-        tenant_id = q.get("tenant_id")
+        # F1 follow-up (2026-07-30): a per-tenant-key caller (bound_tenant is
+        # not None) has ITS OWN tenant_id forced here, silently overriding
+        # whatever ?tenant_id= it asked for -- same convention as WS-3's
+        # triage_api.py::_list_tenant_filter (scope narrowing, never a
+        # rejection that would confirm/deny another tenant's existence).
+        tenant_id = bound_tenant if bound_tenant is not None else q.get("tenant_id")
         if u.path == "/assets/resolve":
             if "ip" not in q or "at" not in q:
                 return self._send(400, {"error": "ip and at required"})
@@ -121,9 +144,10 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         try:
-            if not self._check_auth():
+            ok, bound_tenant = self._check_auth()
+            if not ok:
                 return
-            self._route_post()
+            self._route_post(bound_tenant)
         except _BadRequest as e:
             self._send(400, {"error": str(e)})
         except InvalidTenantId as e:
@@ -131,7 +155,7 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:  # noqa: BLE001 - never let a handler crash the thread
             self._send(500, {"error": "internal error"})
 
-    def _route_post(self):
+    def _route_post(self, bound_tenant: str | None = None):
         u = urlparse(self.path)
         try:
             length = int(self.headers.get("Content-Length", 0))
@@ -148,6 +172,13 @@ class Handler(BaseHTTPRequestHandler):
         if not isinstance(body, dict):
             raise _BadRequest("body must be a JSON object")
         if u.path == "/assets/upsert":
+            # F1 follow-up: a per-tenant-key caller (bound_tenant is not
+            # None) has its own tenant_id forced into the body, silently
+            # overriding whatever tenant_id it tried to upsert as -- a
+            # scoped key must not be able to WRITE into another tenant's
+            # inventory any more than it can read one.
+            if bound_tenant is not None:
+                body = {**body, "tenant_id": bound_tenant}
             asset = STORE.upsert(body)
             return self._send(200, asset) if asset else self._send(400, {"error": "mac required"})
         return self._send(404, {"error": "no such path"})
