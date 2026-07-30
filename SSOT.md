@@ -111,9 +111,8 @@ those words get reused loosely across specs written weeks apart.
 | `docs/superpowers/specs/2026-07-21-s7-profinet-decision-gate.md` | S7/PROFINET parser: re-investigated deferral with evidence (RFC 5424 syslog framing is public, event vocabulary is access-gated) | **Current** — the authoritative reasoning for why this parser is still deferred |
 | `docs/superpowers/specs/2026-07-21-periodicity-primitive.md` | Periodicity/beaconing window primitive: design, coefficient-of-variation rationale, stated limitations | **Current** |
 | `docs/superpowers/specs/2026-07-22-mitre-fire-check.md` | M7: empirical MITRE firing check design -- declared vs. fired vs. real-world-validated, kept as three separate claims | **Current** |
-| `docs/superpowers/specs/2026-07-22-modbus-anomaly-scope.md` | M7: why the Modbus/TCP parser is a protocol-anomaly detector, not a vendor-log parser -- Modbus has no audit-log format to parse | **Current** |
+| `docs/superpowers/specs/2026-07-22-modbus-anomaly-scope.md` | M7: why the Modbus/TCP parser is a protocol-anomaly detector, not a vendor-log parser — Modbus has no audit-log format to parse | **Current** |
 | `docs/superpowers/specs/2026-07-21-audit-fix-plan.md` | 2026-07-21 audit: consolidated remediation log (detection-accuracy/EPS/logic findings, all fixed with re-verified evidence) | **Current** — a completed fix log with evidence, not a forward plan |
-| `docs/superpowers/specs/2026-07-29-fengarde-strategy-marketing-review.md` | Sourced audit of launch positioning/competitive claims against real market data (market size, NIS2 numbers, competitors incl. DCSO/Enginsight) — flags the dual banking+data-center sector bet as ungrounded, the "no incumbent occupies this space" claim as false. **Placement flagged, not fully resolved**: this is business/marketing material, the same category §4 records was deliberately moved OUT of this public repo on 2026-07-21 — kept here per explicit owner instruction rather than that standing convention; revisit if that tension matters going forward | **Current** — recommendations partially actioned (see `docs/vs.md`, `docs/nis2-report-generator.md`); the strategic calls (sector bet, MSSP channel) are explicitly still open |
 | `contracts/reporting.md` | Frozen cross-repo contract: incident-report hook request/response schema, incl. M5's additive NIS2 template-mode query params | **Current** — the seam to the paid layer's report backend |
 | `contracts/triage-api.yaml` | OpenAPI 3.1 spec for WS-3's versioned REST API (M4.3) | **Current** — spec-vs-code drift is CI-tested (`test_api_v1.py`) |
 | `contracts/nis2-de-schema.json` | Field schema for the NIS2/§32 BSIG report generator (M5) | **Current** |
@@ -236,7 +235,7 @@ those words get reused loosely across specs written weeks apart.
   forward-roadmap prose references left as historical text, same convention as every other
   already-shipped item in that section). Going-forward split only, no history rewrite.
 
-## 5. M6 launch — EXECUTED 2026-07-30 (real outcome, needs periodic follow-up)
+## 5. M6 launch
 
 **Launched.** The owner manually posted FENGARDE across **4 communities** on 2026-07-30 and
 personally answered comments/questions there. This matches the count and sequencing
