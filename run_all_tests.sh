@@ -46,6 +46,9 @@ echo "== v0.4 (S1): opt-in API-key auth (ws3 triage, ws6 inventory) =="
 $PY services/ws3-indexer/test_auth.py || fail=1
 $PY services/ws6-inventory/test_auth.py || fail=1
 echo
+echo "== ws6 tenant isolation (F1, 2026-07-29 audit): schema/route/migration scoping =="
+$PY services/ws6-inventory/test_tenant_isolation.py || fail=1
+echo
 echo "== M4.2 RBAC: users/sessions/roles (unit) =="
 $PY services/shared/test_rbac.py || fail=1
 echo
@@ -57,6 +60,9 @@ $PY services/ws3-indexer/test_rbac_api.py || fail=1
 echo
 echo "== M4.3 versioned REST API: GET /alerts, /events, /rules (+/api/v1 aliases), spec-vs-code =="
 $PY services/ws3-indexer/test_api_v1.py || fail=1
+echo
+echo "== Design-C (2026-07-29 audit): list_alerts actor/src_ip manual correlation filters =="
+$PY services/ws3-indexer/test_list_alerts_correlation.py || fail=1
 echo
 echo "== M4.4 outbound webhooks: HMAC sign/verify, delivery, retry policy, tenant/score filtering =="
 $PY services/ws3-indexer/test_webhooks.py || fail=1
@@ -88,6 +94,9 @@ echo
 echo "== shared bus read count (P1-8: XREADGROUP batch size; RedisBus-only, opt-in via make test-live) =="
 $PY services/shared/test_bus_read_count.py || fail=1
 echo
+echo "== shared bus redis-fallback exception narrowing (code-quality #1, 2026-07-29 audit) =="
+$PY services/shared/test_bus_redis_fallback.py || fail=1
+echo
 echo "== shared log level gate (P2-3, 2026-07-21 audit) =="
 $PY services/shared/test_log.py || fail=1
 echo
@@ -117,6 +126,12 @@ $PY services/ws4-detection/test_engine_hardening.py || fail=1
 echo
 echo "== ws4 P1-1 (2026-07-21 audit): non-stateful alert_key tenant isolation =="
 $PY services/ws4-detection/test_p1_1_alert_key_tenant.py || fail=1
+echo
+echo "== ws4 Design-A (2026-07-29 audit): make_alert() records all contributing event ids =="
+$PY services/ws4-detection/test_design_a_event_ids.py || fail=1
+echo
+echo "== ws4 Design-B (2026-07-29 audit): siem.llm_gate decouples funnel routing from severity_floor =="
+$PY services/ws4-detection/test_design_b_llm_gate.py || fail=1
 echo
 echo "== ws4/ws5 P1-2 (2026-07-21 audit): 20-59 classifier band now routes to WS-5 =="
 $PY services/ws4-detection/test_p1_2_classifier_band.py || fail=1
