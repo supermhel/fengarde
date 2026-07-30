@@ -71,10 +71,14 @@ _UPDATE_KEYWORDS = ("update", "edit", "modify", "patch", "rename")
 # unrelated tool names (perform_backup, format_report, confirm_action,
 # terminate_session, warm_cache all naturally contain "rm" mid-word) --
 # mislabeling routine tool calls as destructive deletes. "rm" is checked
-# separately as its own token (split on _/-/camelCase), not by substring.
+# separately as its own token (split on _/-/whitespace/./:/camelCase), not by
+# substring. The split set includes "."/":" (round-2 gap: a first cut only
+# split on _/-/whitespace/camelCase, so dot- or colon-namespaced names like
+# "resource.rm"/"fs:rm" fell through neither the substring list nor the
+# tokenizer and silently escaped delete-classification).
 _DELETE_KEYWORDS = ("delete", "remove", "drop")
 _RM_TOKEN = "rm"
-_TOKEN_SPLIT_RE = re.compile(r"[_\-\s]+|(?<=[a-z0-9])(?=[A-Z])")
+_TOKEN_SPLIT_RE = re.compile(r"[_\-\s.:]+|(?<=[a-z0-9])(?=[A-Z])")
 
 
 def _tokenize(tool: str) -> list:

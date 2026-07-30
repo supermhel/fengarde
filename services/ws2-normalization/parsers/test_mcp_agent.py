@@ -69,6 +69,19 @@ class TestMcpAgentParser(unittest.TestCase):
                 event = PARSER.parse(_raw({"tool": tool, "arguments": {}}))
                 self.assertEqual(event["activity_id"], 4)
 
+    def test_rm_dot_or_colon_delimited_still_flagged_delete(self):
+        """Regression for the round-2 independent review's N1 gap: the
+        tokenizer originally only split on _/-/whitespace/camelCase, so a
+        dot- or colon-namespaced "rm" (resource.rm, fs.rm, rm.resource,
+        fs:rm) fell through both the substring list and the tokenizer and
+        silently escaped delete-classification -- a coverage regression vs.
+        the original (buggy) substring code, which happened to still catch
+        these via plain "rm" containment."""
+        for tool in ("resource.rm", "fs.rm", "rm.resource", "fs:rm"):
+            with self.subTest(tool=tool):
+                event = PARSER.parse(_raw({"tool": tool, "arguments": {}}))
+                self.assertEqual(event["activity_id"], 4)
+
     def test_credential_path_access_flagged(self):
         event = PARSER.parse(_raw({
             "tool": "read_file", "session_id": "sess-2",

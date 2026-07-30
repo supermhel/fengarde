@@ -60,14 +60,27 @@ Full suite status at the end of this pass: **`ALL TESTS PASS`**.
   silently be treated as UTC — same class of assumption `_parse()` already
   makes for a timezone-less ISO string (`.replace(tzinfo=timezone.utc)` when
   unspecified), so this isn't a new risk, just worth naming.
-- **N1's fix is scoped to the exact false-positive class the audit
-  reproduced** (English words that happen to contain "rm"). It does not
-  attempt a general-purpose tokenizer robustness pass beyond `_`/`-`/
-  whitespace/camelCase splitting — a tool name using some other delimiter
-  convention (e.g. dots: `resource.rm`) would still correctly flag via the
-  dot acting as a non-word-boundary-preserving split point in most cases,
-  but this wasn't exhaustively tried against every delimiter style; the
-  5 audit-cited false positives and 4 true positives are the tested surface.
+- **N1's fix, as originally shipped in this round, was scoped to the exact
+  false-positive class the audit reproduced** (English words that happen to
+  contain "rm"), via a tokenizer that split only on `_`/`-`/whitespace/
+  camelCase. The claim that a dot-delimited name (e.g. `resource.rm`) would
+  "still correctly flag via the dot acting as a non-word-boundary-preserving
+  split point" was **wrong** — `independent_review_of_fixes_round2.md` §3
+  tested it directly and found `_TOKEN_SPLIT_RE` didn't split on `.` at all,
+  so `resource.rm`/`fs.rm`/`rm.resource`-style names silently escaped
+  delete-classification entirely, a real (if narrow) coverage regression vs.
+  the original buggy substring code, which happened to still catch these via
+  plain "rm" containment. **Closed in a follow-up pass** (2026-07-30,
+  same day): `_TOKEN_SPLIT_RE` now also splits on `.`/`:`, so
+  `resource.rm`/`fs.rm`/`rm.resource`/`fs:rm` are all tokenized to a
+  standalone `rm` token and correctly flagged again, without reintroducing
+  the original substring false-positive bug (none of the 5 audit-cited
+  benign names — `perform_backup`, `format_report`, `confirm_action`,
+  `terminate_session`, `warm_cache` — contain a `.`/`:`, so the added split
+  characters don't change their tokenization). New test
+  `test_rm_dot_or_colon_delimited_still_flagged_delete` in
+  `services/ws2-normalization/parsers/test_mcp_agent.py` covers this
+  directly. See the addendum below.
 - **L1's fix does not address O3** (the separate, lower-priority latent
   check-then-act race in `_MemoryBus.consume()` that the same bug-hunt report
   flagged as "not currently reachable in production... flagging as a trap for
@@ -93,3 +106,32 @@ untouched items from the other five review reports
 (`review_code_quality.md` #2–#7, `review_performance.md` #2–#5,
 `review_architecture.md` F2–F8, `review_design_decisions.md` D/E/G/H). Those
 remain exactly as characterized in the prior round's documents.
+
+## Addendum (2026-07-30) — N1 gap closure
+
+`independent_review_of_fixes_round2.md`'s only required correction (§3,
+"GO for merging... with one required correction") was that N1's shipped fix
+had a real, if narrow, false-negative regression: the tokenizer
+(`_TOKEN_SPLIT_RE` in `services/ws2-normalization/parsers/mcp_agent.py`)
+split on `_`/`-`/whitespace/camelCase but not on `.`/`:`, so a dot- or
+colon-namespaced tool name like `resource.rm`/`fs.rm`/`fs:rm` survived as one
+token that never equals the standalone `"rm"` token the fix checks for — the
+name silently stopped being classified as a delete, where the original
+(buggy) substring code had coincidentally still caught it.
+
+**Fix:** extended `_TOKEN_SPLIT_RE` to also split on `.` and `:` —
+`r"[_\-\s.:]+|(?<=[a-z0-9])(?=[A-Z])"` instead of `r"[_\-\s]+|(?<=[a-z0-9])(?=[A-Z])"`.
+Verified this doesn't reintroduce the original substring false-positive bug:
+none of the 5 audit-cited benign names (`perform_backup`, `format_report`,
+`confirm_action`, `terminate_session`, `warm_cache`) contain a `.` or `:`, so
+their tokenization is unchanged by the wider split set.
+
+**Test:** `test_rm_dot_or_colon_delimited_still_flagged_delete`
+(`services/ws2-normalization/parsers/test_mcp_agent.py`) asserts
+`resource.rm`, `fs.rm`, `rm.resource`, and `fs:rm` all classify as
+`activity_id=4` (Delete) — fails against the pre-patch tokenizer, passes
+against the fix. Full zero-infra suite (`PYTHON=python bash
+run_all_tests.sh`) reconfirmed green with this change applied.
+
+This closes the one open item from both independent reviews; round 2's 9
+fixes plus this follow-up are now fully addressed.
