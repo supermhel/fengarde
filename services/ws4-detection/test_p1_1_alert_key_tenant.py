@@ -91,12 +91,57 @@ def test_alert_key_format_includes_tenant_segment():
     check(key == "r1:acme:x", f"expected 'r1:acme:x', got {key!r}")
 
 
+def _stateful_rule() -> Rule:
+    return Rule({"id": "bf", "title": "t", "level": "high",
+                "detection": {"failed": {"class_uid": 3002}, "condition": "failed"},
+                "siem": {"score_weight": 70, "window_seconds": 60, "threshold": 10,
+                         "group_by": "actor.user.name"}})
+
+
+def test_stateful_alert_key_length_prefixes_the_group_segment():
+    """security-medium #1 (2026-07-29 audit): group_by (e.g. actor.user.name)
+    is populated verbatim from raw log content with no length cap or
+    character filtering, so it can contain the ':' the key format joins on.
+    Rule._namespaced_group length-prefixes the group segment
+    (f"{tenant}:{len(group)}:{group}") so the join stays unambiguous on its
+    own terms -- it does not lean on the incidental fact that `bucket`
+    happens to always render as colon-free digits, an invariant that isn't
+    documented anywhere `alert_key` callers could see it and could silently
+    stop holding if that rendering ever changes."""
+    rule = _stateful_rule()
+    event = {"time": 1750000009000, "actor": {"user": {"name": "evil:99999999"}},
+             "siem": {"tenant": "acme"}}
+    key = rule.alert_key(event)
+    group = "evil:99999999"
+    check(f":{len(group)}:{group}:" in key,
+          f"alert_id should length-prefix the group segment, got {key!r}")
+    # idempotency must survive the new format: redelivery of the same event
+    # still yields the same id.
+    check(rule.alert_key(event) == key, "same event must still yield the same alert_id")
+
+
+def test_stateful_alert_key_distinct_groups_never_collide():
+    """Two different group_by values (one crafted to embed the delimiter, one
+    plain) in the same tenant/window must never produce the same alert_id --
+    the concrete failure Finding 1 describes (a crafted event overwriting a
+    different, legitimate alert)."""
+    rule = _stateful_rule()
+    base = {"time": 1750000009000, "siem": {"tenant": "acme"}}
+    crafted = {**base, "actor": {"user": {"name": "evil:99999999"}}}
+    plain = {**base, "actor": {"user": {"name": "evil"}}}
+    check(rule.alert_key(crafted) != rule.alert_key(plain),
+          "a crafted group embedding ':' must not collide with a different, "
+          "shorter real group in the same tenant/window")
+
+
 def main():
     test_same_ingest_id_different_tenants_get_distinct_alert_ids()
     test_same_content_fingerprint_different_tenants_get_distinct_alert_ids()
     test_same_tenant_is_still_deterministic()
     test_default_tenant_when_absent_matches_stateful_branch_convention()
     test_alert_key_format_includes_tenant_segment()
+    test_stateful_alert_key_length_prefixes_the_group_segment()
+    test_stateful_alert_key_distinct_groups_never_collide()
 
     if FAILS:
         print(f"\n[FAIL] alert_key tenant isolation (P1-1): {len(FAILS)} problem(s)")

@@ -76,6 +76,19 @@ def run():
     dist = c.hit_distinct("k", base, 60_000, value="v", member="y")
     check(dist == 1, f"distinct window must not see count window, got {dist}")
 
+    # --- C1 (2026-07-29 audit): out-of-order arrivals must not wedge a stale
+    # distinct value behind a not-yet-expired later one forever. Reproduces
+    # the exact scenario from the audit report (grouped by actor.user.name,
+    # as common_password_spray.yml/common_impossible_travel.yml do).
+    for name, c in _backends():
+        seq = [(0, "ip1"), (299_000, "ip2"), (5_000, "ip3"),  # ip3 arrives late
+               (302_000, "ip4"), (310_000, "ip5")]
+        counts = [c.hit_distinct("alice", base + t, 300_000, value=v, member=f"m{i}")
+                  for i, (t, v) in enumerate(seq)]
+        check(counts == [1, 2, 3, 3, 3],
+              f"{name}: out-of-order hit_distinct() sequence wrong, got {counts} "
+              f"(expected [1, 2, 3, 3, 3])")
+
 
 def main():
     run()

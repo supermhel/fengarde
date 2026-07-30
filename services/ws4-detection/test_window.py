@@ -137,6 +137,19 @@ def run():
     check(dd == rr, f"backends disagree: deque={dd} redis={rr}")
     check(dd[-1] == 1, f"after gap, only the latest event is in-window, got {dd[-1]}")
 
+    # --- C1 (2026-07-29 audit): out-of-order events must not get stuck in-window forever ---
+    # Front-only eviction assumed `now_ms` is non-decreasing per key; a
+    # late-arriving event wedged behind a not-yet-expired later one used to
+    # stay counted forever, inflating the window past what's actually live.
+    base = 1_750_000_000_000
+    for name, c in [("deque", DequeWindowCounter()),
+                    ("redis-fake", RedisWindowCounter(_FakeRedis()))]:
+        seq = [(0, "e0"), (299_000, "e1"), (5_000, "e2"),  # e2 arrives late
+               (302_000, "e3"), (310_000, "e4")]
+        counts = [c.hit("ooo", base + t, 300_000, member=m) for t, m in seq]
+        check(counts == [1, 2, 3, 3, 3],
+              f"{name}: out-of-order hit() sequence wrong, got {counts} (expected [1, 2, 3, 3, 3])")
+
 
 def main():
     run()

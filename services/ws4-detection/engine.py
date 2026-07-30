@@ -52,13 +52,20 @@ from window import DequeWindowCounter
 _MAX_CLOCK_SKEW_MS = 300_000  # 5 minutes of tolerated source clock drift
 
 
-def get_path(doc: dict, dotted: str):
+def _get_path_parts(doc: dict, parts: tuple):
+    """Same walk as ``get_path``, over an already-split path tuple. Hot-path
+    helper: ``Rule`` precomputes and reuses these tuples (perf #1, 2026-07-29
+    audit) instead of calling ``str.split(".")`` on every lookup."""
     node = doc
-    for part in dotted.split("."):
+    for part in parts:
         if not isinstance(node, dict) or part not in node:
             return None
         node = node[part]
     return node
+
+
+def get_path(doc: dict, dotted: str):
+    return _get_path_parts(doc, dotted.split("."))
 
 
 # --- A3: allowlists -----------------------------------------------------------
@@ -277,6 +284,21 @@ class Rule:
         self.condition = det.get("condition", "")
         self.selections = {k: v for k, v in det.items() if k != "condition"}
         self._allowlists_dir = allowlists_dir
+        # Perf #1 (2026-07-29 audit): self.condition/self.selections are fixed
+        # at load time and never change for this Rule's lifetime (reload()
+        # builds fresh Rule instances rather than mutating one), yet
+        # _eval_condition used to re-tokenize the condition string and
+        # get_path used to re-split every selection's dotted path on EVERY
+        # event, for every candidate rule -- pure re-derivation of a value
+        # that never changes, sitting in the one stage every event passes
+        # through. Precompute both once here; no semantic change.
+        self._condition_tokens = re.findall(
+            r"\(|\)|\band\b|\bor\b|\bnot\b|[\w.]+",
+            self.condition.strip() or " and ".join(self.selections))
+        self._compiled_selections = {
+            name: [(tuple(path.split(".")), expected) for path, expected in sel.items()]
+            for name, sel in self.selections.items()
+        }
         # B1: bucket this rule under class_uid X only when X is provably
         # NECESSARY for any match -- i.e. the condition is UNSATISFIABLE when
         # every selection carrying a plain equality class_uid==X is False and
@@ -293,13 +315,40 @@ class Rule:
         siem = raw.get("siem", {})
         self.sector = siem.get("sector", "common")
         self.score_weight = int(siem.get("score_weight", 0))
+        # Design-B (2026-07-29 audit): `severity_floor` (scoring.yaml) floors
+        # a high/critical rule's score to 70/80, which is always >= llm_min
+        # (60) -- so today EVERY high/critical rule always pays for an LLM
+        # triage call the moment it fires, and tuning score_weight down does
+        # nothing (the floor overrides it). Several shipped high-level rules
+        # document themselves as noisy pre-tuning (agent_credential_file_
+        # access.yml, ot_config_change.yml, bank_mass_card_read.yml,
+        # common_after_hours_admin.yml) with no way to say "keep the
+        # analyst-facing severity, but don't burn an LLM call until this is
+        # tuned". `llm_gate: false` is that lever: it excludes ONLY this
+        # rule's severity floor from the FUNNEL ROUTING decision (Scorer.
+        # routing_score) -- the analyst-facing `score` (Scorer.score, still
+        # floor-inclusive) and `level` are completely unaffected, so nothing
+        # about how the alert LOOKS changes, only whether it queues for LLM
+        # triage. Defaults to True (gate stays on): an unmodified rule's
+        # routing is byte-for-byte unchanged by this feature existing --
+        # opting out is a per-rule decision an operator must make explicitly,
+        # never a silent global behavior change. `is not False` (rather than
+        # `bool(...)`) so a typo'd non-bool value (e.g. a quoted "false"
+        # string) fails closed to the safe side (gate stays ON, more triage
+        # rather than less) instead of `bool("false") == True` silently
+        # doing the wrong thing.
+        self.llm_gate = siem.get("llm_gate", True) is not False
         self.window_seconds = siem.get("window_seconds")
         self.threshold = siem.get("threshold")
         self.group_by = siem.get("group_by", "src_endpoint.ip")
+        self._group_by_parts = tuple(self.group_by.split("."))
         # Optional: count DISTINCT values of this OCSF field per group instead of a
         # raw event count (port scan -> distinct dst ports; lateral movement ->
         # distinct dst hosts). None => plain count (brute-force, mass-delete).
         self.distinct_field = siem.get("distinct_field")
+        self._distinct_field_parts = (
+            tuple(self.distinct_field.split(".")) if self.distinct_field else None
+        )
         # v0.5 A3: optional periodicity/beaconing check on top of the plain
         # count -- {"max_cv": <float>}. Mutually meaningful only alongside
         # window_seconds/threshold; validate_rules.py enforces the shape and
@@ -349,9 +398,31 @@ class Rule:
         """Swap the window backend (e.g. RedisWindowCounter for multi-replica)."""
         self._counter = counter
 
-    def _selection_matches(self, sel: dict, event: dict) -> bool:
-        for path, expected in sel.items():
-            actual = get_path(event, path)
+    @staticmethod
+    def _namespaced_group(tenant: str, group: str) -> str:
+        """``tenant:len(group):group`` -- the shared prefix for both the
+        window-counter key and the stateful alert_id (security-medium #1,
+        2026-07-29 audit).
+
+        `group` comes straight from `group_by` (e.g. `actor.user.name`) and is
+        attacker-controlled with no length cap or character filtering -- a raw
+        `f"{tenant}:{group}"` join lets a crafted `group` containing ':'
+        produce the SAME joined string as a different (tenant, group) pair,
+        letting an attacker deliberately collide their alert_id/window-key
+        with someone else's and overwrite it (idempotent-upsert storage keys
+        on this exact id). Length-prefixing `group` makes the join unambiguous
+        regardless of what characters `group` contains: the digits before the
+        first ':' are never part of `group` itself, so they always disclose
+        exactly how many of the following characters belong to `group` --
+        two different `group` values can never encode to the same string.
+        `tenant` and `self.id` don't need this treatment: tenant is
+        deployment-stamped, not per-event, and rule id is fixed.
+        """
+        return f"{tenant}:{len(group)}:{group}"
+
+    def _selection_matches(self, compiled_sel: list, event: dict) -> bool:
+        for parts, expected in compiled_sel:
+            actual = _get_path_parts(event, parts)
             if isinstance(expected, dict):
                 if not self._operator_matches(expected, actual):
                     return False
@@ -394,11 +465,9 @@ class Rule:
         return True
 
     def _eval_condition(self, event: dict) -> bool:
-        matched = {name: self._selection_matches(sel, event)
-                   for name, sel in self.selections.items()}
-        expr = self.condition.strip() or " and ".join(self.selections)
-        # tokenize: selection names and and/or/not/parens
-        tokens = re.findall(r"\(|\)|\band\b|\bor\b|\bnot\b|[\w.]+", expr)
+        matched = {name: self._selection_matches(compiled, event)
+                   for name, compiled in self._compiled_selections.items()}
+        tokens = self._condition_tokens
         # T4: explicit recursive-descent boolean evaluator over the tokens.
         # No eval(): rule files are contributor-supplied (open source), so executing
         # them as Python — even with __builtins__ stripped — is an RCE surface.
@@ -435,7 +504,7 @@ class Rule:
             # evaluate() gates on group_by being present, so a fired stateful
             # alert always has a real group here -- str() of None can only
             # appear if alert_key is called for an event evaluate() rejected.
-            group = str(get_path(event, self.group_by))
+            group = str(_get_path_parts(event, self._group_by_parts))
             now = int(event.get("time", 0) or 0)
             window_ms = int(self.window_seconds) * 1000
             bucket = now // window_ms if window_ms else now
@@ -452,7 +521,7 @@ class Rule:
             # alerts-{tenant}-* indices) does NOT save us: the collision is on
             # the id used to look a doc up, not on where it's physically stored.
             tenant = (event.get("siem") or {}).get("tenant") or "default"
-            return f"{self.id}:{tenant}:{group}:{bucket}"
+            return f"{self.id}:{self._namespaced_group(tenant, group)}:{bucket}"
         # Non-stateful: prefer ingest_id (one alert per source event). When absent,
         # fall back to a content hash rather than a shared "noingest" constant --
         # otherwise every ingest_id-less event of this rule collapses onto ONE alert
@@ -476,13 +545,53 @@ class Rule:
             ingest = "sha:" + _event_fingerprint(event)
         return f"{self.id}:{tenant}:{ingest}"
 
+    _MAX_CONTRIBUTING_IDS = 50
+
+    def contributing_event_ids(self, event: dict) -> list:
+        """Design-A (2026-07-29 audit): best-effort list of ingest_ids behind
+        this alert, for the analyst/audit trail. Before this, a stateful
+        alert's `event_ids` was always a single-element list -- just the one
+        event that happened to cross the threshold -- even though the alert's
+        own rule_title claims N events occurred (a `common_bruteforce` alert
+        cites "10 failed logins" but referenced only 1 of the 10). That gap
+        compounds with alert retention (365d) outliving common-sector event
+        retention (30d): after 30 days the alert can no longer be
+        substantiated even for the one id it does keep.
+
+        Best-effort, not exhaustive: this reads whatever the window counter
+        currently remembers (bounded by member-dedup + the window itself), so
+        it can under-report if the caller checks long after the window aged
+        entries out, but it can never fabricate an id that wasn't a real hit.
+        Capped at _MAX_CONTRIBUTING_IDS so one very-high-threshold rule can't
+        bloat every alert document.
+        """
+        own_id = (event.get("siem") or {}).get("ingest_id")
+        if not self.stateful:
+            return [own_id] if own_id else []
+        tenant = (event.get("siem") or {}).get("tenant") or "default"
+        group_value = _get_path_parts(event, self._group_by_parts)
+        if group_value is None:
+            return [own_id] if own_id else []
+        window_key = f"{self.id}:{self._namespaced_group(tenant, str(group_value))}"
+        if self.distinct_field:
+            # The tracked "member" for a distinct-field window IS the field
+            # value (e.g. distinct dst ports), not an event id -- still real
+            # evidence of what tripped the rule, just a different shape.
+            ids = self._counter.distinct_members(window_key)
+        else:
+            ids = self._counter.members(window_key)
+        ids = [str(i) for i in ids][: self._MAX_CONTRIBUTING_IDS]
+        if not ids and own_id:
+            ids = [own_id]
+        return ids
+
     def evaluate(self, event: dict) -> bool:
         """Return True if this rule fires for the event (incl. stateful threshold)."""
         if not self._eval_condition(event):
             return False
         if not self.stateful:
             return True
-        group_value = get_path(event, self.group_by)
+        group_value = _get_path_parts(event, self._group_by_parts)
         if group_value is None:
             # An event without the group_by field cannot be attributed to any
             # group. Counting it anyway would pool ALL such events under one
@@ -510,9 +619,10 @@ class Rule:
         # used distinct source IPs per tenant. The counter returns the
         # in-window count after add.
         tenant = (event.get("siem") or {}).get("tenant") or "default"
+        window_key = f"{self.id}:{self._namespaced_group(tenant, group)}"
         window_ms = self.window_seconds * 1000
         if self.distinct_field:
-            value = get_path(event, self.distinct_field)
+            value = _get_path_parts(event, self._distinct_field_parts)
             if value is None:
                 # A non-value must not count as a distinct value. The two
                 # backends previously DISAGREED here: MemoryStore counted None
@@ -522,10 +632,10 @@ class Rule:
                 # (e.g. impossible-travel firing on 2 logins with no geo
                 # enrichment). Fail closed on both.
                 return False
-            count = self._counter.hit_distinct(f"{self.id}:{tenant}:{group}", now,
+            count = self._counter.hit_distinct(window_key, now,
                                                window_ms, value, member)
         elif self.periodicity:
-            count, cv = self._counter.hit_periodic(f"{self.id}:{tenant}:{group}", now,
+            count, cv = self._counter.hit_periodic(window_key, now,
                                                    window_ms, member)
             if cv is None:
                 # Fewer than 3 events in-window yet -- not enough data to judge
@@ -534,7 +644,7 @@ class Rule:
                 return False
             return count >= self.threshold and cv <= self.periodicity.get("max_cv", 1.0)
         else:
-            count = self._counter.hit(f"{self.id}:{tenant}:{group}", now, window_ms, member)
+            count = self._counter.hit(window_key, now, window_ms, member)
         return count >= self.threshold
 
 

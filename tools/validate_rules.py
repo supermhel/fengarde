@@ -256,6 +256,13 @@ def validate_rule(rule: dict) -> list[str]:
             v = siem.get(f)
             if v is not None and (not isinstance(v, str) or not v):
                 errors.append(f"siem.{f} must be a non-empty dotted path, got {v!r}")
+        if "llm_gate" in siem and not isinstance(siem["llm_gate"], bool):
+            # Design-B (2026-07-29 audit): engine.py's Rule deliberately fails
+            # closed (`is not False`) on a non-bool value here, so a typo'd
+            # "false" string would silently keep the gate ON rather than
+            # crash -- catch the typo here instead, at validate-time, so it
+            # doesn't ship silently doing nothing.
+            errors.append(f"siem.llm_gate must be a bool, got {siem['llm_gate']!r}")
 
         if "periodicity" in siem:
             periodicity = siem["periodicity"]

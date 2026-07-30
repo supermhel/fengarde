@@ -149,16 +149,38 @@ class DequeWindowCounter:
         w = self._w[key]
         members = self._live_members[key]
         horizon = now_ms - window_ms
+        # C1 (2026-07-29 audit): front-only eviction assumed `now_ms` is
+        # non-decreasing per key, which the bus does NOT guarantee (replay,
+        # clock skew, or Redis consumer-group round-robin across batches can
+        # deliver events out of order for the same group). A late-arriving
+        # event wedged behind a not-yet-expired later one used to stay
+        # counted forever, inflating the window. Fix keeps the deque
+        # time-sorted: the common case (in-order arrival, the vast majority
+        # of traffic) still appends at the back in O(1); only a genuine
+        # out-of-order arrival pays an O(n log n) re-sort, so the P1-5
+        # near-linear-burst guarantee for well-ordered traffic is preserved.
         while w and w[0][0] < horizon:
             _, evicted_member = w.popleft()
             if evicted_member is not None:
                 members.discard(evicted_member)
         # Redelivery guard: a member already alive in the window counts once.
-        # O(1) via the mirrored set, was O(window-size) via a deque scan.
         if member is not None and member in members:
             count = len(w)
         else:
-            w.append((now_ms, member))
+            if w and now_ms < w[-1][0]:
+                items = list(w)
+                items.append((now_ms, member))
+                items.sort(key=lambda e: e[0])
+                w = deque(items)
+                self._w[key] = w
+                # Sorting may have surfaced a newly-stale entry at the front
+                # (the out-of-order insert could sit anywhere) -- re-evict.
+                while w and w[0][0] < horizon:
+                    _, evicted_member = w.popleft()
+                    if evicted_member is not None:
+                        members.discard(evicted_member)
+            else:
+                w.append((now_ms, member))
             if member is not None:
                 members.add(member)
             count = len(w)
@@ -174,7 +196,16 @@ class DequeWindowCounter:
                      value=None, member=None) -> int:
         """Distinct-count of ``value`` within the window after recording it."""
         w = self._dw[key]
-        w.append((now_ms, value))
+        # C1 fix: keep the deque time-sorted on insert (see hit() comment) so
+        # front-only eviction below stays correct under out-of-order arrival.
+        if w and now_ms < w[-1][0]:
+            items = list(w)
+            items.append((now_ms, value))
+            items.sort(key=lambda e: e[0])
+            w = deque(items)
+            self._dw[key] = w
+        else:
+            w.append((now_ms, value))
         horizon = now_ms - window_ms
         while w and w[0][0] < horizon:
             w.popleft()
@@ -192,6 +223,24 @@ class DequeWindowCounter:
         count = self.hit(key, now_ms, window_ms, member)
         times = sorted(t for t, _ in self._w.get(key, ()))
         return count, _coefficient_of_variation(times)
+
+    def members(self, key: str) -> list:
+        """Design-A (2026-07-29 audit): the ingest_ids currently in-window for
+        a `hit()`/`hit_periodic()` key, read-only -- the same state those
+        calls already maintain, exposed so a fired stateful alert can record
+        WHICH events contributed instead of only a count. Oldest-first;
+        ``None`` members (an event with no ingest_id) are omitted."""
+        return [m for _, m in self._w.get(key, ()) if m is not None]
+
+    def distinct_members(self, key: str) -> list:
+        """Same idea as ``members()`` but for a `hit_distinct()` key, where
+        the tracked member IS the distinct field value (e.g. the distinct
+        dst ports of a port-scan window), not an event id."""
+        seen: list = []
+        for _, v in self._dw.get(key, ()):
+            if v is not None and v not in seen:
+                seen.append(v)
+        return seen
 
 
 class RedisWindowCounter:
@@ -251,3 +300,13 @@ class RedisWindowCounter:
         count = self.hit(key, now_ms, window_ms, member)
         times = sorted(int(score) for _, score in self.r.zrange(zkey, 0, -1, withscores=True))
         return count, _coefficient_of_variation(times)
+
+    def members(self, key: str) -> list:
+        """Design-A (2026-07-29 audit): see DequeWindowCounter.members -- the
+        Redis mirror of the same read, oldest-first by score (insertion
+        time)."""
+        return list(self.r.zrange(f"{self.ns}:{key}", 0, -1))
+
+    def distinct_members(self, key: str) -> list:
+        """Same idea as ``members()`` but for a `hit_distinct()` key."""
+        return list(self.r.zrange(f"{self.ns}:d:{key}", 0, -1))
