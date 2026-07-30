@@ -291,8 +291,20 @@ def main():
             for r in detector.rules:
                 if r.stateful:
                     r.set_counter(counter)
-        except Exception:  # redis missing/unreachable -> per-replica deque fallback
-            pass
+        except ImportError:
+            # Code-quality #1 (2026-07-29 audit): only the documented case --
+            # redis-py isn't installed -- falls back silently to the
+            # per-replica deque counter. That fallback is the exact mode T6's
+            # comment above warns is broken under horizontal scaling (each
+            # replica sees a fraction of events, brute-force never trips), so
+            # anything else that can raise here (a bug in this setup code,
+            # not "redis missing") must not be swallowed into that mode with
+            # zero operator visibility -- let it propagate and crash loudly
+            # instead.
+            get_logger("ws4-detection").warn(
+                "BUS_BACKEND=redis requested but redis-py is not installed; "
+                "falling back to per-replica window counter (NOT safe across "
+                "multiple WS-4 replicas)")
 
     # P1-3 (2026-07-21 audit): ONE Bus() per worker, not one per event. Safe
     # because runner.py's _topic_worker owns exactly one topic (WS-4 consumes
