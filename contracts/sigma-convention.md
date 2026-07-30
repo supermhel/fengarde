@@ -120,3 +120,31 @@ applied: a `critical` rule guarantees score ≥ 80.
 | `>= 60`    | enqueue to `ai.requests` → LLM analysis (WS-5 layer 3)|
 
 These two numbers (20, 60) are defined once in `scoring.yaml` and consumed by WS-4/WS-5.
+
+### `siem.llm_gate: false` — decoupling funnel cost from displayed severity
+
+Design-B (2026-07-29 audit): `high`/`critical` severity floors (70/80) are
+both ≥ `llm_min` (60), so **every** `high`/`critical` rule always pays for an
+LLM triage call the moment it fires — tuning `score_weight` down does
+nothing, since the floor overrides it. That's the wrong rule set to make
+un-tunable: several shipped rules document themselves as noisy *before* an
+operator tunes an allowlist/threshold (`agent_credential_file_access.yml`,
+`ot_config_change.yml`, `bank_mass_card_read.yml`,
+`common_after_hours_admin.yml`).
+
+Set `siem.llm_gate: false` on a rule to exclude **only its own severity
+floor** from the funnel-routing decision (`Scorer.routing_score()`) — the
+rule's `score_weight` still counts toward routing as always, and the
+alert's stored/displayed `score` and `level` (`Scorer.score()`, still
+floor-inclusive) are completely unaffected. This is a per-rule, explicit
+opt-in: omitting it (the default) keeps today's exact behavior, byte for
+byte. Nobody's existing rule routing changes unless a rule author adds this
+field on purpose.
+
+```yaml
+siem:
+  sector: common
+  score_weight: 45
+  llm_gate: false   # high severity for the analyst UI; don't force an LLM
+                     # call until score_weight alone crosses llm_min
+```
