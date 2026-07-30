@@ -50,6 +50,25 @@ class TestMcpAgentParser(unittest.TestCase):
         event = PARSER.parse(_raw({"tool": "delete_resource", "arguments": {}}))
         self.assertEqual(event["activity_id"], 4)
 
+    def test_rm_substring_in_benign_tool_names_not_flagged_delete(self):
+        """Regression for N1: "rm" used to match as a plain substring, so
+        any tool name merely containing "rm" (perform_backup, format_report,
+        confirm_action, terminate_session, warm_cache) was misclassified as
+        a destructive delete."""
+        for tool in ("perform_backup", "format_report", "confirm_action",
+                     "terminate_session", "warm_cache"):
+            with self.subTest(tool=tool):
+                event = PARSER.parse(_raw({"tool": tool, "arguments": {}}))
+                self.assertNotEqual(event["activity_id"], 4)
+
+    def test_rm_as_own_token_still_flagged_delete(self):
+        """"rm" as its own token (not embedded in a longer word) must still
+        be classified as a destructive delete."""
+        for tool in ("rm", "rm_file", "rm-resource", "fileRm"):
+            with self.subTest(tool=tool):
+                event = PARSER.parse(_raw({"tool": tool, "arguments": {}}))
+                self.assertEqual(event["activity_id"], 4)
+
     def test_credential_path_access_flagged(self):
         event = PARSER.parse(_raw({
             "tool": "read_file", "session_id": "sess-2",
@@ -108,6 +127,15 @@ class TestMcpAgentParser(unittest.TestCase):
                 self.assertEqual(event["type_uid"],
                                 event["class_uid"] * 100 + event["activity_id"])
                 self.assertEqual(validate(event), [])
+
+    def test_iso_timestamp_preserved_not_replaced_by_now(self):
+        """Regression for H5: an ISO-8601 'ts' used to fail the old
+        isinstance(int, float) check and silently fall back to now(), losing
+        the real event time. Must route through timeutil.to_epoch_ms()."""
+        event = PARSER.parse(_raw({
+            "tool": "read_file", "arguments": {}, "ts": "2020-01-01T00:00:00Z",
+        }))
+        self.assertEqual(event["time"], 1577836800000)
 
     def test_wrong_typed_ip_dropped_not_crashed(self):
         """Regression for a Hypothesis property-testing finding (M1): see

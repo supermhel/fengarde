@@ -41,6 +41,7 @@ import time
 from typing import Optional
 
 from .base import Parser, SEV_HIGH, SEV_INFO, SEV_MEDIUM
+from .timeutil import to_epoch_ms
 from shared.ocsf import valid_ip
 
 _CLASS_NETWORK = 4001    # Network Activity
@@ -135,7 +136,6 @@ class ModbusAnomalyParser(Parser):
 
     @staticmethod
     def _time_ms(rec: dict, meta: dict) -> int:
-        ts = rec.get("time") or meta.get("received_at")
-        if isinstance(ts, (int, float)) and not isinstance(ts, bool):
-            return int(ts * 1000) if ts < 1e12 else int(ts)
-        return int(time.time() * 1000)
+        return (to_epoch_ms(rec.get("time"))
+                or to_epoch_ms(meta.get("received_at"))
+                or int(time.time() * 1000))

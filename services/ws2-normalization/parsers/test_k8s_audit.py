@@ -73,6 +73,20 @@ class TestK8sAuditParser(unittest.TestCase):
         self.assertEqual(event["activity_id"], 4)
         self.assertEqual(event["severity_id"], 5)  # SEV_CRITICAL
 
+    def test_dual_stack_ip_normalized_not_dead_lettered(self):
+        """Regression for H4: valid_ip()'s normalized return value must be
+        used, not the original unnormalized string -- an IPv6-mapped IPv4
+        address (::ffff:a.b.c.d) parses fine but fails Contract A's ip
+        pattern unless normalized first."""
+        event = PARSER.parse(_raw({
+            "auditID": "abc-123", "verb": "create", "user": {"username": "alice"},
+            "sourceIPs": ["::ffff:10.0.0.5"],
+            "objectRef": {"resource": "pods", "namespace": "default", "name": "x"},
+        }))
+        self.assertIsNotNone(event)
+        self.assertEqual(event["src_endpoint"]["ip"], "10.0.0.5")
+        self.assertEqual(validate(event), [])
+
     def test_unrecognized_verb_returns_none(self):
         self.assertIsNone(PARSER.parse(_raw({"auditID": "x", "verb": "connect"})))
 

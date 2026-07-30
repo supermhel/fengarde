@@ -86,6 +86,16 @@ class TestModbusAnomalyParser(unittest.TestCase):
         event = PARSER.parse(_raw({"unitId": 1, "functionCode": 68}))
         self.assertIsNone(event["unmapped"]["ot"]["anomaly_type"])
 
+    def test_iso_timestamp_preserved_not_replaced_by_now(self):
+        """Regression for H5: an ISO-8601 'time' used to fail the old
+        isinstance(int, float) check and silently fall back to now(), losing
+        the real event time. Must route through timeutil.to_epoch_ms()."""
+        event = PARSER.parse(_raw({
+            "unitId": 1, "functionCode": 3, "address": 1,
+            "time": "2020-01-01T00:00:00Z",
+        }))
+        self.assertEqual(event["time"], 1577836800000)
+
     def test_missing_function_code_returns_none(self):
         self.assertIsNone(PARSER.parse(_raw({"unitId": 1, "address": 1})))
 

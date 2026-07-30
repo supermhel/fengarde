@@ -89,6 +89,15 @@ class TestN8nAuditParser(unittest.TestCase):
                                 event["class_uid"] * 100 + event["activity_id"])
                 self.assertEqual(validate(event), [])
 
+    def test_iso_timestamp_preserved_not_replaced_by_now(self):
+        """Regression for H5: an ISO-8601 'ts' used to fail the old
+        isinstance(int, float) check and silently fall back to now(), losing
+        the real event time. Must route through timeutil.to_epoch_ms()."""
+        event = PARSER.parse(_raw({
+            "eventType": "workflow.updated", "user": "x", "ts": "2020-01-01T00:00:00Z",
+        }))
+        self.assertEqual(event["time"], 1577836800000)
+
     def test_wrong_typed_ip_and_user_dropped_not_crashed(self):
         """Regression for a Hypothesis property-testing finding (M1): see
         test_db_audit.py's identical regression for the shared root cause

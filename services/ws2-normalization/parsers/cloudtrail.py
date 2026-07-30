@@ -92,8 +92,8 @@ class CloudTrailParser(Parser):
         if arn_or_account:
             event["actor"] = {"user": {"name": arn_or_account}}
 
-        src_ip = rec.get("sourceIPAddress")
-        if valid_ip(src_ip):
+        src_ip = valid_ip(rec.get("sourceIPAddress"))
+        if src_ip:
             event["src_endpoint"] = {"ip": src_ip}
 
         _additional_raw = rec.get("additionalEventData")

@@ -102,6 +102,15 @@ class TestStatusFromOutcome(unittest.TestCase):
         self.assertEqual(status_from_outcome({}), "Success")  # default, no fabrication
         self.assertEqual(status_from_outcome({"outcome": "denied"}), "Failure")
 
+    def test_blocked_and_dropped_are_failures(self):
+        """Regression for M1: a blocked/dropped auth attempt must not fall
+        through to the "Success" default -- that suppresses the very
+        brute-force rules watching for it."""
+        self.assertEqual(status_from_outcome({"outcome": "blocked"}), "Failure")
+        self.assertEqual(status_from_outcome({"outcome": "BLOCKED"}), "Failure")
+        self.assertEqual(status_from_outcome({"act": "drop"}, keys=("act",)), "Failure")
+        self.assertEqual(status_from_outcome({"act": "dropped"}, keys=("act",)), "Failure")
+
     def test_n8n_failed_login_is_failure(self):
         ev = N8nAuditParser().parse(_raw(
             {"eventType": "user.login", "user": "attacker", "status": "failed"}))

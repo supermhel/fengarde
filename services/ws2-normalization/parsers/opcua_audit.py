@@ -40,6 +40,7 @@ import time
 from typing import Optional
 
 from .base import Parser, SEV_HIGH, SEV_INFO, SEV_MEDIUM, status_from_outcome
+from .timeutil import to_epoch_ms
 from shared.ocsf import valid_ip, safe_str
 
 _CLASS_AUTH = 3002       # Authentication
@@ -167,14 +168,11 @@ class OpcUaAuditParser(Parser):
 
     @staticmethod
     def _time_ms(rec: dict, meta: dict) -> int:
-        ts = rec.get("time") or rec.get("timestamp") or meta.get("received_at")
-        if isinstance(ts, (int, float)):
-            return int(ts * 1000) if ts < 1e12 else int(ts)
-        return int(time.time() * 1000)
+        return (to_epoch_ms(rec.get("time"))
+                or to_epoch_ms(rec.get("timestamp"))
+                or to_epoch_ms(meta.get("received_at"))
+                or int(time.time() * 1000))
 
     @staticmethod
     def _logged_time(rec: dict, meta: dict) -> Optional[int]:
-        lt = meta.get("received_at")
-        if isinstance(lt, (int, float)):
-            return int(lt * 1000) if lt < 1e12 else int(lt)
-        return None
+        return to_epoch_ms(meta.get("received_at"))

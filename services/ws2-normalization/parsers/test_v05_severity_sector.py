@@ -71,5 +71,16 @@ class TestSectorOverrideValidated(unittest.TestCase):
         self.assertEqual(ev["siem"]["sector"], "datacenter")
 
 
+class TestVmwareTimestamp(unittest.TestCase):
+    def test_iso_timestamp_preserved_not_replaced_by_now(self):
+        """Regression for H5: an ISO-8601 'createdTime' used to fail the old
+        isinstance(int, float) check and silently fall back to now(), losing
+        the real event time. Must route through timeutil.to_epoch_ms()."""
+        ev = VmwareVsphereParser().parse(_raw(
+            {"operation": "VM.Delete", "vm": "v", "userName": "u",
+             "createdTime": "2020-01-01T00:00:00Z"}))
+        self.assertEqual(ev["time"], 1577836800000)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=1)

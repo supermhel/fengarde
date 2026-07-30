@@ -107,8 +107,9 @@ class K8sAuditParser(Parser):
             event["actor"] = {"user": {"name": username}}
 
         source_ips = rec.get("sourceIPs")
-        if isinstance(source_ips, list) and source_ips and valid_ip(source_ips[0]):
-            event["src_endpoint"] = {"ip": source_ips[0]}
+        src_ip = valid_ip(source_ips[0]) if isinstance(source_ips, list) and source_ips else None
+        if src_ip:
+            event["src_endpoint"] = {"ip": src_ip}
 
         event["unmapped"] = {
             "k8s": {

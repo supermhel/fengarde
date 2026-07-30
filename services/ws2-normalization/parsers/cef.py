@@ -94,13 +94,15 @@ class CefParser(Parser):
             meta=meta,
             sector=self.resolve_sector(meta),
         )
-        if valid_ip(src_ip):
+        src_ip = valid_ip(src_ip)
+        if src_ip:
             sep = {"ip": src_ip}
             spt = _as_int(extension.get("spt"))
             if spt is not None:
                 sep["port"] = spt
             event["src_endpoint"] = sep
-        if valid_ip(dst_ip):
+        dst_ip = valid_ip(dst_ip)
+        if dst_ip:
             dep = {"ip": dst_ip}
             dpt = _as_int(extension.get("dpt"))
             if dpt is not None:

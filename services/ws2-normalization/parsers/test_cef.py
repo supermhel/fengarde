@@ -59,6 +59,35 @@ class TestCefParser(unittest.TestCase):
         event = PARSER.parse(_raw(line))
         self.assertEqual(event["activity_id"], 7)
 
+    def test_blocked_auth_attempt_is_failure_not_success(self):
+        """Regression for M1: a CEF line carrying an identity (suser/duser)
+        with act=blocked used to fall through status_from_outcome's default
+        of "Success" -- a blocked login recorded as successful, silently
+        suppressing brute-force detection on this source."""
+        line = "CEF:0|Acme|Firewall|1.0|100|Auth blocked|5|suser=admin src=203.0.113.5 act=blocked"
+        event = PARSER.parse(_raw(line))
+        self.assertIsNotNone(event)
+        self.assertEqual(event["class_uid"], 3002)
+        self.assertEqual(event["status"], "Failure")
+        self.assertEqual(event["activity_id"], 4)
+
+    def test_dual_stack_ip_normalized_not_dead_lettered(self):
+        """Regression for H4: valid_ip()'s normalized return value must be
+        used, not the original unnormalized string -- an IPv6-mapped IPv4
+        address (::ffff:a.b.c.d, what dual-stack/Windows hosts emit) parses
+        fine but fails Contract A's ip pattern unless normalized first."""
+        line = ("CEF:0|Acme|Firewall|1.0|100|Auth failure|5|"
+                "suser=admin src=::ffff:10.0.0.5 dst=::ffff:10.0.0.10 outcome=failure")
+        event = PARSER.parse(_raw(line))
+        self.assertIsNotNone(event)
+        self.assertEqual(event["src_endpoint"]["ip"], "10.0.0.5")
+        self.assertEqual(validate(event), [])
+
+        line2 = "CEF:0|Acme|Firewall|1.0|200|Traffic|3|src=10.0.0.5 dst=::ffff:10.0.0.10 act=blocked"
+        event2 = PARSER.parse(_raw(line2))
+        self.assertEqual(event2["dst_endpoint"]["ip"], "10.0.0.10")
+        self.assertEqual(validate(event2), [])
+
     def test_non_cef_line_returns_none(self):
         self.assertIsNone(PARSER.parse(_raw("not a cef line")))
 

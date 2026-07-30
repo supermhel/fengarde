@@ -72,6 +72,12 @@ _SUCCESS_TOKENS = frozenset({
 _FAILURE_TOKENS = frozenset({
     "failure", "failed", "fail", "error", "denied", "deny", "false", "invalid",
     "unauthorized", "forbidden", "reject", "rejected", "401", "403", "500",
+    # M1 (2026-07-30 audit): a blocked/dropped auth attempt must count as a
+    # failure too -- cef.py's own local _DENY_TOKENS (network branch) already
+    # includes these; the shared vocabulary (auth branch) was missing them,
+    # so act=blocked on an identity-bearing CEF line fell through to the
+    # "Success" default, silently suppressing brute-force detection.
+    "blocked", "block", "drop", "dropped",
 })
 
 

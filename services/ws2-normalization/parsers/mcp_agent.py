@@ -59,13 +59,26 @@ import urllib.parse
 from typing import Optional
 
 from .base import Parser, SEV_HIGH, SEV_INFO, SEV_MEDIUM, status_from_outcome
+from .timeutil import to_epoch_ms
 from shared.ocsf import valid_ip
 
 _CLASS = 6003  # API Activity
 
 _WRITE_KEYWORDS = ("write", "create", "insert", "add", "put")
 _UPDATE_KEYWORDS = ("update", "edit", "modify", "patch", "rename")
-_DELETE_KEYWORDS = ("delete", "remove", "rm", "drop")
+# N1 (2026-07-30 audit): "delete"/"remove"/"drop" are long enough that plain
+# substring containment is low-risk, but the 2-char "rm" matched inside many
+# unrelated tool names (perform_backup, format_report, confirm_action,
+# terminate_session, warm_cache all naturally contain "rm" mid-word) --
+# mislabeling routine tool calls as destructive deletes. "rm" is checked
+# separately as its own token (split on _/-/camelCase), not by substring.
+_DELETE_KEYWORDS = ("delete", "remove", "drop")
+_RM_TOKEN = "rm"
+_TOKEN_SPLIT_RE = re.compile(r"[_\-\s]+|(?<=[a-z0-9])(?=[A-Z])")
+
+
+def _tokenize(tool: str) -> list:
+    return [t.lower() for t in _TOKEN_SPLIT_RE.split(tool) if t]
 
 # Heuristic path patterns that indicate a tool call is touching secret
 # material. Deliberately simple/documented, not a security boundary on its
@@ -202,6 +215,8 @@ class McpAgentParser(Parser):
         for kw in _DELETE_KEYWORDS:
             if kw in t:
                 return 4, SEV_HIGH
+        if _RM_TOKEN in _tokenize(tool):
+            return 4, SEV_HIGH
         for kw in _UPDATE_KEYWORDS:
             if kw in t:
                 return 3, SEV_MEDIUM
@@ -220,14 +235,11 @@ class McpAgentParser(Parser):
 
     @staticmethod
     def _time_ms(rec: dict, meta: dict) -> int:
-        ts = rec.get("ts") or rec.get("timestamp") or meta.get("received_at")
-        if isinstance(ts, (int, float)):
-            return int(ts * 1000) if ts < 1e12 else int(ts)
-        return int(time.time() * 1000)
+        return (to_epoch_ms(rec.get("ts"))
+                or to_epoch_ms(rec.get("timestamp"))
+                or to_epoch_ms(meta.get("received_at"))
+                or int(time.time() * 1000))
 
     @staticmethod
     def _logged_time(rec: dict, meta: dict) -> Optional[int]:
-        lt = meta.get("received_at")
-        if isinstance(lt, (int, float)):
-            return int(lt * 1000) if lt < 1e12 else int(lt)
-        return None
+        return to_epoch_ms(meta.get("received_at"))
