@@ -91,6 +91,29 @@ def run(bus, worker: "AiWorker") -> dict:
     return stats
 
 
+def _make_handler(bus, worker: "AiWorker"):
+    """Build the per-message daemon handler bound to ONE shared `bus`.
+
+    H1 (2026-07-29 audit): ONE Bus() per worker, not one per message. Same
+    fix as WS-2/WS-4's P1-3 -- runner.py's `_topic_worker` owns exactly one
+    topic (WS-5 consumes only ai.requests) per thread and calls this handler
+    serially on that single thread, so there is no cross-thread sharing to
+    guard against. A fresh Bus() per message was worse than the P1-3
+    per-event-connect cost it left unfixed here: on BUS_BACKEND=memory (the
+    project's documented zero-infra dev mode) `Bus()` returns a brand new,
+    isolated in-memory bus every call, so every produce() below wrote into a
+    bus nothing else ever reads -- ai.results/alerts silently stayed empty
+    forever. `bus` is taken as a parameter (rather than constructed inside)
+    so this closure is unit-testable without a live daemon loop.
+    """
+    def handler(payload: dict) -> None:
+        result = worker.handle(payload)
+        bus.produce("ai.results", key=result["event_id"] or "unknown", payload=result)
+        bus.produce("alerts", key=result["event_id"] or "unknown",
+                    payload=_alert_payload(result, payload.get("event", {})))
+    return handler
+
+
 def main():
     # Daemon (T0): consume ai.requests via the shared runner. run() above stays the
     # batch path used by tests / the e2e harness. Real local-Ollama triage runs when
@@ -102,12 +125,8 @@ def main():
     mode = type(worker.llm).__name__
     get_logger("ws5-ai").info("ai triage mode", mode=mode)
 
-    def handler(payload: dict) -> None:
-        bus = Bus()
-        result = worker.handle(payload)
-        bus.produce("ai.results", key=result["event_id"] or "unknown", payload=result)
-        bus.produce("alerts", key=result["event_id"] or "unknown",
-                    payload=_alert_payload(result, payload.get("event", {})))
+    handler_bus = Bus()
+    handler = _make_handler(handler_bus, worker)
 
     serve({"ai.requests": ("cg-ai", handler)},
           health_port=int(os.getenv("PORT", "8005")), service_name="ws5-ai")

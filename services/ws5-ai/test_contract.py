@@ -67,6 +67,23 @@ def run():
     check(by_id["b-1"]["level"] == "critical", f"b-1 level {by_id['b-1']['level']}")
     check(by_id["b-2"]["verdict"] == "suspicious", f"b-2 verdict {by_id['b-2']['verdict']}")
 
+    # H1 (2026-07-29 audit): the daemon handler (main._make_handler) must
+    # write onto the ONE bus it was given, not a fresh bus per call. Reproduces
+    # the exact bug shape: calling the handler twice, as the daemon loop does
+    # for two consecutive messages, must land BOTH results on the same bus.
+    daemon_bus = Bus()
+    daemon_worker = ws5.AiWorker()
+    handler = ws5._make_handler(daemon_bus, daemon_worker)
+    handler(ai_request(85, "d-1"))
+    handler(ai_request(65, "d-2"))
+    daemon_results = daemon_bus.drain("ai.results")
+    daemon_alerts = daemon_bus.drain("alerts")
+    check(len(daemon_results) == 2,
+          f"daemon handler: expected 2 ai.results on the shared bus, got {len(daemon_results)} "
+          f"(a fresh Bus() per message would silently lose these under BUS_BACKEND=memory)")
+    check(len(daemon_alerts) == 2,
+          f"daemon handler: expected 2 alerts on the shared bus, got {len(daemon_alerts)}")
+
 
 def main():
     run()
