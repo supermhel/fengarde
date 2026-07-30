@@ -1,13 +1,13 @@
 {
   "policy": {
-    "description": "FENGARDE retention: common events, delete 30 days after index creation. Age-based only -- WS-3 writes daily date-suffixed indices (events-common-YYYY.MM.DD) directly, no write alias, so ES-style rollover does not apply. ism_template auto-attaches this policy to matching indices at creation time (including tenant-scoped events-common-<tenant>-* indices).",
+    "description": "FENGARDE retention: common events, delete 90 days after index creation. Age-based only -- WS-3 writes daily date-suffixed indices (events-common-YYYY.MM.DD) directly, no write alias, so ES-style rollover does not apply. ism_template auto-attaches this policy to matching indices at creation time (including tenant-scoped events-common-<tenant>-* indices). Design-A (2026-07-29 audit): raised from 30d -- the sector backing the majority of the 27 detection rules was retained for LESS time than the alerts (365d, ism-alerts-365d.json) those events substantiate, so an analyst opening an older alert could no longer pull the raw events behind it. 90d matches a realistic investigation/compliance floor; it still does not fully match the 365d alert lifetime (that would multiply this sector's storage cost ~12x) -- see engine.py's Rule.contributing_event_ids()/window.py's members() for the complementary fix that captures MORE of an alert's contributing event ids up front, and SSOT.md for the honestly-disclosed remaining gap on anything older than 90d.",
     "default_state": "hot",
     "states": [
       {
         "name": "hot",
         "actions": [],
         "transitions": [
-          { "state_name": "delete", "conditions": { "min_index_age": "30d" } }
+          { "state_name": "delete", "conditions": { "min_index_age": "90d" } }
         ]
       },
       {

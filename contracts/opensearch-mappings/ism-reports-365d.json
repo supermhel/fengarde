@@ -1,0 +1,23 @@
+{
+  "policy": {
+    "description": "FENGARDE retention: generated incident/NIS2 reports, delete 365 days after index creation. Design-A (2026-07-29 audit): reports-* previously had NO ISM policy at all (self-disclosed gap -- a NIS2/compliance report citing an alert could sit on an index with undefined retention behavior, worse than merely 'short'). Matches ism-alerts-365d.json's lifetime since a report is only as substantiable as the alert(s) it cites -- retaining the report for less time than the alert it was generated from would recreate the exact evidentiary gap this policy exists to close. Age-based only (daily date-suffixed indices, no write alias -- see ism-events-common-90d.json). ism_template auto-attaches this policy to matching indices at creation time.",
+    "default_state": "hot",
+    "states": [
+      {
+        "name": "hot",
+        "actions": [],
+        "transitions": [
+          { "state_name": "delete", "conditions": { "min_index_age": "365d" } }
+        ]
+      },
+      {
+        "name": "delete",
+        "actions": [ { "delete": {} } ],
+        "transitions": []
+      }
+    ],
+    "ism_template": [
+      { "index_patterns": ["reports-*"], "priority": 100 }
+    ]
+  }
+}

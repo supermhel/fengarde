@@ -1,6 +1,6 @@
 {
   "policy": {
-    "description": "FENGARDE retention: alerts, delete 365 days after index creation. Age-based only (daily date-suffixed indices, no write alias -- see ism-events-30d.json). Pattern alerts-* also covers tenant-scoped alerts-<tenant>-* indices; reports-* is deliberately NOT covered (independent retention, no policy yet).",
+    "description": "FENGARDE retention: alerts, delete 365 days after index creation. Age-based only (daily date-suffixed indices, no write alias -- see ism-events-common-90d.json). Pattern alerts-* also covers tenant-scoped alerts-<tenant>-* indices. reports-* has its OWN matching 365d policy (ism-reports-365d.json, added Design-A 2026-07-29 audit) rather than being covered by this pattern, since a report's retention needs to key off the alert(s) it cites, not off this policy's alerts-* pattern.",
     "default_state": "hot",
     "states": [
       {

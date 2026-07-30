@@ -124,7 +124,11 @@ def _test_ism_policies_install_and_attach(store: OpenSearchStore):
     its pattern -- the exact thing the old Elasticsearch-syntax file could
     never do."""
     policies = sorted(_MAPPINGS.glob("ism-*.json"))
-    check(len(policies) == 4, f"expected 4 ism-*.json policy files, found {len(policies)}")
+    # Design-A (2026-07-29 audit): was 4 -- events-common's policy was renamed
+    # events-30d -> events-common-90d (retention raised so alert evidence
+    # outlives the 30-day gap it used to have), and reports-365d was added
+    # (reports-* previously had no ISM policy at all).
+    check(len(policies) == 5, f"expected 5 ism-*.json policy files, found {len(policies)}")
     for path in policies:
         name = path.stem.removeprefix("ism-")
         _put_ism_policy(store, name, _load_json(path))
@@ -134,7 +138,7 @@ def _test_ism_policies_install_and_attach(store: OpenSearchStore):
               f"policy {name} must round-trip with its delete state, got {got.get('policy', {}).keys()}")
 
     # ism_template attach check: create a fresh index matching events-common-*
-    # and confirm ISM marks it managed by the events-30d policy.
+    # and confirm ISM marks it managed by the events-common-90d policy.
     idx = f"events-common-livetest-{uuid.uuid4().hex[:8]}"
     store._request("PUT", f"/{idx}", {})
     try:
@@ -147,8 +151,8 @@ def _test_ism_policies_install_and_attach(store: OpenSearchStore):
             if attached:
                 break
             time.sleep(0.5)
-        check(attached == "events-30d",
-              f"new index {idx} must auto-attach policy events-30d via ism_template, got {attached!r}")
+        check(attached == "events-common-90d",
+              f"new index {idx} must auto-attach policy events-common-90d via ism_template, got {attached!r}")
     finally:
         try:
             store._request("DELETE", f"/{idx}")
