@@ -89,6 +89,14 @@ def check_invariant(event, errors):
         c, a, t = event["class_uid"], event["activity_id"], event["type_uid"]
     except KeyError:
         return  # missing fields already reported by schema pass
+    # H6 (2026-07-30 audit): a type-mismatched field (e.g. a fixture typo
+    # class_uid: "3002") used to raise an unhandled TypeError out of this
+    # function, crashing main()'s `for f in files:` loop and silently
+    # skipping validation of every alphabetically-later fixture in the run.
+    # A wrong-typed value is already reported by the schema pass -- just
+    # don't also crash the invariant check on it.
+    if not all(isinstance(x, int) and not isinstance(x, bool) for x in (c, a, t)):
+        return
     if t != c * 100 + a:
         errors.append(
             f".type_uid: invariant violated: {t} != class_uid*100+activity_id "

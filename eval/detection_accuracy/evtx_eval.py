@@ -159,10 +159,18 @@ def sliding_distinct_max(pairs, window_ms):
 
 
 def in_business_hours(t_ms):
+    # H7 (2026-07-30 audit): must match the real engine's boundary exactly
+    # (services/ws4-detection/engine.py::_time_outside_hours computes
+    # `start <= minute_of_day < end` for 08:00-18:00). The old extra
+    # `dt.hour == 18 and dt.minute == 0` clause treated the entire minute
+    # 18:00:00-18:00:59 as inside business hours, while the real engine
+    # correctly treats it as outside -- a mismatch that corrupted the
+    # confusion matrix for common_after_hours_admin at exactly that minute.
     dt = datetime.fromtimestamp(t_ms / 1000, tz=timezone.utc)
     if dt.weekday() > 4:  # sat/sun
         return False
-    return 8 <= dt.hour < 18 or (dt.hour == 18 and dt.minute == 0)
+    minute_of_day = dt.hour * 60 + dt.minute
+    return 480 <= minute_of_day < 1080
 
 
 def _real_ip(r):

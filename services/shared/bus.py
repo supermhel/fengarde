@@ -21,6 +21,7 @@ loop). Anything that depends on real PEL behavior must be verified against Redis
 from __future__ import annotations
 import json
 import os
+import threading
 from dataclasses import dataclass
 from collections import defaultdict, deque
 from typing import Iterator, Optional
@@ -59,10 +60,19 @@ class _MemoryBus:
     def __init__(self):
         self._streams: dict[str, deque] = defaultdict(deque)
         self._seq = 0
+        # L1 (2026-07-30 audit): `self._seq += 1` is an unsynchronized
+        # read-modify-write. deque.append() is atomic in CPython (no message
+        # loss), but the counter isn't -- concurrent produce() on one shared
+        # _MemoryBus (e.g. SyslogUDPServer's worker-thread pool) can hand two
+        # messages the same id. Mirrors the lock WS6's InventoryStore
+        # already uses for its own read-modify-write.
+        self._seq_lock = threading.Lock()
 
     def produce(self, topic, key, payload):
-        self._seq += 1
-        self._streams[topic].append(Message(topic, key, payload, str(self._seq)))
+        with self._seq_lock:
+            self._seq += 1
+            seq = self._seq
+        self._streams[topic].append(Message(topic, key, payload, str(seq)))
 
     def consume(self, topic, group=None, block_ms=0) -> Iterator[Message]:
         # drains everything currently queued, then stops (test-friendly)
