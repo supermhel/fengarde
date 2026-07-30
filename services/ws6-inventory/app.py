@@ -22,7 +22,7 @@ from urllib.parse import urlparse, parse_qs
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-from store import InventoryStore  # noqa: E402
+from store import InventoryStore, InvalidTenantId  # noqa: E402
 from authz import check_api_key, warn_if_disabled  # noqa: E402
 
 STORE = InventoryStore(os.getenv("INVENTORY_DB", ":memory:"))
@@ -84,17 +84,26 @@ class Handler(BaseHTTPRequestHandler):
             self._route_get()
         except _BadRequest as e:
             self._send(400, {"error": str(e)})
+        except InvalidTenantId as e:
+            self._send(400, {"error": str(e)})
         except Exception:  # noqa: BLE001 - never let a handler crash the thread
             self._send(500, {"error": "internal error"})
 
     def _route_get(self):
         u = urlparse(self.path)
         q = {k: v[0] for k, v in parse_qs(u.query).items()}
+        # F1 (2026-07-29 audit): every read is scoped to ?tenant_id=, defaulting
+        # to "default" -- the pre-fix, single-tenant behavior -- when absent,
+        # so an existing caller (WS-2 enrichment, WS-7 dashboard) that never
+        # sends tenant_id keeps seeing exactly what it saw before this fix.
+        tenant_id = q.get("tenant_id")
         if u.path == "/assets/resolve":
             if "ip" not in q or "at" not in q:
                 return self._send(400, {"error": "ip and at required"})
             try:
-                asset = STORE.resolve(q["ip"], q["at"])
+                asset = STORE.resolve(q["ip"], q["at"], tenant_id=tenant_id)
+            except InvalidTenantId:
+                raise  # let do_GET's own handler report the real (tenant) problem
             except ValueError:
                 # datetime.fromisoformat() on a malformed `at` -> 400, not a 500.
                 raise _BadRequest("at must be an ISO-8601 timestamp")
@@ -102,10 +111,11 @@ class Handler(BaseHTTPRequestHandler):
         if u.path == "/assets":
             return self._send(200, STORE.list(
                 ip=q.get("ip"), mac=q.get("mac"), sector=q.get("sector"),
-                status=q.get("status"), limit=_parse_limit(q.get("limit"))))
+                status=q.get("status"), limit=_parse_limit(q.get("limit")),
+                tenant_id=tenant_id))
         if u.path.startswith("/assets/"):
             mac = u.path[len("/assets/"):]
-            asset = STORE.get(mac)
+            asset = STORE.get(mac, tenant_id=tenant_id)
             return self._send(200, asset) if asset else self._send(404, {"error": "not found"})
         return self._send(404, {"error": "no such path"})
 
@@ -115,6 +125,8 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self._route_post()
         except _BadRequest as e:
+            self._send(400, {"error": str(e)})
+        except InvalidTenantId as e:
             self._send(400, {"error": str(e)})
         except Exception:  # noqa: BLE001 - never let a handler crash the thread
             self._send(500, {"error": "internal error"})

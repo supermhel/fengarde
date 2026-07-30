@@ -65,6 +65,49 @@ def run():
     now77 = s.resolve("10.0.0.77", "2026-06-16T13:00:00+00:00")
     check(now77 and now77["mac"] == mac, "resolve current IP should find the MAC")
 
+    # --- H2 (2026-07-30 audit): a delayed/redelivered stale observation must
+    # not regress ip_current/last_seen or invert an ip_history interval.
+    stale_store = InventoryStore(":memory:")
+    stale_mac = "AA:BB:CC:00:22:02"
+    stale_store.upsert({"mac": stale_mac, "ip": "10.0.0.9",
+                         "seen_at": "2026-06-16T12:05:00+00:00"})  # newer obs first
+    stale_store.upsert({"mac": stale_mac, "ip": "10.0.0.5",
+                         "seen_at": "2026-06-16T12:00:00+00:00"})  # stale redelivery after
+    stale_asset = stale_store.get(stale_mac)
+    check(stale_asset["ip_current"] == "10.0.0.9",
+          f"stale observation regressed ip_current to {stale_asset['ip_current']}")
+    check(stale_asset["last_seen"] == "2026-06-16T12:05:00+00:00",
+          f"stale observation regressed last_seen to {stale_asset['last_seen']}")
+    check(len(stale_asset["ip_history"]) == 1,
+          f"stale observation must not open a second ip_history interval, "
+          f"got {len(stale_asset['ip_history'])}")
+    hist_entry = stale_asset["ip_history"][0]
+    check(hist_entry["to"] is None,
+          f"the only ip_history interval must still be open, got to={hist_entry['to']}")
+
+    # --- M2 (2026-07-30 audit): WS-1 collectors (snmp_collector,
+    # syslog_collector) emit seen_at as a raw epoch-seconds int, not an
+    # ISO-8601 string. Must be normalized on ingest, not crash resolve().
+    epoch_store = InventoryStore(":memory:")
+    epoch_mac = "AA:BB:CC:00:33:03"
+    epoch_store.upsert({"mac": epoch_mac, "ip": "10.0.0.20", "seen_at": 1750000000})
+    epoch_asset = epoch_store.get(epoch_mac)
+    check(epoch_asset is not None, "epoch seen_at upsert must not be silently dropped")
+    try:
+        resolved = epoch_store.resolve("10.0.0.20", "2025-06-15T15:30:00+00:00")
+        check(resolved is not None and resolved["mac"] == epoch_mac,
+              "resolve() must find the epoch-seen asset, not crash or miss it")
+    except ValueError as e:
+        FAILS.append(f"resolve() crashed on an epoch-normalized seen_at: {e}")
+    # a later ISO-string observation must compare correctly against the
+    # earlier epoch-normalized one (same on-disk shape, not string-typed
+    # epoch digits that would sort/parse wrong)
+    epoch_store.upsert({"mac": epoch_mac, "ip": "10.0.0.21",
+                         "seen_at": "2025-06-15T16:00:00+00:00"})
+    epoch_asset2 = epoch_store.get(epoch_mac)
+    check(epoch_asset2["ip_current"] == "10.0.0.21",
+          f"newer ISO seen_at after an epoch seen_at should win, got {epoch_asset2['ip_current']}")
+
     # --- HTTP layer ---
     srv = ThreadingHTTPServer(("127.0.0.1", 0), ws6.Handler)
     port = srv.server_address[1]

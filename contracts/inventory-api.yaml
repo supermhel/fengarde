@@ -17,6 +17,8 @@ paths:
         - { name: sector, in: query, schema: { type: string, enum: [bank, datacenter, common] } }
         - { name: status, in: query, schema: { type: string, enum: [active, inactive] } }
         - { name: limit, in: query, schema: { type: integer, default: 50 } }
+        - { name: tenant_id, in: query, schema: { type: string, default: "default" },
+            description: "F1 (2026-07-29 audit): scopes the search to one tenant's assets. Omitted -> 'default', the single-tenant behavior every deployment had before this field existed." }
       responses:
         "200":
           description: matching assets
@@ -31,6 +33,7 @@ paths:
       parameters:
         - { name: ip, in: query, required: true, schema: { type: string } }
         - { name: at, in: query, required: true, schema: { type: string, format: date-time } }
+        - { name: tenant_id, in: query, schema: { type: string, default: "default" } }
       responses:
         "200":
           description: the asset that owned the IP at that instant
@@ -43,6 +46,7 @@ paths:
       summary: Get one asset by MAC
       parameters:
         - { name: mac, in: path, required: true, schema: { type: string } }
+        - { name: tenant_id, in: query, schema: { type: string, default: "default" } }
       responses:
         "200":
           content:
@@ -73,6 +77,7 @@ components:
       required: [mac, last_seen, status]
       properties:
         mac: { type: string, description: "primary logical key" }
+        tenant_id: { type: string, default: "default", description: "F1 (2026-07-29 audit): the logical key is actually (tenant_id, mac) -- two tenants may share a mac without colliding." }
         vendor: { type: string }
         hostname: { type: string }
         ip_current: { type: string, nullable: true }
@@ -94,6 +99,7 @@ components:
       required: [mac, ip, seen_at]
       properties:
         mac: { type: string }
+        tenant_id: { type: string, default: "default", description: "F1 (2026-07-29 audit): which tenant this observation belongs to. Omitted -> 'default'." }
         ip: { type: string }
         hostname: { type: string }
         protocol: { type: string }
