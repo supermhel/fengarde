@@ -8,5 +8,11 @@ ENV PYTHONPATH=/app
 ENV BUS_BACKEND=redis
 ENV STORAGE_BACKEND=opensearch
 ENV OPENSEARCH_URL=http://opensearch:9200
+# Security-adversarial #2 (2026-07-29 audit): drop root before running.
+# FENGARDE_RBAC_DB (opt-in SQLite path, off by default) must point at a path
+# writable by this uid if enabled.
+RUN groupadd --system app && useradd --system --gid app --uid 10001 --no-create-home app \
+    && chown -R app:app /app
+USER app
 WORKDIR /app/ws3-indexer
 CMD ["python", "main.py"]

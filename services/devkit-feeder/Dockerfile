@@ -4,4 +4,8 @@ FROM python:3.13-slim@sha256:6771159cd4fa5d9bba1258caf0b82e6b73458c694d178ad97c5
 RUN pip install --no-cache-dir redis==5.0.8
 WORKDIR /app
 COPY services/devkit-feeder/feed.py /app/feed.py
+# Security-adversarial #2 (2026-07-29 audit): drop root before running.
+RUN groupadd --system app && useradd --system --gid app --uid 10001 --no-create-home app \
+    && chown -R app:app /app
+USER app
 CMD ["python", "feed.py"]

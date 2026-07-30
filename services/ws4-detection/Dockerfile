@@ -6,5 +6,9 @@ COPY services/ws4-detection /app/ws4-detection
 RUN pip install --no-cache-dir -r /app/ws4-detection/requirements.txt || true
 ENV PYTHONPATH=/app
 ENV BUS_BACKEND=redis
+# Security-adversarial #2 (2026-07-29 audit): drop root before running.
+RUN groupadd --system app && useradd --system --gid app --uid 10001 --no-create-home app \
+    && chown -R app:app /app
+USER app
 WORKDIR /app/ws4-detection
 CMD ["python", "main.py"]

@@ -1,3 +1,13 @@
+# Security-adversarial #2 (2026-07-29 audit): the other 7 service Dockerfiles
+# were given a non-root USER; this one is deliberately left as-is. nginx:alpine
+# already drops every worker process (the one actually parsing client
+# requests) to its own unprivileged built-in "nginx" user -- only the short-
+# lived master process stays root, solely to bind port 80 and read config, and
+# never touches request data. Forcing the master non-root too would mean
+# either binding a port >1024 (a docker-compose.yml port-mapping change) or
+# adding a capability, and this environment has no running Docker engine to
+# build/verify that change against, so it's deferred rather than shipped
+# unverified.
 FROM nginx:alpine@sha256:4a73073bd557c65b759505da037898b61f1be6cbcc3c2c3aeac22d2a470c1752
 # Static single-file dashboard.
 COPY services/ws7-dashboard /usr/share/nginx/html

@@ -12,5 +12,9 @@ COPY services/ws2-normalization /app/ws2-normalization
 RUN pip install --no-cache-dir -r /app/ws2-normalization/requirements.txt || true
 ENV PYTHONPATH=/app
 ENV BUS_BACKEND=redis
+# Security-adversarial #2 (2026-07-29 audit): drop root before running.
+RUN groupadd --system app && useradd --system --gid app --uid 10001 --no-create-home app \
+    && chown -R app:app /app
+USER app
 WORKDIR /app/ws2-normalization
 CMD ["python", "main.py"]
