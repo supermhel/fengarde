@@ -60,3 +60,22 @@ eval/detection_accuracy/*_eval_results.json
 # Claude Code local/editor files (not project artifacts)
 .claude/settings.local.json
 .claude/launch.json
+
+# --- Public-repo doc policy (2026-07-31 audit) ---
+# docs/superpowers/specs/ and docs/posts/ mix legitimate keep-public
+# decision-rationale docs with forward-looking build/roadmap plans and
+# one-off agent planning drafts (the kind that got moved to fengarde-sec
+# in this same audit). New files dropped here are ignored by default so a
+# coding session doesn't silently publish an internal plan. If a NEW file
+# is genuinely a decision-rationale doc explaining a shipped choice (i.e.
+# belongs in the public category, same bar as the files already tracked
+# here), commit it explicitly with `git add -f` -- don't just remove the
+# ignore rule.
+docs/superpowers/specs/*
+docs/posts/*
+
+# .claude/ is agent config/scratch, not a project artifact -- ignore
+# everything by default and un-ignore specific files the team deliberately
+# wants every contributor to get (shared settings, shared skills/agents).
+.claude/*
+!.claude/settings.json
