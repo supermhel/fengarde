@@ -359,8 +359,6 @@ are the obvious first PRs — or propose a new detection rule via the
 [rule request template](.github/ISSUE_TEMPLATE/rule_request.md).
 
 Monitoring AI agents/MCP servers? See **[docs/agent-monitoring.md](docs/agent-monitoring.md)**.
-Curious how FENGARDE compares to Wazuh/Elastic Security/Security Onion? See
-**[docs/vs.md](docs/vs.md)** — an honest comparison, not a sales pitch.
 
 ---
 

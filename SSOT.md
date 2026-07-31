@@ -196,6 +196,17 @@ those words get reused loosely across specs written weeks apart.
   itself is still recoverable from git history (`git show b037962:docs/superpowers/specs/2026-07-29-fengarde-strategy-marketing-review.md`)
   unless/until a history rewrite purges it — that's a separate, not-yet-made decision, since
   rewriting shared history needs explicit sign-off the same way the 2026-07-21 move declined it.
+- **`docs/vs.md` moved out of this repo (2026-07-31, founder-directed full-repo doc audit):**
+  the competitor-comparison doc (FENGARDE vs Wazuh/Elastic Security/Security Onion + the
+  German-sovereignty-player section) is competitive/positioning content, same category as the
+  2026-07-21 batch and the 2026-07-29 near-miss above — recovered into `fengarde-sec`'s
+  `docs/from-public-repo/specs/2026-07-31-fengarde-vs-competitors.md`, removed from this repo's
+  working tree, README's link to it removed. Going-forward split only, no history rewrite. The
+  same audit reviewed every other doc in this repo (specs, reviews, ADRs, posts) and judged the
+  rest — including `docs/superpowers/specs/2026-07-02-fengarde-v0.3-improvement-plan.md` and
+  `2026-07-10-fengarde-v0.4-build-plan.md`, which carry a short market-positioning header on top
+  of otherwise-technical build plans — as legitimately public per this file's own §3 doc index;
+  flagged to the founder for override rather than moved unilaterally.
 
 ## 5. M6 launch — EXECUTED 2026-07-30 (real outcome, needs periodic follow-up)
 
