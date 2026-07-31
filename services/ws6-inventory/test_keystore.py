@@ -16,7 +16,9 @@ routes (including scope enforcement on writes).
 from __future__ import annotations
 
 import os
+import sqlite3
 import sys
+import tempfile
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -330,6 +332,116 @@ def test_migration_skips_invalid_tenant_id_without_crashing():
         os.environ.pop("FENGARDE_API_KEYS", None)
 
 
+def test_upgrade_from_pre_hmac_scrypt_schema_does_not_crash():
+    """Independent review (2026-07-31): a DB written by the previous (scrypt)
+    keystore round has schema `api_keys(tenant_id PK, lookup_hash, key_hash,
+    source, created_at)` -- no key_id/scope/last_used_at. This round's
+    verify() SELECTs `scope, key_id`, which raised OperationalError ("no such
+    column: scope") -> app.py 500 on every request -> silent lockout on
+    upgrade. The migration must rename the incompatible table aside (never
+    DROP, no data loss) and stand up a fresh HMAC-shaped table, so verify()
+    works and env-var re-migration can repopulate."""
+    with tempfile.TemporaryDirectory() as td:
+        db_path = str(Path(td) / "pre_hmac.db")
+        legacy = sqlite3.connect(db_path)
+        legacy.executescript(
+            """
+            CREATE TABLE api_keys (
+              tenant_id TEXT PRIMARY KEY,
+              lookup_hash TEXT NOT NULL UNIQUE,
+              key_hash TEXT NOT NULL,
+              source TEXT NOT NULL,
+              created_at TEXT NOT NULL
+            );
+            """)
+        legacy.execute("INSERT INTO api_keys VALUES('acme','abc','scrypt$x$y','generated','2026-07-30')")
+        legacy.commit(); legacy.close()
+
+        store = TenantKeyStore(db_path)
+        # verify() must not raise -- the incompatible table is gone from the
+        # active name, replaced by the fresh HMAC schema (empty).
+        ok, tenant, scope = store.verify("anykey")
+        check(not ok, f"a fresh post-upgrade keystore must have no live keys yet, got {(ok, tenant, scope)}")
+
+        # The old rows must be preserved aside (forensics), not destroyed.
+        preserved = [r["name"] for r in store.db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'api_keys_pre%'").fetchall()]
+        check(preserved == ["api_keys_pre_hmac"],
+              f"old scrypt table must be renamed aside, not dropped, got {preserved}")
+
+        # A fresh provision under the new schema must work end-to-end.
+        store.provision("acme", "new-generated-key")
+        ok, tenant, _ = store.verify("new-generated-key")
+        check(ok and tenant == "acme", f"post-upgrade provisioning must work, got {(ok, tenant)}")
+        store.db.close()
+
+
+def test_upgrade_then_env_remigration_repopulates():
+    """The common upgrade path: an operator who still has FENGARDE_API_KEYS
+    set upgrades from the scrypt round. The old table is set aside, the new
+    one is empty, so ensure_legacy_keys_migrated re-provisions from the env
+    var under HMAC -- their existing key value keeps working, zero manual
+    step."""
+    with tempfile.TemporaryDirectory() as td:
+        db_path = str(Path(td) / "pre_hmac2.db")
+        legacy = sqlite3.connect(db_path)
+        legacy.executescript(
+            "CREATE TABLE api_keys (tenant_id TEXT PRIMARY KEY, lookup_hash TEXT NOT NULL UNIQUE, "
+            "key_hash TEXT NOT NULL, source TEXT NOT NULL, created_at TEXT NOT NULL);")
+        legacy.execute("INSERT INTO api_keys VALUES('acme','abc','scrypt$x$y','migrated','2026-07-30')")
+        legacy.commit(); legacy.close()
+
+        os.environ["FENGARDE_API_KEYS"] = "acme:acme-real-key"
+        try:
+            store = TenantKeyStore(db_path)
+            migrated = ensure_legacy_keys_migrated(store)
+            check(migrated == ["acme"], f"env-var re-migration must repopulate after upgrade, got {migrated}")
+            ok, tenant, _ = store.verify("acme-real-key")
+            check(ok and tenant == "acme",
+                  f"the operator's env-var key must work post-upgrade with no manual step, got {(ok, tenant)}")
+            store.db.close()
+        finally:
+            os.environ.pop("FENGARDE_API_KEYS", None)
+
+
+def test_pepper_change_is_detected_at_startup():
+    """Independent review (2026-07-31): a stored HMAC only verifies under the
+    exact pepper it was written with, so changing FENGARDE_API_KEY_PEPPER
+    after keys exist silently fails EVERY key (fail-closed lockout, no
+    obvious cause). A canary written at first provision must let startup
+    detect a later pepper change. Proven via the persisted canary value:
+    same pepper -> match; changed pepper -> mismatch (which _check_pepper_
+    canary logs loudly)."""
+    import hmac as _hmac
+    import hashlib as _hashlib
+    from keystore import _PEPPER_CANARY_PLAINTEXT
+    with tempfile.TemporaryDirectory() as td:
+        db_path = str(Path(td) / "pepper.db")
+        os.environ["FENGARDE_API_KEY_PEPPER"] = "pepper-A"
+        try:
+            store = TenantKeyStore(db_path)
+            store.provision("acme", "k1")
+            canary = store.db.execute(
+                "SELECT v FROM keystore_meta WHERE k='pepper_canary'").fetchone()["v"]
+            store.db.close()
+
+            match_a = _hmac.new(b"pepper-A", _PEPPER_CANARY_PLAINTEXT.encode(), _hashlib.sha256).hexdigest()
+            match_b = _hmac.new(b"pepper-B", _PEPPER_CANARY_PLAINTEXT.encode(), _hashlib.sha256).hexdigest()
+            check(canary == match_a, "canary must equal HMAC of the pepper in effect at first provision")
+            check(canary != match_b, "canary must NOT match a different pepper (drift is detectable)")
+        finally:
+            os.environ.pop("FENGARDE_API_KEY_PEPPER", None)
+
+
+def test_canary_absent_until_first_provision():
+    """No canary is written for an empty keystore -- so _check_pepper_canary
+    is a clean no-op on a fresh/never-provisioned store, and doesn't
+    false-warn on the zero-infra default."""
+    store = TenantKeyStore(":memory:")
+    row = store.db.execute("SELECT v FROM keystore_meta WHERE k='pepper_canary'").fetchone()
+    check(row is None, "an unprovisioned keystore must have no pepper canary yet")
+
+
 def main():
     test_key_is_never_stored_in_plaintext()
     test_verify_correct_and_wrong_key()
@@ -353,6 +465,10 @@ def main():
     test_migration_only_runs_once()
     test_migration_skips_duplicate_key_across_tenants_without_crashing()
     test_migration_skips_invalid_tenant_id_without_crashing()
+    test_upgrade_from_pre_hmac_scrypt_schema_does_not_crash()
+    test_upgrade_then_env_remigration_repopulates()
+    test_pepper_change_is_detected_at_startup()
+    test_canary_absent_until_first_provision()
     if FAILS:
         print(f"[FAIL] WS-6 keystore: {len(FAILS)} problem(s)")
         for f in FAILS:
@@ -360,8 +476,9 @@ def main():
         sys.exit(1)
     print("[OK] WS-6 keystore: hashed-at-rest (HMAC-SHA256+pepper) storage, fast symmetric verify, "
           "cross-tenant isolation, multi-key zero-downtime rotation + idempotent revoke, scopes, "
-          "validated tenant ids, and legacy-key migration (shared/tenant-keys, precedence, no-op, "
-          "never-overwrite, dup-key skip, invalid-tenant skip) all PASS")
+          "validated tenant ids, legacy-key migration (shared/tenant-keys, precedence, no-op, "
+          "never-overwrite, dup-key skip, invalid-tenant skip), pre-HMAC schema upgrade (preserve "
+          "+ re-migrate), and pepper-drift detection all PASS")
 
 
 if __name__ == "__main__":

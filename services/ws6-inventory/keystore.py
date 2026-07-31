@@ -54,6 +54,11 @@ SCOPE_READ_ONLY = "read_only"
 SCOPE_READ_WRITE = "read_write"
 VALID_SCOPES = (SCOPE_READ_ONLY, SCOPE_READ_WRITE)
 
+# Fixed, non-secret sentinel HMAC'd with the pepper to detect a later pepper
+# change (see TenantKeyStore._check_pepper_canary). Its value doesn't matter,
+# only that it's constant across runs.
+_PEPPER_CANARY_PLAINTEXT = "fengarde-ws6-pepper-canary-v1"
+
 # A legacy key shorter than this is treated as "possibly human-chosen" for
 # the migration weak-key warning -- generate_raw_key() produces 43-char
 # token_urlsafe(32) values, so anything meaningfully shorter was never one
@@ -178,6 +183,7 @@ class TenantKeyStore:
     def _init(self):
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.execute("PRAGMA synchronous=NORMAL")
+        self._migrate_pre_hmac_schema()
         self.db.executescript(
             """
             CREATE TABLE IF NOT EXISTS api_keys (
@@ -190,9 +196,91 @@ class TenantKeyStore:
               last_used_at TEXT
             );
             CREATE INDEX IF NOT EXISTS idx_api_keys_tenant ON api_keys(tenant_id);
+            CREATE TABLE IF NOT EXISTS keystore_meta (k TEXT PRIMARY KEY, v TEXT);
             """
         )
         self.db.commit()
+        self._check_pepper_canary()
+
+    def _migrate_pre_hmac_schema(self) -> None:
+        """An independent review (2026-07-31) caught that a DB file written
+        by the previous (scrypt) keystore round -- schema `api_keys(tenant_id
+        PRIMARY KEY, lookup_hash, key_hash, source, created_at)`, no `key_id`
+        /`scope`/`last_used_at` columns -- would make this round's verify()
+        query ("...scope, key_id FROM api_keys") raise OperationalError
+        ("no such column: scope"), which app.py's broad handler turns into a
+        500 on EVERY request: a silent, total lockout on upgrade for any
+        deployment that keeps its DB across versions (the shipped container's
+        /data/inventory.db does).
+
+        The scrypt round's stored hashes are `scrypt$...`, cryptographically
+        incompatible with this round's HMAC verify -- there is no way to
+        carry the actual keys forward (we never stored the raw keys). So the
+        honest migration is: preserve the old rows aside for forensics
+        (rename, never DROP -- same discipline as store.py::
+        _migrate_pre_tenant_schema), let the fresh HMAC-shaped table be
+        created empty below, and warn LOUDLY. Because the new table is then
+        empty, ensure_legacy_keys_migrated() will re-provision from
+        FENGARDE_API_KEYS/FENGARDE_API_KEY if those are still set (the common
+        case -- most upgraders still have them); if not, the operator must
+        re-issue keys via manage_keys.py, which the warning says explicitly.
+        No-op on a fresh DB or an already-HMAC-shaped one."""
+        tables = {r["name"] for r in self.db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+        if "api_keys" not in tables:
+            return  # fresh DB
+        cols = {r["name"] for r in self.db.execute("PRAGMA table_info(api_keys)").fetchall()}
+        if "key_id" in cols:
+            return  # already this round's schema
+        # Rename aside under a unique name (append a counter if a prior failed
+        # upgrade already left one) so this can never itself collide/crash.
+        base = "api_keys_pre_hmac"
+        name, n = base, 1
+        while name in tables:
+            n += 1
+            name = f"{base}_{n}"
+        self.db.execute(f"ALTER TABLE api_keys RENAME TO {name}")
+        self.db.commit()
+        print('{"level": "warning", "service": "ws6-inventory", "msg": '
+              '"upgraded a pre-HMAC (scrypt) keystore: old scrypt-hashed keys '
+              'cannot be verified under HMAC and were preserved aside as '
+              f'\\"{name}\\"; keys will re-provision from FENGARDE_API_KEYS/'
+              'FENGARDE_API_KEY if still set, otherwise re-issue via '
+              'manage_keys.py"}', flush=True)
+
+    def _check_pepper_canary(self) -> None:
+        """Pepper-drift guard (independent review, 2026-07-31): a stored
+        HMAC verifies only under the exact pepper it was written with, so if
+        FENGARDE_API_KEY_PEPPER is changed/unset after keys were provisioned,
+        EVERY key silently fails to verify -- a total (fail-closed, not
+        bypass) lockout with no obvious cause. We can't test a real key at
+        startup (we never store raw keys), so we keep a canary: HMAC(pepper,
+        a fixed sentinel), written once when the first key is provisioned
+        (see provision()). At startup, if a canary exists and does NOT match
+        the current pepper, warn loudly -- turning a baffling 'all auth
+        broke' into a named, actionable cause."""
+        row = self.db.execute(
+            "SELECT v FROM keystore_meta WHERE k='pepper_canary'").fetchone()
+        if row is None:
+            return  # no keys provisioned yet (or pre-canary DB) -- nothing to check
+        current = hmac.new(_pepper(), _PEPPER_CANARY_PLAINTEXT.encode("utf-8"),
+                           hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(row["v"], current):
+            print('{"level": "error", "service": "ws6-inventory", "msg": '
+                  '"FENGARDE_API_KEY_PEPPER changed since keys were provisioned: '
+                  'ALL keys will fail to verify (fail-closed lockout). Restore the '
+                  'previous pepper value, or re-provision every key via manage_keys.py"}',
+                  flush=True)
+
+    def _ensure_pepper_canary(self) -> None:
+        """Write the pepper canary if absent -- called from provision() so it
+        captures the pepper in effect when the first key is created. Must be
+        called while holding _write_lock (provision() does)."""
+        current = hmac.new(_pepper(), _PEPPER_CANARY_PLAINTEXT.encode("utf-8"),
+                           hashlib.sha256).hexdigest()
+        self.db.execute(
+            "INSERT OR IGNORE INTO keystore_meta(k, v) VALUES('pepper_canary', ?)",
+            (current,))
 
     def count(self) -> int:
         return self.db.execute("SELECT COUNT(*) FROM api_keys").fetchone()[0]
@@ -240,6 +328,9 @@ class TenantKeyStore:
                 "VALUES (?,?,?,?,?,?)",
                 (key_id, tenant_id, key_hash, scope, source, _now_iso()),
             )
+            # Capture the pepper in effect the first time a key is created, so
+            # _check_pepper_canary can flag a later pepper change at startup.
+            self._ensure_pepper_canary()
             self.db.commit()
             return key_id
 
