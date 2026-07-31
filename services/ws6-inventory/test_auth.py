@@ -3,11 +3,11 @@
 Auth is opt-in: an empty keystore (services/ws6-inventory/keystore.py) means
 every request is allowed, the zero-infra/quickstart default. Once any key is
 provisioned (directly via TenantKeyStore.provision, or auto-migrated from a
-legacy FENGARDE_API_KEY/FENGARDE_API_KEYS env var -- see keystore.py's
-ensure_legacy_keys_migrated), every request must present a key that verifies
-against it. See test_keystore.py for store-level (non-HTTP) coverage of the
-hashing/rotation/migration mechanics themselves; this file proves the same
-guarantees hold over real HTTP requests against the actual Handler.
+legacy FENGARDE_API_KEY/FENGARDE_API_KEYS env var), every request must present
+a key that verifies against it. See test_keystore.py for store-level coverage
+of the hashing/rotation/scope/migration mechanics; this file proves the same
+guarantees hold over real HTTP requests against the actual Handler, including
+scope enforcement on writes and URL-decoded MAC lookups.
 """
 from __future__ import annotations
 
@@ -110,13 +110,10 @@ def test_tenant_scoped_key_cannot_read_another_tenant():
         code, body = _get(port, "/assets", api_key="unknown-key")
         check(code == 401, f"a key matching no provisioned tenant should 401, got {code}")
 
-        # acme's key, no ?tenant_id= at all -> its own tenant, not "default"
         code, body = _get(port, "/assets", api_key="acme-key")
         check(code == 200 and len(body) == 1 and body[0]["hostname"] == "acme-box",
               f"acme's key with no tenant_id must see only acme's asset, got {body}")
 
-        # acme's key EXPLICITLY asking for globex -> silently forced back to acme,
-        # never globex's data and never a 403 that would confirm globex exists
         code, body = _get(port, "/assets?tenant_id=globex", api_key="acme-key")
         check(code == 200 and len(body) == 1 and body[0]["hostname"] == "acme-box",
               f"acme's key asking for tenant_id=globex must still get only acme's data, got {body}")
@@ -128,11 +125,28 @@ def test_tenant_scoped_key_cannot_read_another_tenant():
         srv.shutdown(); srv.server_close()
 
 
+def test_url_encoded_mac_lookup_works_within_own_tenant():
+    """A MAC path segment is %-encoded by clients (':' -> '%3A'); the route
+    must URL-decode it so a scoped key can fetch its OWN asset by MAC.
+    Before the decode fix this always 404'd (encoded string never matched
+    the stored decoded MAC)."""
+    srv, port = _serve()
+    try:
+        import app as ws6
+        ws6.KEYSTORE.provision("acme", "acme-key")
+        ws6.STORE.upsert({"mac": "AA:BB:CC:00:11:22", "ip": "10.1.1.7",
+                          "hostname": "acme-encoded", "seen_at": "2026-06-16T08:00:00+00:00",
+                          "tenant_id": "acme"})
+        code, body = _get(port, "/assets/AA%3ABB%3ACC%3A00%3A11%3A22", api_key="acme-key")
+        check(code == 200 and body.get("hostname") == "acme-encoded",
+              f"a %-encoded MAC must decode and resolve to the stored asset, got {code} {body}")
+    finally:
+        srv.shutdown(); srv.server_close()
+
+
 def test_tenant_scoped_key_cannot_write_another_tenant():
-    """The write half of the same guarantee: a scoped key upserting with a
-    spoofed tenant_id in the request body must land in ITS OWN tenant, not
-    the one it named -- otherwise a compromised acme key could plant/
-    overwrite data in globex's inventory."""
+    """A scoped key upserting with a spoofed tenant_id in the request body
+    must land in ITS OWN tenant, not the one it named."""
     srv, port = _serve()
     try:
         import app as ws6
@@ -155,10 +169,30 @@ def test_tenant_scoped_key_cannot_write_another_tenant():
         srv.shutdown(); srv.server_close()
 
 
+def test_read_only_key_can_read_but_not_write():
+    """A read_only-scoped key must GET fine but be rejected (403) on any
+    write, before it can touch the store -- a leaked read key must not be
+    able to poison inventory (which feeds enrichment/detection)."""
+    srv, port = _serve()
+    try:
+        import app as ws6
+        ws6.KEYSTORE.provision("acme", "ro-key", scope=ws6.SCOPE_READ_ONLY)
+
+        code, _ = _get(port, "/assets", api_key="ro-key")
+        check(code == 200, f"a read_only key must still be able to GET, got {code}")
+
+        code, body = _post(port, "/assets/upsert",
+                           {"mac": "10:00:00:00:00:11", "ip": "10.1.1.11",
+                            "seen_at": "2026-06-16T08:00:00+00:00"},
+                           api_key="ro-key")
+        check(code == 403, f"a read_only key must be 403 on a write, got {code} {body}")
+        check(ws6.STORE.get("10:00:00:00:00:11", tenant_id="acme") is None,
+              "a read_only key's rejected write must not have reached the store")
+    finally:
+        srv.shutdown(); srv.server_close()
+
+
 def test_admin_key_is_unrestricted():
-    """The '*' entry is the escape hatch for an operator/ops-tool caller
-    that legitimately needs cross-tenant access -- same trust level as the
-    old single shared key."""
     srv, port = _serve()
     try:
         import app as ws6
@@ -173,28 +207,23 @@ def test_admin_key_is_unrestricted():
         srv.shutdown(); srv.server_close()
 
 
-def test_rotated_key_stops_working_over_http():
+def test_rotation_both_keys_live_then_old_revoked_over_http():
     srv, port = _serve()
     try:
         import app as ws6
-        ws6.KEYSTORE.provision("acme", "old-key")
-        code, _ = _get(port, "/assets", api_key="old-key")
-        check(code == 200, "the original key must work before rotation")
-
+        old_id = ws6.KEYSTORE.provision("acme", "old-key")
         ws6.KEYSTORE.provision("acme", "new-key")
-        code, _ = _get(port, "/assets", api_key="old-key")
-        check(code == 401, f"the OLD key must 401 immediately after rotation, got {code}")
-        code, _ = _get(port, "/assets", api_key="new-key")
-        check(code == 200, f"the NEW key must work, got {code}")
+        check(_get(port, "/assets", api_key="old-key")[0] == 200, "old key live during rotation")
+        check(_get(port, "/assets", api_key="new-key")[0] == 200, "new key live during rotation")
+
+        ws6.KEYSTORE.revoke(old_id)
+        check(_get(port, "/assets", api_key="old-key")[0] == 401, "revoked old key must 401")
+        check(_get(port, "/assets", api_key="new-key")[0] == 200, "surviving new key must still work")
     finally:
         srv.shutdown(); srv.server_close()
 
 
 def test_legacy_single_key_migrates_and_keeps_working_over_http():
-    """An operator upgrading from the original single FENGARDE_API_KEY must
-    keep using that exact value with zero reconfiguration -- proven here by
-    actually running the migration function against a live server, not just
-    the store-level unit test in test_keystore.py."""
     os.environ["FENGARDE_API_KEY"] = "the-operators-original-key"
     try:
         srv, port = _serve()
@@ -202,7 +231,6 @@ def test_legacy_single_key_migrates_and_keeps_working_over_http():
             import app as ws6
             migrated = ws6.ensure_legacy_keys_migrated(ws6.KEYSTORE)
             check(migrated == ["default"], f"expected migration of 'default' only, got {migrated}")
-
             code, _ = _get(port, "/assets", api_key="the-operators-original-key")
             check(code == 200, f"the operator's existing key must keep working after migration, got {code}")
             code, _ = _get(port, "/assets", api_key="some-other-guess")
@@ -217,19 +245,20 @@ def main():
     test_auth_disabled_by_default()
     test_auth_enforced_once_a_key_is_provisioned()
     test_tenant_scoped_key_cannot_read_another_tenant()
+    test_url_encoded_mac_lookup_works_within_own_tenant()
     test_tenant_scoped_key_cannot_write_another_tenant()
+    test_read_only_key_can_read_but_not_write()
     test_admin_key_is_unrestricted()
-    test_rotated_key_stops_working_over_http()
+    test_rotation_both_keys_live_then_old_revoked_over_http()
     test_legacy_single_key_migrates_and_keeps_working_over_http()
     if FAILS:
         print(f"[FAIL] ws6 auth: {len(FAILS)} problem(s)")
         for f in FAILS:
             print("   -", f)
         sys.exit(1)
-    print("[OK] WS-6 auth: disabled by default, enforced once a key is provisioned, "
-          "per-tenant keys isolate read+write, admin key unrestricted, rotation takes "
-          "effect immediately, legacy single-key migration keeps existing callers working "
-          "-- all over real HTTP")
+    print("[OK] WS-6 auth: disabled by default, enforced once provisioned, per-tenant keys isolate "
+          "read+write, URL-decoded MAC lookup, read_only scope blocks writes (403), admin key "
+          "unrestricted, zero-downtime rotation + revoke, legacy single-key migration -- all over real HTTP")
 
 
 if __name__ == "__main__":

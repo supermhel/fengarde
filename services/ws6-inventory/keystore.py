@@ -1,27 +1,41 @@
-"""F1 second follow-up (2026-07-30): per-tenant API keys, hashed at rest.
+"""F1 third follow-up (2026-07-31): per-tenant API keys -- fast keyed hash,
+multi-key rotation, scoped (read-only/read-write), validated tenant ids.
 
-The first F1 follow-up added `FENGARDE_API_KEYS` (plaintext `tenant:key` pairs
-in an env var, compared with `hmac.compare_digest`) -- real isolation, but the
-key material itself lived in cleartext for as long as the process/env
-persisted, and rotating/provisioning meant hand-editing an env var. This
-replaces that with a real keystore: one SQLite table (`api_keys`, in the same
-file as `INVENTORY_DB`), one scrypt hash per tenant, no raw key ever written
-to disk. Hashing mirrors `services/shared/users.py::hash_password` exactly
-(same KDF, same cost parameters, same "scrypt$salt$hash" format) for
-consistency with the one other place this codebase hashes a secret --
-ws6's Docker image doesn't bundle `services/shared` (see Dockerfile), so this
-stays a standalone copy rather than an import, same rationale as authz.py.
+History, so the design tradeoffs below make sense:
+  - 2nd follow-up shipped scrypt (matching services/shared/users.py's
+    password hashing) with a separate fast SHA-256 "lookup_hash" column to
+    avoid an O(n)-scrypt-calls-per-request scaling problem.
+  - An independent review (cavecrew-reviewer, 2026-07-31) measured ~150ms
+    per scrypt verify and pointed out this was the wrong primitive: scrypt
+    exists to slow down an offline attacker brute-forcing a LOW-entropy,
+    human-chosen secret (a password). These keys are
+    `generate_raw_key()`-produced 256-bit random values -- offline brute
+    force is already infeasible regardless of hash speed, so paying a
+    memory-hard KDF on every single request bought nothing but a throughput
+    ceiling and a cheap unauthenticated-DoS lever (send garbage keys,
+    force ~150ms of CPU per request). The review also found the review's
+    OWN "timing defense" (a decoy hash on a miss) was inverted: it ran the
+    slow hash TWICE on a miss vs once on a hit, doubling that DoS cost
+    instead of equalizing timing.
 
-Backward compatibility: `ensure_legacy_keys_migrated()` is a first-boot
-bootstrap, same shape as `shared/users.py::ensure_first_boot_admin` -- if the
-keystore is empty and an operator already has `FENGARDE_API_KEYS` or the
-original single `FENGARDE_API_KEY` configured, their EXISTING key value(s)
-are hashed and provisioned as-is. Nothing the operator holds today needs to
-change; they keep sending the exact same X-Api-Key they always did, and it
-now authenticates via the hashed keystore instead of a live plaintext
-compare. FENGARDE_API_KEYS/FENGARDE_API_KEY are consulted ONLY as migration
-input, once, at startup -- once the keystore has any row, it is the sole
-source of truth for every subsequent request (see app.py::_check_auth).
+This version replaces scrypt with HMAC-SHA256 keyed by a server-side
+pepper (FENGARDE_API_KEY_PEPPER). For a high-entropy random token, a fast
+keyed hash is the standard choice (this is the GitHub/Stripe/AWS
+personal-access-token model: SHA-256 (or HMAC) the token, index it,
+compare in O(1) -- no memory-hard KDF, because the token's own entropy,
+not hash slowness, is the thing resisting brute force). The pepper is
+defense-in-depth on top of that: if the keystore's DB leaks WITHOUT the
+pepper leaking too (different secret store), a stored hash reveals
+nothing offline-crackable. Because the primary key_hash is now itself
+fast, the previous round's separate fast "lookup_hash" column serves no
+purpose and is removed -- one column does both jobs.
+
+One real gap this does NOT close: a MIGRATED legacy key (an operator's old
+FENGARDE_API_KEY, which could be a short human-chosen string, not a
+generated token) gets weaker offline-brute-force protection under a fast
+hash than it had under scrypt. ensure_legacy_keys_migrated() flags this at
+migration time (see its docstring) rather than silently accepting the
+same risk profile as a generated key.
 """
 from __future__ import annotations
 
@@ -33,18 +47,28 @@ import sqlite3
 import threading
 from datetime import datetime, timezone
 
-from store import DEFAULT_TENANT
+from store import DEFAULT_TENANT, InvalidTenantId, _validated_tenant
 
 ADMIN_TENANT_MARKER = "*"
+SCOPE_READ_ONLY = "read_only"
+SCOPE_READ_WRITE = "read_write"
+VALID_SCOPES = (SCOPE_READ_ONLY, SCOPE_READ_WRITE)
 
-# Same cost parameters as shared/users.py::hash_password -- ~50ms/call on a
-# modern CPU, deliberately slow/memory-hard (NIST-approved KDF) against an
-# offline attack on a stolen DB, without adding argon2-cffi/bcrypt as a new
-# dependency (this project is stdlib-first by convention, CLAUDE.md).
-_SCRYPT_N = 2 ** 14
-_SCRYPT_R = 8
-_SCRYPT_P = 1
-_SCRYPT_DKLEN = 32
+# A legacy key shorter than this is treated as "possibly human-chosen" for
+# the migration weak-key warning -- generate_raw_key() produces 43-char
+# token_urlsafe(32) values, so anything meaningfully shorter was never one
+# of ours.
+_LIKELY_WEAK_KEY_LEN = 24
+
+
+class DuplicateKeyError(ValueError):
+    """Raised by provision() when the given raw key already belongs to a
+    DIFFERENT tenant -- a key must uniquely identify one tenant (that is
+    the entire mechanism verify() relies on), so this can never be
+    resolved by guessing; the caller must pick a different key or fix the
+    input. Re-provisioning the SAME key for the SAME tenant is NOT an
+    error (see provision()'s docstring) -- only a genuine cross-tenant
+    collision raises this."""
 
 
 def _now_iso() -> str:
@@ -52,50 +76,78 @@ def _now_iso() -> str:
 
 
 def generate_raw_key() -> str:
-    """A fresh, high-entropy key for provisioning a new tenant. 32 random
-    bytes, url-safe base64 -- same primitive `shared/sessions.py` already
-    uses for session tokens (`secrets.token_urlsafe`)."""
+    """A fresh, high-entropy key for provisioning a tenant. 32 random
+    bytes, url-safe base64 -- same primitive shared/sessions.py already
+    uses for session tokens (secrets.token_urlsafe)."""
     return secrets.token_urlsafe(32)
 
 
+def generate_key_id() -> str:
+    """A short, non-secret identifier for one specific provisioned key --
+    shown in `manage_keys.py list`/logs so an operator can name a key to
+    revoke without it ever containing the secret itself."""
+    return secrets.token_hex(8)
+
+
+def _pepper() -> bytes:
+    """Server-side pepper for the keyed hash. Unlike the KDF salt this
+    replaces, absence is NOT a per-row concern (there's only one, from the
+    environment) and must never block the zero-infra/quickstart default:
+    unset -> empty pepper, loud warning (see warn_missing_pepper), same
+    "insecure-but-functional default, warn don't crash" convention as
+    FENGARDE_API_KEY being unset meaning auth-off. Even with an empty
+    pepper, a stolen keystore DB alone still doesn't recover a raw
+    GENERATED key (SHA-256 preimage resistance) -- the pepper's value is
+    specifically in the leak-DB-without-leaking-pepper-too scenario."""
+    return os.getenv("FENGARDE_API_KEY_PEPPER", "").encode("utf-8")
+
+
+def warn_missing_pepper() -> None:
+    if not os.getenv("FENGARDE_API_KEY_PEPPER"):
+        print('{"level": "warning", "service": "ws6-inventory", '
+              '"msg": "FENGARDE_API_KEY_PEPPER not set: keys are still '
+              'unrecoverable from a DB leak alone (SHA-256 preimage), but '
+              'the pepper\'s defense-in-depth is inactive"}', flush=True)
+
+
 def _hash_key(raw: str) -> str:
-    salt = os.urandom(16)
-    dk = hashlib.scrypt(raw.encode("utf-8"), salt=salt,
-                         n=_SCRYPT_N, r=_SCRYPT_R, p=_SCRYPT_P, dklen=_SCRYPT_DKLEN)
-    return f"scrypt${salt.hex()}${dk.hex()}"
+    digest = hmac.new(_pepper(), raw.encode("utf-8"), hashlib.sha256).hexdigest()
+    return f"hmac-sha256${digest}"
 
 
 def _verify_key(raw: str, stored: str) -> bool:
     """Constant-time-compare verify. A malformed `stored` value (wrong algo
-    tag, bad hex) fails closed to False, never raises -- a corrupt row must
-    not become a crash or, worse, an auth bypass. Mirrors
-    shared/users.py::verify_password exactly."""
+    tag) fails closed to False, never raises -- a corrupt row must not
+    become a crash or, worse, an auth bypass."""
     try:
-        algo, salt_hex, hash_hex = stored.split("$")
-        if algo != "scrypt":
+        algo, digest_hex = stored.split("$", 1)
+        if algo != "hmac-sha256":
             return False
-        salt = bytes.fromhex(salt_hex)
-        dk = hashlib.scrypt(raw.encode("utf-8"), salt=salt,
-                             n=_SCRYPT_N, r=_SCRYPT_R, p=_SCRYPT_P, dklen=_SCRYPT_DKLEN)
-        return hmac.compare_digest(dk.hex(), hash_hex)
+        computed = hmac.new(_pepper(), raw.encode("utf-8"), hashlib.sha256).hexdigest()
+        return hmac.compare_digest(computed, digest_hex)
     except Exception:
         return False
 
 
-def _lookup_hash(raw: str) -> str:
-    """A fast (non-memory-hard) SHA-256 of the raw key, used ONLY to narrow
-    an incoming request down to a single candidate row via an indexed
-    lookup -- the actual authentication decision is always _verify_key()'s
-    salted scrypt compare below. Without this, verifying a request against
-    N provisioned tenants would cost N scrypt calls (~50ms each, per
-    shared/users.py's own budget) on every single request: fine for a
-    handful of tenants, a real latency problem -- and a cheap
-    computational-DoS lever for an attacker sending garbage keys -- at MSP
-    scale. A collision or reversal of this hash only wastes an attacker's
-    time confirming they guessed the wrong row; it is never itself the
-    security boundary, so an unsalted fast hash is the right tool here,
-    same tradeoff production API-key systems (e.g. GitHub PATs) make."""
-    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+def _validated_scope(scope: str | None) -> str:
+    if scope is None:
+        return SCOPE_READ_WRITE
+    if scope not in VALID_SCOPES:
+        raise ValueError(f"invalid scope {scope!r}: must be one of {VALID_SCOPES}")
+    return scope
+
+
+def _validated_provision_tenant(tenant_id: str) -> str:
+    """Same validation store.py applies to every request's tenant_id,
+    reused here so a key can never be provisioned for a tenant_id that
+    will then fail on every actual request (the "silently useless
+    credential" gap an independent review caught: manage_keys.py accepted
+    any string, e.g. "ACME Corp", which authenticated fine and then 400'd
+    downstream forever). "*" (the admin marker) is not a real tenant_id and
+    is special-cased past this check."""
+    if tenant_id == ADMIN_TENANT_MARKER:
+        return tenant_id
+    return _validated_tenant(tenant_id)
 
 
 def _parse_legacy_tenant_keys(raw: str | None) -> dict[str, str]:
@@ -124,15 +176,20 @@ class TenantKeyStore:
         self._init()
 
     def _init(self):
+        self.db.execute("PRAGMA journal_mode=WAL")
+        self.db.execute("PRAGMA synchronous=NORMAL")
         self.db.executescript(
             """
             CREATE TABLE IF NOT EXISTS api_keys (
-              tenant_id TEXT PRIMARY KEY,
-              lookup_hash TEXT NOT NULL UNIQUE,
-              key_hash TEXT NOT NULL,
+              key_id TEXT PRIMARY KEY,
+              tenant_id TEXT NOT NULL,
+              key_hash TEXT NOT NULL UNIQUE,
+              scope TEXT NOT NULL DEFAULT 'read_write',
               source TEXT NOT NULL,
-              created_at TEXT NOT NULL
+              created_at TEXT NOT NULL,
+              last_used_at TEXT
             );
+            CREATE INDEX IF NOT EXISTS idx_api_keys_tenant ON api_keys(tenant_id);
             """
         )
         self.db.commit()
@@ -140,53 +197,117 @@ class TenantKeyStore:
     def count(self) -> int:
         return self.db.execute("SELECT COUNT(*) FROM api_keys").fetchone()[0]
 
-    def provision(self, tenant_id: str, raw_key: str, source: str = "generated") -> None:
-        """Create or ROTATE (overwrite) tenant_id's key. One active key per
-        tenant by design -- provisioning a new key for a tenant immediately
-        invalidates whatever key it had before (no dual-key grace period;
-        out of scope for this pass -- an operator rotating a key needs to
-        update the caller in the same maintenance window)."""
+    def provision(self, tenant_id: str, raw_key: str, source: str = "generated",
+                  scope: str | None = None) -> str:
+        """Add a new, independently revocable key for tenant_id. Returns
+        its key_id. Unlike the previous round, this does NOT overwrite any
+        existing key for the tenant -- a tenant can hold multiple live
+        keys at once (rotation = provision a new one, confirm the caller
+        cut over, then revoke() the old key_id -- no forced downtime).
+
+        Re-provisioning the exact same raw_key for the SAME tenant is a
+        no-op returning the existing key_id (idempotent). Provisioning the
+        same raw_key for a DIFFERENT tenant raises DuplicateKeyError -- a
+        key is the sole thing verify() uses to determine the tenant, so
+        two tenants sharing one key is not a state that can be resolved by
+        guessing (the previous round crashed the whole service on this
+        with an unhandled sqlite3.IntegrityError at import time; this
+        raises a clear, catchable error instead -- see
+        ensure_legacy_keys_migrated for how migration handles it without
+        aborting startup).
+
+        Raises InvalidTenantId (tenant_id) or ValueError (scope) on bad
+        input -- never silently accepts a tenant_id/scope that would make
+        the resulting key authenticate but then fail on every real
+        request."""
+        tenant_id = _validated_provision_tenant(tenant_id)
+        scope = _validated_scope(scope)
+        key_hash = _hash_key(raw_key)
+        with self._write_lock:
+            existing = self.db.execute(
+                "SELECT key_id, tenant_id FROM api_keys WHERE key_hash=?", (key_hash,)
+            ).fetchone()
+            if existing is not None:
+                if existing["tenant_id"] == tenant_id:
+                    return existing["key_id"]
+                raise DuplicateKeyError(
+                    f"this key is already provisioned for tenant {existing['tenant_id']!r}; "
+                    f"a single key cannot identify two different tenants "
+                    f"(attempted for {tenant_id!r})")
+            key_id = generate_key_id()
+            self.db.execute(
+                "INSERT INTO api_keys(key_id, tenant_id, key_hash, scope, source, created_at) "
+                "VALUES (?,?,?,?,?,?)",
+                (key_id, tenant_id, key_hash, scope, source, _now_iso()),
+            )
+            self.db.commit()
+            return key_id
+
+    def revoke(self, key_id: str) -> bool:
+        """Deletes one specific key. Idempotent -- revoking an already-gone
+        (or never-existed) key_id is not an error, just returns False, so
+        a retried/duplicate revoke request is safe."""
+        with self._write_lock:
+            cur = self.db.execute("DELETE FROM api_keys WHERE key_id=?", (key_id,))
+            self.db.commit()
+            return cur.rowcount > 0
+
+    def verify(self, raw_key: str):
+        """Returns (True, tenant_id_or_None, scope) on success --
+        tenant_id is None for the `*` admin key (unrestricted, caller's
+        own tenant_id trusted as-is). Returns (False, None, None) on any
+        failure: empty header, unknown key, or a key that fails the HMAC
+        compare. Exactly one fast hash + one lookup per request regardless
+        of how many keys are provisioned (see this module's docstring for
+        why a memory-hard KDF, used by the previous round, was the wrong
+        choice here)."""
+        if not raw_key:
+            return False, None, None
+        key_hash = _hash_key(raw_key)
+        row = self.db.execute(
+            "SELECT tenant_id, key_hash, scope, key_id FROM api_keys WHERE key_hash=?",
+            (key_hash,),
+        ).fetchone()
+        if row is None:
+            return False, None, None
+        # Defense in depth: don't let a single indexed equality lookup BE
+        # the entire auth decision -- explicitly re-verify with a
+        # constant-time compare of the retrieved value against a freshly
+        # computed one. Costs microseconds on top of a lookup that already
+        # matched; guards against ever depending on SQLite text-equality
+        # semantics alone for a security decision.
+        if not _verify_key(raw_key, row["key_hash"]):
+            return False, None, None
+        self._touch_last_used(row["key_id"])
+        tenant_id = row["tenant_id"]
+        return True, (None if tenant_id == ADMIN_TENANT_MARKER else tenant_id), row["scope"]
+
+    def _touch_last_used(self, key_id: str) -> None:
+        """Records last-use, throttled to at most once/hour per key so a
+        hot key doesn't cost a write on every single request. Single
+        conditional UPDATE (no SELECT-then-write round trip)."""
+        cutoff = datetime.now(tz=timezone.utc).timestamp() - 3600
+        cutoff_iso = datetime.fromtimestamp(cutoff, tz=timezone.utc).isoformat()
         with self._write_lock:
             self.db.execute(
-                "INSERT INTO api_keys(tenant_id, lookup_hash, key_hash, source, created_at) "
-                "VALUES (?,?,?,?,?) "
-                "ON CONFLICT(tenant_id) DO UPDATE SET "
-                "lookup_hash=excluded.lookup_hash, key_hash=excluded.key_hash, "
-                "source=excluded.source, created_at=excluded.created_at",
-                (tenant_id, _lookup_hash(raw_key), _hash_key(raw_key), source, _now_iso()),
+                "UPDATE api_keys SET last_used_at=? WHERE key_id=? "
+                "AND (last_used_at IS NULL OR last_used_at < ?)",
+                (_now_iso(), key_id, cutoff_iso),
             )
             self.db.commit()
 
-    def verify(self, raw_key: str):
-        """Returns (True, tenant_id_or_None) on success -- None means the
-        `*` admin key (unrestricted, caller's own tenant_id trusted as-is,
-        same as the pre-F1/legacy shared-key trust level). Returns
-        (False, None) on any failure: empty header, unknown key, or a key
-        that fails the scrypt compare. Exactly one scrypt call per request
-        regardless of how many tenants are provisioned (see
-        _lookup_hash's docstring)."""
-        if not raw_key:
-            return False, None
-        row = self.db.execute(
-            "SELECT tenant_id, key_hash FROM api_keys WHERE lookup_hash=?",
-            (_lookup_hash(raw_key),),
-        ).fetchone()
-        if row is None:
-            # Still spend one scrypt call so a nonexistent key takes roughly
-            # the same wall-clock time as a real near-miss -- same timing
-            # discipline as shared/users.py::verify_login's decoy hash.
-            _verify_key(raw_key, _hash_key("decoy"))
-            return False, None
-        if not _verify_key(raw_key, row["key_hash"]):
-            return False, None
-        tenant_id = row["tenant_id"]
-        return True, (None if tenant_id == ADMIN_TENANT_MARKER else tenant_id)
-
-    def list_tenants(self) -> list[str]:
-        """Provisioned tenant ids (never key material) -- for ops tooling
-        and the migration startup log line."""
-        return [r["tenant_id"] for r in
-                self.db.execute("SELECT tenant_id FROM api_keys ORDER BY tenant_id").fetchall()]
+    def list_keys(self, tenant_id: str | None = None) -> list[dict]:
+        """Provisioned key metadata (key_id, tenant_id, scope, source,
+        created_at, last_used_at) -- NEVER key material, hashed or
+        otherwise. For ops tooling (manage_keys.py list) and the migration
+        startup log line."""
+        q = "SELECT key_id, tenant_id, scope, source, created_at, last_used_at FROM api_keys"
+        args: list = []
+        if tenant_id is not None:
+            q += " WHERE tenant_id=?"
+            args.append(tenant_id)
+        q += " ORDER BY tenant_id, created_at"
+        return [dict(r) for r in self.db.execute(q, args).fetchall()]
 
 
 def ensure_legacy_keys_migrated(store: TenantKeyStore) -> list[str]:
@@ -199,7 +320,7 @@ def ensure_legacy_keys_migrated(store: TenantKeyStore) -> list[str]:
 
     Priority when both legacy mechanisms are set (FENGARDE_API_KEYS wins --
     it is the newer, more specific one, and its presence means the operator
-    already adopted the first F1 follow-up):
+    already adopted an earlier per-tenant-key follow-up):
       1. FENGARDE_API_KEYS ("tenant:key,tenant:key,*:key") -> one row per
          entry, source='migrated_legacy_tenant_keys'.
       2. FENGARDE_API_KEY (the original single shared secret) -> one row
@@ -207,21 +328,84 @@ def ensure_legacy_keys_migrated(store: TenantKeyStore) -> list[str]:
       3. Neither set -> no-op, returns [] (auth stays fully disabled, same
          zero-infra default as always).
 
-    Returns the list of tenant_ids migrated (never the key values), for a
-    one-line, secret-free startup log entry. A store that already has ANY
-    row is left untouched -- this only ever runs once, on the very first
-    boot after upgrade; re-provisioning/rotation afterward is
+    Two adversarial-input cases handled loudly instead of crashing startup:
+      * An entry's tenant_id fails store.py's validation (e.g. "ACME Corp"
+        from an env var typo) -- SKIPPED with a warning naming the tenant,
+        rather than provisioning a key that would authenticate and then
+        400 on every real request.
+      * Two entries share the same raw key value (operator copy-paste
+        error) -- the SECOND one to migrate is SKIPPED with a warning
+        naming both tenants, rather than crashing the whole service with
+        an unhandled sqlite3.IntegrityError (this was a real regression in
+        the previous round: the plaintext-era config tolerated a duplicate
+        key by silently misauthenticating one tenant as the other, which
+        is worse, but this fix must not trade that for "the service does
+        not start at all"). The first entry still migrates normally.
+
+    A migrated key shorter than a generated key would ever be (see
+    _LIKELY_WEAK_KEY_LEN) gets an additional warning: a fast keyed hash
+    protects a 256-bit generated key just fine, but offers less margin
+    than the previous round's scrypt did for a short, possibly
+    human-chosen legacy secret if the DB *and* the pepper both leak --
+    worth an explicit nudge to rotate onto a generated key via
+    manage_keys.py, not a silent downgrade in protection.
+
+    Returns the list of tenant_ids actually migrated (never key values),
+    for a one-line, secret-free startup log entry. A store that already
+    has ANY row is left untouched -- this only ever runs once, on the very
+    first boot after upgrade; re-provisioning/rotation afterward is
     manage_keys.py's job, not this function's."""
     if store.count() > 0:
         return []
+
+    def _migrate_one(tenant_id: str, key: str, source: str) -> bool:
+        try:
+            store.provision(tenant_id, key, source=source)
+        except InvalidTenantId:
+            print(f'{{"level": "warning", "service": "ws6-inventory", "msg": '
+                  f'"skipped migrating tenant_id {tenant_id!r} from a legacy env var: '
+                  f'not a valid tenant_id, would authenticate then fail every request"}}',
+                  flush=True)
+            return False
+        except DuplicateKeyError:
+            print(f'{{"level": "warning", "service": "ws6-inventory", "msg": '
+                  f'"skipped migrating tenant_id {tenant_id!r}: its key is a duplicate '
+                  f'of an already-migrated tenant\'s key -- one key cannot identify two '
+                  f'tenants, fix the duplicate and provision it separately via manage_keys.py"}}',
+                  flush=True)
+            return False
+        if len(key) < _LIKELY_WEAK_KEY_LEN:
+            print(f'{{"level": "warning", "service": "ws6-inventory", "msg": '
+                  f'"tenant_id {tenant_id!r} migrated a short (possibly human-chosen) key -- '
+                  f'consider rotating to a generated one via manage_keys.py provision"}}',
+                  flush=True)
+        return True
+
     tenant_keys_raw = os.getenv("FENGARDE_API_KEYS")
     if tenant_keys_raw:
         parsed = _parse_legacy_tenant_keys(tenant_keys_raw)
-        for tenant_id, key in parsed.items():
-            store.provision(tenant_id, key, source="migrated_legacy_tenant_keys")
-        return sorted(parsed.keys())
+        migrated = [t for t, k in parsed.items()
+                    if _migrate_one(t, k, "migrated_legacy_tenant_keys")]
+        return migrated
+
     legacy = os.getenv("FENGARDE_API_KEY")
     if legacy:
-        store.provision(DEFAULT_TENANT, legacy, source="migrated_legacy_shared_key")
-        return [DEFAULT_TENANT]
+        return [DEFAULT_TENANT] if _migrate_one(DEFAULT_TENANT, legacy, "migrated_legacy_shared_key") else []
+
     return []
+
+
+def warn_if_legacy_env_now_ignored() -> None:
+    """Loud, cheap drift guard: a legacy env var is being silently ignored
+    because the keystore was already seeded on an earlier boot (so this
+    boot's ensure_legacy_keys_migrated() call was a no-op) -- editing the
+    env var now does nothing. The caller is responsible for only invoking
+    this when that's actually true: after calling
+    ensure_legacy_keys_migrated(), if it returned [] (migrated nothing
+    THIS boot) AND store.count() > 0 (yet the keystore is non-empty, i.e.
+    it was already seeded before)."""
+    if os.getenv("FENGARDE_API_KEYS") or os.getenv("FENGARDE_API_KEY"):
+        print('{"level": "warning", "service": "ws6-inventory", "msg": '
+              '"FENGARDE_API_KEYS/FENGARDE_API_KEY is set but the keystore already has '
+              'provisioned keys from a previous boot -- these env vars are IGNORED once '
+              'migrated; use manage_keys.py to change keys, not the env var"}', flush=True)

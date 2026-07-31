@@ -18,12 +18,15 @@ import os
 import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse, parse_qs, unquote
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 from store import InventoryStore, InvalidTenantId  # noqa: E402
-from keystore import TenantKeyStore, ensure_legacy_keys_migrated  # noqa: E402
+from keystore import (  # noqa: E402
+    SCOPE_READ_ONLY, TenantKeyStore, ensure_legacy_keys_migrated,
+    warn_if_legacy_env_now_ignored, warn_missing_pepper,
+)
 from authz import warn_if_disabled  # noqa: E402
 
 STORE = InventoryStore(os.getenv("INVENTORY_DB", ":memory:"))
@@ -74,29 +77,31 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
     def _check_auth(self):
-        """Returns (True, bound_tenant) on success, or sends 401 and returns
-        (False, None). An empty keystore means auth is fully disabled --
-        the zero-infra/quickstart default, unchanged since before F1.
-        Otherwise every request must present a key that verifies against
-        KEYSTORE (hashed at rest, see keystore.py). bound_tenant is None
-        for the '*' admin key (unrestricted, this request's own
-        ?tenant_id= trusted as-is) or a specific tenant_id for a
-        tenant-scoped key -- every tenant_id this request touches must
-        then be forced to it, regardless of what the caller asked for."""
+        """Returns (True, bound_tenant, scope) on success, or sends 401 and
+        returns (False, None, None). An empty keystore means auth is fully
+        disabled -- the zero-infra/quickstart default, unchanged since
+        before F1. Otherwise every request must present a key that
+        verifies against KEYSTORE (hashed at rest, see keystore.py).
+        bound_tenant is None for the '*' admin key (unrestricted, this
+        request's own ?tenant_id= trusted as-is) or a specific tenant_id
+        for a tenant-scoped key -- every tenant_id this request touches
+        must then be forced to it, regardless of what the caller asked
+        for. scope is SCOPE_READ_ONLY/SCOPE_READ_WRITE -- do_POST rejects
+        a read-only key before it can write anything."""
         if KEYSTORE.count() == 0:
-            return True, None
-        ok, bound = KEYSTORE.verify(self.headers.get("X-Api-Key", ""))
+            return True, None, None
+        ok, bound, scope = KEYSTORE.verify(self.headers.get("X-Api-Key", ""))
         if not ok:
             self._send(401, {"error": "unauthorized"})
-            return False, None
-        return True, bound
+            return False, None, None
+        return True, bound, scope
 
     def do_GET(self):
         # Any malformed input (bad ?at=, bad ?limit=) becomes a clean 4xx/5xx JSON
         # response instead of an unhandled exception that drops the connection and
         # leaks a stack trace to the client.
         try:
-            ok, bound_tenant = self._check_auth()
+            ok, bound_tenant, _scope = self._check_auth()
             if not ok:
                 return
             self._route_get(bound_tenant)
@@ -137,15 +142,23 @@ class Handler(BaseHTTPRequestHandler):
                 status=q.get("status"), limit=_parse_limit(q.get("limit")),
                 tenant_id=tenant_id))
         if u.path.startswith("/assets/"):
-            mac = u.path[len("/assets/"):]
+            # unquote: a raw path segment is never URL-decoded by urlparse
+            # -- without this, a %-encoded MAC (e.g. "%3A" for ":") never
+            # matches the decoded value stored by upsert(), silently
+            # always 404ing instead of finding the real (tenant-scoped)
+            # asset.
+            mac = unquote(u.path[len("/assets/"):])
             asset = STORE.get(mac, tenant_id=tenant_id)
             return self._send(200, asset) if asset else self._send(404, {"error": "not found"})
         return self._send(404, {"error": "no such path"})
 
     def do_POST(self):
         try:
-            ok, bound_tenant = self._check_auth()
+            ok, bound_tenant, scope = self._check_auth()
             if not ok:
+                return
+            if scope == SCOPE_READ_ONLY:
+                self._send(403, {"error": "this key is read-only"})
                 return
             self._route_post(bound_tenant)
         except _BadRequest as e:
@@ -186,6 +199,12 @@ class Handler(BaseHTTPRequestHandler):
 
 def serve(host="0.0.0.0", port=8000):
     warn_if_disabled("ws6-inventory", KEYSTORE)
+    warn_missing_pepper()
+    if not MIGRATED_TENANTS and KEYSTORE.count() > 0:
+        # Nothing migrated on THIS boot, yet the keystore is non-empty --
+        # it was already seeded by an earlier boot. If a legacy env var is
+        # still set, editing it now does nothing; say so.
+        warn_if_legacy_env_now_ignored()
     srv = ThreadingHTTPServer((host, port), Handler)
     # ws6 is a standalone service; its image does NOT bundle `shared`, so emit a
     # structured JSON log line inline rather than importing shared.log.
