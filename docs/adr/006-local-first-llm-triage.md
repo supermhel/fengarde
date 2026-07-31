@@ -53,8 +53,8 @@ on WS-5's output to decide whether to fire.
   pressure to walk back local-first triage later.
 - **Trade-off:** local-model quality/latency is whatever the operator's own
   hardware supports — no vendor-hosted frontier-model fallback exists in this
-  repo. Documented as a deliberate scope boundary (`docs/posts/local-ai-triage.md`),
-  not a gap to silently fix by adding a cloud API key path.
+  repo. Documented as a deliberate scope boundary, not a gap to silently fix
+  by adding a cloud API key path.
 - **Trade-off:** prompt-injection *content* still reaches the model (bounding
   its blast radius doesn't prevent the attempt) — WS-4's independent,
   advisory-only relationship to WS-5 is the actual mitigation, not input
@@ -63,5 +63,6 @@ on WS-5's output to decide whether to fire.
   layered on top of prompt injection — the dashboard's `esc()` discipline
   (log-injection ADR context, `services/shared/sanitize.py`) is what actually
   closes that, not this ADR's decision.
-- See `docs/posts/local-ai-triage.md` for the full public-facing rationale
-  this ADR summarizes.
+- A `docs/posts/local-ai-triage.md` draft write-up expanded on this rationale
+  for a public audience; it was never published and moved out of this repo's
+  working tree in the 2026-07-31 doc audit (SSOT.md §4).

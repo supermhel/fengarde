@@ -45,5 +45,6 @@ the entire zero-infra test suite (`STORAGE_BACKEND=memory`, the default for
 - **Trade-off:** single-instance OpenSearch in the current tier, same HA
   caveat as ADR 001's Redis decision — no replica/cluster design yet,
   conscious Phase-3 scope cut per the 2026-07-02 architecture review.
-- See `docs/posts/opensearch-not-elastic.md` for the full public-facing
-  rationale this ADR summarizes.
+- A `docs/posts/opensearch-not-elastic.md` draft write-up expanded on this
+  rationale for a public audience; it was never published and moved out of
+  this repo's working tree in the 2026-07-31 doc audit (SSOT.md §4).

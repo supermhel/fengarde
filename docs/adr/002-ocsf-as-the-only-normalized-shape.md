@@ -56,5 +56,6 @@ additively, without colliding with OCSF's own fields — see
   makes this failure mode possible (rules and parsers are decoupled by the
   same OCSF contract that makes reuse work) — the fix for the risk the
   decision introduces is itself now permanent CI infrastructure.
-- See `docs/posts/ocsf-native.md` for the full public-facing rationale this
-  ADR summarizes.
+- A `docs/posts/ocsf-native.md` draft write-up expanded on this rationale for
+  a public audience; it was never published and moved out of this repo's
+  working tree in the 2026-07-31 doc audit (SSOT.md §4).

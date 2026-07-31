@@ -2,9 +2,12 @@
 
 Backfilled 2026-07-16 (M2, PLAN_C Tier 2.3) for the six standing decisions
 already made and shipped — these record reasoning that previously lived only
-in commit messages, `docs/superpowers/specs/`, and `docs/posts/`, not a
-retroactive justification invented after the fact. Each ADR cites the code/doc
-that proves the decision is real, not aspirational.
+in commit messages and `docs/superpowers/specs/`, not a retroactive
+justification invented after the fact. Each ADR cites the code/doc that
+proves the decision is real, not aspirational. (Three ADRs below also cite
+a `docs/posts/` write-up as further public-facing rationale; those draft
+posts were never published and moved out of this repo's working tree in the
+2026-07-31 doc audit — see SSOT.md §4.)
 
 New architecturally-significant decisions going forward get a new ADR here
 (per `CLAUDE.md`'s standing guardrail: ask the human before changing the bus

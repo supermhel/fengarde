@@ -6,7 +6,9 @@ plus the private FENGARDE-Sec seam. This is the "design & architecture" lens of 
 sweep — the one that produces a document, not a diff. Grounded in the actual code, not the
 roadmap's intentions.
 
-Companion doc: `2026-06-27-fengarde-v0.1-build-plan.md` (what shipped). The 3-tier target +
+Companion doc: the v0.1 build plan (what shipped) — moved to fengarde-sec's
+`docs/from-public-repo/specs/` in the 2026-07-31 doc audit, see SSOT.md §4.
+The 3-tier target +
 open-core design doc is the owner's internal roadmap, not kept in this repo's working tree
 (see SSOT.md §4) — SSOT.md §1's open-core-split row has the current, reconciled summary.
 

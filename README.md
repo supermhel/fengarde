@@ -221,8 +221,9 @@ All services are long-running daemons with a `/health` endpoint and a restart po
 >
 > **Honest status:** the *in-stack* live feeder and the *live* dashboard (which reads
 > alerts straight from OpenSearch) are the remaining DX2/DX4 items — see
-> [the build plan](docs/superpowers/specs/2026-06-27-fengarde-v0.1-build-plan.md). The
-> end-to-end detection logic itself is proven today by `make e2e`.
+> `SSOT.md` for current status (the original build plan is historical and no
+> longer kept in this repo). The end-to-end detection logic itself is proven
+> today by `make e2e`.
 
 Other handy targets:
 
@@ -318,8 +319,7 @@ schema (OCSF).
 | 7 | `services/ws7-dashboard` | Alert console | ✅ |
 
 For current status and the forward roadmap, see **[SSOT.md](SSOT.md)** (read that first).
-For historical design context: [the v0.1 build plan](docs/superpowers/specs/2026-06-27-fengarde-v0.1-build-plan.md)
-and [`docs/PHASE0_README.md`](docs/PHASE0_README.md).
+For historical design context: [`docs/PHASE0_README.md`](docs/PHASE0_README.md).
 
 ---
 

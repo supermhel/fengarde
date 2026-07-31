@@ -113,9 +113,9 @@ In short, for triage purposes:
   what's actually still open before filing a duplicate.
 
 See [SSOT.md](SSOT.md) §3 for the full current doc index and each doc's trust
-level, and the [v0.1 build plan](docs/superpowers/specs/2026-06-27-fengarde-v0.1-build-plan.md)
-for historical context only (it describes the project's first slice, not its
-current scope).
+level. The original v0.1 build plan is historical context only (it describes
+the project's first slice, not its current scope) and is no longer kept in
+this repo's working tree — see SSOT.md §4.
 
 ---
 
