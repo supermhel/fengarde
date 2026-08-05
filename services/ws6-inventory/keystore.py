@@ -115,6 +115,16 @@ def warn_missing_pepper() -> None:
               'the pepper\'s defense-in-depth is inactive"}', flush=True)
 
 
+# CodeQL py/weak-sensitive-data-hashing (alerts #71/#72) flags both HMAC calls
+# below as "weak hashing of sensitive data" -- that rule targets *password*
+# hashing, where a fast hash is wrong because the attacker's search space is
+# small (a human-chosen secret) and hash speed is the only cost. `raw` here is
+# never a password: it is a `generate_raw_key()`-produced 256-bit random
+# token (or, for a migrated legacy key, flagged separately at migration time
+# -- see this module's docstring above). For a high-entropy token, a fast
+# keyed hash is the correct, standard choice (GitHub/Stripe/AWS
+# personal-access-token model) -- see the module docstring for the full
+# tradeoff writeup, including why scrypt was tried first and reverted.
 def _hash_key(raw: str) -> str:
     digest = hmac.new(_pepper(), raw.encode("utf-8"), hashlib.sha256).hexdigest()
     return f"hmac-sha256${digest}"
