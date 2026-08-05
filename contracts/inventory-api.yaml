@@ -94,6 +94,7 @@ components:
         type: { type: string, description: "router, switch, server, vm, hypervisor, db, medical, plc" }
         last_seen: { type: string, format: date-time }
         status: { type: string, enum: [active, inactive] }
+        new_device: { type: boolean, description: "M7 Track Y: true when THIS observation was an alertable first-ever sighting of the mac for its tenant. Only ever present on POST /assets/upsert's response -- it describes the write, not the stored asset, so reads (GET /assets, /assets/{mac}) never carry it. False during the tenant's initial baseline window (INVENTORY_BASELINE_SECONDS) so populating an existing segment is not reported as a fleet of new devices." }
     Observation:
       type: object
       required: [mac, ip, seen_at]

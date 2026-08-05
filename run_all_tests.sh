@@ -52,6 +52,9 @@ echo
 echo "== ws6 per-tenant API keys, hashed at rest (F1 2nd follow-up, 2026-07-30 audit) =="
 $PY services/ws6-inventory/test_keystore.py || fail=1
 echo
+echo "== ws6 new-device diff (M7 Track Y): baseline, per-tenant state, restart durability =="
+$PY services/ws6-inventory/test_new_device_diff.py || fail=1
+echo
 echo "== M4.2 RBAC: users/sessions/roles (unit) =="
 $PY services/shared/test_rbac.py || fail=1
 echo
@@ -237,6 +240,9 @@ $PY services/ws2-normalization/parsers/test_sysmon.py || fail=1
 echo
 echo "== ws2 parsers: modbus_anomaly (M7 Track X, 2026-07-22: OT protocol-anomaly detector, not a vendor-log parser -- un-dormants ot_modbus_unauthorized_write.yml) =="
 $PY services/ws2-normalization/parsers/test_modbus_anomaly.py || fail=1
+echo
+echo "== ws2 inventory_diff parser (M7 Track Y): OCSF shape + edge rejection =="
+$PY services/ws2-normalization/parsers/test_inventory_diff.py || fail=1
 echo
 echo "== ws5 ollama adapter + fallback (v0.2) =="
 $PY services/ws5-ai/test_llm_adapter.py || fail=1
