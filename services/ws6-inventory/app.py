@@ -192,8 +192,17 @@ class Handler(BaseHTTPRequestHandler):
             # inventory any more than it can read one.
             if bound_tenant is not None:
                 body = {**body, "tenant_id": bound_tenant}
-            asset = STORE.upsert(body)
-            return self._send(200, asset) if asset else self._send(400, {"error": "mac required"})
+            asset, is_new_device = STORE.upsert_with_diff(body)
+            if not asset:
+                return self._send(400, {"error": "mac required"})
+            # M7 Track Y: an alertable first-ever sighting for this tenant.
+            # Additive field -- existing callers that ignore it are unaffected.
+            # This is the SIGNAL only; nothing publishes it to `raw.events`
+            # yet, because WS-6 is deliberately stdlib-only (see
+            # requirements.txt: the redis dep for the bus is documented and
+            # intentionally deferred). Until that lands, the
+            # `ot_new_device_on_segment` rule has no live producer.
+            return self._send(200, {**asset, "new_device": is_new_device})
         return self._send(404, {"error": "no such path"})
 
 
@@ -206,8 +215,10 @@ def serve(host="0.0.0.0", port=8000):
         # still set, editing it now does nothing; say so.
         warn_if_legacy_env_now_ignored()
     srv = ThreadingHTTPServer((host, port), Handler)
-    # ws6 is a standalone service; its image does NOT bundle `shared`, so emit a
-    # structured JSON log line inline rather than importing shared.log.
+    # ws6's HTTP surface deliberately avoids `shared` even though the image
+    # bundles it now (M7 Track Y follow-up, for bus_consumer.py's opt-in use)
+    # -- emit a structured JSON log line inline rather than importing
+    # shared.log, so this path stays independent of that dependency.
     import json as _json
     import time as _time
     if MIGRATED_TENANTS:
@@ -222,4 +233,14 @@ def serve(host="0.0.0.0", port=8000):
 
 
 if __name__ == "__main__":
+    # M7 Track Y follow-up: opt-in bus consumer, mirrors ws3-indexer's
+    # triage_api/webhook thread pattern (services/ws3-indexer/main.py) -- HTTP
+    # stays the main thread, the bus consumer runs alongside it on a daemon
+    # thread. Gated on BUS_BACKEND (unset in the zero-infra Docker build,
+    # which never installs `shared`/redis at all) so importing this module
+    # never requires them; `shared` is only imported inside this branch.
+    if os.getenv("BUS_BACKEND"):
+        import threading
+        from bus_consumer import run_forever
+        threading.Thread(target=run_forever, args=(STORE,), daemon=True).start()
     serve(port=int(os.getenv("PORT", "8000")))

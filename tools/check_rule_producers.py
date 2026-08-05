@@ -149,6 +149,11 @@ FIXTURES: dict[str, list[dict]] = {
         {"raw": {"unitId": 1, "functionCode": 6, "address": 41999,
                  "sourceIp": "10.20.0.99", "destIp": "10.20.0.5"}, "meta": {}},
     ],
+    "inventory_diff": [
+        {"raw": {"mac": "AA:BB:CC:DD:EE:FF", "ip": "10.20.0.77",
+                 "hostname": "plc-line4", "device_type": "plc",
+                 "sector": "ot", "seen_at": 1751500000000}, "meta": {}},
+    ],
 }
 
 
