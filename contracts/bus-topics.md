@@ -12,7 +12,7 @@ nothing here should be read as "Kafka already works."
 
 | Topic              | Producer        | Consumer(s)       | Payload                              | Partition key            |
 |--------------------|-----------------|-------------------|--------------------------------------|--------------------------|
-| `raw.events`       | WS-1 Collectors | WS-2 Normalization| `{source_type, raw, meta}`           | `src_endpoint.ip`        |
+| `raw.events`       | WS-1 Collectors, WS-6 Inventory (M7 Track Y follow-up: a genuinely new device, `source_type=inventory_diff`) | WS-2 Normalization| `{source_type, raw, meta}`           | `src_endpoint.ip` (WS-1) / `mac` (WS-6) |
 | `normalized.events`| WS-2 Normalization | WS-3, WS-4, WS-6 | OCSF event (Contract A)              | `src_endpoint.ip`        |
 | `scored.events`    | WS-4 Detection  | WS-3, WS-5        | OCSF event + `siem.score`            | `src_endpoint.ip`        |
 | `ai.requests`      | WS-4 Detection  | WS-5 AI worker(s) | `{event_id, event, reason}`          | `event_id`               |

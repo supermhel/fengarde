@@ -231,4 +231,14 @@ def serve(host="0.0.0.0", port=8000):
 
 
 if __name__ == "__main__":
+    # M7 Track Y follow-up: opt-in bus consumer, mirrors ws3-indexer's
+    # triage_api/webhook thread pattern (services/ws3-indexer/main.py) -- HTTP
+    # stays the main thread, the bus consumer runs alongside it on a daemon
+    # thread. Gated on BUS_BACKEND (unset in the zero-infra Docker build,
+    # which never installs `shared`/redis at all) so importing this module
+    # never requires them; `shared` is only imported inside this branch.
+    if os.getenv("BUS_BACKEND"):
+        import threading
+        from bus_consumer import run_forever
+        threading.Thread(target=run_forever, args=(STORE,), daemon=True).start()
     serve(port=int(os.getenv("PORT", "8000")))
