@@ -1,16 +1,14 @@
 title: New OT device appeared on the OT inventory segment
 id: 7f8091a2-b3c4-4d53-9e6f-1a2b3c4d5e6f
-# PROVISIONAL -- DORMANT IN PRODUCTION (M7 Track Y, 2026-08-05).
-# This rule has NO live producer. Nothing in the deployed system publishes an
-# inventory-diff notification to `raw.events`: WS-6 owns the durable per-tenant
-# new-device state (InventoryStore.upsert_with_diff) but is deliberately
-# stdlib-only with no bus client, and nothing consumes `assets.updates` either.
-# The only thing that has ever fired this rule is its own anti-dormancy fixture
-# in tools/check_rule_producers.py, so a green eval/attack/fire_check.py proves
-# it CAN fire, never that it WILL. Do not read its presence here, or the
-# "28 rules shipped" count in SSOT.md, as a working detection.
-# Promote to `status: stable` only once the bus transport lands.
-status: experimental
+# M7 Track Y follow-up (2026-08-05): WS-6 now has a real assets.updates bus
+# consumer (services/ws6-inventory/bus_consumer.py) that republishes a
+# baseline-gated, per-tenant first sighting onto raw.events for this rule to
+# evaluate -- proven zero-infra end to end, including a real round-trip
+# through the inventory_diff parser into valid OCSF
+# (services/ws6-inventory/test_bus_consumer.py). NOT YET live-verified against
+# a real Docker/Redis stack -- same standing caveat as most of this project's
+# zero-infra-proven features (see SSOT.md's "proven vs. claim" section, §2).
+status: stable
 description: >
   An inventory-diff worker observed a previously unknown MAC/device appear on
   the OT segment.  The worker is expected to emit an OCSF Network Activity open

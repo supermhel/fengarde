@@ -80,8 +80,12 @@ def run() -> None:
     check(event2 is not None and validate(event2) == [], "plain observation still parses to valid OCSF")
     check(event2["severity_id"] != 4,
           "sector is never fabricated as ot -- severity is not escalated for an unlabeled device")
-    check("tenant_id" not in out2[0].payload["meta"],
-          "no tenant_id on the observation means none is fabricated into meta")
+    # InventoryStore resolves an absent tenant_id to the real "default" tenant
+    # (its own tenant model, not a null/empty value -- see store.py's
+    # _validated_tenant), so stamping THAT resolved value here is consistent
+    # with what was actually stored, not a fabrication of upstream context.
+    check(out2[0].payload["meta"].get("tenant_id") == "default",
+          "an observation with no explicit tenant is stamped with the store's resolved default")
 
     # Cold start inside a baseline window: no publish at all.
     os.environ["INVENTORY_BASELINE_SECONDS"] = "3600"

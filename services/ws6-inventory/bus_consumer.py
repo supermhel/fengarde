@@ -56,10 +56,12 @@ def make_handler(store: InventoryStore, bus: Bus):
         if not is_new_device:
             return
         notification = build_notification(payload)
-        meta = {}
+        # InventoryStore resolves an absent tenant_id to the real "default"
+        # tenant (store.py::_validated_tenant), never empty/None, so this is
+        # always the tenant the observation was actually stored under -- not
+        # a guess when the observation itself omitted one.
         tenant_id = asset.get("tenant_id")
-        if tenant_id:
-            meta["tenant_id"] = tenant_id
+        meta = {"tenant_id": tenant_id}
         bus.produce(
             "raw.events",
             key=asset["mac"],
