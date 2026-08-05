@@ -65,7 +65,17 @@ class SnmpCollector:
         }
 
         # Asset observation: SNMP gives us all three of mac/ip/hostname.
-        if ip != "0.0.0.0" and (mac or hostname):
+        #
+        # Requires `mac`, not `mac or hostname` (2026-08-05). `assets.updates`
+        # is MAC-keyed (contracts/bus-topics.md partition key; WS-6's
+        # InventoryStore rejects a macless observation outright), so the old
+        # `or` let a device that answered sysName but NOT ifPhysAddress emit an
+        # observation that could only ever be discarded. The shipped mock
+        # devices all carry a MAC so this never fired in the seeded path -- it
+        # was a latent instance of the same defect that made every
+        # syslog-sourced observation a guaranteed drop. See
+        # syslog_collector.handle_line's comment for the full finding.
+        if ip != "0.0.0.0" and mac:
             self._assets.append(
                 {
                     "mac": mac,

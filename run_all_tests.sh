@@ -256,6 +256,9 @@ echo
 echo "== ws1 P1-6 (2026-07-21 audit): spool drain O(n) + lock released across produce() =="
 $PY services/ws1-collectors/test_spool_perf.py || fail=1
 echo
+echo "== ws1 asset observations: only MAC-bearing observations reach assets.updates (2026-08-05) =="
+$PY services/ws1-collectors/test_asset_observations.py || fail=1
+echo
 echo "== integration e2e (WS-1->2->4->3) =="
 $PY tools/integration_e2e.py || fail=1
 echo

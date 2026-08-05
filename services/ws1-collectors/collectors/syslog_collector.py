@@ -87,16 +87,32 @@ class SyslogCollector:
         else:
             meta["parsed"] = False  # leave full normalization to WS-2
 
-        # Record an asset observation when we have both a hostname and an IP.
-        if hostname and not _IP_LITERAL.match(hostname):
-            self._assets.append(
-                {
-                    "mac": None,  # syslog headers carry no MAC
-                    "ip": ip,
-                    "hostname": hostname,
-                    "seen_at": received_at,
-                }
-            )
+        # NO asset observation is emitted here, deliberately -- syslog headers
+        # carry no MAC, and `assets.updates` is MAC-keyed.
+        #
+        # This used to append {"mac": None, "ip": ip, "hostname": hostname, ...}
+        # whenever a non-IP hostname was parsed. Live-verified 2026-08-05: every
+        # one of those was discarded on arrival. `contracts/bus-topics.md` names
+        # `mac` as the topic's partition key, and WS-6's
+        # `InventoryStore.upsert_with_diff()` returns None for any observation
+        # without one ("inventory is MAC-keyed (Contract C)"), so the consumer
+        # logged `assets.updates observation missing mac, dropped` and moved on.
+        # Measured on a real stack: 3 of the 5 observations WS-1 seeds at startup
+        # were syslog-sourced and 100% of them were dropped, every run. The path
+        # was invisible until WS-6's bus consumer was actually wired up, because
+        # until then nothing consumed the topic at all.
+        #
+        # `netflow_collector` already documents this same abstention for the same
+        # reason. Emitting a message the only consumer is structurally guaranteed
+        # to discard is pure bus traffic plus a misleading warn-log, and it hides
+        # a genuine macless bug should one ever appear.
+        #
+        # Enriching an ALREADY-KNOWN asset from a macless sighting (match the
+        # observation's IP against `ip_history` via WS-6's existing
+        # `InventoryStore.resolve()`) is a real, useful feature -- tracked
+        # separately, not done here. It needs its own handling of DHCP/NAT
+        # address reuse, which can otherwise attach a hostname to the wrong
+        # device silently. See SSOT.md's 2026-08-05 rows.
 
         return {"source_type": self.SOURCE_TYPE, "raw": line, "meta": stamp_meta(meta)}
 
