@@ -21,16 +21,31 @@
 
 services:
   # Disable single-instance services when HA is active.
+  #
+  # Live-verified bug (2026-08-05): `profiles: [ha]` here does the OPPOSITE of
+  # "disable" -- Compose activates a service when ONE of its listed profiles is
+  # requested, so tagging these `[ha]` and then invoking `--profile ha up`
+  # (exactly what `make ha-up` does) makes them start ALONGSIDE the HA cluster,
+  # not instead of it. Confirmed live: both `siem-bus` (plain) and
+  # `siem-bus-ha-1..3` were `Up (healthy)` simultaneously, and devkit-feeder's
+  # traffic went to the plain instance (its REDIS_URL is hardcoded to
+  # `redis:6379`, unaffected by this file) while the Sentinel-managed cluster
+  # sat at zero events. `[standard]` fixes it: a plain `docker compose up`
+  # (this file not included) never requests `--profile standard`, so these
+  # stay profile-less there and start exactly as before (unaffected, matching
+  # this file's original intent) -- but once ha.yml's override replaces their
+  # profile list with `[standard]`, `--profile ha up` no longer matches them
+  # at all, since only "ha" was requested.
   redis:
-    profiles: [ha]
+    profiles: [standard]
   opensearch:
-    profiles: [ha]
+    profiles: [standard]
   dashboards:
-    profiles: [ha]
+    profiles: [standard]
   provision:
-    profiles: [ha]
+    profiles: [standard]
   devkit-feeder:
-    profiles: [ha]
+    profiles: [standard]
 
   # ---- Redis HA: 1 primary + 2 replicas + 3 Sentinels ----
   redis-1:
@@ -258,6 +273,34 @@ services:
   # These keep the existing service names so `docker compose up --profile ha`
   # still brings up the full stack, but route the bus and storage to the HA
   # backends instead of the single-instance ones.
+  #
+  # `depends_on: !override {...}` (not plain `depends_on: {...}`) on every one of
+  # these -- live-verified bug (2026-08-05): Compose MERGES `depends_on` maps
+  # across -f files by key, it does not replace them. Without `!override`, e.g.
+  # ws1-collectors ends up depending on BOTH `redis-1` (this override) AND the
+  # base file's `redis` (unioned in from docker-compose.yml) -- and once the
+  # single-instance disable fix above correctly excludes `redis` from the
+  # active service set, that merged-in dependency on a service that will never
+  # start makes the whole `up`/`down` invocation fail with "depends on
+  # undefined service". `!override` tells Compose to replace this key outright
+  # instead of merging it, which is what every one of these overrides always
+  # intended.
+  #
+  # `networks: [default, ha]` on every one of these -- second live-verified bug
+  # found in the same pass, past the point where `depends_on`/env looked
+  # correct: none of these services were ever attached to the `ha` network
+  # redis-1..3/the Sentinels/opensearch-1..3 actually live on. `depends_on`
+  # being satisfied only proves the target container is healthy, not that
+  # THIS container can reach it -- these stayed on the base file's implicit
+  # `default` network only, so every one of them sat `unhealthy` with
+  # `redis.exceptions.ConnectionError: Error -2 connecting to redis:6379. Name
+  # or service not known.` in its logs (the sentinel-discovery path silently
+  # falling back to `_RedisSentinelBus`'s initial/dead URL after
+  # `Sentinel.discover_master()` itself failed with a plain network
+  # `ConnectionError` to all three sentinel hosts -- confirmed live from
+  # inside the container, not inferred). `default` is kept alongside `ha` so
+  # these can still reach each other (WS-7's proxy to WS-6's API, etc.)
+  # exactly as before.
 
   ws1-collectors:
     environment:
@@ -265,7 +308,8 @@ services:
       - REDIS_SENTINEL_HOSTS=redis-sentinel-1:26379,redis-sentinel-2:26379,redis-sentinel-3:26379
       - REDIS_SENTINEL_MASTER=mymaster
       - REDIS_PASSWORD=${REDIS_PASSWORD:-}
-    depends_on: {redis-1: {condition: service_healthy}}
+    depends_on: !override {redis-1: {condition: service_healthy}}
+    networks: [default, ha]
 
   ws2-normalization:
     environment:
@@ -273,7 +317,8 @@ services:
       - REDIS_SENTINEL_HOSTS=redis-sentinel-1:26379,redis-sentinel-2:26379,redis-sentinel-3:26379
       - REDIS_SENTINEL_MASTER=mymaster
       - REDIS_PASSWORD=${REDIS_PASSWORD:-}
-    depends_on: {redis-1: {condition: service_healthy}}
+    depends_on: !override {redis-1: {condition: service_healthy}}
+    networks: [default, ha]
 
   ws3-indexer:
     environment:
@@ -282,9 +327,10 @@ services:
       - REDIS_SENTINEL_MASTER=mymaster
       - REDIS_PASSWORD=${REDIS_PASSWORD:-}
       - OPENSEARCH_URL=http://opensearch-1:9200
-    depends_on:
+    depends_on: !override
       redis-1: {condition: service_healthy}
       opensearch-1: {condition: service_healthy}
+    networks: [default, ha]
 
   ws4-detection:
     environment:
@@ -292,7 +338,8 @@ services:
       - REDIS_SENTINEL_HOSTS=redis-sentinel-1:26379,redis-sentinel-2:26379,redis-sentinel-3:26379
       - REDIS_SENTINEL_MASTER=mymaster
       - REDIS_PASSWORD=${REDIS_PASSWORD:-}
-    depends_on: {redis-1: {condition: service_healthy}}
+    depends_on: !override {redis-1: {condition: service_healthy}}
+    networks: [default, ha]
 
   ws5-ai:
     environment:
@@ -300,14 +347,25 @@ services:
       - REDIS_SENTINEL_HOSTS=redis-sentinel-1:26379,redis-sentinel-2:26379,redis-sentinel-3:26379
       - REDIS_SENTINEL_MASTER=mymaster
       - REDIS_PASSWORD=${REDIS_PASSWORD:-}
-    depends_on: {redis-1: {condition: service_healthy}}
+    depends_on: !override {redis-1: {condition: service_healthy}}
+    networks: [default, ha]
 
+  # M7 Track Y follow-up (2026-08-05): WS-6 gained its own assets.updates bus
+  # consumer the same day this HA profile already existed, and was never
+  # wired in here -- live-verified gap, caught by actually bringing HA up
+  # rather than assumed fixed because the single-instance path was tested.
+  # Without this override WS-6 depends on the now-correctly-excluded plain
+  # `redis` (unsatisfiable) and, even if it somehow started, its bus consumer
+  # would try BUS_BACKEND=redis against a host that isn't running.
   ws6-inventory:
     environment:
+      - FENGARDE_API_KEY=${FENGARDE_API_KEY:-}
       - BUS_BACKEND=redis-sentinel
       - REDIS_SENTINEL_HOSTS=redis-sentinel-1:26379,redis-sentinel-2:26379,redis-sentinel-3:26379
       - REDIS_SENTINEL_MASTER=mymaster
       - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+    depends_on: !override {redis-1: {condition: service_healthy}}
+    networks: [default, ha]
 
   ws7-dashboard:
     environment:
