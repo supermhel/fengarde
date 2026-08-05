@@ -137,8 +137,8 @@ def _rewrite_selection(
             if not isinstance(item, dict):
                 errors.append(f"{where}[{idx}]: expected mapping, got {type(item).__name__}")
                 continue
-            rewritten: dict[str, Any] = {}
-            source_suffix: dict[str, int] = {}
+            rewritten = {}
+            source_suffix = {}
             for field, val in item.items():
                 local_field, local_value = _translate_modifier(field, val)
                 if local_value is _DROP:
