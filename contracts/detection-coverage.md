@@ -69,7 +69,7 @@ this is now a rule gap, not a parser gap.
 | ot_write_outside_maintenance | class 6003, activity 3, time outside_hours | yes (opcua_audit, added v0.4) | ATT&CK-ICS T0836 / TA0106 |
 | ot_new_engineering_connection | class 3002, activity 1, distinct src_endpoint.ip per unmapped.ot.server_id | yes (opcua_audit, added v0.4) | ATT&CK-ICS T0864 / TA0108 |
 | ot_config_change | class 6003, unmapped.ot.is_config_node=true | yes (opcua_audit, added v0.4) | ATT&CK-ICS T0836 / TA0106 |
-| ot_new_device_on_segment | class 4001, activity 1, siem.source_type=inventory_diff, siem.sector=datacenter, unmapped.ot.sector=ot | fixture only (inventory_diff parser exists, but NOTHING publishes an inventory-diff notification to `raw.events` yet -- WS-6's bus transport is deliberately deferred, see SSOT.md's M7 Track Y row) | ATT&CK-ICS T0864 / TA0108 |
+| ot_new_device_on_segment | class 4001, activity 1, siem.source_type=inventory_diff, siem.sector=datacenter, unmapped.ot.sector=ot | yes, zero-infra proven end to end (inventory_diff, WS-6 bus_consumer.py added M7 Track Y follow-up 2026-08-05 -- not yet live-verified against a real Docker/Redis stack, see SSOT.md) | ATT&CK-ICS T0864 / TA0108 |
 | n8n_new_webhook_exposed | class 6003, activity 1, api.operation=webhook.created | yes (n8n_audit, added v0.4) | ATT&CK T1133 / TA0003 |
 | n8n_workflow_modified_after_hours | class 6003, siem.source_type=n8n_audit, time outside_hours | yes (n8n_audit, added v0.4) | ATT&CK T1078 / TA0004 |
 | common_dns_exfil | class 4002, activity 1, distinct dst_endpoint.hostname | yes (dns_query, added v0.5) | ATT&CK T1071.004 / TA0011 |

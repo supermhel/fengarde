@@ -55,6 +55,9 @@ echo
 echo "== ws6 new-device diff (M7 Track Y): baseline, per-tenant state, restart durability =="
 $PY services/ws6-inventory/test_new_device_diff.py || fail=1
 echo
+echo "== ws6 bus consumer (M7 Track Y follow-up): assets.updates -> raw.events, real parser round-trip =="
+$PY services/ws6-inventory/test_bus_consumer.py || fail=1
+echo
 echo "== M4.2 RBAC: users/sessions/roles (unit) =="
 $PY services/shared/test_rbac.py || fail=1
 echo
