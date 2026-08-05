@@ -4,7 +4,7 @@
 
 COMPOSE := docker compose -f infra/docker-compose.yml
 
-.PHONY: help preflight demo test e2e nis2-demo up down chaos test-live attack-scorecard eval-detection mutation-test
+.PHONY: help preflight demo test e2e nis2-demo up down ha-up ha-down chaos test-live attack-scorecard eval-detection mutation-test
 
 PYTHON ?= python3
 

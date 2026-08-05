@@ -23,7 +23,7 @@ os.environ["BUS_BACKEND"] = "memory"
 
 from shared.bus import Bus  # noqa: E402
 from collectors.syslog_udp_server import (  # noqa: E402
-    SyslogUDPServer, build_raw_event, _TokenBucket)
+    SyslogUDPServer, build_raw_event, _TokenBucket, TenantTokenBuckets)
 from collectors.spool import BoundedSpool  # noqa: E402
 
 SYSLOG_LINE = "<34>Oct 11 22:14:15 myhost sshd[1234]: Failed password for root"
@@ -105,6 +105,39 @@ class TestTokenBucket(unittest.TestCase):
         self.assertTrue(b.take(), "bucket should have refilled some tokens after a delay")
 
 
+class TestTenantTokenBuckets(unittest.TestCase):
+    def test_per_tenant_buckets_are_independent(self):
+        buckets = TenantTokenBuckets(rate_per_sec=3)
+        # acme drains its own bucket
+        acme = [buckets.take("acme") for _ in range(6)]
+        self.assertEqual(sum(acme), 3)
+        # globex still has its full burst available
+        globex = [buckets.take("globex") for _ in range(6)]
+        self.assertEqual(sum(globex), 3)
+
+    def test_missing_tenant_falls_back_to_shared_default(self):
+        buckets = TenantTokenBuckets(rate_per_sec=2)
+        self.assertTrue(buckets.take(""))
+        self.assertTrue(buckets.take(""))
+        self.assertFalse(buckets.take(""))
+        # Explicit tenant should still have its own full bucket.
+        self.assertTrue(buckets.take("acme"))
+        self.assertTrue(buckets.take("acme"))
+        self.assertFalse(buckets.take("acme"))
+
+    def test_new_tenant_gets_own_capacity(self):
+        buckets = TenantTokenBuckets(rate_per_sec=4)
+        self.assertEqual(sum(buckets.take("acme") for _ in range(8)), 4)
+        self.assertEqual(sum(buckets.take("globex") for _ in range(8)), 4)
+
+    def test_unknown_tenant_bounded_even_when_map_is_full(self):
+        buckets = TenantTokenBuckets(rate_per_sec=10)
+        for i in range(4096):
+            buckets.take(f"tenant-{i}")
+        # The next distinct tenant should still be limited, not leak.
+        self.assertEqual(sum(buckets.take("overflow-tenant") for _ in range(20)), 10)
+
+
 class TestSyslogUDPServerShedding(unittest.TestCase):
     def test_rate_limit_sheds_excess_datagrams(self):
         bus = Bus()
@@ -145,6 +178,27 @@ class TestSyslogUDPServerShedding(unittest.TestCase):
             self.assertEqual(len(bus.drain("raw.events")), 50)
             self.assertEqual(server.events_shed, 0)
         finally:
+            server.stop()
+
+    def test_per_tenant_token_bucket_isolates_at_edge(self):
+        bus = Bus()
+        server = SyslogUDPServer(bus, host="127.0.0.1", port=0,
+                                 deterministic_id=True, max_events_per_sec=5)
+        server.start()
+        try:
+            for i in range(20):
+                os.environ["TENANT_ID"] = "acme"
+                server._handle_datagram(f"acme line {i}".encode(), "127.0.0.1")
+                os.environ["TENANT_ID"] = "globex"
+                server._handle_datagram(f"globex line {i}".encode(), "127.0.0.1")
+            self.assertEqual(len(bus.drain("raw.events")) + server.events_shed, 40,
+                             "every datagram must be accounted for across both tenants")
+            self.assertLessEqual(len(bus.drain("raw.events")), 10,
+                                 "both tenants together should not exceed 2 * rate")
+            self.assertGreaterEqual(server.events_shed, 30,
+                                    "both tenants combined should shed most of the 40 datagrams")
+        finally:
+            os.environ.pop("TENANT_ID", None)
             server.stop()
 
 

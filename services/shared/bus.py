@@ -398,6 +398,90 @@ class _RedisBus:
             return 0
 
 
+class _RedisSentinelBus:
+    """Redis Streams bus backed by Sentinel master discovery, for the HA
+    opt-in profile (see infra/docker-compose.ha.yml). Delegates every
+    Streams operation to a plain _RedisBus pointed at the current master;
+    re-resolves the master through Sentinel after any call fails, so a
+    failover is picked up on the next operation rather than requiring a
+    process restart. Default single-instance deployments never construct
+    this class -- BUS_BACKEND stays "redis" unless HA is explicitly opted
+    into via BUS_BACKEND=redis-sentinel.
+    """
+
+    def __init__(self, url: str) -> None:
+        self._url = url
+        self._password = os.getenv("REDIS_PASSWORD", "")
+        sentinel_hosts = []
+        for part in os.getenv("REDIS_SENTINEL_HOSTS", "").split(","):
+            part = part.strip()
+            if not part:
+                continue
+            host, _, port = part.partition(":")
+            sentinel_hosts.append((host.strip(), int(port.strip()) if port else 26379))
+        self._sentinel = None
+        self._master_name = os.getenv("REDIS_SENTINEL_MASTER", "mymaster")
+        if sentinel_hosts:
+            try:
+                from redis.sentinel import Sentinel  # type: ignore
+                self._sentinel = Sentinel(
+                    sentinel_hosts, password=self._password or None,
+                    socket_timeout=1, decode_responses=True,
+                )
+            except Exception:
+                self._sentinel = None
+        self._bus = _RedisBus(url)
+        self._refresh_master()
+
+    @property
+    def r(self):
+        return self._bus.r
+
+    def _refresh_master(self) -> None:
+        if self._sentinel is None:
+            return
+        try:
+            host, port = self._sentinel.discover_master(self._master_name)
+            new_url = f"redis://:{self._password or ''}@{host}:{port}/0"
+            if new_url != self._url:
+                self._url = new_url
+                self._bus = _RedisBus(new_url)
+        except Exception:
+            # Sentinel temporarily unreachable -- keep using the last known bus
+            # rather than raise; the next failing call retries discovery.
+            pass
+
+    def _with_failover(self, method, *args, **kwargs):
+        try:
+            return getattr(self._bus, method)(*args, **kwargs)
+        except Exception:
+            self._refresh_master()
+            return getattr(self._bus, method)(*args, **kwargs)
+
+    def produce(self, topic, key, payload):
+        return self._with_failover("produce", topic, key, payload)
+
+    def consume(self, topic, group="cg-default", block_ms=5000):
+        return self._with_failover("consume", topic, group=group, block_ms=block_ms)
+
+    def ack(self, msg, group="cg-default"):
+        return self._with_failover("ack", msg, group=group)
+
+    def claim_pending(self, topic, group="cg-default", min_idle_ms=60000,
+                      max_redeliveries=5):
+        return self._with_failover("claim_pending", topic, group=group,
+                                    min_idle_ms=min_idle_ms, max_redeliveries=max_redeliveries)
+
+    def depth(self, topic) -> int:
+        return self._with_failover("depth", topic)
+
+    def lag(self, topic) -> int:
+        return self._with_failover("lag", topic)
+
+    def trim_acked(self, topic) -> int:
+        return self._with_failover("trim_acked", topic)
+
+
 def Bus():
     backend = os.getenv("BUS_BACKEND", "memory").lower()
     if backend == "redis":
@@ -416,5 +500,13 @@ def Bus():
             from shared.log import get_logger
             get_logger("bus").warn(
                 "BUS_BACKEND=redis requested but redis-py is not installed; "
+                "falling back to in-memory bus (not shared across processes)")
+    elif backend == "redis-sentinel":
+        try:
+            return _RedisSentinelBus(os.getenv("REDIS_URL", "redis://localhost:6379/0"))
+        except ImportError:
+            from shared.log import get_logger
+            get_logger("bus").warn(
+                "BUS_BACKEND=redis-sentinel requested but redis-py is not installed; "
                 "falling back to in-memory bus (not shared across processes)")
     return _MemoryBus()
