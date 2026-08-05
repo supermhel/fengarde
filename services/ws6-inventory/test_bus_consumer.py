@@ -19,6 +19,7 @@ HERE = Path(__file__).resolve().parent
 SERVICES = HERE.parent
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(SERVICES))
+sys.path.insert(0, str(SERVICES / "ws2-normalization"))
 os.environ["BUS_BACKEND"] = "memory"
 os.environ["INVENTORY_BASELINE_SECONDS"] = "0"
 
