@@ -11,6 +11,7 @@ Supported rule shape (subset of Sigma, per sigma-convention.md):
         <ocsf.dotted.path>: <scalar>        # equality
         <ocsf.dotted.path>: {gt|gte|lt|lte|ne: <number>}   # comparison (fail closed)
         <ocsf.dotted.path>: {not_in: <allowlist-name>}     # suppression via contracts/allowlists/
+        <ocsf.dotted.path>: {glob: "svchost*.exe"}         # Sigma-style *?[seq] wildcard, NOT regex
         time: {outside_hours: {start: "08:00", end: "18:00",   # time-of-day / day-of-week
                days: [mon,tue,wed,thu,fri], tz_offset_minutes: 0}}
       condition: "<sel> [and|or|not] <sel> ..."  # boolean over selection names
@@ -28,6 +29,7 @@ distinct dst hosts for lateral movement) rather than the raw number of events.
 """
 from __future__ import annotations
 
+import fnmatch
 import hashlib
 import ipaddress
 import json
@@ -164,6 +166,29 @@ def _contains(actual, needle) -> bool:
     if not needle or len(needle) > _CONTAINS_MAX:
         return False
     return needle in actual
+
+
+_GLOB_MAX = 200  # same bound as _CONTAINS_MAX -- patterns are contributor-supplied
+
+
+def _glob_match(actual, pattern) -> bool:
+    """Fail-closed glob match (Sigma-style `*`/`?`/`[seq]` wildcards, M7
+    2026-08-05: the cheap partial step toward Sigma-rule portability design-
+    review finding D named -- ADR-005's no-regex constraint stays unchanged,
+    this does NOT reopen that door).
+
+    ``fnmatch`` translates these four glob metacharacters into a regex built
+    from bounded, non-overlapping quantifiers -- there is no construction of
+    ``*``/``?``/``[seq]`` alone that produces the nested/alternating
+    repetition catastrophic backtracking needs, unlike arbitrary contributor
+    regex (which is why ADR-005 excludes regex, not wildcards specifically).
+    Both operands must be strings and the pattern length-capped, same
+    contributor-safety discipline as ``_contains``."""
+    if not isinstance(actual, str) or not isinstance(pattern, str):
+        return False
+    if not pattern or len(pattern) > _GLOB_MAX:
+        return False
+    return fnmatch.fnmatchcase(actual, pattern)
 
 # --- A3: time-of-day / day-of-week predicate ----------------------------------
 _DAY_NAMES = {"mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4, "sat": 5, "sun": 6}
@@ -459,6 +484,12 @@ class Rule:
                 # bounded substring match (attacker-safe: plain str.__contains__,
                 # no regex, arg length capped). Both operands must be strings.
                 if not _contains(actual, arg):
+                    return False
+            elif op == "glob":
+                # M7 2026-08-05: Sigma-style */?/[seq] wildcard via fnmatch, NOT
+                # regex (see _glob_match's docstring for why this doesn't reopen
+                # ADR-005's no-regex/ReDoS-safety constraint).
+                if not _glob_match(actual, arg):
                     return False
             else:
                 return False  # unknown operator -> fail closed

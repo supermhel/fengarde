@@ -150,6 +150,37 @@ def run():
     r = make_rule({"sel": {"x": {"contains": ["not", "a", "string"]}}, "condition": "sel"})
     check(r.evaluate({"x": "abc"}) is False, "contains: non-string needle fails closed")
 
+    # --- v0.6 (A-Sigma): `glob` (Sigma-style */?/[seq] wildcard via fnmatch, no regex) ---
+    r = make_rule({"sel": {"process.file.name": {"glob": "svchost*.exe"}}, "condition": "sel"})
+    check(r.evaluate({"process": {"file": {"name": "svchost.exe"}}}) is True,
+          "glob: '*' matches zero chars, exact suffix must still match")
+    check(r.evaluate({"process": {"file": {"name": "svchost32.exe"}}}) is True,
+          "glob: '*' matches a mid-string run of characters")
+    check(r.evaluate({"process": {"file": {"name": "notsvchost.exe"}}}) is False,
+          "glob: fnmatch is anchored at both ends -- a prefix match must NOT count")
+    check(r.evaluate({"process": {"file": {"name": "svchost.dll"}}}) is False,
+          "glob: wrong suffix must not match")
+
+    r = make_rule({"sel": {"host": {"glob": "web-??.corp"}}, "condition": "sel"})
+    check(r.evaluate({"host": "web-01.corp"}) is True, "glob: '?' matches exactly one char")
+    check(r.evaluate({"host": "web-1.corp"}) is False, "glob: '?' must not match zero chars")
+    check(r.evaluate({"host": "web-001.corp"}) is False, "glob: '?' must not match two chars")
+
+    r = make_rule({"sel": {"x": {"glob": "[a-c]atch"}}, "condition": "sel"})
+    check(r.evaluate({"x": "batch"}) is True, "glob: '[seq]' character class matches")
+    check(r.evaluate({"x": "match"}) is False, "glob: '[seq]' excludes chars outside the set")
+
+    check(r.evaluate({}) is False, "glob: missing field fails closed")
+    r = make_rule({"sel": {"x": {"glob": "*"}}, "condition": "sel"})
+    check(r.evaluate({"x": 123}) is False, "glob: non-string actual fails closed, even vs bare '*'")
+    r = make_rule({"sel": {"x": {"glob": ["not", "a", "string"]}}, "condition": "sel"})
+    check(r.evaluate({"x": "abc"}) is False, "glob: non-string pattern fails closed")
+    r = make_rule({"sel": {"x": {"glob": ""}}, "condition": "sel"})
+    check(r.evaluate({"x": "abc"}) is False, "glob: empty pattern fails closed, not a match-all")
+    r = make_rule({"sel": {"x": {"glob": "a" * 201}}, "condition": "sel"})
+    check(r.evaluate({"x": "a" * 201}) is False,
+          "glob: an oversized (>200 char) pattern fails closed, same bound as contains")
+
     # --- allowlist direct unit: an entry is ALWAYS exact-matchable even when
     # it's also CIDR-shaped-but-invalid (exact.add happens unconditionally in
     # Allowlist.__init__, independent of whether ip_network() parses it) ---
