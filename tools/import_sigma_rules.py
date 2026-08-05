@@ -24,7 +24,7 @@ _DROP = object()
 # Sigma uses arbitrary selection names; the engine tokenizer accepts `[\w.]+`.
 # We sanitize names by lowercasing and replacing every non-[a-z0-9_] run.
 _NAME_RE = re.compile(r"[^a-z0-9_]+")
-_CONDITION_TOKEN_RE = re.compile(r"\(|\)|\band\b|\bor\b|\bnot\b|[\w.]+")
+_CONDITION_KEYWORDS = {"and", "or", "not"}
 
 
 def _sanitize_name(name: str) -> str:
@@ -161,13 +161,40 @@ def _rewrite_selection(
 
 
 def _rewrite_condition(condition: str, rename_map: dict[str, str]) -> str:
+    """Substitute original Sigma selection names with their local equivalents.
+
+    Single-pass on purpose: every source token is replaced at most once, so an
+    inserted group expression (e.g. `(sel_1 or sel_2)`) is never rescanned and
+    re-substituted by a later, differently-named entry in `rename_map`. The
+    previous sequential-`re.sub` version could corrupt a condition whenever one
+    original selection name was also a substring-token of another's expansion.
+    """
     if not isinstance(condition, str) or not condition.strip():
         return ""
-    sorted_names = sorted(rename_map.items(), key=lambda kv: len(kv[0]), reverse=True)
-    out = condition
-    for old, new in sorted_names:
-        out = re.sub(rf"(?<![a-zA-Z0-9_.]){re.escape(old)}(?![a-zA-Z0-9_.])", new, out)
-    return out
+
+    def _sub(match: re.Match[str]) -> str:
+        token = match.group(0)
+        if token in _CONDITION_KEYWORDS:
+            return token
+        return rename_map.get(token, token)
+
+    # Match on the ORIGINAL Sigma name charset, not the engine's `[\w.]+`:
+    # source selection names are arbitrary (`Special-Name`), which is why
+    # `_sanitize_name` exists at all. Tokenizing them with `[\w.]+` would split
+    # `Special-Name` into two tokens that match no rename_map key.
+    return re.sub(r"[^\s()]+", _sub, condition)
+
+
+def _unknown_condition_refs(condition: str, known: set[str]) -> set[str]:
+    """Identifier tokens in `condition` that name no existing selection.
+
+    Catches both dangling references to selections dropped during import and
+    Sigma aggregation syntax this importer does not support (`1 of them`,
+    `all of sel*`), either of which would otherwise be emitted as a rule the
+    engine cannot evaluate.
+    """
+    tokens = re.findall(r"[\w.]+", condition or "")
+    return {t for t in tokens if t not in _CONDITION_KEYWORDS and t not in known}
 
 
 def _rewrite_siem(siem: dict[str, Any], errors: list[str]) -> dict[str, Any]:
@@ -200,14 +227,22 @@ def _rewrite_siem(siem: dict[str, Any], errors: list[str]) -> dict[str, Any]:
     return out
 
 
-def import_sigma_rule(raw: dict[str, Any]) -> dict[str, Any] | None:
+def import_sigma_rule(
+    raw: dict[str, Any], errors: list[str] | None = None
+) -> dict[str, Any] | None:
     """Convert a SigmaHQ-style rule dict to the local Contract D shape.
 
     Returns a converted rule dict, or None if the rule cannot be safely
     imported. The returned dict is meant to be dumped to
     `contracts/rules/<sector>_<name>.yml`.
+
+    Pass a list as `errors` to receive every part of the source rule that was
+    dropped, defaulted, or rejected -- an import can succeed while silently
+    discarding real detection logic (unsupported modifiers, unsafe regexes),
+    and a caller that never sees those has no way to know the imported rule is
+    weaker than the Sigma original.
     """
-    errors: list[str] = []
+    errors = [] if errors is None else errors
     rule_id = raw.get("id")
     title = raw.get("title") or raw.get("name") or "imported-sigma-rule"
     level = _level_from_sigma(raw.get("level"))
@@ -241,6 +276,7 @@ def import_sigma_rule(raw: dict[str, Any]) -> dict[str, Any] | None:
 
     new_det: dict[str, Any] = {}
     rename_map: dict[str, str] = {}
+    groups: list[str] = []
     condition = detection.get("condition") if isinstance(detection, dict) else None
 
     for name, value in detection.items():
@@ -249,6 +285,19 @@ def import_sigma_rule(raw: dict[str, Any]) -> dict[str, Any] | None:
         if not isinstance(value, (dict, list)):
             errors.append(f"selection '{name}': unsupported selection shape {type(value).__name__}")
             continue
+        if _sanitize_name(name) in _CONDITION_KEYWORDS:
+            # A selection whose name collides with a boolean keyword is
+            # unreferenceable: `_rewrite_condition` must leave `and`/`or`/`not`
+            # alone to preserve real operators, so the reference is never
+            # substituted and the emitted condition is syntactically invalid.
+            # That parses to False at evaluation time -- a rule that imports
+            # cleanly and then silently never fires, which is strictly worse
+            # than refusing the import.
+            errors.append(
+                f"selection '{name}': name collides with reserved condition "
+                f"keyword '{_sanitize_name(name)}' and cannot be referenced"
+            )
+            return None
         local_names = []
         for sanitized, fields in _rewrite_selection(name, value, errors):
             if sanitized in new_det:
@@ -257,7 +306,13 @@ def import_sigma_rule(raw: dict[str, Any]) -> dict[str, Any] | None:
             local_names.append(sanitized)
         if not local_names:
             continue
-        rename_map[name] = local_names[0]
+        # A Sigma list-selection means OR-of-items, and it expands to several
+        # local selections. Every reference to the ORIGINAL name must therefore
+        # resolve to the whole OR group: collapsing it to local_names[0] would
+        # silently drop the remaining branches and narrow the rule.
+        group = local_names[0] if len(local_names) == 1 else "(" + " or ".join(local_names) + ")"
+        rename_map[name] = group
+        groups.append(group)
 
     if not new_det:
         return None
@@ -265,9 +320,23 @@ def import_sigma_rule(raw: dict[str, Any]) -> dict[str, Any] | None:
         return None
 
     if not isinstance(condition, str) or not condition.strip():
-        condition = " and ".join(new_det)
+        # Sigma requires `detection.condition`; a rule without one is malformed
+        # input, so this fallback is announced via `errors` rather than applied
+        # silently. AND across distinct selections, but the OR inside a
+        # list-selection group is real Sigma semantics and must survive --
+        # AND-ing sibling branches of one list (same field, two values) yields
+        # a rule that can never fire.
+        errors.append("detection.condition: missing, defaulted to AND across selections")
+        condition = " and ".join(groups)
     else:
         condition = _rewrite_condition(condition, rename_map)
+
+    unknown_refs = _unknown_condition_refs(condition, set(new_det))
+    if unknown_refs:
+        errors.append(
+            f"detection.condition: references unknown selection(s) {sorted(unknown_refs)}"
+        )
+        return None
 
     siem = raw.get("siem") or {}
     if not isinstance(siem, dict):
@@ -309,9 +378,12 @@ def main(argv: list[str]) -> int:
     if not isinstance(raw, dict):
         print("[FAIL] top-level Sigma rule must be a YAML mapping")
         return 2
-    rule = import_sigma_rule(raw)
+    errors: list[str] = []
+    rule = import_sigma_rule(raw, errors)
     if rule is None:
         print("[FAIL] rule could not be imported (unsupported shape)")
+        for err in errors:
+            print(f"   - {err}")
         return 1
     if len(argv) > 2:
         dst = Path(argv[2])
@@ -323,6 +395,13 @@ def main(argv: list[str]) -> int:
         encoding="utf-8",
     )
     print(f"[OK] imported -> {dst}")
+    if errors:
+        print(
+            f"[WARN] {len(errors)} part(s) of the source rule were dropped or "
+            f"defaulted -- the imported rule is NOT equivalent to the Sigma original:"
+        )
+        for err in errors:
+            print(f"   - {err}")
     return 0
 
 

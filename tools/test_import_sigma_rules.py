@@ -139,6 +139,124 @@ def run() -> None:
     check(bool(val) is True and end == len(toks),
           "imported or-list condition parses true under engine's parser")
 
+    # A REAL SigmaHQ rule references a list-selection by its ORIGINAL name
+    # (`condition: sel`), never by the expanded `sel_1 or sel_2` the test above
+    # hand-writes. That original-name path is the one an importer must get
+    # right: collapsing the group to its first branch silently drops every
+    # other value the rule was meant to match.
+    rule = import_sigma_rule({
+        "title": "Or list referenced by original name",
+        "id": "66666666-6666-6666-6666-666666666666",
+        "level": "high",
+        "logsource": {"category": "process_creation"},
+        "detection": {
+            "sel": [{"file.name": "a.exe"}, {"file.name": "b.exe"}],
+            "filter": {"user.name": "svc"},
+            "condition": "sel and not filter",
+        },
+    })
+    check(rule["condition"] == "(sel_1 or sel_2) and not filter",
+          "list-selection referenced by original name keeps every OR branch")
+
+    # Sigma requires `detection.condition`. When it is missing, the generated
+    # fallback must still OR the branches of one list-selection: AND-ing them
+    # (same field, two different values) produces a rule that can never fire --
+    # a dead rule that would pass a shape check and never a real one.
+    errs: list[str] = []
+    rule = import_sigma_rule({
+        "title": "Or list default condition",
+        "id": "77777777-7777-7777-7777-777777777777",
+        "level": "high",
+        "logsource": {"category": "process_creation"},
+        "detection": {
+            "sel": [{"file.name": "a.exe"}, {"file.name": "b.exe"}],
+        },
+    }, errs)
+    check(rule["condition"] == "(sel_1 or sel_2)",
+          "default condition ORs list-selection branches instead of AND-ing them")
+    check(any("condition" in e for e in errs),
+          "missing condition is reported, not silently defaulted")
+    # Prove the generated default actually fires on ONE branch through the
+    # engine's own parser -- the AND version returned False here.
+    toks = _re.findall(r"\(|\)|\band\b|\bor\b|\bnot\b|[\w.]+", rule["condition"])
+    val, end = _parse_or(toks, 0, {"sel_1": True, "sel_2": False})
+    check(bool(val) is True and end == len(toks),
+          "default or-list condition fires when only one branch matches")
+
+    # Unsupported Sigma aggregation syntax must be rejected, not emitted as a
+    # rule referencing selections that do not exist.
+    errs = []
+    rule = import_sigma_rule({
+        "title": "Unsupported aggregation",
+        "id": "88888888-8888-8888-8888-888888888888",
+        "level": "medium",
+        "logsource": {"category": "process_creation"},
+        "detection": {
+            "sel": {"file.name": "a.exe"},
+            "condition": "1 of them",
+        },
+    }, errs)
+    check(rule is None, "unsupported `1 of them` aggregation rejected, not emitted")
+    check(any("unknown selection" in e for e in errs),
+          "rejection reason names the unknown selection references")
+
+    # Dropped detection logic must be visible to the caller. An import that
+    # silently discards an unsafe regex produces a WEAKER rule than the Sigma
+    # original, and a caller with no error channel cannot know that.
+    errs = []
+    import_sigma_rule({
+        "title": "Reports dropped fields",
+        "id": "99999999-9999-9999-9999-999999999999",
+        "level": "medium",
+        "logsource": {"category": "process_creation"},
+        "detection": {
+            "sel": {"cmd|re": "^(a+)+$", "file.name|contains": "bad"},
+            "condition": "sel",
+        },
+        "siem": {"bogus_key": 1},
+    }, errs)
+    check(errs, "dropped/unsupported source content is reported via the errors channel")
+
+    # A selection named after a boolean keyword can never be referenced: the
+    # rewriter must leave `and`/`or`/`not` alone to preserve real operators, so
+    # the reference survives unsubstituted and the condition is invalid. That
+    # imports cleanly and then never fires -- reject it instead.
+    for keyword in ("and", "or", "not"):
+        errs = []
+        rule = import_sigma_rule({
+            "title": f"Keyword selection {keyword}",
+            "logsource": {"category": "process_creation"},
+            "detection": {
+                keyword: {"file.name": "a.exe"},
+                "condition": keyword,
+            },
+        }, errs)
+        check(rule is None, f"selection named '{keyword}' is rejected, not silently dead")
+        check(any("reserved condition keyword" in e for e in errs),
+              f"rejection of selection named '{keyword}' names the real reason")
+
+    # Same collision via a list-selection, whose expansions (`and_1`, `and_2`)
+    # are not themselves keywords -- the unreferenceable name is the original.
+    errs = []
+    rule = import_sigma_rule({
+        "title": "Keyword list selection",
+        "logsource": {"category": "process_creation"},
+        "detection": {
+            "or": [{"file.name": "a.exe"}, {"file.name": "b.exe"}],
+            "condition": "or",
+        },
+    }, errs)
+    check(rule is None, "list-selection named after a keyword is rejected too")
+
+    # Case-folding must not smuggle one past the check.
+    errs = []
+    rule = import_sigma_rule({
+        "title": "Keyword selection uppercased",
+        "logsource": {"category": "process_creation"},
+        "detection": {"AND": {"file.name": "a.exe"}, "condition": "AND"},
+    }, errs)
+    check(rule is None, "selection named 'AND' is rejected after sanitization lowercases it")
+
 
 def main() -> None:
     run()
