@@ -176,6 +176,9 @@ echo
 echo "== F3: tenants.py::load_disabled_rules fails open on a malformed/path-traversal tenant_id =="
 $PY services/ws4-detection/test_tenants.py || fail=1
 echo
+echo "== M7 follow-up: rule-health watchdog (last-fired timestamp per rule on /metrics/prom) =="
+$PY services/ws4-detection/test_rule_health.py || fail=1
+echo
 echo "== ws2 parsers: generic syslog + windows event log (v0.2) =="
 $PY services/ws2-normalization/parsers/test_generic_syslog.py || fail=1
 $PY services/ws2-normalization/parsers/test_windows_eventlog.py || fail=1
