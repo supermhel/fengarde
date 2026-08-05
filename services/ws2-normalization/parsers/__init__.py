@@ -27,6 +27,7 @@ from .cef import CefParser
 from .cloudtrail import CloudTrailParser
 from .sysmon import SysmonParser
 from .modbus_anomaly import ModbusAnomalyParser
+from .inventory_diff import InventoryDiffParser
 from .plugins import discover_plugin_parsers
 
 _REGISTRY: dict[str, Parser] = {
@@ -35,7 +36,7 @@ _REGISTRY: dict[str, Parser] = {
               LinuxSshParser(), GenericSyslogParser(), WindowsEventLogParser(),
               DbAuditParser(), McpAgentParser(), OpcUaAuditParser(), N8nAuditParser(),
               DnsQueryParser(), K8sAuditParser(), CefParser(), CloudTrailParser(),
-              SysmonParser(), ModbusAnomalyParser())
+              SysmonParser(), ModbusAnomalyParser(), InventoryDiffParser())
 }
 
 # M4.5: external pip packages can register additional parsers (docs/plugin-
@@ -102,6 +103,10 @@ def _resolve_structured(rec: dict) -> Optional[Parser]:
     # (no other registered parser uses that field name).
     if "functionCode" in rec:
         return _REGISTRY["modbus_anomaly"]
+    # inventory diff: mac + sector + device_type is unique to this parser's
+    # notification shape (the inventory worker's output contract).
+    if "mac" in rec and "sector" in rec and "device_type" in rec:
+        return _REGISTRY["inventory_diff"]
     # eventType: OPC UA (CamelCase Audit*EventType) vs n8n (dotted lower-case)
     et = rec.get("eventType") or rec.get("event_type") or rec.get("type")
     if isinstance(et, str) and et:
