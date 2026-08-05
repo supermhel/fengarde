@@ -1,0 +1,332 @@
+# HA opt-in profile -- Redis Sentinel + OpenSearch 3-node cluster.
+#
+# Default stack is untouched: `make up` / `docker compose up` still brings up
+# the single-instance Redis + OpenSearch defined in docker-compose.yml. This
+# file only takes effect when the `ha` profile is explicitly requested.
+#
+# MSSP-hosted-central tier startup:
+#   export REDIS_PASSWORD=$(openssl rand -hex 16)
+#   make ha-up
+#
+# The profile:
+# - adds 1 Redis primary + 2 replicas + 3 Sentinels on an internal `ha` network
+# - replaces single-node OpenSearch with a 3-node cluster on the same network
+# - overrides the existing application services so the bus talks to Sentinel
+#   and the indexer talks to the cluster's first node
+# - starts a one-shot `provision-ha` container that installs index templates
+#   + ISM policies against the cluster once it is healthy
+#
+# Existing index templates already declare `number_of_replicas: 1`; no
+# application-code mapping change is needed for replica shards.
+
+services:
+  # Disable single-instance services when HA is active.
+  redis:
+    profiles: [ha]
+  opensearch:
+    profiles: [ha]
+  dashboards:
+    profiles: [ha]
+  provision:
+    profiles: [ha]
+  devkit-feeder:
+    profiles: [ha]
+
+  # ---- Redis HA: 1 primary + 2 replicas + 3 Sentinels ----
+  redis-1:
+    image: redis:7-alpine
+    container_name: siem-bus-ha-1
+    profiles: [ha]
+    command: >
+      sh -c '
+      if [ -n "$$REDIS_PASSWORD" ]; then
+        exec redis-server --appendonly yes --requirepass "$$REDIS_PASSWORD" --masterauth "$$REDIS_PASSWORD";
+      else
+        echo "REDIS_PASSWORD must be set for HA" >&2; exit 1;
+      fi'
+    environment:
+      - REDIS_PASSWORD=${REDIS_PASSWORD:?Set REDIS_PASSWORD before starting HA Redis}
+    volumes: ["redis-data-ha-1:/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks: [ha]
+
+  redis-2:
+    image: redis:7-alpine
+    container_name: siem-bus-ha-2
+    profiles: [ha]
+    command: >
+      sh -c '
+      if [ -n "$$REDIS_PASSWORD" ]; then
+        exec redis-server --appendonly yes --replicaof redis-1 6379 --masterauth "$$REDIS_PASSWORD" --requirepass "$$REDIS_PASSWORD";
+      else
+        echo "REDIS_PASSWORD must be set for HA" >&2; exit 1;
+      fi'
+    environment:
+      - REDIS_PASSWORD=${REDIS_PASSWORD:?Set REDIS_PASSWORD before starting HA Redis}
+    volumes: ["redis-data-ha-2:/data"]
+    depends_on: {redis-1: {condition: service_healthy}}
+    networks: [ha]
+
+  redis-3:
+    image: redis:7-alpine
+    container_name: siem-bus-ha-3
+    profiles: [ha]
+    command: >
+      sh -c '
+      if [ -n "$$REDIS_PASSWORD" ]; then
+        exec redis-server --appendonly yes --replicaof redis-1 6379 --masterauth "$$REDIS_PASSWORD" --requirepass "$$REDIS_PASSWORD";
+      else
+        echo "REDIS_PASSWORD must be set for HA" >&2; exit 1;
+      fi'
+    environment:
+      - REDIS_PASSWORD=${REDIS_PASSWORD:?Set REDIS_PASSWORD before starting HA Redis}
+    volumes: ["redis-data-ha-3:/data"]
+    depends_on: {redis-1: {condition: service_healthy}}
+    networks: [ha]
+
+  redis-sentinel-1:
+    image: redis:7-alpine
+    container_name: siem-sentinel-ha-1
+    profiles: [ha]
+    command: ["sh", "/redis-sentinel-entrypoint.sh"]
+    environment:
+      - REDIS_PASSWORD=${REDIS_PASSWORD:?Set REDIS_PASSWORD before starting HA Redis}
+    volumes:
+      - ./redis-sentinel-entrypoint.sh:/redis-sentinel-entrypoint.sh:ro
+      - redis-sentinel-ha-1:/data
+    depends_on: [redis-1, redis-2, redis-3]
+    networks: [ha]
+    ports: ["127.0.0.1:26379:26379"]
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -p 26379 ping || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  redis-sentinel-2:
+    image: redis:7-alpine
+    container_name: siem-sentinel-ha-2
+    profiles: [ha]
+    command: ["sh", "/redis-sentinel-entrypoint.sh"]
+    environment:
+      - REDIS_PASSWORD=${REDIS_PASSWORD:?Set REDIS_PASSWORD before starting HA Redis}
+    volumes:
+      - ./redis-sentinel-entrypoint.sh:/redis-sentinel-entrypoint.sh:ro
+      - redis-sentinel-ha-2:/data
+    depends_on: [redis-sentinel-1]
+    networks: [ha]
+    ports: ["127.0.0.1:26380:26379"]
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -p 26379 ping || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  redis-sentinel-3:
+    image: redis:7-alpine
+    container_name: siem-sentinel-ha-3
+    profiles: [ha]
+    command: ["sh", "/redis-sentinel-entrypoint.sh"]
+    environment:
+      - REDIS_PASSWORD=${REDIS_PASSWORD:?Set REDIS_PASSWORD before starting HA Redis}
+    volumes:
+      - ./redis-sentinel-entrypoint.sh:/redis-sentinel-entrypoint.sh:ro
+      - redis-sentinel-ha-3:/data
+    depends_on: [redis-sentinel-1]
+    networks: [ha]
+    ports: ["127.0.0.1:26381:26379"]
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -p 26379 ping || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ---- OpenSearch HA: 3-node cluster ----
+  opensearch-1:
+    image: opensearchproject/opensearch:2.13.0
+    container_name: siem-store-ha-1
+    profiles: [ha]
+    environment:
+      - cluster.name=fengarde
+      - node.name=opensearch-1
+      - network.host=0.0.0.0
+      - network.publish_host=opensearch-1
+      - discovery.seed_hosts=opensearch-1:9300,opensearch-2:9300,opensearch-3:9300
+      - cluster.initial_master_nodes=opensearch-1,opensearch-2,opensearch-3
+      - bootstrap.memory_lock=true
+      - "OPENSEARCH_JAVA_OPTS=-Xms1g -Xmx1g"
+      - DISABLE_SECURITY_PLUGIN=true
+    ulimits:
+      memlock: { soft: -1, hard: -1 }
+    volumes: ["os-data-ha-1:/usr/share/opensearch/data"]
+    depends_on:
+      opensearch-2: {condition: service_healthy}
+      opensearch-3: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    networks: [ha]
+    ports: ["127.0.0.1:9201:9200"]
+
+  opensearch-2:
+    image: opensearchproject/opensearch:2.13.0
+    container_name: siem-store-ha-2
+    profiles: [ha]
+    environment:
+      - cluster.name=fengarde
+      - node.name=opensearch-2
+      - network.host=0.0.0.0
+      - network.publish_host=opensearch-2
+      - discovery.seed_hosts=opensearch-1:9300,opensearch-2:9300,opensearch-3:9300
+      - cluster.initial_master_nodes=opensearch-1,opensearch-2,opensearch-3
+      - bootstrap.memory_lock=true
+      - "OPENSEARCH_JAVA_OPTS=-Xms1g -Xmx1g"
+      - DISABLE_SECURITY_PLUGIN=true
+    ulimits:
+      memlock: { soft: -1, hard: -1 }
+    volumes: ["os-data-ha-2:/usr/share/opensearch/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    networks: [ha]
+    ports: ["127.0.0.1:9202:9200"]
+
+  opensearch-3:
+    image: opensearchproject/opensearch:2.13.0
+    container_name: siem-store-ha-3
+    profiles: [ha]
+    environment:
+      - cluster.name=fengarde
+      - node.name=opensearch-3
+      - network.host=0.0.0.0
+      - network.publish_host=opensearch-3
+      - discovery.seed_hosts=opensearch-1:9300,opensearch-2:9300,opensearch-3:9300
+      - cluster.initial_master_nodes=opensearch-1,opensearch-2,opensearch-3
+      - bootstrap.memory_lock=true
+      - "OPENSEARCH_JAVA_OPTS=-Xms1g -Xmx1g"
+      - DISABLE_SECURITY_PLUGIN=true
+    ulimits:
+      memlock: { soft: -1, hard: -1 }
+    volumes: ["os-data-ha-3:/usr/share/opensearch/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    networks: [ha]
+    ports: ["127.0.0.1:9203:9200"]
+
+  # ---- HA-specific Dashboards ----
+  dashboards-ha:
+    image: opensearchproject/opensearch-dashboards:2.13.0
+    container_name: siem-dashboards-ha
+    profiles: [ha]
+    environment:
+      - 'OPENSEARCH_HOSTS=["http://opensearch-1:9200","http://opensearch-2:9200","http://opensearch-3:9200"]'
+      - DISABLE_SECURITY_DASHBOARDS_PLUGIN=true
+    networks: [ha]
+    ports: ["127.0.0.1:5602:5601"]
+    depends_on:
+      opensearch-1: {condition: service_healthy}
+      opensearch-2: {condition: service_healthy}
+      opensearch-3: {condition: service_healthy}
+
+  # ---- Provision templates/policies against the HA cluster ----
+  provision-ha:
+    image: curlimages/curl:8.7.1
+    container_name: siem-provision-ha
+    profiles: [ha]
+    volumes:
+      - ../contracts/opensearch-mappings:/mappings:ro
+      - ./provision.sh:/provision.sh:ro
+    entrypoint: ["sh", "/provision.sh"]
+    restart: "no"
+    environment:
+      - OPENSEARCH_URL=http://opensearch-1:9200
+    depends_on:
+      opensearch-1: {condition: service_healthy}
+
+  # ---- Application service overrides for HA ----
+  # These keep the existing service names so `docker compose up --profile ha`
+  # still brings up the full stack, but route the bus and storage to the HA
+  # backends instead of the single-instance ones.
+
+  ws1-collectors:
+    environment:
+      - BUS_BACKEND=redis-sentinel
+      - REDIS_SENTINEL_HOSTS=redis-sentinel-1:26379,redis-sentinel-2:26379,redis-sentinel-3:26379
+      - REDIS_SENTINEL_MASTER=mymaster
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+    depends_on: {redis-1: {condition: service_healthy}}
+
+  ws2-normalization:
+    environment:
+      - BUS_BACKEND=redis-sentinel
+      - REDIS_SENTINEL_HOSTS=redis-sentinel-1:26379,redis-sentinel-2:26379,redis-sentinel-3:26379
+      - REDIS_SENTINEL_MASTER=mymaster
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+    depends_on: {redis-1: {condition: service_healthy}}
+
+  ws3-indexer:
+    environment:
+      - BUS_BACKEND=redis-sentinel
+      - REDIS_SENTINEL_HOSTS=redis-sentinel-1:26379,redis-sentinel-2:26379,redis-sentinel-3:26379
+      - REDIS_SENTINEL_MASTER=mymaster
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - OPENSEARCH_URL=http://opensearch-1:9200
+    depends_on:
+      redis-1: {condition: service_healthy}
+      opensearch-1: {condition: service_healthy}
+
+  ws4-detection:
+    environment:
+      - BUS_BACKEND=redis-sentinel
+      - REDIS_SENTINEL_HOSTS=redis-sentinel-1:26379,redis-sentinel-2:26379,redis-sentinel-3:26379
+      - REDIS_SENTINEL_MASTER=mymaster
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+    depends_on: {redis-1: {condition: service_healthy}}
+
+  ws5-ai:
+    environment:
+      - BUS_BACKEND=redis-sentinel
+      - REDIS_SENTINEL_HOSTS=redis-sentinel-1:26379,redis-sentinel-2:26379,redis-sentinel-3:26379
+      - REDIS_SENTINEL_MASTER=mymaster
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+    depends_on: {redis-1: {condition: service_healthy}}
+
+  ws6-inventory:
+    environment:
+      - BUS_BACKEND=redis-sentinel
+      - REDIS_SENTINEL_HOSTS=redis-sentinel-1:26379,redis-sentinel-2:26379,redis-sentinel-3:26379
+      - REDIS_SENTINEL_MASTER=mymaster
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+
+  ws7-dashboard:
+    environment:
+      - BUS_BACKEND=redis-sentinel
+      - REDIS_SENTINEL_HOSTS=redis-sentinel-1:26379,redis-sentinel-2:26379,redis-sentinel-3:26379
+      - REDIS_SENTINEL_MASTER=mymaster
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+
+networks:
+  ha:
+    driver: bridge
+
+volumes:
+  redis-data-ha-1: {}
+  redis-data-ha-2: {}
+  redis-data-ha-3: {}
+  redis-sentinel-ha-1: {}
+  redis-sentinel-ha-2: {}
+  redis-sentinel-ha-3: {}
+  os-data-ha-1: {}
+  os-data-ha-2: {}
+  os-data-ha-3: {}

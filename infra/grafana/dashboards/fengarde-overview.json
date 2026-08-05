@@ -42,6 +42,19 @@
           "legendFormat": "{{service}} / {{topic}}"
         }
       ]
+    },
+    {
+      "id": 4,
+      "title": "Rule staleness (seconds since last fire, ws4-detection only)",
+      "type": "timeseries",
+      "description": "M7 follow-up (2026-08-05, rule-health watchdog): a rule absent from this panel has never fired THIS PROCESS -- it is not yet distinguishable from 'never fired since deploy' vs. genuinely dead; that distinction is on the operator, same honesty caveat as this dashboard's other panels. A rule present and climbing is the real dead-rule signal this panel exists for.",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 16 },
+      "targets": [
+        {
+          "expr": "time() - fengarde_extra{field=~\"rule_last_fired_timestamp:.*\"}",
+          "legendFormat": "{{field}}"
+        }
+      ]
     }
   ]
 }

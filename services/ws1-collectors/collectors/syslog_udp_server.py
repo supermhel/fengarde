@@ -117,6 +117,12 @@ class _TokenBucket:
     traffic above `rate`/sec sheds the excess. `rate <= 0` disables limiting
     (every take() succeeds) -- the default state for tests and any deployment
     that hasn't opted in yet.
+
+    F4 (per-tenant throughput isolation): a bucket can be keyed by tenant
+    so one tenant's flood cannot consume another tenant's share. Unknown
+    tenants are grouped into a single shared bucket under the reserved key
+    ``_default`` to preserve the previous global behavior without an
+    unbounded number of in-memory bucket objects.
     """
 
     def __init__(self, rate_per_sec: float):
@@ -138,6 +144,35 @@ class _TokenBucket:
                 self.tokens -= 1
                 return True
             return False
+
+
+class TenantTokenBuckets:
+    """Thin tenant-scoped facade over a shared `_TokenBucket` rate.
+
+    A fixed per-tenant cap is required for true isolation. Sharing one
+    bucket instance across tenants and branching on `take()` would still
+    let one tenant's burst steal all tokens; instead each tenant gets its
+    own bucket so the configured rate is a per-tenant ceiling, not a pool.
+    """
+
+    def __init__(self, rate_per_sec: float):
+        self._rate = max(rate_per_sec, 0)
+        self._buckets: "dict[str, _TokenBucket]" = {}
+        self._default_bucket = _TokenBucket(self._rate)
+        self._lock = threading.Lock()
+
+    def take(self, tenant_id: str) -> bool:
+        bucket = self._default_bucket if not tenant_id else self._buckets.get(tenant_id)
+        if bucket is None:
+            bucket = _TokenBucket(self._rate)
+            # keep map bounded: never grow without limit on a poisoned header.
+            if len(self._buckets) < 4096:
+                with self._lock:
+                    if tenant_id not in self._buckets:
+                        self._buckets[tenant_id] = bucket
+            else:
+                return self._default_bucket.take()
+        return bucket.take()
 
 
 def _deterministic_ingest_id(line: str) -> str:
@@ -221,7 +256,10 @@ class SyslogUDPServer:
         self.events_spooled = 0     # written to the fallback spool, pending replay
         self.events_lost = 0        # spool configured but itself at capacity
         self.events_queue_full = 0  # P0-4: worker pool saturated, queue.put_nowait refused
-        self._bucket = _TokenBucket(max_events_per_sec)
+        # B2: one bucket per tenant_id so one tenant's flood cannot shed another
+        # tenant's datagrams. Events with no tenant_id fall into the shared
+        # default bucket, preserving prior global behavior for unknown sources.
+        self._buckets = TenantTokenBuckets(max_events_per_sec)
         self._last_shed_log = 0.0   # throttles the shed-warning log itself: a
                                     # real flood must not turn into a log flood
         # P0-4: genuinely concurrent now (a fixed pool of worker threads all
@@ -253,19 +291,14 @@ class SyslogUDPServer:
         line = data.decode("utf-8", errors="replace").rstrip("\r\n")
         if not line:
             return
-        if not self._bucket.take():
-            # B2: shed at the ingest edge rather than let an unbounded flood
-            # grow the bus stream directly. If a spool is configured (the
-            # zero-loss-under-flood opt-in, see spool.py), try there first --
-            # only truly lost once the spool itself is full (or the spool
-            # write itself unexpectedly errors -- _try_spool never raises).
-            event = build_raw_event(line, deterministic_id=self.deterministic_id)
+        event = build_raw_event(line, deterministic_id=self.deterministic_id)
+        tenant_id = event.get("meta", {}).get("tenant_id")
+        if not self._buckets.take(tenant_id or ""):
             if self._try_spool(peer_ip, event):
                 self.events_spooled += 1
                 return
             self._count_shed(peer_ip, lost_to_full_spool=self._spool is not None)
             return
-        event = build_raw_event(line, deterministic_id=self.deterministic_id)
         try:
             self.bus.produce(self.topic, key=peer_ip, payload=event)
         except Exception as exc:  # bus/Redis unreachable -> try the spool before dropping
@@ -279,10 +312,6 @@ class SyslogUDPServer:
                               spool_full=self._spool is not None)
             return
         self.events_produced += 1
-        # P0-4: no per-datagram log here anymore -- a JSON-dumps + stdout
-        # flush syscall pair per event roughly doubled per-event cost (see
-        # shared/log.py) and turned line-rate ingest into a log flood.
-        # events_produced already counts the same fact on /metrics.
 
     def _try_spool(self, peer_ip: str, event: dict) -> bool:
         """Best-effort spool write. False on no-spool-configured, spool-full,

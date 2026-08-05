@@ -47,7 +47,7 @@ _UUID_RE = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
                       r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
 _LEVELS = {"informational", "low", "medium", "high", "critical"}
 _SECTORS = {"common", "bank", "dc", "datacenter"}
-_KNOWN_OPS = set(_NUMERIC_OPS) | {"not_in", "outside_hours", "in", "contains"}
+_KNOWN_OPS = set(_NUMERIC_OPS) | {"not_in", "outside_hours", "in", "contains", "glob"}
 # C3: optional MITRE tagging. Enterprise ATT&CK ("Txxxx"/"Txxxx.xxx", "TAxxxx"),
 # ATT&CK for ICS (same shape, different id space, OT rules), and ATLAS
 # (AI/ML-specific attacks, "AML.Txxxx"/"AML.Txxxx.xxx", "AML.TAxxxx") --
@@ -172,6 +172,10 @@ def _validate_selection(name: str, sel, errors: list[str]) -> None:
                     if not isinstance(arg, str) or not arg:
                         errors.append(f"{where}.{path}: 'contains' needs a non-empty "
                                       f"string, got {arg!r}")
+                elif op == "glob":
+                    if not isinstance(arg, str) or not arg:
+                        errors.append(f"{where}.{path}: 'glob' needs a non-empty "
+                                      f"string pattern, got {arg!r}")
         # A non-dict value (scalar OR list) is an EQUALITY match: engine's
         # _selection_matches does `actual != expected`, so a list value like
         # `some.array.field: ["a", "b"]` legitimately matches an event whose

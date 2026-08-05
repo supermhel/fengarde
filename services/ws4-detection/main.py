@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -59,7 +60,36 @@ class Detector:
         self.scorer = Scorer(SCORING_YAML)
         self.tenants_dir = tenants_dir
         self._window_counter = None  # set by main() when BUS_BACKEND=redis
+        # M7 follow-up (2026-08-05): rule-health watchdog. Keyed by rule id (not
+        # object identity) so it survives a reload() the same way window state
+        # does -- an edited rule keeps its fire history, a removed-then-readded
+        # rule with the same id keeps it too. In-process only (no cross-replica
+        # aggregation): each WS-4 replica reports its own view, same scope as
+        # every other counter this module already tracks via shared.runner.Metrics.
+        self.rule_last_fired: dict[str, float] = {}
         self.rules, self._by_class_uid = self._load()
+
+    def record_fire(self, rule_id: str, ts: float | None = None) -> None:
+        """Record that ``rule_id`` fired, for the rule-health Prometheus surface.
+
+        Never fabricates a value for a rule that hasn't fired: absence from
+        ``rule_last_fired`` (and so from ``rule_health_metrics()``'s output) IS
+        the signal that a rule is dead or has simply never fired yet -- an
+        operator distinguishes the two via how long the process has been up,
+        same as any other Prometheus gauge that only appears after a first
+        observation."""
+        self.rule_last_fired[rule_id] = time.time() if ts is None else ts
+
+    def rule_health_metrics(self) -> dict:
+        """Zero-arg callable shape expected by ``shared.runner.serve``'s
+        ``metrics_provider`` -- one gauge per rule that has fired at least
+        once this process, the UNIX timestamp of its most recent fire.
+        Standard Prometheus idiom (a `_timestamp_seconds` gauge, not a
+        precomputed "seconds ago") so an operator's own alert rule decides
+        the staleness threshold (`time() - metric > N`) rather than this
+        service baking one in."""
+        return {f"rule_last_fired_timestamp:{rule_id}": ts
+                for rule_id, ts in self.rule_last_fired.items()}
 
     def _load(self):
         """Load base + plugin rules and bucket them by class_uid. Raises on
@@ -231,6 +261,7 @@ def detect_one(bus, detector: "Detector", event: dict) -> None:
     for rule in matched:
         alert = make_alert(event, rule, event["siem"]["score"])
         bus.produce("alerts", key=alert["alert_id"], payload=alert)
+        detector.record_fire(rule.id)
     # P1-2 (2026-07-21 audit): scoring.yaml/sigma-convention.md promise a
     # 20-59 "light classifier" band, but only action=="llm" (>=60) ever
     # reached ai.requests -- the band was dead, scores 20-59 got indexed and
@@ -255,6 +286,7 @@ def run(bus, detector: "Detector") -> dict:
         for rule in matched:
             alert = make_alert(event, rule, event["siem"]["score"])
             bus.produce("alerts", key=alert["alert_id"], payload=alert)
+            detector.record_fire(rule.id)
             stats["alerts"] += 1
         if action in ("llm", "classifier"):  # P1-2: see detect_one()'s comment
             bus.produce("ai.requests", key=event["siem"].get("ingest_id", key),
@@ -331,7 +363,8 @@ def main():
     try:
         serve({"normalized.events": ("cg-detect", handler)},
               health_port=int(os.getenv("PORT", "8004")),
-              service_name="ws4-detection", shutdown=shutdown)
+              service_name="ws4-detection", shutdown=shutdown,
+              metrics_provider=detector.rule_health_metrics)
     finally:
         if watchdog is not None:
             watchdog.join(timeout=5)
