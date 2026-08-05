@@ -17,6 +17,8 @@ help:
 	@echo "  make nis2-demo  - zero-infra: bank-DB priv-esc alert -> German NIS2 draft (no Docker)"
 	@echo "  make up         - start the stack detached (docker compose up -d)"
 	@echo "  make down       - stop the stack and remove volumes"
+	@echo "  make ha-up      - OPT-IN: Sentinel + 3-node OpenSearch HA profile (needs REDIS_PASSWORD)"
+	@echo "  make ha-down    - stop the HA profile and remove its volumes"
 	@echo "  make chaos      - M1 correctness gate: kill each service mid-replay,"
 	@echo "                    assert zero lost/duplicate alerts (needs 'make up' first)"
 	@echo "  make test-live  - OPT-IN: real Redis + OpenSearch (needs 'make up' or REDIS_URL/OPENSEARCH_URL)"
@@ -61,6 +63,15 @@ up:
 
 down:
 	$(COMPOSE) down -v
+
+# Opt-in HA profile: Redis Sentinel (1 primary + 2 replicas + 3 Sentinels) +
+# 3-node OpenSearch, on top of the default single-instance stack. Requires
+# REDIS_PASSWORD to be set. See infra/docker-compose.ha.yml's header comment.
+ha-up:
+	$(COMPOSE) -f infra/docker-compose.ha.yml --profile ha up -d
+
+ha-down:
+	$(COMPOSE) -f infra/docker-compose.ha.yml --profile ha down -v
 
 # M1 (combined roadmap) correctness gate: proves effectively-once alerting
 # (at-least-once delivery + idempotent alert_id) survives a service dying

@@ -316,14 +316,6 @@ services:
       - REDIS_SENTINEL_MASTER=mymaster
       - REDIS_PASSWORD=${REDIS_PASSWORD:-}
 
-  devkit-feeder:
-    environment:
-      - BUS_BACKEND=redis-sentinel
-      - REDIS_SENTINEL_HOSTS=redis-sentinel-1:26379,redis-sentinel-2:26379,redis-sentinel-3:26379
-      - REDIS_SENTINEL_MASTER=mymaster
-      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
-    depends_on: {redis-1: {condition: service_healthy}}
-
 networks:
   ha:
     driver: bridge
