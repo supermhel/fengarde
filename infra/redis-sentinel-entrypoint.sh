@@ -41,18 +41,34 @@ RAW_PORT="${REDIS_SENTINEL_PRIMARY_PORT:-6379}"
 # address resolved at boot stays correct for the life of the cluster.
 case "$RAW_HOST" in
   *[!0-9.]*)
+    # Bounded on ELAPSED WALL-CLOCK, not on an iteration count.
+    #
+    # This loop used to run `30` iterations of getent + `sleep 1` and report
+    # "after 30s" on failure. Those are not the same thing: an unresolvable name
+    # is exactly the case where getent BLOCKS for the resolv.conf timeout (the
+    # 5s+ stall this whole script exists to keep off Sentinel's event loop), so
+    # each iteration costs that timeout plus the sleep, not one second. Measured
+    # end to end against a name that does not resolve: 179 seconds before the
+    # script gave up and printed "after 30s". An operator sees a Sentinel wedged
+    # in `starting` for three minutes and a message understating it 6x, which
+    # points diagnosis away from DNS -- the actual cause.
+    RESOLVE_TIMEOUT_S="${REDIS_SENTINEL_RESOLVE_TIMEOUT_S:-60}"
+    started_at=$(date +%s)
     PRIMARY_IP=""
-    i=0
-    while [ "$i" -lt 30 ]; do
+    while :; do
       PRIMARY_IP=$(getent hosts "$RAW_HOST" 2>/dev/null | awk '{print $1; exit}')
       [ -n "$PRIMARY_IP" ] && break
-      i=$((i + 1))
+      elapsed=$(( $(date +%s) - started_at ))
+      if [ "$elapsed" -ge "$RESOLVE_TIMEOUT_S" ]; then
+        echo "Could not resolve REDIS_SENTINEL_PRIMARY_HOST='$RAW_HOST' after
+${elapsed}s (limit ${RESOLVE_TIMEOUT_S}s). A name that does not resolve makes
+each lookup block for the resolver's own timeout, so this can overshoot the
+limit by one lookup. Set REDIS_SENTINEL_PRIMARY_HOST to a literal IP to skip
+resolution entirely." >&2
+        exit 1
+      fi
       sleep 1
     done
-    if [ -z "$PRIMARY_IP" ]; then
-      echo "Could not resolve REDIS_SENTINEL_PRIMARY_HOST='$RAW_HOST' after 30s" >&2
-      exit 1
-    fi
     echo "Resolved primary '$RAW_HOST' -> $PRIMARY_IP (monitoring by IP)"
     ;;
   *)

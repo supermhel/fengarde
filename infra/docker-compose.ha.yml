@@ -430,6 +430,26 @@ networks:
     ipam:
       config:
         - subnet: 172.28.0.0/24
+          # Dynamic allocations are confined to the TOP half of the subnet so
+          # they can never take a pinned address. Without this, Docker's IPAM
+          # hands out dynamic IPs sequentially from .2 upward, straight through
+          # the .11-.13/.21-.23 block above -- and this profile puts 10
+          # containers on this network with no ipv4_address (opensearch-1..3,
+          # dashboards-ha, ws1..ws6), which is enough to reach .11. Reproduced:
+          # 10 dynamic containers on a bare 172.28.0.0/24 take .2-.11, after
+          # which `docker run --ip 172.28.0.11` fails with "Address already in
+          # use". `make ha-up` normally survives on start ordering alone
+          # (redis-1 has no depends_on, the app services all wait on it), which
+          # is exactly why this stayed invisible -- but a partial `up`, a
+          # `--force-recreate` of redis-1 while the rest are running, or one
+          # more ha-attached service turns it into a hard startup failure.
+          #
+          # Must be CIDR-aligned: Docker silently normalizes a misaligned range
+          # rather than rejecting it (172.28.0.24/27 -> 172.28.0.0/27, which
+          # would confine every dynamic container into .0-.31 and guarantee the
+          # collision instead of preventing it -- verified against the daemon).
+          # .128/25 is aligned and leaves .2-.127 free for pinned addresses.
+          ip_range: 172.28.0.128/25
 
 volumes:
   redis-data-ha-1: {}
