@@ -20,10 +20,12 @@ change for the only deployment topology that exists today.
 """
 from __future__ import annotations
 
+import os
 import re
 import sqlite3
+import sys
 import threading
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 # Mirrors shared.envelope.valid_tenant_id's pattern exactly (lowercase
 # alnum/hyphen, 1-63 chars, no leading/trailing hyphen) without importing
@@ -51,6 +53,54 @@ def _validated_tenant(tenant_id) -> str:
             f"invalid tenant_id {tenant_id!r}: must be lowercase alphanumeric/hyphen, "
             f"1-63 chars, no leading/trailing hyphen")
     return tenant_id
+
+
+_BASELINE_SECONDS_DEFAULT = 3600
+# A baseline window exists to cover initial population, which is a minutes-to-
+# hours job. Anything longer is far more likely a typo or a stale env var than
+# an intent, and its effect -- new-device detection silently suppressed for
+# months -- looks exactly like "no intrusions", the same indistinguishable
+# failure the rule-health watchdog exists to prevent. Clamp loudly instead.
+_BASELINE_SECONDS_MAX = 86400
+
+
+def _baseline_seconds() -> int:
+    """Length of a tenant's initial-population window, in seconds.
+
+    Read per call (not cached at import) so a test or operator can change it
+    without rebuilding the store. 0 disables baselining entirely: every
+    first-ever sighting is alertable immediately. Values above
+    ``_BASELINE_SECONDS_MAX`` are clamped, with a warning -- a window measured
+    in months would disable the detection without ever saying so.
+    """
+    raw = os.getenv("INVENTORY_BASELINE_SECONDS")
+    if raw is None:
+        return _BASELINE_SECONDS_DEFAULT
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        print(
+            f"[warn] INVENTORY_BASELINE_SECONDS={raw!r} is not an integer; "
+            f"using default {_BASELINE_SECONDS_DEFAULT}s",
+            file=sys.stderr,
+        )
+        return _BASELINE_SECONDS_DEFAULT
+    if value < 0:
+        print(
+            f"[warn] INVENTORY_BASELINE_SECONDS={value} is negative; "
+            f"treating as 0 (no baseline window)",
+            file=sys.stderr,
+        )
+        return 0
+    if value > _BASELINE_SECONDS_MAX:
+        print(
+            f"[warn] INVENTORY_BASELINE_SECONDS={value} exceeds the "
+            f"{_BASELINE_SECONDS_MAX}s cap; clamping. A longer window would "
+            f"suppress new-device detection indistinguishably from silence.",
+            file=sys.stderr,
+        )
+        return _BASELINE_SECONDS_MAX
+    return value
 
 
 def _now_iso() -> str:
@@ -123,6 +173,14 @@ class InventoryStore:
             CREATE INDEX IF NOT EXISTS idx_ip_history_tenant_mac ON ip_history(tenant_id, mac);
             CREATE INDEX IF NOT EXISTS idx_ip_history_tenant_ip ON ip_history(tenant_id, ip);
             CREATE INDEX IF NOT EXISTS idx_protocols_tenant_mac ON protocols(tenant_id, mac);
+            -- M7 Track Y: per-tenant baseline window for new-device detection.
+            -- A first-ever sighting is only *alertable* once this tenant's
+            -- baseline has closed; before then it is initial population. See
+            -- _baseline_closed() for why this is per tenant and not global.
+            CREATE TABLE IF NOT EXISTS tenant_state (
+              tenant_id TEXT PRIMARY KEY,
+              baseline_until TEXT NOT NULL
+            );
             """
         )
         # P2-6: WAL journal mode batches the fsync cost across commits instead
@@ -192,19 +250,69 @@ class InventoryStore:
         """Upsert from an Observation {mac, ip, hostname?, protocol?, seen_at,
         tenant_id?}. tenant_id defaults to "default" when absent (backward
         compatible with every pre-F1 caller)."""
+        asset, _ = self.upsert_with_diff(obs)
+        return asset
+
+    def upsert_with_diff(self, obs: dict) -> tuple[dict | None, bool]:
+        """:meth:`upsert`, plus whether this observation is an ALERTABLE
+        first-ever sighting of the MAC for its tenant (M7 Track Y).
+
+        The bool is False -- not just for a MAC already on file -- but also for
+        any first sighting that lands inside the tenant's baseline window, so
+        standing up the service against an existing segment populates the
+        inventory instead of emitting one alert per device already there.
+        """
         mac = obs.get("mac")
         if not mac:
-            return None  # inventory is MAC-keyed (Contract C)
+            return None, False  # inventory is MAC-keyed (Contract C)
         tenant_id = _validated_tenant(obs.get("tenant_id"))
         with self._write_lock:
             return self._upsert_locked(obs, mac, tenant_id)
 
-    def _upsert_locked(self, obs: dict, mac: str, tenant_id: str) -> dict | None:
+    def _baseline_closed(self, tenant_id: str) -> bool:
+        """Whether `tenant_id`'s initial-population window has elapsed.
+
+        Per tenant, not global: in an MSP deployment each customer is onboarded
+        at its own time, so a global flag would let tenant B's first-ever
+        devices alert as intrusions merely because tenant A was onboarded a
+        month earlier.
+
+        The window is opened lazily, on the tenant's first observation. A
+        tenant that ALREADY has assets when its row is first created is an
+        existing deployment upgrading into this feature, not a fresh install --
+        its inventory is already the baseline, so the window is opened closed
+        rather than suppressing a genuine new device for the next hour.
+        """
+        row = self.db.execute(
+            "SELECT baseline_until FROM tenant_state WHERE tenant_id=?", (tenant_id,)
+        ).fetchone()
+        if row is None:
+            already_populated = self.db.execute(
+                "SELECT 1 FROM assets WHERE tenant_id=? LIMIT 1", (tenant_id,)
+            ).fetchone() is not None
+            seconds = 0 if already_populated else _baseline_seconds()
+            until = datetime.now(tz=timezone.utc) + timedelta(seconds=seconds)
+            self.db.execute(
+                "INSERT INTO tenant_state(tenant_id, baseline_until) VALUES(?,?)",
+                (tenant_id, until.isoformat()),
+            )
+            return seconds <= 0
+        try:
+            return datetime.now(tz=timezone.utc) >= _parse(row["baseline_until"])
+        except (ValueError, TypeError):
+            # Unparseable marker: fail toward alerting rather than silently
+            # suppressing new-device detection forever.
+            return True
+
+    def _upsert_locked(self, obs: dict, mac: str, tenant_id: str) -> tuple[dict | None, bool]:
         ip = obs.get("ip")
         seen = _normalize_seen_at(obs.get("seen_at"))
         row = self.db.execute(
             "SELECT * FROM assets WHERE tenant_id=? AND mac=?", (tenant_id, mac)
         ).fetchone()
+        # Evaluated before the INSERT below so the tenant's own baseline row is
+        # created off the pre-insert asset count.
+        is_new_device = row is None and self._baseline_closed(tenant_id)
 
         if row is None:
             self.db.execute(
@@ -256,7 +364,7 @@ class InventoryStore:
                 (tenant_id, mac, obs["protocol"]),
             )
         self.db.commit()
-        return self.get(mac, tenant_id=tenant_id)
+        return self.get(mac, tenant_id=tenant_id), is_new_device
 
     # ---- reads ----------------------------------------------------------
     def get(self, mac: str, tenant_id: str | None = None) -> dict | None:

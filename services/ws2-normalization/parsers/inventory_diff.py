@@ -14,10 +14,12 @@ Raw bus payload ``raw`` is one inventory-diff notification, e.g. ::
 """
 from __future__ import annotations
 
+import time
 from typing import Optional
 
 from .base import Parser, SEV_INFO
-from shared.ocsf import valid_ip
+from .timeutil import to_epoch_ms
+from shared.ocsf import valid_ip, valid_mac
 
 
 _CLASS_NETWORK = 4001   # Network Activity
@@ -36,7 +38,13 @@ class InventoryDiffParser(Parser):
             return None
         meta = raw.get("meta") or {}
 
-        mac = rec.get("mac")
+        # Contract A constrains src_endpoint.mac to a strict pattern, so an
+        # unvalidated value here (malformed string, or a non-string straight
+        # out of the notification JSON) passes this parser and then fails
+        # schema validation downstream -- the event dead-letters instead of
+        # being cleanly rejected at the edge. Same unguarded-JSON-field risk
+        # `valid_ip` already covers for the IP.
+        mac = valid_mac(rec.get("mac"))
         ip = valid_ip(rec.get("ip") or meta.get("ip"))
         hostname = rec.get("hostname")
         device_type = rec.get("device_type")
@@ -82,14 +90,12 @@ class InventoryDiffParser(Parser):
         seen = rec.get("seen_at")
         if isinstance(seen, (int, float)):
             return int(seen)
-        from .timeutil import to_epoch_ms
         return (to_epoch_ms(seen)
                 or to_epoch_ms(meta.get("received_at"))
-                or int(__import__("time").time() * 1000))
+                or int(time.time() * 1000))
 
     @staticmethod
     def _logged_time(rec: dict, meta: dict) -> Optional[int]:
-        from .timeutil import to_epoch_ms
         seen = rec.get("seen_at")
         if isinstance(seen, (int, float)):
             return int(seen)

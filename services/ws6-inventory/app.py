@@ -192,8 +192,17 @@ class Handler(BaseHTTPRequestHandler):
             # inventory any more than it can read one.
             if bound_tenant is not None:
                 body = {**body, "tenant_id": bound_tenant}
-            asset = STORE.upsert(body)
-            return self._send(200, asset) if asset else self._send(400, {"error": "mac required"})
+            asset, is_new_device = STORE.upsert_with_diff(body)
+            if not asset:
+                return self._send(400, {"error": "mac required"})
+            # M7 Track Y: an alertable first-ever sighting for this tenant.
+            # Additive field -- existing callers that ignore it are unaffected.
+            # This is the SIGNAL only; nothing publishes it to `raw.events`
+            # yet, because WS-6 is deliberately stdlib-only (see
+            # requirements.txt: the redis dep for the bus is documented and
+            # intentionally deferred). Until that lands, the
+            # `ot_new_device_on_segment` rule has no live producer.
+            return self._send(200, {**asset, "new_device": is_new_device})
         return self._send(404, {"error": "no such path"})
 
 
