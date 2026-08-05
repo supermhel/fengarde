@@ -90,6 +90,20 @@ detection:
   layer, not just this operator. A non-string operand or empty/oversized
   (>200 char) pattern fails closed, same discipline as `contains`.
 
+## Importing SigmaHQ rules (M7 follow-up)
+
+`tools/import_sigma_rules.py` converts a real SigmaHQ rule YAML into the shape
+this file describes: selection sanitization, dict/list/OR selection shapes,
+`and`/`or`/`not` condition rewriting, and the `contains`/`startswith`/
+`endswith`/`re` modifiers (`re` translates to a bounded `glob` above, or
+rejects the rule if it can't). Run it with `python tools/import_sigma_rules.py
+<sigma-rule.yml> [out.yml]`; anything it drops or defaults is printed as a
+`[WARN]`, not silently discarded. **Honest scope**: this covers roughly the
+basic detection/condition layer, an estimated 10-20% of real-world SigmaHQ
+constructs — full regex fields, additional modifiers (`base64`, etc.),
+timeframes, references, and more complex condition syntax are not yet
+supported, so this does not make arbitrary SigmaHQ rules importable.
+
 ## Periodicity / beaconing (v0.5, A3)
 
 An optional `siem.periodicity` block on a stateful rule additionally requires

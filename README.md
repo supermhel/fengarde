@@ -232,6 +232,10 @@ make e2e      # zero-infra ACCEPTANCE test: SSH brute-force -> real alert (no Do
 make test     # run the full zero-infra contract test suite (no Docker needed)
 make up       # start the stack detached (docker compose up -d)
 make down     # stop the stack and remove volumes
+make ha-up    # OPT-IN: Redis Sentinel (1 primary + 2 replicas + 3 Sentinels) + 3-node OpenSearch HA
+              # profile on top of the default stack (needs REDIS_PASSWORD) -- see
+              # infra/docker-compose.ha.yml's header comment. Default `make up` is unaffected.
+make ha-down  # stop the HA profile and remove its volumes
 ```
 
 ---
@@ -311,9 +315,9 @@ schema (OCSF).
 | WS | Service | Role | v0.1 status |
 |----|---------|------|-------------|
 | 1 | `services/ws1-collectors` | Collect logs → `raw.events` | ✅ |
-| 2 | `services/ws2-normalization` | Parsers → validated OCSF events | ✅ (16 parsers) |
+| 2 | `services/ws2-normalization` | Parsers → validated OCSF events | ✅ (17 parsers) |
 | 3 | `services/ws3-indexer` | Routing + OpenSearch indexing (idempotent) | ✅ |
-| 4 | `services/ws4-detection` | Correlation rules + scoring + windowing | ✅ (27 rules) |
+| 4 | `services/ws4-detection` | Correlation rules + scoring + windowing | ✅ (28 rules) |
 | 5 | `services/ws5-ai` | Triage | ✅ real local-LLM (Ollama) since v0.2, stub fallback |
 | 6 | `services/ws6-inventory` | IP/MAC inventory API (SQLite) | ✅ |
 | 7 | `services/ws7-dashboard` | Alert console | ✅ |

@@ -9,6 +9,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **M7 Track Y — OT inventory-diff detection, end to end**: a new
+  `ot_new_device_on_segment` rule fires on a genuinely new device appearing
+  on an OT segment. `services/ws6-inventory`'s `InventoryStore` now tracks a
+  first-ever sighting of a MAC per tenant, gated behind a per-tenant baseline
+  window (`INVENTORY_BASELINE_SECONDS`, default 1h) so standing the service
+  up against an existing segment populates inventory instead of alerting on
+  every device already there, and durable in SQLite so a restart is never
+  mistaken for the whole segment reappearing. A new bus consumer
+  (`services/ws6-inventory/bus_consumer.py`) closes a gap that predates this
+  feature — `contracts/bus-topics.md` had named WS-6 as `assets.updates`'
+  consumer since Phase 0, and `requirements.txt` had carried the dependency
+  comment since an earlier audit, but nothing had ever implemented it: WS-6
+  now consumes `assets.updates` and republishes an alertable first sighting
+  onto `raw.events`, giving the rule a real producer for the first time.
+  `redis` is opt-in in WS-6's image (only pulled in when `BUS_BACKEND` is
+  set), so the zero-infra HTTP-only path is unaffected. Two independent
+  adversarial reviews returned DO NOT SHIP on the first cut of this work (no
+  baseline, no durable state, unproven tenant isolation, no producer at all)
+  — all fixed; see `SSOT.md`'s M7 Track Y rows for the full history.
+- **Partial SigmaHQ rule importer** (`tools/import_sigma_rules.py`): converts
+  a subset of SigmaHQ's public detection rules into this repo's own rule
+  format — selection sanitization, dict/list/OR selection shapes, condition
+  rewriting (`and`/`or`/`not`), `contains`/`startswith`/`endswith`/`re`
+  modifiers (regex translated to a bounded glob under ADR-005's no-ReDoS
+  constraint, or rejected). Honest about scope: roughly the basic
+  detection/condition layer, an estimated 10-20% of real-world SigmaHQ
+  constructs — full regex fields, additional modifiers, timeframes, and
+  complex condition syntax are still open. Two independent review rounds
+  found and this fixed 5 real bugs, the sharpest being that a Sigma
+  list-selection (OR-of-items) referenced by its original name silently kept
+  only the first branch, and a selection named `and`/`or`/`not` imported
+  cleanly into a syntactically dead condition with no error reported.
+- **Sigma-style `glob` operator** in the rule grammar
+  (`services/ws4-detection/engine.py::_glob_match`, `*`/`?`/`[seq]`/`[!seq]`
+  via `fnmatch`) — the cheap partial step toward Sigma-rule portability;
+  explicitly not a regex layer, so ADR-005's no-ReDoS guarantee is unchanged.
+- **Rule-health / dead-rule watchdog**: `Detector.record_fire()` stamps a
+  real timestamp per rule id on every match; `rule_health_metrics()` renders
+  one gauge per rule that has actually fired (never fabricated as 0 for one
+  that hasn't) on the existing `/metrics/prom` route, closing the gap where
+  a rule proven fireable (`fire_check.py`) could still go silently dead in
+  production with no distinguishable signal from "no attacks happened."
 - **Non-zero rule-count floor** in `eval/attack/fire_check.py` and
   `tools/check_rule_producers.py`: both gates passed while examining **zero
   rules**. Every check in either is vacuously true over an empty set, so a

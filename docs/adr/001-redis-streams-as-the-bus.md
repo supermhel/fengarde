@@ -38,9 +38,15 @@ is actually built (YAGNI), not before.
 - **Positive:** `BUS_BACKEND=memory` gives the zero-infra contributor loop
   (`make test`, `make e2e`) — no Docker/Redis needed to add a parser or rule.
 - **Trade-off, documented (R-B in the architecture review):** Redis is a
-  single instance in the current (local/air-gapped) deployment tier; there is
-  no HA design yet (Sentinel/cluster) for a future central tier. Conscious
-  scope cut, not an oversight.
+  single instance by default. **Update (F4/HA, 2026-08-05):** an opt-in
+  Sentinel HA profile now exists (`infra/docker-compose.ha.yml`,
+  `_RedisSentinelBus` in `services/shared/bus.py` — 1 primary + 2 replicas +
+  3 Sentinels, `make ha-up`), not the single-instance-only setup this ADR
+  originally described. Cluster (sharding) was still the deliberate non-choice
+  named below; Sentinel was picked because nothing in this workload needs
+  sharding, and Cluster's multi-key restriction would constrain future work
+  for no throughput benefit. The default `docker compose up` path is
+  byte-for-byte unaffected — HA is opt-in, not the new baseline.
 - **Trade-off:** `_MemoryBus` fakes redelivery/DLQ semantics differently than
   `_RedisBus` (no persistent PEL — tests re-create the loop via a re-produce
   pattern). Anything depending on real PEL behavior (XAUTOCLAIM timing,
