@@ -51,6 +51,16 @@ from typing import Optional
 from .spool import BoundedSpool
 from shared.envelope import stamp_meta
 
+# CodeQL py/bind-socket-all-network-interfaces (alert #63) flags this default.
+# It is intentional, not an oversight: this is a syslog COLLECTOR whose entire
+# purpose is receiving UDP datagrams from OTHER machines on the network
+# (routers, firewalls, switches) -- binding it to 127.0.0.1 would make it
+# unreachable from any real log source and defeat the service. The port is
+# already published to the host's own interfaces in `infra/docker-compose.yml`
+# (`ports: ["5514:5514/udp"]`, its own comment: "so devices ... can send to
+# it"), so 0.0.0.0 here matches an already-deliberate, already-documented
+# exposure decision one layer up, not a new one. Override via SYSLOG_UDP_HOST
+# if a deployment needs to restrict ingestion to a specific NIC.
 DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = 5514
 # B2 (backpressure decision, docs/superpowers/specs/2026-07-02-fengarde-v0.3-improvement-plan.md):
