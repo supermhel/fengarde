@@ -152,6 +152,10 @@ echo
 echo "== ws4 v0.5 (A3): common_beaconing.yml fires on regular cadence, not on irregular =="
 $PY services/ws4-detection/test_v05_beaconing.py || fail=1
 echo
+echo "== ws4 OT inventory-diff rule (new OT device on segment) =="
+$PY services/ws4-detection/test_ot_inventory_diff_rule.py || fail=1
+echo
+
 echo "== ws4 agent rule pack (PLAN_A P3 R1/R3/R4/R5): fire on REAL parser output =="
 $PY services/ws4-detection/test_v05_agent_rules.py || fail=1
 echo

@@ -1,0 +1,39 @@
+title: New OT device appeared on the OT inventory segment
+id: 7f8091a2-b3c4-4d53-9e6f-1a2b3c4d5e6f
+status: stable
+description: >
+  An inventory-diff worker observed a previously unknown MAC/device appear on
+  the OT segment.  The worker is expected to emit an OCSF Network Activity open
+  event (`class_uid` 4001, `activity_id` 1) annotated with
+  `siem.source_type=inventory_diff`, `siem.sector=datacenter`,
+  `unmapped.ot.sector=ot` and `unmapped.ot.device_type` from the asset
+  inventory.  This rule is a coarse, single-shot watch: one unknown OT device
+  is already worth attention; legitimate onboarding will also fire until the
+  inventory allowlist is tuned per deployment.  Unlike the existing
+  `ot_new_engineering_connection` rule, this does NOT key on OPC UA logons --
+  it keys on inventory state, which is exactly the missing signal called out in
+  the task.
+level: high
+logsource:
+  category: network_activity
+detection:
+  ot_new_device:
+    class_uid: 4001
+    activity_id: 1
+    siem.source_type: inventory_diff
+    siem.sector: datacenter
+    unmapped.ot.sector: ot
+  condition: ot_new_device
+fields:
+  - src_endpoint.ip
+  - src_endpoint.mac
+  - unmapped.ot.device_type
+  - unmapped.ot.vendor
+  - unmapped.ot.hostname
+siem:
+  sector: datacenter
+  score_weight: 55
+mitre:
+  framework: attack-ics
+  tactic: TA0108      # Initial Access (ICS)
+  technique: T0864    # Transient Cyber Asset
