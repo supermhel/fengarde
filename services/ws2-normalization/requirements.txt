@@ -5,7 +5,7 @@
 # PLAN_C Tier 2.2 -- these used to be unpinned inline `pip install` args with no
 # machine-readable manifest, so Dependabot/SBOM tooling had nothing to track).
 PyYAML==6.0.2      # A5 enrichment (contracts/enrichment/*.yml)
-redis==5.0.8       # bus backend (services/shared/bus.py::_RedisBus, lazy-imported)
+redis==8.1.0       # bus backend (services/shared/bus.py::_RedisBus, lazy-imported)
 
 # Test-only extra (M1 correctness gate) -- NOT installed by the Dockerfile,
 # never imported at runtime, only by parsers/test_property_hardening.py:
