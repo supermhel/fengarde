@@ -215,8 +215,10 @@ def serve(host="0.0.0.0", port=8000):
         # still set, editing it now does nothing; say so.
         warn_if_legacy_env_now_ignored()
     srv = ThreadingHTTPServer((host, port), Handler)
-    # ws6 is a standalone service; its image does NOT bundle `shared`, so emit a
-    # structured JSON log line inline rather than importing shared.log.
+    # ws6's HTTP surface deliberately avoids `shared` even though the image
+    # bundles it now (M7 Track Y follow-up, for bus_consumer.py's opt-in use)
+    # -- emit a structured JSON log line inline rather than importing
+    # shared.log, so this path stays independent of that dependency.
     import json as _json
     import time as _time
     if MIGRATED_TENANTS:
