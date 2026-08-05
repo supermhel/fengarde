@@ -67,7 +67,11 @@ services:
       interval: 5s
       timeout: 3s
       retries: 5
-    networks: [ha]
+    # Static IP -- see the `ha` network's ipam block at the bottom of this file
+    # for why the Redis/Sentinel nodes are pinned rather than left dynamic.
+    networks:
+      ha:
+        ipv4_address: 172.28.0.11
 
   redis-2:
     image: redis:7-alpine
@@ -76,7 +80,7 @@ services:
     command: >
       sh -c '
       if [ -n "$$REDIS_PASSWORD" ]; then
-        exec redis-server --appendonly yes --replicaof redis-1 6379 --masterauth "$$REDIS_PASSWORD" --requirepass "$$REDIS_PASSWORD";
+        exec redis-server --appendonly yes --replicaof 172.28.0.11 6379 --masterauth "$$REDIS_PASSWORD" --requirepass "$$REDIS_PASSWORD";
       else
         echo "REDIS_PASSWORD must be set for HA" >&2; exit 1;
       fi'
@@ -84,7 +88,9 @@ services:
       - REDIS_PASSWORD=${REDIS_PASSWORD:?Set REDIS_PASSWORD before starting HA Redis}
     volumes: ["redis-data-ha-2:/data"]
     depends_on: {redis-1: {condition: service_healthy}}
-    networks: [ha]
+    networks:
+      ha:
+        ipv4_address: 172.28.0.12
 
   redis-3:
     image: redis:7-alpine
@@ -93,7 +99,7 @@ services:
     command: >
       sh -c '
       if [ -n "$$REDIS_PASSWORD" ]; then
-        exec redis-server --appendonly yes --replicaof redis-1 6379 --masterauth "$$REDIS_PASSWORD" --requirepass "$$REDIS_PASSWORD";
+        exec redis-server --appendonly yes --replicaof 172.28.0.11 6379 --masterauth "$$REDIS_PASSWORD" --requirepass "$$REDIS_PASSWORD";
       else
         echo "REDIS_PASSWORD must be set for HA" >&2; exit 1;
       fi'
@@ -101,7 +107,9 @@ services:
       - REDIS_PASSWORD=${REDIS_PASSWORD:?Set REDIS_PASSWORD before starting HA Redis}
     volumes: ["redis-data-ha-3:/data"]
     depends_on: {redis-1: {condition: service_healthy}}
-    networks: [ha]
+    networks:
+      ha:
+        ipv4_address: 172.28.0.13
 
   redis-sentinel-1:
     image: redis:7-alpine
@@ -110,11 +118,19 @@ services:
     command: ["sh", "/redis-sentinel-entrypoint.sh"]
     environment:
       - REDIS_PASSWORD=${REDIS_PASSWORD:?Set REDIS_PASSWORD before starting HA Redis}
+      # Must match redis-1's pinned ipv4_address above. Declared here so the
+      # compose file stays the single source of truth for the address; the
+      # entrypoint carries the same value only as a fallback default. A
+      # hostname still works (the entrypoint resolves it once at startup) but
+      # an IP is what keeps Sentinel off the resolver entirely.
+      - REDIS_SENTINEL_PRIMARY_HOST=172.28.0.11
     volumes:
       - ./redis-sentinel-entrypoint.sh:/redis-sentinel-entrypoint.sh:ro
       - redis-sentinel-ha-1:/data
     depends_on: [redis-1, redis-2, redis-3]
-    networks: [ha]
+    networks:
+      ha:
+        ipv4_address: 172.28.0.21
     ports: ["127.0.0.1:26379:26379"]
     healthcheck:
       test: ["CMD-SHELL", "redis-cli -p 26379 ping || exit 1"]
@@ -129,11 +145,19 @@ services:
     command: ["sh", "/redis-sentinel-entrypoint.sh"]
     environment:
       - REDIS_PASSWORD=${REDIS_PASSWORD:?Set REDIS_PASSWORD before starting HA Redis}
+      # Must match redis-1's pinned ipv4_address above. Declared here so the
+      # compose file stays the single source of truth for the address; the
+      # entrypoint carries the same value only as a fallback default. A
+      # hostname still works (the entrypoint resolves it once at startup) but
+      # an IP is what keeps Sentinel off the resolver entirely.
+      - REDIS_SENTINEL_PRIMARY_HOST=172.28.0.11
     volumes:
       - ./redis-sentinel-entrypoint.sh:/redis-sentinel-entrypoint.sh:ro
       - redis-sentinel-ha-2:/data
     depends_on: [redis-sentinel-1]
-    networks: [ha]
+    networks:
+      ha:
+        ipv4_address: 172.28.0.22
     ports: ["127.0.0.1:26380:26379"]
     healthcheck:
       test: ["CMD-SHELL", "redis-cli -p 26379 ping || exit 1"]
@@ -148,11 +172,19 @@ services:
     command: ["sh", "/redis-sentinel-entrypoint.sh"]
     environment:
       - REDIS_PASSWORD=${REDIS_PASSWORD:?Set REDIS_PASSWORD before starting HA Redis}
+      # Must match redis-1's pinned ipv4_address above. Declared here so the
+      # compose file stays the single source of truth for the address; the
+      # entrypoint carries the same value only as a fallback default. A
+      # hostname still works (the entrypoint resolves it once at startup) but
+      # an IP is what keeps Sentinel off the resolver entirely.
+      - REDIS_SENTINEL_PRIMARY_HOST=172.28.0.11
     volumes:
       - ./redis-sentinel-entrypoint.sh:/redis-sentinel-entrypoint.sh:ro
       - redis-sentinel-ha-3:/data
     depends_on: [redis-sentinel-1]
-    networks: [ha]
+    networks:
+      ha:
+        ipv4_address: 172.28.0.23
     ports: ["127.0.0.1:26381:26379"]
     healthcheck:
       test: ["CMD-SHELL", "redis-cli -p 26379 ping || exit 1"]
@@ -375,8 +407,29 @@ services:
       - REDIS_PASSWORD=${REDIS_PASSWORD:-}
 
 networks:
+  # Explicit subnet so the Redis + Sentinel nodes can be pinned to static IPs.
+  #
+  # Live-verified bug (2026-08-05): Sentinel was monitoring the primary by the
+  # hostname `redis-1` with `resolve-hostnames yes`, which makes it re-resolve
+  # that name on its event loop on every health check. Once the primary
+  # container dies the name stops resolving, and the lookup takes the stock
+  # 5s resolv.conf upstream timeout (measured: 0.00s for a live name, 5.06s for
+  # a dead one) -- well past Sentinel's hardcoded 2000ms TILT trigger. Sentinel
+  # tilted, suspended failover for 30s, retried the same dead name on exit, and
+  # re-tilted forever: `+sdown master` but never `+odown`, zero promotions, the
+  # whole cluster stuck write-dead on primary loss. Full write-up in
+  # redis-sentinel-entrypoint.sh's header comment.
+  #
+  # Pinning the Redis nodes means the address Sentinel is handed at boot stays
+  # valid for the life of the cluster, so it never needs the resolver again.
+  # .11-.13 = Redis primary/replicas, .21-.23 = Sentinels. Application services
+  # attaching to this network stay dynamic (Docker's IPAM allocates from the
+  # low end and skips these reservations), so nothing else here has to change.
   ha:
     driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/24
 
 volumes:
   redis-data-ha-1: {}
