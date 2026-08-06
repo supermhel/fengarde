@@ -41,6 +41,21 @@ except Exception:  # pragma: no cover - fallback when shared not importable
         warn = error = info
     _log = _NullLog()
 
+try:  # FIX 4: no-redirect urlopen (SSRF hardening); guarded like _log above
+    from shared.outbound_http import no_redirect_urlopen as _no_redirect_urlopen
+except Exception:  # pragma: no cover - standalone fallback (redirect-following)
+    _no_redirect_urlopen = None
+
+
+def _urlopen(req, timeout=None):
+    """urlopen without redirect-following when shared.http is importable.
+    When it isn't (standalone import), falls back to plain urlopen. Note:
+    this still resolves ``urllib.request.urlopen`` at call time, so unit
+    tests mocking that name keep working."""
+    if _no_redirect_urlopen is not None:
+        return _no_redirect_urlopen(req, timeout=timeout)
+    return urllib.request.urlopen(req, timeout=timeout)  # pragma: no cover
+
 
 # Allowed enum values for a deterministic, downstream-safe verdict.
 _VERDICTS = {"benign", "suspicious", "malicious", "unknown"}
@@ -147,7 +162,7 @@ class OllamaLLM:
         """Cheap reachability probe (GET /api/tags). Never raises."""
         try:
             req = urllib.request.Request(f"{self.url}/api/tags", method="GET")
-            with urllib.request.urlopen(req, timeout=self.timeout):  # noqa: S310
+            with _urlopen(req, timeout=self.timeout):  # noqa: S310
                 return True
         except Exception:
             return False
@@ -170,7 +185,7 @@ class OllamaLLM:
         req = urllib.request.Request(
             f"{self.url}/api/generate", data=body,
             headers={"Content-Type": "application/json"}, method="POST")
-        with urllib.request.urlopen(req, timeout=self.timeout) as resp:  # noqa: S310
+        with _urlopen(req, timeout=self.timeout) as resp:  # noqa: S310
             # Cap the read: a triage verdict is a few hundred bytes, so bound it so a
             # runaway/hostile response can't exhaust memory. An over-cap response is
             # truncated -> json.loads fails -> FallbackLLM degrades to the stub.

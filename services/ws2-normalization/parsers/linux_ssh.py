@@ -25,11 +25,12 @@ back to now.
 from __future__ import annotations
 
 import re
-import ipaddress
 import time
 from typing import Optional
 
 from .base import Parser, SEV_HIGH, SEV_INFO
+from .timeutil import to_epoch_ms
+from shared.ocsf import valid_ip
 
 _CLASS = 3002  # Authentication
 
@@ -61,16 +62,11 @@ _INVALID = re.compile(
 )
 
 
-def _valid_ip(ip):
-    """True if ``ip`` is a real IPv4 OR IPv6 address (else it must be dropped so
-    it can't fail Contract A's endpoint pattern downstream)."""
-    if not isinstance(ip, str):
-        return False
-    try:
-        ipaddress.ip_address(ip)
-        return True
-    except ValueError:
-        return False
+# FIX 7: the local _valid_ip() was replaced by shared.ocsf.valid_ip, which
+# additionally collapses IPv4-mapped IPv6 ("::ffff:10.0.0.5") to its dotted-quad
+# form ("10.0.0.5") so dual-stack auth events no longer fail Contract A's
+# endpoint pattern and get dead-lettered downstream. (The ipaddress.ip_address
+# it replaced accepted the mapped form but passed it through unnormalized.)
 # "pam_unix(sshd:session): session closed|opened for user jdoe"
 _SESSION = re.compile(
     r"session\s+(?P<state>opened|closed)\s+for user\s+(?P<user>\S+)"
@@ -97,7 +93,10 @@ class LinuxSshParser(Parser):
         if activity_id is None:
             return None  # an sshd line we don't model (e.g. "Connection closed")
 
-        if not _valid_ip(ip):
+        # FIX 7: valid_ip collapses ::ffff:10.0.0.5 -> 10.0.0.5 and returns the
+        # normalized form; assign the result (not just test it).
+        ip = valid_ip(ip)
+        if not ip:
             ip = None  # malformed octet in the log line -> drop, fall back to meta.ip
         ip = ip or meta.get("ip")
         verb = {1: "Logon", 2: "Logoff", 4: "Failed logon"}[activity_id]
@@ -164,17 +163,15 @@ class LinuxSshParser(Parser):
 
     @staticmethod
     def _time_ms(meta: dict) -> int:
-        ra = meta.get("received_at")
-        if isinstance(ra, (int, float)):
-            return int(ra * 1000) if ra < 1e12 else int(ra)
-        return int(time.time() * 1000)
+        # FIX 15: route through to_epoch_ms so FILETIME / epoch-seconds / ISO
+        # strings all normalize the same way (the old `int(ra*1000) if ra<1e12`
+        # one-liner mishandled FILETIME < 1e12 daylight and ISO strings).
+        parsed = to_epoch_ms(meta.get("received_at"))
+        return parsed if parsed is not None else int(time.time() * 1000)
 
     @staticmethod
     def _logged_time(meta: dict) -> Optional[int]:
-        ra = meta.get("received_at")
-        if isinstance(ra, (int, float)):
-            return int(ra * 1000) if ra < 1e12 else int(ra)
-        return None
+        return to_epoch_ms(meta.get("received_at"))
 
 
 def _as_int(v) -> Optional[int]:

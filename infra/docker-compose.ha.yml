@@ -55,7 +55,15 @@ services:
     command: >
       sh -c '
       if [ -n "$$REDIS_PASSWORD" ]; then
-        exec redis-server --appendonly yes --requirepass "$$REDIS_PASSWORD" --masterauth "$$REDIS_PASSWORD";
+        # FIX 23: min-replicas-to-write 1 / min-replicas-max-lag 10 make the
+        # primary REFUSE writes when no replica is connected (or all replicas
+        # lag >10s). Without this the primary silently accepts + ack events it
+        # has not replicated; if the primary then dies, the replica promoted to
+        # primary never received the acked tail -- silent event loss on exactly
+        # the failover path Sentinel exists to survive. Trade-off: while every
+        # replica is down the primary goes read-only (write-availability lost),
+        # which is the honest cost of not losing the acked tail. See SSOT.md §2.
+        exec redis-server --appendonly yes --requirepass "$$REDIS_PASSWORD" --masterauth "$$REDIS_PASSWORD" --min-replicas-to-write 1 --min-replicas-max-lag 10;
       else
         echo "REDIS_PASSWORD must be set for HA" >&2; exit 1;
       fi'
@@ -389,10 +397,20 @@ services:
       - REDIS_SENTINEL_HOSTS=redis-sentinel-1:26379,redis-sentinel-2:26379,redis-sentinel-3:26379
       - REDIS_SENTINEL_MASTER=mymaster
       - REDIS_PASSWORD=${REDIS_PASSWORD:-}
-      - OPENSEARCH_URL=http://opensearch-1:9200
+      # FIX H6 wiring (2026-08-06): OpenSearchStore accepts a comma-separated
+      # node list (storage/opensearch.py) and rotates to the next node on a
+      # connection-level failure. Pointing this at ALL THREE nodes is what
+      # actually turns the H6 code on -- it landed pointed at opensearch-1
+      # only, so the failover it implements was dead code in the one compose
+      # file (HA) that exists specifically to exercise it: the cluster stays
+      # green on any single node loss, but the writer (pinned to opensearch-1
+      # alone) would still go down with it.
+      - OPENSEARCH_URL=http://opensearch-1:9200,http://opensearch-2:9200,http://opensearch-3:9200
     depends_on: !override
       redis-1: {condition: service_healthy}
       opensearch-1: {condition: service_healthy}
+      opensearch-2: {condition: service_healthy}
+      opensearch-3: {condition: service_healthy}
     networks: [default, ha]
 
   ws4-detection:

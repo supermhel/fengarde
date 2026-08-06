@@ -25,6 +25,7 @@ import time
 from typing import Optional
 
 from .base import Parser, SEV_INFO
+from .timeutil import to_epoch_ms
 from shared.ocsf import valid_ip
 
 _CLASS = 4002  # DNS / HTTP Activity
@@ -80,7 +81,6 @@ class DnsQueryParser(Parser):
 
     @staticmethod
     def _time_ms(meta: dict) -> int:
-        ra = meta.get("received_at")
-        if isinstance(ra, (int, float)):
-            return int(ra * 1000) if ra < 1e12 else int(ra)
-        return int(time.time() * 1000)
+        # FIX 15: route through to_epoch_ms (FILETIME / ISO / epoch handling).
+        parsed = to_epoch_ms(meta.get("received_at"))
+        return parsed if parsed is not None else int(time.time() * 1000)

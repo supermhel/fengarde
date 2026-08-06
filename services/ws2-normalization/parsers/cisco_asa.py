@@ -21,6 +21,7 @@ from typing import Optional
 
 from .base import (Parser, SEV_INFO, SEV_LOW, SEV_MEDIUM, SEV_HIGH,
                    SEV_CRITICAL, IPV4)
+from .timeutil import to_epoch_ms
 
 # Cisco ASA syslog severity (0-7) -> OCSF severity_id. The old two-level map
 # (<=4 -> MEDIUM else INFO) capped emergency/alert/critical (0/1/2) at MEDIUM,
@@ -118,14 +119,10 @@ class CiscoAsaParser(Parser):
 
     @staticmethod
     def _time_ms(meta: dict) -> int:
-        ra = meta.get("received_at")
-        if isinstance(ra, (int, float)):
-            return int(ra * 1000) if ra < 1e12 else int(ra)
-        return int(time.time() * 1000)
+        # FIX 15: route through to_epoch_ms (FILETIME / ISO / epoch handling).
+        parsed = to_epoch_ms(meta.get("received_at"))
+        return parsed if parsed is not None else int(time.time() * 1000)
 
     @staticmethod
     def _logged_time(meta: dict) -> Optional[int]:
-        ra = meta.get("received_at")
-        if isinstance(ra, (int, float)):
-            return int(ra * 1000) if ra < 1e12 else int(ra)
-        return None
+        return to_epoch_ms(meta.get("received_at"))

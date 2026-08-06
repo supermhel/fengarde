@@ -19,7 +19,7 @@ from typing import Optional
 
 from .base import Parser, SEV_INFO
 from .timeutil import to_epoch_ms
-from shared.ocsf import valid_ip, valid_mac
+from shared.ocsf import valid_ip, valid_mac, safe_str
 
 
 _CLASS_NETWORK = 4001   # Network Activity
@@ -46,7 +46,11 @@ class InventoryDiffParser(Parser):
         # `valid_ip` already covers for the IP.
         mac = valid_mac(rec.get("mac"))
         ip = valid_ip(rec.get("ip") or meta.get("ip"))
-        hostname = rec.get("hostname")
+        # FIX L9: hostname pulled from an unguarded JSON field could be any
+        # type (int/list/dict); Contract A's endpoint schema requires a string.
+        # safe_str() drops a non-string hostname instead of emitting a
+        # schema-invalid event that dead-letters downstream.
+        hostname = safe_str(rec.get("hostname"))
         device_type = rec.get("device_type")
         sector = rec.get("sector")
 
@@ -87,16 +91,15 @@ class InventoryDiffParser(Parser):
 
     @staticmethod
     def _time_ms(rec: dict, meta: dict) -> int:
-        seen = rec.get("seen_at")
-        if isinstance(seen, (int, float)):
-            return int(seen)
-        return (to_epoch_ms(seen)
-                or to_epoch_ms(meta.get("received_at"))
-                or int(time.time() * 1000))
+        # FIX 8: to_epoch_ms converts epoch-seconds -> ms (the previous
+        # `isinstance(seen, (int, float)): return int(seen)` returned
+        # epoch-seconds AS ms, a ~1000x error that put events 55 years off),
+        # and also normalizes FILETIME and ISO-8601 strings.
+        parsed = (to_epoch_ms(rec.get("seen_at"))
+                  or to_epoch_ms(meta.get("received_at")))
+        return parsed if parsed is not None else int(time.time() * 1000)
 
     @staticmethod
     def _logged_time(rec: dict, meta: dict) -> Optional[int]:
-        seen = rec.get("seen_at")
-        if isinstance(seen, (int, float)):
-            return int(seen)
-        return to_epoch_ms(meta.get("received_at"))
+        return (to_epoch_ms(rec.get("seen_at"))
+                or to_epoch_ms(meta.get("received_at")))

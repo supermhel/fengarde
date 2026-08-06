@@ -39,9 +39,11 @@ from __future__ import annotations
 import http.client
 import json
 import os
+import threading
 import time
 import urllib.error
 import urllib.parse
+from typing import TypedDict
 
 from .adapter import StorageAdapter
 
@@ -67,24 +69,91 @@ class _HTTPError(urllib.error.HTTPError):
         return self._body
 
 
+class _Node(TypedDict):
+    host: str
+    port: int
+    https: bool
+    base: str
+
+
 class OpenSearchStore(StorageAdapter):
     def __init__(self, url: str | None = None, timeout: float = 10.0) -> None:
         url_str: str = url or os.getenv("OPENSEARCH_URL") or "http://localhost:9200"
-        parsed = urllib.parse.urlsplit(url_str)
-        self._host: str = parsed.hostname or "localhost"
-        self._port = parsed.port or (443 if parsed.scheme == "https" else 9200)
-        self._https = parsed.scheme == "https"
-        self.base = f"{parsed.scheme}://{parsed.netloc}".rstrip("/")
+        # FIX H6 (2026-08-06): comma-separated node list for 3-node HA. Single
+        # URL => one node => behavior byte-for-byte unchanged (the common
+        # single-instance case). Multiple nodes => on any connection-level
+        # failure we rotate to the next node, giving the writer real failover
+        # instead of pinning to opensearch-1 forever (cluster green, app dead).
+        self._nodes: list[_Node] = []
+        for part in url_str.split(","):
+            part = part.strip()
+            if not part:
+                continue
+            parsed = urllib.parse.urlsplit(part)
+            self._nodes.append({
+                "host": parsed.hostname or "localhost",
+                "port": parsed.port or (443 if parsed.scheme == "https" else 9200),
+                "https": parsed.scheme == "https",
+                "base": f"{parsed.scheme}://{parsed.netloc}".rstrip("/"),
+            })
+        if not self._nodes:
+            self._nodes.append({
+                "host": "localhost", "port": 9200, "https": False,
+                "base": "http://localhost:9200",
+            })
+        self._node_idx = 0
         self.timeout = timeout
         self._conn: http.client.HTTPConnection | None = None
+        # FIX H6 follow-up (2026-08-06): one OpenSearchStore instance is
+        # shared across every topic-consumer thread (ws3-indexer/main.py
+        # runs one worker thread PER topic against the SAME store). Without a
+        # lock, two threads hitting a connection failure at the same moment
+        # could each read/mutate _node_idx / _host / _port / _https / base /
+        # _conn concurrently and corrupt which node a request actually goes
+        # to (e.g. one thread reads the post-rotation host while another has
+        # only half-applied the rotation). This lock guards node selection
+        # and the connection object's create/reset lifecycle; the actual
+        # blocking socket I/O in _request()/bulk_index() runs OUTSIDE the
+        # lock so concurrent requests aren't needlessly serialized on the
+        # network round-trip -- only the bookkeeping around them is atomic.
+        self._node_lock = threading.Lock()
+        with self._node_lock:
+            self._use_current_node()
+
+    def _use_current_node(self) -> None:
+        """Point _host/_port/_https/.base at the current node so the rest of
+        the class (connection, retry, base-path building) is unchanged.
+        Caller must hold self._node_lock."""
+        node = self._nodes[self._node_idx]
+        self._host = node["host"]
+        self._port = node["port"]
+        self._https = node["https"]
+        self.base = node["base"]
+
+    def _rotate_node(self) -> None:
+        """Advance to the next node in the list (round-robin), resetting any
+        stale connection so the next request uses the new node. Acquires
+        self._node_lock itself -- callers must NOT already hold it."""
+        with self._node_lock:
+            self._reset_connection_locked()
+            if len(self._nodes) > 1:
+                self._node_idx = (self._node_idx + 1) % len(self._nodes)
+                self._use_current_node()
 
     def _connection(self) -> http.client.HTTPConnection:
-        if self._conn is None:
-            cls = http.client.HTTPSConnection if self._https else http.client.HTTPConnection
-            self._conn = cls(self._host, self._port, timeout=self.timeout)
-        return self._conn
+        with self._node_lock:
+            if self._conn is None:
+                cls = http.client.HTTPSConnection if self._https else http.client.HTTPConnection
+                self._conn = cls(self._host, self._port, timeout=self.timeout)
+            return self._conn
 
     def _reset_connection(self) -> None:
+        """Acquires self._node_lock itself -- callers must NOT already hold it."""
+        with self._node_lock:
+            self._reset_connection_locked()
+
+    def _reset_connection_locked(self) -> None:
+        """Caller must hold self._node_lock."""
         if self._conn is not None:
             try:
                 self._conn.close()
@@ -102,15 +171,21 @@ class OpenSearchStore(StorageAdapter):
         same as before, for `index()`'s own retry loop to handle."""
         data = json.dumps(body).encode("utf-8") if body is not None else None
         headers = {"Content-Type": "application/json"}
-        for attempt in (0, 1):
+        # FIX H6: try each node in the list (single-node list = one attempt
+        # round, byte-for-byte prior behavior). A connection-level failure
+        # rotates to the next node so the writer keeps working when a node
+        # goes down (instead of pinning to opensearch-1 until the app restarts).
+        max_attempts = len(self._nodes) * 2  # *2: retry the same node once before rotating, mirroring P1-4's rebuild
+        for attempt in range(max_attempts):
             conn = self._connection()
             try:
                 conn.request(method, path, body=data, headers=headers)
                 resp = conn.getresponse()
                 payload = resp.read()
             except (http.client.HTTPException, OSError) as exc:
-                self._reset_connection()
-                if attempt == 1:
+                # Connection-level failure -> drop this node and try the next.
+                self._rotate_node()
+                if attempt == max_attempts - 1:
                     # Wrap as urllib.error.URLError: every existing caller's
                     # retry logic (index()'s `except urllib.error.URLError`)
                     # was written against urlopen()'s exception shape; this

@@ -35,6 +35,7 @@ import ipaddress
 import json
 import math
 import re
+import sys
 import time
 from pathlib import Path
 
@@ -71,11 +72,15 @@ def get_path(doc: dict, dotted: str):
 
 
 # --- A3: allowlists -----------------------------------------------------------
-# Loaded once per rule-load pass (see load_rules) and shared via a module-level
-# cache keyed by directory, so repeated `not_in: <name>` references across rules
-# don't re-read/re-parse the file. A missing/malformed allowlist fails CLOSED:
-# the rule selection referencing it can never match (never raises), and a
-# warning is printed once at load time so the misconfiguration is visible.
+# Loaded once per rule-load pass (see load_rules, which clears the entries for
+# its own allowlists_dir up front) and shared via a module-level cache keyed by
+# directory, so repeated `not_in: <name>` references across rules don't
+# re-read/re-parse the file within that pass. A missing/malformed allowlist
+# makes the ALLOWLIST ITSELF fail closed (Allowlist.matches() always returns
+# False -- it can never suppress anything), which makes the RULE fail OPEN
+# (the not_in selection keeps matching/firing -- see _operator_matches's
+# not_in branch and M2 in engine.py's history). A warning is printed once per
+# load pass so the misconfiguration is visible.
 _ALLOWLIST_CACHE: dict[str, "Allowlist"] = {}
 
 
@@ -83,7 +88,10 @@ class Allowlist:
     """A loaded allowlist: exact-match strings plus optional CIDR ranges.
 
     `ok` is False when the file was missing/malformed; matches() then always
-    returns False (fail closed) instead of raising.
+    returns False -- the ALLOWLIST fails closed (never suppresses) instead of
+    raising, which is what makes a rule's `not_in` clause referencing it fail
+    OPEN (keep firing). Do not read "fails closed" here as "the rule stops
+    firing" -- it is the opposite; see the module note above _ALLOWLIST_CACHE.
     """
 
     def __init__(self, entries: list, ok: bool = True):
@@ -134,9 +142,15 @@ def load_allowlist(allowlists_dir: Path, name: str) -> Allowlist:
         if not isinstance(entries, list):
             raise ValueError("allowlist file missing a list 'entries:' key")
         allowlist = Allowlist(entries, ok=True)
-    except Exception as exc:  # missing file, bad YAML, bad shape -> fail closed
+    except Exception as exc:  # missing file, bad YAML, bad shape -> FAIL OPEN
+        # M2 (2026-08-06): this WARNING previously claimed "will never match
+        # (fail closed)" -- the INVERSE of the real behavior. `not_in` on a
+        # broken allowlist is deliberately fail-OPEN: the rule keeps firing
+        # (noise, never a missed detection). That is the tested, intended
+        # posture; the message now says so honestly.
         print(f"[engine] WARNING: allowlist '{name}' failed to load ({exc}); "
-              f"rule selections using not_in:{name} will never match (fail closed).")
+              f"rule selections using not_in:{name} will MATCH everything "
+              f"(fail open - detection kept, expect noise).")
         allowlist = Allowlist([], ok=False)
 
     _ALLOWLIST_CACHE[cache_key] = allowlist
@@ -365,6 +379,21 @@ class Rule:
         self.llm_gate = siem.get("llm_gate", True) is not False
         self.window_seconds = siem.get("window_seconds")
         self.threshold = siem.get("threshold")
+        # FIX 2(b) poison-pill guard (2026-08-06): validate the stateful
+        # window/threshold TYPES at construction, so a poisoned rule like
+        # `window_seconds: "60"` raises a clear ValueError HERE (bad
+        # contributor rule spotted at load time) instead of a TypeError inside
+        # event evaluation -- `"60" * 1000` or `count >= "10"` would otherwise
+        # escape the condition-phase try/except and poison-pill the consumer.
+        # Bool is rejected too: it is an int subtype whose arithmetic would be
+        # silently nonsense (True * 1000 == 1000).
+        for _f in ("window_seconds", "threshold"):
+            _v = siem.get(_f)
+            if _v is not None and (isinstance(_v, bool)
+                                   or not isinstance(_v, (int, float))):
+                raise ValueError(
+                    f"rule {raw.get('id')}: siem.{_f} must be numeric, "
+                    f"got {type(_v).__name__}")
         self.group_by = siem.get("group_by", "src_endpoint.ip")
         self._group_by_parts = tuple(self.group_by.split("."))
         # Optional: count DISTINCT values of this OCSF field per group instead of a
@@ -471,6 +500,14 @@ class Rule:
                 if not isinstance(arg, str):
                     return False  # malformed allowlist reference -> fail closed
                 allowlist = load_allowlist(self._allowlists_dir or _default_allowlists_dir(), arg)
+                # FAIL-OPEN on a broken allowlist (2026-08-06, matches the
+                # project's established intent in test_v03_rule_grammar /
+                # test_v04_rule_tuning / test_v05_agent_rules -- see M2).
+                # `not_in` is a SUPPRESSION allowlist ("fire when the field is
+                # NOT in this known-good list"). If the list cannot be loaded,
+                # over-alerting (keep firing = noise) is strictly safer than
+                # silently disabling the rule (detection blackout). This is
+                # deliberate and tested; do not flip to fail-closed.
                 if allowlist.matches(actual):
                     return False  # value IS in the allowlist -> suppressed -> no match
             elif op == "outside_hours":
@@ -622,6 +659,21 @@ class Rule:
             return False
         if not self.stateful:
             return True
+        # FIX 2(a) poison-pill guard (2026-08-06): the stateful evaluation runs
+        # window arithmetic (`window_seconds * 1000`, `count >= threshold`) that
+        # is out of reach of the condition-phase try/except in _eval_condition.
+        # A poisoned rule that slipped past load-time validation (Part B here +
+        # validate_rules wiring in load_rules) must fail CLOSED to no-match,
+        # never escape as an uncaught TypeError/ValueError that crashes the
+        # consumer (message unacked -> redelivered forever).
+        try:
+            return self._evaluate_stateful(event)
+        except (TypeError, ValueError):
+            return False
+
+    def _evaluate_stateful(self, event: dict) -> bool:
+        """Stateful threshold path. Caller wraps this in a TypeError/ValueError
+        guard (FIX 2(a)); f(n) must never let window arithmetic raise."""
         group_value = _get_path_parts(event, self._group_by_parts)
         if group_value is None:
             # An event without the group_by field cannot be attributed to any
@@ -638,6 +690,17 @@ class Rule:
             # (now_ms - window_ms) and poison-pill the consumer; a far-future
             # time would corrupt the window (see _MAX_CLOCK_SKEW_MS). Fail closed
             # -- same discipline as the time-of-day predicate (_time_outside_hours).
+            raw = event.get("time", 0)
+            if (isinstance(raw, (int, float)) and not isinstance(raw, bool)
+                    and math.isfinite(raw)
+                    and int(raw) > int(time.time() * 1000) + _MAX_CLOCK_SKEW_MS):
+                # FIX L1 (2026-08-06): a future-dated event is dropped here by
+                # the anti-window-poisoning guard -- surface it at WARN so these
+                # silent fail-closed drops (source clock-skew / spoofed timestamps)
+                # are visible to operators instead of vanishing without a trace.
+                print(f"[engine] WARN: rule {self.id}: dropping future-dated "
+                      f"event (time={raw}); beyond {_MAX_CLOCK_SKEW_MS}ms "
+                      f"clock-skew guard, not driving stateful window")
             return False
         member = (event.get("siem") or {}).get("ingest_id") or str(now)
         # Namespace the window by rule id AND tenant so two rules (or two
@@ -730,11 +793,72 @@ def _default_allowlists_dir() -> Path:
     return Path(__file__).resolve().parent.parent.parent / "contracts" / "allowlists"
 
 
+def _validate_loaded_rule(raw: dict, path: Path) -> None:
+    """FIX 2(c) poison-pill guard (2026-08-06): run the rule validator
+    (tools/validate_rules.validate_rule) on each loaded YAML dict BEFORE
+    constructing its ``Rule``, so a poisoned rule (e.g. ``window_seconds:
+    "60"``) is rejected at load time with a clear error instead of raising
+    inside event evaluation and poison-pilling the consumer. Only the
+    poison-pill class (bad window_seconds/threshold types) blocks a load; the
+    validator's other strict-gate findings are tolerated by the runtime (see
+    the filter below).
+
+    Loaded lazily and by ABSOLUTE FILE PATH on purpose:
+      * deferred import -- tools/validate_rules.py imports engine at module
+        scope, so a module-level import here would be circular;
+      * file-path load -- the repo's ``tools/`` is a namespace package (no
+        ``__init__.py``) and can be shadowed on ``sys.path`` by an unrelated
+        regular ``tools`` package (e.g. the hermes-agent ``tools`` dir), so
+        ``import tools.validate_rules`` is not reliable in every runtime.
+        Loading by resolved path works regardless of what else sits on
+        ``sys.path``. If the file is genuinely absent, we fall back to
+        engine.Rule.__init__'s own type checks, which still guard the actual
+        poison-pill case.
+    """
+    import importlib.util  # noqa: E402  (module-level would bloat hot imports)
+    vrf = Path(__file__).resolve().parents[2] / "tools" / "validate_rules.py"
+    if not vrf.exists():
+        return  # tools/ not deployed; Rule.__init__ still guards
+    spec = importlib.util.spec_from_file_location("_fengarde_validate_rules", vrf)
+    if spec is None or spec.loader is None:
+        return  # could not build a spec/loader; Rule.__init__ still guards
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["_fengarde_validate_rules"] = mod
+    spec.loader.exec_module(mod)
+    errors = mod.validate_rule(raw)
+    # The rule validator is a strict CONTRIBUTION gate (UUID id, title,
+    # level, ... required for the open-source rule flywheel). The runtime,
+    # by contrast, is deliberately tolerant: Rule defaults a missing `level`
+    # to "medium", and a malformed rule fails CLOSED at evaluate -- it never
+    # refuses to load. So applying the full gate here would reject rules that
+    # are perfectly valid AT RUNTIME (e.g. a rule missing an optional `level`
+    # field). The one error class that MUST stop a load is a poison-pill
+    # window -- a non-numeric window_seconds/threshold that would crash the
+    # stateful path (guarded anyway by FIX 2(a)/(b), but far better to reject
+    # the rule here with a clear file+field message). Surface only that class.
+    poison = [e for e in errors
+              if "window_seconds" in e or "threshold" in e]
+    if poison:
+        raise ValueError(f"rule file {path.name} failed validation: "
+                         f"{poison[0]}")
+
+
 def load_rules(rules_dir: Path, allowlists_dir: Path | None = None) -> list[Rule]:
     rules = []
     resolved_allowlists = allowlists_dir or (Path(rules_dir).parent / "allowlists")
+    # Drop this dir's cached allowlists before the pass. Without this, an
+    # allowlist that failed to load once (ok=False, cached) stays cached for
+    # the life of the process even after an operator fixes the file on disk
+    # and a hot-reload picks up the new rules -- load_allowlist() would keep
+    # returning the stale broken-allowlist object forever, so a `not_in`
+    # suppression the operator just repaired would silently stay disabled
+    # (fail-open noise) instead of resuming suppression.
+    resolved_str = str(Path(resolved_allowlists).resolve())
+    for key in [k for k in _ALLOWLIST_CACHE if k.startswith(resolved_str + "::")]:
+        del _ALLOWLIST_CACHE[key]
     for path in sorted(Path(rules_dir).glob("*.yml")):
         raw = yaml.safe_load(path.read_text(encoding="utf-8"))
         if raw:
+            _validate_loaded_rule(raw, path)  # FIX 2(c): reject bad rules at load time
             rules.append(Rule(raw, allowlists_dir=resolved_allowlists))
     return rules

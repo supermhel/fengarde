@@ -29,6 +29,7 @@ import time
 from typing import Optional
 
 from .base import Parser, SEV_BY_CATEGORY, status_from_outcome
+from .timeutil import to_epoch_ms
 from shared.ocsf import valid_ip
 
 _CLASS = 6003  # API Activity
@@ -125,14 +126,13 @@ class K8sAuditParser(Parser):
     def _time_ms(rec: dict, meta: dict) -> int:
         # requestReceivedTimestamp is a real RFC3339 field on every k8s audit
         # event; fall back to meta.received_at, then now -- same layered
-        # fallback every other parser uses.
+        # fallback every other parser uses. FIX 15: numeric fallback routes
+        # through to_epoch_ms too (FILETIME / epoch-seconds / ms normalize
+        # identically).
         ts = rec.get("requestReceivedTimestamp")
         if isinstance(ts, str) and ts:
-            from .timeutil import to_epoch_ms
             parsed = to_epoch_ms(ts)
             if parsed is not None:
                 return parsed
-        ra = meta.get("received_at")
-        if isinstance(ra, (int, float)):
-            return int(ra * 1000) if ra < 1e12 else int(ra)
-        return int(time.time() * 1000)
+        parsed = to_epoch_ms(meta.get("received_at"))
+        return parsed if parsed is not None else int(time.time() * 1000)

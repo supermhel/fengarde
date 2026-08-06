@@ -15,6 +15,14 @@ detection:
   #     src_endpoint.ip: {not_in: corp_ranges}
   # (or a dedicated known-egress allowlist) -- but understand it blinds this rule
   # to attacks from those ranges.
+  #
+  # FIX L2 (honest default posture): like every rule, this one ships with NO
+  # suppression -- the allowlist/`not_in` idiom below is EMPTY until an operator
+  # populates it (e.g. `contracts/allowlists/known_egress.yml`) with the org's
+  # actual NAT/proxy egress ranges. That default is deliberate: suppressing
+  # nothing on first install beats silently suppressing a real internal brute
+  # force. Populate the org's known-egress allowlist only if and when benign
+  # bursts actually show up in your environment.
   failed_auth:
     class_uid: 3002
     activity_id: 4

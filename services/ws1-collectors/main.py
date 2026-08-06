@@ -139,6 +139,12 @@ def main() -> None:
             "events_spooled": udp.events_spooled,
             "events_lost": udp.events_lost,
             "events_queue_full": udp.events_queue_full,
+            # FENGARDE E6: bounded per-source breakdown {ip: {produced,
+            # dropped, shed}} -- a dict with a capped (LRU-evicted) map, so
+            # /metrics can show which peer IPs are flooding/shedding without
+            # the map itself growing without bound. Aggregates above stay
+            # authoritative (and lossless); this is a visibility partition.
+            "per_source": udp.per_source_metrics(),
         }
         # P0-4: the kernel-level drop counter (RcvbufErrors) -- the loss
         # class that reads as a healthy events_shed=0/events_dropped=0 at the

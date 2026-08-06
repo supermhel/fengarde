@@ -59,8 +59,15 @@ class LoginRateLimiter:
     username, not source IP -- a shared-NAT office trying one real user's
     password shouldn't get every OTHER user in the office locked out too,
     and username-keying is what actually stops a credential-stuffing run
-    against one account. In-memory (see sessions.py's same scope note --
-    single-process API, restart clears it).
+    against one account.
+
+    Scope note: this limiter is IN-MEMORY / single-process only. Its state
+    lives in this process's `_attempts` dict, so it (a) clears on restart
+    and (b) is NOT shared across WS-3 replicas or with the Redis-backed
+    session store -- it only protects logins that hit THIS instance. For a
+    cluster-wide lockout, pair this with Redis-based rate limiting at a
+    reverse proxy; this class is a correct per-instance safeguard, not a
+    global one.
 
     Thread-safe (a lock around all three methods): `is_locked_out` is a
     read-modify-write on `_attempts` (it prunes stale timestamps as a side

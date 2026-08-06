@@ -150,7 +150,16 @@ class Detector:
     def process(self, event: dict):
         """Return (scored_event, matched_rules, action)."""
         class_uid = event.get("class_uid")
-        candidates = self._by_class_uid.get(class_uid, []) + self._by_class_uid[None]
+        # FIX 13 (2026-08-06): an event with class_uid=None (no class equality)
+        # must get only the catch-all bucket, NOT the catch-all added twice --
+        # the old expression `by_class.get(None, []) + by_class[None]` would
+        # evaluate every catch-all rule TWICE against such an event (double
+        # stateful-window hits / duplicate alerts). When the class is present,
+        # the class bucket is combined with the catch-all as before.
+        if class_uid is None:
+            candidates = self._by_class_uid[None]
+        else:
+            candidates = self._by_class_uid.get(class_uid, []) + self._by_class_uid[None]
         # M4 multi-tenancy: a tenant's config can disable specific global
         # rules for their own events (contracts/tenants/<tenant_id>.yml).
         # Missing config/entry -> nothing disabled (fail open to detection,
@@ -168,6 +177,20 @@ class Detector:
         # above is unaffected either way.
         action = self.scorer.route(self.scorer.routing_score(matched))
         return event, matched, action
+
+    def _funnel_dedup(self, event: dict, matched: list) -> bool:
+        """FIX 22 (2026-08-06): gate an ``ai.requests`` enqueue. Returns True
+        when at least one matched rule's alert_key is not within the LLM-funnel
+        cooldown, recording the qualifying keys via Scorer.should_enqueue_llm so
+        a hot rule fires the funnel at most once per alert-key per cooldown.
+        No matched rules -> no dedup to apply (True)."""
+        if not matched:
+            return True
+        fresh = False
+        for rule in matched:
+            if self.scorer.should_enqueue_llm(rule.alert_key(event)):
+                fresh = True
+        return fresh
 
 
 def rules_max_mtime(rules_dir: Path = RULES_DIR, allowlists_dir: Path = ALLOWLISTS_DIR) -> float:
@@ -269,7 +292,7 @@ def detect_one(bus, detector: "Detector", event: dict) -> None:
     # a real model call; "classifier" runs only the cheap deterministic/ML
     # classifier (classifier.py) -- never the LLM, or the whole point of a
     # separate cheap tier is defeated.
-    if action in ("llm", "classifier"):
+    if action in ("llm", "classifier") and detector._funnel_dedup(event, matched):
         bus.produce("ai.requests", key=event["siem"].get("ingest_id", key),
                     payload={"event_id": event["siem"].get("ingest_id"),
                              "event": event, "tier": action,
@@ -288,7 +311,7 @@ def run(bus, detector: "Detector") -> dict:
             bus.produce("alerts", key=alert["alert_id"], payload=alert)
             detector.record_fire(rule.id)
             stats["alerts"] += 1
-        if action in ("llm", "classifier"):  # P1-2: see detect_one()'s comment
+        if action in ("llm", "classifier") and detector._funnel_dedup(event, matched):  # P1-2 + FIX 22
             bus.produce("ai.requests", key=event["siem"].get("ingest_id", key),
                         payload={"event_id": event["siem"].get("ingest_id"),
                                  "event": event, "tier": action,
@@ -306,18 +329,52 @@ def main():
 
     detector = Detector()
 
-    # T6: on Redis, give stateful rules a GLOBAL window counter so the threshold
-    # count is correct across multiple WS-4 replicas. A per-process deque would
-    # split the count and the brute-force alert would never fire under scaling.
-    # Stashed on the detector (not just applied once) so a later reload() also
-    # rewires newly-loaded rule objects onto the same counter.
-    if os.getenv("BUS_BACKEND", "memory").lower() == "redis":
+    _backend = os.getenv("BUS_BACKEND", "memory").lower()
+    # T6: on a shared Redis bus, give stateful rules a GLOBAL window counter so
+    # the threshold count is correct across multiple WS-4 replicas. A per-process
+    # deque would split the count and the brute-force alert would never fire
+    # under scaling. Stashed on the detector (not just applied once) so a later
+    # reload() also rewires newly-loaded rule objects onto the same counter.
+    # FIX 1 (CRITICAL, 2026-08-06): the HA compose sets BUS_BACKEND=redis-sentinel,
+    # which the old exact == "redis" gate silently ignored -> 12 stateful rules
+    # fell back to per-process counters that never fire at scale. Now BOTH
+    # "redis" and "redis-sentinel" are wired.
+    #
+    # C1 follow-up (2026-08-06): the first version resolved the master ONCE via
+    # `Sentinel.discover_master()` and built a plain `redis.Redis(host, port)`
+    # pinned to that address. Sentinel exists to survive exactly the event that
+    # breaks a pinned client: on a real failover the old master demotes to a
+    # replica, starts answering "READONLY You can't write against a read only
+    # replica.", and the pinned client keeps hammering it until the process is
+    # restarted -- the counter goes dark for the rest of the process lifetime.
+    # `Sentinel.master_for()` returns a client that re-asks Sentinel for the
+    # current master on each new connection (including the reconnect after a
+    # failover breaks the old one), so writes follow the master automatically.
+    if _backend in ("redis", "redis-sentinel"):
         try:
             import redis  # type: ignore
             from window import RedisWindowCounter  # noqa: E402
-            client = redis.Redis.from_url(
-                os.getenv("REDIS_URL", "redis://localhost:6379/0"),
-                decode_responses=True)
+            if _backend == "redis-sentinel":
+                from redis.sentinel import Sentinel  # type: ignore
+                sentinel_hosts = []
+                for part in os.getenv("REDIS_SENTINEL_HOSTS", "").split(","):
+                    part = part.strip()
+                    if not part:
+                        continue
+                    host, _, port = part.partition(":")
+                    sentinel_hosts.append((host.strip(),
+                                           int(port.strip()) if port.strip() else 26379))
+                master_name = os.getenv("REDIS_SENTINEL_MASTER", "mymaster")
+                password = os.getenv("REDIS_PASSWORD", "") or None
+                sentinel = Sentinel(sentinel_hosts, password=password,
+                                    socket_timeout=1, decode_responses=True)
+                client = sentinel.master_for(master_name, redis_class=redis.Redis,
+                                             password=password,
+                                             decode_responses=True)
+            else:
+                client = redis.Redis.from_url(
+                    os.getenv("REDIS_URL", "redis://localhost:6379/0"),
+                    decode_responses=True)
             counter = RedisWindowCounter(client)
             detector._window_counter = counter
             for r in detector.rules:
@@ -334,7 +391,7 @@ def main():
             # zero operator visibility -- let it propagate and crash loudly
             # instead.
             get_logger("ws4-detection").warn(
-                "BUS_BACKEND=redis requested but redis-py is not installed; "
+                f"BUS_BACKEND={_backend} requested but redis-py is not installed; "
                 "falling back to per-replica window counter (NOT safe across "
                 "multiple WS-4 replicas)")
 

@@ -24,6 +24,7 @@ import time
 from typing import Optional
 
 from .base import Parser, SEV_BY_CATEGORY, SEV_HIGH, SEV_INFO, status_from_outcome
+from .timeutil import to_epoch_ms
 from shared.ocsf import valid_ip
 
 _CLASS_AUTH = 3002
@@ -109,13 +110,13 @@ class CloudTrailParser(Parser):
 
     @staticmethod
     def _time_ms(rec: dict, meta: dict) -> int:
+        # FIX 15: numeric fallback now also routes through to_epoch_ms so
+        # FILETIME / epoch-seconds / ms normalize identically (the old
+        # `int(ra*1000) if ra<1e12 else int(ra)` mishandled FILETIME).
         ts = rec.get("eventTime")
         if isinstance(ts, str) and ts:
-            from .timeutil import to_epoch_ms
             parsed = to_epoch_ms(ts)
             if parsed is not None:
                 return parsed
-        ra = meta.get("received_at")
-        if isinstance(ra, (int, float)):
-            return int(ra * 1000) if ra < 1e12 else int(ra)
-        return int(time.time() * 1000)
+        parsed = to_epoch_ms(meta.get("received_at"))
+        return parsed if parsed is not None else int(time.time() * 1000)
