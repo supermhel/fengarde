@@ -15,8 +15,12 @@
   `threshold` + `group_by` (sliding window, plus `distinct_field` for distinct-count).
   Score = capped sum of weights, with a severity floor; funnel route =
   store / classifier / llm per `scoring.yaml`.
-- Operators (v0.3): equality, comparison (`gt/gte/lt/lte/ne`), allowlist suppression
-  (`not_in`), time-of-day (`outside_hours`) — non-eval, fail-closed. Grammar in
+- Operators: equality, comparison (`gt/gte/lt/lte/ne`), allowlist suppression
+  (`not_in`, fail-OPEN on a broken allowlist file — see `engine.py`'s
+  `_ALLOWLIST_CACHE` docstring), time-of-day (`outside_hours`), list membership
+  (`in`, v0.4 P2), bounded substring (`contains`, v0.4 P2), Sigma-style
+  wildcard (`glob` — `*`/`?`/`[seq]`/`[!seq]` via `fnmatch`, M7 2026-08-05,
+  explicitly not a regex layer per ADR-005) — non-eval, fail-closed. Grammar in
   `contracts/sigma-convention.md`.
 - `class_uid` prefilter: rules bucketed by a *necessary* equality class_uid so an
   event only evaluates candidate rules; multi-class/negation rules fall back to a

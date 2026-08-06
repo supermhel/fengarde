@@ -31,6 +31,13 @@
   Auth below) — session cookie + `csrf_token`. Every session-authenticated
   `POST` (including `/alerts/{id}/triage` and `/alerts/{id}/report`) must echo
   the token back as `X-CSRF-Token` or gets 403.
+- `POST /auth/mfa/enable`, `POST /auth/mfa/verify` (E3, 2026-08-06, opt-in
+  per-user TOTP) — both require the acting user's own current password in
+  the body (session cookie alone is not sufficient to touch MFA config),
+  rate-limited separately from login lockout, every outcome audited.
+- `GET /audit` (E1, 2026-08-06, admin-only) — recent entries from the
+  append-only, capacity-capped, fail-open audit log
+  (`services/ws3-indexer/audit.py`); records login/triage/report events.
 - Outbound webhooks (M4.4, `services/ws3-indexer/webhooks.py`) run in a
   separate thread on their OWN consumer group (`cg-webhook`) on the `alerts`
   topic — a slow/down receiver can never delay or duplicate indexing itself.

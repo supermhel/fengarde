@@ -145,6 +145,105 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   threshold is well *chosen* — lowering a declared threshold keeps the gate
   green.
 
+### Added (2026-08-06, security-hardening + enhancements, PR #54)
+
+An independent security/architecture/CI audit (28 findings, plus a
+cross-check against a prior swarm review and a dedicated HA audit — full
+detail in `SSOT.md`'s two new §1 rows and `implementation_report_2026-08-06.md`)
+drove a 39-finding fix pass, followed by a second independent review that
+caught 1 CRITICAL + 4 HIGH regressions the fix pass itself introduced and
+fixed those too (commit `983efc7`).
+
+- **Opt-in MFA/TOTP** (`services/ws6-inventory/mfa.py`, RFC 6238,
+  stdlib-only): provision → confirm two-step activation, login gates on
+  `totp_code` once active, additive `users` schema columns (existing
+  accounts untouched). Both `/auth/mfa/enable` and `/auth/mfa/verify`
+  require the acting user's own current password — a session cookie alone
+  cannot touch an account's MFA config — rate-limited and audited.
+- **Append-only admin-scoped audit log** (`services/ws3-indexer/audit.py`):
+  JSONL, capacity-capped (ring-buffer tail-trim), fail-open (an audit
+  outage never breaks login/triage/report), wired into login
+  success/failure, triage updates, and report generation; `GET /audit`
+  requires `admin`.
+- **OpenSearch multi-node write failover** (FIX H6): `OpenSearchStore`
+  accepts a comma-separated node list and rotates to a surviving node on a
+  connection-level failure; `infra/docker-compose.ha.yml`'s `ws3-indexer`
+  now actually points at all 3 nodes (it shipped pointed at one, making the
+  failover code dead in the one profile meant to exercise it).
+- **Per-source syslog metrics** (E6): a bounded, LRU-evicted, thread-safe
+  per-peer-IP breakdown on WS-1's `/metrics`.
+- **Dashboard**: saved alert-search filters (client-side), dark/light theme
+  toggle, alert-lifecycle guidance and per-rule playbook rendering
+  (E11/E12/E13).
+- **`FENGARDE_REQUIRE_AUTH`** boot-time gate (`services/shared/authz.py`):
+  refuses to start when auth is required but the configured surface is
+  incomplete, instead of silently booting default-open.
+
+### Fixed (2026-08-06, same pass)
+
+- **HA `BUS_BACKEND` env-gate** only matched the exact string `"redis"`,
+  silently ignoring `redis-sentinel` — 12 stateful rules fell back to
+  per-process window counters under the HA profile and would never fire at
+  scale. Now accepts both, and the Redis Sentinel window-counter client
+  uses `Sentinel.master_for()` (re-resolves on every reconnect) instead of
+  a one-shot `discover_master()` that kept writing to a demoted master
+  after a real failover.
+- **Poison-pill rule guard**: `window_seconds`/`threshold` type-validated
+  at rule load, plus a runtime fail-closed wrapper around stateful
+  evaluation, so a malformed rule can no longer crash the detection
+  consumer.
+- `Detector.process()` evaluated the `class_uid=None` catch-all rule bucket
+  twice for a classless event.
+- `db_audit.py`'s substring-match operation map misclassified `GRANT
+  SELECT` as a read instead of a privilege-escalation event; reordered
+  privilege-first.
+- `shared/ocsf.py::valid_ip` now normalizes IPv4-mapped IPv6
+  (`::ffff:a.b.c.d`) so dual-stack auth events stop dead-lettering.
+- Session rows written to the Redis session backend are now HMAC-signed
+  and **required** to be — `RedisSessionStore` refuses to start without
+  `FENGARDE_SESSION_SECRET` set, and `resolve()` rejects any row without a
+  valid signature (an earlier version of this fix left an unsigned
+  backward-compat path open, which a process able to write to Redis
+  directly could use to forge a session — closed in the review pass).
+- SSRF hardening: `shared/http.py` was renamed to `shared/outbound_http.py`
+  (the old name shadowed the stdlib `http` module and silently broke
+  `import urllib.request`) and every outbound call (webhooks, reports, LLM
+  triage) now uses a no-redirect `urllib` opener.
+- **UDP syslog dedup**: an intermediate version of this pass hardcoded
+  `deterministic_id=True` for every UDP datagram on the theory that "UDP
+  retransmission is normal" — false, and it collapsed N genuinely repeated
+  identical log lines (e.g. N real brute-force attempts) into one
+  content-hashed `ingest_id`, which WS-4's window counters dedup by member,
+  silently zeroing threshold-rule counts. Reverted to honoring the
+  constructor's `deterministic_id` flag (default `False`).
+- Sigma regex-to-glob translation (`tools/import_sigma_rules.py`, M18): a
+  bare `.` outside a `.*` wildcard is rejected on **both** translation
+  branches now — the first pass only closed the fully-literal branch,
+  leaving `^cmd.exe .*payload$` silently narrowed to a literal-dot glob.
+  Both Sigma test files are now wired into `run_all_tests.sh` (they
+  existed but were never CI-gated).
+- The `not_in` allowlist module-level cache (`_ALLOWLIST_CACHE`) was never
+  invalidated, so an operator repairing a broken allowlist file would see
+  the fix ignored until process restart; cleared at the start of every
+  `load_rules()` pass.
+- CI's mutmut step was flipped to "blocking" against a config with no
+  actual threshold field to gate on (`mutmut run` fails on any survivor,
+  which would fail every PR at the measured ~72% baseline); reverted to
+  informational.
+
+### Security
+
+- Redis `AUTH`/primary now runs with `--min-replicas-to-write 1
+  --min-replicas-max-lag 10` (FIX 23) so it refuses writes while no replica
+  is connected, rather than silently accepting an acked tail a subsequent
+  failover could lose — see `SSOT.md`'s chaos-gate row for the honest scope
+  this adds (consumer-failure durability was already proven; primary
+  failover durability is what this closes).
+- `SECURITY.md` gained sections on the Grafana default credential, the
+  empty-by-default `FENGARDE_API_KEY_PEPPER`, webhook-secret sourcing, and
+  the now-mandatory `FENGARDE_SESSION_SECRET` for the Redis session
+  backend.
+
 ## [0.5.0] - 2026-07-23
 
 ### Added (M2 proof artifacts + M7 continuous tracks, 2026-07-22)

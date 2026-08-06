@@ -104,7 +104,7 @@ Now edit `acme_firewall.py`. The key pieces of a parser are:
 ### Edit 2 — register the parser
 
 Open `services/ws2-normalization/parsers/__init__.py` and register your class in the
-registry (around **line 19**). Add the import and add an instance to the `_REGISTRY`
+registry (the `_REGISTRY` dict, around **line 33**). Add the import and add an instance to the `_REGISTRY`
 comprehension:
 
 ```python

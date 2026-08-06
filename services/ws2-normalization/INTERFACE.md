@@ -24,6 +24,10 @@
 - `cef` → Authentication (3002) / Network Activity (4001), sector common (v0.5: generic CEF-emitting appliances; feeds existing common_* rules)
 - `cloudtrail` → Authentication (3002) / API Activity (6003), sector common (v0.5: AWS CloudTrail; first cloud-control-plane producer)
 - `modbus_anomaly` → Network Activity (4001), sector datacenter (M7, 2026-07-22: Modbus/TCP protocol-anomaly detector -- NOT a vendor audit-log parser, see its module docstring; second OT source after opcua_audit)
+- `sysmon` → Kernel/Process Activity (1002) / Network Activity (4001) / File System Activity (1001), sector common (P0-3: Sysmon process/network/file events; first class-1001 producer)
+- `inventory_diff` → Network Activity (4001), sector datacenter/ot (M7 Track Y, 2026-08-05: normalizes WS-6's new-device-on-segment notifications; see `services/ws6-inventory/bus_consumer.py` for the producer side)
+
+17 parsers total as of 2026-08-06 (this file previously undercounted at 15 — re-synced against `parsers/__init__.py`'s `_REGISTRY`).
 
 Adding a source = new module + one registry line. `type_uid` always derived.
 

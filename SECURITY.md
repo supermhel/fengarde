@@ -102,6 +102,26 @@ with actual per-user identity and roles:
   identical across every replica sharing the Redis session store — a
   mismatched secret across replicas makes every replica reject every other
   replica's sessions as forged.
+- **MFA/TOTP** (`services/ws6-inventory/mfa.py`, opt-in per user) — stdlib-only
+  RFC 6238. `POST /auth/mfa/enable` provisions a secret (pending), `POST
+  /auth/mfa/verify` confirms a code to activate it; once active, `/auth/login`
+  requires a valid `totp_code`. Both MFA-config routes require the ACTING
+  user's own current password in the request body, even though a valid
+  session cookie is already presented — a stolen session cookie alone cannot
+  disarm or re-provision an account's MFA, since re-provisioning
+  unconditionally resets `totp_active` to 0. Rate-limited per username in a
+  namespace separate from login lockout, and every attempt (success or
+  failure) is written to the audit log below.
+- **Admin audit log** (`services/ws3-indexer/audit.py`, always on when RBAC is
+  enabled) — append-only JSONL, capacity-capped (oldest entries tail-trimmed,
+  never rewritten in place), fail-open (a write failure is swallowed and
+  logged, never breaks the request it's auditing). Records login
+  success/failure, triage updates, and report generation. `GET /audit`
+  requires the `admin` role. Default location is a path inside the
+  ws3-indexer container's own tree (`FENGARDE_AUDIT_LOG` to override) — on an
+  ephemeral container filesystem this does not survive a restart unless the
+  path is mounted to a persistent volume; treat it as operational trail, not
+  a durable compliance record, unless you mount it.
 - **Dashboard basic-auth** — opt-in via the `infra/docker-compose.auth.yml`
   override (nginx `auth_basic` + htpasswd). The main compose file ships this
   **off by default** so `docker compose up` stays zero-prerequisite.

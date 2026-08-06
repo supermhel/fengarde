@@ -123,10 +123,16 @@ updated status — this table is a snapshot, that file is the source of truth.
 | **Syslog UDP listener** (WS-1) | ✅ Works | Live datagrams → `raw.events` |
 | **Multi-tenancy** | ✅ Works | `tenant_id` threaded collector→normalize→detect→index; per-tenant OpenSearch indices, per-tenant rule enablement; isolation proven by `tools/test_multi_tenant_isolation.py` |
 | **RBAC** | ✅ Works, opt-in | Per-user accounts/roles/tenant scoping via `FENGARDE_RBAC_DB`; session cookies, CSRF protection, dashboard login UI; unset (default) = pre-RBAC API-key-only behavior, byte-for-byte unchanged |
+| **MFA/TOTP** | ✅ Works, opt-in | Per-user, stdlib-only RFC 6238; provision → confirm two-step activation, login gates once active, config changes require re-entering your own password (a stolen session cookie alone can't touch it) |
+| **Admin audit log** | ✅ Works, opt-in | Append-only, capacity-capped JSONL trail of login/triage/report events, fail-open (an audit outage never blocks a request), `GET /audit` (admin-only) |
+| **Redis-backed sessions (multi-replica RBAC)** | ✅ Works, opt-in | `FENGARDE_SESSION_BACKEND=redis`; every session row is HMAC-signed and `FENGARDE_SESSION_SECRET` is required to start — a process that can write to Redis directly still can't forge a session |
 | **Versioned REST API** | ✅ Works | `contracts/triage-api.yaml` (OpenAPI 3.1); every route reachable bare or under `/api/v1/...`; spec-vs-code drift is CI-tested |
 | **Outbound alert webhooks** | ✅ Works, opt-in | HMAC-SHA256-signed deliveries to operator-configured URLs (`contracts/webhooks/*.yml`, ships empty); see `docs/webhooks.md` |
 | **Parser/rule plugin interface** | ✅ Works | External pip package can ship a parser or rule pack via Python entry points, no fork needed; see `docs/plugin-development.md` |
-| **Chaos-tested delivery** | ✅ Works | `make chaos`: 40 scenarios, each pipeline service SIGKILLed mid-replay — zero lost, zero duplicate alerts (2026-07-18 run) |
+| **Chaos-tested delivery** | ✅ Works | `make chaos`: 40 scenarios, each pipeline service SIGKILLed mid-replay — zero lost, zero duplicate alerts (2026-07-18 run). Proves consumer-failure durability; a Redis-primary failover is a separate scenario, see `SSOT.md` |
+| **HA profile** (Redis Sentinel + 3-node OpenSearch) | ✅ Works, opt-in | `docker-compose.ha.yml` / `make ha-up`; live-verified Sentinel failover (~1s promotion) and 3-node OpenSearch (green, replicas assigned); write-side OpenSearch failover now wired to all 3 nodes |
+| **Per-source syslog metrics** | ✅ Works | Bounded, LRU-evicted, thread-safe per-peer-IP breakdown on WS-1's `/metrics` |
+| **Dashboard: saved searches, dark mode, alert lifecycle + playbooks** | ✅ Works | Client-side saved alert-search filters, OS-aware dark/light theme, per-alert playbook rendering |
 | **NIS2 (DE) report template** | ✅ Works | Deterministic German/English NIS2 Art. 23 / §32 BSIG draft, additive on the report hook (`?template=nis2`); every entity-specific fact renders as an explicit `[ANALYST MUST PROVIDE]` placeholder, never fabricated |
 | SNMP parser | 🚧 Planned | Deferred — [good first issue](CONTRIBUTING.md) |
 | NetFlow parser | 🚧 Planned | Deferred (binary format) |
