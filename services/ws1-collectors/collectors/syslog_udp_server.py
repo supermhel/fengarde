@@ -82,6 +82,14 @@ DEFAULT_MAX_EVENTS_PER_SEC = 2000
 # all).
 DEFAULT_WORKERS = 4
 DEFAULT_QUEUE_MAXSIZE = 20000
+# FENGARDE E6: the per-source (/metrics) breakdown is a bounded map -- cap on
+# how many distinct peer IPs we retain per-source counters for, so a slow
+# trickle of log sources plus a spike of novel/one-off senders can't grow the
+# map without bound. When full, the least-recently-updated source is evicted
+# (true LRU via dict insertion order + reinsert). This is inherently a
+# visibility tradeoff: an operator sees the recent, active sources in detail
+# and the aggregate counters still account for EVERY datagram, evicted or not.
+DEFAULT_PEER_METRICS_MAX = 1024
 # Best-effort kernel receive-buffer size (bytes). Linux typically caps this via
 # net.core.rmem_max unless raised; setsockopt succeeding doesn't guarantee the
 # full value was actually granted, but asking for headroom is still strictly
@@ -245,6 +253,10 @@ class SyslogUDPServer:
         (env ``SYSLOG_UDP_SO_RCVBUF``, default :data:`DEFAULT_SO_RCVBUF`).
         Best-effort (``setsockopt`` failures are swallowed) -- more headroom
         during a burst, not a correctness guarantee.
+    :param peer_metrics_max: FENGARDE E6: max distinct peer IPs kept in the
+        incremental per-source breakdown (``per_source_metrics()``); LRU-evicts
+        the oldest when full. Default :data:`DEFAULT_PEER_METRICS_MAX`. The
+        aggregate counters are never evicted -- every datagram stays counted.
     :param logger: optional shared.log Logger.
     """
 
@@ -255,7 +267,8 @@ class SyslogUDPServer:
                  spool_drain_interval_s: float = 5.0, logger=None,
                  workers: int = DEFAULT_WORKERS,
                  queue_maxsize: int = DEFAULT_QUEUE_MAXSIZE,
-                 so_rcvbuf: int = DEFAULT_SO_RCVBUF):
+                 so_rcvbuf: int = DEFAULT_SO_RCVBUF,
+                 peer_metrics_max: int = DEFAULT_PEER_METRICS_MAX):
         self.bus = bus
         self.topic = topic
         self.deterministic_id = deterministic_id
@@ -274,6 +287,15 @@ class SyslogUDPServer:
                                     # real flood must not turn into a log flood
         # P0-4: genuinely concurrent now (a fixed pool of worker threads all
         # call _handle_datagram), so this lock is load-bearing, not defensive.
+        # FENGARDE E6: incrementally-maintained per-source breakdown for
+        # /metrics. A bounded dict keyed by peer IP -> {produced, dropped,
+        # shed}; guarded by the same _shed_lock that protects the aggregate
+        # counters (see _count_peer). LRU-evicts the oldest source when the
+        # map would exceed peer_metrics_max. The aggregates are untouched --
+        # this is purely additive, so it cannot regress the counters-under-
+        # lock fix.
+        self._peer_metrics_max = max(1, peer_metrics_max)
+        self._peer_metrics: "dict[str, dict[str, int]]" = {}
         self._shed_lock = threading.Lock()
         self._spool = spool
         self._spool_drain_interval_s = spool_drain_interval_s
@@ -301,11 +323,18 @@ class SyslogUDPServer:
         line = data.decode("utf-8", errors="replace").rstrip("\r\n")
         if not line:
             return
-        event = build_raw_event(line, deterministic_id=self.deterministic_id)
+        # FIX 21: UDP is connectionless -- retransmission is the normal case, not
+        # an edge case -- so stamp a content-hash ingest_id instead of a random
+        # uuid4. A retransmitted datagram therefore dedups to the same
+        # meta.ingest_id downstream (deterministic alert_id) instead of becoming
+        # a second event. This keeps _deterministic_ingest_id (the parser's SHA
+        # fallback) live rather than shadowed by a random UUID on every datagram.
+        event = build_raw_event(line, deterministic_id=True)
         tenant_id = event.get("meta", {}).get("tenant_id")
         if not self._buckets.take(tenant_id or ""):
             if self._try_spool(peer_ip, event):
-                self.events_spooled += 1
+                with self._shed_lock:
+                    self.events_spooled += 1
                 return
             self._count_shed(peer_ip, lost_to_full_spool=self._spool is not None)
             return
@@ -313,15 +342,53 @@ class SyslogUDPServer:
             self.bus.produce(self.topic, key=peer_ip, payload=event)
         except Exception as exc:  # bus/Redis unreachable -> try the spool before dropping
             if self._try_spool(peer_ip, event):
-                self.events_spooled += 1
+                with self._shed_lock:
+                    self.events_spooled += 1
                 return
-            self.events_dropped += 1
+            with self._shed_lock:
+                self.events_dropped += 1
+                self._count_peer(peer_ip, "dropped")
             if self.log is not None:
                 self.log.warn("dropped syslog datagram: bus produce failed",
                               src=peer_ip, error=str(exc),
                               spool_full=self._spool is not None)
             return
-        self.events_produced += 1
+        with self._shed_lock:
+            self.events_produced += 1
+            self._count_peer(peer_ip, "produced")
+
+    def _count_peer(self, peer_ip: str, kind: str) -> None:
+        """Increment ``kind`` (\"produced\"/\"dropped\"/\"shed\") for ``peer_ip``.
+
+        MUST be called with ``self._shed_lock`` held (it's only ever invoked
+        from the already-locked aggregate-counter blocks in ``_handle_datagram``
+        / ``_count_shed``), so this is cheap and race-free. Bounds the map: when
+        a brand-new IP arrives at ``_peer_metrics_max`` distinct sources, the
+        least-recently-updated one is evicted (true LRU -- a ``pop``+reinsert
+        moves the just-updated entry to the back of the dict's insertion
+        order). Eviction only affects this visibility map, never the aggregate
+        counters: every datagram remains accounted for by the totals.
+        """
+        metrics = self._peer_metrics
+        entry = metrics.pop(peer_ip, None)  # reinsert below => LRU recency
+        if entry is None:
+            if len(metrics) >= self._peer_metrics_max:
+                # evict the oldest key (Python dicts preserve insertion order)
+                metrics.pop(next(iter(metrics)))
+            entry = {"produced": 0, "dropped": 0, "shed": 0}
+        entry[kind] += 1
+        metrics[peer_ip] = entry
+
+    def per_source_metrics(self) -> dict:
+        """Snapshot of the bounded per-source breakdown for ``metrics_provider``.
+
+        Returns ``{ip: {"produced": n, "dropped": n, "shed": n}}`` under the
+        same lock the counters are written under, so a /metrics read is
+        consistent. The map is capped at ``peer_metrics_max`` distinct IPs
+        (LRU-evicted when full); aggregate counters always cover the rest.
+        """
+        with self._shed_lock:
+            return {ip: dict(m) for ip, m in self._peer_metrics.items()}
 
     def _try_spool(self, peer_ip: str, event: dict) -> bool:
         """Best-effort spool write. False on no-spool-configured, spool-full,
@@ -349,6 +416,7 @@ class SyslogUDPServer:
                 self.events_lost += 1
             else:
                 self.events_shed += 1
+            self._count_peer(peer_ip, "shed")
             now = time.monotonic()
             if now - self._last_shed_log >= 1.0:
                 self._last_shed_log = now
