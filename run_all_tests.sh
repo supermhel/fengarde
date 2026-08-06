@@ -106,6 +106,9 @@ echo
 echo "== shared bus redis-fallback exception narrowing (code-quality #1, 2026-07-29 audit) =="
 $PY services/shared/test_bus_redis_fallback.py || fail=1
 echo
+echo "== shared bus Sentinel failover on the generator methods (2026-08-05) =="
+$PY services/shared/test_sentinel_failover.py || fail=1
+echo
 echo "== shared log level gate (P2-3, 2026-07-21 audit) =="
 $PY services/shared/test_log.py || fail=1
 echo

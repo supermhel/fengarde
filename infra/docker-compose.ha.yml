@@ -291,6 +291,23 @@ services:
     image: curlimages/curl:8.7.1
     container_name: siem-provision-ha
     profiles: [ha]
+    # Live-verified bug (2026-08-05, found only by bringing the FULL profile up
+    # rather than the Redis subset): this service had no `networks:` at all, so
+    # it landed on the base file's `default` network while opensearch-1..3 live
+    # on `ha`. It could not resolve `opensearch-1`, sat forever on provision.sh's
+    # "Waiting for OpenSearch at http://opensearch-1:9200 ..." loop, and NEVER
+    # installed anything -- confirmed against the running cluster: 0 index
+    # templates, 0 ISM policies. An HA deployment therefore indexed into
+    # whatever dynamic mappings OpenSearch inferred, with no retention policy
+    # at all, instead of the contract mappings in contracts/opensearch-mappings.
+    #
+    # Same defect class as the app-service `networks: [default, ha]` fix
+    # documented above, and missed by that pass because this is an HA-ONLY
+    # service defined here rather than an override of a base-file service, so
+    # it was not in the list of overrides being audited. `depends_on:
+    # opensearch-1 service_healthy` was satisfied the whole time -- proving the
+    # target is healthy is not proving THIS container can route to it.
+    networks: [ha]
     volumes:
       - ../contracts/opensearch-mappings:/mappings:ro
       - ./provision.sh:/provision.sh:ro
