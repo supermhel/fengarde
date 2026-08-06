@@ -45,8 +45,6 @@ class SyslogCollector:
 
     def __init__(self, transport: str = "udp"):
         self.transport = transport
-        # Buffer of asset observations discovered while parsing lines.
-        self._assets: list[dict] = []
 
     def handle_line(self, line: str, peer_ip: Optional[str] = None) -> Optional[dict]:
         """Parse one syslog line; return a raw payload or ``None`` if unparseable.
@@ -124,6 +122,20 @@ class SyslogCollector:
                 yield payload
 
     def asset_observations(self) -> Iterator[dict]:
-        """Drain discovered ``assets.updates`` observations (mac/ip/hostname/seen_at)."""
-        while self._assets:
-            yield self._assets.pop(0)
+        """Syslog carries no MAC — yields nothing. Uniform interface.
+
+        Same form as ``netflow_collector`` for the same reason: ``assets
+        .updates`` is MAC-keyed and its only consumer discards a macless
+        observation, so a collector that cannot see a MAC abstains outright.
+        See ``handle_line`` for the measured finding behind this.
+
+        Deliberately NOT a drain loop over an accumulator. This used to be
+        ``while self._assets: yield self._assets.pop(0)`` with a ``self._assets``
+        list that, once the emission was removed, nothing ever appended to --
+        live-looking machinery that reads as a working buffer and invites the
+        next person adding an OT or DHCP-derived observation to append to it,
+        silently reintroducing a macless emission the collector contract now
+        forbids. Returning an empty iterator with no accumulator makes the
+        abstention structural rather than incidental.
+        """
+        return iter(())
