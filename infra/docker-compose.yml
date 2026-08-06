@@ -158,9 +158,18 @@ services:
     # only after setting a key (see SECURITY.md).
     ports: ["127.0.0.1:8000:8000"]
     volumes: ["inventory-data:/data"]
+    depends_on: { redis: { condition: service_healthy } }
     environment:
       # v0.4 Track S1: opt-in shared-secret auth (unset = open + warning log).
       - FENGARDE_API_KEY=${FENGARDE_API_KEY:-}
+      # M7 Track Y follow-up (2026-08-05): starts the assets.updates bus
+      # consumer thread (services/ws6-inventory/bus_consumer.py) alongside
+      # the HTTP server. Without this, the consumer code exists but never
+      # runs -- BUS_BACKEND unset is exactly the zero-infra/HTTP-only path
+      # bus_consumer.py's own tests exercise, same convention as every other
+      # workstream's BUS_BACKEND=redis line above.
+      - BUS_BACKEND=redis
+      - REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0
 
   ws7-dashboard:
     build: { context: .., dockerfile: services/ws7-dashboard/Dockerfile }

@@ -452,25 +452,72 @@ class _RedisSentinelBus:
             pass
 
     def _with_failover(self, method, *args, **kwargs):
+        """Failover wrapper for the PLAIN (non-generator) bus methods.
+
+        Only valid when ``method`` actually performs its I/O during the call.
+        For a generator function the call merely builds the generator and does
+        no I/O at all, so nothing can raise here and this wrapper silently
+        degrades to a no-op -- see ``_iter_with_failover``.
+        """
         try:
             return getattr(self._bus, method)(*args, **kwargs)
         except Exception:
             self._refresh_master()
             return getattr(self._bus, method)(*args, **kwargs)
 
+    def _iter_with_failover(self, method, *args, **kwargs):
+        """Failover wrapper for the GENERATOR bus methods (consume,
+        claim_pending).
+
+        Live-verified bug (2026-08-05, found by killing the primary under the
+        full HA stack rather than a produce-only test client): ``_RedisBus
+        .consume`` and ``_RedisBus.claim_pending`` are generator functions, so
+        ``getattr(self._bus, method)(...)`` returns a generator object without
+        executing a single line of the body. No connection is touched, nothing
+        can raise, and ``_with_failover``'s ``except`` is therefore unreachable
+        for them. The ConnectionError surfaces later, when the RUNNER iterates
+        the generator -- outside the try block -- so ``_refresh_master()`` was
+        never called on the two methods every long-running service spends its
+        entire life in. The runner's own retry then called ``consume()`` again,
+        which built another generator against the SAME stale ``self._bus``, and
+        the service stayed pinned to the dead primary forever.
+
+        Observed on the full stack: Redis-side failover completed in 1.2s, but
+        ws2/ws3/ws4/ws5 all went unhealthy looping on
+        ``ConnectionError: Error 113 connecting to <old primary>:6379. No route
+        to host.`` while 12 messages sat unconsumed at ``lag=12`` on the new
+        primary. A produce-only client recovered fine in the same scenario,
+        which is exactly what made this invisible: ``produce``/``ack``/``depth``
+        /``lag``/``trim_acked`` are ordinary functions and were genuinely
+        covered by ``_with_failover``.
+
+        Delegating with ``yield from`` puts the ITERATION inside the try, which
+        is where the I/O actually happens. A retry may redeliver entries the
+        first generator already yielded; that is consistent with the
+        at-least-once contract this bus documents (consumers are idempotent on
+        ingest_id/event_id/alert_id), and is strictly better than wedging.
+        """
+        try:
+            yield from getattr(self._bus, method)(*args, **kwargs)
+        except Exception:
+            self._refresh_master()
+            yield from getattr(self._bus, method)(*args, **kwargs)
+
     def produce(self, topic, key, payload):
         return self._with_failover("produce", topic, key, payload)
 
     def consume(self, topic, group="cg-default", block_ms=5000):
-        return self._with_failover("consume", topic, group=group, block_ms=block_ms)
+        return self._iter_with_failover("consume", topic, group=group,
+                                        block_ms=block_ms)
 
     def ack(self, msg, group="cg-default"):
         return self._with_failover("ack", msg, group=group)
 
     def claim_pending(self, topic, group="cg-default", min_idle_ms=60000,
                       max_redeliveries=5):
-        return self._with_failover("claim_pending", topic, group=group,
-                                    min_idle_ms=min_idle_ms, max_redeliveries=max_redeliveries)
+        return self._iter_with_failover("claim_pending", topic, group=group,
+                                        min_idle_ms=min_idle_ms,
+                                        max_redeliveries=max_redeliveries)
 
     def depth(self, topic) -> int:
         return self._with_failover("depth", topic)
