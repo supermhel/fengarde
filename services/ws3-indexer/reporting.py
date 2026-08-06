@@ -28,6 +28,8 @@ import time
 import urllib.error
 import urllib.request
 
+from shared.outbound_http import no_redirect_urlopen  # noqa: E402
+
 _DISCLAIMER = ("DRAFT — automatically generated. Not legal advice. "
                "Review before any regulatory submission.")
 _REQUEST_TIMEOUT = float(os.getenv("REPORT_BACKEND_TIMEOUT", "5"))
@@ -125,7 +127,7 @@ def _call_http_backend(alert: dict, triage: dict, events: list, requested_at: fl
         url, data=payload, method="POST",
         headers={"Content-Type": "application/json"})
     try:
-        with urllib.request.urlopen(req, timeout=_REQUEST_TIMEOUT) as resp:  # noqa: S310
+        with no_redirect_urlopen(req, timeout=_REQUEST_TIMEOUT) as resp:  # noqa: S310
             body = json.loads(resp.read().decode())
     except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, ValueError):
         return None

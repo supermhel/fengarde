@@ -17,6 +17,7 @@ sys.path.insert(0, str(SERVICES))
 
 from router import route  # noqa: E402
 from storage.memory import MemoryStore  # noqa: E402
+from shared.authz import require_auth_or_die  # noqa: E402
 
 TOPICS = ["normalized.events", "scored.events", "alerts", "ai.results"]
 
@@ -96,6 +97,11 @@ _ALL_BUS_TOPICS = ["raw.events", "normalized.events", "scored.events",
 
 
 def main():
+    # FIX 6: refuse to boot default-open when FENGARDE_REQUIRE_AUTH=1 but the
+    # configured auth surface is incomplete (see shared/authz.py). No-op
+    # unless FENGARDE_REQUIRE_AUTH is set to 1/true/yes.
+    require_auth_or_die("ws3-indexer")
+
     # Daemon (T0): one worker thread PER topic (the runner handles the 4-topic
     # fan-in that a single blocking loop would starve). run() above stays the batch
     # path used by tests / the e2e harness. The store is shared across the 4 topic

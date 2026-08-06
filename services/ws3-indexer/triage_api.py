@@ -63,7 +63,9 @@ from __future__ import annotations
 
 import hmac
 import json
+import os
 import sys
+import threading
 import time
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -80,6 +82,7 @@ from shared.sessions import SessionStore, make_session_store  # noqa: E402
 import reporting  # noqa: E402
 import rules_view  # noqa: E402
 import nis2_template  # noqa: E402
+import audit  # noqa: E402
 
 _MAX_BODY_BYTES = 4096  # a triage update is a status enum + a short note.
 _MAX_NOTE_CHARS = 2000
@@ -89,6 +92,60 @@ _SESSION_COOKIE = "fengarde_session"
 _FAMILIES = {"bank", "dc", "common"}
 _DEFAULT_LIST_LIMIT = 50
 _MAX_LIST_LIMIT = 200
+
+
+# -- FIX L4: optional per-IP token-bucket API rate limiting ------------------
+# Off by default (RATE_LIMIT_REQUESTS_PER_MIN unset/0/<=0). When enabled, a
+# token bucket per client IP lets `RATE_LIMIT_REQUESTS_PER_MIN` requests per
+# minute through and answers 429 (with Retry-After) beyond that. In-memory
+# per-process (same scope as LoginRateLimiter); sufficient as a per-instance
+# guard, not a cluster-wide one.
+def _rate_limit_per_min() -> int:
+    raw = os.getenv("RATE_LIMIT_REQUESTS_PER_MIN", "0")
+    try:
+        return int(raw or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+_RATE_LIMIT = _rate_limit_per_min()
+_rate_buckets: dict[str, "_TokenBucket"] = {}
+_rate_lock = threading.Lock()
+
+
+class _TokenBucket:
+    """Leaky/token bucket: `capacity` tokens, refilled at tokens/sec."""
+
+    __slots__ = ("capacity", "tokens", "refill_per_s", "updated")
+
+    def __init__(self, capacity: float, refill_per_s: float):
+        self.capacity = max(capacity, 1.0)
+        self.tokens = self.capacity
+        self.refill_per_s = refill_per_s
+        self.updated = time.time()
+
+    def allow(self) -> bool:
+        now = time.time()
+        self.tokens = min(self.capacity,
+                          self.tokens + (now - self.updated) * self.refill_per_s)
+        self.updated = now
+        if self.tokens >= 1.0:
+            self.tokens -= 1.0
+            return True
+        return False
+
+
+def _rate_limit_allowed(ip: str) -> bool:
+    """True if `ip` may proceed. Always True when rate limiting is off."""
+    if _RATE_LIMIT <= 0:
+        return True
+    refill_per_s = _RATE_LIMIT / 60.0
+    with _rate_lock:
+        bucket = _rate_buckets.get(ip)
+        if bucket is None:
+            bucket = _TokenBucket(float(_RATE_LIMIT), refill_per_s)
+            _rate_buckets[ip] = bucket
+        return bucket.allow()
 
 
 def _strip_api_v1(path: str) -> str:
@@ -124,7 +181,8 @@ def _default_triage() -> dict:
 
 
 def make_handler(store, users_db=None, sessions: SessionStore | None = None,
-                  rate_limiter: LoginRateLimiter | None = None):
+                  rate_limiter: LoginRateLimiter | None = None,
+                  audit_log: "audit.AuditLog | None" = None):
     """Returns a Handler class bound to the given store (closure, matches the
     pattern main.py already uses for the bus handler).
 
@@ -133,6 +191,11 @@ def make_handler(store, users_db=None, sessions: SessionStore | None = None,
     ``shared.users.UserStore`` to turn on session login + role/tenant
     enforcement on the triage and report routes; ``sessions``/
     ``rate_limiter`` default to fresh in-process instances when RBAC is on.
+
+    ``audit_log`` is the E1 audit store (append-only, fail-open -- see
+    audit.py). Defaults to the process-wide ``audit.default_audit()``. Every
+    audit write is fail-open: an audit-log outage never breaks login, triage,
+    or report generation (the write is swallowed in Handler._audit).
     """
     rbac_enabled = users_db is not None
     if rbac_enabled:
@@ -141,6 +204,7 @@ def make_handler(store, users_db=None, sessions: SessionStore | None = None,
         # unreachable -- see shared/sessions.py's module docstring.
         sessions = sessions or make_session_store()
         rate_limiter = rate_limiter or LoginRateLimiter()
+    _audit = audit_log if audit_log is not None else audit.default_audit()
 
     class Handler(BaseHTTPRequestHandler):
         # Slowloris guard: drop a client that stalls mid-request instead of
@@ -218,6 +282,25 @@ def make_handler(store, users_db=None, sessions: SessionStore | None = None,
             self._send(401, {"error": "unauthorized"})
             return False
 
+        def _audit_actor(self, session) -> str:
+            """The actor name for an audit entry. RBAC-off (session is the
+            True sentinel) means the shared API key is authenticating -- name
+            it as a non-person actor; a real session uses its username."""
+            if session is not True and session is not None:
+                return str(session.username)
+            return "api_key"
+
+        def _audit(self, event: str, actor: str | None = None,
+                   tenant_id: str | None = None, detail: dict | None = None) -> None:
+            """E1: fail-open audit write. Any failure inside the audit log is
+            swallowed here so an audit outage can never raise into (and break)
+            the login/triage/report request path."""
+            try:
+                _audit.record(event=event, actor=actor or "unknown",
+                             tenant_id=tenant_id, detail=detail)
+            except Exception:  # noqa: BLE001 - fail-open, see audit.py docstring
+                pass
+
         def _check_csrf(self) -> bool:
             """CSRF defense-in-depth for state-changing (POST) requests
             riding on an active browser session. The session cookie already
@@ -251,6 +334,22 @@ def make_handler(store, users_db=None, sessions: SessionStore | None = None,
             identically."""
             return _strip_api_v1(urlparse(self.path).path)
 
+        def _check_rate_limit(self) -> bool:
+            """FIX L4: per-IP token-bucket guard. Sends 429 (Retry-After) and
+            returns False when the caller's IP has exhausted its bucket; a
+            no-op (always True) when rate limiting is disabled."""
+            ip = self.client_address[0] if self.client_address else ""
+            if _rate_limit_allowed(ip):
+                return True
+            body = json.dumps({"error": "rate limit exceeded"}).encode()
+            self.send_response(429)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.send_header("Retry-After", "60")
+            self.end_headers()
+            self.wfile.write(body)
+            return False
+
         def _list_tenant_filter(self, session, requested: str | None) -> str | None:
             """The tenant_id to actually filter a list endpoint by. RBAC off
             (session is True) or role=admin: use whatever the caller asked
@@ -264,6 +363,8 @@ def make_handler(store, users_db=None, sessions: SessionStore | None = None,
 
         def do_GET(self):
             try:
+                if not self._check_rate_limit():  # FIX L4 (no-op when off)
+                    return
                 path = self._normalized_path()
                 if rbac_enabled and path == "/auth/me":
                     return self._route_auth_me()
@@ -294,6 +395,8 @@ def make_handler(store, users_db=None, sessions: SessionStore | None = None,
                 return self._route_list_events(u.query)
             if path == "/rules":
                 return self._route_list_rules(u.query)
+            if path == "/audit":
+                return self._route_audit()
 
             report_alert_id = self._alert_id_from_path(path, "report")
             if report_alert_id is not None:
@@ -391,8 +494,24 @@ def make_handler(store, users_db=None, sessions: SessionStore | None = None,
             rules = rules_view.list_rule_summaries(tenant_id)
             return self._send(200, {"rules": rules, "count": len(rules)})
 
+        def _route_audit(self):
+            """E1: GET /audit -- admin-only view of the recent audit trail.
+            Requires role >= admin (RBAC off -> the shared API key is treated
+            as the deployment owner, so it's allowed). Non-admins are denied
+            via _require_role. The log itself is already capacity-capped, so
+            the `limit` param only narrows the response."""
+            session = self._require_role("admin")
+            if session is None:
+                return
+            q = parse_qs(urlparse(self.path).query)
+            limit = _parse_limit(q.get("limit"))
+            entries = _audit.recent(limit)
+            return self._send(200, {"entries": entries, "count": len(entries)})
+
         def do_POST(self):
             try:
+                if not self._check_rate_limit():  # FIX L4 (no-op when off)
+                    return
                 path = self._normalized_path()
                 if rbac_enabled and path == "/auth/login":
                     return self._route_auth_login()
@@ -400,6 +519,10 @@ def make_handler(store, users_db=None, sessions: SessionStore | None = None,
                     return
                 if rbac_enabled and path == "/auth/logout":
                     return self._route_auth_logout()
+                if rbac_enabled and path == "/auth/mfa/enable":
+                    return self._route_mfa_enable()
+                if rbac_enabled and path == "/auth/mfa/verify":
+                    return self._route_mfa_verify()
                 if not self._check_auth():
                     return
                 self._route_post(path)
@@ -436,13 +559,33 @@ def make_handler(store, users_db=None, sessions: SessionStore | None = None,
                 # Same response as a wrong password -- a lockout must not be
                 # a distinguishable oracle for "this username exists and is
                 # currently being attacked."
+                self._audit("login_failure", actor=username,
+                            detail={"reason": "locked_out", "username": username})
                 return self._send(401, {"error": "invalid credentials"})
 
             row = users_db.verify_login(username, password)
             if row is None:
                 rate_limiter.record_failure(username)
+                self._audit("login_failure", actor=username,
+                            detail={"reason": "bad_credentials", "username": username})
                 return self._send(401, {"error": "invalid credentials"})
             rate_limiter.record_success(username)
+
+            # FENGARDE E3 MFA -- OPT-IN per user. If this account has an
+            # ACTIVE TOTP secret, a valid `totp_code` in the login body is
+            # REQUIRED before any session is issued. Accounts that never
+            # provisioned TOTP are untouched: login is byte-for-byte the
+            # pre-E3 path below. A missing/invalid code fails identically to
+            # a wrong password (401 "invalid credentials", plus a rate-limit
+            # failure) so an attacker can't distinguish "wrong TOTP" from
+            # "wrong password" -- no new oracle.
+            if users_db.is_totp_enabled(username):
+                totp_code = body.get("totp_code")
+                if not isinstance(totp_code, str) or not users_db.verify_totp(username, totp_code):
+                    rate_limiter.record_failure(username)
+                    self._audit("login_failure", actor=username,
+                                detail={"reason": "bad_totp", "username": username})
+                    return self._send(401, {"error": "invalid credentials"})
 
             token = sessions.create(row["username"], row["role"], row["tenant_id"])
             csrf_token = sessions.resolve(token).csrf_token
@@ -462,6 +605,9 @@ def make_handler(store, users_db=None, sessions: SessionStore | None = None,
             # csrf_token travels in the response BODY, not a cookie -- the
             # browser JS reads it here (or from /auth/me on a page reload)
             # and echoes it back as X-CSRF-Token on writes. See _check_csrf.
+            self._audit("login_success", actor=row["username"],
+                        tenant_id=row["tenant_id"],
+                        detail={"username": row["username"], "role": row["role"]})
             return self._send(200, {"username": row["username"], "role": row["role"],
                                      "tenant_id": row["tenant_id"], "csrf_token": csrf_token},
                                extra_headers={"Set-Cookie": set_cookie})
@@ -470,12 +616,69 @@ def make_handler(store, users_db=None, sessions: SessionStore | None = None,
             token = self._session_token()
             if token:
                 sessions.invalidate(token)
+            session = self._current_session()
+            if session is not None:
+                self._audit("logout", actor=session.username,
+                            tenant_id=session.tenant_id, detail={"username": session.username})
             cookie = SimpleCookie()
             cookie[_SESSION_COOKIE] = ""
             cookie[_SESSION_COOKIE]["path"] = "/"
             cookie[_SESSION_COOKIE]["max-age"] = 0
             return self._send(200, {"ok": True},
                                extra_headers={"Set-Cookie": cookie[_SESSION_COOKIE].OutputString()})
+
+        def _mfa_target_username(self, session):
+            """The username an MFA action applies to: the acting user at
+            minimum, OR another user when an admin supplies `username` in the
+            body (admin may provision/verify MFA on behalf of an account).
+            Returns (target, body); target is None (an error already sent) if
+            unauthorized or the target doesn't exist -- an admin provisioning
+            for a nonexistent user is the same 404-not-confirm posture as
+            every other RBAC gate."""
+            body = self._read_json_body(_MAX_BODY_BYTES)
+            target = body.get("username")
+            if target is None:
+                return session.username, body
+            if session.role != "admin":
+                self._send(404, {"error": "no such path"})
+                return None, body
+            if not isinstance(target, str) or not users_db.get_user(target):
+                self._send(404, {"error": "no such user"})
+                return None, body
+            return target, body
+
+        def _route_mfa_enable(self):
+            """POST /auth/mfa/enable -- opt-in MFA step one: generate a secret,
+            store it (pending), and hand back the otpauth:// URI for a QR code."""
+            session = self._current_session()
+            if session is None:
+                return self._send(401, {"error": "not logged in"})
+            target, _body = self._mfa_target_username(session)
+            if target is None:
+                return
+            try:
+                uri = users_db.provision_totp(target)
+            except Exception:  # noqa: BLE001 - mfa module missing/broken
+                return self._send(503, {"error": "MFA provisioning unavailable"})
+            return self._send(200, {"username": target, "otpauth_uri": uri,
+                                     "status": "pending-secret-verification"})
+
+        def _route_mfa_verify(self):
+            """POST /auth/mfa/verify -- opt-in MFA step two. Body carries the
+            `totp_code` the user read from their authenticator; on success the
+            secret is marked ACTIVE and future logins require the code."""
+            session = self._current_session()
+            if session is None:
+                return self._send(401, {"error": "not logged in"})
+            target, body = self._mfa_target_username(session)
+            if target is None:
+                return
+            code = body.get("totp_code")
+            if not isinstance(code, str):
+                return self._send(400, {"error": "totp_code (string) is required"})
+            if not users_db.verify_totp(target, code):
+                return self._send(401, {"error": "invalid totp code"})
+            return self._send(200, {"username": target, "mfa_active": True})
 
         def _route_post(self, path: str):
             report_alert_id = self._alert_id_from_path(path, "report")
@@ -521,6 +724,12 @@ def make_handler(store, users_db=None, sessions: SessionStore | None = None,
                     report = reporting.generate_report(alert_doc, triage)
                 report_index = reporting._report_index()
                 store.index(report_index, report["report_id"], report)
+                self._audit("report_generated",
+                            actor=self._audit_actor(session),
+                            tenant_id=alert_doc.get("tenant_id"),
+                            detail={"alert_id": report_alert_id,
+                                    "report_id": report.get("report_id"),
+                                    "template": template})
                 return self._send(200, report)
 
             alert_id = self._alert_id_from_path(path)
@@ -601,6 +810,12 @@ def make_handler(store, users_db=None, sessions: SessionStore | None = None,
                 doc = dict(doc)
                 doc["triage"] = triage
                 if store.index_cas(index, alert_id, doc, version):
+                    self._audit("triage_update",
+                                actor=self._audit_actor(session),
+                                tenant_id=doc.get("tenant_id"),
+                                detail={"alert_id": alert_id,
+                                        "status": triage.get("status"),
+                                        "updated_at": triage.get("updated_at")})
                     return self._send(200, triage)
                 # conflict: another writer landed between our read and
                 # write -- loop re-reads the fresh doc and re-applies.

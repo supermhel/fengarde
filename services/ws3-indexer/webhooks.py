@@ -42,6 +42,8 @@ from pathlib import Path
 
 import yaml
 
+from shared.outbound_http import no_redirect_urlopen  # noqa: E402
+
 _HERE = Path(__file__).resolve().parent
 _SERVICES = _HERE.parent
 _ROOT = _SERVICES.parent
@@ -153,7 +155,7 @@ def deliver(config: WebhookConfig, alert: dict) -> bool:
     for attempt in range(_MAX_RETRIES):
         req = urllib.request.Request(config.url, data=body, method="POST", headers=headers)
         try:
-            with urllib.request.urlopen(req, timeout=_TIMEOUT_S) as resp:  # noqa: S310
+            with no_redirect_urlopen(req, timeout=_TIMEOUT_S) as resp:  # noqa: S310
                 resp.read()
             return True
         except urllib.error.HTTPError as exc:
