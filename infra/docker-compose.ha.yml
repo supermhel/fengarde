@@ -69,9 +69,23 @@ services:
       retries: 5
     # Static IP -- see the `ha` network's ipam block at the bottom of this file
     # for why the Redis/Sentinel nodes are pinned rather than left dynamic.
+    #
+    # REDIS_PRIMARY_IP is the SINGLE source of truth for the initial primary's
+    # address. It is interpolated here, into redis-2/redis-3's `--replicaof`,
+    # and into each Sentinel's REDIS_SENTINEL_PRIMARY_HOST. It used to be
+    # written out literally in all five places with nothing keeping them in
+    # sync: an operator who set REDIS_SENTINEL_PRIMARY_HOST (the only one that
+    # was configurable) moved the Sentinels but left the replicas still trying
+    # to replicate from 172.28.0.11, producing a monitored primary with zero
+    # replicas -- and Sentinel cannot promote anything when there is no
+    # candidate, so HA was silently defeated by the one knob the file advertised.
+    #
+    # Must be a literal IPv4 address, not a hostname: `ipv4_address` below only
+    # accepts an address, and handing Sentinel an IP is the entire point of the
+    # DNS fix documented in redis-sentinel-entrypoint.sh.
     networks:
       ha:
-        ipv4_address: 172.28.0.11
+        ipv4_address: ${REDIS_PRIMARY_IP:-172.28.0.11}
 
   redis-2:
     image: redis:7-alpine
@@ -80,7 +94,7 @@ services:
     command: >
       sh -c '
       if [ -n "$$REDIS_PASSWORD" ]; then
-        exec redis-server --appendonly yes --replicaof 172.28.0.11 6379 --masterauth "$$REDIS_PASSWORD" --requirepass "$$REDIS_PASSWORD";
+        exec redis-server --appendonly yes --replicaof ${REDIS_PRIMARY_IP:-172.28.0.11} 6379 --masterauth "$$REDIS_PASSWORD" --requirepass "$$REDIS_PASSWORD";
       else
         echo "REDIS_PASSWORD must be set for HA" >&2; exit 1;
       fi'
@@ -99,7 +113,7 @@ services:
     command: >
       sh -c '
       if [ -n "$$REDIS_PASSWORD" ]; then
-        exec redis-server --appendonly yes --replicaof 172.28.0.11 6379 --masterauth "$$REDIS_PASSWORD" --requirepass "$$REDIS_PASSWORD";
+        exec redis-server --appendonly yes --replicaof ${REDIS_PRIMARY_IP:-172.28.0.11} 6379 --masterauth "$$REDIS_PASSWORD" --requirepass "$$REDIS_PASSWORD";
       else
         echo "REDIS_PASSWORD must be set for HA" >&2; exit 1;
       fi'
@@ -123,7 +137,7 @@ services:
       # entrypoint carries the same value only as a fallback default. A
       # hostname still works (the entrypoint resolves it once at startup) but
       # an IP is what keeps Sentinel off the resolver entirely.
-      - REDIS_SENTINEL_PRIMARY_HOST=172.28.0.11
+      - REDIS_SENTINEL_PRIMARY_HOST=${REDIS_PRIMARY_IP:-172.28.0.11}
     volumes:
       - ./redis-sentinel-entrypoint.sh:/redis-sentinel-entrypoint.sh:ro
       - redis-sentinel-ha-1:/data
@@ -150,7 +164,7 @@ services:
       # entrypoint carries the same value only as a fallback default. A
       # hostname still works (the entrypoint resolves it once at startup) but
       # an IP is what keeps Sentinel off the resolver entirely.
-      - REDIS_SENTINEL_PRIMARY_HOST=172.28.0.11
+      - REDIS_SENTINEL_PRIMARY_HOST=${REDIS_PRIMARY_IP:-172.28.0.11}
     volumes:
       - ./redis-sentinel-entrypoint.sh:/redis-sentinel-entrypoint.sh:ro
       - redis-sentinel-ha-2:/data
@@ -177,7 +191,7 @@ services:
       # entrypoint carries the same value only as a fallback default. A
       # hostname still works (the entrypoint resolves it once at startup) but
       # an IP is what keeps Sentinel off the resolver entirely.
-      - REDIS_SENTINEL_PRIMARY_HOST=172.28.0.11
+      - REDIS_SENTINEL_PRIMARY_HOST=${REDIS_PRIMARY_IP:-172.28.0.11}
     volumes:
       - ./redis-sentinel-entrypoint.sh:/redis-sentinel-entrypoint.sh:ro
       - redis-sentinel-ha-3:/data

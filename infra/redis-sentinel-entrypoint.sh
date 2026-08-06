@@ -8,6 +8,45 @@ MASTER_NAME="${REDIS_SENTINEL_MASTER:-mymaster}"
 RAW_HOST="${REDIS_SENTINEL_PRIMARY_HOST:-172.28.0.11}"
 RAW_PORT="${REDIS_SENTINEL_PRIMARY_PORT:-6379}"
 
+# The config lives on the MOUNTED VOLUME (/data), not /tmp, and is generated
+# only when it does not already exist.
+#
+# A sentinel.conf is not an input file, it is Sentinel's persistent STATE.
+# Sentinel CONFIG REWRITEs its own runtime state back into whichever file it was
+# started with: its `myid`, every `known-sentinel`/`known-replica` it has
+# discovered, its current epoch, and -- critically -- which node is currently
+# the master after a failover.
+#
+# This script previously wrote to /tmp/sentinel.conf and overwrote it
+# unconditionally on every start, while docker-compose.ha.yml mounted a named
+# volume at /data that consequently held nothing at all. Every restart therefore
+# handed Sentinel a fresh identity and reset it to monitoring the ORIGINAL
+# primary from the template. A single Sentinel restarting re-learns the true
+# master from its peers over the hello channel and self-corrects, so this hid
+# well; but restart all three together (compose recreate, host reboot, Docker
+# Desktop restart) after a failover has moved the master and there is no
+# surviving peer to correct them -- the whole quorum comes back monitoring a
+# node that is now a replica.
+#
+# Regenerating is still available for the case where the tunables below actually
+# need to change: set REDIS_SENTINEL_FORCE_RECONFIG=1. `make ha-down` already
+# runs `down -v`, which removes the volume, so a clean teardown resets state
+# without needing the flag.
+#
+# Trade-off worth stating: `sentinel auth-pass` means REDIS_PASSWORD is written
+# into this file, so it now persists in the named volume rather than living only
+# in the container's ephemeral layer. Treat the volume as secret-bearing.
+SENTINEL_CONF="${REDIS_SENTINEL_CONF:-/data/sentinel.conf}"
+
+if [ -s "$SENTINEL_CONF" ] && [ "${REDIS_SENTINEL_FORCE_RECONFIG:-0}" != "1" ]; then
+  echo "Reusing existing Sentinel state at $SENTINEL_CONF (myid, known peers and"
+  echo "current master preserved across restart). Set"
+  echo "REDIS_SENTINEL_FORCE_RECONFIG=1 to regenerate it from the environment."
+  exec redis-sentinel "$SENTINEL_CONF"
+fi
+
+mkdir -p "$(dirname "$SENTINEL_CONF")"
+
 # Resolve the primary to an IP HERE, in the shell, once, at startup -- never
 # inside Sentinel's event loop.
 #
@@ -99,7 +138,7 @@ esac
 # than written to the file. An earlier revision put this text inside the heredoc
 # and the shell tried to execute a backticked Sentinel event name out of the
 # prose, logging "-failover-abort-not-elected: not found" on every boot.
-cat > /tmp/sentinel.conf <<EOF
+cat > "$SENTINEL_CONF" <<EOF
 port 26379
 sentinel resolve-hostnames no
 sentinel announce-hostnames no
@@ -109,4 +148,7 @@ sentinel down-after-milliseconds ${MASTER_NAME} ${REDIS_SENTINEL_DOWN_AFTER_MS:-
 sentinel parallel-syncs ${MASTER_NAME} 1
 sentinel failover-timeout ${MASTER_NAME} ${REDIS_SENTINEL_FAILOVER_TIMEOUT_MS:-20000}
 EOF
-exec redis-sentinel /tmp/sentinel.conf
+# The file carries the Redis password; keep it off other users on the volume.
+chmod 600 "$SENTINEL_CONF"
+echo "Generated Sentinel config at $SENTINEL_CONF (monitoring ${PRIMARY_IP}:${RAW_PORT})"
+exec redis-sentinel "$SENTINEL_CONF"
