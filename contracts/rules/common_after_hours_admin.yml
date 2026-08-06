@@ -23,6 +23,14 @@ detection:
     # logons still fire. See that file.
     actor.user.name:
       not_in: service_accounts
+      # FIX L2 (honest default posture): this allowlist SHIPS EMPTY -- nothing
+      # is suppressed until an operator populates
+      # contracts/allowlists/service_accounts.yml with the org's actual
+      # backup/patching/monitoring accounts. An empty allowlist means this
+      # rule is intentionally noisy: it matches every 4672 off-hours, exactly
+      # because a default that suppresses anything could blind you to a real
+      # privileged logon. Populate service_accounts.yml for your site before
+      # trusting (or tuning down) the signal.
     time:
       outside_hours:
         start: "08:00"

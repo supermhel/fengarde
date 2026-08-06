@@ -49,6 +49,12 @@ public internet or an untrusted network.
 - The bundled OpenSearch runs with its security plugin **disabled** for
   zero-friction local development (`DISABLE_SECURITY_PLUGIN=true` in
   `infra/docker-compose.yml`). It must not be exposed beyond the local host.
+- **Grafana** (opt-in `observability` profile, loopback-bound `127.0.0.1:3000`)
+  ships with a default `admin`/`admin` credential
+  (`GF_SECURITY_ADMIN_PASSWORD=admin` in `infra/docker-compose.yml`). Change it
+  before enabling the profile on any host where port 3000 is reachable beyond
+  localhost — it is protected only by the loopback binding, not by any auth
+  beyond that default password.
 
 ### 2. Authentication is opt-in (v0.4+), layered up to real RBAC in v0.6 (M4.2)
 
@@ -203,6 +209,38 @@ egress path you are opting into, same posture as WS-5's outbound LLM calls
   dead-letter queue for exhausted webhook retries yet (unlike the bus's own
   DLQ) — a receiver down for an extended outage silently misses alerts
   fired during that window.
+
+---
+
+### 10. API key pepper defaults empty (defense-in-depth inactive without it)
+
+`FENGARDE_API_KEY_PEPPER` (WS-6 keystore, `services/ws6-inventory/keystore.py`)
+defaults to an **empty** byte string. When unset, API keys are HMAC-SHA256-hashed
+with an empty key, so a leak of the keys table alone still exposes every key to
+an offline brute force — the pepper's entire purpose (protecting against a
+DB-only leak *without* also leaking the pepper) is **inactive**. A startup
+warning is logged. **Set `FENGARDE_API_KEY_PEPPER` to a high-entropy random
+value for production deployments.** Note the trade-off aired in `SSOT.md`:
+rotating the pepper invalidates all provisioned keys by design (now detected and
+announced via a pepper canary, but re-provisioning remains the recovery path).
+
+**Related defaults worth remembering here, documented in full in their own
+sections:**
+
+- **Webhook secrets come from env vars (`contracts/webhooks/*.yml`
+  `secret_env`)** — the repo never commits a secret itself; a config names an
+  environment variable that must be set at deploy time (`secret_env`), and an
+  unset secret makes that one webhook fail closed rather than send an unsigned
+  request. See §9.
+- **Grafana default credential** — the opt-in `observability` Grafana ships
+  `admin`/`admin` until you change `GF_SECURITY_ADMIN_PASSWORD`; loopback-bound,
+  but change it before exposing beyond localhost. See §1.
+- **TLS / reverse-proxy** — FENGARDE services provide **no TLS of their own**.
+  Production deployments are expected to terminate TLS at a reverse proxy (see
+  `docs/deployment.md` for a working nginx example) and to keep the backend
+  ports on the Compose/management network. Any `http://` (including webhook
+  URLs and OLLAMA_URL) sends its content in cleartext once it leaves that
+  network boundary.
 
 ---
 

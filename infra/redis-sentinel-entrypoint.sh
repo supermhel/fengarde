@@ -1,5 +1,15 @@
 #!/bin/sh
 set -eu
+# FIX 23 (async-replication durability): the PRIMARY's redis-server (started by
+# docker-compose.ha.yml's redis-1, NOT by this script -- this script only runs
+# the *Sentinel*) carries `--min-replicas-to-write 1 --min-replicas-max-lag 10`.
+# That makes the primary refuse writes while no replica is connected (or all
+# replicas lag >10s), so the acked tail can never be silently lost to a failover
+# that promotes a replica which never received the last writes. This script adds
+# no config of its own for those knobs -- Sentinel has no equivalent setting --
+# but it is listed here so the durability guarantee stays discoverable next to
+# the failover machinery it protects. Trade-off documented in docker-compose.ha.yml
+# and SSOT.md §2: with every replica down the primary goes read-only.
 if [ -z "${REDIS_PASSWORD:-}" ]; then
   echo "REDIS_PASSWORD must be set for HA Sentinel" >&2
   exit 1
