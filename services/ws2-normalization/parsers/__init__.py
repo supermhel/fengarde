@@ -107,10 +107,17 @@ def _resolve_structured(rec: dict) -> Optional[Parser]:
     # notification shape (the inventory worker's output contract).
     if "mac" in rec and "sector" in rec and "device_type" in rec:
         return _REGISTRY["inventory_diff"]
-    # eventType: OPC UA (CamelCase Audit*EventType) vs n8n (dotted lower-case)
+    # eventType: OPC UA (CamelCase Audit*[EventType]) vs n8n (dotted lower-case)
     et = rec.get("eventType") or rec.get("event_type") or rec.get("type")
     if isinstance(et, str) and et:
-        if et.startswith("Audit") and et.endswith("EventType"):
+        # FIX (swarm): OPC UA event types start with "Audit" but don't always
+        # carry the "EventType" suffix (e.g. "Audit.CustomAction"). Match any
+        # "Audit" prefix so those route to opcua_audit instead of falling
+        # through to the n8n dotted check (which would misroute "Audit.Foo" via
+        # the "." branch). Checked BEFORE the n8n dotted-lowercase branch; a
+        # dotted n8n type never starts with "Audit". The source_type-authoritative
+        # path (resolve()) is unaffected.
+        if et.startswith("Audit"):
             return _REGISTRY["opcua_audit"]
         if "." in et or et in ("login", "logout") or "workflowId" in rec or "webhook" in rec:
             return _REGISTRY["n8n_audit"]

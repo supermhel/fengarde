@@ -36,19 +36,30 @@ _CLASS = 6005  # Datastore Activity
 # the shared cross-source rubric (base.SEV_BY_CATEGORY, P2.2) so "delete a row"
 # and "drop a table" both land as CRITICAL like vmware's delete/destroy does,
 # not a source-specific MEDIUM that dodges the severity floor.
-_OP_MAP = {
-    "select": (1, SEV_BY_CATEGORY["read"]),
-    "query": (1, SEV_BY_CATEGORY["read"]),
-    "insert": (2, SEV_BY_CATEGORY["write"]),
-    "write": (2, SEV_BY_CATEGORY["write"]),
-    "update": (3, SEV_BY_CATEGORY["modify"]),
-    "delete": (4, SEV_BY_CATEGORY["destroy"]),
-    "drop": (4, SEV_BY_CATEGORY["destroy"]),
-    "grant": (5, SEV_BY_CATEGORY["privilege"]),
-    "revoke": (5, SEV_BY_CATEGORY["privilege"]),
-    "alter": (5, SEV_BY_CATEGORY["privilege"]),
-    "create user": (5, SEV_BY_CATEGORY["privilege"]),
-}
+# FIX 3: privilege/rare-first ordering so "GRANT SELECT ON t" is classified as
+# activity 5 (privilege), not downgraded to activity 1 (read) by the substring
+# "select" matching first. A list-of-tuples guarantees the iteration order
+# (a dict also preserves insertion order in CPython, but the tuple list makes
+# the ordering explicit and version-proof).
+_OP_MAP: list[tuple[str, tuple[int, int]]] = [
+    # Privilege ops (checked FIRST -- the longer compound key "create user"
+    # appears before any shorter substring it could shadow).
+    ("create user", (5, SEV_BY_CATEGORY["privilege"])),
+    ("grant", (5, SEV_BY_CATEGORY["privilege"])),
+    ("revoke", (5, SEV_BY_CATEGORY["privilege"])),
+    ("alter", (5, SEV_BY_CATEGORY["privilege"])),
+    # Destructive ops
+    ("drop", (4, SEV_BY_CATEGORY["destroy"])),
+    ("delete", (4, SEV_BY_CATEGORY["destroy"])),
+    # Modify
+    ("update", (3, SEV_BY_CATEGORY["modify"])),
+    # Write
+    ("insert", (2, SEV_BY_CATEGORY["write"])),
+    ("write", (2, SEV_BY_CATEGORY["write"])),
+    # Read (catch-all -- checked LAST so privilege ops can't hide behind reads)
+    ("select", (1, SEV_BY_CATEGORY["read"])),
+    ("query", (1, SEV_BY_CATEGORY["read"])),
+]
 
 
 class DbAuditParser(Parser):
@@ -68,9 +79,11 @@ class DbAuditParser(Parser):
             return None
         meta = raw.get("meta") or {}
 
-        operation = (rec.get("operation") or "").lower()
+        # FIX 11: operation can be a non-string (int/list/dict) out of a
+        # structured JSON record -- str() guards against .lower() crashing.
+        operation = str(rec.get("operation") or "").strip().lower()
         activity_id, severity_id = 1, SEV_INFO
-        for kw, (aid, sev) in _OP_MAP.items():
+        for kw, (aid, sev) in _OP_MAP:
             if kw in operation:
                 activity_id, severity_id = aid, sev
                 break

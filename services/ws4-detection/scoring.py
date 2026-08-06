@@ -17,6 +17,32 @@ class Scorer:
         self.floor = cfg["severity_floor"]
         self.clamp_min = cfg["clamp"]["min"]
         self.clamp_max = cfg["clamp"]["max"]
+        # FIX 22 (2026-08-06): in-memory dedup of LLM/classifier-funnel enqueues
+        # per alert key. A hot stateful rule fires repeatedly within its window
+        # bucket with the SAME alert_key; without dedup every fire re-queues WS-5
+        # triage for the same incident. Bounded: ~1000 entries, pruned on growth.
+        self._recent_llm_enqueues: dict[str, float] = {}  # alert_key -> enqueue ts
+        self._llm_cooldown_s = 300  # 5 minutes
+        self._llm_cache_budget = 1000
+
+    def should_enqueue_llm(self, alert_key: str, now: float | None = None) -> bool:
+        """FIX 22: True if an ``ai.requests`` enqueue for ``alert_key`` should
+        proceed -- i.e. it was NOT enqueued within the cooldown window. Records
+        the enqueue timestamp on a fresh/expired key (the dedup is internal and
+        caller-transparent). Prunes the in-memory table when it exceeds the
+        budget, dropping entries older than two cooldowns.
+        """
+        import time as _time
+        now = _time.time() if now is None else now
+        last = self._recent_llm_enqueues.get(alert_key, 0.0)
+        if now - last < self._llm_cooldown_s:
+            return False
+        self._recent_llm_enqueues[alert_key] = now
+        if len(self._recent_llm_enqueues) > self._llm_cache_budget:
+            cutoff = now - self._llm_cooldown_s * 2
+            self._recent_llm_enqueues = {
+                k: v for k, v in self._recent_llm_enqueues.items() if v > cutoff}
+        return True
 
     def score(self, matched_rules) -> int:
         if not matched_rules:

@@ -34,19 +34,28 @@ def _safe_int(value):
     except (ValueError, TypeError):
         return None
 
-# operation keyword -> (activity_id, severity), severity from the shared
-# cross-source rubric (base.SEV_BY_CATEGORY, P2.2).
-_OP_MAP = {
-    "create": (1, SEV_BY_CATEGORY["write"]),
-    "deploy": (1, SEV_BY_CATEGORY["write"]),
-    "read": (2, SEV_BY_CATEGORY["read"]),
-    "get": (2, SEV_BY_CATEGORY["read"]),
-    "update": (3, SEV_BY_CATEGORY["modify"]),
-    "reconfig": (3, SEV_BY_CATEGORY["modify"]),
-    "delete": (4, SEV_BY_CATEGORY["destroy"]),
-    "destroy": (4, SEV_BY_CATEGORY["destroy"]),
-    "remove": (4, SEV_BY_CATEGORY["destroy"]),
-}
+# FIX 12: operation keyword -> (activity_id, severity), severity from the shared
+# cross-source rubric (base.SEV_BY_CATEGORY, P2.2). Listed as an ordered
+# tuple-list with DELETE/DESTROY/REMOVE checked BEFORE DEPLOY/CREATE so
+# "VM.Undeploy" (which contains "undeploy" -> "deploy" by substring) classifies
+# as activity 4 (Destroy), not activity 1 (Create). "remove" also appears before
+# "reconfig"/"read" substring shadows.
+_OP_MAP: list[tuple[str, tuple[int, int]]] = [
+    # Destructive ops (checked FIRST)
+    ("delete", (4, SEV_BY_CATEGORY["destroy"])),
+    ("destroy", (4, SEV_BY_CATEGORY["destroy"])),
+    ("remove", (4, SEV_BY_CATEGORY["destroy"])),
+    ("undeploy", (4, SEV_BY_CATEGORY["destroy"])),
+    # Create/deploy
+    ("create", (1, SEV_BY_CATEGORY["write"])),
+    ("deploy", (1, SEV_BY_CATEGORY["write"])),
+    # Modify
+    ("update", (3, SEV_BY_CATEGORY["modify"])),
+    ("reconfig", (3, SEV_BY_CATEGORY["modify"])),
+    # Read (checked LAST)
+    ("read", (2, SEV_BY_CATEGORY["read"])),
+    ("get", (2, SEV_BY_CATEGORY["read"])),
+]
 
 
 class VmwareVsphereParser(Parser):
@@ -66,9 +75,10 @@ class VmwareVsphereParser(Parser):
             return None
         meta = raw.get("meta") or {}
 
-        operation = (rec.get("operation") or "").lower()
+        # FIX 11: operation can be a non-string out of a structured record.
+        operation = str(rec.get("operation") or "").strip().lower()
         activity_id, severity_id = 2, SEV_INFO
-        for kw, (aid, sev) in _OP_MAP.items():
+        for kw, (aid, sev) in _OP_MAP:
             if kw in operation:
                 activity_id, severity_id = aid, sev
                 break

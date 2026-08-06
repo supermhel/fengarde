@@ -64,7 +64,15 @@ from shared.ocsf import valid_ip
 
 _CLASS = 6003  # API Activity
 
-_WRITE_KEYWORDS = ("write", "create", "insert", "add", "put")
+# FIX L3: "put"/"add" are short enough that plain substring containment matches
+# them inside unrelated tool names (compute, output, status, addon, address),
+# misclassifying routine read tool-calls as Create. Longer verbs stay substring
+# (write/create/insert are low-risk), while the short ones are matched as
+# standalone tokens -- the same discipline the _RM_TOKEN fix (N1) applied to
+# "rm" -- so "object_put"/"put_object" still classify as Create but "compute"/
+# "output" don't.
+_WRITE_KEYWORDS = ("write", "create", "insert")
+_WRITE_TOKENS = ("put", "add")
 _UPDATE_KEYWORDS = ("update", "edit", "modify", "patch", "rename")
 # N1 (2026-07-30 audit): "delete"/"remove"/"drop" are long enough that plain
 # substring containment is low-risk, but the 2-char "rm" matched inside many
@@ -227,6 +235,9 @@ class McpAgentParser(Parser):
         for kw in _WRITE_KEYWORDS:
             if kw in t:
                 return 1, SEV_MEDIUM
+        # FIX L3: short write verbs matched as standalone tokens (not substring).
+        if any(tok in _tokenize(tool) for tok in _WRITE_TOKENS):
+            return 1, SEV_MEDIUM
         return 2, SEV_INFO  # default: Read
 
     @staticmethod
