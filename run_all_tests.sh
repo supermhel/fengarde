@@ -16,6 +16,10 @@ echo
 echo "== B4: rule validation gate (schema, condition parse, operator safety) =="
 $PY tools/validate_rules.py || fail=1
 $PY tools/test_validate_rules.py || fail=1
+echo
+echo "== Sigma import: regex->glob translation + rule sanitization =="
+$PY tools/test_fix_m18_sigma_glob.py || fail=1
+$PY tools/test_import_sigma_rules.py || fail=1
 
 for ws in ws1-collectors ws2-normalization ws3-indexer ws4-detection ws5-ai ws6-inventory ws7-dashboard; do
   echo

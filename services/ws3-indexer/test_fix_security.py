@@ -8,8 +8,10 @@ Covered:
     redirecting server's 30x surfaces as urllib.error.HTTPError and the
     redirect target is never hit.
   * FIX 5 -- server-side session signing: _sign is secret-and-content
-    dependent, and a forged Redis session row (sig mismatches) is rejected
-    (resolve -> None). Live-Redis-gated.
+    dependent, a forged Redis session row (sig mismatch OR missing sig) is
+    rejected (resolve -> None; no backward-compat unsigned path), and
+    RedisSessionStore refuses to construct without FENGARDE_SESSION_SECRET
+    set. Live-Redis-gated.
   * FIX 6 -- require_auth_or_die exits with code 1 when FENGARDE_REQUIRE_AUTH
     is on but auth is incomplete; no-ops otherwise.
   * FIX L4 -- per-IP rate limiter is a no-op when disabled and returns 429
@@ -160,18 +162,37 @@ def test_forged_redis_session_rejected():
         t2 = store.create("alice", "analyst", "acme")
         check(store.resolve(t2) is not None,
               "a legitimately signed session must still resolve")
-        # Backward compat: a legacy row with NO sig must still resolve.
+        # Follow-up (2026-08-06): signing is now MANDATORY, no backward-compat
+        # unsigned path -- a legacy row with NO sig must be REJECTED, not
+        # silently accepted (accepting it would let an attacker who can write
+        # to Redis directly just omit `sig` and bypass signing entirely).
         store.r.delete("fengarde:session:" + t2)
         legacy = {"username": "bob", "role": "viewer", "tenant_id": "acme",
                   "expires_at": str(__import__("time").time() + 1000),
                   "csrf_token": "c"}
         store.r.hset("fengarde:session:" + t2, mapping=legacy)
-        check(store.resolve(t2) is not None,
-              "a legacy (unsigned) session row must still resolve (backward compat)")
+        check(store.resolve(t2) is None,
+              "a legacy (unsigned) session row must be rejected -- signing "
+              "has no backward-compat bypass")
     finally:
         store.r.delete("fengarde:session:" + token)
         os.environ.pop("FENGARDE_SESSION_SECRET", None)
         os.environ.pop("FENGARDE_SESSION_BACKEND", None)
+
+
+def test_redis_session_store_refuses_without_secret():
+    if not _redis_reachable():
+        print("  [SKIP] test_redis_session_store_refuses_without_secret "
+              "(SESSION_TEST_REDIS!=1 or no Redis)")
+        return
+    os.environ.pop("FENGARDE_SESSION_SECRET", None)
+    try:
+        sessions.RedisSessionStore(url=os.getenv("REDIS_URL"), ttl_s=900)
+        check(False, "RedisSessionStore must refuse to construct without "
+                     "FENGARDE_SESSION_SECRET set (fail loud, no silent "
+                     "per-process random fallback)")
+    except RuntimeError:
+        pass
 
 
 # -- FIX 6: require_auth_or_die ------------------------------------------------
@@ -230,6 +251,7 @@ def main():
     test_no_redirect_follows_nothing()
     test_sign_is_secret_and_content_dependent()
     test_forged_redis_session_rejected()
+    test_redis_session_store_refuses_without_secret()
     test_require_auth_or_die_missing_key_exits_1()
     test_require_auth_or_die_noop_without_env()
     test_rate_limit_is_noop_when_off()

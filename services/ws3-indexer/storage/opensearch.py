@@ -39,6 +39,7 @@ from __future__ import annotations
 import http.client
 import json
 import os
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -103,11 +104,26 @@ class OpenSearchStore(StorageAdapter):
         self._node_idx = 0
         self.timeout = timeout
         self._conn: http.client.HTTPConnection | None = None
-        self._use_current_node()
+        # FIX H6 follow-up (2026-08-06): one OpenSearchStore instance is
+        # shared across every topic-consumer thread (ws3-indexer/main.py
+        # runs one worker thread PER topic against the SAME store). Without a
+        # lock, two threads hitting a connection failure at the same moment
+        # could each read/mutate _node_idx / _host / _port / _https / base /
+        # _conn concurrently and corrupt which node a request actually goes
+        # to (e.g. one thread reads the post-rotation host while another has
+        # only half-applied the rotation). This lock guards node selection
+        # and the connection object's create/reset lifecycle; the actual
+        # blocking socket I/O in _request()/bulk_index() runs OUTSIDE the
+        # lock so concurrent requests aren't needlessly serialized on the
+        # network round-trip -- only the bookkeeping around them is atomic.
+        self._node_lock = threading.Lock()
+        with self._node_lock:
+            self._use_current_node()
 
     def _use_current_node(self) -> None:
         """Point _host/_port/_https/.base at the current node so the rest of
-        the class (connection, retry, base-path building) is unchanged."""
+        the class (connection, retry, base-path building) is unchanged.
+        Caller must hold self._node_lock."""
         node = self._nodes[self._node_idx]
         self._host = node["host"]
         self._port = node["port"]
@@ -116,19 +132,28 @@ class OpenSearchStore(StorageAdapter):
 
     def _rotate_node(self) -> None:
         """Advance to the next node in the list (round-robin), resetting any
-        stale connection so the next request uses the new node."""
-        self._reset_connection()
-        if len(self._nodes) > 1:
-            self._node_idx = (self._node_idx + 1) % len(self._nodes)
-            self._use_current_node()
+        stale connection so the next request uses the new node. Acquires
+        self._node_lock itself -- callers must NOT already hold it."""
+        with self._node_lock:
+            self._reset_connection_locked()
+            if len(self._nodes) > 1:
+                self._node_idx = (self._node_idx + 1) % len(self._nodes)
+                self._use_current_node()
 
     def _connection(self) -> http.client.HTTPConnection:
-        if self._conn is None:
-            cls = http.client.HTTPSConnection if self._https else http.client.HTTPConnection
-            self._conn = cls(self._host, self._port, timeout=self.timeout)
-        return self._conn
+        with self._node_lock:
+            if self._conn is None:
+                cls = http.client.HTTPSConnection if self._https else http.client.HTTPConnection
+                self._conn = cls(self._host, self._port, timeout=self.timeout)
+            return self._conn
 
     def _reset_connection(self) -> None:
+        """Acquires self._node_lock itself -- callers must NOT already hold it."""
+        with self._node_lock:
+            self._reset_connection_locked()
+
+    def _reset_connection_locked(self) -> None:
+        """Caller must hold self._node_lock."""
         if self._conn is not None:
             try:
                 self._conn.close()

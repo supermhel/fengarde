@@ -338,8 +338,18 @@ def main():
     # FIX 1 (CRITICAL, 2026-08-06): the HA compose sets BUS_BACKEND=redis-sentinel,
     # which the old exact == "redis" gate silently ignored -> 12 stateful rules
     # fell back to per-process counters that never fire at scale. Now BOTH
-    # "redis" and "redis-sentinel" are wired; sentinel resolves the live master
-    # via redis.sentinel.Sentinel.discover_master (NOT REDIS_URL).
+    # "redis" and "redis-sentinel" are wired.
+    #
+    # C1 follow-up (2026-08-06): the first version resolved the master ONCE via
+    # `Sentinel.discover_master()` and built a plain `redis.Redis(host, port)`
+    # pinned to that address. Sentinel exists to survive exactly the event that
+    # breaks a pinned client: on a real failover the old master demotes to a
+    # replica, starts answering "READONLY You can't write against a read only
+    # replica.", and the pinned client keeps hammering it until the process is
+    # restarted -- the counter goes dark for the rest of the process lifetime.
+    # `Sentinel.master_for()` returns a client that re-asks Sentinel for the
+    # current master on each new connection (including the reconnect after a
+    # failover breaks the old one), so writes follow the master automatically.
     if _backend in ("redis", "redis-sentinel"):
         try:
             import redis  # type: ignore
@@ -358,9 +368,9 @@ def main():
                 password = os.getenv("REDIS_PASSWORD", "") or None
                 sentinel = Sentinel(sentinel_hosts, password=password,
                                     socket_timeout=1, decode_responses=True)
-                host, port = sentinel.discover_master(master_name)
-                client = redis.Redis(host=host, port=port, password=password,
-                                     decode_responses=True)
+                client = sentinel.master_for(master_name, redis_class=redis.Redis,
+                                             password=password,
+                                             decode_responses=True)
             else:
                 client = redis.Redis.from_url(
                     os.getenv("REDIS_URL", "redis://localhost:6379/0"),

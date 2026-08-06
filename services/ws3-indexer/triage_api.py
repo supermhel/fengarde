@@ -627,57 +627,118 @@ def make_handler(store, users_db=None, sessions: SessionStore | None = None,
             return self._send(200, {"ok": True},
                                extra_headers={"Set-Cookie": cookie[_SESSION_COOKIE].OutputString()})
 
-        def _mfa_target_username(self, session):
-            """The username an MFA action applies to: the acting user at
-            minimum, OR another user when an admin supplies `username` in the
+        def _mfa_target(self, session, body):
+            """The username an MFA action applies to: the acting user by
+            default, OR another user when an admin supplies `username` in the
             body (admin may provision/verify MFA on behalf of an account).
-            Returns (target, body); target is None (an error already sent) if
-            unauthorized or the target doesn't exist -- an admin provisioning
-            for a nonexistent user is the same 404-not-confirm posture as
-            every other RBAC gate."""
-            body = self._read_json_body(_MAX_BODY_BYTES)
+            Returns None (an error already sent) if unauthorized or the
+            target doesn't exist -- an admin provisioning for a nonexistent
+            user is the same 404-not-confirm posture as every other RBAC
+            gate."""
             target = body.get("username")
             if target is None:
-                return session.username, body
+                return session.username
             if session.role != "admin":
                 self._send(404, {"error": "no such path"})
-                return None, body
+                return None
             if not isinstance(target, str) or not users_db.get_user(target):
                 self._send(404, {"error": "no such user"})
-                return None, body
-            return target, body
+                return None
+            return target
+
+        def _mfa_reauth(self, session, body) -> bool:
+            """Re-auth gate for MFA-config-changing routes (enable/verify),
+            added 2026-08-06. Requires the ACTING session's own current
+            `password` in the body -- even though a valid session cookie is
+            already presented. Without this, a stolen session cookie ALONE
+            was enough to re-provision MFA on an account: `enable_totp`
+            unconditionally resets `totp_active` to 0 (users.py), so one
+            unauthenticated-beyond-the-cookie POST to /auth/mfa/enable
+            silently disarmed an account's MFA, and the caller then held the
+            new secret. Requiring the caller's own password closes that --
+            an attacker who only has the cookie cannot pass this gate.
+
+            Rate-limited per-username in a separate `mfa:` namespace (reuses
+            the login `rate_limiter` instance, so it shares its cleanup/sweep
+            machinery, but keyed apart from plain usernames so a burst of bad
+            MFA re-auth attempts can't be confused with, or silently ride
+            along on, ordinary login-lockout accounting) and every outcome is
+            audited. Sends its own error response and returns False on
+            failure; the caller just returns.
+            """
+            # rate_limiter is only None when rbac_enabled is False (see the
+            # `rate_limiter = rate_limiter or LoginRateLimiter()` reassignment
+            # above), and this method is only ever reached via /auth/mfa/*
+            # routes that are themselves gated behind `rbac_enabled` in
+            # do_POST -- so it is always set here. mypy can't see that
+            # narrowing across this closure, hence the assert (this is the
+            # only method in this class with a `-> bool` return annotation,
+            # which is what makes mypy check its body at all -- see
+            # --check-untyped-defs in pyproject.toml's [tool.mypy] comment).
+            assert rate_limiter is not None
+            key = f"mfa:{session.username}"
+            if rate_limiter.is_locked_out(key):
+                self._audit("mfa_reauth_failure", actor=session.username,
+                            tenant_id=session.tenant_id, detail={"reason": "locked_out"})
+                self._send(401, {"error": "reauthentication required"})
+                return False
+            password = body.get("password")
+            if (not isinstance(password, str)
+                    or users_db.verify_login(session.username, password) is None):
+                rate_limiter.record_failure(key)
+                self._audit("mfa_reauth_failure", actor=session.username,
+                            tenant_id=session.tenant_id, detail={"reason": "bad_password"})
+                self._send(401, {"error": "reauthentication required"})
+                return False
+            rate_limiter.record_success(key)
+            return True
 
         def _route_mfa_enable(self):
             """POST /auth/mfa/enable -- opt-in MFA step one: generate a secret,
-            store it (pending), and hand back the otpauth:// URI for a QR code."""
+            store it (pending), and hand back the otpauth:// URI for a QR code.
+            Body must carry the ACTING user's current `password` (see
+            _mfa_reauth) plus an optional admin-on-behalf-of `username`."""
             session = self._current_session()
             if session is None:
                 return self._send(401, {"error": "not logged in"})
-            target, _body = self._mfa_target_username(session)
+            body = self._read_json_body(_MAX_BODY_BYTES)
+            if not self._mfa_reauth(session, body):
+                return
+            target = self._mfa_target(session, body)
             if target is None:
                 return
             try:
                 uri = users_db.provision_totp(target)
             except Exception:  # noqa: BLE001 - mfa module missing/broken
                 return self._send(503, {"error": "MFA provisioning unavailable"})
+            self._audit("mfa_enable", actor=session.username,
+                        tenant_id=session.tenant_id, detail={"target": target})
             return self._send(200, {"username": target, "otpauth_uri": uri,
                                      "status": "pending-secret-verification"})
 
         def _route_mfa_verify(self):
             """POST /auth/mfa/verify -- opt-in MFA step two. Body carries the
-            `totp_code` the user read from their authenticator; on success the
+            ACTING user's current `password` (re-auth, see _mfa_reauth) PLUS
+            the `totp_code` read from the authenticator; on success the
             secret is marked ACTIVE and future logins require the code."""
             session = self._current_session()
             if session is None:
                 return self._send(401, {"error": "not logged in"})
-            target, body = self._mfa_target_username(session)
+            body = self._read_json_body(_MAX_BODY_BYTES)
+            if not self._mfa_reauth(session, body):
+                return
+            target = self._mfa_target(session, body)
             if target is None:
                 return
             code = body.get("totp_code")
             if not isinstance(code, str):
                 return self._send(400, {"error": "totp_code (string) is required"})
             if not users_db.verify_totp(target, code):
+                self._audit("mfa_verify_failure", actor=session.username,
+                            tenant_id=session.tenant_id, detail={"target": target})
                 return self._send(401, {"error": "invalid totp code"})
+            self._audit("mfa_verify_success", actor=session.username,
+                        tenant_id=session.tenant_id, detail={"target": target})
             return self._send(200, {"username": target, "mfa_active": True})
 
         def _route_post(self, path: str):

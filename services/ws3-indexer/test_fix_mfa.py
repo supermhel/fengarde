@@ -9,6 +9,10 @@ Covers, against REAL code paths:
      marks it active only on a valid code.
   3. login: once a user's TOTP is ACTIVE, /auth/login REQUIRES a valid
      `totp_code` (rejects with 401 when missing/invalid).
+  3b. re-auth (2026-08-06): /auth/mfa/enable and /auth/mfa/verify require the
+      acting user's own current password in the body -- a session cookie
+      alone cannot touch MFA config -- and are rate-limited per username in
+      their own namespace.
   4. backward compatibility: a user who never enabled TOTP logs in with
      password alone -- byte-for-byte the pre-E3 path.
 
@@ -180,12 +184,14 @@ def test_login_requires_code_when_totp_enabled():
                                               {"username": "alice", "password": "pw-alice-1"})
         cookie = _cookie_value(set_cookie)
         csrf = login_body["csrf_token"]
-        _, enable_body, _ = _request(port, "POST", "/auth/mfa/enable", {}, cookie=cookie, csrf=csrf)
+        _, enable_body, _ = _request(port, "POST", "/auth/mfa/enable",
+                                     {"password": "pw-alice-1"}, cookie=cookie, csrf=csrf)
         # Enable returns an otpauth URI carrying the secret -> derive the real code.
         uri_params = enable_body["otpauth_uri"].split("?", 1)[1]
         secret = dict(p.split("=", 1) for p in uri_params.split("&"))["secret"]
         code = mfa.generate_code(secret)
-        _request(port, "POST", "/auth/mfa/verify", {"totp_code": code}, cookie=cookie, csrf=csrf)
+        _request(port, "POST", "/auth/mfa/verify",
+                {"password": "pw-alice-1", "totp_code": code}, cookie=cookie, csrf=csrf)
 
         # Now: missing code -> 401; wrong code -> 401.
         code_no, _, _ = _request(port, "POST", "/auth/login",
@@ -202,6 +208,117 @@ def test_login_requires_code_when_totp_enabled():
                                          "totp_code": mfa.generate_code(secret)})
         check(code_ok == 200, f"login with correct totp_code must succeed, got {code_ok}")
         check(body_ok.get("username") == "alice", "successful MFA login must create a session")
+    finally:
+        srv.shutdown(); srv.server_close()
+
+
+# -- 3b. mfa/enable + mfa/verify require re-auth (2026-08-06) ----------------
+# A stolen session cookie alone must NOT be enough to touch MFA config:
+# enable_totp() unconditionally resets totp_active to 0, so without a
+# re-auth gate, one POST /auth/mfa/enable with just the cookie would
+# silently disarm an account's MFA. Both routes now require the ACTING
+# user's own current password in the body.
+
+def test_mfa_enable_requires_password_reauth():
+    store, users = _fresh()
+    srv, port = _serve(store, users)
+    try:
+        _, login_body, set_cookie = _request(port, "POST", "/auth/login",
+                                              {"username": "alice", "password": "pw-alice-1"})
+        cookie = _cookie_value(set_cookie)
+        csrf = login_body["csrf_token"]
+
+        # Cookie alone, no password in body -> rejected, MFA state untouched.
+        code_none, _, _ = _request(port, "POST", "/auth/mfa/enable", {},
+                                   cookie=cookie, csrf=csrf)
+        check(code_none == 401,
+              f"mfa/enable with no password must be 401 (cookie theft must not "
+              f"be enough to touch MFA config), got {code_none}")
+
+        # Wrong password -> also rejected.
+        code_wrong, _, _ = _request(port, "POST", "/auth/mfa/enable",
+                                    {"password": "not-the-password"},
+                                    cookie=cookie, csrf=csrf)
+        check(code_wrong == 401,
+              f"mfa/enable with a wrong password must be 401, got {code_wrong}")
+
+        check(not users.is_totp_enabled("alice"),
+              "a rejected reauth must not have touched totp state")
+        row = users.get_user("alice")
+        check(row["totp_secret"] is None,
+              "a rejected reauth must not have provisioned a secret")
+
+        # Correct password -> succeeds and returns a provisioning URI.
+        code_ok, body_ok, _ = _request(port, "POST", "/auth/mfa/enable",
+                                       {"password": "pw-alice-1"},
+                                       cookie=cookie, csrf=csrf)
+        check(code_ok == 200 and body_ok.get("otpauth_uri", "").startswith("otpauth://"),
+              f"mfa/enable with the correct password must succeed, got {code_ok} {body_ok}")
+    finally:
+        srv.shutdown(); srv.server_close()
+
+
+def test_mfa_verify_requires_password_reauth():
+    store, users = _fresh()
+    srv, port = _serve(store, users)
+    try:
+        _, login_body, set_cookie = _request(port, "POST", "/auth/login",
+                                              {"username": "alice", "password": "pw-alice-1"})
+        cookie = _cookie_value(set_cookie)
+        csrf = login_body["csrf_token"]
+        _, enable_body, _ = _request(port, "POST", "/auth/mfa/enable",
+                                     {"password": "pw-alice-1"}, cookie=cookie, csrf=csrf)
+        uri_params = enable_body["otpauth_uri"].split("?", 1)[1]
+        secret = dict(p.split("=", 1) for p in uri_params.split("&"))["secret"]
+        real_code = mfa.generate_code(secret)
+
+        # Right TOTP code, but no password -> rejected, MFA stays inactive.
+        code_none, _, _ = _request(port, "POST", "/auth/mfa/verify",
+                                   {"totp_code": real_code}, cookie=cookie, csrf=csrf)
+        check(code_none == 401,
+              f"mfa/verify with no password must be 401 even with a valid "
+              f"totp_code, got {code_none}")
+        check(not users.is_totp_enabled("alice"),
+              "a reauth-rejected verify must not have activated MFA")
+
+        # Right password + right code -> activates.
+        code_ok, body_ok, _ = _request(port, "POST", "/auth/mfa/verify",
+                                       {"password": "pw-alice-1", "totp_code": real_code},
+                                       cookie=cookie, csrf=csrf)
+        check(code_ok == 200 and body_ok.get("mfa_active") is True,
+              f"mfa/verify with password + valid code must activate, got {code_ok} {body_ok}")
+        check(users.is_totp_enabled("alice"), "MFA must be active after a successful verify")
+    finally:
+        srv.shutdown(); srv.server_close()
+
+
+def test_mfa_reauth_rate_limited():
+    store, users = _fresh()
+    srv, port = _serve(store, users)
+    try:
+        _, login_body, set_cookie = _request(port, "POST", "/auth/login",
+                                              {"username": "alice", "password": "pw-alice-1"})
+        cookie = _cookie_value(set_cookie)
+        csrf = login_body["csrf_token"]
+
+        # LoginRateLimiter's default is 5 failures / 5min window (rbac.py).
+        # Hammer mfa/enable with a wrong password past that and confirm the
+        # account gets locked out of MFA re-auth (not just the last attempt
+        # rejected on credentials).
+        codes = []
+        for _ in range(7):
+            c, _, _ = _request(port, "POST", "/auth/mfa/enable",
+                               {"password": "wrong"}, cookie=cookie, csrf=csrf)
+            codes.append(c)
+        check(all(c == 401 for c in codes), f"every failed reauth must be 401, got {codes}")
+
+        # Even the CORRECT password is now rejected -- the reauth gate itself
+        # is locked out, same posture as LoginRateLimiter on /auth/login.
+        code_locked, _, _ = _request(port, "POST", "/auth/mfa/enable",
+                                     {"password": "pw-alice-1"}, cookie=cookie, csrf=csrf)
+        check(code_locked == 401,
+              f"mfa reauth must stay locked out even with the correct password "
+              f"once the attempt budget is exhausted, got {code_locked}")
     finally:
         srv.shutdown(); srv.server_close()
 
@@ -235,6 +352,9 @@ def main():
     test_otpauth_uri_shape()
     test_user_store_enable_then_verify_activates()
     test_login_requires_code_when_totp_enabled()
+    test_mfa_enable_requires_password_reauth()
+    test_mfa_verify_requires_password_reauth()
+    test_mfa_reauth_rate_limited()
     test_login_backward_compatible_totp_never_enabled()
 
     if FAILS:
@@ -244,7 +364,8 @@ def main():
         sys.exit(1)
     print("[OK] FENGARDE E3 MFA/TOTP: stdlib generate+verify, +/-1-step skew "
           "window, fail-closed malformed input, provision->verify activation, "
-          "login REQUIRES totp_code when active, and byte-for-byte backward "
+          "login REQUIRES totp_code when active, enable/verify REQUIRE "
+          "password reauth (rate-limited), and byte-for-byte backward "
           "compat when TOTP is disabled")
 
 

@@ -70,6 +70,20 @@ def _safe_glob_from_regex(pattern: str) -> str | None:
             return None
         if re.search(r"[^a-zA-Z0-9_.\-/ ]", parts[0] + parts[1]):
             return None
+        # M18 follow-up (2026-08-06): the literal-pattern branch below
+        # already rejects a bare '.' (regex "match any char") because
+        # translating it to a glob would turn it into a LITERAL dot and
+        # silently narrow the rule. The prefix/suffix around a `.*` wildcard
+        # are the exact same regex fragments -- any '.' surviving here (an
+        # escaped `\.` would already have been rejected above by the
+        # disallowed-backslash charset check) is just as much an unhandled
+        # "any char" operator as one in the fully-literal branch, and was
+        # missed here: `^cmd.exe .*payload$` translated to the glob
+        # `cmd.exe *payload`, which only matches a LITERAL dot after "cmd"
+        # instead of Sigma's "any character" -- silently narrowing an
+        # imported detection rule. Reject instead of narrowing.
+        if "." in parts[0] or "." in parts[1]:
+            return None
         return parts[0] + "*" + parts[1]
     if re.fullmatch(r"[a-zA-Z0-9_.\-/ ]*", pat):
         # A bare '.' (not part of a '.*' wildcard -- that case returned

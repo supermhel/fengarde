@@ -94,6 +94,10 @@ jobs:
           BUS_BACKEND: redis
           REDIS_URL: redis://localhost:6379/0
           SESSION_TEST_REDIS: "1"
+          # FIX 5 follow-up (2026-08-06): RedisSessionStore now refuses to
+          # construct without this set (mandatory session signing) -- a
+          # throwaway CI-only value, never used for anything but this job.
+          FENGARDE_SESSION_SECRET: ci-test-session-secret-not-for-production
         run: python services/shared/test_sessions.py
       - name: Stateful window counter on real Redis
         env:
@@ -161,19 +165,23 @@ jobs:
           done
       - name: coverage gate (ws2/ws3/shared/ws4/ws6, blocking at measured baseline)
         run: python tools/coverage_gate.py
-      # FIX M10 (2026-08-06): mutmut flips from informational to BLOCKING. The
-      # measured baseline survival rate is ~72% on sessions.py (scoped in
-      # pyproject.toml [tool.mutmut]); the pass/fail threshold is governed by
-      # that same config. `python -m mutmut run` no longer swallows its exit
-      # code (no `|| true`), so a test-weakening PR that drops the kill rate
-      # below the floor now FAILS CI. Results print for diagnostics but the run
-      # decides pass/fail.
-      - name: mutmut (blocking -- fails CI on kill-rate regression vs pyproject.toml [tool.mutmut] baseline)
+      # FIX M10 (2026-08-06, reverted same day): a version of this step made
+      # mutmut BLOCKING on the theory that pyproject.toml's [tool.mutmut]
+      # "governs the pass/fail threshold" -- it doesn't. That section has no
+      # threshold field at all (mutmut has no such setting), and nothing in
+      # this pipeline parses `mutmut results` to compare a rate against one.
+      # `mutmut run` exits non-zero whenever ANY mutant survives, so dropping
+      # `|| true` here would fail this job on every run at the measured ~72%
+      # survival baseline -- not on a regression, on the baseline itself.
+      # Reverted to informational until a real threshold parser exists (e.g.
+      # grep `mutmut results` output for the survived count and compare
+      # against a number actually stored in [tool.mutmut]).
+      - name: mutmut (informational, non-blocking -- see pyproject.toml [tool.mutmut])
         run: |
           pip install mutmut
-          python -m mutmut run
-          python -m mutmut results
-          echo "mutmut survival rate is BLOCKING (baseline ~72%, threshold in pyproject.toml [tool.mutmut])"
+          python -m mutmut run || true
+          python -m mutmut results || true
+          echo "mutmut survival rate is informational (pyproject.toml [tool.mutmut]) -- not blocking CI, no threshold parser exists yet"
       - name: SBOM freshness (blocking -- sbom.json must match requirements.txt)
         run: |
           pip install cyclonedx-bom

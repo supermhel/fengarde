@@ -3,7 +3,10 @@
 Covers, per the unified fix plan:
   FIX 1   (CRITICAL)  HA env-gate accepts BUS_BACKEND=redis-sentinel and
                       builds the RedisWindowCounter client via
-                      Sentinel.discover_master (NOT REDIS_URL).
+                      Sentinel.master_for (NOT REDIS_URL, NOT a one-shot
+                      discover_master() pinned to a fixed host:port -- that
+                      would keep writing to a demoted master after a real
+                      failover; master_for() re-resolves on reconnect).
   FIX 2   (HIGH)      Poison-pill: window_seconds/threshold type-validated at
                       construction; a poisoned rule that slips past validation
                       fails closed at evaluate (no crash); load_rules rejects
@@ -108,8 +111,9 @@ def _inject_fake_redis(fake_clients, with_sentinel=True):
                          decode_responses=None):
                 self.hosts = hosts
 
-            def discover_master(self, name):
-                return ("10.0.1.200", 6379)
+            def master_for(self, name, redis_class=None, **kw):
+                fake_clients.append(("master_for", name, kw))
+                return object()
 
         sentinel_mod = types.ModuleType("redis.sentinel")
         sentinel_mod.Sentinel = _Sentinel
@@ -125,7 +129,7 @@ def _restore_redis(saved):
             sys.modules[name] = orig
 
 
-def test_fix1_ha_sentinel_attaches_counter_from_discover_master():
+def test_fix1_ha_sentinel_attaches_counter_via_master_for():
     fake_clients: list = []
     saved = _inject_fake_redis(fake_clients, with_sentinel=True)
     try:
@@ -139,10 +143,12 @@ def test_fix1_ha_sentinel_attaches_counter_from_discover_master():
     check(isinstance(stub._window_counter, RedisWindowCounter),
           "fix1: redis-sentinel must attach a RedisWindowCounter")
     check(fake_clients and fake_clients[0] == (
-        "direct", {"host": "10.0.1.200", "port": 6379,
-                   "password": "s3cret", "decode_responses": True}),
-          f"fix1: sentinel client must be built from discover_master "
-          f"(NOT REDIS_URL), got {fake_clients}")
+        "master_for", "mymaster",
+        {"password": "s3cret", "decode_responses": True}),
+          f"fix1 (C1 follow-up): sentinel client must be built via "
+          f"Sentinel.master_for (NOT a one-shot discover_master() pinned to a "
+          f"fixed host:port, and NOT REDIS_URL) so writes follow a real "
+          f"failover instead of a stale demoted master; got {fake_clients}")
 
 
 def test_fix1_ha_redis_still_uses_from_url():
@@ -374,7 +380,7 @@ def main():
     import tempfile
     tmp_path = tempfile.mkdtemp(prefix="fengarde-fixdet-")
     p = Path(tmp_path)
-    test_fix1_ha_sentinel_attaches_counter_from_discover_master()
+    test_fix1_ha_sentinel_attaches_counter_via_master_for()
     test_fix1_ha_redis_still_uses_from_url()
     test_fix1_ha_memory_skips_counter()
     test_fix2_poison_window_raises_at_construction()

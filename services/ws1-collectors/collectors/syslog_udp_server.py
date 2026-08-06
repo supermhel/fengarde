@@ -323,13 +323,19 @@ class SyslogUDPServer:
         line = data.decode("utf-8", errors="replace").rstrip("\r\n")
         if not line:
             return
-        # FIX 21: UDP is connectionless -- retransmission is the normal case, not
-        # an edge case -- so stamp a content-hash ingest_id instead of a random
-        # uuid4. A retransmitted datagram therefore dedups to the same
-        # meta.ingest_id downstream (deterministic alert_id) instead of becoming
-        # a second event. This keeps _deterministic_ingest_id (the parser's SHA
-        # fallback) live rather than shadowed by a random UUID on every datagram.
-        event = build_raw_event(line, deterministic_id=True)
+        # FIX 21 (reverted 2026-08-06): a prior version of this line hardcoded
+        # deterministic_id=True on the theory that "UDP retransmission is
+        # normal." It isn't -- UDP has no retransmission mechanism, so
+        # duplicate datagrams are rare (network-level duplication/relay
+        # loops), while genuinely distinct repeated log lines (identical
+        # appliance/firewall messages, e.g. repeated auth failures) are
+        # common. Content-hashing collapsed every distinct-but-identical-text
+        # datagram to ONE meta.ingest_id, which stateful window rules dedup
+        # by member -- N separate brute-force attempts counted as 1 and the
+        # threshold rule silently never fired. Honor the constructor flag
+        # (default False = per-datagram uuid4) like every other caller of
+        # build_raw_event.
+        event = build_raw_event(line, deterministic_id=self.deterministic_id)
         tenant_id = event.get("meta", {}).get("tenant_id")
         if not self._buckets.take(tenant_id or ""):
             if self._try_spool(peer_ip, event):

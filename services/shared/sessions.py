@@ -23,6 +23,19 @@ turn "logout everywhere" into "logout on one replica" -- the exact bug the
 Redis backend exists to prevent. (Contrast the bus, which does fall back:
 a degraded transport is visible in /health; a degraded session store is
 invisible.)
+
+**Redis session rows are HMAC-signed and the signature is MANDATORY (FIX 5,
+follow-up 2026-08-06).** Any process that can write to Redis can otherwise
+forge an admin session with a raw HSET. ``RedisSessionStore.__init__``
+refuses to start unless ``FENGARDE_SESSION_SECRET`` is set (fail loud, same
+posture as the unreachable-Redis case above -- a silent per-process random
+fallback would sign sessions with a key no OTHER replica shares, so every
+replica but the one that minted a session would reject it as unsigned,
+which is just as broken as no signing at all). ``resolve()`` then requires
+every row to carry a valid ``sig``; a row with no ``sig`` (legacy data, or a
+forged row that omits it) is rejected outright -- there is no backward-
+compatible unsigned path, because leaving one open is exactly the gap FIX 5
+closes.
 """
 from __future__ import annotations
 
@@ -36,8 +49,6 @@ import time
 from dataclasses import dataclass
 from typing import Optional
 
-from shared.log import get_logger  # noqa: E402
-
 DEFAULT_SESSION_TTL_S = 8 * 3600  # 8-hour session, a work-day
 
 _REDIS_KEY_PREFIX = "fengarde:session:"
@@ -47,29 +58,29 @@ _REDIS_KEY_PREFIX = "fengarde:session:"
 # Without a signature, any process that can write to Redis can forge an
 # admin session (raw HGETALL with no integrity check). We HMAC-SHA256-sign
 # the stored data with a server key so only a process holding the same key
-# can mint sessions that `resolve()` will accept. Retroactively
-# backward-compatible: a stored row with NO `sig` field (pre-FIX-5 data, or
-# a deployment that never configured a secret) still resolves unchanged.
-_warned_secret = False
-_fallback_secret: Optional[bytes] = None  # stable per-process fallback when env unset
+# can mint sessions that `resolve()` will accept. MANDATORY, not opt-in:
+# RedisSessionStore.__init__ refuses to construct without
+# FENGARDE_SESSION_SECRET set (see its docstring) -- a prior version fell
+# back to a random per-process secret with a warning, which silently
+# defeated cross-replica signing (each replica would sign with its own
+# unshared key, so every replica's sessions would look "forged" -- i.e.
+# unsigned -- to every other replica) instead of refusing to start.
 
 
 def _session_secret() -> bytes:
-    """The HMAC key. From FENGARDE_SESSION_SECRET, or a stable per-process
-    random fallback (with a one-time WARN) when the env var is unset. The
-    fallback is cached so create()/resolve() within this process always agree
-    on the same signature (it just isn't persisted across restarts)."""
-    global _warned_secret, _fallback_secret
+    """The mandatory HMAC key, from FENGARDE_SESSION_SECRET.
+
+    Only ever called after RedisSessionStore.__init__ has already verified
+    the env var is set (see there) -- this raises instead of silently
+    degrading if that invariant is somehow violated (e.g. a future call
+    site added before construction).
+    """
     s = os.getenv("FENGARDE_SESSION_SECRET", "")
     if not s:
-        if _fallback_secret is None:
-            _fallback_secret = secrets.token_urlsafe(32).encode("utf-8")
-            if not _warned_secret:
-                _warned_secret = True
-                get_logger("sessions").warn(
-                    "FENGARDE_SESSION_SECRET not set; session signing is disabled. "
-                    "Set FENGARDE_SESSION_SECRET for production deployments.")
-        return _fallback_secret
+        raise RuntimeError(
+            "FENGARDE_SESSION_SECRET is not set; session signing has no key. "
+            "RedisSessionStore.__init__ should have refused to start before "
+            "this was ever called.")
     return s.encode("utf-8")
 
 
@@ -157,6 +168,19 @@ class RedisSessionStore:
 
     def __init__(self, url: Optional[str] = None, ttl_s: int = DEFAULT_SESSION_TTL_S):
         import redis  # lazy, same idiom as shared/bus.py
+        # FIX 5 follow-up (2026-08-06): fail loud, at construction, if no
+        # signing secret is configured -- checked BEFORE the Redis connection
+        # so a missing-secret misconfiguration surfaces as its own clear error
+        # rather than being masked by (or confused with) a connectivity
+        # failure. See the module docstring's "Redis session rows are
+        # HMAC-signed" section for why this can't silently fall back.
+        if not os.getenv("FENGARDE_SESSION_SECRET"):
+            raise RuntimeError(
+                "FENGARDE_SESSION_SECRET must be set to use "
+                "FENGARDE_SESSION_BACKEND=redis. It HMAC-signs every session "
+                "row so a process that can write to Redis directly (but "
+                "doesn't hold this secret) cannot forge an authenticated "
+                "session. Refusing to start without it.")
         self.ttl_s = ttl_s
         self.r = redis.Redis.from_url(
             url or os.getenv("REDIS_URL") or "redis://localhost:6379/0",
@@ -187,14 +211,16 @@ class RedisSessionStore:
         data = self.r.hgetall(_REDIS_KEY_PREFIX + token)
         if not data:
             return None
-        # FIX 5: server-side signature check. Backward compatible -- a row
-        # with NO `sig` field (legacy, or signing never configured) still
-        # resolves; a row WITH a `sig` must verify or it's rejected as forged.
+        # FIX 5 follow-up: signing is MANDATORY for this backend (enforced at
+        # __init__ -- a live RedisSessionStore always has a configured
+        # secret), so a row with NO `sig`, or one whose `sig` doesn't verify,
+        # is rejected outright. No backward-compat unsigned path: leaving one
+        # open would let an attacker who can write to Redis directly (the
+        # exact threat FIX 5 exists for) just omit `sig` and resolve
+        # unchecked, same as before FIX 5 shipped.
         sig = data.pop("sig", None)
-        if not sig or not _session_secret():
-            pass  # no signature present -> no signing (backward compat)
-        elif not hmac.compare_digest(str(sig), _sign(data)):
-            return None  # signature mismatch -> forged session, reject
+        if not sig or not hmac.compare_digest(str(sig), _sign(data)):
+            return None
         return Session(
             username=str(data["username"]), role=str(data["role"]),
             tenant_id=str(data["tenant_id"]),

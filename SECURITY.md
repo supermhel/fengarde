@@ -91,6 +91,17 @@ with actual per-user identity and roles:
   (nobody can log in) with a loud startup warning. See
   `services/ws3-indexer/test_rbac_api.py` for the full behavior proven over
   real HTTP.
+- **`FENGARDE_SESSION_SECRET`** — required when `FENGARDE_SESSION_BACKEND=redis`
+  (multi-replica session sharing, `services/shared/sessions.py`).
+  `RedisSessionStore` HMAC-signs every session row it writes and rejects any
+  row it reads back without a valid signature — so a process that can write
+  to Redis directly (but doesn't hold this secret) cannot forge an
+  authenticated session. Unset = `RedisSessionStore` **refuses to start**
+  (fail loud, not a silent unsigned fallback); the default `memory` session
+  backend does not need it. Generate a high-entropy value and keep it
+  identical across every replica sharing the Redis session store — a
+  mismatched secret across replicas makes every replica reject every other
+  replica's sessions as forged.
 - **Dashboard basic-auth** — opt-in via the `infra/docker-compose.auth.yml`
   override (nginx `auth_basic` + htpasswd). The main compose file ships this
   **off by default** so `docker compose up` stays zero-prerequisite.

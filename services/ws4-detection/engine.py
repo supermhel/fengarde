@@ -72,11 +72,15 @@ def get_path(doc: dict, dotted: str):
 
 
 # --- A3: allowlists -----------------------------------------------------------
-# Loaded once per rule-load pass (see load_rules) and shared via a module-level
-# cache keyed by directory, so repeated `not_in: <name>` references across rules
-# don't re-read/re-parse the file. A missing/malformed allowlist fails CLOSED:
-# the rule selection referencing it can never match (never raises), and a
-# warning is printed once at load time so the misconfiguration is visible.
+# Loaded once per rule-load pass (see load_rules, which clears the entries for
+# its own allowlists_dir up front) and shared via a module-level cache keyed by
+# directory, so repeated `not_in: <name>` references across rules don't
+# re-read/re-parse the file within that pass. A missing/malformed allowlist
+# makes the ALLOWLIST ITSELF fail closed (Allowlist.matches() always returns
+# False -- it can never suppress anything), which makes the RULE fail OPEN
+# (the not_in selection keeps matching/firing -- see _operator_matches's
+# not_in branch and M2 in engine.py's history). A warning is printed once per
+# load pass so the misconfiguration is visible.
 _ALLOWLIST_CACHE: dict[str, "Allowlist"] = {}
 
 
@@ -84,7 +88,10 @@ class Allowlist:
     """A loaded allowlist: exact-match strings plus optional CIDR ranges.
 
     `ok` is False when the file was missing/malformed; matches() then always
-    returns False (fail closed) instead of raising.
+    returns False -- the ALLOWLIST fails closed (never suppresses) instead of
+    raising, which is what makes a rule's `not_in` clause referencing it fail
+    OPEN (keep firing). Do not read "fails closed" here as "the rule stops
+    firing" -- it is the opposite; see the module note above _ALLOWLIST_CACHE.
     """
 
     def __init__(self, entries: list, ok: bool = True):
@@ -839,6 +846,16 @@ def _validate_loaded_rule(raw: dict, path: Path) -> None:
 def load_rules(rules_dir: Path, allowlists_dir: Path | None = None) -> list[Rule]:
     rules = []
     resolved_allowlists = allowlists_dir or (Path(rules_dir).parent / "allowlists")
+    # Drop this dir's cached allowlists before the pass. Without this, an
+    # allowlist that failed to load once (ok=False, cached) stays cached for
+    # the life of the process even after an operator fixes the file on disk
+    # and a hot-reload picks up the new rules -- load_allowlist() would keep
+    # returning the stale broken-allowlist object forever, so a `not_in`
+    # suppression the operator just repaired would silently stay disabled
+    # (fail-open noise) instead of resuming suppression.
+    resolved_str = str(Path(resolved_allowlists).resolve())
+    for key in [k for k in _ALLOWLIST_CACHE if k.startswith(resolved_str + "::")]:
+        del _ALLOWLIST_CACHE[key]
     for path in sorted(Path(rules_dir).glob("*.yml")):
         raw = yaml.safe_load(path.read_text(encoding="utf-8"))
         if raw:

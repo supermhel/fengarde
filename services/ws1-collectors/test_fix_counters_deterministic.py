@@ -7,9 +7,16 @@ Covers the two infra/docs-agent fixes in ``collectors/syslog_udp_server.py``:
   concurrent worker threads can't lose updates. Zero-infra, so we drive
   ``_handle_datagram`` directly with a fake bus from many threads and assert the
   counter exactly reflects every produced/spooled/dropped datagram.
-- FIX 21: ``_handle_datagram`` builds the raw event with ``deterministic_id=True``
-  (UDP is connectionless, retransmission is normal), so identical lines always
-  get the same content-hash ``meta.ingest_id`` instead of a random ``uuid4``.
+- FIX 21 (reverted 2026-08-06): a prior version hardcoded
+  ``deterministic_id=True`` in ``_handle_datagram`` regardless of the
+  constructor flag, on the theory that "UDP retransmission is normal" (it
+  isn't -- UDP has no retransmission mechanism). That collapsed N distinct
+  repeated log lines (e.g. N separate brute-force attempts logging the exact
+  same "Failed password" text) to ONE content-hash ``meta.ingest_id``, and
+  WS-4's stateful window counters dedup by that id -- so the threshold rule
+  silently never fired. ``_handle_datagram`` now honors ``self.deterministic_id``
+  like every other ``build_raw_event`` caller; these tests assert the flag is
+  RESPECTED, not that identical lines are forced to dedup.
 
 ``python services/ws1-collectors/test_fix_counters_deterministic.py``
 """
@@ -138,24 +145,45 @@ class TestDeterministicUdpIngestId(unittest.TestCase):
         self.assertNotEqual(a["meta"]["ingest_id"],
                             different["meta"]["ingest_id"])
 
-    def test_handle_datagram_uses_deterministic_id_even_when_server_flag_false(self):
-        # FIX 21: the UDP path is hard-wired to deterministic_id=True regardless
-        # of the constructor flag, because retransmission is normal on UDP.
+    def test_handle_datagram_honors_deterministic_id_false(self):
+        # FIX 21 (reverted): deterministic_id=False (the default) must give
+        # every datagram its OWN random ingest_id, even when the line text is
+        # byte-identical -- two separate "Failed password" attempts from an
+        # attacker are two separate events, not one deduped event. This is
+        # the property that keeps WS-4's stateful window counters (which dedup
+        # by meta.ingest_id) able to count repeated identical log lines.
         bus = _FakeBus()
         server = SyslogUDPServer(bus, host="127.0.0.1", port=0,
                                  deterministic_id=False)
-        server._handle_datagram(b"retransmitted datagram", "10.0.0.1")
-        server._handle_datagram(b"retransmitted datagram", "10.0.0.1")
+        for _ in range(5):
+            server._handle_datagram(b"Failed password for admin from 1.2.3.4",
+                                    "10.0.0.1")
         server._sock.close()
-        self.assertEqual(len(bus.produced), 2)
+        self.assertEqual(len(bus.produced), 5)
+        ids = {p["meta"]["ingest_id"] for p in bus.produced}
+        self.assertEqual(len(ids), 5,
+                         "identical-text datagrams must each get a distinct "
+                         "ingest_id when deterministic_id=False, so a real "
+                         "burst of repeated log lines is not silently "
+                         "collapsed into one window-counter member")
+
+    def test_handle_datagram_honors_deterministic_id_true(self):
+        # Opt-in dedup: when a deployment explicitly wants content-hash
+        # dedup (deterministic_id=True), identical lines DO share one id --
+        # the flag is honored in both directions, never hardcoded.
+        bus = _FakeBus()
+        server = SyslogUDPServer(bus, host="127.0.0.1", port=0,
+                                 deterministic_id=True)
+        server._handle_datagram(b"same content", "10.0.0.1")
+        server._handle_datagram(b"same content", "10.0.0.1")
+        server._sock.close()
         ids = {p["meta"]["ingest_id"] for p in bus.produced}
         self.assertEqual(len(ids), 1,
-                         "identical retransmitted datagrams must share one "
-                         "content-hash ingest_id")
-        # And it must be a deterministic SHA-derived id, not a uuid4 collision.
+                         "deterministic_id=True must still content-hash-dedup "
+                         "when a deployment explicitly opts in")
         self.assertEqual(
             ids.pop(),
-            build_raw_event("retransmitted datagram",
+            build_raw_event("same content",
                             deterministic_id=True)["meta"]["ingest_id"])
 
 
