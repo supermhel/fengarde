@@ -19,9 +19,26 @@ import hashlib
 import hmac
 import os
 import sqlite3
+import sys
 import threading
 import time
+from pathlib import Path
 from typing import Optional
+
+# FENGARDE E3 MFA: the stdlib-only TOTP primitive lives in
+# services/ws6-inventory/mfa.py -- reachable here without creating a package
+# cycle by putting ws6-inventory on sys.path (mfa.py itself imports nothing
+# from shared, so there is no circular import). This is safe even when the
+# module is absent (defensive: degrade to "TOTP off") so no call site breaks.
+try:
+    _WS6_INV = Path(__file__).resolve().parent.parent / "ws6-inventory"
+    if str(_WS6_INV) not in sys.path:
+        sys.path.insert(0, str(_WS6_INV))
+    import mfa as _mfa  # noqa: E402
+    _TOTP_AVAILABLE = True
+except Exception:  # noqa: BLE001 - TOTP must never take the whole store down
+    _mfa = None  # type: ignore[assignment]
+    _TOTP_AVAILABLE = False
 
 ROLES = ("read_only", "analyst", "admin")
 DEFAULT_TENANT = "default"
@@ -74,6 +91,14 @@ _SCHEMA_MIGRATIONS: list[tuple[int, str]] = [
         );
         """),
     (2, "ALTER TABLE users ADD COLUMN last_login_at INTEGER"),
+    # FENGARDE E3 MFA: opt-in per-user TOTP. Both columns are ADDITIVE and
+    # default-null/zero, so existing pre-E3 users.db files upgrade in place
+    # and every existing account starts with TOTP DISABLED -- login for them
+    # is byte-for-byte unchanged until an admin/user provisions and verifies.
+    (3, """
+        ALTER TABLE users ADD COLUMN totp_secret TEXT;
+        ALTER TABLE users ADD COLUMN totp_active INTEGER NOT NULL DEFAULT 0;
+        """),
 ]
 
 CURRENT_SCHEMA_VERSION = _SCHEMA_MIGRATIONS[-1][0]
@@ -154,6 +179,74 @@ class UserStore:
                 (hash_password(new_password), username),
             )
             self.db.commit()
+
+    # -- FENGARDE E3 MFA: opt-in per-user TOTP ------------------------------
+    # Every helper is a graceful no-op when the mfa module is unavailable
+    # (_TOTP_AVAILABLE is False), so an environment that somehow lacks
+    # ws6-inventory/mfa.py simply behaves as if MFA were never enabled --
+    # never a crash, and never an auth lock-out.
+
+    def enable_totp(self, username: str, secret: str) -> None:
+        """Provision a TOTP secret for `username` (stored, NOT yet active).
+
+        The account keeps logging in with password only until
+        `verify_totp` confirms a first valid code -- this two-step enable
+        (store secret, then confirm) prevents an operator from turning on
+        MFA for an account whose authenticator app is pointed at the wrong
+        key and locking that user out. Unknown usernames are a silent no-op
+        (UPDATE matches zero rows), same non-enumerating posture as login.
+        """
+        with self._write_lock:
+            self.db.execute(
+                "UPDATE users SET totp_secret = ?, totp_active = 0 WHERE username = ?",
+                (secret, username),
+            )
+            self.db.commit()
+
+    def provision_totp(self, username: str, issuer: str = "FENGARDE") -> str:
+        """Generate a fresh secret, store it (one step of two), and return
+        the `otpauth://` provisioning URI for a QR code.
+
+        The caller shows the URI to the user; the account is only actually
+        MFA-protected once `verify_totp` confirms a code.
+        """
+        if not _TOTP_AVAILABLE:
+            raise RuntimeError("TOTP support unavailable (ws6-inventory/mfa.py not loadable)")
+        secret = _mfa.generate_secret()
+        self.enable_totp(username, secret)
+        return _mfa.otpauth_uri(secret, label=username, issuer=issuer)
+
+    def is_totp_enabled(self, username: str) -> bool:
+        """True once this account has an ACTIVE TOTP (secret verified)."""
+        row = self.get_user(username)
+        return bool(row and row["totp_active"])
+
+    def verify_totp(self, username: str, code: str) -> bool:
+        """Check `code` against the account's stored secret; on success mark
+        the secret ACTIVE (the two-step completion after `enable_totp`).
+
+        Returns False for any failure (no secret, wrong code, missing mfa
+        module, unknown user) -- never raises.
+        """
+        if not _TOTP_AVAILABLE:
+            return False
+        row = self.get_user(username)
+        if row is None:
+            return False
+        secret = row["totp_secret"]
+        if not secret:
+            return False
+        if not _mfa.verify_code(secret, code):
+            return False
+        # -- valid code: mark active (idempotent -- already-active accounts
+        #    just re-confirm on every login, which is harmless).
+        with self._write_lock:
+            self.db.execute(
+                "UPDATE users SET totp_active = 1 WHERE username = ?", (username,)
+            )
+            self.db.commit()
+        return True
+
 
     def list_users(self) -> list[sqlite3.Row]:
         return self.db.execute("SELECT username, role, tenant_id, created_at FROM users").fetchall()

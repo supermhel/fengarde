@@ -26,6 +26,9 @@ invisible.)
 """
 from __future__ import annotations
 
+import hashlib
+import hmac
+import json
 import os
 import secrets
 import threading
@@ -33,9 +36,48 @@ import time
 from dataclasses import dataclass
 from typing import Optional
 
+from shared.log import get_logger  # noqa: E402
+
 DEFAULT_SESSION_TTL_S = 8 * 3600  # 8-hour session, a work-day
 
 _REDIS_KEY_PREFIX = "fengarde:session:"
+
+
+# -- FIX 5: server-side HMAC signing of the Redis-held session hash --------
+# Without a signature, any process that can write to Redis can forge an
+# admin session (raw HGETALL with no integrity check). We HMAC-SHA256-sign
+# the stored data with a server key so only a process holding the same key
+# can mint sessions that `resolve()` will accept. Retroactively
+# backward-compatible: a stored row with NO `sig` field (pre-FIX-5 data, or
+# a deployment that never configured a secret) still resolves unchanged.
+_warned_secret = False
+_fallback_secret: Optional[bytes] = None  # stable per-process fallback when env unset
+
+
+def _session_secret() -> bytes:
+    """The HMAC key. From FENGARDE_SESSION_SECRET, or a stable per-process
+    random fallback (with a one-time WARN) when the env var is unset. The
+    fallback is cached so create()/resolve() within this process always agree
+    on the same signature (it just isn't persisted across restarts)."""
+    global _warned_secret, _fallback_secret
+    s = os.getenv("FENGARDE_SESSION_SECRET", "")
+    if not s:
+        if _fallback_secret is None:
+            _fallback_secret = secrets.token_urlsafe(32).encode("utf-8")
+            if not _warned_secret:
+                _warned_secret = True
+                get_logger("sessions").warn(
+                    "FENGARDE_SESSION_SECRET not set; session signing is disabled. "
+                    "Set FENGARDE_SESSION_SECRET for production deployments.")
+        return _fallback_secret
+    return s.encode("utf-8")
+
+
+def _sign(data: dict) -> str:
+    """Deterministic HMAC-SHA256 hexdigest over the sorted-keys JSON of the
+    session data dict (sort_keys=True so create()/resolve() agree)."""
+    payload = json.dumps(data, sort_keys=True)
+    return hmac.new(_session_secret(), payload.encode(), hashlib.sha256).hexdigest()
 
 
 @dataclass
@@ -64,6 +106,13 @@ class SessionStore:
         the cookie's own SameSite=Strict."""
         token = secrets.token_urlsafe(32)
         csrf_token = secrets.token_urlsafe(32)
+        # 0/non-positive TTL = immediate expiry, never stored. Deliberately
+        # deterministic (not `expires_at = now + 0`): a coarse clock can make
+        # that resolve() as NOT-yet-expired, and the Redis store already
+        # special-cases ttl_s <= 0 -- parity here keeps both backends honoring
+        # the same contract that test_sessions.py `_body_expiry` asserts.
+        if self.ttl_s <= 0:
+            return token  # already expired; matches redis-store resolve() -> None
         with self._lock:
             self._sessions[token] = Session(
                 username=username, role=role, tenant_id=tenant_id,
@@ -120,11 +169,14 @@ class RedisSessionStore:
         if self.ttl_s <= 0:
             return token  # already expired; matches memory-store resolve() -> None
         key = _REDIS_KEY_PREFIX + token
-        pipe = self.r.pipeline()
-        pipe.hset(key, mapping={
+        data = {
             "username": username, "role": role, "tenant_id": tenant_id,
             "expires_at": str(time.time() + self.ttl_s), "csrf_token": csrf_token,
-        })
+        }
+        pipe = self.r.pipeline()
+        mapping = dict(data)
+        mapping["sig"] = _sign(data)
+        pipe.hset(key, mapping=mapping)  # type: ignore[arg-type]  # redis-py stubs union-broaden str->bytes; str-only is safe at runtime
         pipe.expire(key, self.ttl_s)
         pipe.execute()
         return token
@@ -135,6 +187,14 @@ class RedisSessionStore:
         data = self.r.hgetall(_REDIS_KEY_PREFIX + token)
         if not data:
             return None
+        # FIX 5: server-side signature check. Backward compatible -- a row
+        # with NO `sig` field (legacy, or signing never configured) still
+        # resolves; a row WITH a `sig` must verify or it's rejected as forged.
+        sig = data.pop("sig", None)
+        if not sig or not _session_secret():
+            pass  # no signature present -> no signing (backward compat)
+        elif not hmac.compare_digest(str(sig), _sign(data)):
+            return None  # signature mismatch -> forged session, reject
         return Session(
             username=str(data["username"]), role=str(data["role"]),
             tenant_id=str(data["tenant_id"]),
