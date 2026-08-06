@@ -42,16 +42,18 @@ run before and after your change.
 
 ## Add a parser (the best first contribution)
 
-Ten parsers ship today (Linux SSH, Cisco ASA, Active Directory, VMware vSphere,
-generic syslog, Windows Event Log, DB audit, MCP/AI-agent, OPC UA/OT, n8n). A new source parser is a
-self-contained module with a clean extension point — adding one never touches an
-existing parser. Good candidates still open:
+17 parsers ship today (Linux SSH, Cisco ASA, Active Directory, VMware vSphere,
+generic syslog, Windows Event Log, DB audit, MCP/AI-agent, OPC UA/OT, n8n, DNS query log,
+Kubernetes audit, CEF, AWS CloudTrail, Sysmon, Modbus/TCP, inventory-diff OT device). A new
+source parser is a self-contained module with a clean extension point — adding one never
+touches an existing parser. Good candidates still open:
 
 - SNMP
 - NetFlow *(binary format — bigger lift)*
-- DNS / proxy logs *(unlocks OCSF class 4002 — DNS-exfil/beaconing rules)*
+- Proxy / web-gateway logs *(DNS query log already ships — this is the HTTP-proxy sibling)*
 - Custom JSON
-- Kubernetes audit log
+- S7/PROFINET *(deferred on an access gap, not a doc gap — the vocabulary needed sits behind a
+  Siemens support login; see `docs/superpowers/specs/2026-07-21-s7-profinet-decision-gate.md`)*
 
 **Step-by-step walkthrough:** [docs/adding-a-parser.md](docs/adding-a-parser.md).
 

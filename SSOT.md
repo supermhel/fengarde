@@ -255,11 +255,17 @@ planned — r/netsec → r/selfhosted → Show HN → r/blueteamsec — but that
 is inferred from the prior plan, not independently confirmed per-post here; treat it as "4
 communities, matches the planned sequence," not a verified breakdown.
 
-**Measured outcome as of 2026-07-30: 8 GitHub stars.** This is a point-in-time number, not a
-verdict — it will change, and this section needs a periodic re-check (star count, issue/PR
-inflow, any inbound design-partner interest) rather than being read as a fixed result. Whoever
-next touches this section should update the star count and note the date, not silently leave a
-stale number standing as if current.
+**Traction log** (mechanism per `fengarde-sec/docs/2026-07-30-forward-plan-v2.md` §5.2 — a dated
+table here, not a new file; cadence weekly for the first month, then monthly). Each row a real
+`gh api repos/supermhel/fengarde` check, not a guess:
+
+| Date | Stars | Forks | Open issues/PRs | Notable inbound |
+|---|---|---|---|---|
+| 2026-07-30 | 8 | 0 | 0 | Launch day, 4 communities posted |
+| 2026-08-06 | 10 | 0 | 0 | No inbound design-partner or MSSP contact yet |
+
+Still a point-in-time signal, not a verdict — track the trend across check-ins, don't over-read
+any single row.
 
 The gate-criteria table below records the readiness assessment that was true going into
 launch (all green since 2026-07-19, per the "Bottom line" note) — kept as the historical record
