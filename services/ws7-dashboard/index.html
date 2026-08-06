@@ -5,9 +5,18 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>FENGARDE — Console</title>
 <style>
+  /* E13: theme via CSS custom properties. `:root` = light (default); the
+     html.dark class overrides with the dark palette (the pre-E13 appearance).
+     To keep behavior backward-compatible, dark is applied automatically when
+     the OS prefers dark or the user has saved a dark preference (see
+     fengarde.initTheme below). */
   :root{
+    --bg:#ffffff; --panel:#f6f8fa; --border:#d0d7de; --txt:#1f2328; --muted:#59636e;
+    --rowhover:#eef1f4; --crit:#d1242f; --high:#9a6700; --med:#9a6700; --low:#1a7f37; --accent:#0969da;
+  }
+  html.dark{
     --bg:#0d1117; --panel:#161b22; --border:#30363d; --txt:#e6edf3; --muted:#8b949e;
-    --crit:#f85149; --high:#db8e1a; --med:#d29922; --low:#3fb950; --accent:#388bfd;
+    --rowhover:#1c2330; --crit:#f85149; --high:#db8e1a; --med:#d29922; --low:#3fb950; --accent:#388bfd;
   }
   *{box-sizing:border-box}
   body{margin:0;font:14px/1.5 -apple-system,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--txt)}
@@ -24,7 +33,7 @@
   table{width:100%;border-collapse:collapse;background:var(--panel);border:1px solid var(--border);border-radius:8px;overflow:hidden}
   th,td{text-align:left;padding:10px 12px;border-bottom:1px solid var(--border);font-size:13px}
   th{color:var(--muted);font-weight:600;text-transform:uppercase;font-size:11px;letter-spacing:.04em}
-  tr:last-child td{border-bottom:none} tr.clk{cursor:pointer} tr.clk:hover{background:#1c2330}
+  tr:last-child td{border-bottom:none} tr.clk{cursor:pointer} tr.clk:hover{background:var(--rowhover)}
   .pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:600}
   .crit{background:rgba(248,81,73,.15);color:var(--crit)} .high{background:rgba(219,142,26,.15);color:var(--high)}
   .med{background:rgba(210,153,34,.15);color:var(--med)} .low{background:rgba(63,185,80,.15);color:var(--low)}
@@ -36,6 +45,20 @@
   .kv .k{color:var(--muted)} .bar{height:18px;background:var(--bg);border:1px solid var(--border);border-radius:4px;overflow:hidden}
   .bar>span{display:block;height:100%;background:var(--accent)} .src{display:flex;align-items:center;gap:10px;margin:8px 0}
   .src .lbl{width:90px;color:var(--muted)} .muted{color:var(--muted)} a{color:var(--accent);cursor:pointer}
+  /* E13: dark/light theme toggle */
+  #themeToggle{background:transparent;border:1px solid var(--border);color:var(--muted);border-radius:6px;padding:4px 10px;cursor:pointer;font-size:13px;line-height:1}
+  /* E12: saved alert-search filters */
+  .filterbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px}
+  .filterbar input[type=text]{flex:1;min-width:200px}
+  .filterbar select{max-width:160px}
+  .filterbar button{background:var(--accent);color:#fff;border:none;padding:7px 12px;border-radius:6px;cursor:pointer;font-size:13px}
+  #savedSearches{max-width:200px}
+  /* E11: analyst lifecycle guidance + per-alert playbook */
+  .lifecycle-hint{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:10px 12px;font-size:12px;line-height:1.6;margin:0 0 12px}
+  .lifecycle-hint code{background:var(--bg);border:1px solid var(--border);padding:0 5px;border-radius:4px;font-size:11px}
+  details.playbook{margin-top:6px}
+  details.playbook summary{cursor:pointer;font-size:12px;color:var(--accent);font-weight:600}
+  .playbook-body{background:var(--bg);border:1px solid var(--border);border-radius:6px;padding:8px 10px;font-size:12px;white-space:pre-wrap;max-width:480px;margin:4px 0 0;font-family:inherit}
   /* M3: session login */
   #loginScreen{display:flex;align-items:center;justify-content:center;min-height:80vh}
   #loginBox{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:28px;width:280px}
@@ -65,6 +88,8 @@
     <button data-view="sources">Sources</button>
     <button data-view="coverage">Coverage</button>
   </nav>
+  <!-- E13: dark/light theme toggle -->
+  <button id="themeToggle" title="Toggle dark / light theme" style="margin-left:12px" aria-label="Toggle dark mode">🌙</button>
   <!-- M3: only populated/shown once a real RBAC session is confirmed (checkSession());
        stays empty and invisible when RBAC is off, matching every other opt-in auth
        layer's "unset = zero behavior change" convention in this project. -->
@@ -94,6 +119,35 @@
   <!-- LEVEL 1 -->
   <section id="global" class="view active">
     <div class="cards" id="globalCards"></div>
+    <!-- E11: analyst lifecycle guidance. The backend triage API (triage_api.py
+         _STATUSES) only persists {new,triaged,closed,false_positive,true_positive}.
+         The richer analyst steps investigating/contained are NOT accepted by the
+         backend, so we render them here as guidance text and never send them as a
+         selectable triage value -- analysts recording those steps use "triaged". -->
+    <div class="lifecycle-hint muted">
+      <b>Alert lifecycle:</b> <code>new</code> → <code>investigating</code> → <code>contained</code> → <code>closed</code>
+      (or <code>false_positive</code>). The backend currently persists triage state as one of
+      <code>new / triaged / closed / false_positive / true_positive</code> — the intermediate steps
+      <code>investigating</code> and <code>contained</code> are analyst guidance here and are recorded
+      as <code>triaged</code> until a finer lifecycle model is supported.
+    </div>
+    <!-- E12: saved alert-search filters (pure client-side, localStorage). -->
+    <div class="filterbar">
+      <input id="alertSearch" type="text" placeholder="Search rule / ID / sector…" />
+      <select id="sevFilter" aria-label="Severity">
+        <option value="">All severities</option>
+        <option value="crit">Critical</option><option value="high">High</option>
+        <option value="med">Medium</option><option value="low">Low</option>
+      </select>
+      <select id="statusFilter" aria-label="Triage status">
+        <option value="">All statuses</option>
+        <option value="new">new</option><option value="triaged">triaged</option>
+        <option value="closed">closed</option><option value="false_positive">false_positive</option>
+        <option value="true_positive">true_positive</option>
+      </select>
+      <button id="saveFilter" type="button">Save filter</button>
+      <select id="savedSearches" aria-label="Saved searches"><option value="">Saved searches…</option></select>
+    </div>
     <h3>Active critical alerts</h3>
     <table><thead><tr><th>Time</th><th>Rule</th><th>Sector</th><th>Level</th><th>Score</th><th>Source</th><th>Triage</th><th>Note</th><th>Report</th></tr></thead>
       <tbody id="alertRows"></tbody></table>
@@ -284,7 +338,8 @@ async function getAlerts(){
             sector: s.sector,
             src_endpoint: s.src_endpoint||{},
             actor: s.actor||{},
-            mitre: s.mitre||null
+            mitre: s.mitre||null,
+            playbook: s.playbook || (s.rule && s.rule.playbook) || null
           }));
         LIVE = true;
         return alerts;
@@ -376,6 +431,7 @@ async function renderGlobal(alerts){
   ].map(([l,n])=>`<div class="card"><div class="n">${n}</div><div class="l">${l}</div></div>`).join("");
 
   const sorted = alerts.sort((a,b)=>b.score-a.score);
+  await enrichPlaybooks(sorted);   // E11: attach rule.playbook when available
   const triageByAlert = {};
   await Promise.all(sorted.map(async a => {
     if(a.alert_id) triageByAlert[a.alert_id] = await fetchTriage(a.alert_id);
@@ -385,7 +441,7 @@ async function renderGlobal(alerts){
     const t = triageByAlert[a.alert_id] || {status:"new", note:""};
     const aid = esc(a.alert_id||"");
     return `
-    <tr><td class="muted">${esc(new Date(a.time).toLocaleTimeString())}</td>
+    <tr data-rule-id="${esc(a.rule_id||"")}"><td class="muted">${esc(new Date(a.time).toLocaleTimeString())}</td>
     <td>${esc(a.rule_title)}</td><td>${esc(a.sector||"")}</td>
     <td><span class="pill ${lvl(a.level)}">${esc(a.level)}</span></td>
     <td>${esc(a.score)}</td><td class="muted">${esc((a.src_endpoint||{}).ip||"")}</td>
@@ -393,7 +449,8 @@ async function renderGlobal(alerts){
     <td><input class="triage-note" data-alert-id="${aid}" type="text" placeholder="analyst note"
         value="${esc(t.note||"")}" /></td>
     <td><button class="report-btn" data-alert-id="${aid}">Report</button>
-    <button class="nis2-btn" data-alert-id="${aid}" title="Draft NIS2 notification (German, Art. 23 NIS2 / §32 BSIG) -- see docs/nis2-report-generator.md">NIS2 (DE)</button></td></tr>`;
+    <button class="nis2-btn" data-alert-id="${aid}" title="Draft NIS2 notification (German, Art. 23 NIS2 / §32 BSIG) -- see docs/nis2-report-generator.md">NIS2 (DE)</button>
+    ${a.playbook ? `<details class="playbook"><summary>Playbook</summary><pre class="playbook-body">${esc(a.playbook)}</pre></details>` : ""}</td></tr>`;
   }).join("");
 
   // wire triage controls: status change + note blur both POST the update.
@@ -582,6 +639,142 @@ function renderSources(){
     <div style="width:60px;text-align:right">${v.toLocaleString()}</div></div>`).join("");
 }
 
+// ---- E13: dark / light theme -----------------------------------------
+// Preference lives in localStorage ('fengarde.theme' = "dark"|"light"|null).
+// When unset we fall back to the OS preference (prefers-color-scheme), which
+// is also the backward-compatible default: prior-to-E13 deployments that ran
+// dark now stay dark automatically on dark-mode OSes. Toggling writes the
+// explicit preference so the OS-preference fallback stops overriding it.
+const THEME_KEY = "fengarde.theme";
+function applyTheme(dark){
+  document.documentElement.classList.toggle("dark", !!dark);
+  const t = document.getElementById("themeToggle");
+  if(t) t.textContent = dark ? "☀️" : "🌙";
+}
+function initTheme(){
+  let saved = null;
+  try{ saved = localStorage.getItem(THEME_KEY); }catch(e){}
+  let dark;
+  if(saved === "dark" || saved === "light"){
+    dark = saved === "dark";
+  }else{
+    dark = !!(window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches);
+  }
+  applyTheme(dark);
+}
+function toggleTheme(){
+  const dark = !document.documentElement.classList.contains("dark");
+  try{ localStorage.setItem(THEME_KEY, dark ? "dark" : "light"); }catch(e){}
+  applyTheme(dark);
+}
+document.addEventListener("DOMContentLoaded", () => {
+  const t = document.getElementById("themeToggle");
+  if(t) t.onclick = toggleTheme;
+});
+
+// ---- E12: saved alert-search filters (pure client-side) --------------
+// A "saved search" captures the active alert filter (free-text query,
+// severity, triage status) as a named entry in localStorage. Clicking an
+// entry re-applies it: the filter controls are repopulated and the alert
+// table is re-filtered. No backend involvement -- this is analyst ergonomics
+// only, on top of the existing /api/alerts feed.
+const SAVED_KEY = "fengarde.savedSearches";
+function readSavedSearches(){
+  try{ return JSON.parse(localStorage.getItem(SAVED_KEY) || "[]") || []; }
+  catch(e){ return []; }
+}
+function writeSavedSearches(list){
+  try{ localStorage.setItem(SAVED_KEY, JSON.stringify(list)); }catch(e){}
+}
+function collectAlertFilter(){
+  return {
+    q: document.getElementById("alertSearch").value.trim(),
+    severity: document.getElementById("sevFilter").value,
+    status: document.getElementById("statusFilter").value
+  };
+}
+function applyAlertFilter(){
+  const f = collectAlertFilter();
+  const rows = document.querySelectorAll("#alertRows tr");
+  rows.forEach(tr => {
+    let show = true;
+    if(f.q){
+      const hay = (tr.querySelector("td:nth-child(2)")?.textContent || "")
+        + " " + (tr.querySelector("td:nth-child(3)")?.textContent || "")
+        + " " + (tr.getAttribute("data-rule-id") || "");
+      if(hay.toLowerCase().indexOf(f.q.toLowerCase()) === -1) show = false;
+    }
+    if(show && f.severity){
+      const pill = tr.querySelector(".pill");
+      const cls = pill && [...pill.classList].find(c => ["crit","high","med","low"].includes(c));
+      if(cls !== f.severity) show = false;
+    }
+    if(show && f.status){
+      const sel = tr.querySelector(".triage-status");
+      if(sel && sel.value !== f.status) show = false;
+    }
+    tr.style.display = show ? "" : "none";
+  });
+}
+function renderSavedSearches(){
+  const list = readSavedSearches();
+  const sel = document.getElementById("savedSearches");
+  if(!sel) return;
+  sel.innerHTML = '<option value="">Saved searches…</option>'
+    + list.map((s,i)=>`<option value="${i}">${esc(s.name||("filter "+(i+1)))}</option>`).join("");
+}
+function saveCurrentFilter(){
+  const f = collectAlertFilter();
+  let name = "";
+  try{ name = (window.prompt("Name this saved filter:", "") || "").trim(); }catch(e){}
+  if(!name){ return; }
+  const list = readSavedSearches();
+  list.push({ name, q: f.q, severity: f.severity, status: f.status });
+  writeSavedSearches(list);
+  renderSavedSearches();
+}
+document.addEventListener("DOMContentLoaded", () => {
+  renderSavedSearches();
+  const saveBtn = document.getElementById("saveFilter");
+  if(saveBtn) saveBtn.onclick = saveCurrentFilter;
+  const ss = document.getElementById("savedSearches");
+  if(ss) ss.onchange = () => {
+    const idx = +ss.value;
+    if(isNaN(idx)) return;
+    const list = readSavedSearches();
+    const s = list[idx];
+    if(!s) return;
+    document.getElementById("alertSearch").value = s.q || "";
+    document.getElementById("sevFilter").value = s.severity || "";
+    document.getElementById("statusFilter").value = s.status || "";
+    applyAlertFilter();
+  };
+  ["alertSearch","sevFilter","statusFilter"].forEach(id => {
+    const el = document.getElementById(id);
+    if(el) el.addEventListener("input", applyAlertFilter);
+  });
+});
+
+// ---- E11: playbook enrichment (rule.playbook) ------------------------
+// Some alerts only carry a playbook via their rule (the rules API may expose
+// an optional `playbook` markdown field). Load it once, lazily, and attach it
+// to any alert that has a rule_id but no inline playbook, so the per-row
+// Playbook disclosure stays accurate without a backend change.
+let RULE_PLAYBOOK = null;   // {rule_id: playbookMarkdown} -- loaded once
+async function enrichPlaybooks(alerts){
+  try{
+    if(RULE_PLAYBOOK === null){
+      const rules = await getRules();
+      RULE_PLAYBOOK = {};
+      (rules||[]).forEach(r => { if(r && r.id && r.playbook) RULE_PLAYBOOK[r.id] = r.playbook; });
+    }
+    alerts.forEach(a => {
+      if(!a.playbook && a.rule_id && RULE_PLAYBOOK[a.rule_id]) a.playbook = RULE_PLAYBOOK[a.rule_id];
+    });
+  }catch(e){ /* playbook enrichment is best-effort; skip on any failure */ }
+  return alerts;
+}
+
 // M3: gate the app's first render behind the session check -- RBAC off (or
 // already logged in) resolves true immediately and this is byte-for-byte the
 // pre-M3 bootstrap; RBAC on with no session shows the login form instead and
@@ -589,11 +782,13 @@ function renderSources(){
 async function boot(){
   const ok = await checkSession();
   if(!ok) return;
+  await enrichPlaybooks([]);  // warm the rule->playbook cache (best-effort)
   renderGlobal().catch(err=>console.error("renderGlobal failed:",err));
   renderInventory();
   renderSources();
   renderCoverage().catch(err=>console.error("renderCoverage failed:",err));
 }
+initTheme();
 boot();
 </script>
 </body>
