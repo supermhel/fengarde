@@ -75,10 +75,28 @@ class _MemoryBus:
         self._streams[topic].append(Message(topic, key, payload, str(seq)))
 
     def consume(self, topic, group=None, block_ms=0) -> Iterator[Message]:
-        # drains everything currently queued, then stops (test-friendly)
-        q = self._streams[topic]
-        while q:
-            yield q.popleft()
+        # L2 (2026-08-06 audit, Task H): the check-and-pop (`while q: popleft()`)
+        # was NOT atomic. Two concurrent consumers on one shared _MemoryBus could
+        # both pass the `while q` check before either popped, then double-deliver
+        # the last message (or hit IndexError on an already-emptied deque), and a
+        # consumer could interleave with a concurrent produce(). Fix: snapshot and
+        # clear under _seq_lock so the whole "is there a message? + pop it"
+        # sequence is atomic -- drains everything currently queued, then stops.
+        #
+        # The lock is released BEFORE any yield on purpose: _seq_lock is also
+        # taken by produce(), and a service's handler runs INSIDE this consume
+        # loop and produces on the SAME bus in the same thread (e.g. ws2 consumes
+        # raw.events -> produces normalized.events). Holding a non-reentrant lock
+        # across a yield would self-deadlock that handler. Snapshotting under the
+        # lock means anything produced mid-iteration is delivered by the next
+        # consume() call (the runner re-enters the loop regardless), so nothing is
+        # lost and at-least-once delivery is preserved.
+        with self._seq_lock:
+            q = self._streams[topic]
+            pending = list(q)
+            q.clear()
+        for msg in pending:
+            yield msg
 
     def ack(self, msg, group=None):
         # consume() already removed the message from the deque; nothing to ack.

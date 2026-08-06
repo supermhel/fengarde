@@ -84,6 +84,28 @@ def run():
     check(len(daemon_alerts) == 2,
           f"daemon handler: expected 2 alerts on the shared bus, got {len(daemon_alerts)}")
 
+    # Task F (LLM dedup): a redelivered event_id must NOT hit the LLM twice.
+    # The first delivery triages; the second returns the cached result without
+    # calling analyze() again.
+    from unittest.mock import MagicMock
+    dup_worker = ws5.AiWorker()
+    dup_llm = MagicMock()
+    dup_llm.analyze.return_value = {"verdict": "malicious", "summary": "s",
+                                    "level": "critical"}
+    dup_worker.llm = dup_llm
+    dup_req = ai_request(85, "dup-1")
+    dup_worker.handle(dup_req)
+    dup_worker.handle(dup_req)
+    check(dup_llm.analyze.call_count == 1,
+          f"redelivery called analyze {dup_llm.analyze.call_count}x, want 1")
+    # classifier tier never calls the LLM, dedup or not.
+    clf_dup = dict(ai_request(85, "dup-clf"))
+    clf_dup["tier"] = "classifier"
+    dup_worker.handle(clf_dup)
+    dup_worker.handle(clf_dup)
+    check(dup_llm.analyze.call_count == 1,
+          f"classifier tier called analyze {dup_llm.analyze.call_count - 1}x extra")
+
 
 def main():
     run()

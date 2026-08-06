@@ -15,12 +15,22 @@ single global rule set per tenant.
 """
 from __future__ import annotations
 
+import sys
 from collections import OrderedDict
 from pathlib import Path
 
 import yaml
 
-from shared.envelope import valid_tenant_id
+# Make `shared` resolvable regardless of how tenants.py is imported -- same
+# fix as engine.py's identical comment (2026-08-07).
+_SERVICES_DIR = Path(__file__).resolve().parent.parent
+if str(_SERVICES_DIR) not in sys.path:
+    sys.path.insert(0, str(_SERVICES_DIR))
+
+from shared.envelope import valid_tenant_id  # noqa: E402
+from shared.log import get_logger  # noqa: E402
+
+_log = get_logger("ws4-detection")
 
 DEFAULT_TENANT = "default"
 
@@ -94,8 +104,10 @@ def load_disabled_rules(tenants_dir: Path, tenant_id: str) -> frozenset:
             entries = raw.get("disabled_rules") if isinstance(raw, dict) else None
             disabled = frozenset(e for e in (entries or []) if isinstance(e, str))
         except Exception as exc:  # bad YAML/shape -> fail open (nothing disabled)
-            print(f"[tenants] WARNING: tenant config '{tenant_id}' failed to "
-                  f"load ({exc}); no rules disabled for this tenant (fail open).")
+            _log.warn(
+                f"tenant config '{tenant_id}' failed to load ({exc}); "
+                f"no rules disabled for this tenant (fail open)."
+            )
             disabled = frozenset()
 
     _cache_put(cache_key, disabled)

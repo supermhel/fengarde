@@ -742,60 +742,68 @@ def make_handler(store, users_db=None, sessions: SessionStore | None = None,
             return self._send(200, {"username": target, "mfa_active": True})
 
         def _route_post(self, path: str):
-            report_alert_id = self._alert_id_from_path(path, "report")
-            if report_alert_id is not None:
-                # Drain any request body (the client may send one, even
-                # though this endpoint takes none) so the connection doesn't
-                # get reset with unread bytes still buffered. An unparseable
-                # Content-Length is a 400 (mirrors the triage route) -- NOT
-                # silently zeroed, which would leave stray body bytes in the
-                # buffer and corrupt the next request on a keep-alive
-                # connection.
-                try:
-                    length = int(self.headers.get("Content-Length", 0))
-                except (TypeError, ValueError):
-                    raise _BadRequest("invalid Content-Length")
-                if length < 0:
-                    raise _BadRequest("invalid Content-Length")
-                if length > 0:
-                    self.rfile.read(min(length, _MAX_BODY_BYTES))
-                if not report_alert_id:
-                    raise _BadRequest("alert_id required")
-                session = self._require_role("analyst")  # report generation is a write action
-                if session is None:
-                    return
-                found = store.find_alert(report_alert_id)
-                if found is None:
-                    return self._send(404, {"error": "alert not found"})
-                _, alert_doc = found
-                if not self._tenant_gate(session, alert_doc):
-                    return
-                triage = alert_doc.get("triage") or _default_triage()
-                q = parse_qs(urlparse(self.path).query)
-                template = (q.get("template", ["generic"])[0] or "generic").lower()
-                if template == "nis2":
-                    # M5: additive rendering mode, same response envelope
-                    # (contracts/reporting.md's frozen schema) -- see
-                    # nis2_template.py's module docstring for the DRAFT/
-                    # NOT-LEGAL-ADVICE + NIS2-vs-DORA scope caveat.
-                    stage = q.get("stage", ["notification"])[0]
-                    lang = q.get("lang", ["de"])[0]
-                    report = nis2_template.build_report(alert_doc, triage, stage=stage, lang=lang)
-                else:
-                    report = reporting.generate_report(alert_doc, triage)
-                report_index = reporting._report_index()
-                store.index(report_index, report["report_id"], report)
-                self._audit("report_generated",
-                            actor=self._audit_actor(session),
-                            tenant_id=alert_doc.get("tenant_id"),
-                            detail={"alert_id": report_alert_id,
-                                    "report_id": report.get("report_id"),
-                                    "template": template})
-                return self._send(200, report)
+            # Thin dispatcher: route to a dedicated per-route handler. Kept
+            # deliberately small so a new POST route is a new method, not a
+            # grown if-chain inside this one.
+            if self._alert_id_from_path(path, "report") is not None:
+                return self._route_report(path)
+            if self._alert_id_from_path(path) is not None:
+                return self._route_triage(path)
+            return self._send(404, {"error": "no such path"})
 
+        def _route_report(self, path: str):  # POST /alerts/{id}/report
+            # Drain any request body (the client may send one, even
+            # though this endpoint takes none) so the connection doesn't
+            # get reset with unread bytes still buffered. An unparseable
+            # Content-Length is a 400 (mirrors the triage route) -- NOT
+            # silently zeroed, which would leave stray body bytes in the
+            # buffer and corrupt the next request on a keep-alive
+            # connection.
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+            except (TypeError, ValueError):
+                raise _BadRequest("invalid Content-Length")
+            if length < 0:
+                raise _BadRequest("invalid Content-Length")
+            if length > 0:
+                self.rfile.read(min(length, _MAX_BODY_BYTES))
+            report_alert_id = self._alert_id_from_path(path, "report")
+            if not report_alert_id:
+                raise _BadRequest("alert_id required")
+            session = self._require_role("analyst")  # report generation is a write action
+            if session is None:
+                return
+            found = store.find_alert(report_alert_id)
+            if found is None:
+                return self._send(404, {"error": "alert not found"})
+            _, alert_doc = found
+            if not self._tenant_gate(session, alert_doc):
+                return
+            triage = alert_doc.get("triage") or _default_triage()
+            q = parse_qs(urlparse(self.path).query)
+            template = (q.get("template", ["generic"])[0] or "generic").lower()
+            if template == "nis2":
+                # M5: additive rendering mode, same response envelope
+                # (contracts/reporting.md's frozen schema) -- see
+                # nis2_template.py's module docstring for the DRAFT/
+                # NOT-LEGAL-ADVICE + NIS2-vs-DORA scope caveat.
+                stage = q.get("stage", ["notification"])[0]
+                lang = q.get("lang", ["de"])[0]
+                report = nis2_template.build_report(alert_doc, triage, stage=stage, lang=lang)
+            else:
+                report = reporting.generate_report(alert_doc, triage)
+            report_index = reporting._report_index()
+            store.index(report_index, report["report_id"], report)
+            self._audit("report_generated",
+                        actor=self._audit_actor(session),
+                        tenant_id=alert_doc.get("tenant_id"),
+                        detail={"alert_id": report_alert_id,
+                                "report_id": report.get("report_id"),
+                                "template": template})
+            return self._send(200, report)
+
+        def _route_triage(self, path: str):  # POST /alerts/{id}
             alert_id = self._alert_id_from_path(path)
-            if alert_id is None:
-                return self._send(404, {"error": "no such path"})
             if not alert_id:
                 raise _BadRequest("alert_id required")
 

@@ -44,10 +44,21 @@ import hmac
 import os
 import secrets
 import sqlite3
+import sys
 import threading
 from datetime import datetime, timezone
+from pathlib import Path
 
 from store import DEFAULT_TENANT, InvalidTenantId, _validated_tenant
+
+# Make `shared` resolvable regardless of how keystore.py is imported.
+_SERVICES_DIR = Path(__file__).resolve().parent.parent
+if str(_SERVICES_DIR) not in sys.path:
+    sys.path.insert(0, str(_SERVICES_DIR))
+
+from shared.log import get_logger  # noqa: E402
+
+_log = get_logger("ws6-inventory")
 
 ADMIN_TENANT_MARKER = "*"
 SCOPE_READ_ONLY = "read_only"
@@ -109,10 +120,11 @@ def _pepper() -> bytes:
 
 def warn_missing_pepper() -> None:
     if not os.getenv("FENGARDE_API_KEY_PEPPER"):
-        print('{"level": "warning", "service": "ws6-inventory", '
-              '"msg": "FENGARDE_API_KEY_PEPPER not set: keys are still '
-              'unrecoverable from a DB leak alone (SHA-256 preimage), but '
-              'the pepper\'s defense-in-depth is inactive"}', flush=True)
+        _log.warn(
+            "FENGARDE_API_KEY_PEPPER not set: keys are still unrecoverable "
+            "from a DB leak alone (SHA-256 preimage), but the pepper's "
+            "defense-in-depth is inactive"
+        )
 
 
 # CodeQL py/weak-sensitive-data-hashing (alerts #71/#72) flags both HMAC calls
@@ -251,12 +263,13 @@ class TenantKeyStore:
             name = f"{base}_{n}"
         self.db.execute(f"ALTER TABLE api_keys RENAME TO {name}")
         self.db.commit()
-        print('{"level": "warning", "service": "ws6-inventory", "msg": '
-              '"upgraded a pre-HMAC (scrypt) keystore: old scrypt-hashed keys '
-              'cannot be verified under HMAC and were preserved aside as '
-              f'\\"{name}\\"; keys will re-provision from FENGARDE_API_KEYS/'
-              'FENGARDE_API_KEY if still set, otherwise re-issue via '
-              'manage_keys.py"}', flush=True)
+        _log.warn(
+            f"upgraded a pre-HMAC (scrypt) keystore: old scrypt-hashed keys "
+            f"cannot be verified under HMAC and were preserved aside as "
+            f'"{name}"; keys will re-provision from FENGARDE_API_KEYS/'
+            f"FENGARDE_API_KEY if still set, otherwise re-issue via "
+            f"manage_keys.py"
+        )
 
     def _check_pepper_canary(self) -> None:
         """Pepper-drift guard (independent review, 2026-07-31): a stored
@@ -276,11 +289,11 @@ class TenantKeyStore:
         current = hmac.new(_pepper(), _PEPPER_CANARY_PLAINTEXT.encode("utf-8"),
                            hashlib.sha256).hexdigest()
         if not hmac.compare_digest(row["v"], current):
-            print('{"level": "error", "service": "ws6-inventory", "msg": '
-                  '"FENGARDE_API_KEY_PEPPER changed since keys were provisioned: '
-                  'ALL keys will fail to verify (fail-closed lockout). Restore the '
-                  'previous pepper value, or re-provision every key via manage_keys.py"}',
-                  flush=True)
+            _log.error(
+                "FENGARDE_API_KEY_PEPPER changed since keys were provisioned: "
+                "ALL keys will fail to verify (fail-closed lockout). Restore the "
+                "previous pepper value, or re-provision every key via manage_keys.py"
+            )
 
     def _ensure_pepper_canary(self) -> None:
         """Write the pepper canary if absent -- called from provision() so it
@@ -463,23 +476,23 @@ def ensure_legacy_keys_migrated(store: TenantKeyStore) -> list[str]:
         try:
             store.provision(tenant_id, key, source=source)
         except InvalidTenantId:
-            print(f'{{"level": "warning", "service": "ws6-inventory", "msg": '
-                  f'"skipped migrating tenant_id {tenant_id!r} from a legacy env var: '
-                  f'not a valid tenant_id, would authenticate then fail every request"}}',
-                  flush=True)
+            _log.warn(
+                f"skipped migrating tenant_id {tenant_id!r} from a legacy env var: "
+                f"not a valid tenant_id, would authenticate then fail every request"
+            )
             return False
         except DuplicateKeyError:
-            print(f'{{"level": "warning", "service": "ws6-inventory", "msg": '
-                  f'"skipped migrating tenant_id {tenant_id!r}: its key is a duplicate '
-                  f'of an already-migrated tenant\'s key -- one key cannot identify two '
-                  f'tenants, fix the duplicate and provision it separately via manage_keys.py"}}',
-                  flush=True)
+            _log.warn(
+                f"skipped migrating tenant_id {tenant_id!r}: its key is a duplicate "
+                f"of an already-migrated tenant's key -- one key cannot identify two "
+                f"tenants, fix the duplicate and provision it separately via manage_keys.py"
+            )
             return False
         if len(key) < _LIKELY_WEAK_KEY_LEN:
-            print(f'{{"level": "warning", "service": "ws6-inventory", "msg": '
-                  f'"tenant_id {tenant_id!r} migrated a short (possibly human-chosen) key -- '
-                  f'consider rotating to a generated one via manage_keys.py provision"}}',
-                  flush=True)
+            _log.warn(
+                f"tenant_id {tenant_id!r} migrated a short (possibly human-chosen) "
+                f"key -- consider rotating to a generated one via manage_keys.py provision"
+            )
         return True
 
     tenant_keys_raw = os.getenv("FENGARDE_API_KEYS")
@@ -506,7 +519,8 @@ def warn_if_legacy_env_now_ignored() -> None:
     THIS boot) AND store.count() > 0 (yet the keystore is non-empty, i.e.
     it was already seeded before)."""
     if os.getenv("FENGARDE_API_KEYS") or os.getenv("FENGARDE_API_KEY"):
-        print('{"level": "warning", "service": "ws6-inventory", "msg": '
-              '"FENGARDE_API_KEYS/FENGARDE_API_KEY is set but the keystore already has '
-              'provisioned keys from a previous boot -- these env vars are IGNORED once '
-              'migrated; use manage_keys.py to change keys, not the env var"}', flush=True)
+        _log.warn(
+            "FENGARDE_API_KEYS/FENGARDE_API_KEY is set but the keystore already has "
+            "provisioned keys from a previous boot -- these env vars are IGNORED once "
+            "migrated; use manage_keys.py to change keys, not the env var"
+        )

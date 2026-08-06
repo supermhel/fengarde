@@ -73,12 +73,15 @@ config flag.
 Stated plainly, not smoothed over — same disclosure standard this project applies to its
 own technical claims:
 
-- **No per-tenant throughput/compute fairness beyond the ingest edge.** Rate-limiting at
-  the syslog listener is per-tenant (proven), but detection-engine processing and AI
-  triage queueing are shared — one noisy tenant can degrade detection latency for others
-  on the same deployment. If you're running multiple customers on one box, budget for
-  that or plan tenant-per-deployment instead of tenant-per-shared-stack until this is
-  addressed.
+- **Per-tenant fairness is order-bounded, not compute-isolated.** Rate-limiting at the
+  syslog listener is per-tenant (proven). Downstream, WS-4 detection and WS-5 AI triage now
+  round-robin each consume batch by tenant (`services/shared/fairness.py`, default on) so a
+  flooding tenant can no longer occupy every consecutive turn ahead of another tenant — but
+  the underlying consumer is still one thread processing one message at a time, so total
+  throughput is still shared. A large enough flood still adds latency for everyone, just no
+  longer disproportionately to the quiet tenant specifically. If a customer's SLA needs true
+  compute isolation (not just fair ordering), plan tenant-per-deployment for them rather
+  than relying on this.
 - **No tenant-provisioning admin UI.** Everything above is a CLI/YAML-file workflow. There
   is no dashboard "add a customer" wizard yet.
 - **OpenSearch's own high-availability profile (3-node) has never been live-failure-tested.**
@@ -96,9 +99,9 @@ If you'd like a relationship channel (a name on a partner list, MSSP-specific do
 updates, optional co-marketing — no legal weight, no fee), open an [MSSP partner
 registration issue](../../../issues/new?template=mssp_partner_registration.md).
 
-## Known blocker before this doc is announced
+## Status
 
-Per-tenant throughput fairness (see the gap list above) is being treated as a
-must-fix-before-outreach item, not an accepted tradeoff — this doc stays unlinked from
-README until that's resolved. If you're reading this directly, that work may still be in
-progress; ask before relying on shared-deployment multi-tenancy at real scale.
+Per-tenant fair consume ordering (the must-fix-before-outreach item) landed
+2026-08-07 — see the gap list above for its real, bounded scope. This doc is still
+unlinked from README pending your own review of its content, not any remaining
+engineering blocker.

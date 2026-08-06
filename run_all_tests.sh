@@ -119,6 +119,12 @@ echo
 echo "== shared runner traceback throttle (P2-4, 2026-07-21 audit) =="
 $PY services/shared/test_runner_throttle.py || fail=1
 echo
+echo "== shared MemoryBus produce/consume race (L1/L2, 2026-07-30/2026-08-06 audits) =="
+$PY services/shared/test_bus_memory_race.py || fail=1
+echo
+echo "== shared per-tenant fair consume ordering (Task M / Finding F4, 2026-08-07) =="
+$PY services/shared/test_fairness.py || fail=1
+echo
 echo "== ws2 property-based parser hardening (M1, Hypothesis) =="
 $PY services/ws2-normalization/parsers/test_property_hardening.py || fail=1
 echo
@@ -311,6 +317,12 @@ echo
 echo "== action-pin gate: every workflow SHA-pinned, incl. workflows with no pull_request trigger =="
 $PY tools/test_verify_action_pins.py || fail=1
 $PY tools/verify_action_pins.py --offline || fail=1
+
+# == Detection quality canary (docs/detection-quality.md): engine-vs-labels ==
+echo
+echo "== detection-quality: precision/recall/F1 canary over the labeled corpus (real engine + real rules) =="
+$PY tools/test_detection_quality.py || fail=1
+$PY tools/detection_quality_eval.py || fail=1
 
 # == Phase 4 (2026-08-06) enhancement + fix regression tests ==
 echo

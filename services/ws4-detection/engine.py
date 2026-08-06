@@ -43,6 +43,20 @@ import yaml
 
 from window import DequeWindowCounter
 
+# Make `shared` resolvable regardless of how engine.py is imported. The
+# service entrypoint (main.py) already puts `services/` on sys.path, but
+# tools that import engine.py directly (validate_rules.py, fire_check.py,
+# the WS-4 rule-firing tests) only add `services/ws4-detection` -- without
+# this, `from shared.log import get_logger` below raises ModuleNotFoundError
+# in every one of those callers (found 2026-08-07: 14 failures, one root cause).
+_SERVICES_DIR = Path(__file__).resolve().parent.parent
+if str(_SERVICES_DIR) not in sys.path:
+    sys.path.insert(0, str(_SERVICES_DIR))
+
+from shared.log import get_logger  # noqa: E402
+
+_log = get_logger("ws4-detection")
+
 # Sliding-window counters use the event's own ``time`` as "now" so historical
 # replay works on event-time. But log time is attacker-influenced (most parsers
 # read it straight off the record), and one event stamped far in the future would
@@ -148,9 +162,11 @@ def load_allowlist(allowlists_dir: Path, name: str) -> Allowlist:
         # broken allowlist is deliberately fail-OPEN: the rule keeps firing
         # (noise, never a missed detection). That is the tested, intended
         # posture; the message now says so honestly.
-        print(f"[engine] WARNING: allowlist '{name}' failed to load ({exc}); "
-              f"rule selections using not_in:{name} will MATCH everything "
-              f"(fail open - detection kept, expect noise).")
+        _log.warn(
+            f"allowlist '{name}' failed to load ({exc}); rule selections using "
+            f"not_in:{name} will MATCH everything (fail open - detection kept, "
+            f"expect noise)."
+        )
         allowlist = Allowlist([], ok=False)
 
     _ALLOWLIST_CACHE[cache_key] = allowlist
@@ -698,9 +714,11 @@ class Rule:
                 # the anti-window-poisoning guard -- surface it at WARN so these
                 # silent fail-closed drops (source clock-skew / spoofed timestamps)
                 # are visible to operators instead of vanishing without a trace.
-                print(f"[engine] WARN: rule {self.id}: dropping future-dated "
-                      f"event (time={raw}); beyond {_MAX_CLOCK_SKEW_MS}ms "
-                      f"clock-skew guard, not driving stateful window")
+                _log.warn(
+                    f"rule {self.id}: dropping future-dated event (time={raw}); "
+                    f"beyond {_MAX_CLOCK_SKEW_MS}ms clock-skew guard, not driving "
+                    f"stateful window"
+                )
             return False
         member = (event.get("siem") or {}).get("ingest_id") or str(now)
         # Namespace the window by rule id AND tenant so two rules (or two

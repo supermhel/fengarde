@@ -12,9 +12,15 @@ a REAL brute-force alert that reaches the indexer, end to end:
       -> WS-5 triage    -> passthrough stub verdict (no Ollama needed)
       -> WS-3 index     -> alert lands in alerts-* (this is what the dashboard reads)
 
-It also proves T7 (idempotency): re-processing the same triggering event yields the
-SAME deterministic alert_id, so the indexer dedups instead of creating a duplicate
-alert. That is the property that makes at-least-once delivery safe for a SIEM.
+It also proves T7 (idempotency). What this demo actually exercises: it does NOT
+replay a literal byte-identical event. The brute-force rule is stateful and its
+alert_id is deterministic -- keyed on (rule, group, fixed window bucket), never
+on the specific triggering event. So a NEW event that lands in the same 60s
+window (an 11th failed login) re-fires the rule yet yields the SAME alert_id,
+and the indexer dedups instead of creating a duplicate. That deterministic-id
+dedup is the property that makes at-least-once delivery safe for a SIEM.
+(Alongside it, a true byte-identical event replay is also asserted below: the
+literal first event, re-produced, must also map to that same alert_id.)
 
 Run:  C:/Python313/python.exe tools/demo_e2e.py     (or `make e2e`)
 """
@@ -124,8 +130,11 @@ def main() -> None:
         before = sum(store.count(idx) for idx in alert_indices)
         original_id = bf_alerts[0]["alert_id"]
 
-        # replay: an 11th failed login in the same window -> rule fires again ->
-        # alert with the SAME deterministic id -> indexer must dedup, not duplicate.
+        # (1) "NEW window-overlapping event" replay: an 11th failed login in the
+        # same 60s window -> rule re-fires -> alert_id is deterministic (keyed on
+        # rule+group+window bucket, not the specific event) -> SAME id -> the
+        # indexer dedups, not duplicates. At-least-once delivery is safe because
+        # of this deterministic-id dedup, NOT because of a literal event replay.
         bus.produce("raw.events", key=ATTACKER_IP, payload=ssh_fail(10))
         _fresh("main", "parsers"); ws2b = _import("ws2-normalization"); ws2b.run(bus)
         _fresh("main", "engine", "scoring"); ws4b = _import("ws4-detection")
@@ -145,8 +154,35 @@ def main() -> None:
         if after != before:
             fails.append(f"T7 broken: alert count grew {before}->{after} on replay (duplicate!)")
         else:
-            print(f"  T7 OK: replay reused alert_id {replay_id} -> deduped "
-                  f"(alerts count stayed {before})")
+            print(f"  T7 OK: new window-overlapping event deduped via deterministic "
+                  f"alert_id {replay_id} (alerts count stayed {before})")
+
+        # (2) TRUE byte-identical event replay: re-produce the literal FIRST
+        # event (same raw + same ingest_id, identical in every field), re-run the
+        # chain, and assert it too maps to the SAME alert_id with no new doc.
+        # This is the literal-replay reading of "idempotent under redelivery".
+        bus.produce("raw.events", key=ATTACKER_IP, payload=ssh_fail(0))
+        _fresh("main", "parsers"); ws2c = _import("ws2-normalization"); ws2c.run(bus)
+        _fresh("main", "engine", "scoring"); ws4c = _import("ws4-detection")
+        ws4c.run(bus, det)
+        _fresh("main", "router"); ws3c = _import("ws3-indexer")
+        ws3c.run(bus, store)
+
+        idem_indices = [i for i in store.indices() if i.startswith("alerts-")]
+        idem_after = sum(store.count(idx) for idx in idem_indices)
+        idem_id = [
+            d["alert_id"] for idx in idem_indices for d in store.all_docs(idx)
+            if BRUTEFORCE_TITLE in str(d.get("rule_title", "")).lower()
+        ][0]
+
+        if idem_id != original_id:
+            fails.append(f"T7 broken: true identical replay id {idem_id} != original {original_id}")
+        if idem_after != after:
+            fails.append(f"T7 broken: alert count grew {after}->{idem_after} on true "
+                         f"identical replay (duplicate!)")
+        else:
+            print(f"  T7 OK: true identical-event replay reused alert_id {idem_id} "
+                  f"-> deduped (alerts count stayed {after})")
 
     if fails:
         print("\n[FAIL] demo e2e:", *fails, sep="\n  - ")

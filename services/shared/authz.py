@@ -10,9 +10,10 @@ unchanged. A real deployment sets `FENGARDE_API_KEY`.
 from __future__ import annotations
 
 import hmac
-import json
 import os
 import sys
+
+from shared.log import get_logger
 
 
 def check_api_key(headers, env_var: str = "FENGARDE_API_KEY") -> bool:
@@ -31,8 +32,7 @@ def check_api_key(headers, env_var: str = "FENGARDE_API_KEY") -> bool:
 
 def warn_if_disabled(service: str, env_var: str = "FENGARDE_API_KEY") -> None:
     if not os.getenv(env_var):
-        print(f'{{"level": "warning", "service": "{service}", '
-              f'"msg": "auth disabled: {env_var} not set"}}', flush=True)
+        get_logger(service).warn(f"auth disabled: {env_var} not set")
 
 
 def require_auth_or_die(service: str) -> None:
@@ -55,9 +55,8 @@ def require_auth_or_die(service: str) -> None:
     if os.getenv("BUS_BACKEND") in ("redis", "redis-sentinel") and not os.getenv("REDIS_PASSWORD"):
         missing.append("REDIS_PASSWORD (Redis bus with no auth)")
     if missing:
-        print(json.dumps({
-            "level": "fatal", "service": service,
-            "msg": "FENGARDE_REQUIRE_AUTH=1 but auth is incomplete",
-            "missing": missing,
-        }), flush=True)
+        get_logger(service).error(
+            "FENGARDE_REQUIRE_AUTH=1 but auth is incomplete",
+            missing=missing,
+        )
         sys.exit(1)

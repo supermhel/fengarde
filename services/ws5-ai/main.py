@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import os
 import sys
+from collections import deque
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -30,11 +31,65 @@ from shared.bus import Bus  # noqa: E402
 from classifier import LightClassifier  # noqa: E402
 from llm_adapter import make_llm  # noqa: E402
 
+# How many event-ids the in-process dedup cache retains. Bounded on purpose:
+# under at-least-once redelivery we only need to catch a re-delivered event
+# while it is still plausibly being replayed, so we keep the most recent ids
+# and evict the OLDEST when full (mirrors ws4-detection/window.py's bounded
+# member-eviction). A re-delivered event that aged out past the cap is simply
+# triaged again -- harmless, and keeps memory flat on high-throughput bursts.
+_SEEN_CAP = 10000
+
+
+class _TriageCache:
+    """Bounded in-process dedup for the LLM triage call.
+
+    Under at-least-once delivery the same event (same ``siem.ingest_id`` /
+    ``event_id``) can be re-delivered; without a guard we'd call
+    ``self.llm.analyze()`` once per redelivery, doing paid/expensive triage on
+    something already triaged on its first delivery. This keeps the event id in
+    a bounded window and returns the previously-computed result on redelivery so
+    the caller still gets a truthful, identical answer -- just without re-running
+    the LLM.
+
+    Eviction models ``DequeWindowCounter`` in ws4-detection/window.py: an
+    insertion-order ``deque`` (companion to the O(1) membership structure)
+    tracks recency, and when the cap is reached the OLDEST id is dropped from
+    both. In-process-only, exactly like the deque window backend -- per-replica
+    dedup, which is the right scope for a single funnel consumer.
+    """
+
+    def __init__(self, cap: int = _SEEN_CAP) -> None:
+        self._cap = cap
+        self._order: deque = deque()
+        self._m: dict = {}  # event_id -> triage result (dict keys = the membership set)
+
+    def get(self, key: str):
+        return self._m.get(key)
+
+    def put(self, key: str, result) -> None:
+        if key in self._m:
+            return
+        self._m[key] = result
+        self._order.append(key)
+        if len(self._order) > self._cap:
+            oldest = self._order.popleft()
+            self._m.pop(oldest, None)
+
 
 class AiWorker:
-    def __init__(self):
+    def __init__(self, seen_cap: int = _SEEN_CAP):
         self.llm = make_llm()
         self.classifier = LightClassifier()
+        self._triage = _TriageCache(cap=seen_cap)
+
+    @staticmethod
+    def _dedup_key(request: dict):
+        """The id used for dedup: the event's OCSF ``siem.ingest_id`` falling
+        back to the request-level ``event_id``. Returns ``None`` when neither is
+        present -- events with no id are still processed on every delivery
+        (back-compat), since there is nothing stable to dedup on."""
+        return (request.get("event", {}) or {}).get("siem", {}).get("ingest_id") \
+            or request.get("event_id")
 
     def handle(self, request: dict) -> dict:
         event = request.get("event", {})
@@ -50,8 +105,15 @@ class AiWorker:
                 "classification": classification,
             }
         reasons = request.get("reason", [])
+        eid = self._dedup_key(request)
+        if eid is not None:
+            cached = self._triage.get(eid)
+            if cached is not None:
+                # Already triaged on a prior delivery -- do NOT pay for the LLM
+                # again; hand back the exact verdict we already computed.
+                return cached
         verdict = self.llm.analyze(event, reasons)
-        return {
+        result = {
             "event_id": request.get("event_id"),
             "tier": tier,
             "verdict": verdict.get("verdict"),
@@ -59,6 +121,9 @@ class AiWorker:
             "level": verdict.get("level"),
             "classification": classification,
         }
+        if eid is not None:
+            self._triage.put(eid, result)
+        return result
 
 
 def _alert_payload(result: dict, event: dict) -> dict:
@@ -128,8 +193,19 @@ def main():
     handler_bus = Bus()
     handler = _make_handler(handler_bus, worker)
 
+    # Task M / Finding F4 (2026-08-07): see ws4-detection/main.py's identical
+    # comment -- same fix, same default-on/opt-out, applied to the ai.requests
+    # topic (WS-5's LLM triage queue was the other half of this gap).
+    bus_factory = Bus
+    if os.getenv("FENGARDE_TENANT_FAIR_CONSUME", "1").strip().lower() not in ("0", "false", "no"):
+        from shared.fairness import FairConsumeBus, event_tenant_key
+
+        def bus_factory():
+            return FairConsumeBus(Bus(), tenant_key_fn=event_tenant_key)
+
     serve({"ai.requests": ("cg-ai", handler)},
-          health_port=int(os.getenv("PORT", "8005")), service_name="ws5-ai")
+          health_port=int(os.getenv("PORT", "8005")), service_name="ws5-ai",
+          bus_factory=bus_factory)
 
 
 if __name__ == "__main__":
