@@ -27,3 +27,10 @@ repos:
       - id: trailing-whitespace
       - id: check-merge-conflict
       - id: check-yaml
+  # FIX M15/M19 (2026-08-06): secret scanning in pre-commit (same class as the
+  # gitleaks CI job in ci.yml, but local/lateral). Blocks a commit that would
+  # otherwise land a credential and only be caught on push.
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.18.4
+    hooks:
+      - id: gitleaks

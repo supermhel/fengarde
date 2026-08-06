@@ -7,9 +7,9 @@ COPY services/ws2-normalization /app/ws2-normalization
 # PyYAML is required: the A5 enrichment stage (enrichment/__init__.py) loads
 # contracts/enrichment/*.yml at import time. Without it ws2 crash-loops on
 # `import yaml` -- a real bug the zero-infra test gate misses (local Python
-# has yaml). `redis` is the bus backend. `|| true` intentionally: an offline
-# build still produces a runnable image for the memory-bus path.
-RUN pip install --no-cache-dir -r /app/ws2-normalization/requirements.txt || true
+# has yaml). `redis` is the bus backend. Fail-closed: a broken requirements.txt
+# must fail the build, not silently produce an image that can't start.
+RUN pip install --no-cache-dir -r /app/ws2-normalization/requirements.txt
 ENV PYTHONPATH=/app
 ENV BUS_BACKEND=redis
 # Security-adversarial #2 (2026-07-29 audit): drop root before running.

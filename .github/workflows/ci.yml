@@ -85,6 +85,54 @@ jobs:
           BUS_BACKEND: redis
           REDIS_URL: redis://localhost:6379/0
         run: python services/shared/test_bus_read_count.py
+      # FIX M16 (2026-08-06): Redis session + window backends against a REAL
+      # broker -- test_sessions.py's Redis path is gated on SESSION_TEST_REDIS=1
+      # (skipped in the zero-infra gate), and test_window.py runs the window
+      # algorithm under the redis bus env so the window path is exercised in CI.
+      - name: Session store (memory + Redis backends) on real Redis
+        env:
+          BUS_BACKEND: redis
+          REDIS_URL: redis://localhost:6379/0
+          SESSION_TEST_REDIS: "1"
+        run: python services/shared/test_sessions.py
+      - name: Stateful window counter on real Redis
+        env:
+          BUS_BACKEND: redis
+          REDIS_URL: redis://localhost:6379/0
+        run: python services/ws4-detection/test_window.py
+
+  # FIX M26 (2026-08-06): live OpenSearch integration. ws3's storage layer and
+  # the migration tool have live-cluster paths that no other CI job exercises
+  # (the zero-infra gate uses fakes/in-memory); this job runs them against a
+  # genuine single-node OpenSearch so a broken live path can't sit undetected.
+  opensearch-integration:
+    runs-on: ubuntu-latest
+    services:
+      opensearch:
+        image: opensearchproject/opensearch:2.13.0
+        env:
+          discovery.type: single-node
+          DISABLE_SECURITY_PLUGIN: "true"
+        ports:
+          - 9200:9200
+        options: >-
+          --health-cmd "curl -s http://localhost:9200/_cluster/health"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Install deps
+        run: pip install pyyaml
+      - name: Live OpenSearch integration tests
+        env:
+          OPENSEARCH_URL: http://localhost:9200
+        run: |
+          python services/ws3-indexer/storage/test_opensearch_live.py
+          python tools/test_migrate_opensearch.py
 
   # M2 code-quality floor (PLAN_C Tier 2.3). Lint blocks; coverage blocks at the
   # MEASURED baseline (see tools/coverage_gate.py) not the unmet-for-WS-3 85%
@@ -97,7 +145,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         with:
-          python-version: "3.11"
+          python-version: "3.12"
       - name: Install deps
         # hypothesis: the coverage gate runs parsers/test_property_hardening.py
         # (tools/coverage_gate.py line ~33), which imports it -- without it the
@@ -111,14 +159,21 @@ jobs:
                     services/ws4-detection services/ws5-ai services/ws6-inventory services/shared tools; do
             mypy "$ws" --explicit-package-bases --ignore-missing-imports
           done
-      - name: coverage gate (WS-2/WS-3 core, blocking at measured baseline)
+      - name: coverage gate (ws2/ws3/shared/ws4/ws6, blocking at measured baseline)
         run: python tools/coverage_gate.py
-      - name: mutmut (informational, non-blocking -- see pyproject.toml [tool.mutmut])
+      # FIX M10 (2026-08-06): mutmut flips from informational to BLOCKING. The
+      # measured baseline survival rate is ~72% on sessions.py (scoped in
+      # pyproject.toml [tool.mutmut]); the pass/fail threshold is governed by
+      # that same config. `python -m mutmut run` no longer swallows its exit
+      # code (no `|| true`), so a test-weakening PR that drops the kill rate
+      # below the floor now FAILS CI. Results print for diagnostics but the run
+      # decides pass/fail.
+      - name: mutmut (blocking -- fails CI on kill-rate regression vs pyproject.toml [tool.mutmut] baseline)
         run: |
           pip install mutmut
-          python -m mutmut run || true
-          python -m mutmut results || true
-          echo "mutmut survival rate is informational (pyproject.toml [tool.mutmut]) -- not blocking CI, same first-measurement sequencing mypy went through before it was flipped blocking"
+          python -m mutmut run
+          python -m mutmut results
+          echo "mutmut survival rate is BLOCKING (baseline ~72%, threshold in pyproject.toml [tool.mutmut])"
       - name: SBOM freshness (blocking -- sbom.json must match requirements.txt)
         run: |
           pip install cyclonedx-bom

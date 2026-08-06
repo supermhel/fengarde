@@ -72,6 +72,12 @@ def _safe_glob_from_regex(pattern: str) -> str | None:
             return None
         return parts[0] + "*" + parts[1]
     if re.fullmatch(r"[a-zA-Z0-9_.\-/ ]*", pat):
+        # A bare '.' (not part of a '.*' wildcard -- that case returned
+        # above) is a regex "match any char" operator. Translated to a glob
+        # it would become a LITERAL dot, silently narrowing the rule to a
+        # subset of what Sigma intended. Reject instead of narrowing.
+        if "." in pat:
+            return None
         return pat
     return None
 

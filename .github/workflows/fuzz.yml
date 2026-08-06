@@ -1,4 +1,4 @@
-name: Nightly fuzz (top 3 parsers)
+name: Nightly fuzz (coverage-guided, matrix of parsers)
 
 # M1 correctness gate (PLAN_C Tier 1.2): coverage-guided byte-level fuzzing,
 # complementing the value-level Hypothesis property tests that run on every
@@ -19,13 +19,16 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
+      # L8 (2026-08-06 fix): grow from the original 3 to 5 parsers --
+      # db_audit (GRANT/priv-parse, FIX-3-adjacent) and vmware_vsphere
+      # (VM operation classification) round out the high-value text parsers.
       matrix:
-        target: [linux_ssh, cisco_asa, windows_eventlog]
+        target: [linux_ssh, cisco_asa, windows_eventlog, db_audit, vmware_vsphere]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         with:
-          python-version: "3.11"
+          python-version: "3.12"
       - name: Install atheris
         run: pip install atheris
       - name: Restore corpus cache

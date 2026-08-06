@@ -308,6 +308,23 @@ echo "== action-pin gate: every workflow SHA-pinned, incl. workflows with no pul
 $PY tools/test_verify_action_pins.py || fail=1
 $PY tools/verify_action_pins.py --offline || fail=1
 
+# == Phase 4 (2026-08-06) enhancement + fix regression tests ==
+echo
+echo "== ws3 FIX H6: OpenSearch multi-node writer failover (2026-08-06) =="
+$PY services/ws3-indexer/test_fix_h6_opensearch_failover.py || fail=1
+echo
+echo "== ws3 E1: audit log (append-only, admin-scoped, fail-open, capacity cap) =="
+$PY services/ws3-indexer/test_fix_audit.py || fail=1
+echo
+echo "== ws3 E3: opt-in MFA/TOTP (stdlib generate+verify, login gating, backward compat) =="
+$PY services/ws3-indexer/test_fix_mfa.py || fail=1
+echo
+echo "== ws1 E6: per-source syslog metrics (bounded, thread-safe) =="
+$PY services/ws1-collectors/test_fix_metric_sources.py || fail=1
+echo
+echo "== ws7 UX fixes: saved searches, dark mode, alert lifecycle (static assertions) =="
+$PY services/ws7-dashboard/test_fix_ux.py || fail=1
+
 echo
 if [ "$fail" -eq 0 ]; then echo "ALL TESTS PASS"; else echo "SOME TESTS FAILED"; fi
 exit $fail

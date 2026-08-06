@@ -26,9 +26,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / "sbom.json"
 
-# Runtime requirements.txt files (excludes devkit-feeder, which pip-installs
-# its one dependency inline in its Dockerfile rather than via a requirements
-# file, and ws7-dashboard, which is static+nginx with no Python deps).
+# Runtime requirements.txt files (ws7-dashboard is static+nginx with no Python
+# deps). devkit-feeder is INCLUDED since H9 moved its redis dep out of the
+# inline Dockerfile pip-install and into a requirements.txt -- it is now part
+# of the deployable system's manifest like every other service.
 REQUIREMENTS_FILES = [
     "services/ws1-collectors/requirements.txt",
     "services/ws2-normalization/requirements.txt",
@@ -36,6 +37,7 @@ REQUIREMENTS_FILES = [
     "services/ws4-detection/requirements.txt",
     "services/ws5-ai/requirements.txt",
     "services/ws6-inventory/requirements.txt",
+    "services/devkit-feeder/requirements.txt",
 ]
 
 
