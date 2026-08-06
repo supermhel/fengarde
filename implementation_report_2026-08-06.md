@@ -77,13 +77,45 @@ All 5 new regression test files (H6 + 4 Phase-4) **wired into `run_all_tests.sh`
 
 ---
 
-## Adjudications Worth Recording (passed on to anyone maintaining this)
+## Phase 5 — Independent Review Response (commit `983efc7`, merged as PR #54)
 
-1. **`not_in` on a broken allowlist is DELIBERATELY fail-open** (rule keeps firing = noise, never a missed detection). Do NOT flip it to fail-closed — that creates a silent detection blackout. Fixed the inverted WARNING text instead.
-2. **`shared/http.py` is an illegal filename** — it shadows the stdlib `http` module and breaks `import urllib.request`. The helper lives at `shared/outbound_http.py`.
-3. **Hardening added uncovered code lowered WS-3 coverage 77%→70%** — floors set to honest measured baselines (not the old 75%), per the project's own honesty convention.
-4. **`run_all_tests.sh` on this Windows host** uses `PYTHON=python` (the `python3` on PATH is a broken Store stub). CI on Linux is unaffected.
+A second independent review pass re-audited the 11-commit implementation from scratch (re-ran the full gate, then read the actual diffs rather than trusting the self-reported "all green"). It confirmed the `not_in` fail-open adjudication was correct against pre-existing tests, then found **1 CRITICAL regression and 4 HIGH issues newly introduced by the same pass** — all fixed in `983efc7`:
+
+### 🔴 CRITICAL — FIX 21 silently broke threshold detection
+`syslog_udp_server.py::_handle_datagram` had been hardcoded to `deterministic_id=True` on the claim that "UDP retransmission is normal" — **false**: UDP has no retransmission mechanism, while genuinely-repeated identical log lines (e.g. N separate brute-force attempts logging the same "Failed password" text) are common. Content-hashing collapsed every repeat to ONE `meta.ingest_id`, and WS-4's window counters dedup by that id (`member in members`), so N real attempts counted as 1 and threshold rules never fired. Reverted to honoring the constructor's `deterministic_id` flag (default `False`); the enshrining test rewritten to assert the flag in both directions.
+
+### 🟠 HIGH — session-signing forgery bypass + cross-replica breakage
+`RedisSessionStore.resolve()` accepted signature-free rows (the alg:none downgrade), and an unset `FENGARDE_SESSION_SECRET` silently generated a random per-process key that defeated cross-replica signing. Fixed: ctor raises `RuntimeError` without the secret; `resolve()` requires a valid `sig` unconditionally. Live-verified against a real throwaway Redis container (two clients with the same secret now agree on each other's sessions).
+
+### 🟠 HIGH — MFA disable-by-cookie-theft
+`POST /auth/mfa/enable` required only a session cookie and reset `totp_active`, so a stolen cookie disarmed MFA and leaked the new secret. Fixed: both MFA routes require the acting user's current password (`_mfa_reauth`), rate-limited in a separate `mfa:` namespace, every outcome audited.
+
+### 🟠 HIGH — Sentinel client pinned to stale demoted master
+`discover_master()` once + a fixed `redis.Redis(host, port)` wrote to the demoted node after a real failover → `READONLY` until restart. Fixed: `Sentinel.master_for()`, which re-resolves the current master on every reconnect.
+
+### 🟠 HIGH — H6 OpenSearch failover was dead code in the HA profile
+`docker-compose.ha.yml` pointed `OPENSEARCH_URL` at `opensearch-1` only. Fixed: all 3 nodes comma-separated; node-selection + connection lifecycle locked across ws3-indexer's concurrent consumer threads (lock not held across blocking socket I/O).
+
+### Other fixes in `983efc7`
+- mutmut reverted to informational (the "blocking" flip gated on a nonexistent threshold; `mutmut run` exits 1 on any survivor)
+- Sigma `.*`-wildcard-branch narrowing closed (both branches now reject bare `.`), both sigma test files wired into `run_all_tests.sh` for the first time
+- `_ALLOWLIST_CACHE` invalidation bug fixed (a repaired allowlist file now takes effect on hot-reload)
+- Two more inverted "fail closed" comments corrected
+
+**Verification**: full gate re-run green (`run_all_tests.sh`, ruff, mypy all 8 workstreams); HA compose config validated. The review chain: Codex unavailable (usage limit), so `cavecrew-reviewer` subagent per project policy — it read actual diffs/files and returned explicit per-finding verdicts.
+
+**Standing caveat (honest)**: session-signing was live-verified against a standalone Redis container; the `master_for()` failover re-resolve, MFA reauth flow, and H6 multi-node lock were NOT re-run against a live failover/full-stack scenario — a real follow-up, not silently assumed proven.
 
 ---
 
-*Implementation executed 2026-08-06 via 9 parallel structured agents (5 Phase 1-3 + 4 Phase 4) with independent orchestrator verification of every finding and fix.*
+## Adjudications Worth Recording (passed on to anyone maintaining this)
+
+1. **`not_in` on a broken allowlist is DELIBERATELY fail-open** (rule keeps firing = noise, never a missed detection). Do NOT flip it to fail-closed — that creates a silent detection blackout. Fixed the inverted WARNING text instead. **Captured in `983efc7`'s audit entry: verified against pre-existing tests by the second review.**
+2. **`shared/http.py` is an illegal filename** — it shadows the stdlib `http` module and breaks `import urllib.request`. The helper lives at `shared/outbound_http.py`.
+3. **Hardening added uncovered code lowered WS-3 coverage 77%→70%** — floors set to honest measured baselines (not the old 75%), per the project's own honesty convention.
+4. **`run_all_tests.sh` on this Windows host** uses `PYTHON=python` (the `python3` on PATH is a broken Store stub). CI on Linux is unaffected.
+5. **Do not hardcode `deterministic_id=True` for UDP** — the window counter dedups by ingest_id and identical repeated lines would under-count. Honor the flag (default False).
+
+---
+
+*Implementation executed 2026-08-06 via 9 parallel structured agents (5 Phase 1-3 + 4 Phase 4), then a second independent review pass (`983efc7`, merged as PR #54) found and fixed 1 CRITICAL + 4 HIGH + lower-severity regressions introduced by that pass. Final state: merged to `main`, full gate green.*
