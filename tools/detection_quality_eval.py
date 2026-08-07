@@ -26,7 +26,7 @@ sys.path.insert(0, str(SERVICES / "ws2-normalization"))
 sys.path.insert(0, str(SERVICES / "ws4-detection"))
 sys.path.insert(0, str(SERVICES))
 
-from engine import load_rules  # noqa: E402
+from engine import Rule, load_rules  # noqa: E402
 
 RULES_DIR = ROOT / "contracts" / "rules"
 ALLOWLISTS_DIR = ROOT / "contracts" / "allowlists"
@@ -143,7 +143,7 @@ CORPUS: list[dict] = [
 ]
 
 
-def load_engine_rules() -> dict[str, object]:
+def load_engine_rules() -> dict[str, Rule]:
     """Load the real rules from contracts/rules via engine.load_rules.
 
     Returns {rule_id: Rule}. Uses the genuine loader path (poison-pill
@@ -153,7 +153,7 @@ def load_engine_rules() -> dict[str, object]:
     return {r.id: r for r in rules}
 
 
-def fired_rule_ids(event: dict, rules: dict[str, object]) -> set[str]:
+def fired_rule_ids(event: dict, rules: dict[str, Rule]) -> set[str]:
     """Run one event through the real Rule.evaluate() on every loaded rule.
 
     Only stateless rules are considered (the corpus drives single events, so a
@@ -169,7 +169,7 @@ def fired_rule_ids(event: dict, rules: dict[str, object]) -> set[str]:
     return fired
 
 
-def entry_results(corpus: list[dict], rules: dict[str, object]) -> list[dict]:
+def entry_results(corpus: list[dict], rules: dict[str, Rule]) -> list[dict]:
     """[(name, expected:set, fired:set)] for every corpus entry."""
     return [{"name": e["name"],
              "expected": set(e["expected_rules"]),
