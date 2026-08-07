@@ -110,8 +110,14 @@ class AiWorker:
             cached = self._triage.get(eid)
             if cached is not None:
                 # Already triaged on a prior delivery -- do NOT pay for the LLM
-                # again; hand back the exact verdict we already computed.
-                return cached
+                # again; hand back the exact verdict we already computed. A
+                # COPY, not the cache's own dict: the caller (_make_handler)
+                # hands this straight to bus.produce(), and on
+                # BUS_BACKEND=memory a produced payload is stored by
+                # reference (no serialization) -- a later mutation of that
+                # message would otherwise corrupt this cache entry for every
+                # future redelivery of the same event.
+                return dict(cached)
         verdict = self.llm.analyze(event, reasons)
         result = {
             "event_id": request.get("event_id"),
@@ -122,7 +128,9 @@ class AiWorker:
             "classification": classification,
         }
         if eid is not None:
-            self._triage.put(eid, result)
+            # Cache a copy too, for the same reason -- the freshly-built
+            # `result` below is also handed to bus.produce() by the caller.
+            self._triage.put(eid, dict(result))
         return result
 
 

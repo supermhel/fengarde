@@ -91,6 +91,16 @@ class _MemoryBus:
         # lock means anything produced mid-iteration is delivered by the next
         # consume() call (the runner re-enters the loop regardless), so nothing is
         # lost and at-least-once delivery is preserved.
+        #
+        # Side effect: the whole batch is removed from `_streams[topic]` up
+        # front, before the first message is yielded -- so depth()/drain()
+        # called while a caller is mid-iteration over this generator report
+        # the batch as already gone (0 remaining), not "in flight". This
+        # matches the pre-fix behavior for a single consumer (popleft() also
+        # removed each message before yielding it) and is required for the
+        # atomicity fix above; callers reading depth() for backpressure
+        # signals should be aware a large batch briefly reads as fully
+        # drained while its handlers are still running.
         with self._seq_lock:
             q = self._streams[topic]
             pending = list(q)

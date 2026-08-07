@@ -56,12 +56,18 @@ def run_consume_concurrency():
     consume() snapshots-and-clears under _seq_lock so 'is there a message?' +
     'pop it' is a single atomic step.
 
-    N > M so multiple consumers are guaranteed to contend over the tail of the
-    queue, and the consumers each fully drain -- but the assertion doesn't lean
-    on any particular interleaving: with the lock, every consumer always sees a
-    distinct message. Under the pre-fix unlocked `while q: popleft()`, N>1
-    consumers on a single message reliably double-popleft (IndexError / double
-    delivery), so this test goes red there and green here.
+    All M messages are produced before any consumer thread starts, so with the
+    fix in place whichever consumer wins the `_seq_lock` race takes the ENTIRE
+    batch in one snapshot-and-clear and every other consumer sees an empty
+    queue -- the split across N threads is all-or-nothing per consume() call,
+    not one-message-each. The assertions therefore don't lean on any
+    particular split between threads, only on the aggregate: every message
+    delivered exactly once, none dropped, none duplicated, regardless of which
+    thread(s) happened to win. N > M just gives the lock genuine contention
+    (many threads racing to claim a batch, not just two). Under the pre-fix
+    unlocked `while q: popleft()`, N>1 consumers draining the SAME queue
+    concurrently reliably double-popleft (IndexError / double delivery) before
+    it empties, so this test goes red there and green here.
     """
     N = 64  # concurrent consumers
     M = 64  # produced messages

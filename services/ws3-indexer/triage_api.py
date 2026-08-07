@@ -77,6 +77,7 @@ for _p in (str(_HERE), str(_HERE.parent)):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 from shared.authz import check_api_key, warn_if_disabled  # noqa: E402
+from shared.log import get_logger  # noqa: E402
 from shared.rbac import role_at_least, can_access_tenant, LoginRateLimiter  # noqa: E402
 from shared.sessions import SessionStore, make_session_store  # noqa: E402
 import reporting  # noqa: E402
@@ -744,14 +745,17 @@ def make_handler(store, users_db=None, sessions: SessionStore | None = None,
         def _route_post(self, path: str):
             # Thin dispatcher: route to a dedicated per-route handler. Kept
             # deliberately small so a new POST route is a new method, not a
-            # grown if-chain inside this one.
-            if self._alert_id_from_path(path, "report") is not None:
-                return self._route_report(path)
-            if self._alert_id_from_path(path) is not None:
-                return self._route_triage(path)
+            # grown if-chain inside this one. Each id is parsed once here and
+            # passed down -- not re-parsed from `path` inside the handler.
+            report_alert_id = self._alert_id_from_path(path, "report")
+            if report_alert_id is not None:
+                return self._route_report(report_alert_id)
+            alert_id = self._alert_id_from_path(path)
+            if alert_id is not None:
+                return self._route_triage(alert_id)
             return self._send(404, {"error": "no such path"})
 
-        def _route_report(self, path: str):  # POST /alerts/{id}/report
+        def _route_report(self, report_alert_id: str):  # POST /alerts/{id}/report
             # Drain any request body (the client may send one, even
             # though this endpoint takes none) so the connection doesn't
             # get reset with unread bytes still buffered. An unparseable
@@ -767,7 +771,6 @@ def make_handler(store, users_db=None, sessions: SessionStore | None = None,
                 raise _BadRequest("invalid Content-Length")
             if length > 0:
                 self.rfile.read(min(length, _MAX_BODY_BYTES))
-            report_alert_id = self._alert_id_from_path(path, "report")
             if not report_alert_id:
                 raise _BadRequest("alert_id required")
             session = self._require_role("analyst")  # report generation is a write action
@@ -802,8 +805,7 @@ def make_handler(store, users_db=None, sessions: SessionStore | None = None,
                                 "template": template})
             return self._send(200, report)
 
-        def _route_triage(self, path: str):  # POST /alerts/{id}
-            alert_id = self._alert_id_from_path(path)
+        def _route_triage(self, alert_id: str):  # POST /alerts/{id}
             if not alert_id:
                 raise _BadRequest("alert_id required")
 
@@ -914,30 +916,26 @@ def serve(store, host="0.0.0.0", port=8013):
         # plaintext secret in this process's output or filesystem, ever.
         created = ensure_first_boot_admin(users_db)
         if created:
-            print(json.dumps({
-                "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                "level": "info", "service": "ws3-indexer-triage",
-                "msg": "first-boot admin account created from "
-                       "FENGARDE_ADMIN_PASSWORD (unset it now -- it is no "
-                       "longer needed and env vars leak via inspect/exec)",
-                "username": created,
-            }), flush=True)
+            get_logger("ws3-indexer-triage").info(
+                "first-boot admin account created from "
+                "FENGARDE_ADMIN_PASSWORD (unset it now -- it is no "
+                "longer needed and env vars leak via inspect/exec)",
+                username=created,
+            )
         elif users_db.count() == 0:
             # RBAC is on but no account exists and no bootstrap password was
             # provided: fail-closed (nobody can log in), and say so loudly.
-            print(json.dumps({
-                "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                "level": "warning", "service": "ws3-indexer-triage",
-                "msg": "RBAC enabled but the user store is empty and "
-                       "FENGARDE_ADMIN_PASSWORD is unset -- no one can log "
-                       "in. Set FENGARDE_ADMIN_PASSWORD and restart to "
-                       "create the first admin account.",
-            }), flush=True)
+            get_logger("ws3-indexer-triage").warn(
+                "RBAC enabled but the user store is empty and "
+                "FENGARDE_ADMIN_PASSWORD is unset -- no one can log "
+                "in. Set FENGARDE_ADMIN_PASSWORD and restart to "
+                "create the first admin account."
+            )
 
     handler_cls = make_handler(store, users_db=users_db)
     srv = ThreadingHTTPServer((host, port), handler_cls)
-    print(json.dumps({"ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-                      "level": "info", "service": "ws3-indexer-triage",
-                      "msg": "listening", "url": f"http://{host}:{port}",
-                      "rbac": "enabled" if users_db else "disabled"}), flush=True)
+    get_logger("ws3-indexer-triage").info(
+        "listening", url=f"http://{host}:{port}",
+        rbac="enabled" if users_db else "disabled",
+    )
     srv.serve_forever()

@@ -14,10 +14,36 @@ HERE = Path(__file__).resolve().parent
 SERVICES = HERE.parent
 sys.path.insert(0, str(SERVICES))
 
-from shared.bus import _MemoryBus  # noqa: E402
+from collections import deque
+
+from shared.bus import Message, _MemoryBus  # noqa: E402
 from shared.fairness import FairConsumeBus, default_tenant_key, event_tenant_key  # noqa: E402
 
 FAILS: list[str] = []
+
+
+class _BatchedBus:
+    """Minimal stand-in for a real batch-bounded bus (Redis XREADGROUP's
+    ``count=N``): unlike ``_MemoryBus.consume()`` (which always drains the
+    WHOLE topic in one call), this yields at most ``batch_size`` messages per
+    ``.consume()`` call and leaves the rest queued for the next call --
+    proving FairConsumeBus's documented "Honest scope" (see fairness.py's
+    module docstring): reordering only happens among what ONE underlying
+    ``.consume()`` call already returned; it cannot reach across raw batch
+    boundaries it never sees together."""
+
+    def __init__(self, batch_size: int):
+        self._q: deque = deque()
+        self._batch_size = batch_size
+        self._seq = 0
+
+    def produce(self, topic, key, payload):
+        self._seq += 1
+        self._q.append(Message(topic, key, payload, str(self._seq)))
+
+    def consume(self, topic, group=None, block_ms=0):
+        for _ in range(min(self._batch_size, len(self._q))):
+            yield self._q.popleft()
 
 
 def check(cond, msg):
@@ -120,6 +146,54 @@ def test_delegates_non_consume_methods_to_inner_bus():
     check(bus.depth("t") == 0, "consume() via FairConsumeBus did not drain the inner bus")
 
 
+def test_flood_spanning_multiple_raw_batches_still_delays_quiet():
+    """Honest-scope check (fairness.py's own 'Honest scope' section):
+    round-robin only reorders WITHIN what one underlying .consume() call
+    returns. On a real batch-bounded bus (Redis XREADGROUP's count=N,
+    BUS_XREADGROUP_COUNT), a flood large enough to fill an entire raw batch
+    BY ITSELF still delays a quiet tenant's message until the raw read
+    finally reaches it -- FairConsumeBus cannot reorder across raw batch
+    boundaries it never sees together. This is the gap between fairness.py's
+    precise claim ("bounds delay WITHIN one consume batch") and a looser
+    reading of it ("a flooding tenant can't occupy every consecutive turn
+    ahead of another tenant") -- the latter only holds within a single
+    batch, not across a backlog spanning multiple batches.
+    """
+    BATCH = 20
+    raw = _BatchedBus(BATCH)
+    # 'flood' alone fills 3 full raw batches; 'quiet' is produced LAST, so it
+    # cannot be read by the underlying bus until every 'flood' message ahead
+    # of it in raw arrival order has already been read out.
+    for i in range(3 * BATCH):
+        raw.produce("t", key=None, payload=_event("flood", i))
+    raw.produce("t", key=None, payload=_event("quiet", 0))
+    fair = FairConsumeBus(raw, tenant_key_fn=default_tenant_key)
+
+    # First .consume() call: the raw batch underneath is 100% 'flood' (quiet
+    # hasn't been read by the underlying bus yet) -- round-robin over ONE
+    # tenant bucket degenerates to FIFO, so quiet cannot appear at all.
+    first_batch = [m.payload["siem"]["tenant"] for m in fair.consume("t")]
+    check(len(first_batch) == BATCH,
+          f"expected {BATCH} messages in the first raw batch, got {len(first_batch)}")
+    check("quiet" not in first_batch,
+          "'quiet' appeared in the first raw batch -- test setup invalid, it "
+          "must not be reachable until the flood ahead of it has been read")
+
+    # Drain the remaining raw batches -- 'quiet' only surfaces once the
+    # underlying read finally reaches it, proving the round-robin reorder
+    # cannot look past a batch boundary it hasn't read yet.
+    remaining: list[str] = []
+    while True:
+        batch = list(fair.consume("t"))
+        if not batch:
+            break
+        remaining.extend(m.payload["siem"]["tenant"] for m in batch)
+    check("quiet" in remaining, "'quiet' message lost across batched consumption")
+    check(remaining and remaining[-1] == "quiet",
+          f"expected 'quiet' to surface only in the FINAL raw batch (after "
+          f"every 'flood' message ahead of it), got tail={remaining[-3:]}")
+
+
 def main():
     test_single_tenant_order_unchanged()
     test_flooding_tenant_does_not_starve_others_within_batch()
@@ -127,6 +201,7 @@ def main():
     test_malformed_payload_falls_back_to_default_tenant()
     test_event_tenant_key_reads_nested_shape()
     test_delegates_non_consume_methods_to_inner_bus()
+    test_flood_spanning_multiple_raw_batches_still_delays_quiet()
     if FAILS:
         print(f"[FAIL] fairness: {len(FAILS)} problem(s)")
         for f in FAILS:

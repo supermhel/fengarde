@@ -129,6 +129,23 @@ def test_unmapped_wildcard_missing_subtree_is_noop():
           f"hostname not stripped: {out['src_endpoint']['hostname']!r}")
 
 
+def test_explicit_path_with_nested_value_recurses_instead_of_passthrough():
+    """api.request.data is documented as a string, but strip_ansi_and_control()
+    silently no-ops on non-str input -- so if a producer ever puts a dict/list
+    there instead (malformed shape, or a future producer), the OLD code path
+    (`cursor[leaf] = strip_ansi_and_control(cursor[leaf])`) would leave hostile
+    content in a nested dict/list completely unsanitized. Any explicit path
+    whose value is a dict/list must recurse the same as the "*" wildcard."""
+    hostile = "\x1b[31mx\x07"
+    event = {"api": {"request": {"data": {"body": f"evil{hostile}", "n": 3}}}}
+    ws2._sanitize_free_text(event)
+    check(event["api"]["request"]["data"]["body"] == "evilx",
+          f"nested dict at an explicit path not sanitized: {event['api']['request']['data']!r}")
+    check(event["api"]["request"]["data"]["n"] == 3,
+          f"non-string leaf under a nested explicit-path value got mutated: "
+          f"{event['api']['request']['data']!r}")
+
+
 def main():
     test_strips_csi_ansi()
     test_strips_osc_ansi_terminated_by_bel()
@@ -139,6 +156,7 @@ def main():
     test_normalize_one_sanitizes_message_from_real_parser()
     test_sanitizes_unmapped_wildcard_any_prefix_any_depth()
     test_unmapped_wildcard_missing_subtree_is_noop()
+    test_explicit_path_with_nested_value_recurses_instead_of_passthrough()
 
     if FAILS:
         print(f"\n[FAIL] sanitize: {len(FAILS)} problem(s)")

@@ -11,9 +11,21 @@ is configured, not how to check it.
 """
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
+# Make `shared` resolvable regardless of how this module is imported -- same
+# fix as keystore.py/store.py's identical comment (2026-08-07, Task K).
+_SERVICES_DIR = Path(__file__).resolve().parent.parent
+if str(_SERVICES_DIR) not in sys.path:
+    sys.path.insert(0, str(_SERVICES_DIR))
+
+from shared.log import get_logger  # noqa: E402
+
 
 def warn_if_disabled(service: str, keystore) -> None:
     if keystore.count() == 0:
-        print(f'{{"level": "warning", "service": "{service}", '
-              f'"msg": "auth disabled: no keys provisioned (FENGARDE_API_KEY / '
-              f'FENGARDE_API_KEYS / manage_keys.py never configured)"}}', flush=True)
+        get_logger(service).warn(
+            "auth disabled: no keys provisioned (FENGARDE_API_KEY / "
+            "FENGARDE_API_KEYS / manage_keys.py never configured)"
+        )

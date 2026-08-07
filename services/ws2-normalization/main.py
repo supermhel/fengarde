@@ -88,7 +88,19 @@ def _sanitize_free_text(event: dict) -> dict:
                 _sanitize_tree(cursor)
             continue
         if isinstance(cursor, dict) and leaf in cursor:
-            cursor[leaf] = strip_ansi_and_control(cursor[leaf])
+            v = cursor[leaf]
+            if isinstance(v, (dict, list)):
+                # An explicit (non-wildcard) path whose value turned out to be
+                # a nested structure rather than a plain string -- e.g. a
+                # future/malformed producer putting a dict under
+                # api.request.data instead of the documented string. Recurse
+                # the same as the "*" wildcard rather than silently passing
+                # it through: strip_ansi_and_control() only sanitizes str and
+                # no-ops on dict/list, so without this a nested shape at an
+                # explicit path would reach downstream sinks unsanitized.
+                _sanitize_tree(v)
+            else:
+                cursor[leaf] = strip_ansi_and_control(v)
     return event
 
 

@@ -211,7 +211,7 @@ def references(corpus: list[dict]) -> set[str]:
     return {rid for e in corpus for rid in e["expected_rules"]}
 
 
-def main(argv: list[str] | None = None) -> int:
+def main() -> int:
     rules = load_engine_rules()
     scored = references(CORPUS)
     missing = scored - set(rules)
