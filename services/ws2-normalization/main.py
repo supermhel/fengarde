@@ -33,7 +33,36 @@ _FREE_TEXT_PATHS = (
     ("actor", "process", "name"),
     ("src_endpoint", "hostname"),
     ("dst_endpoint", "hostname"),
+    # "*" is a wildcard leaf: every string anywhere under the `unmapped` dict
+    # is sanitized (any prefix -- unmapped.mcp.*, unmapped.ot.*, unmapped.db.*),
+    # no matter how deep, since parsers copy attacker-controlled raw payload
+    # bytes into unmapped.* verbatim.
+    ("unmapped", "*"),
+    # api.request.data carries arbitrary request bodies parsers forward as
+    # free text; sanitize it too (M1 gap fix).
+    ("api", "request", "data"),
 )
+
+
+def _sanitize_tree(value: Any) -> Any:
+    """Recursively strip ANSI/control chars from every string leaf under a
+    nested dict/list tree. Used for the ``("unmapped", "*")`` wildcard so ANY
+    key under ``unmapped`` -- at arbitrary depth -- is covered, not just a
+    fixed set of dotted paths. Non-string values pass through unchanged; the
+    tree is mutated in place (mirrors the rest of the walker)."""
+    if isinstance(value, dict):
+        for k, v in value.items():
+            if isinstance(v, str):
+                value[k] = strip_ansi_and_control(v)
+            else:
+                _sanitize_tree(v)
+    elif isinstance(value, list):
+        for i, v in enumerate(value):
+            if isinstance(v, str):
+                value[i] = strip_ansi_and_control(v)
+            else:
+                _sanitize_tree(v)
+    return value
 
 
 def _sanitize_free_text(event: dict) -> dict:
@@ -42,7 +71,9 @@ def _sanitize_free_text(event: dict) -> dict:
     from raw log content, so a hostile hostname/username/message can't forge
     terminal output (tools/dlq_peek.py, docker logs) or inject a fake extra
     log line downstream. Complements (does not replace) the dashboard's HTML
-    escaping, which covers browser DOM XSS, not terminal/log-sink injection."""
+    escaping, which covers browser DOM XSS, not terminal/log-sink injection.
+    A leaf of ``"*"`` triggers a full recursive strip of that subtree (the
+    ``unmapped.*`` wildcard)."""
     node = event
     for *path, leaf in (p for p in _FREE_TEXT_PATHS):
         cursor: Any = node
@@ -50,8 +81,26 @@ def _sanitize_free_text(event: dict) -> dict:
             cursor = cursor.get(key) if isinstance(cursor, dict) else None
             if cursor is None:
                 break
+        if cursor is None:
+            continue
+        if leaf == "*":
+            if isinstance(cursor, dict):
+                _sanitize_tree(cursor)
+            continue
         if isinstance(cursor, dict) and leaf in cursor:
-            cursor[leaf] = strip_ansi_and_control(cursor[leaf])
+            v = cursor[leaf]
+            if isinstance(v, (dict, list)):
+                # An explicit (non-wildcard) path whose value turned out to be
+                # a nested structure rather than a plain string -- e.g. a
+                # future/malformed producer putting a dict under
+                # api.request.data instead of the documented string. Recurse
+                # the same as the "*" wildcard rather than silently passing
+                # it through: strip_ansi_and_control() only sanitizes str and
+                # no-ops on dict/list, so without this a nested shape at an
+                # explicit path would reach downstream sinks unsanitized.
+                _sanitize_tree(v)
+            else:
+                cursor[leaf] = strip_ansi_and_control(v)
     return event
 
 

@@ -81,6 +81,71 @@ def test_normalize_one_sanitizes_message_from_real_parser():
     check("\x07" not in message, f"BEL byte survived into message: {message!r}")
 
 
+def test_sanitizes_unmapped_wildcard_any_prefix_any_depth():
+    """M1 gap fix: attacker-controlled content under unmapped.* (ANY prefix,
+    at ANY depth) and api.request.data must be stripped. Before the fix these
+    two shapes were not in _FREE_TEXT_PATHS, so a hostile value riding in
+    unmapped.mcp.* / unmapped.ot.* / unmapped.db.* reached downstream sinks
+    untouched. Now the ("unmapped", "*") wildcard strips every string leaf in
+    the whole subtree, and api.request.data is an explicit nested path."""
+    hostile = "\x1b[31m\x1b]52;c;ZXZpbA==\x07\x00\r\n"
+    event = {
+        "unmapped": {
+            "foo": {"bar": f"evil{hostile}red"},          # deep dict
+            "ot": {"node_id": "n\x1b]52;c;ZXZpbA==\x07x"},  # OSC clipboard-injection
+            "db": {"object": "a\r\nb"},                    # log-forging CRLF
+            "deep": {"a": {"b": {"c": "y\x00z"}}},         # arbitrarily deep
+            "flat_list": ["x\x1b[31m", "plain"],           # list of strings
+            "count": 7,                                     # non-string leaf
+        },
+        "api": {"request": {"data": f"body{hostile}inject"}},
+    }
+    ws2._sanitize_free_text(event)
+    check(event["unmapped"]["foo"]["bar"] == "evilred",
+          f"unmapped.foo.bar not stripped: {event['unmapped']['foo']['bar']!r}")
+    check(event["unmapped"]["ot"]["node_id"] == "nx",
+          f"unmapped.ot.node_id OSC not stripped: {event['unmapped']['ot']['node_id']!r}")
+    check(event["unmapped"]["db"]["object"] == "ab",
+          f"unmapped.db.object CRLF not stripped: {event['unmapped']['db']['object']!r}")
+    check(event["unmapped"]["deep"]["a"]["b"]["c"] == "yz",
+          "unmapped arbitrarily-deep content not stripped: "
+          f"{event['unmapped']['deep']['a']['b']['c']!r}")
+    check(event["unmapped"]["flat_list"] == ["x", "plain"],
+          f"unmapped list-of-strings not stripped: {event['unmapped']['flat_list']!r}")
+    check(event["api"]["request"]["data"] == "bodyinject",
+          f"api.request.data not stripped: {event['api']['request']['data']!r}")
+    # Non-string leaves must survive untouched (same contract as strip_ansi_and_control).
+    check(event["unmapped"]["count"] == 7,
+          f"non-string leaf got mutated: {event['unmapped']['count']!r}")
+
+
+def test_unmapped_wildcard_missing_subtree_is_noop():
+    """A payload with no unmapped/api.request.data must pass through cleanly --
+    the wildcard must not KeyError or corrupt a normal event."""
+    event = {"message": "hello\x1b[31m", "src_endpoint": {"hostname": "h\x00st"}}
+    out = ws2._sanitize_free_text(event)
+    check(out["message"] == "hello", f"message not stripped: {out['message']!r}")
+    check(out["src_endpoint"]["hostname"] == "hst",
+          f"hostname not stripped: {out['src_endpoint']['hostname']!r}")
+
+
+def test_explicit_path_with_nested_value_recurses_instead_of_passthrough():
+    """api.request.data is documented as a string, but strip_ansi_and_control()
+    silently no-ops on non-str input -- so if a producer ever puts a dict/list
+    there instead (malformed shape, or a future producer), the OLD code path
+    (`cursor[leaf] = strip_ansi_and_control(cursor[leaf])`) would leave hostile
+    content in a nested dict/list completely unsanitized. Any explicit path
+    whose value is a dict/list must recurse the same as the "*" wildcard."""
+    hostile = "\x1b[31mx\x07"
+    event = {"api": {"request": {"data": {"body": f"evil{hostile}", "n": 3}}}}
+    ws2._sanitize_free_text(event)
+    check(event["api"]["request"]["data"]["body"] == "evilx",
+          f"nested dict at an explicit path not sanitized: {event['api']['request']['data']!r}")
+    check(event["api"]["request"]["data"]["n"] == 3,
+          f"non-string leaf under a nested explicit-path value got mutated: "
+          f"{event['api']['request']['data']!r}")
+
+
 def main():
     test_strips_csi_ansi()
     test_strips_osc_ansi_terminated_by_bel()
@@ -89,6 +154,9 @@ def main():
     test_log_forging_newline_removed()
     test_non_string_passthrough()
     test_normalize_one_sanitizes_message_from_real_parser()
+    test_sanitizes_unmapped_wildcard_any_prefix_any_depth()
+    test_unmapped_wildcard_missing_subtree_is_noop()
+    test_explicit_path_with_nested_value_recurses_instead_of_passthrough()
 
     if FAILS:
         print(f"\n[FAIL] sanitize: {len(FAILS)} problem(s)")

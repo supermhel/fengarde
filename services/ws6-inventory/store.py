@@ -26,6 +26,17 @@ import sqlite3
 import sys
 import threading
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+# Make `shared` resolvable regardless of how store.py is imported (the
+# service entrypoints and test harnesses set sys.path inconsistently).
+_SERVICES_DIR = Path(__file__).resolve().parent.parent
+if str(_SERVICES_DIR) not in sys.path:
+    sys.path.insert(0, str(_SERVICES_DIR))
+
+from shared.log import get_logger  # noqa: E402
+
+_log = get_logger("ws6-inventory")
 
 # Mirrors shared.envelope.valid_tenant_id's pattern exactly (lowercase
 # alnum/hyphen, 1-63 chars, no leading/trailing hyphen) without importing
@@ -79,25 +90,22 @@ def _baseline_seconds() -> int:
     try:
         value = int(raw)
     except (TypeError, ValueError):
-        print(
-            f"[warn] INVENTORY_BASELINE_SECONDS={raw!r} is not an integer; "
-            f"using default {_BASELINE_SECONDS_DEFAULT}s",
-            file=sys.stderr,
+        _log.warn(
+            f"INVENTORY_BASELINE_SECONDS={raw!r} is not an integer; "
+            f"using default {_BASELINE_SECONDS_DEFAULT}s"
         )
         return _BASELINE_SECONDS_DEFAULT
     if value < 0:
-        print(
-            f"[warn] INVENTORY_BASELINE_SECONDS={value} is negative; "
-            f"treating as 0 (no baseline window)",
-            file=sys.stderr,
+        _log.warn(
+            f"INVENTORY_BASELINE_SECONDS={value} is negative; "
+            f"treating as 0 (no baseline window)"
         )
         return 0
     if value > _BASELINE_SECONDS_MAX:
-        print(
-            f"[warn] INVENTORY_BASELINE_SECONDS={value} exceeds the "
+        _log.warn(
+            f"INVENTORY_BASELINE_SECONDS={value} exceeds the "
             f"{_BASELINE_SECONDS_MAX}s cap; clamping. A longer window would "
-            f"suppress new-device detection indistinguishably from silence.",
-            file=sys.stderr,
+            f"suppress new-device detection indistinguishably from silence."
         )
         return _BASELINE_SECONDS_MAX
     return value

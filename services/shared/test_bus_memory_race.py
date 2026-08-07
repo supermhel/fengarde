@@ -22,6 +22,7 @@ from __future__ import annotations
 import sys
 import threading
 import time
+from collections import Counter
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -45,6 +46,62 @@ class SlowInt(int):
     def __add__(self, other):
         time.sleep(0.05)
         return SlowInt(int(self) + other)
+
+
+def run_consume_concurrency():
+    """L2 (Task H): _MemoryBus.consume()'s check-and-pop was NOT atomic. Two
+    concurrent consumers could both pass the `while q:` check before either
+    popped, then double-deliver the last message (or IndexError on an emptied
+    deque), and a consumer could interleave with a concurrent produce(). Fix:
+    consume() snapshots-and-clears under _seq_lock so 'is there a message?' +
+    'pop it' is a single atomic step.
+
+    All M messages are produced before any consumer thread starts, so with the
+    fix in place whichever consumer wins the `_seq_lock` race takes the ENTIRE
+    batch in one snapshot-and-clear and every other consumer sees an empty
+    queue -- the split across N threads is all-or-nothing per consume() call,
+    not one-message-each. The assertions therefore don't lean on any
+    particular split between threads, only on the aggregate: every message
+    delivered exactly once, none dropped, none duplicated, regardless of which
+    thread(s) happened to win. N > M just gives the lock genuine contention
+    (many threads racing to claim a batch, not just two). Under the pre-fix
+    unlocked `while q: popleft()`, N>1 consumers draining the SAME queue
+    concurrently reliably double-popleft (IndexError / double delivery) before
+    it empties, so this test goes red there and green here.
+    """
+    N = 64  # concurrent consumers
+    M = 64  # produced messages
+    bus = _MemoryBus()
+    for m in range(M):
+        bus.produce("ct", key=None, payload={"m": m})
+
+    results: list[int] = []
+    results_lock = threading.Lock()
+
+    def consumer():
+        for msg in bus.consume("ct"):
+            with results_lock:
+                results.append(msg.payload["m"])
+
+    threads = [threading.Thread(target=consumer) for _ in range(N)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=10)
+
+    check(bus.depth("ct") == 0,
+          f"bus depth should be 0 after all consumers finish, got "
+          f"{bus.depth('ct')} (unconsumed messages left on the bus)")
+    check(len(results) == M,
+          f"expected exactly M={M} total messages consumed, got {len(results)} "
+          f"(duplicates, drops, or stray yields on a drained bus)")
+    counts = Counter(results)
+    missing = [m for m in range(M) if counts.get(m, 0) == 0]
+    dupes = {m: c for m, c in counts.items() if c > 1}
+    check(not missing,
+          f"messages dropped by concurrent consumers: {missing}")
+    check(not dupes,
+          f"messages consumed MORE than once by concurrent consumers: {dupes}")
 
 
 def run():
@@ -73,12 +130,14 @@ def run():
 
 def main():
     run()
+    run_consume_concurrency()
     if FAILS:
         print(f"[FAIL] bus memory race: {len(FAILS)} problem(s)")
         for f in FAILS:
             print("   -", f)
         sys.exit(1)
-    print("[OK] _MemoryBus.produce() is race-free under a forced concurrent-writer interleaving")
+    print("[OK] _MemoryBus.produce() and consume() are race-free under forced "
+          "concurrent interleavings")
 
 
 if __name__ == "__main__":

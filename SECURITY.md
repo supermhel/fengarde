@@ -289,10 +289,23 @@ The following are **known** and **deferred** to later releases:
   a reverse-proxy TLS example — documented, not built-in).
 - Hardened, production-grade OpenSearch security configuration (§1 — the
   security plugin stays disabled; mitigation is the network boundary only).
-- Multi-replica / HA deployment overall (Redis/OpenSearch single points of
-  failure; HA is design-only). The triage write path is multi-replica-safe via
-  optimistic concurrency (§7) and RBAC sessions are single-process only (§2) —
-  no other multi-replica behavior has been designed or tested.
+- Multi-replica / HA is opt-in, not the default deployment. Redis Sentinel
+  failover (`make ha-up`) is built and live-kill-tested (automatic promotion,
+  app-tier recovery with zero lost messages). 3-node OpenSearch HA ships in
+  the same compose profile and is now also live-kill-tested (2026-08-07,
+  `services/ws3-indexer/storage/test_opensearch_ha_failover_live.py`: brought
+  up the real 3-node cluster, `docker kill`'d `opensearch-1` directly,
+  confirmed the write path still succeeded via round-robin failover to a
+  surviving node, confirmed the cluster returned to `status: green` after
+  restarting the killed node). The triage write path is multi-replica-safe
+  via optimistic concurrency (§7) and RBAC sessions are single-process only
+  unless `FENGARDE_SESSION_BACKEND=redis` (§2).
+  **`services/ws1-collectors`'s UDP syslog listener has no active/passive pair
+  and is a genuine single point of failure with no HA option today** — unlike
+  Redis/OpenSearch, this component has no opt-in profile to mitigate it; a
+  deployment where ingestion availability matters needs its own
+  network-level redundancy (e.g. two listeners behind a load balancer) until
+  this is addressed upstream.
 - AI-triage prompt-injection guardrails. The AI service calls a local LLM; its
   verdict is advisory and enum-constrained (see threat-boundary §6), but robust
   prompt-injection defenses are still deferred.

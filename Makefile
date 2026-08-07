@@ -95,6 +95,7 @@ test-live:
 	@BUS_BACKEND=redis $(PYTHON) services/shared/test_bus_lag.py
 	@BUS_BACKEND=redis $(PYTHON) services/shared/test_bus_read_count.py
 	@$(PYTHON) services/ws3-indexer/storage/test_opensearch_live.py
+	@$(PYTHON) services/ws3-indexer/storage/test_opensearch_ha_failover_live.py
 	@SESSION_TEST_REDIS=1 $(PYTHON) services/shared/test_sessions.py
 
 # P3-2 (2026-07-21 audit fix plan) -- declared ATT&CK/ATLAS coverage

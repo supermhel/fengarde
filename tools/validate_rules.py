@@ -46,7 +46,7 @@ from engine import (  # noqa: E402
 _UUID_RE = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
                       r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
 _LEVELS = {"informational", "low", "medium", "high", "critical"}
-_SECTORS = {"common", "bank", "dc", "datacenter"}
+_SECTORS = {"common", "bank", "datacenter"}
 _KNOWN_OPS = set(_NUMERIC_OPS) | {"not_in", "outside_hours", "in", "contains", "glob"}
 # C3: optional MITRE tagging. Enterprise ATT&CK ("Txxxx"/"Txxxx.xxx", "TAxxxx"),
 # ATT&CK for ICS (same shape, different id space, OT rules), and ATLAS

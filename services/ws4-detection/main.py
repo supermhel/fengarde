@@ -417,11 +417,25 @@ def main():
     # matches the pre-existing load-once-at-startup behavior byte-for-byte.
     reload_interval = float(os.getenv("RULES_RELOAD_INTERVAL_S", "0"))
     reload_thread = start_rule_reload_watcher(detector, shutdown, reload_interval)
+    # Task M / Finding F4 (2026-08-07): one flooding tenant's messages used to
+    # sit ahead of every other tenant's in this single serial consume loop,
+    # degrading their detection latency in lockstep with the flood. Default
+    # ON: for the common single-tenant case this degenerates to plain FIFO
+    # (see fairness.py's docstring), so it's behavior-preserving there and a
+    # real fix for the multi-tenant case. FENGARDE_TENANT_FAIR_CONSUME=0 opts
+    # back out to the raw bus if ever needed.
+    bus_factory = Bus
+    if os.getenv("FENGARDE_TENANT_FAIR_CONSUME", "1").strip().lower() not in ("0", "false", "no"):
+        from shared.fairness import FairConsumeBus, default_tenant_key
+
+        def bus_factory():
+            return FairConsumeBus(Bus(), tenant_key_fn=default_tenant_key)
     try:
         serve({"normalized.events": ("cg-detect", handler)},
               health_port=int(os.getenv("PORT", "8004")),
               service_name="ws4-detection", shutdown=shutdown,
-              metrics_provider=detector.rule_health_metrics)
+              metrics_provider=detector.rule_health_metrics,
+              bus_factory=bus_factory)
     finally:
         if watchdog is not None:
             watchdog.join(timeout=5)
