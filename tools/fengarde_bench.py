@@ -93,15 +93,30 @@ def _generic(ip: str, seq: int, base_s: int) -> dict:
 
 
 def generate_events(n: int, mixed: bool) -> list[dict]:
-    base_s = int(time.time())
+    # 2026-08-07: `meta.received_at` becomes the event's `time` (see
+    # linux_ssh.py::_time_ms and its siblings), and engine.py's window-
+    # poisoning guard fail-closes any event more than _MAX_CLOCK_SKEW_MS
+    # (5 minutes) in the future. The old `base_s + i` layout marched every
+    # event FORWARD from "now" as `i` grew, so past i~300 every event in a
+    # run was silently dropped from driving stateful windows -- flooding
+    # stdout with one WARN per stateful rule per affected event and making
+    # the timed section massively slower (observed ~9x on a 20k run), not
+    # a real per-event processing cost. Same bug class already fixed in
+    # eval/attack/fire_check.py and tools/chaos_test.py: lay events out in
+    # the PAST relative to `base_s`, never the future, regardless of `n`.
+    # Each helper computes `received_at = base_s + seq` internally, so passing
+    # a constant `base_s - n` here (not a per-event value) makes that internal
+    # `+ seq` land exactly on `base_s - n + i` for every event -- max is
+    # `base_s - 1` (i = n-1), always in the past, regardless of `n`.
+    run_base = int(time.time()) - n
     events = []
     for i in range(n):
         ip = f"198.51.100.{(i % 250) + 1}"
         if not mixed:
-            events.append(_ssh_fail(ip, i, base_s))
+            events.append(_ssh_fail(ip, i, run_base))
         else:
             gen = (_ssh_fail, _asa_deny, _generic)[i % 3]
-            events.append(gen(ip, i, base_s))
+            events.append(gen(ip, i, run_base))
     return events
 
 

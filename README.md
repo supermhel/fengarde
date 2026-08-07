@@ -103,12 +103,18 @@ make down                                 # stop the stack and remove volumes
 
 ---
 
-## What's real (v0.5.0 released — v0.4.0/v0.5.0 tags live on `main`)
+## What's real (on `main` today — last tagged release is v0.5.0)
 
 FENGARDE ships a **working detection pipeline**. We are deliberate about what is
 real versus what is planned — this is a security tool, so accuracy matters more than
-a long feature list. See [SSOT.md](SSOT.md) for the authoritative, continuously
-updated status — this table is a snapshot, that file is the source of truth.
+a long feature list. This table describes the current tip of `main`, not just the
+last tag: v0.5.0 (`v0.4.0`/`v0.5.0` tags both live) shipped 2026-07-23, and real,
+tested work has landed on `main` since without a new tag of its own (most recently
+the per-tenant fairness fix and live-kill-tested OpenSearch HA, merged today) — if
+you need a pinned, tagged release rather than the moving tip, use `v0.5.0` and
+expect it to be missing anything below dated after 2026-07-23. See
+[SSOT.md](SSOT.md) for the authoritative, continuously updated status — this table
+is a snapshot, that file is the source of truth.
 
 | Capability | Status | Notes |
 |---|---|---|
@@ -140,6 +146,8 @@ updated status — this table is a snapshot, that file is the source of truth.
 | SNMP parser | 🚧 Planned | Deferred — [good first issue](CONTRIBUTING.md) |
 | NetFlow parser | 🚧 Planned | Deferred (binary format) |
 | Custom JSON parser | 🚧 Planned | Deferred |
+| Proxy / web-gateway parser | 🚧 Planned | DNS query log already ships (class 4002) — this is its HTTP-proxy sibling |
+| S7/PROFINET parser | 🚧 Deferred | Not a scope decision — the concrete vocabulary needed sits behind a Siemens support login this project doesn't have access to; see `docs/superpowers/specs/2026-07-21-s7-profinet-decision-gate.md` |
 
 > **No AI required.** The pipeline produces real alerts with zero infra and no LLM;
 > Ollama triage is an optional layer that degrades gracefully to a stub.
@@ -153,14 +161,30 @@ python tools/fengarde_bench.py --events 20000 --mixed
 ```
 
 One-command, reproducible by anyone with a clone — no Docker required. Measured
-2026-07-16 on a 4 vCPU / 15 GB sandbox host (not a fixed reference VPS, see caveat
-below):
+2026-08-07 on the same class of sandbox host as the original 2026-07-16 number
+(not a fixed reference VPS, see caveat below):
 
 | Metric | Value |
 |---|---|
-| Sustained EPS (5,000 events, `linux_ssh` only) | ~12,950 events/sec |
-| Sustained EPS (20,000 events, mixed `ssh`/`asa`/`generic_syslog`) | ~13,750 events/sec |
-| Peak resident memory (20,000-event run) | ~84 MB |
+| Sustained EPS (5,000 events, `linux_ssh` only) | ~570 events/sec |
+| Sustained EPS (20,000 events, mixed `ssh`/`asa`/`generic_syslog`) | ~1,300-1,600 events/sec |
+| Peak resident memory (20,000-event run) | ~100 MB |
+
+**Down from the 2026-07-16 numbers (~13,000 EPS) — two separate causes, not one:**
+(1) a real bug in the benchmark script itself: synthetic events were timestamped
+marching *forward* from "now" (`base_s + seq`), so past ~300 events every
+subsequent event tripped the engine's 5-minute future-event anti-poisoning
+guard, flooding stdout with one warning per stateful rule per event during the
+timed section — fixed 2026-08-07 (`tools/fengarde_bench.py`, same bug class
+already fixed once in `eval/attack/fire_check.py` and once in
+`tools/chaos_test.py`, never applied here). (2) even after that fix, real
+throughput is genuinely lower than 2026-07-16 — the code now does more work per
+event than it did then (a larger rule set, the A5 enrichment stage, the M1
+recursive log-injection sanitizer over `unmapped.*`, structured logging
+replacing bare `print()`), and nobody has re-profiled where the remaining cost
+actually goes. Read this as the current honest number, not a regression that's
+been root-caused down to a single line — if raw batch throughput matters for
+your deployment, treat ~1,500 EPS as today's real baseline, not ~13,000.
 
 **Read before citing these numbers anywhere:** this is a **zero-infra CPU-bound
 baseline** — one process, the in-memory bus, `MemoryStore` — measuring how fast
@@ -260,6 +284,8 @@ make ha-down  # stop the HA profile and remove its volumes
 | 8080 | `ws7-dashboard` | FENGARDE alert console |
 | 5514/udp | `ws1-collectors` | Live syslog ingestion (unauthenticated — trusted segment only) |
 | 8013 | `ws3-indexer` | Triage API — **internal only**, the dashboard proxies to it container-to-container; not published to the host |
+| 9090 | `prometheus` | Metrics scrape + query — **opt-in**, `observability` compose profile only (`docker compose --profile observability up`) |
+| 3000 | `grafana` | Dashboards over Prometheus — **opt-in**, same profile; ships with a default `admin`/`admin` credential, see `SECURITY.md` §1 |
 
 `make preflight` checks the published ports are free before you start.
 
@@ -293,7 +319,8 @@ Expected tail:
 
 ```
   ALERT: Authentication brute-force from single source src=203.0.113.5 score=70 id=...
-  T7 OK: replay reused alert_id ... -> deduped (alerts count stayed 2)
+  T7 OK: new window-overlapping event deduped via deterministic alert_id ... (alerts count stayed 2)
+  T7 OK: true identical-event replay reused alert_id ... -> deduped (alerts count stayed 2)
 [OK] FENGARDE v0.1 acceptance: SSH brute-force -> real alert in the index, idempotent under replay. Zero infra.
 ```
 
@@ -309,19 +336,23 @@ For the full Dockerized stack (collect → normalize → detect → index → da
 
 ```
 WS-1 Collectors ─raw.events─▶ WS-2 Normalization ─normalized.events─┬─▶ WS-3 Indexer ─▶ OpenSearch
-   (Cisco ASA / AD /          (parsers → OCSF)                      ├─▶ WS-6 Inventory (IP/MAC)
-    VMware / Linux SSH)                                             └─▶ WS-4 Detection ─scored.events─▶ WS-3
-                                                                          │  alerts ─▶ WS-3 / WS-7
-                                                                          └─ai.requests─▶ WS-5 AI (stub) ─▶ WS-3/WS-7
-WS-7 Dashboard ◀── WS-6 API + alerts
+   (Cisco ASA / AD /          (parsers → OCSF)                      └─▶ WS-4 Detection ─scored.events─▶ WS-3
+    VMware / Linux SSH)                                                  │  alerts ─▶ WS-3
+   ─assets.updates─▶ WS-6 Inventory (IP/MAC) ─raw.events─▶ (new device -> WS-2, feedback loop)
+                                                                          └─ai.requests─▶ WS-5 AI (real local
+                                                                                Ollama triage, stub fallback)
+                                                                                ─ai.results/alerts─▶ WS-3
+WS-7 Dashboard ◀── HTTP only (nginx → WS-3's triage/report/rules API + WS-6's inventory API), never the bus
 ```
 
-The **only** coupling between services is the message bus. Everything else is a frozen
-contract under [`contracts/`](contracts/). All source-format heterogeneity is absorbed
-at the edge (one parser per source in WS-2); the interior of the system handles a single
-schema (OCSF).
+The **only** coupling between backend services (WS-1 through WS-6) is the message bus —
+no service calls another's code or API directly. Everything else is a frozen contract
+under [`contracts/`](contracts/). All source-format heterogeneity is absorbed at the edge
+(one parser per source in WS-2); the interior of the system handles a single schema
+(OCSF). WS-7 is the one exception by necessity: it's a browser UI, so it reaches WS-3/WS-6
+over HTTP (via nginx) — it never touches the bus, and no backend service depends on it.
 
-| WS | Service | Role | v0.1 status |
+| WS | Service | Role | Status |
 |----|---------|------|-------------|
 | 1 | `services/ws1-collectors` | Collect logs → `raw.events` | ✅ |
 | 2 | `services/ws2-normalization` | Parsers → validated OCSF events | ✅ (17 parsers) |

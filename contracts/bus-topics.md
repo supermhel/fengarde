@@ -13,12 +13,24 @@ nothing here should be read as "Kafka already works."
 | Topic              | Producer        | Consumer(s)       | Payload                              | Partition key            |
 |--------------------|-----------------|-------------------|--------------------------------------|--------------------------|
 | `raw.events`       | WS-1 Collectors, WS-6 Inventory (M7 Track Y follow-up: a genuinely new device, `source_type=inventory_diff`) | WS-2 Normalization| `{source_type, raw, meta}`           | `src_endpoint.ip` (WS-1) / `mac` (WS-6) |
-| `normalized.events`| WS-2 Normalization | WS-3, WS-4, WS-6 | OCSF event (Contract A)              | `src_endpoint.ip`        |
-| `scored.events`    | WS-4 Detection  | WS-3, WS-5        | OCSF event + `siem.score`            | `src_endpoint.ip`        |
-| `ai.requests`      | WS-4 Detection  | WS-5 AI worker(s) | `{event_id, event, reason}`          | `event_id`               |
-| `ai.results`       | WS-5 AI         | WS-3, WS-7        | `{event_id, verdict, summary, level}`| `event_id`               |
-| `alerts`           | WS-4, WS-5      | WS-3, WS-7        | enriched alert                       | `alert_id`               |
-| `assets.updates`   | WS-1, WS-6      | WS-6 Inventory    | `{mac, ip, hostname, seen_at}`       | `mac`                    |
+| `normalized.events`| WS-2 Normalization | WS-3, WS-4       | OCSF event (Contract A)              | `src_endpoint.ip`        |
+| `scored.events`    | WS-4 Detection  | WS-3               | OCSF event + `siem.score`            | `src_endpoint.ip`        |
+| `ai.requests`      | WS-4 Detection  | WS-5 AI worker(s) | `{event_id, event, tier, reason}`    | `event_id`               |
+| `ai.results`       | WS-5 AI         | WS-3               | `{event_id, tier, verdict, summary, level, classification}` | `event_id` |
+| `alerts`           | WS-4, WS-5      | WS-3               | enriched alert                       | `alert_id`               |
+| `assets.updates`   | WS-1            | WS-6 Inventory    | `{mac, ip, hostname, seen_at}`       | `mac`                    |
+| `<topic>.deadletter` | any consumer (`services/shared/runner.py`'s generic redelivery-cap logic), plus `raw.events.deadletter` produced directly by WS-2 on unparseable input | operator (`tools/dlq_peek.py`) | `{topic, group, id, delivery_count, payload}` | inherits the original message's key |
+
+**WS-3 and WS-7 do not have the same bus relationship.** WS-3 (indexer) is the
+real consumer of `normalized.events`/`scored.events`/`ai.results`/`alerts` —
+it's the only service that persists them. WS-7 (dashboard) never touches the
+bus at all; it's a static UI that reads alert/rule/inventory data over HTTP via
+nginx proxies to WS-3's REST API (see `services/ws7-dashboard/INTERFACE.md`).
+An earlier version of this table listed WS-6 as a `normalized.events`/
+`assets.updates` producer-or-consumer beyond its actual `assets.updates`→
+`raw.events` role, and WS-5/WS-7 as `scored.events`/`ai.results`/`alerts`
+consumers they never were — corrected 2026-08-07 against the real
+`bus.produce`/`bus.consume` call sites, not assumed from an earlier draft.
 
 ## Envelope v1 (M1 correctness gate, additive)
 

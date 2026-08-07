@@ -78,6 +78,7 @@ this is now a rule gap, not a parser gap.
 | bank_mass_card_read | class 6005, activity 1, siem.sector=bank, distinct unmapped.db.object | yes (db_audit, object field added v0.5) | ATT&CK T1005 / TA0009 |
 | common_rapid_account_lifecycle | class 3003, activity in [1,4], group unmapped.target_user.name | yes (windows_eventlog 4720/4726) | ATT&CK T1136 / TA0003 |
 | common_beaconing | class 4001, activity 7, periodicity max_cv<=0.25 | yes (cisco_asa, existing producer; A3 periodicity primitive added v0.5) | ATT&CK T1071 / TA0011 |
+| ot_modbus_unauthorized_write | class 4001, unmapped.ot.anomaly_type=unauthorized_write | yes (modbus_anomaly, M7 OT expansion, 2026-07-22) | ATT&CK-ICS T0855 / TA0106 |
 
 **C3 rule (v0.5):** MITRE tagging is a SHAPE-checked, honest-effort mapping
 (`tools/validate_rules.py`'s `mitre` block), not a claim of MITRE endorsement --

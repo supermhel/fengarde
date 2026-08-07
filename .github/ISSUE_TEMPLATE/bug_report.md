@@ -7,10 +7,15 @@ assignees: ''
 ---
 
 <!--
-Before filing: FENGARDE v0.1 is the detection PIPELINE. The AI service (WS-5) is a
-documented passthrough stub and the 5 deferred parsers (generic syslog, SNMP,
-NetFlow, Windows Event Log, custom JSON) are NOT implemented in v0.1 — those are
-feature requests, not bugs. See the "What's real in v0.1" table in the README.
+Before filing: check the "What's real" table in the README (or SSOT.md for the
+full authoritative status) — most of the pipeline is real and working, so a
+mismatch there is usually a genuine bug, not an unimplemented feature. The
+only parsers still genuinely deferred are SNMP, NetFlow, custom JSON, a
+proxy/web-gateway parser, and S7/PROFINET (see README's Planned table) — a
+report about any of these five is a feature request, not a bug. WS-5 AI
+triage is real (local Ollama by default, with a documented stub fallback when
+OLLAMA_URL is unset/unreachable) — a wrong/missing verdict when Ollama is
+actually configured and reachable IS a bug.
 -->
 
 ## What happened

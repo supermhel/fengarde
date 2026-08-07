@@ -4,6 +4,16 @@
 - Topic `raw.events` (group `cg-normalize`) — `{source_type, raw, meta}`.
 - Contracts: A (OCSF schema), B (bus).
 
+## Pipeline
+- Parse (`source_type` → registered parser) → **enrich** (A5: additive-only
+  `src_endpoint.reputation` from a local IOC list, `src_endpoint.location` from a
+  local CIDR→country map; offline/air-gap-safe, fail-open) → **sanitize** (M1:
+  strip ANSI escapes/C0 control chars from every free-text field a parser may
+  have populated from raw content — `message`, `actor.user/process.name`,
+  `src_endpoint`/`dst_endpoint.hostname`, all of `unmapped.*` recursively at any
+  depth, `api.request.data` — defends the log-injection surface, not browser XSS)
+  → validate against Contract A → produce.
+
 ## Produces
 - Topic `normalized.events` — OCSF event (Contract A), partition key = `src_endpoint.ip`.
 - Topic `raw.events.deadletter` — unparseable/invalid inputs with errors.
@@ -30,6 +40,10 @@
 17 parsers total as of 2026-08-06 (this file previously undercounted at 15 — re-synced against `parsers/__init__.py`'s `_REGISTRY`).
 
 Adding a source = new module + one registry line. `type_uid` always derived.
+A parser can also ship as an external, installable Python package via the
+`fengarde.parsers` entry-point group (M4.5, `discover_plugin_parsers()`,
+`docs/plugin-development.md`) — no fork of this repo required; a plugin whose
+`SOURCE_TYPE` collides with a built-in parser is skipped, the built-in wins.
 
 ## Contract tests
 - `python test_contract.py`  (memory bus; validates every parser's output against the schema)

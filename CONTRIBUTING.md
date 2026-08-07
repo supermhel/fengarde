@@ -110,9 +110,10 @@ In short, for triage purposes:
 - A request to **improve the pipeline, a parser, a rule, the dashboard, AI
   triage, multi-tenancy, RBAC, or the report/NIS2 generator** → all in scope,
   very welcome; these are existing, working subsystems, not future milestones.
-- The three parsers listed as 🚧 Planned in the README (SNMP, NetFlow, custom
-  JSON) are the current deferred/"good first issue" set — check there for
-  what's actually still open before filing a duplicate.
+- The five parsers listed as 🚧 Planned/Deferred in the README (SNMP, NetFlow,
+  custom JSON, proxy/web-gateway, S7/PROFINET) are the current deferred/"good
+  first issue" set — check there for what's actually still open before filing
+  a duplicate.
 
 See [SSOT.md](SSOT.md) §3 for the full current doc index and each doc's trust
 level. The original v0.1 build plan is historical context only (it describes

@@ -1,9 +1,13 @@
 # Deployment: putting FENGARDE behind TLS
 
-FENGARDE itself does not terminate TLS anywhere (SECURITY.md §2: "no users,
-roles, or TLS" is the honest v0.4 auth scope). If analysts need to reach the
-dashboard from outside the machine it runs on, put a reverse proxy in front
-of it — this doc is that missing piece, documented rather than built, per
+FENGARDE itself does not terminate TLS anywhere. This is still true even
+though the rest of SECURITY.md §2's original v0.4 scope has moved well past
+"no users, roles" — real per-user accounts, roles, and RBAC shipped in M4.2
+(v0.6, `services/shared/users.py`/`rbac.py`) and MFA/audit-logging landed
+since. TLS specifically stayed out of scope the whole time: none of that
+identity work terminates TLS either, so if analysts need to reach the
+dashboard from outside the machine it runs on, a reverse proxy is still the
+answer — this doc is that missing piece, documented rather than built, per
 the standing "document, don't build TLS" scope decision.
 
 **This is a documentation-only addition.** Nothing in FENGARDE's own
