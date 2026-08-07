@@ -274,9 +274,14 @@ def make_alert(event, rule, score):
 def detect_one(bus, detector: "Detector", event: dict) -> None:
     """Process a single normalized event and emit its derived records.
 
-    Pulled out of run() so the same logic backs both the batch run() loop (tests)
-    and the shared-runner handler (daemon). Raises on any failure so the runner
-    leaves the message unacked for redelivery.
+    Backs the shared-runner handler (daemon). Raises on any failure so the
+    runner leaves the message unacked for redelivery.
+
+    **Not shared with run()**: despite the name, the batch run() loop below
+    does NOT call this -- it re-implements the identical scored/alert/funnel
+    logic as an independently-maintained inline copy. The two are in sync
+    today (including the FIX 22 dedup call); a fix applied to one is not
+    mechanically guaranteed to reach the other, so change both together.
     """
     event, matched, action = detector.process(event)
     key = (event.get("src_endpoint") or {}).get("ip", "0.0.0.0")

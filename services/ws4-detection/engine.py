@@ -53,9 +53,27 @@ _SERVICES_DIR = Path(__file__).resolve().parent.parent
 if str(_SERVICES_DIR) not in sys.path:
     sys.path.insert(0, str(_SERVICES_DIR))
 
+from shared.envelope import valid_tenant_id  # noqa: E402
 from shared.log import get_logger  # noqa: E402
 
 _log = get_logger("ws4-detection")
+_DEFAULT_TENANT = "default"
+
+
+def _event_tenant(event: dict) -> str:
+    """``siem.tenant``, falling back to ``_DEFAULT_TENANT`` on absent OR
+    invalid. `_namespaced_group()`'s length-prefix only defends `group`
+    against a colon-collision, not `tenant` -- its own docstring justifies
+    that by claiming tenant is "deployment-stamped, not per-event", but this
+    is exactly where it's read straight off the per-event `siem.tenant`
+    field, the same field every other tenant-trusting call site
+    (`tenants.py::tenant_of`/`load_disabled_rules`, `ws3-indexer/router.py`,
+    `ws3-indexer/rules_view.py`) validates via `valid_tenant_id()` before
+    use. Rejecting (not merely ignoring) a malformed tenant here closes the
+    same colon-collision class `_namespaced_group` was written to prevent,
+    just on the other side of the join."""
+    tenant = (event.get("siem") or {}).get("tenant") or _DEFAULT_TENANT
+    return tenant if valid_tenant_id(tenant) else _DEFAULT_TENANT
 
 # Sliding-window counters use the event's own ``time`` as "now" so historical
 # replay works on event-time. But log time is attacker-influenced (most parsers
@@ -604,7 +622,7 @@ class Rule:
             # left open here. Tenant-scoped storage (F3's separate
             # alerts-{tenant}-* indices) does NOT save us: the collision is on
             # the id used to look a doc up, not on where it's physically stored.
-            tenant = (event.get("siem") or {}).get("tenant") or "default"
+            tenant = _event_tenant(event)
             return f"{self.id}:{self._namespaced_group(tenant, group)}:{bucket}"
         # Non-stateful: prefer ingest_id (one alert per source event). When absent,
         # fall back to a content hash rather than a shared "noingest" constant --
@@ -623,7 +641,7 @@ class Rule:
         # tenant, matching the stateful branch's unconditional format (no
         # special-casing "default" -- consistency matters more than a few
         # bytes for the common single-tenant case).
-        tenant = (event.get("siem") or {}).get("tenant") or "default"
+        tenant = _event_tenant(event)
         ingest = (event.get("siem") or {}).get("ingest_id")
         if not ingest:
             ingest = "sha:" + _event_fingerprint(event)
@@ -730,7 +748,7 @@ class Rule:
         # a real isolation gap the M4.1 gate test didn't catch because it
         # used distinct source IPs per tenant. The counter returns the
         # in-window count after add.
-        tenant = (event.get("siem") or {}).get("tenant") or "default"
+        tenant = _event_tenant(event)
         window_key = f"{self.id}:{self._namespaced_group(tenant, group)}"
         window_ms = self.window_seconds * 1000
         if self.distinct_field:

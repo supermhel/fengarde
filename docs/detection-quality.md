@@ -38,7 +38,7 @@ have, which is the right stance for a small canary corpus.
 agreement. They say nothing about how often the engine detects real attacks in
 production, evades an actor, or trades false alarms against the org's actual
 tolerances. A perfect 1.0 here would only prove the engine matches our hand
-labels on ~12 events — a tiny, curated sample. That is a deliberate, bounded
+labels on 10 events — a tiny, curated sample. That is a deliberate, bounded
 claim. See [Honest caveats](#honest-caveats).
 
 ## How the labeled corpus is structured

@@ -53,6 +53,9 @@ class _LegacyAdapter(StorageAdapter):
                 return index, doc
         return None
 
+    def find_report(self, alert_id):  # pragma: no cover - trivial
+        return self.docs.get(("reports", f"{alert_id}:report"))
+
     def list_alerts(self, *, tenant_id=None, status=None, limit=50):  # pragma: no cover
         return []
 

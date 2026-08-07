@@ -44,9 +44,8 @@ with zero hits (`SSOT.md` §2, "Bus-only coupling" row).
 - **Trade-off:** contract changes (a new bus-topic field, a new required OCSF
   property) are a coordination point across every consumer of that topic —
   which is why bus-schema changes are explicitly gated behind human sign-off
-  in this project's standing guardrails (`CLAUDE.md` /
-  `docs/superpowers/specs/*-agent-execution*.md`), not something a single
-  service's PR can silently widen.
+  in this project's standing guardrails (`CLAUDE.md`), not something a
+  single service's PR can silently widen.
 - **Verification discipline this decision requires:** `tools/validate_contract.py`
   (Contract A, OCSF), `tools/validate_rules.py` (Contract D shape),
   `tools/check_rule_producers.py` (cross-workstream satisfiability) all exist

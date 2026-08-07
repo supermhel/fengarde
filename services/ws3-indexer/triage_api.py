@@ -769,8 +769,17 @@ def make_handler(store, users_db=None, sessions: SessionStore | None = None,
                 raise _BadRequest("invalid Content-Length")
             if length < 0:
                 raise _BadRequest("invalid Content-Length")
-            if length > 0:
-                self.rfile.read(min(length, _MAX_BODY_BYTES))
+            if length > _MAX_BODY_BYTES:
+                # Reading only _MAX_BODY_BYTES here would still leave
+                # length - _MAX_BODY_BYTES unread on the socket -- on a
+                # keep-alive connection those stray bytes get misparsed as
+                # the start of the next request. Closing the connection
+                # instead of trying to fully drain an oversized,
+                # attacker-sized body is the standard http.server escape
+                # hatch (same fix as _route_triage's sibling bug below).
+                self.close_connection = True
+            elif length > 0:
+                self.rfile.read(length)
             if not report_alert_id:
                 raise _BadRequest("alert_id required")
             session = self._require_role("analyst")  # report generation is a write action
@@ -820,6 +829,10 @@ def make_handler(store, users_db=None, sessions: SessionStore | None = None,
             if length < 0:
                 raise _BadRequest("invalid Content-Length")
             if length > _MAX_BODY_BYTES:
+                # Rejecting without reading leaves the body unread on the
+                # socket -- same keep-alive corruption risk as
+                # _route_report's sibling bug, closed the same way.
+                self.close_connection = True
                 raise _BadRequest("request body too large")
             try:
                 body = json.loads(self.rfile.read(length) or b"{}")

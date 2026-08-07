@@ -16,8 +16,10 @@
 - `/api/auth/` (M3 remainder) → WS-3's `/auth/{login,logout,me}`. Nginx injects
   `FENGARDE_API_KEY` server-side on the triage/report proxies — the browser
   never holds the key.
-- WS-6 inventory API (`GET /assets`, `/assets/{mac}`) — Contract C, via
-  `window.INVENTORY_API`; falls back to `mocks/mock_data.js` when unset.
+- WS-6 inventory API (`GET /assets`) — Contract C, via `window.INVENTORY_API`;
+  falls back to `mocks/mock_data.js` when unset. Fetches the full list and does
+  per-device lookup/filtering client-side; `/assets/{mac}` is a WS-6 contract
+  endpoint the dashboard doesn't currently call.
 
 ## Produces
 - Static single-file UI (`index.html`) served by nginx. No backend of its own.

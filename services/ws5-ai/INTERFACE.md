@@ -49,7 +49,7 @@
 - `python test_fix_llm_dedup.py`  (dedup cache: redelivery, bounded eviction, back-compat)
 
 ## Environment (read by `main.py` / `llm_adapter.py`)
-- `PORT` (default `8011`) — health/metrics listener port.
+- `PORT` (default `8005`) — health/metrics listener port.
 - `OLLAMA_URL` (default `http://localhost:11434`) — Ollama endpoint; unset/unreachable
   degrades to the documented passthrough `StubLLM` (zero infra).
 - `OLLAMA_MODEL` — model name to request from Ollama.

@@ -175,7 +175,7 @@ class OpenSearchStore(StorageAdapter):
         # round, byte-for-byte prior behavior). A connection-level failure
         # rotates to the next node so the writer keeps working when a node
         # goes down (instead of pinning to opensearch-1 until the app restarts).
-        max_attempts = len(self._nodes) * 2  # *2: retry the same node once before rotating, mirroring P1-4's rebuild
+        max_attempts = len(self._nodes) * 2  # *2: a full extra lap after every node has been tried once, mirroring P1-4's rebuild
         for attempt in range(max_attempts):
             conn = self._connection()
             try:
@@ -207,7 +207,15 @@ class OpenSearchStore(StorageAdapter):
         Returns ``{"indexed": n, "errors": [...]}``; a per-item failure
         inside the bulk response does not fail the whole call (matches
         `_bulk`'s own semantics: partial success is normal), but is
-        collected in ``errors`` for the caller to inspect/retry."""
+        collected in ``errors`` for the caller to inspect/retry.
+
+        **FIX H6 scope note**: unlike ``_request()``/``index()``, a
+        connection-level failure here only resets and retries the SAME node
+        (``self._reset_connection()``, one retry) -- it does not rotate
+        through ``self._nodes`` the way the live-daemon write path does.
+        Currently harmless (only the batch/tooling path calls this, never
+        ``main.py``'s daemon loop), but multi-node failover is NOT covered
+        here if a caller is ever added that needs it."""
         if not items:
             return {"indexed": 0, "errors": []}
         lines = []

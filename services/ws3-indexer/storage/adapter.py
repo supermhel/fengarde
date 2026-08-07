@@ -55,6 +55,15 @@ class StorageAdapter(abc.ABC):
         this, so every adapter must provide it.
         """
 
+    @abc.abstractmethod
+    def find_report(self, alert_id: str) -> dict | None:
+        """Locate a report doc (``report_id == f"{alert_id}:report"``) across
+        all daily ``reports-*`` indices. Mirrors :meth:`find_alert`'s lookup
+        shape. ``triage_api.py``'s report-GET route calls this unconditionally,
+        so every adapter must provide it -- there is no legacy-adapter default
+        the way CAS below has one, since a report-less adapter can't degrade
+        to a sane fallback."""
+
     # -- optimistic concurrency (C1 triage read-modify-write) ---------------
     #
     # The triage API mutates an EXISTING alert doc (find -> merge -> write).
@@ -100,14 +109,17 @@ class StorageAdapter(abc.ABC):
 
     @abc.abstractmethod
     def list_alerts(self, *, tenant_id: str | None = None,
-                     status: str | None = None, limit: int = 50) -> list[dict]:
+                     status: str | None = None, limit: int = 50,
+                     actor: str | None = None, src_ip: str | None = None) -> list[dict]:
         """Newest-first alert documents, optionally filtered by
         ``tenant_id`` (exact match on the alert's own ``tenant_id`` field)
         and/or ``triage.status`` (documents with no triage default to
         ``"new"``). ``tenant_id=None`` means "every tenant" -- callers
         enforcing RBAC must pass the caller's own tenant, never trust a
         client-supplied ``None``. ``limit`` is the caller's responsibility
-        to clamp to a sane bound before calling."""
+        to clamp to a sane bound before calling. ``actor``/``src_ip`` are
+        optional manual-correlation filters (Design-C) -- exact match on the
+        alert's contributing-event actor username / source IP, when given."""
 
     @abc.abstractmethod
     def list_events(self, *, family: str | None = None, tenant_id: str | None = None,

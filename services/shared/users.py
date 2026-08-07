@@ -56,6 +56,17 @@ def hash_password(password: str) -> str:
     return f"scrypt${salt.hex()}${dk.hex()}"
 
 
+# Fixed decoy hash for the unknown-username timing defense in verify_login().
+# Computed once at import time (one scrypt call, not two) so the "unknown
+# username" path costs exactly one hash_password + one verify_password call --
+# the same as the "known username, wrong password" path. A per-call
+# hash_password("decoy") would run scrypt twice (once to build the decoy hash,
+# once inside verify_password to check it), making the unknown-username path
+# ~2x slower than the wrong-password path and reopening the enumeration
+# side-channel this is meant to close.
+_DECOY_HASH = hash_password("decoy")
+
+
 def verify_password(password: str, stored: str) -> bool:
     """Constant-time-compare verify. Any malformed `stored` value (wrong
     algo tag, bad hex, etc.) fails closed to False, never raises -- a
@@ -157,10 +168,11 @@ class UserStore:
         response, an enumeration side channel)."""
         row = self.get_user(username)
         if row is None:
-            # Still run a scrypt hash so a nonexistent-username request takes
+            # Still run a scrypt verify so a nonexistent-username request takes
             # roughly the same wall-clock time as a real one (timing-based
-            # username enumeration defense).
-            verify_password(password, hash_password("decoy"))
+            # username enumeration defense) -- one scrypt op, matching the
+            # wrong-password path's cost exactly (see _DECOY_HASH above).
+            verify_password(password, _DECOY_HASH)
             return None
         if not verify_password(password, row["password_hash"]):
             return None
