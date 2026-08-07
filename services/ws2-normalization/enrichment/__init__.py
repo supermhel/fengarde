@@ -27,9 +27,34 @@ from typing import Optional
 
 import yaml
 
-_ROOT = Path(__file__).resolve().parents[3]
-_DEFAULT_IOC = _ROOT / "contracts" / "enrichment" / "ioc.yml"
-_DEFAULT_GEOIP = _ROOT / "contracts" / "enrichment" / "geoip.yml"
+
+def _contracts_dir() -> Path:
+    """Probe candidate bases rather than trust a fixed `parents[N]` depth.
+
+    2026-08-07: `parents[3]` assumed this module always sits 4 levels below
+    the repo root, true for a local checkout (repo/services/ws2-normalization/
+    enrichment/__init__.py) but NOT for the built image -- the Dockerfile
+    `COPY`s `services/ws2-normalization` straight to `/app/ws2-normalization`
+    (dropping the `services/` prefix) and `contracts` to `/app/contracts`, so
+    in the container this module is only 3 levels below `/`, `parents[3]`
+    lands on `/`, and every IOC/geo lookup path silently pointed at
+    `/contracts/...` (which doesn't exist) instead of `/app/contracts/...`.
+    The fail-open contract this module already deliberately has (see the
+    module docstring) meant this was never an error, just a silently
+    always-empty enrichment stage in every deployed image -- identical bug
+    class already found and fixed once in ws3-indexer's `rules_view.py`/
+    `webhooks.py` (SSOT.md), same dual-path-probe fix applied here.
+    """
+    here = Path(__file__).resolve()
+    for base in (here.parents[3], here.parents[2]):
+        if (base / "contracts" / "enrichment" / "ioc.yml").exists():
+            return base / "contracts"
+    return here.parents[3] / "contracts"
+
+
+_CONTRACTS = _contracts_dir()
+_DEFAULT_IOC = _CONTRACTS / "enrichment" / "ioc.yml"
+_DEFAULT_GEOIP = _CONTRACTS / "enrichment" / "geoip.yml"
 
 
 def _load_entries(path: Path) -> list[dict]:

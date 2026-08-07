@@ -74,5 +74,15 @@
 ## Contract tests
 - `python test_contract.py`  (memory bus; rule firing + stateful thresholds + funnel)
 
+## Environment (read by `main.py` / `engine.py` / `window.py`)
+- `PORT` (default `8010`) — health/metrics listener port.
+- `BUS_BACKEND` / `REDIS_URL` / `REDIS_PASSWORD` / `REDIS_SENTINEL_HOSTS` /
+  `REDIS_SENTINEL_MASTER` — bus backend (memory / redis / redis-sentinel).
+- `FENGARDE_TENANT_FAIR_CONSUME` (`1`/`true`) — opt-in per-tenant fair consume
+  ordering (PR #55; default FIFO otherwise).
+- `RULES_RELOAD_INTERVAL_S` (default `0` = off) — opt-in rule hot-reload poll
+  interval (mtime-poll + atomic swap, B4).
+- `DETECTION_OUTPUT_DEPTH_WARN` — warn threshold for over-deep nested output.
+
 ## Run locally
 - `python main.py`

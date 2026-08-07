@@ -327,6 +327,8 @@ release line only.
 
 | Version | Supported |
 |---------|-----------|
-| `main` (unreleased work past v0.3.0) | ✅ |
-| v0.3.0 (latest tag) | ✅ |
+| `main` (unreleased work) | ✅ |
+| v0.5.0 (latest tag) | ✅ |
+| v0.4.0 | ✅ |
+| v0.3.0 | ❌ (superseded; upgrade to v0.5.0) |
 | < v0.3.0 | ❌ |

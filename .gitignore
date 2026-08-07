@@ -82,3 +82,10 @@ docs/posts/*
 
 # E1 audit-log runtime data (append-only JSONL, never committed)
 audit*.jsonl
+
+# Agent / editor / local scratch (not project artifacts)
+.hermes/
+.obsidian/
+.worktrees/
+graphify-out/
+IDEA.md

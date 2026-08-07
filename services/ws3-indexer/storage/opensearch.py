@@ -299,8 +299,10 @@ class OpenSearchStore(StorageAdapter):
     # if_seq_no/if_primary_term, and OpenSearch rejects a stale write with 409
     # so the caller re-reads and retries. That closes the cross-replica lost-
     # update window a process lock cannot. The CAS wire format is unit-tested
-    # against a fake transport (test_storage_cas.py); like the rest of this
-    # skeleton module it has not been exercised against a LIVE OpenSearch yet.
+    # against a fake transport (test_storage_cas.py), and the real 409 is
+    # live-verified against an actual cluster by
+    # storage/test_opensearch_live.py::_test_cas_conflict_on_stale_version
+    # (`make test-live`).
     def _search_alert(self, alert_id: str) -> dict | None:
         body = {"size": 1, "query": {"term": {"_id": alert_id}},
                 "seq_no_primary_term": True}
@@ -382,9 +384,9 @@ class OpenSearchStore(StorageAdapter):
         return True
 
     # -- M4.3 versioned REST API: bounded list/browse -----------------------
-    # Same "not yet exercised against a live cluster" caveat as the rest of
-    # this skeleton module -- the request shape is correct, but the offline
-    # contract tests exercise MemoryStore.list_alerts/list_events instead.
+    # The offline contract tests exercise MemoryStore.list_alerts/list_events;
+    # the OpenSearch request shape is verified against a real cluster by
+    # storage/test_opensearch_live.py where relevant (`make test-live`).
     def _list(self, index_pattern: str, term_filters: dict, limit: int) -> list[dict]:
         must = [{"term": {k: v}} for k, v in term_filters.items() if v is not None]
         body = {

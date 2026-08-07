@@ -1,6 +1,6 @@
 {
   "policy": {
-    "description": "FENGARDE retention: data-center events, force_merge at 7 days, delete 90 days after index creation. Age-based only (daily date-suffixed indices, no write alias -- see ism-events-30d.json).",
+    "description": "FENGARDE retention: data-center events, force_merge at 7 days, delete 90 days after index creation. Age-based only (daily date-suffixed indices, no write alias -- see ism-events-common-90d.json).",
     "default_state": "hot",
     "states": [
       {

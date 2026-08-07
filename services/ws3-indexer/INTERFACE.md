@@ -57,6 +57,25 @@
   CI's `redis-integration`-adjacent live lane).
 - Idempotent on `siem.ingest_id` / `alert_id` (at-least-once delivery).
 
+## Environment (read by `main.py` / `triage_api.py` / `audit.py` / `reporting.py`)
+- `TRIAGE_PORT` (default `8013`) — HTTP listener port.
+- `PORT` — alias read by the runner for the health/metrics listener host/port
+  wiring (see `shared/runner.py`).
+- `OPENSEARCH_URL` — storage endpoint (else `http://localhost:9200`); may be a
+  comma-separated node list (multi-node write failover, FIX H6).
+- `BUS_BACKEND` / `REDIS_URL` / `REDIS_PASSWORD` / `REDIS_SENTINEL_HOSTS` /
+  `REDIS_SENTINEL_MASTER` — bus backend (memory / redis / redis-sentinel).
+- `FENGARDE_API_KEY`, `FENGARDE_REQUIRE_AUTH`, `FENGARDE_RBAC_DB`,
+  `FENGARDE_ADMIN_PASSWORD` — auth (see SECURITY.md §2).
+- `FENGARDE_SESSION_BACKEND` (memory|redis) and `FENGARDE_SESSION_SECRET`
+  (required non-empty for the redis session backend — signing).
+- `STREAM_REAP_INTERVAL_S` — acked-stream reaper cadence.
+- `REPORT_BACKEND` (template|http), `REPORT_BACKEND_TIMEOUT`,
+  `FENGARDE_SEC_REPORT_URL` — incident-report backend seam (`reporting.py`).
+- `RATE_LIMIT_REQUESTS_PER_MIN` (default off / ≤0) — per-IP request rate cap.
+- `FENGARDE_AUDIT_LOG` and `FENGARDE_AUDIT_LOG_MAX_ENTRIES` — audit JSONL path /
+  capacity cap (`audit.py`; fail-open, never breaks a request).
+
 ## Contract tests
 - `python test_contract.py`  (MemoryStore; routing + idempotency)
 

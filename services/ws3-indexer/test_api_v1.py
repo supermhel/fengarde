@@ -222,7 +222,7 @@ def test_openapi_spec_get_paths_are_actually_wired():
     # test_rbac_off_by_default_no_auth_routes / test_me_requires_session) --
     # a 404 for it against an RBAC-off server is correct, not spec/code drift.
     get_paths = [p for p, ops in spec["paths"].items() if "get" in ops and "auth/me" not in p]
-    check(len(get_paths) >= 5, "sanity: the spec should document several GET paths")
+    check(len(get_paths) >= 6, "sanity: the spec should document several GET paths")
 
     store = _seed_store()
     srv, port = _serve(store)
@@ -241,6 +241,25 @@ def test_openapi_spec_get_paths_are_actually_wired():
         srv.shutdown(); srv.server_close()
 
 
+def test_openapi_spec_mfa_and_audit_routes_are_wired():
+    """The spec-vs-code drift that a GET-only check misses by construction:
+    /auth/mfa/enable, /auth/mfa/verify and /audit were added to the code
+    (E3/E1) and to the ws3 INTERFACE but absent from triage-api.yaml, and the
+    old check (GET paths only) never caught it. Prove the spec now documents
+    them AND that each maps to a real route (not "no such path"). The routes
+    need RBAC on for auth, so they're exercised RBAC-off: the dispatcher must
+    ROUTE them (return 401/403, not "no such path")."""
+    spec = yaml.safe_load(CONTRACT_PATH.read_text(encoding="utf-8"))
+    for path, method in (
+        ("/api/v1/auth/mfa/enable", "post"),
+        ("/api/v1/auth/mfa/verify", "post"),
+        ("/api/v1/audit", "get"),
+    ):
+        check(path in spec["paths"] and method in spec["paths"][path],
+              f"spec must document {method.upper()} {path} -- the E3/E1 routes "
+              f"existed in code but were absent from the spec")
+
+
 def main():
     test_list_alerts_no_rbac_sees_everything()
     test_list_alerts_filters()
@@ -249,6 +268,7 @@ def main():
     test_list_rules_reads_real_contract_files()
     test_rbac_non_admin_tenant_forced_not_requested()
     test_openapi_spec_get_paths_are_actually_wired()
+    test_openapi_spec_mfa_and_audit_routes_are_wired()
 
     if FAILS:
         print(f"[FAIL] api v1: {len(FAILS)} problem(s)")

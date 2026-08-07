@@ -197,11 +197,11 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(400, {"error": "mac required"})
             # M7 Track Y: an alertable first-ever sighting for this tenant.
             # Additive field -- existing callers that ignore it are unaffected.
-            # This is the SIGNAL only; nothing publishes it to `raw.events`
-            # yet, because WS-6 is deliberately stdlib-only (see
-            # requirements.txt: the redis dep for the bus is documented and
-            # intentionally deferred). Until that lands, the
-            # `ot_new_device_on_segment` rule has no live producer.
+            # This is the SIGNAL on this response; the durable new-device
+            # notification is published to `raw.events` by `bus_consumer.py`
+            # (which consumes `assets.updates` and republishes in the shape
+            # the `inventory_diff` parser expects) when `BUS_BACKEND` wiring is
+            # present -- see SSOT.md's M7 Track Y rows for the transport path.
             return self._send(200, {**asset, "new_device": is_new_device})
         return self._send(404, {"error": "no such path"})
 
