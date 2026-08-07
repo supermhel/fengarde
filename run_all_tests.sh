@@ -338,6 +338,9 @@ echo
 echo "== ws1 E6: per-source syslog metrics (bounded, thread-safe) =="
 $PY services/ws1-collectors/test_fix_metric_sources.py || fail=1
 echo
+echo "== ws1: fix-counters determinism (no double-count/race under concurrent produce) =="
+$PY services/ws1-collectors/test_fix_counters_deterministic.py || fail=1
+echo
 echo "== ws7 UX fixes: saved searches, dark mode, alert lifecycle (static assertions) =="
 $PY services/ws7-dashboard/test_fix_ux.py || fail=1
 
