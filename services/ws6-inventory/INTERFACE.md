@@ -77,3 +77,15 @@ set.
 
 ## Run locally
 - `python app.py`  (serves on :8000)
+
+## Environment (read by `app.py` / `keystore.py` / `store.py` / `bus_consumer.py`)
+- `PORT` (default `8000`) — HTTP listener port.
+- `INVENTORY_DB` — SQLite path for inventory (Contract C).
+- `INVENTORY_KEYSTORE_DB` — SQLite path for the keystore (F1 hardening).
+- `INVENTORY_BASELINE_SECONDS` (default `3600`) — first-sighting baseline window
+  (a device is only "new" after this window since the tenant's first observation).
+- `FENGARDE_API_KEY` / `FENGARDE_API_KEYS` / `FENGARDE_API_KEY_PEPPER` — auth;
+  `FENGARDE_API_KEYS` is the per-tenant map (`tenant:key,...`, `*:key` admin).
+- `BUS_BACKEND` / `REDIS_URL` (and the shared Redis env set) — opt-in bus consumer
+  backend; when `BUS_BACKEND=redis`, `bus_consumer.py` republishes
+  `assets.updates` → `raw.events` (transparently skipped otherwise).

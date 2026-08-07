@@ -5,14 +5,21 @@
 - `/api/alerts` → OpenSearch `alerts-*` (live alert list), polled every 10s when
   live + tab visible (C2, `document.hidden` guard, skips DOM rebuild when the
   fetched set is byte-identical — protects an in-progress triage-note edit).
-- `/api/triage` → WS-3 triage API (`ws3-indexer:8013`) — GET/POST forwarded.
-- `/api/report` (v0.4 Track R) → WS-3's `/alerts/{id}/report`, incl. the M5
-  `?template=nis2` NIS2/§32 BSIG draft option — "Rapport" button per alert row.
+- `/api/triage/` → WS-3 triage API (`ws3-indexer:8013`) — GET/POST forwarded,
+  prefix stripped. The report feature (v0.4 Track R) has no separate `/api/report`
+  location — it's reached through this same proxy at
+  `/api/triage/alerts/{id}/report`, incl. the M5 `?template=nis2` NIS2/§32 BSIG
+  draft option — "Rapport" button per alert row.
+- `/api/rules` (C3, MITRE coverage heatmap) → WS-3's `/rules` read model
+  (`list_rule_summaries`) — feeds the dashboard's "Coverage" view, shaded by real
+  alert counts per tactic×technique.
 - `/api/auth/` (M3 remainder) → WS-3's `/auth/{login,logout,me}`. Nginx injects
   `FENGARDE_API_KEY` server-side on the triage/report proxies — the browser
   never holds the key.
-- WS-6 inventory API (`GET /assets`, `/assets/{mac}`) — Contract C, via
-  `window.INVENTORY_API`; falls back to `mocks/mock_data.js` when unset.
+- WS-6 inventory API (`GET /assets`) — Contract C, via `window.INVENTORY_API`;
+  falls back to `mocks/mock_data.js` when unset. Fetches the full list and does
+  per-device lookup/filtering client-side; `/assets/{mac}` is a WS-6 contract
+  endpoint the dashboard doesn't currently call.
 
 ## Produces
 - Static single-file UI (`index.html`) served by nginx. No backend of its own.

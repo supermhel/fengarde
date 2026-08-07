@@ -202,6 +202,9 @@ echo
 echo "== M7 follow-up: rule-health watchdog (last-fired timestamp per rule on /metrics/prom) =="
 $PY services/ws4-detection/test_rule_health.py || fail=1
 echo
+echo "== ws4 FIX 1/2/13/14/22/L1 regression: Sentinel HA wiring, poison-pill rejection, clock-skew warn =="
+$PY services/ws4-detection/test_fix_detection_engine.py || fail=1
+echo
 echo "== ws2 parsers: generic syslog + windows event log (v0.2) =="
 $PY services/ws2-normalization/parsers/test_generic_syslog.py || fail=1
 $PY services/ws2-normalization/parsers/test_windows_eventlog.py || fail=1
@@ -337,6 +340,12 @@ $PY services/ws3-indexer/test_fix_mfa.py || fail=1
 echo
 echo "== ws1 E6: per-source syslog metrics (bounded, thread-safe) =="
 $PY services/ws1-collectors/test_fix_metric_sources.py || fail=1
+echo
+echo "== ws1: fix-counters determinism (no double-count/race under concurrent produce) =="
+$PY services/ws1-collectors/test_fix_counters_deterministic.py || fail=1
+echo
+echo "== H7 regression: EVTX business-hours boundary (oracle vs real engine at 18:00:00) =="
+$PY eval/detection_accuracy/test_evtx_eval.py || fail=1
 echo
 echo "== ws7 UX fixes: saved searches, dark mode, alert lifecycle (static assertions) =="
 $PY services/ws7-dashboard/test_fix_ux.py || fail=1

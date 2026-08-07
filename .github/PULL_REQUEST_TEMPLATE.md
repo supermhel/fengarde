@@ -15,7 +15,7 @@ A short description of the change.
 
 - [ ] New parser (new log source)
 - [ ] Bug fix
-- [ ] Feature / enhancement (v0.1 scope)
+- [ ] Feature / enhancement
 - [ ] Docs / infra / developer experience
 - [ ] Other:
 

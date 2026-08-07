@@ -175,7 +175,7 @@ class OpenSearchStore(StorageAdapter):
         # round, byte-for-byte prior behavior). A connection-level failure
         # rotates to the next node so the writer keeps working when a node
         # goes down (instead of pinning to opensearch-1 until the app restarts).
-        max_attempts = len(self._nodes) * 2  # *2: retry the same node once before rotating, mirroring P1-4's rebuild
+        max_attempts = len(self._nodes) * 2  # *2: a full extra lap after every node has been tried once, mirroring P1-4's rebuild
         for attempt in range(max_attempts):
             conn = self._connection()
             try:
@@ -207,7 +207,15 @@ class OpenSearchStore(StorageAdapter):
         Returns ``{"indexed": n, "errors": [...]}``; a per-item failure
         inside the bulk response does not fail the whole call (matches
         `_bulk`'s own semantics: partial success is normal), but is
-        collected in ``errors`` for the caller to inspect/retry."""
+        collected in ``errors`` for the caller to inspect/retry.
+
+        **FIX H6 scope note**: unlike ``_request()``/``index()``, a
+        connection-level failure here only resets and retries the SAME node
+        (``self._reset_connection()``, one retry) -- it does not rotate
+        through ``self._nodes`` the way the live-daemon write path does.
+        Currently harmless (only the batch/tooling path calls this, never
+        ``main.py``'s daemon loop), but multi-node failover is NOT covered
+        here if a caller is ever added that needs it."""
         if not items:
             return {"indexed": 0, "errors": []}
         lines = []
@@ -299,8 +307,10 @@ class OpenSearchStore(StorageAdapter):
     # if_seq_no/if_primary_term, and OpenSearch rejects a stale write with 409
     # so the caller re-reads and retries. That closes the cross-replica lost-
     # update window a process lock cannot. The CAS wire format is unit-tested
-    # against a fake transport (test_storage_cas.py); like the rest of this
-    # skeleton module it has not been exercised against a LIVE OpenSearch yet.
+    # against a fake transport (test_storage_cas.py), and the real 409 is
+    # live-verified against an actual cluster by
+    # storage/test_opensearch_live.py::_test_cas_conflict_on_stale_version
+    # (`make test-live`).
     def _search_alert(self, alert_id: str) -> dict | None:
         body = {"size": 1, "query": {"term": {"_id": alert_id}},
                 "seq_no_primary_term": True}
@@ -382,9 +392,9 @@ class OpenSearchStore(StorageAdapter):
         return True
 
     # -- M4.3 versioned REST API: bounded list/browse -----------------------
-    # Same "not yet exercised against a live cluster" caveat as the rest of
-    # this skeleton module -- the request shape is correct, but the offline
-    # contract tests exercise MemoryStore.list_alerts/list_events instead.
+    # The offline contract tests exercise MemoryStore.list_alerts/list_events;
+    # the OpenSearch request shape is verified against a real cluster by
+    # storage/test_opensearch_live.py where relevant (`make test-live`).
     def _list(self, index_pattern: str, term_filters: dict, limit: int) -> list[dict]:
         must = [{"term": {k: v}} for k, v in term_filters.items() if v is not None]
         body = {

@@ -9,6 +9,89 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Per-tenant fair consume ordering** (`services/shared/fairness.py`):
+  WS-4 detection and WS-5 AI triage now round-robin each consume batch by
+  tenant instead of raw FIFO, so one tenant flooding a shared deployment can
+  no longer occupy every consecutive processing turn ahead of another
+  tenant's events. Reorders only, never drops or delays a message — the
+  single serial consumer thread per topic ruled out a token-bucket-style
+  delay (it would just add latency to everyone, not redistribute it).
+  Default on; a single-tenant deployment sees byte-for-byte unchanged
+  behavior (round-robin over one bucket is plain FIFO). Honest scope: bounds
+  delay within one raw consume batch (MemoryBus's full drain, or Redis's
+  `BUS_XREADGROUP_COUNT`-sized read) — a flood large enough to fill an
+  entire raw batch by itself still delays a quiet tenant until the
+  underlying bus's own read reaches it; see the module's docstring and
+  `services/shared/test_fairness.py`'s batch-boundary test.
+- **Detection-quality precision/recall/F1 canary** (`docs/detection-quality.md`,
+  `tools/detection_quality_eval.py`): the real engine scored against a small
+  hand-labeled corpus, including two deliberately adversarial labels (an
+  off-hours admin logon with no timestamp, a service-account logon against
+  the intentionally-empty allowlist) that keep the numbers honest instead of
+  a trivial 1.0. This is *engine-versus-labels* agreement, not a real-world
+  detection-fidelity claim — a regression trip-wire (macro-F1 floor 0.5,
+  deliberately low), not a quality bar. Wired into `run_all_tests.sh`.
+- **OpenSearch 3-node HA writer failover, live-kill-tested**
+  (`services/ws3-indexer/storage/test_opensearch_ha_failover_live.py`):
+  brought up the real `make ha-up` 3-node cluster, `docker kill`'d a node
+  directly, confirmed a write still succeeds via round-robin failover to a
+  surviving node, confirmed the cluster returns to `status: green` after the
+  node restarts. The test's own kill mechanism was previously broken (it
+  invoked `docker compose kill` against an override file with no image/build
+  context, so every prior run silently skipped the actual kill and reported
+  a false PASS) — fixed to kill the container directly, and a failed
+  kill/restart now hard-fails the test instead of silently downgrading to a
+  skip.
+
+### Fixed
+
+- **WS-5 LLM triage now dedups on redelivery**: at-least-once bus delivery
+  meant a redelivered event could trigger a second, duplicate (real-cost, if
+  `OLLAMA_URL` points at a paid endpoint) LLM call for content already
+  triaged. A bounded per-event-id cache (`services/ws5-ai/main.py`, keyed on
+  `siem.ingest_id` falling back to `event_id`) now returns the prior verdict
+  on a redelivery instead of re-calling the LLM; oldest entries evict first
+  once the cache is full, so memory stays flat under sustained load. Stores
+  and returns copies, not shared references — a downstream mutation of a
+  produced message can no longer corrupt the cached entry for a future
+  redelivery.
+- **Log-injection sanitizer gap**: `unmapped.*` (any depth, any parser
+  extension) and `api.request.data` were not in the fixed free-text sanitize
+  path (`services/ws2-normalization/main.py`), so attacker-controlled
+  content riding in those extension fields reached downstream log sinks
+  unsanitized. Fixed with a recursive wildcard walk over the whole
+  `unmapped` subtree; non-string leaves pass through untouched.
+- **`_MemoryBus.consume()`'s check-and-pop race**: the old `while q:
+  q.popleft()` loop was not atomic — two concurrent consumers on one shared
+  `_MemoryBus` (e.g. a worker-thread pool) could both pass the emptiness
+  check before either popped, causing a double-delivery or an unhandled
+  `IndexError` on an already-drained queue. Fixed by snapshotting and
+  clearing the queue under a lock, released *before* any message is yielded
+  (a service's own handler can produce back onto the same bus from inside
+  the consume loop — holding a non-reentrant lock across the yield would
+  have self-deadlocked that path).
+- **`engine.py`/`tenants.py` broke every tool that imports the detection
+  engine directly**: a new module-level `from shared.log import get_logger`
+  assumed `services/` was already on `sys.path`, which only holds when the
+  module loads through its normal service entrypoint — `tools/validate_rules.py`
+  and several WS-4 rule-firing tests import `engine`/`tenants` directly and
+  don't set that path themselves. 14 test failures, one root cause; fixed
+  with the same `sys.path` bootstrap already used in `ws6-inventory`.
+- **`_SECTORS`'s dormant `"dc"` alias** removed (`tools/validate_rules.py`)
+  — `"datacenter"` was the only value any shipped rule actually used.
+- Assorted `print()`-based logging (auth warnings in
+  `services/shared/authz.py`, `services/ws6-inventory/authz.py`, rule/tenant
+  load warnings in `services/ws4-detection/engine.py`/`tenants.py`, keystore
+  warnings in `services/ws6-inventory/keystore.py` and `store.py`, triage-API
+  warnings in `services/ws3-indexer/triage_api.py`) converted to the shared
+  structured logger — no functional change, consistent machine-parseable
+  logs everywhere a service is meant to run long-lived.
+- `demo_e2e.py`'s T7 acceptance test now asserts what it actually claims:
+  it previously only proved a *new*, window-overlapping event dedups to the
+  same deterministic `alert_id` (real, but not literal replay); a second
+  assertion now also replays the exact original event byte-for-byte and
+  confirms it maps to the same id with no new document.
+
 - **M7 Track Y — OT inventory-diff detection, end to end**: a new
   `ot_new_device_on_segment` rule fires on a genuinely new device appearing
   on an OT segment. `services/ws6-inventory`'s `InventoryStore` now tracks a

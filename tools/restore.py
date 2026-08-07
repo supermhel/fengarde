@@ -33,6 +33,20 @@ class RestoreError(Exception):
     pass
 
 
+def _safe_join(base: Path, rel: str) -> Path:
+    """Join `rel` onto `base`, refusing anything that would escape it.
+
+    The tar-extraction step is defended by ``filter="data"`` (PEP 706), but
+    every path built from ``manifest.json`` afterward is a second,
+    independent join from JSON content the archive controls -- an absolute
+    ``rel`` silently discards `base` when joined with pathlib, and a ``..``
+    component walks out of it, same threat class as the tar-member vector.
+    """
+    if Path(rel).is_absolute() or ".." in Path(rel).parts:
+        raise RestoreError(f"manifest entry path escapes the archive root: {rel!r}")
+    return base / rel
+
+
 def verify_and_restore(archive_path: Path, dest: Path, force: bool = False) -> list[str]:
     """Extract `archive_path` into `dest` after verifying every manifest
     entry's checksum. Returns the list of restored (destination-relative)
@@ -66,7 +80,7 @@ def verify_and_restore(archive_path: Path, dest: Path, force: bool = False) -> l
 
         for entry in manifest.get("files", []):
             rel = entry["path"]
-            staged_file = staging / rel
+            staged_file = _safe_join(staging, rel)
             if not staged_file.exists():
                 raise RestoreError(f"manifest references missing file: {rel}")
             actual = _sha256(staged_file)
@@ -75,7 +89,7 @@ def verify_and_restore(archive_path: Path, dest: Path, force: bool = False) -> l
 
         if not force:
             for entry in manifest.get("files", []):
-                collision = dest / entry["path"]
+                collision = _safe_join(dest, entry["path"])
                 if collision.exists():
                     raise RestoreError(
                         f"{collision} already exists -- pass --force to overwrite (nothing written yet)")
@@ -83,8 +97,8 @@ def verify_and_restore(archive_path: Path, dest: Path, force: bool = False) -> l
         restored: list[str] = []
         for entry in manifest.get("files", []):
             rel = entry["path"]
-            src = staging / rel
-            dst = dest / rel
+            src = _safe_join(staging, rel)
+            dst = _safe_join(dest, rel)
             dst.parent.mkdir(parents=True, exist_ok=True)
             dst.write_bytes(src.read_bytes())
             restored.append(rel)

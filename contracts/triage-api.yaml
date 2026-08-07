@@ -64,6 +64,63 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/SessionIdentity" }
         "401": { description: not logged in }
+  /api/v1/auth/mfa/enable:
+    post:
+      summary: "Provision a TOTP secret for the acting user (E3, 2026-08-06, opt-in). Requires, in the body, the acting user's own current password as a re-auth gate -- a session cookie alone cannot touch MFA config. Rate-limited per username (5 failures / 5 min, same budget as /auth/login)."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [password]
+              properties:
+                password: { type: string }
+      responses:
+        "200":
+          description: returns an otpauth:// URI carrying the new secret; TOTP remains inactive until verified
+        "401": { description: wrong/missing password, or this user's MFA re-auth is rate-limited out }
+  /api/v1/auth/mfa/verify:
+    post:
+      summary: "Activate a previously-provisioned TOTP by presenting a valid code (E3). Also requires the acting user's own current password in the body (re-auth gate), rate-limited like enable."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [password, totp_code]
+              properties:
+                password: { type: string }
+                totp_code: { type: string, description: "6-digit RFC 6238 code, ±1 step skew window" }
+      responses:
+        "200":
+          description: MFA now active for the user
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  mfa_active: { type: boolean }
+        "401": { description: wrong/missing password or code, or rate-limited }
+  /api/v1/audit:
+    get:
+      summary: "Recent audit-log entries (E1, 2026-08-06). Admin-only when RBAC is enabled; visible to the shared API-key caller when RBAC is off. Append-only, capacity-capped."
+      responses:
+        "200":
+          description: newest-first audit entries
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  count: { type: integer }
+                  entries:
+                    type: array
+                    items:
+                      type: object
+        "403": { description: RBAC on, caller role < admin }
+        "401/404": { description: no session / route hidden when RBAC off }
   /api/v1/alerts:
     get:
       summary: Newest-first alert listing (not free-text search)

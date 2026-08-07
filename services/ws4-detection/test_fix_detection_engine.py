@@ -372,8 +372,8 @@ def test_fix_l1_future_event_warns_and_fails_closed():
         pass
     check(fired is False,
           "fixL1: a far-future event must fail closed (never drive the window)")
-    check("WARN" in buf.getvalue(),
-          f"fixL1: far-future drop must log a WARN, got: {buf.getvalue()!r}")
+    check('"level": "warn"' in buf.getvalue(),
+          f"fixL1: far-future drop must log a warn, got: {buf.getvalue()!r}")
 
 
 def main():

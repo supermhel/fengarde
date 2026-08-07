@@ -50,10 +50,21 @@ workstream; bus-only coupling between workstreams is untouched.
 {
   "alert": { "...": "the full alert document as stored" },
   "triage": { "status": "...", "note": "...", "updated_at": 0 },
-  "events": [ "up to REPORT_MAX_EVENTS (default 20) contributing OCSF events" ],
+  "events": [],
   "requested_at": 0
 }
 ```
+
+**`events` is currently always `[]`, not a real payload** — this was written as
+a forward-looking field before the lookup existed to populate it, and no
+`REPORT_MAX_EVENTS`-style config was ever built (there is no such env var
+anywhere in this repo; don't rely on it existing). Pulling the alert's actual
+contributing normalized events (`Rule.contributing_event_ids()`,
+`services/ws4-detection/engine.py`, already recorded per-alert since the
+Design-A pass) into this field is a real, still-open follow-up — see
+`services/ws3-indexer/reporting.py::generate_report`'s own docstring. A backend
+implementation (including `fengarde-sec`'s) must not assume this array is ever
+non-empty today.
 
 ## Response schema (frozen)
 

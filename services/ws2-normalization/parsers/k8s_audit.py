@@ -30,7 +30,7 @@ from typing import Optional
 
 from .base import Parser, SEV_BY_CATEGORY, status_from_outcome
 from .timeutil import to_epoch_ms
-from shared.ocsf import valid_ip
+from shared.ocsf import valid_ip, safe_str
 
 _CLASS = 6003  # API Activity
 
@@ -103,7 +103,7 @@ class K8sAuditParser(Parser):
             sector=self.resolve_sector(meta),
         )
 
-        username = user.get("username")
+        username = safe_str(user.get("username"))
         if username:
             event["actor"] = {"user": {"name": username}}
 

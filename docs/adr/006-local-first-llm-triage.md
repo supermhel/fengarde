@@ -61,8 +61,10 @@ on WS-5's output to decide whether to fire.
   sanitization on the prompt itself. If the model's summary field is ever
   rendered anywhere without escaping, that becomes a second problem (XSS)
   layered on top of prompt injection — the dashboard's `esc()` discipline
-  (log-injection ADR context, `services/shared/sanitize.py`) is what actually
-  closes that, not this ADR's decision.
+  (`services/ws7-dashboard/index.html`) is what actually closes that, not
+  this ADR's decision. `services/shared/sanitize.py` is a separate,
+  complementary defense (terminal/log-injection control-char stripping for
+  fields not covered by `esc()`), not the XSS mitigation itself.
 - A `docs/posts/local-ai-triage.md` draft write-up expanded on this rationale
   for a public audience; it was never published and moved out of this repo's
   working tree in the 2026-07-31 doc audit (SSOT.md §4).

@@ -31,6 +31,7 @@ import argparse
 import json
 import os
 import sys
+import urllib.error
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -69,8 +70,10 @@ def installed_version(store: OpenSearchStore, name: str) -> int | None:
     "needs applying")."""
     try:
         result = store._request("GET", f"/_index_template/{name}")
-    except Exception:
-        return None
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            return None
+        raise
     installed = result.get("index_templates") or []
     if not installed:
         return None

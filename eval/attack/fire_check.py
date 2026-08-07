@@ -71,11 +71,11 @@ throughout it, because the fixtures and the evaluate() path are both healthy;
 it is the rules that vanished.
 
 `_canary_check` is about ATTRIBUTION, not detection. A dead fixture pipeline
-already turned this gate red before it existed (all 26 tagged rules must
-fire, including the 14 stateless ones -- so those DO have a blocking positive
+already turned this gate red before it existed (all 27 tagged rules must
+fire, including the 15 stateless ones -- so those DO have a blocking positive
 replay of their own, contrary to this docstring's first version). What the
 canary changes is that the failure reads "the harness is broken" instead of
-"26 rules are dead-on-arrival". See its own docstring for what it does not
+"27 rules are dead-on-arrival". See its own docstring for what it does not
 cover -- notably partial harness death, where it stays green.
 
 Run: python eval/attack/fire_check.py
@@ -172,7 +172,7 @@ def _canary_check(events: list[dict]) -> tuple[bool, str]:
     **What this is and is not.** An adversarial review corrected the original
     claim here, which was wrong and is worth recording: this does NOT close a
     detection blind spot, because there was no blind spot of that shape. Every
-    one of the 26 tagged rules -- including all 14 stateless ones -- must fire
+    one of the 27 tagged rules -- including all 15 stateless ones -- must fire
     on its own fixture or `main()` returns 1 at `tagged_not_firing`. So the
     stateless rules DO have a blocking positive replay of their own, and a
     dead fixture pipeline or a broken `Rule.evaluate()` already turned the

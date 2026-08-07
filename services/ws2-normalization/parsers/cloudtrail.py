@@ -25,7 +25,7 @@ from typing import Optional
 
 from .base import Parser, SEV_BY_CATEGORY, SEV_HIGH, SEV_INFO, status_from_outcome
 from .timeutil import to_epoch_ms
-from shared.ocsf import valid_ip
+from shared.ocsf import valid_ip, safe_str
 
 _CLASS_AUTH = 3002
 _CLASS_API = 6003
@@ -89,7 +89,7 @@ class CloudTrailParser(Parser):
             sector=self.resolve_sector(meta),
         )
 
-        arn_or_account = user_identity.get("arn") or user_identity.get("accountId")
+        arn_or_account = safe_str(user_identity.get("arn") or user_identity.get("accountId"))
         if arn_or_account:
             event["actor"] = {"user": {"name": arn_or_account}}
 

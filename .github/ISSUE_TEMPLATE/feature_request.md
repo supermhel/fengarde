@@ -7,12 +7,12 @@ assignees: ''
 ---
 
 <!--
-Scope check so this gets triaged correctly:
-  - v0.1 = the detection pipeline (collect -> normalize -> detect -> index ->
-    dashboard, with 4 parsers). Improvements here are in scope now.
-  - AI triage is v0.2. The AI service (WS-5) is a passthrough stub in v0.1.
-  - For a NEW LOG SOURCE, use the "Parser request" template instead.
-See CONTRIBUTING.md and the README's "What's real in v0.1" table.
+Scope check so this gets triaged correctly: the pipeline, every parser, every
+detection rule, AI triage, multi-tenancy, RBAC, webhooks, the plugin
+interface, and the report/NIS2 generator are all real, shipped, in-scope
+subsystems today, not future milestones -- see CONTRIBUTING.md and the
+README's "What's real" table (or SSOT.md for the full authoritative status).
+For a NEW LOG SOURCE, use the "Parser request" template instead.
 -->
 
 ## Problem / motivation
@@ -23,10 +23,11 @@ What are you trying to do, and what's getting in the way?
 
 What you'd like FENGARDE to do.
 
-## Which milestone do you think this targets?
+## What area does this touch?
 
-- [ ] v0.1 pipeline improvement (parser quality, rules, dashboard, infra, DX)
-- [ ] v0.2 (AI triage, the 5 deferred parsers, fleet/observability, etc.)
+- [ ] Pipeline / parser / rule quality
+- [ ] Dashboard / DX / infra
+- [ ] A currently-deferred parser (SNMP, NetFlow, custom JSON, proxy/web-gateway, S7/PROFINET — see README's Planned table)
 - [ ] Not sure — happy for maintainers to triage
 
 ## Alternatives considered

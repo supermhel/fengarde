@@ -8,13 +8,15 @@ kept in sync with run_all_tests.sh by hand since there's no shared manifest).
 HONEST THRESHOLDS, not the PLAN_C target itself: re-measured 2026-07-19 after
 the PR#2 merge (and after syncing TARGETS with the merged run_all_tests.sh --
 the gate briefly read WS-3 at 50% because the M4 code was in --source while
-its test suites weren't in this list). WS-2 is at 90% (above the ~85% target);
-WS-3 at 77% (below it -- main.py's run() loop and storage/opensearch.py's
-live-cluster paths remain the gap). This gate enforces those MEASURED numbers
-minus a small buffer as a regression guard, not the unmet 85% target --
-claiming a gate "blocks CI on 85%" when WS-3 demonstrably doesn't meet it
-would be exactly the overclaiming SSOT.md sec2 exists to prevent. Raise
-WS-3's threshold as real tests close the gap; don't lower WS-2's.
+its test suites weren't in this list). Current enforced floors (see TARGETS):
+WS-2 88.0, WS-3 65.0 (dropped from 75 on 2026-08-06 when the hardened
+session/SSRF/rate-limit surface made it measure lower -- gap honestly open),
+WS-3-reports 45.0, WS-4 40.0, WS-6 60.0. This gate enforces those MEASURED
+numbers minus a small buffer as a regression guard, not the unmet 85%
+target -- claiming a gate "blocks CI on 85%" when a service demonstrably
+doesn't meet it would be exactly the overclaiming SSOT.md sec2 exists to
+prevent. Raise a service's threshold as real tests close the gap; don't
+lower WS-2's.
 
 Run:  python tools/coverage_gate.py
 """

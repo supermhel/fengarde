@@ -11,8 +11,10 @@ Adding a parser is the best first contribution to FENGARDE — and needs NO Dock
 The whole loop is: copy services/ws2-normalization/parsers/linux_ssh.py, make 3
 edits, run `python test_contract.py`. See docs/adding-a-parser.md.
 
-v0.2 already plans these 5: generic syslog, SNMP, NetFlow, Windows Event Log,
-custom JSON.
+17 parsers already ship (see README's "What's real" table for the full list).
+Still genuinely deferred: SNMP, NetFlow, custom JSON, a proxy/web-gateway
+parser, S7/PROFINET (see README's Planned table) — check there before filing
+a duplicate for one of these five.
 -->
 
 ## Source / product
