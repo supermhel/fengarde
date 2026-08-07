@@ -29,7 +29,9 @@
             "summary": { "type": "text" },
             "level": { "type": "keyword" }
           }
-        }
+        },
+        "siem": { "properties": { "tenant": { "type": "keyword" }, "sector": { "type": "keyword" }, "source_type": { "type": "keyword" } } },
+        "tenant_id": { "type": "keyword" }
       }
     }
   }

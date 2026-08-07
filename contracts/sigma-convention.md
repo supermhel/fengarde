@@ -11,7 +11,7 @@ Because they target the normalized schema, one rule works across all sources of 
 - Detection field names are **OCSF dotted paths**, e.g. `class_uid`, `activity_id`,
   `src_endpoint.ip`, `actor.user.name`, `siem.sector`.
 - Every rule MUST carry a `level` (`informational|low|medium|high|critical`) and a
-  custom `score_weight` (0–100) under `tags` → mapped by scoring.yaml.
+  custom `score_weight` (0–100) under `siem.score_weight` → mapped by scoring.yaml.
 - Stateful rules (counts over time) declare `siem.window_seconds` and `siem.threshold`.
 
 ## Required rule fields
