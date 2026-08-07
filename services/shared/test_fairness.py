@@ -8,13 +8,12 @@ Run: python services/shared/test_fairness.py
 from __future__ import annotations
 
 import sys
+from collections import deque
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 SERVICES = HERE.parent
 sys.path.insert(0, str(SERVICES))
-
-from collections import deque
 
 from shared.bus import Message, _MemoryBus  # noqa: E402
 from shared.fairness import FairConsumeBus, default_tenant_key, event_tenant_key  # noqa: E402

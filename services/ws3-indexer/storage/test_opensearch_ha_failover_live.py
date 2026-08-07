@@ -173,7 +173,7 @@ def _test_writer_survives_node_kill(store: OpenSearchStore, index: str,
     try:
         _kill_container(container)
     except _DockerUnavailable:
-        print(f"[SKIP] HA failover: `docker` is not available on this host "
+        print("[SKIP] HA failover: `docker` is not available on this host "
               "-- skipping the live kill, not claiming it happened")
         return
     except RuntimeError as exc:
