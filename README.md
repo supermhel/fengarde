@@ -42,10 +42,13 @@ Three things make it different from a generic self-hosted SIEM:
 > people actually make — Wazuh's indexer is an OpenSearch fork too. It only
 > distinguishes FENGARDE from Elastic-based stacks, so it is not listed above.
 
-New in v0.4: parser packs for the sources this wedge actually needs — MCP/AI-agent
-tool-call audit logs, industrial OPC UA control-system events, and n8n automation-platform
-logs — plus an incident-report draft hook (the open half of a NIS2/DORA
-regulatory-evidence feature; see [`contracts/reporting.md`](contracts/reporting.md)).
+New since v0.4: a deterministic German/English NIS2 draft-report generator
+(additive on the same incident-report hook, `?template=nis2`; see
+[`contracts/reporting.md`](contracts/reporting.md)), opt-in RBAC/MFA/audit-log/
+webhooks/multi-tenancy for MSP-style deployments, and an opt-in HA profile
+(Redis Sentinel + 3-node OpenSearch) with **live-kill-tested failover on both
+sides** — not just wired, actually proven by killing a real node and watching
+the write path survive.
 
 ---
 
@@ -121,7 +124,7 @@ updated status — this table is a snapshot, that file is the source of truth.
 | **Incident-report draft hook** | ✅ Works (v0.4) | `POST /alerts/{id}/report` renders a generic markdown incident report from alert facts, always marked `status: draft` with a disclaimer; the regulated-content backend is a paid, optional add-on (`contracts/reporting.md`) |
 | **Opt-in auth** | ✅ Works (v0.4) | Shared-secret `FENGARDE_API_KEY` on the triage/inventory APIs, opt-in dashboard basic-auth, opt-in Redis `AUTH` — unset (default) stays fully open, matching v0.1-v0.3 behavior |
 | **Syslog UDP listener** (WS-1) | ✅ Works | Live datagrams → `raw.events` |
-| **Multi-tenancy** | ✅ Works | `tenant_id` threaded collector→normalize→detect→index; per-tenant OpenSearch indices, per-tenant rule enablement; isolation proven by `tools/test_multi_tenant_isolation.py` |
+| **Multi-tenancy** | ✅ Works | `tenant_id` threaded collector→normalize→detect→index; per-tenant OpenSearch indices, per-tenant rule enablement; isolation proven by `tools/test_multi_tenant_isolation.py`. Detection/AI-triage consume ordering is also per-tenant fair (`services/shared/fairness.py`): one flooding tenant can no longer occupy every consecutive processing turn ahead of another sharing the same deployment — bounded within one consume batch, not full compute isolation, see the module's own honest-scope note |
 | **RBAC** | ✅ Works, opt-in | Per-user accounts/roles/tenant scoping via `FENGARDE_RBAC_DB`; session cookies, CSRF protection, dashboard login UI; unset (default) = pre-RBAC API-key-only behavior, byte-for-byte unchanged |
 | **MFA/TOTP** | ✅ Works, opt-in | Per-user, stdlib-only RFC 6238; provision → confirm two-step activation, login gates once active, config changes require re-entering your own password (a stolen session cookie alone can't touch it) |
 | **Admin audit log** | ✅ Works, opt-in | Append-only, capacity-capped JSONL trail of login/triage/report events, fail-open (an audit outage never blocks a request), `GET /audit` (admin-only) |
@@ -130,7 +133,7 @@ updated status — this table is a snapshot, that file is the source of truth.
 | **Outbound alert webhooks** | ✅ Works, opt-in | HMAC-SHA256-signed deliveries to operator-configured URLs (`contracts/webhooks/*.yml`, ships empty); see `docs/webhooks.md` |
 | **Parser/rule plugin interface** | ✅ Works | External pip package can ship a parser or rule pack via Python entry points, no fork needed; see `docs/plugin-development.md` |
 | **Chaos-tested delivery** | ✅ Works | `make chaos`: 40 scenarios, each pipeline service SIGKILLed mid-replay — zero lost, zero duplicate alerts (2026-07-18 run). Proves consumer-failure durability; a Redis-primary failover is a separate scenario, see `SSOT.md` |
-| **HA profile** (Redis Sentinel + 3-node OpenSearch) | ✅ Works, opt-in | `docker-compose.ha.yml` / `make ha-up`; live-verified Sentinel failover (~1s promotion) and 3-node OpenSearch (green, replicas assigned); write-side OpenSearch failover now wired to all 3 nodes |
+| **HA profile** (Redis Sentinel + 3-node OpenSearch) | ✅ Works, opt-in | `docker-compose.ha.yml` / `make ha-up`. Both sides live-kill-tested, not just wired: Sentinel failover (~1s promotion, zero lost messages) and 3-node OpenSearch (killed a real node, confirmed a write still succeeds via round-robin to a surviving node, cluster back to `green` after restart) |
 | **Per-source syslog metrics** | ✅ Works | Bounded, LRU-evicted, thread-safe per-peer-IP breakdown on WS-1's `/metrics` |
 | **Dashboard: saved searches, dark mode, alert lifecycle + playbooks** | ✅ Works | Client-side saved alert-search filters, OS-aware dark/light theme, per-alert playbook rendering |
 | **NIS2 (DE) report template** | ✅ Works | Deterministic German/English NIS2 Art. 23 / §32 BSIG draft, additive on the report hook (`?template=nis2`); every entity-specific fact renders as an explicit `[ANALYST MUST PROVIDE]` placeholder, never fabricated |
@@ -344,12 +347,14 @@ across three eval lanes under `eval/`:
 | `make attack-scorecard` | **Declared** MITRE ATT&CK/ATT&CK-ICS/ATLAS coverage (which techniques a rule's `mitre:` block claims), an **empirical** check that every tagged rule's condition actually fires on its own real producer fixture through the live detection engine, and a **boundary** check that each stateful rule stays silent one event under its threshold and when its events are spread past its window — three distinct claims, never merged into one number | Zero infra |
 | `make eval-detection` | Independent-oracle replay: real Windows Security/Sysmon attack corpora (EVTX-ATTACK-SAMPLES, splunk/attack_data) fed through the live pipeline, alerts checked against a ground truth computed separately from the engine's own logic — this is what catches a bug a unit test mirroring the engine's own code cannot. See [`eval/detection_accuracy/README.md`](eval/detection_accuracy/README.md) for dataset licensing and setup (both corpora are third-party, not vendored; the target skips cleanly with no datasets fetched) | Real datasets fetched separately |
 | `make nis2-demo` | End-to-end proof that a real alert becomes a structurally-compliant NIS2 draft (disclaimer, draft status, no fabricated entity facts) — the same checklist `eval/report_generator/`'s harness runs across 12 synthetic scenarios × 3 stages × 2 languages in CI | Zero infra |
+| `python tools/detection_quality_eval.py` | Precision/recall/F1 canary: the real engine against a small hand-labeled corpus (`docs/detection-quality.md`), including two deliberately adversarial labels that keep the numbers honest instead of a trivial 1.0. This is *engine-versus-labels* agreement, not real-world detection fidelity — a regression trip-wire (floor 0.5), not a quality bar | Zero infra |
 
-None of these are optional add-ons bolted on for show — `attack-scorecard` and
-the report-generator eval both run in `run_all_tests.sh`; `eval-detection`
-is deliberately excluded from the zero-infra gate (a target that always
-skips would be noise there) but is the harness that actually caught real
-false negatives in the brute-force rule during the 2026-07-21 audit pass.
+None of these are optional add-ons bolted on for show — `attack-scorecard`,
+the report-generator eval, and the detection-quality canary all run in
+`run_all_tests.sh`; `eval-detection` is deliberately excluded from the
+zero-infra gate (a target that always skips would be noise there) but is the
+harness that actually caught real false negatives in the brute-force rule
+during the 2026-07-21 audit pass.
 
 ---
 
