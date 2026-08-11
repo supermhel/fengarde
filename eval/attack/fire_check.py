@@ -55,10 +55,26 @@ Two properties of that negative half are load-bearing:
     hours boundary, silence has two possible causes and the probe reports
     "skipped" rather than claiming a boundary it did not test.
 
-Stateless rules are NOT boundary-tested: the near-miss of a single-event
-field match is the entire rest of the value space, so no near-miss fixture
-is generatable and each one has to be hand-authored. They are reported as
-untested rather than counted as passing.
+Stateless rules get a DIFFERENT negative probe, because they have no
+threshold or window to step under. Earlier versions of this file claimed no
+near-miss was generatable for them and reported all 15 as untested. That
+claim was too strong, and `_near_miss_probe` replaces it: every shipped
+stateless rule's condition is a pure conjunction of field predicates, so
+violating exactly ONE declared predicate on the fixture that fired must
+silence the rule. That is generatable per predicate, not hand-authored.
+
+Read the resulting claim narrowly -- it is single-predicate NECESSITY, not
+well-scopedness. It proves each predicate the rule declares is load-bearing
+at evaluation time, which catches the too-loose defects that the positive
+check passes silently: a condition evaluated as `or` where `and` was
+declared, a `not_in` allowlist that is never consulted, an `outside_hours`
+window ignored (a rule that ignores time-of-day fires on its own fixture
+perfectly), and a compile step that drops a selection field. It proves
+nothing about whether the declared predicate SET is the right one -- exactly
+the same limit the stateful probes carry on declared thresholds. A predicate
+with no constructible violation (an empty `not_in` list, an unknown
+operator) is reported skipped, and a rule with any skipped predicate is not
+counted as having fully held.
 
 **Two harness-integrity guards, doing different jobs.**
 
@@ -85,7 +101,9 @@ from __future__ import annotations
 
 import copy
 import json
+import shutil
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -99,7 +117,20 @@ sys.path.insert(0, str(ROOT / "tools"))
 from parsers import _REGISTRY  # noqa: E402
 from enrichment import enrich  # noqa: E402
 from main import Detector  # noqa: E402  -- ws4-detection's real Detector
-from engine import _time_outside_hours, Rule  # noqa: E402  -- reuse the engine's own predicate
+# Reuse the engine's OWN predicate helpers rather than reimplementing them: a
+# near-miss constructor that decided "this value violates the operator" by its
+# own logic could disagree with the engine and assert silence for a case the
+# engine never considered a match in the first place -- a vacuous probe that
+# reports "held". Asking the same functions the engine asks keeps the two from
+# drifting.
+from engine import (  # noqa: E402
+    _contains,
+    _glob_match,
+    _in_list,
+    _time_outside_hours,
+    get_path,
+    Rule,
+)
 import check_rule_producers as crp  # noqa: E402  -- reuse the same FIXTURES
 
 OUT_DIR = Path(__file__).resolve().parent / "out"
@@ -467,14 +498,14 @@ def _boundary_probe(rule, base_event: dict | None, blocked: bool = False) -> dic
     failure message would have quietly disarmed the gate while every test
     stayed green. The fragile comparison was guarding the wrong side.
 
-    Stateless rules get no probe at all -- the near-miss of a single-event
-    field match is the whole rest of the value space, so there is no
-    generatable near-miss fixture; that needs a hand-authored one per rule
-    and is honestly reported as untested rather than counted as passing."""
+    Stateless rules get no probe HERE -- they have no threshold to step under
+    and no window to overrun. Their negative half is `_near_miss_probe`
+    (single-predicate necessity), reported separately so the two claims are
+    never summed into one number that means neither."""
     if not rule.stateful:
         return {"applicable": False,
-                "reason": "stateless rule -- near-miss undefined without a "
-                          "hand-authored fixture; not boundary-tested"}
+                "reason": "stateless rule -- no threshold/window to probe; "
+                          "see this rule's `near_miss` entry instead"}
     if base_event is None:
         # Both cases arrive here with no fixture, but they mean opposite
         # things and the JSON is what a reader consults after the fact --
@@ -537,6 +568,249 @@ def _boundary_probe(rule, base_event: dict | None, blocked: bool = False) -> dic
             "too_loose": [n for n, v in probes.items() if v["status"] == "fired"]}
 
 
+# Perturbation used wherever a predicate needs "some value that is not the one
+# declared". Deliberately not a plausible-looking value: a near-miss probe is
+# an assertion about the ENGINE's evaluation of a declared predicate, and a
+# realistic-looking substitute invites the reader to think the probe says
+# something about real-world traffic. It does not.
+_NEAR_MISS_SENTINEL = "__firecheck_near_miss__"
+
+
+def _is_pure_conjunction(rule) -> bool:
+    """True when the condition is selections joined ONLY by ``and``.
+
+    The whole near-miss argument rests on this: under pure conjunction every
+    declared predicate is individually necessary, so violating exactly one
+    must silence the rule. Under `or` it must not (the other disjunct still
+    matches), and under `not` the polarity inverts -- asserting silence there
+    would be asserting a defect. Such rules are reported inapplicable rather
+    than probed, because a wrong negative assertion is worse than none.
+
+    Reads the engine's own precomputed token list rather than re-parsing the
+    condition string, so a tokenizer change cannot leave this helper agreeing
+    with a grammar the engine no longer implements.
+
+    Boolean keywords are excluded from the selection-name test before it runs.
+    Without that, a rule carrying a selection literally NAMED `or` makes the
+    `or` token satisfy `t in rule.selections`, and a genuinely disjunctive
+    condition is classified as a conjunction -- the one direction that is
+    unsafe, since the probe would then demand silence from a rule whose other
+    disjunct legitimately still matches and report a healthy rule as too
+    loose. No shipped rule has such a selection; the guard costs a set
+    lookup and removes the failure mode rather than relying on that."""
+    keywords = {"and", "or", "not"}
+    tokens = rule._condition_tokens
+    return bool(tokens) and all(
+        t == "and" or (t not in keywords and t in rule.selections) for t in tokens)
+
+
+def _inside_hours_ts(spec) -> int | None:
+    """An epoch-ms that is INSIDE ``spec``'s business-hours window -- the exact
+    mirror of `_oh_anchors`, and the near-miss for an ``outside_hours``
+    predicate.
+
+    This is the predicate whose violation the positive check is blindest to: a
+    rule that ignored time-of-day entirely would fire on its own off-hours
+    fixture exactly as a healthy one does. Only feeding it an in-hours
+    timestamp and demanding silence tells the two apart.
+
+    Steps back by minutes for the same reason `_oh_anchors` does (specs carry
+    minute resolution), and searches a full 8 days so a window configured for
+    weekdays only still finds an in-hours instant from any starting weekend."""
+    now = int(time.time() * 1000)
+    for minutes_back in range(1, 8 * 24 * 60 + 1):
+        ts = now - minutes_back * 60_000
+        if not _time_outside_hours(spec, ts):
+            return ts
+    return None
+
+
+def _operator_near_miss(op, arg, actual) -> dict:
+    """How to violate ONE operator predicate: ``{"kind": "value", ...}`` to
+    overwrite the field, ``{"kind": "allowlist", ...}`` for the ``not_in``
+    special case, or ``{"kind": "skip", "reason": ...}`` when no violation is
+    constructible.
+
+    Skipping is a first-class outcome, not a failure to try. A constructor
+    that guessed at a value it could not prove violates the predicate would
+    produce a probe whose silence means nothing -- and would report it as
+    "held" alongside the real ones."""
+    if op == "not_in":
+        # Inverted case. Every other operator is violated by changing the
+        # EVENT; `not_in` is violated by changing the ALLOWLIST, because the
+        # suppression fires when the value IS listed. Mutating the event
+        # instead would just swap one non-allowlisted value for another and
+        # the rule would correctly keep firing -- a probe that reads as a
+        # defect while testing nothing.
+        if not isinstance(arg, str):
+            return {"kind": "skip", "reason": "malformed not_in reference (engine fails closed here)"}
+        if actual is None:
+            return {"kind": "skip", "reason": "field is absent on the firing fixture -- nothing to allowlist"}
+        return {"kind": "allowlist", "name": arg, "value": actual}
+    if op == "outside_hours":
+        ts = _inside_hours_ts(arg)
+        if ts is None:
+            return {"kind": "skip", "reason": "no in-hours instant found in an 8-day sweep"}
+        return {"kind": "value", "value": ts, "label": "timestamp stamped INSIDE business hours"}
+    if op in ("gt", "gte", "lt", "lte", "ne"):
+        if not isinstance(arg, (int, float)) or isinstance(arg, bool):
+            return {"kind": "skip", "reason": f"non-numeric {op} argument"}
+        flipped = {"gt": arg, "gte": arg - 1, "lt": arg, "lte": arg + 1, "ne": arg}[op]
+        return {"kind": "value", "value": flipped,
+                "label": f"{op}:{arg!r} violated by exactly one step ({flipped!r})"}
+    if op == "in":
+        if not isinstance(arg, list):
+            return {"kind": "skip", "reason": "malformed in-list (engine fails closed here)"}
+        if _in_list(_NEAR_MISS_SENTINEL, arg):
+            return {"kind": "skip", "reason": "the sentinel is itself a member of the declared list"}
+        return {"kind": "value", "value": _NEAR_MISS_SENTINEL, "label": "value outside the declared in-list"}
+    if op == "contains":
+        if _contains(_NEAR_MISS_SENTINEL, arg):
+            return {"kind": "skip", "reason": "the sentinel itself contains the declared needle"}
+        return {"kind": "value", "value": _NEAR_MISS_SENTINEL, "label": "declared needle absent"}
+    if op == "glob":
+        if _glob_match(_NEAR_MISS_SENTINEL, arg):
+            return {"kind": "skip", "reason": "the sentinel itself matches the declared pattern"}
+        return {"kind": "value", "value": _NEAR_MISS_SENTINEL, "label": "value outside the declared glob"}
+    return {"kind": "skip", "reason": f"no near-miss constructor for operator {op!r}"}
+
+
+def _equality_near_miss(expected) -> dict:
+    """Violate a plain equality selection (``class_uid: 6003``).
+
+    Bools are checked before numbers on purpose: ``bool`` is an ``int``
+    subtype in Python, so the numeric branch would turn ``True`` into ``2``,
+    which is still truthy-looking in a report and, worse, is a value no parser
+    emits -- the perturbation would be testing a type change rather than the
+    declared value. ``not expected`` is the actual near-miss."""
+    if isinstance(expected, bool):
+        return {"kind": "value", "value": not expected, "label": f"{expected!r} -> {(not expected)!r}"}
+    if isinstance(expected, (int, float)):
+        return {"kind": "value", "value": expected + 1, "label": f"{expected!r} -> {expected + 1!r}"}
+    if isinstance(expected, str):
+        return {"kind": "value", "value": expected + _NEAR_MISS_SENTINEL,
+                "label": f"{expected!r} perturbed"}
+    return {"kind": "skip",
+            "reason": f"no near-miss constructor for a {type(expected).__name__} literal"}
+
+
+def _fires_with_value_allowlisted(rule, event: dict, name: str, value) -> bool:
+    """Rebuild ``rule`` against a throwaway allowlists dir in which ``value`` IS
+    listed, and report whether it still fires. Silence is the pass.
+
+    A fresh temp dir per probe rather than editing `contracts/allowlists/`:
+    `load_allowlist` caches on the RESOLVED dir path, so a unique directory
+    cannot poison the real allowlist's cached entry for the rest of the
+    process (or for any other probe). The directory holds only the targeted
+    list -- any other list the rule references is missing here and therefore
+    fails OPEN by the engine's documented `not_in` posture, i.e. keeps
+    matching, so an untargeted allowlist can never be the reason this probe
+    sees silence."""
+    tmp = Path(tempfile.mkdtemp(prefix="firecheck-allowlist-"))
+    try:
+        (tmp / f"{name}.yml").write_text(
+            "entries:\n  - " + json.dumps(str(value)) + "\n", encoding="utf-8")
+        probe_rule = Rule(copy.deepcopy(rule.raw), allowlists_dir=tmp)
+        return probe_rule.evaluate(copy.deepcopy(event))
+    finally:
+        # Safe to remove immediately: the engine caches the parsed Allowlist
+        # object, not the file handle, so nothing reads this path again.
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def _near_miss_probe(rule, base_event: dict | None, blocked: bool = False) -> dict:
+    """Negative half of the gate for STATELESS rules: the rule fires on its own
+    fixture (proven by `_try_fire`) -- prove it stops firing when any single
+    declared predicate is violated.
+
+    Structure mirrors `_boundary_probe` deliberately, including the `status`
+    machine field and the "any skipped probe means not fully held" rule, so
+    the two negative halves cannot drift into reporting the same word with
+    different strictness.
+
+    Four inapplicable cases, each recorded with its own reason because they
+    mean different things to whoever reads the JSON later: the rule is
+    stateful (wrong probe), no fixture exists (the rule never fired, or the
+    harness could not exercise it -- opposite meanings, same empty input), the
+    condition is not a pure conjunction (see `_is_pure_conjunction`), or the
+    positive control does not reproduce here.
+
+    That last one is the same load-bearing property `_replay` documents for
+    the stateful probes: silence only means something if this exact harness
+    demonstrably CAN make this rule fire. `_try_fire` establishes the fire on
+    an anchored copy it does not return, so the anchoring is reconstructed and
+    re-asserted here rather than assumed -- otherwise a reconstruction bug
+    would report every predicate as "held" on a rule that was never firing in
+    the first place, which is precisely the vacuous-green failure the whole
+    probe exists to avoid."""
+    if rule.stateful:
+        return {"applicable": False,
+                "reason": "stateful rule -- probed on its threshold/window instead"}
+    if base_event is None:
+        return {"applicable": False,
+                "reason": ("harness could not construct a replay for this rule -- "
+                           "no evidence about the rule either way" if blocked else
+                           "rule never fired -- no fixture to build a near-miss from")}
+    if not _is_pure_conjunction(rule):
+        return {"applicable": False,
+                "reason": f"condition {rule.condition!r} is not a pure conjunction -- "
+                          f"violating one predicate need not silence the rule, so "
+                          f"asserting silence would assert a defect"}
+
+    anchors = _oh_anchors(rule, 0)
+    if anchors is None:
+        return {"applicable": False,
+                "reason": "harness could not construct an off-hours anchor -- "
+                          "no evidence about the rule either way"}
+    fire_ev = copy.deepcopy(base_event)
+    for field, anchor in anchors:
+        _set_path(fire_ev, field, anchor)
+    if not rule.evaluate(fire_ev):
+        return {"applicable": False,
+                "reason": "positive control did not reproduce on the reconstructed "
+                          "fixture -- every near-miss below would be vacuously silent"}
+
+    probes: dict[str, dict] = {}
+    for sel_name, selection in rule.selections.items():
+        if not isinstance(selection, dict):
+            continue
+        for field, expected in selection.items():
+            if isinstance(expected, dict):
+                # One probe per OPERATOR, not per field: a field carrying
+                # {gt: 5, lt: 90} declares two independent constraints and a
+                # single probe would leave one of them unexercised while the
+                # report implied the field was covered.
+                cases = [(f"{sel_name}.{field}[{op}]",
+                          _operator_near_miss(op, arg, get_path(fire_ev, field)))
+                         for op, arg in expected.items()]
+            else:
+                cases = [(f"{sel_name}.{field}", _equality_near_miss(expected))]
+
+            for key, case in cases:
+                if case["kind"] == "skip":
+                    probes[key] = {"status": "skipped", "detail": case["reason"]}
+                    continue
+                if case["kind"] == "allowlist":
+                    fired = _fires_with_value_allowlisted(
+                        rule, fire_ev, case["name"], case["value"])
+                    detail = (f"{field}={case['value']!r} placed IN allowlist "
+                              f"{case['name']!r} -- suppression must apply")
+                else:
+                    ev = copy.deepcopy(fire_ev)
+                    _set_path(ev, field, case["value"])
+                    ev.setdefault("siem", {})["ingest_id"] = f"firecheck:{rule.id}:nearmiss:{key}"
+                    fired = rule.evaluate(ev)
+                    detail = f"{field}: {case['label']}"
+                probes[key] = {"status": "fired" if fired else "held", "detail": detail}
+
+    held = [n for n, v in probes.items() if v["status"] == "held"]
+    skipped = [n for n, v in probes.items() if v["status"] == "skipped"]
+    return {"applicable": True, "probes": probes,
+            "held": held, "skipped": skipped,
+            "fully_held": bool(held) and not skipped,
+            "too_loose": [n for n, v in probes.items() if v["status"] == "fired"]}
+
+
 def main() -> int:
     events = _real_events()
 
@@ -570,18 +844,31 @@ def main() -> int:
             "tactic": mitre.get("tactic"), "technique": mitre["technique"],
             "fired": fired, "note": note, "harness_blocked": blocked,
             "boundary": _boundary_probe(rule, fixture, blocked),
+            "near_miss": _near_miss_probe(rule, fixture, blocked),
         })
 
     tagged_not_firing = [r for r in results if not r["fired"] and not r["harness_blocked"]]
     harness_blocked = [r for r in results if r["harness_blocked"]]
-    too_loose = [r for r in results if r["boundary"].get("too_loose")]
+    # Both negative halves feed ONE too-loose gate. They answer the same
+    # question (does this rule fire when it must not?) by different
+    # constructions, and a rule that fails either one is equally shipped-broken.
+    too_loose = [r for r in results
+                 if r["boundary"].get("too_loose") or r["near_miss"].get("too_loose")]
     fully_held = [r for r in results if r["boundary"].get("fully_held")]
     # Partly probed = at least one probe held and at least one was skipped.
     # Not counted as having held its boundary: the headline sentence claims
     # BOTH probes stayed silent, and for a half-probed rule that is false.
     partly_held = [r for r in results
                    if r["boundary"].get("held") and r["boundary"].get("skipped")]
-    untested = len(results) - len(fully_held)
+    nm_fully_held = [r for r in results if r["near_miss"].get("fully_held")]
+    nm_partly_held = [r for r in results
+                      if r["near_miss"].get("held") and r["near_miss"].get("skipped")]
+    nm_predicates = sum(len(r["near_miss"].get("held", [])) for r in results)
+    # A rule counts as negatively verified when EITHER half fully held -- the
+    # two are mutually exclusive by construction (stateful vs. stateless), so
+    # this cannot double-count, and anything in neither list is genuinely
+    # unverified rather than merely probed by the other half.
+    untested = len(results) - len(fully_held) - len(nm_fully_held)
 
     print(f"MITRE empirical firing check -- {len(results)} tagged rule(s) checked "
           f"against their own real producer fixtures (declared-vs-fired, not "
@@ -591,6 +878,8 @@ def main() -> int:
         print(f"  [{mark}] {r['technique']:<10} {r['id']}: {r['note']}")
         for name, verdict in r["boundary"].get("probes", {}).items():
             print(f"           |- {name}: {verdict['status']} -- {verdict['detail']}")
+        for name, verdict in r["near_miss"].get("probes", {}).items():
+            print(f"           |- near-miss {name}: {verdict['status']} -- {verdict['detail']}")
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     out_path = OUT_DIR / "fire_check.json"
@@ -634,18 +923,26 @@ def main() -> int:
               f"boundary -- too loose, which the satisfiability gate and the "
               f"positive fire check both pass silently:")
         for r in too_loose:
-            for name in r["boundary"]["too_loose"]:
+            for name in r["boundary"].get("too_loose", []):
                 print(f"    {r['id']} ({r['technique']}): {name} fired when it must not")
+            for name in r["near_miss"].get("too_loose", []):
+                print(f"    {r['id']} ({r['technique']}): near-miss {name} fired with "
+                      f"that predicate violated -- the predicate is not load-bearing")
         return 1
 
     print(f"\n[OK] all {len(results)} MITRE-tagged rules fire on their own real "
           f"producer fixture")
-    print(f"[OK] {len(fully_held)} stateful rule(s) also held their boundary "
-          f"(threshold-1 AND window-overrun both ran and stayed silent); "
-          f"{untested} rule(s) NOT boundary-tested -- untested, not passing"
+    print(f"[OK] {len(fully_held)} stateful rule(s) held their declared boundary "
+          f"(threshold-1 AND window-overrun both ran and stayed silent)"
           + (f", of which {len(partly_held)} had one probe held and one skipped"
-             if partly_held else "")
-          + " -- see 'boundary' in the JSON")
+             if partly_held else ""))
+    print(f"[OK] {len(nm_fully_held)} stateless rule(s) held single-predicate "
+          f"necessity ({nm_predicates} predicate near-miss(es) ran and stayed "
+          f"silent) -- necessity of each DECLARED predicate, not well-scopedness"
+          + (f"; {len(nm_partly_held)} rule(s) had at least one predicate with no "
+             f"constructible near-miss" if nm_partly_held else ""))
+    print(f"[OK] {untested} rule(s) negatively verified by NEITHER half -- "
+          f"untested, not passing -- see 'boundary'/'near_miss' in the JSON")
     return 0
 
 
