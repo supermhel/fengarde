@@ -4,7 +4,7 @@
 
 COMPOSE := docker compose -f infra/docker-compose.yml
 
-.PHONY: help preflight demo test e2e nis2-demo up down ha-up ha-down chaos test-live attack-scorecard eval-detection mutation-test
+.PHONY: help preflight demo test e2e nis2-demo up down ha-up ha-down chaos test-live ha-verify attack-scorecard eval-detection mutation-test
 
 PYTHON ?= python3
 
@@ -89,6 +89,15 @@ chaos:
 # (not fail) if their backend isn't reachable, so this target is safe to run
 # without infra up -- it just proves nothing that time. Bring up real infra
 # first: `make up`, or point REDIS_URL/OPENSEARCH_URL at your own instances.
+#
+# The session line needs FENGARDE_SESSION_SECRET because RedisSessionStore
+# refuses to construct without it (mandatory session signing, FIX 5). CI has
+# always supplied one; this target did not, so `make test-live` failed at that
+# step for anyone running it locally while CI stayed green -- found 2026-08-11
+# by running the lane by hand. Throwaway default, overridable, never a real
+# credential: it signs only the rows this test creates.
+SESSION_TEST_SECRET ?= local-test-session-secret-not-for-production
+
 test-live:
 	@BUS_BACKEND=redis $(PYTHON) services/shared/test_runner.py
 	@BUS_BACKEND=redis $(PYTHON) services/shared/test_bus_trim_acked.py
@@ -96,7 +105,19 @@ test-live:
 	@BUS_BACKEND=redis $(PYTHON) services/shared/test_bus_read_count.py
 	@$(PYTHON) services/ws3-indexer/storage/test_opensearch_live.py
 	@$(PYTHON) services/ws3-indexer/storage/test_opensearch_ha_failover_live.py
-	@SESSION_TEST_REDIS=1 $(PYTHON) services/shared/test_sessions.py
+	@$(PYTHON) services/ws3-indexer/storage/test_opensearch_cas_concurrency_live.py
+	@SESSION_TEST_REDIS=1 FENGARDE_SESSION_SECRET=$(SESSION_TEST_SECRET) $(PYTHON) services/shared/test_sessions.py
+
+# Failover-scoped live proofs (2026-08-11). Separate from `test-live` because
+# these KILL a Redis primary and need the HA profile up (`make ha-up`), not the
+# default single-instance stack -- running them against `make up` would prove
+# nothing and stop the only broker. Both skip cleanly if the HA profile isn't
+# active. Each drives an in-network probe over `docker exec` while performing
+# the kill from the host, because the HA Redis nodes are not host-published and
+# the defect classes both need ONE long-lived client spanning the promotion.
+ha-verify:
+	@$(PYTHON) tools/sentinel_failover_live.py
+	@$(PYTHON) tools/chaos_failover_test.py
 
 # P3-2 (2026-07-21 audit fix plan) -- declared ATT&CK/ATLAS coverage
 # scorecard + MITRE ATT&CK Navigator layer export. Zero infra, zero

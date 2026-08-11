@@ -9,6 +9,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Failover-scoped live verification lane** (`make ha-verify`): two proofs
+  that needed a real primary kill and therefore never ran. Both drive an
+  in-network probe over `docker exec` while performing the kill from the
+  host — the HA Redis nodes are not host-published, and both defect classes
+  require ONE long-lived client spanning the promotion, so a fresh
+  per-step client would resolve the new master trivially and prove nothing.
+  - `tools/sentinel_failover_live.py` +
+    `services/ws4-detection/test_window_sentinel_failover_live.py`: the
+    distributed window counter across a Sentinel promotion. Builds its
+    client exactly as ws4's HA branch does and holds it across the kill.
+    The defect guarded is a client pinned to a demoted master, which answers
+    `READONLY` forever while every health check stays green and every
+    stateful rule silently stops firing. Asserts a VALUE, not just write
+    success — a promoted replica that had not replicated the window would
+    accept writes happily while having lost the count.
+  - `tools/chaos_failover_test.py` + `tools/chaos_failover_probe.py`: the
+    acked-tail durability class `make chaos` structurally cannot see, since
+    no SIGKILL of a *consumer* replays a primary acking a write it never
+    replicated. Contract: every `produce()` that returned success must be
+    readable after the promotion; a produce that raised is not covered,
+    because refusing the write is FIX 23's `min-replicas-to-write`
+    guarantee working rather than a violation.
+- **Live OCC/CAS concurrency test**
+  (`services/ws3-indexer/storage/test_opensearch_cas_concurrency_live.py`,
+  wired into `make test-live`): 8 concurrent read-modify-write triage
+  updates against one alert on a real cluster, asserting all 8 notes
+  survive. A lost update is invisible to a serial test — every write
+  succeeds and the final document is well-formed — so only a marker that
+  should be present and isn't reveals it. Sensitivity-verified by
+  disarming `index_cas`'s version guard, which loses 7 of 8 notes.
+
 - **Stateless-rule near-miss probes** (`eval/attack/fire_check.py`
   `_near_miss_probe`): closes the last standing gap in the rule-boundary
   gate. The 15 stateless rules previously had no negative probe at all —
@@ -45,6 +76,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rule's compiled selections — declaration intact, engine no longer
   checking it — must make `main()` exit 1, asserted separately for a plain
   equality predicate and for an `outside_hours` one.
+### Fixed
+
+- `make test-live`'s session step never set `FENGARDE_SESSION_SECRET`, which
+  `RedisSessionStore` has required since the mandatory-signing change (FIX 5).
+  CI supplied one in its own job env, so the lane was green there and broken
+  for anyone running it locally — found by running it by hand. The target now
+  passes a throwaway `SESSION_TEST_SECRET` (overridable).
+
+### Added (continued)
+
 - **Per-tenant fair consume ordering** (`services/shared/fairness.py`):
   WS-4 detection and WS-5 AI triage now round-robin each consume batch by
   tenant instead of raw FIFO, so one tenant flooding a shared deployment can
