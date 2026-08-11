@@ -9,6 +9,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Stateless-rule near-miss probes** (`eval/attack/fire_check.py`
+  `_near_miss_probe`): closes the last standing gap in the rule-boundary
+  gate. The 15 stateless rules previously had no negative probe at all —
+  they carry no threshold to step under and no window to overrun, and the
+  gate reported them "untested, not passing" on the stated grounds that no
+  near-miss was generatable and each needed a hand-authored fixture. That
+  reasoning was wrong: every shipped stateless rule's condition is a pure
+  conjunction of field predicates, so violating exactly ONE declared
+  predicate on the fixture the rule fired on must silence it — generatable
+  per predicate. Each predicate kind has its own constructor (perturbed
+  value for equality, one step across the boundary for `gt/gte/lt/lte/ne`,
+  a non-member for `in`/`contains`/`glob`, an INSIDE-business-hours
+  timestamp for `outside_hours`), and `not_in` is inverted on purpose: the
+  event is left untouched and the rule is rebuilt against a throwaway
+  allowlist directory in which its value IS listed, so the suppression path
+  itself runs. **Result: 15 of 15 stateless rules hold, 46 predicate
+  near-misses, none skipped** — every MITRE-tagged rule is now negatively
+  verified by one half of the gate or the other, none by neither.
+  The claim is deliberately narrow — single-predicate NECESSITY, not
+  well-scopedness, the same limit the stateful probes carry on declared
+  thresholds. It catches what the positive fire check passes silently: a
+  condition evaluated as `or` where `and` was declared, a `not_in`
+  allowlist that is never consulted, an `outside_hours` window ignored (a
+  rule that ignores time-of-day fires on its own off-hours fixture exactly
+  like a healthy one), and a compile step that drops a selection field. It
+  proves nothing about whether the declared predicate set is the right one.
+  Rules with non-conjunctive conditions are declined rather than probed
+  (under `or`, violating one predicate legitimately leaves the rule firing,
+  so asserting silence would assert a defect), a rule whose positive
+  control does not reproduce is declined rather than reported all-held, and
+  any predicate with no constructible violation is reported skipped and
+  keeps its rule out of the "fully held" count. Sensitivity-tested end to
+  end in `eval/attack/test_fire_check.py`: dropping a declared field from a
+  rule's compiled selections — declaration intact, engine no longer
+  checking it — must make `main()` exit 1, asserted separately for a plain
+  equality predicate and for an `outside_hours` one.
 - **Per-tenant fair consume ordering** (`services/shared/fairness.py`):
   WS-4 detection and WS-5 AI triage now round-robin each consume batch by
   tenant instead of raw FIFO, so one tenant flooding a shared deployment can

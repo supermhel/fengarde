@@ -44,6 +44,14 @@ import fire_check as fc  # noqa: E402
 RULE_BRUTE = "6f1c8a2e-0d3b-4c11-9a21-7b5e2f9a1c01"     # count, threshold 10
 RULE_MASS_CARD = "d4e5f607-8192-4a31-8b4c-5d6e7f809104"  # distinct-count, threshold 20
 
+# Stateless rules for the near-miss (single-predicate necessity) probes. Two
+# shapes, not one: a plain multi-equality rule, and a rule carrying an
+# `outside_hours` predicate -- the case the positive fire check cannot see at
+# all, since a rule that ignores time-of-day fires on its own off-hours
+# fixture exactly like a healthy one.
+RULE_ROOT_LOGIN = "c3d4e5f6-7081-4920-9a3b-4c5d6e7f8093"       # cloud_root_console_login
+RULE_N8N_AFTER_HOURS = "92a3b4c5-d627-4f05-ad6f-7a8b9c0d1e24"  # n8n_workflow_modified_after_hours
+
 FAILS: list[str] = []
 _EVENTS: list[dict] | None = None
 
@@ -401,9 +409,12 @@ def test_replay_reports_a_fire_on_any_event_not_just_the_last():
           "-- an intermediate fire inside a negative probe is being discarded")
 
 
-def test_stateless_rules_are_reported_untested_not_passing():
-    """A stateless rule has no generatable near-miss, so it must be reported
-    as not boundary-tested rather than counted as having held a boundary."""
+def test_stateless_rules_are_near_miss_probed_not_threshold_probed():
+    """A stateless rule has no threshold to step under, so `_boundary_probe`
+    must decline it -- but declining is not the end of the story any more: the
+    same rule must come back APPLICABLE from `_near_miss_probe` with real
+    verdicts. Asserting only the decline (as this test once did) would keep
+    passing if the near-miss half were deleted tomorrow."""
     rules = fresh_rules()
     stateless = next((r for r in rules.values()
                       if not r.stateful and isinstance(r.raw.get("mitre"), dict)), None)
@@ -412,9 +423,186 @@ def test_stateless_rules_are_reported_untested_not_passing():
         return
     probe = fc._boundary_probe(stateless, {"time": 0})
     check(probe.get("applicable") is False,
-          f"{stateless.id}: stateless rule reported as boundary-tested")
+          f"{stateless.id}: stateless rule reported as threshold/window-tested")
     check("probes" not in probe,
           f"{stateless.id}: stateless rule produced probe verdicts it cannot support")
+
+    fixture = _fixture_for(stateless)
+    if fixture is None:
+        return
+    near = fc._near_miss_probe(stateless, fixture)
+    check(near.get("applicable") is True,
+          f"{stateless.id}: stateless rule got no near-miss probe either "
+          f"({near.get('reason')}) -- it would be negatively unverified")
+    check(bool(near.get("probes")),
+          f"{stateless.id}: near-miss probe ran but produced no predicate verdicts")
+
+
+def _make_predicate_ignored(rule, dotted_field) -> bool:
+    """Drop one DECLARED predicate from the rule's COMPILED selections, leaving
+    the declaration in `rule.selections` untouched.
+
+    That asymmetry is the whole point, and it is a real defect shape rather
+    than a contrived one: the rule file still says the field is required, the
+    engine no longer checks it, and the positive fire check passes happily
+    because a rule with fewer constraints fires on its own fixture exactly as
+    the honest one does. Nothing except a near-miss can see it."""
+    parts = tuple(dotted_field.split("."))
+    dropped = False
+    for name, compiled in rule._compiled_selections.items():
+        kept = [(p, e) for p, e in compiled if p != parts]
+        if len(kept) != len(compiled):
+            rule._compiled_selections[name] = kept
+            dropped = True
+    return dropped
+
+
+def test_near_miss_probe_catches_a_predicate_that_is_not_load_bearing():
+    """Perturbing a declared field must silence an honest rule and FIRE once
+    the engine stops consulting that field."""
+    for rid, field, key in (
+        (RULE_ROOT_LOGIN, "unmapped.cloud.identity_type",
+         "root_login_no_mfa.unmapped.cloud.identity_type"),
+        (RULE_ROOT_LOGIN, "unmapped.cloud.mfa_used",
+         "root_login_no_mfa.unmapped.cloud.mfa_used"),
+    ):
+        rules = fresh_rules()
+        rule = rules[rid]
+        fixture = _fixture_for(rule)
+        if fixture is None:
+            continue
+
+        honest = fc._near_miss_probe(rule, fixture)
+        check(honest.get("probes", {}).get(key, {}).get("status") == "held",
+              f"{rid}: honest rule did not hold its {key} near-miss "
+              f"({honest.get('probes', {}).get(key)})")
+
+        check(_make_predicate_ignored(rule, field),
+              f"{rid}: test could not drop {field} from the compiled selections")
+        mutant = fc._near_miss_probe(rule, fixture)
+        check(mutant.get("probes", {}).get(key, {}).get("status") == "fired",
+              f"{rid}: near-miss probe stayed silent on a rule that no longer "
+              f"consults its declared {field} -- the probe cannot detect a "
+              f"predicate that is not load-bearing")
+        check(key in mutant.get("too_loose", []),
+              f"{rid}: {key} fired but was not reported in too_loose")
+
+
+def test_near_miss_probe_catches_an_ignored_outside_hours_predicate():
+    """The time-of-day case, called out separately because it is the one the
+    POSITIVE check is structurally blind to: a rule that ignores its
+    `outside_hours` predicate entirely still fires on its own off-hours
+    fixture, indistinguishably from a healthy one. Only stamping an in-hours
+    timestamp and demanding silence separates them."""
+    rules = fresh_rules()
+    rule = rules[RULE_N8N_AFTER_HOURS]
+    fixture = _fixture_for(rule)
+    if fixture is None:
+        return
+    key = "workflow_change.time[outside_hours]"
+
+    honest = fc._near_miss_probe(rule, fixture)
+    check(honest.get("probes", {}).get(key, {}).get("status") == "held",
+          f"{RULE_N8N_AFTER_HOURS}: honest rule fired on an in-hours timestamp "
+          f"({honest.get('probes', {}).get(key)})")
+
+    check(_make_predicate_ignored(rule, "time"),
+          f"{RULE_N8N_AFTER_HOURS}: test could not drop the time predicate")
+    mutant = fc._near_miss_probe(rule, fixture)
+    check(mutant.get("probes", {}).get(key, {}).get("status") == "fired",
+          f"{RULE_N8N_AFTER_HOURS}: an in-hours event did not fire a rule that "
+          f"stopped consulting its outside_hours predicate -- the probe cannot "
+          f"detect an ignored time-of-day window")
+
+
+def test_near_miss_probe_declines_a_non_conjunctive_condition():
+    """Under `or`, violating one predicate legitimately leaves the rule firing.
+    Probing anyway would report a healthy rule as too loose, so the probe must
+    decline -- and say why, since 'inapplicable' is what a reader sees later."""
+    rules = fresh_rules()
+    rule = rules[RULE_ROOT_LOGIN]
+    fixture = _fixture_for(rule)
+    if fixture is None:
+        return
+    rule._condition_tokens = ["root_login_no_mfa", "or", "root_login_no_mfa"]
+    probe = fc._near_miss_probe(rule, fixture)
+    check(probe.get("applicable") is False,
+          f"{RULE_ROOT_LOGIN}: near-miss probe ran on an OR condition, where "
+          f"single-predicate necessity does not hold")
+    check("conjunction" in (probe.get("reason") or ""),
+          f"{RULE_ROOT_LOGIN}: declined an OR condition without saying why "
+          f"({probe.get('reason')})")
+
+
+def test_near_miss_probe_declines_an_or_condition_named_like_a_selection():
+    """The unsafe direction of `_is_pure_conjunction`, pinned.
+
+    A selection literally named `or` makes the `or` TOKEN satisfy a plain
+    `token in rule.selections` test, so a genuinely disjunctive condition
+    classifies as a conjunction and the probe demands silence from a rule
+    whose other disjunct legitimately still matches -- reporting a healthy
+    rule as too loose. No shipped rule has that shape, which is exactly why
+    it needs a test rather than an assumption."""
+    rules = fresh_rules()
+    rule = rules[RULE_ROOT_LOGIN]
+    fixture = _fixture_for(rule)
+    if fixture is None:
+        return
+    rule.selections = dict(rule.selections)
+    rule.selections["or"] = {"class_uid": 3002}
+    rule._condition_tokens = ["root_login_no_mfa", "or", "or"]
+    check(fc._is_pure_conjunction(rule) is False,
+          f"{RULE_ROOT_LOGIN}: a condition joined by OR was classified as a pure "
+          f"conjunction because a selection is named 'or'")
+
+
+def test_near_miss_probe_requires_its_positive_control():
+    """Silence is only evidence when this harness can demonstrably fire the
+    rule. A rule that never matches would otherwise report every predicate as
+    'held' -- all-green from a rule that does nothing at all, the exact
+    vacuous pass the stateful probes share `_replay` to avoid."""
+    rules = fresh_rules()
+    rule = rules[RULE_ROOT_LOGIN]
+    fixture = _fixture_for(rule)
+    if fixture is None:
+        return
+    rule.evaluate = lambda event: False
+    probe = fc._near_miss_probe(rule, fixture)
+    check(probe.get("applicable") is False,
+          f"{RULE_ROOT_LOGIN}: near-miss probe reported verdicts for a rule that "
+          f"cannot fire at all -- every 'held' below would be vacuous")
+    check("positive control" in (probe.get("reason") or ""),
+          f"{RULE_ROOT_LOGIN}: declined without naming the positive control "
+          f"({probe.get('reason')})")
+
+
+def test_gate_exits_nonzero_end_to_end_on_a_stateless_rule_ignoring_a_predicate():
+    """Same end-to-end argument as the stateful too-loose test: every layer
+    below can be right while `main()` still exits 0. The near-miss verdicts
+    have to reach the exit code and the failure output."""
+    real_detector = fc.Detector
+
+    def mutated_detector(*args, **kwargs):
+        detector = real_detector(*args, **kwargs)
+        for r in detector.rules:
+            if r.id == RULE_ROOT_LOGIN:
+                _make_predicate_ignored(r, "unmapped.cloud.mfa_used")
+        return detector
+
+    fc.Detector = mutated_detector
+    try:
+        rc, out = _run_main_capturing()
+    finally:
+        fc.Detector = real_detector
+
+    check(rc == 1, f"gate exited {rc} with a stateless rule that ignores a "
+                   f"declared predicate; expected 1")
+    check("fire BELOW their declared boundary" in out,
+          "gate did not report the near-miss failure in its failure output")
+    tail = out.split("fire BELOW their declared boundary")[-1]
+    check(RULE_ROOT_LOGIN in tail, f"gate failure output did not name {RULE_ROOT_LOGIN}")
+    check("not load-bearing" in tail,
+          "gate failure output did not attribute the failure to a near-miss probe")
 
 
 def _run_main_capturing() -> tuple[int, str]:
@@ -577,7 +765,7 @@ def test_canary_is_not_mistaken_for_a_real_tagged_rule():
 
 def main():
     rules = fresh_rules()
-    for rid in (RULE_BRUTE, RULE_MASS_CARD):
+    for rid in (RULE_BRUTE, RULE_MASS_CARD, RULE_ROOT_LOGIN, RULE_N8N_AFTER_HOURS):
         if rid not in rules:
             print(f"[FAIL] eval/attack/fire_check.py: rule {rid} not loaded")
             sys.exit(1)
@@ -593,7 +781,13 @@ def main():
     test_positive_replay_always_fits_inside_its_own_window()
     test_overrun_replay_always_lands_past_its_window()
     test_replay_reports_a_fire_on_any_event_not_just_the_last()
-    test_stateless_rules_are_reported_untested_not_passing()
+    test_stateless_rules_are_near_miss_probed_not_threshold_probed()
+    test_near_miss_probe_catches_a_predicate_that_is_not_load_bearing()
+    test_near_miss_probe_catches_an_ignored_outside_hours_predicate()
+    test_near_miss_probe_declines_a_non_conjunctive_condition()
+    test_near_miss_probe_declines_an_or_condition_named_like_a_selection()
+    test_near_miss_probe_requires_its_positive_control()
+    test_gate_exits_nonzero_end_to_end_on_a_stateless_rule_ignoring_a_predicate()
     test_gate_fails_when_zero_rules_are_checked()
     test_gate_fails_when_every_rule_loses_its_mitre_block()
     test_canary_is_green_while_zero_rules_are_checked()
@@ -609,8 +803,11 @@ def main():
         for f in FAILS:
             print("   -", f)
         sys.exit(1)
-    print("[OK] fire_check boundary probes: sensitive to a one-event and a 10% "
-          "window error, the gate exits 1 end-to-end on a genuinely too-loose "
+    print("[OK] fire_check negative probes: stateful half is sensitive to a "
+          "one-event and a 10% window error; stateless half catches a declared "
+          "predicate (including an outside_hours window) the engine stops "
+          "consulting, declines OR conditions and rules with no positive "
+          "control; the gate exits 1 end-to-end on either kind of too-loose "
           "rule and 0 on the real rule set, probes are tenant-isolated, and "
           "partly/fully skipped rules are reported untested rather than held")
 

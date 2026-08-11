@@ -88,6 +88,16 @@ space, so no near-miss fixture is generatable and each needs a hand-authored
 one. That is a real remaining gap, listed here rather than averaged into a
 headline number.
 
+> **Superseded 2026-08-11 — the "no near-miss is generatable" reasoning above
+> was wrong.** Every shipped stateless rule's condition is a pure conjunction
+> of field predicates, so violating exactly ONE declared predicate must
+> silence the rule, which IS generatable per predicate. `fire_check.py`'s
+> `_near_miss_probe` does that; 15 of 15 stateless rules hold across 46
+> predicate near-misses, none skipped. The rule count also moved (14 → 15) as
+> rules were added after this spec was written. See `SSOT.md` for the current
+> claim and its scope; the paragraph above is kept as the historical record of
+> what this spec concluded at the time.
+
 Two properties of the negative half are load-bearing:
 
 1. **It shares `_replay` with the positive check.** "Did not fire" and "was
