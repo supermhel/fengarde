@@ -2,10 +2,9 @@
 
 **Re-synced 2026-08-06** — this file previously described only the basic
 CRUD HTTP API; the auth model, MFA hosting, and bus-consumer half were all
-undocumented. `services/ws6-inventory/` now has 8 substantive modules
+undocumented. `services/ws6-inventory/` now has 7 substantive modules
 (`app.py`, `authz.py`, `bus_consumer.py`, `keystore.py`, `manage_keys.py`,
-`mfa.py`, `store.py`, plus tests) — everything below reflects the current
-set.
+`store.py`, plus tests) — everything below reflects the current set.
 
 ## Consumes
 - Topic `assets.updates` (opt-in, `BUS_BACKEND` set; `services/ws6-inventory/
@@ -48,12 +47,16 @@ set.
   full security history (this is the 3rd iteration after two earlier ones
   were found insufficient by independent review).
 
-## MFA (`mfa.py` — hosted here, NOT wired into this service's own auth)
-- Stdlib-only RFC 6238 TOTP primitive (`generate_secret`, `generate_code`,
-  `verify_code`, `otpauth_uri`). Physically lives in this directory but is
-  imported cross-service by `services/shared/users.py` (WS-3's RBAC session
-  login) via a `sys.path` insert — WS-6's own API-key auth above does not
-  itself gate anything behind MFA.
+## MFA — MOVED OUT of this service (2026-08-11)
+- The stdlib-only RFC 6238 TOTP primitive now lives at `services/shared/mfa.py`.
+  It was never wired into WS-6's own auth (WS-6 uses the API-key scheme above);
+  its only consumer has always been `services/shared/users.py` for WS-3's RBAC
+  session login, which reached it via a `sys.path` insert into this directory.
+- That insert resolved correctly in a source checkout and **not** in any
+  deployed image — ws3-indexer copies `services/shared`, not `ws6-inventory`,
+  so the import failed and MFA silently disabled itself in the shipped
+  container. Moving it to `shared/` (where every image already copies it) is
+  the fix. See `services/shared/users.py`'s import block for the full account.
 
 ## Model
 - MAC = primary key (stable), now scoped `(tenant_id, mac)` since the F1

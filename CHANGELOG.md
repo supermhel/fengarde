@@ -9,6 +9,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Failover-scoped live verification lane** (`make ha-verify`): two proofs
+  that needed a real primary kill and therefore never ran. Both drive an
+  in-network probe over `docker exec` while performing the kill from the
+  host — the HA Redis nodes are not host-published, and both defect classes
+  require ONE long-lived client spanning the promotion, so a fresh
+  per-step client would resolve the new master trivially and prove nothing.
+  - `tools/sentinel_failover_live.py` +
+    `services/ws4-detection/test_window_sentinel_failover_live.py`: the
+    distributed window counter across a Sentinel promotion. Builds its
+    client exactly as ws4's HA branch does and holds it across the kill.
+    The defect guarded is a client pinned to a demoted master, which answers
+    `READONLY` forever while every health check stays green and every
+    stateful rule silently stops firing. Asserts a VALUE, not just write
+    success — a promoted replica that had not replicated the window would
+    accept writes happily while having lost the count.
+  - `tools/chaos_failover_test.py` + `tools/chaos_failover_probe.py`: the
+    acked-tail durability class `make chaos` structurally cannot see, since
+    no SIGKILL of a *consumer* replays a primary acking a write it never
+    replicated. Contract: every `produce()` that returned success must be
+    readable after the promotion; a produce that raised is not covered,
+    because refusing the write is FIX 23's `min-replicas-to-write`
+    guarantee working rather than a violation.
+- **Three more live verification lanes**, each closing a SSOT.md §2 row that
+  had been reviewed but never executed against real infrastructure:
+  - `services/ws3-indexer/test_mfa_live_e2e.py` — the full MFA/TOTP flow over
+    real HTTP against the deployed handler. Steps 4 and 5 (password-only
+    login must be REFUSED once TOTP is active, and a wrong code must be
+    refused indistinguishably from a wrong password) are the load-bearing
+    ones; a build with MFA not enforced at all still passes step 6 alone.
+    This test found the inert-MFA defect listed under Fixed.
+  - `tools/ot_new_device_e2e.py` — WS-6 bus consumer → `raw.events` → WS-2
+    parser → WS-4 rule → indexed alert, the first time
+    `ot_new_device_on_segment` has fired from a real producer rather than its
+    own anti-dormancy fixture. Uses a MAC and a tenant unique per run so a
+    stale alert cannot be misread as a fresh pass.
+  - `tools/backpressure_load_test.py` — a real 120k-datagram flood at ~2.2x
+    the configured cap, from inside the docker network (a host→container
+    flood loses ~75% to Docker's NAT, so nothing engages and the test passes
+    while proving nothing). Its own guard refuses to report evidence when the
+    achieved send rate did not clear 2x the cap.
+- **Live OCC/CAS concurrency test**
+  (`services/ws3-indexer/storage/test_opensearch_cas_concurrency_live.py`,
+  wired into `make test-live`): 8 concurrent read-modify-write triage
+  updates against one alert on a real cluster, asserting all 8 notes
+  survive. A lost update is invisible to a serial test — every write
+  succeeds and the final document is well-formed — so only a marker that
+  should be present and isn't reveals it. Sensitivity-verified by
+  disarming `index_cas`'s version guard, which loses 7 of 8 notes.
+
 - **Stateless-rule near-miss probes** (`eval/attack/fire_check.py`
   `_near_miss_probe`): closes the last standing gap in the rule-boundary
   gate. The 15 stateless rules previously had no negative probe at all —
@@ -45,6 +94,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rule's compiled selections — declaration intact, engine no longer
   checking it — must make `main()` exit 1, asserted separately for a plain
   equality predicate and for an `outside_hours` one.
+### Fixed
+
+- **MFA/TOTP was inert in every deployed container** (`services/shared/mfa.py`,
+  moved from `services/ws6-inventory/mfa.py`). `shared/users.py` located the
+  TOTP primitive by walking `parent.parent / "ws6-inventory"` — correct in a
+  source checkout, wrong in every image, since ws3-indexer's Dockerfile copies
+  `services/shared` and never `ws6-inventory`. The import failed, a bare
+  `except` set `_TOTP_AVAILABLE = False`, and in the shipped container
+  `provision_totp()` raised while `verify_totp()` rejected every code — so an
+  operator could believe MFA was enforced while it was not, with all zero-infra
+  tests green because the checkout path resolves fine. Found by running the MFA
+  flow against a real container for the first time. ws6 never imported the
+  module (its own `INTERFACE.md` said "hosted here, NOT wired into this
+  service's own auth"), so `shared/` was always the right home. The degrade is
+  no longer silent either: it now emits a `RuntimeWarning` that names the
+  consequence, and the new live e2e treats an unavailable TOTP primitive as a
+  FAILURE rather than a skip.
+- `infra/docker-compose.yml` never exposed `INVENTORY_BASELINE_SECONDS`, a
+  documented WS-6 tunable, so the only way to change the per-tenant baseline
+  window was editing the compose file. Now a passthrough with its documented
+  3600s default.
+- `make test-live`'s session step never set `FENGARDE_SESSION_SECRET`, which
+  `RedisSessionStore` has required since the mandatory-signing change (FIX 5).
+  CI supplied one in its own job env, so the lane was green there and broken
+  for anyone running it locally — found by running it by hand. The target now
+  passes a throwaway `SESSION_TEST_SECRET` (overridable).
+
+### Added (continued)
+
 - **Per-tenant fair consume ordering** (`services/shared/fairness.py`):
   WS-4 detection and WS-5 AI triage now round-robin each consume batch by
   tenant instead of raw FIFO, so one tenant flooding a shared deployment can
