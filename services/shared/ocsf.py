@@ -11,7 +11,7 @@ from typing import Optional
 # container layout (/app/shared -> /app/tools, parents[1]).
 #
 # Unlike this module's own MFA-import counterpart in users.py (deliberately
-# wrapped in try/except so a missing ws6-inventory/mfa.py degrades to "TOTP
+# wrapped in try/except so a missing shared/mfa.py degrades to "TOTP
 # off" instead of taking the process down), a missing tools/ directory here
 # must NOT degrade silently: validate_event/SCHEMA_PATH are load-bearing for
 # every parser's OCSF validation, so a stub/no-op fallback would mean
