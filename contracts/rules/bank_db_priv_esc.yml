@@ -1,9 +1,13 @@
-title: Privileged database operation outside maintenance window
+title: Privileged database operation on a banking DB
 id: 2a9d7b41-5e6c-4f88-bb12-3c0a1e7d4f02
 status: stable
 description: >
-  Privileged datastore operation (grant/alter) on a banking DB. High weight because
-  it maps directly to PCI-DSS access-control monitoring.
+  Privileged datastore operation (grant/alter) on a banking DB, any time of
+  day -- this rule has NO time predicate (unlike e.g.
+  ot_write_outside_maintenance.yml), despite an earlier title implying one;
+  corrected to match the actual detection.block below rather than add an
+  outside_hours gate to a shipped rule's behavior. High weight because it
+  maps directly to PCI-DSS access-control monitoring.
 level: critical
 logsource:
   category: datastore_activity

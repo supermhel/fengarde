@@ -8,6 +8,7 @@ source (e.g. ``syslog_rfc5424``) is routed to the right product parser.
 from __future__ import annotations
 
 import json
+import re
 from typing import Optional
 
 from .base import Parser
@@ -38,6 +39,11 @@ _REGISTRY: dict[str, Parser] = {
               DnsQueryParser(), K8sAuditParser(), CefParser(), CloudTrailParser(),
               SysmonParser(), ModbusAnomalyParser(), InventoryDiffParser())
 }
+
+# Real Cisco ASA tag shape (mirrors cisco_asa.py's own _ASA_TAG): a bare "%ASA"
+# substring can appear inside attacker-controlled content (e.g. a crafted SSH
+# username) and must not be enough to route away from the real source parser.
+_ASA_TAG_RE = re.compile(r"%ASA-\d-\d+:")
 
 # M4.5: external pip packages can register additional parsers (docs/plugin-
 # development.md) via the "fengarde.parsers" entry-point group. Purely
@@ -90,8 +96,12 @@ def _resolve_structured(rec: dict) -> Optional[Parser]:
     substring of a value (which attacker-controlled log content could spoof).
     Returns None when routing is genuinely ambiguous, so main() dead-letters it
     with a "set source_type" hint instead of silently mis-parsing."""
-    # MCP/agent tool-call audit
-    if "tool" in rec and ("arguments" in rec or "args" in rec):
+    # MCP/agent tool-call audit. Mirrors McpAgentParser's own field aliases
+    # (_pick(rec, "tool", "tool_name", "name") / _pick(rec, "arguments", "args",
+    # "params")) -- a record using only the alias names must route here too,
+    # not fall through to dead-letter.
+    if ("tool" in rec or "tool_name" in rec or "name" in rec) and \
+            ("arguments" in rec or "args" in rec or "params" in rec):
         return _REGISTRY["mcp_agent"]
     # k8s audit event: auditID is unique to the k8s audit-log schema.
     if "auditID" in rec:
@@ -169,10 +179,13 @@ def resolve(raw_payload: dict) -> Optional[Parser]:
     if isinstance(raw, str) and not raw.lstrip().startswith("{"):
         if raw.startswith("CEF:"):
             return _REGISTRY["cef"]
-        if "%ASA-" in raw or "%ASA" in raw:
-            return _REGISTRY["cisco_asa"]
+        # sshd is checked first: a bare "%ASA" substring (no strict tag) can
+        # appear inside attacker-controlled content (e.g. a crafted SSH
+        # username) and must never outrank a real sshd marker.
         if "sshd[" in raw or "pam_unix(sshd:" in raw:
             return _REGISTRY["linux_ssh"]
+        if _ASA_TAG_RE.search(raw):
+            return _REGISTRY["cisco_asa"]
         if "query[" in raw and " from " in raw:
             return _REGISTRY["dns_query"]
         return _REGISTRY["generic_syslog"]  # catch-all syslog is now reachable

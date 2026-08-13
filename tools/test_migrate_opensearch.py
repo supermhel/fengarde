@@ -77,8 +77,8 @@ def test_load_templates_reads_the_real_repo_and_skips_ism():
     templates = mig.load_templates()
     check(not any(name.startswith("ism-") for name in templates),
           "ISM policy files must never be treated as index templates")
-    expected = {"alerts", "assets", "events-bank", "events-common", "events-dc"}
-    check(expected.issubset(set(templates)), f"the real 5 template files must all load, got {set(templates)}")
+    expected = {"alerts", "assets", "events-bank", "events-common", "events-dc", "reports"}
+    check(expected.issubset(set(templates)), f"the real 6 template files must all load, got {set(templates)}")
     for name in expected:
         version = mig._mapping_version(templates[name])
         check(version >= 1, f"{name}.json must carry a real mapping_version >= 1, got {version}")
@@ -90,7 +90,7 @@ def test_plan_marks_nothing_installed_as_apply():
     store = OpenSearchStore(url="http://fake:9200")
     store._request = _FakeTransport({})  # every GET 404s -> nothing installed
     steps = mig.plan(store)
-    check(len(steps) == 5, f"must plan for all 5 real templates, got {len(steps)}")
+    check(len(steps) == 6, f"must plan for all 6 real templates, got {len(steps)}")
     check(all(s["action"] == "apply" for s in steps),
           f"nothing installed yet must mean 'apply' for everything, got {steps}")
     check(all(s["installed_version"] is None for s in steps),
@@ -150,7 +150,7 @@ def main():
             print("   -", f)
         sys.exit(1)
     print("[OK] M4.6 OpenSearch template migration: mapping_version extraction, real repo's "
-          "5 template files all carry a real version and the ism-*.json policy files are "
+          "6 template files all carry a real version and the ism-*.json policy files are "
           "correctly excluded, plan() correctly distinguishes nothing-installed/stale/current, apply() "
           "only PUTs the templates actually marked for it -- fake-transport wire-format level, "
           "same standing caveat as the rest of the OpenSearch storage adapter")

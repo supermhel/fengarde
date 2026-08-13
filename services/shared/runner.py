@@ -372,13 +372,44 @@ def serve(handlers: Handlers, *, health_port: int | None = None,
     state = HealthState()
     metrics = Metrics()
 
+    def _combined_metrics_provider():
+        """Merge deadletter-topic depth into whatever the caller's own
+        metrics_provider already returns. A dead-letter topic has no
+        consumer group ANYWHERE in this codebase -- nothing else ever
+        reports how many messages are sitting in it, so the only way to
+        notice a real backlog was running tools/dlq_peek.py by hand (found
+        live: raw.events.deadletter held 80 real entries with zero
+        visibility on a running Docker/Redis stack). bus_factory() returns
+        a fresh client per call; on RedisBus that client points at the SAME
+        shared server, so .depth() reads the real, shared stream length.
+        On the default MemoryBus (test/dev only) each fresh instance is
+        empty by construction, so this reads 0 there -- uninformative, not
+        misleading, consistent with MemoryBus's documented reduced-fidelity
+        scope elsewhere in this module."""
+        depths = {}
+        try:
+            b = bus_factory()
+            for topic in handlers:
+                try:
+                    depths[f"{topic}.deadletter_depth"] = b.depth(f"{topic}.deadletter")
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        if metrics_provider is not None:
+            try:
+                depths.update(metrics_provider())
+            except Exception:
+                pass  # the health handler already treats a broken provider as non-fatal
+        return depths
+
     # Health thread (stdlib ThreadingHTTPServer, mirrors ws6/app.py).
     health_srv = None
     health_thread = None
     if health_port is not None:
         health_srv = ThreadingHTTPServer(
             ("0.0.0.0", health_port),
-            _make_health_handler(service_name, state, metrics, metrics_provider))
+            _make_health_handler(service_name, state, metrics, _combined_metrics_provider))
         health_thread = threading.Thread(
             target=health_srv.serve_forever, name="health", daemon=True)
         health_thread.start()

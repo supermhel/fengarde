@@ -32,7 +32,7 @@ Please include:
 FENGARDE is a **local, single-host development and demonstration stack**. It is
 **not** hardened for production or internet exposure. Sections below carry the
 milestone that introduced them (v0.1 network boundary → v0.4 opt-in shared-secret
-auth → M4/v0.6 multi-tenancy + RBAC + webhooks + plugins) — each section's own
+auth → M4 multi-tenancy + RBAC + webhooks + plugins) — each section's own
 label is the accurate version marker; don't infer an overall repo version from
 this file's title. Understand these boundaries before running it:
 
@@ -56,11 +56,11 @@ public internet or an untrusted network.
   localhost — it is protected only by the loopback binding, not by any auth
   beyond that default password.
 
-### 2. Authentication is opt-in (v0.4+), layered up to real RBAC in v0.6 (M4.2)
+### 2. Authentication is opt-in (v0.4+), layered up to real RBAC in M4.2
 
 v0.1/v0.2/v0.3 shipped with **no authentication at all** — anyone who could
 reach a port could call its API. v0.4 added a minimal, honest, **opt-in**
-shared-secret layer; v0.6 (M4.2) adds a second, independent opt-in layer
+shared-secret layer; M4.2 adds a second, independent opt-in layer
 with actual per-user identity and roles:
 
 - **`FENGARDE_API_KEY`** — a shared secret checked via `X-Api-Key` on the WS-3
@@ -70,7 +70,7 @@ with actual per-user identity and roles:
   (`"auth disabled: FENGARDE_API_KEY not set"`). Set it and every write/read on
   those two APIs requires the matching header; the dashboard's nginx proxy
   injects it server-side so the browser never holds the key.
-- **`FENGARDE_RBAC_DB`** (M4.2, v0.6) — a SQLite file path. Unset (default) =
+- **`FENGARDE_RBAC_DB`** (M4.2) — a SQLite file path. Unset (default) =
   the WS-3 triage/report endpoints stay exactly the pre-M4.2 API-key-only
   behavior; `/auth/login`, `/auth/logout`, `/auth/me` don't even exist. Set
   it and: real per-user accounts (`services/shared/users.py`, passwords
@@ -206,7 +206,7 @@ sensitive log content in cleartext. When you enable it, place the spool on a vol
 with restrictive filesystem permissions (not world-readable) and a retention
 policy; it is a local buffer, not an audit store.
 
-### 9. Outbound alert webhooks (M4.4, v0.6) send alert content to operator-configured URLs
+### 9. Outbound alert webhooks (M4.4) send alert content to operator-configured URLs
 
 Opt-in via `contracts/webhooks/*.yml` (ships empty — no files, no outbound
 requests, ever); see `docs/webhooks.md` and `contracts/webhooks/README.md`.
@@ -280,7 +280,7 @@ sections:**
 The following are **known** and **deferred** to later releases:
 
 - Full authentication / authorization is still **opt-in everywhere**, never
-  default-on. v0.4 added a shared-secret layer (§2); M4.2 (v0.6) added a second,
+  default-on. v0.4 added a shared-secret layer (§2); M4.2 added a second,
   independent opt-in layer with real per-user identity/roles/tenant scoping —
   but nothing forces either on, and the WS-3 triage API (§7) and WS-6 inventory
   API stay open by default like every other service unless an operator sets the

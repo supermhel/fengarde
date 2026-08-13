@@ -127,6 +127,7 @@ TARGETS: dict[str, tuple[str, list[str], float]] = {
             "test_tenant_isolation.py",
             "test_new_device_diff.py",
             "test_bus_consumer.py",
+            "test_manage_keys.py",
         ],
         60.0,  # measured 69% (2026-08-06 first-time baseline); 9pt buffer
     ),

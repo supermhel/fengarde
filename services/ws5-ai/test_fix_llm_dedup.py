@@ -51,7 +51,7 @@ class CountingLLM:
 def ai_request(ingest_id):
     return {
         "event_id": ingest_id,
-        "reason": ["Privileged database operation outside maintenance window"],
+        "reason": ["Privileged database operation on a banking DB"],
         "event": {
             "class_uid": 6005, "activity_id": 5, "severity_id": 4,
             "time": 1750000000000,

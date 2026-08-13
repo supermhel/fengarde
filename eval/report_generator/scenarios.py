@@ -11,7 +11,7 @@ SCENARIOS: list[tuple[str, dict, dict]] = [
     ("bank_db_priv_esc", {
         "alert_id": "eval-1", "time": 1752000000000,
         "rule_id": "2a9d7b41-5e6c-4f88-bb12-3c0a1e7d4f02",
-        "rule_title": "Privileged database operation outside maintenance window",
+        "rule_title": "Privileged database operation on a banking DB",
         "level": "critical", "score": 90, "sector": "bank", "tenant_id": "default",
     }, {"status": "triaged", "note": "confirmed unauthorized GRANT statement"}),
 

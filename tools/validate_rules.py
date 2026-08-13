@@ -182,7 +182,8 @@ def _validate_selection(name: str, sel, errors: list[str]) -> None:
         # field equals that exact list. Accept it -- only dicts are operators.
 
 
-def _validate_condition(condition, selection_names: set[str], errors: list[str]) -> None:
+def _validate_condition(condition, selection_names: set[str], errors: list[str],
+                        not_in_selection_names: "set[str] | None" = None) -> None:
     if not isinstance(condition, str) or not condition.strip():
         errors.append("detection.condition: missing or empty")
         return
@@ -195,6 +196,29 @@ def _validate_condition(condition, selection_names: set[str], errors: list[str])
         if tok not in _KEYWORDS and tok not in selection_names:
             errors.append(f"detection.condition references undefined selection {tok!r} "
                           f"(defined: {sorted(selection_names)})")
+    # `not_in`'s fail-open contract ("broken allowlist -> keep firing, over-
+    # alert rather than go dark", see engine.py's _operator_matches) only
+    # fails OPEN when the selection is referenced in a non-negated position.
+    # A broken allowlist makes the not_in operator resolve to "matched", and
+    # `not matched` = False -- so wrapping a not_in selection in `not (...)`
+    # silently inverts a documented-safe fail-open into a fail-CLOSED
+    # detection blackout on a broken allowlist file. Block it at the gate:
+    # no shipped rule does this today, so this closes the trap for good
+    # rather than warning after a future contribution ships it.
+    if not_in_selection_names:
+        for i, tok in enumerate(tokens):
+            if tok != "not":
+                continue
+            j = i + 1
+            while j < len(tokens) and tokens[j] == "(":
+                j += 1
+            if j < len(tokens) and tokens[j] in not_in_selection_names:
+                errors.append(
+                    f"detection.condition: selection {tokens[j]!r} uses a `not_in` "
+                    f"operator and is referenced in a negated position ('not {tokens[j]}'"
+                    f") -- this inverts not_in's documented fail-OPEN-on-a-broken-"
+                    f"allowlist behavior into fail-closed; reference it without `not`, "
+                    f"or restructure the condition")
     # Parse under the REAL evaluator to reject malformed boolean expressions
     # (unbalanced parens, dangling operators) at gate time.
     matched = {n: False for n in selection_names}
@@ -236,7 +260,13 @@ def validate_rule(rule: dict) -> list[str]:
             errors.append("'detection' has no selections")
         for name, sel in selections.items():
             _validate_selection(name, sel, errors)
-        _validate_condition(detection.get("condition"), selection_names, errors)
+        not_in_selection_names = {
+            name for name, sel in selections.items()
+            if isinstance(sel, dict)
+            and any(isinstance(v, dict) and "not_in" in v for v in sel.values())
+        }
+        _validate_condition(detection.get("condition"), selection_names, errors,
+                            not_in_selection_names)
 
     siem = rule.get("siem", {})
     if not isinstance(siem, dict):

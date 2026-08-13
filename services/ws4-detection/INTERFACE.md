@@ -78,8 +78,10 @@
 - `PORT` (default `8010`) — health/metrics listener port.
 - `BUS_BACKEND` / `REDIS_URL` / `REDIS_PASSWORD` / `REDIS_SENTINEL_HOSTS` /
   `REDIS_SENTINEL_MASTER` — bus backend (memory / redis / redis-sentinel).
-- `FENGARDE_TENANT_FAIR_CONSUME` (`1`/`true`) — opt-in per-tenant fair consume
-  ordering (PR #55; default FIFO otherwise).
+- `FENGARDE_TENANT_FAIR_CONSUME` — per-tenant fair consume ordering (PR #55).
+  **Default on**; opt out with `=0`/`=false` (this entry said "opt-in,
+  default FIFO" until 2026-08-13, contradicting this file's own module
+  description above — `main.py:433`'s actual default is `"1"`).
 - `RULES_RELOAD_INTERVAL_S` (default `0` = off) — opt-in rule hot-reload poll
   interval (mtime-poll + atomic swap, B4).
 - `DETECTION_OUTPUT_DEPTH_WARN` — warn threshold for over-deep nested output.

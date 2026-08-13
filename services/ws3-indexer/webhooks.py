@@ -42,7 +42,7 @@ from pathlib import Path
 
 import yaml
 
-from shared.outbound_http import no_redirect_urlopen  # noqa: E402
+from shared.outbound_http import is_unsafe_target_url, no_redirect_urlopen  # noqa: E402
 
 _HERE = Path(__file__).resolve().parent
 _SERVICES = _HERE.parent
@@ -111,6 +111,13 @@ def load_webhook_configs(webhooks_dir: Path | None = None) -> list[WebhookConfig
         if not isinstance(wid, str) or not isinstance(url, str) or not isinstance(secret_env, str):
             continue
         if not (url.startswith("https://") or url.startswith("http://")):
+            continue
+        # SSRF hardening: a scheme check alone never rejects a URL pointing
+        # at the cloud metadata endpoint or an internal service (both are
+        # valid http(s) URLs). Skip the whole config rather than silently
+        # rewrite the URL -- same "malformed/unsafe config is skipped, not
+        # patched" posture as the checks above.
+        if is_unsafe_target_url(url):
             continue
         tenant_id = raw.get("tenant_id")
         min_score = raw.get("min_score", 0)

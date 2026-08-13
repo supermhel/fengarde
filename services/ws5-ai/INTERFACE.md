@@ -53,7 +53,9 @@
 - `OLLAMA_URL` (default `http://localhost:11434`) — Ollama endpoint; unset/unreachable
   degrades to the documented passthrough `StubLLM` (zero infra).
 - `OLLAMA_MODEL` — model name to request from Ollama.
-- `FENGARDE_TENANT_FAIR_CONSUME` (`1`/`true`) — opt-in per-tenant fair consume.
+- `FENGARDE_TENANT_FAIR_CONSUME` — per-tenant fair consume. **Default on**;
+  opt out with `=0`/`=false` (this said "opt-in" until 2026-08-13, contradicting
+  this file's own Consumes section above, which correctly says default on).
 
 ## Run locally
 - `python main.py`  (StubLLM unless OLLAMA_URL is set)

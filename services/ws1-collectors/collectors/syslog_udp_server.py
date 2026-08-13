@@ -177,9 +177,17 @@ class TenantTokenBuckets:
         self._rate = max(rate_per_sec, 0)
         self._buckets: "dict[str, _TokenBucket]" = {}
         self._default_bucket = _TokenBucket(self._rate)
+        # F4 gap fix: the tenant-level bucket alone collapses to one shared
+        # budget whenever every real network source shares one tenant_id --
+        # the default, single-tenant deployment. A flooding host can then
+        # rate-limit away a genuine concurrent attacker's events on the same
+        # collector, since both share the sole tenant bucket. A nested
+        # per-source-IP bucket at the same rate caps any ONE source's share
+        # of the tenant budget without weakening the tenant-wide ceiling.
+        self._source_buckets: "dict[str, _TokenBucket]" = {}
         self._lock = threading.Lock()
 
-    def take(self, tenant_id: str) -> bool:
+    def take(self, tenant_id: str, source_ip: "Optional[str]" = None) -> bool:
         bucket = self._default_bucket if not tenant_id else self._buckets.get(tenant_id)
         if bucket is None:
             bucket = _TokenBucket(self._rate)
@@ -189,8 +197,21 @@ class TenantTokenBuckets:
                     if tenant_id not in self._buckets:
                         self._buckets[tenant_id] = bucket
             else:
-                return self._default_bucket.take()
-        return bucket.take()
+                bucket = self._default_bucket
+        if not bucket.take():
+            return False
+        if not source_ip:
+            return True
+        src_bucket = self._source_buckets.get(source_ip)
+        if src_bucket is None:
+            src_bucket = _TokenBucket(self._rate)
+            if len(self._source_buckets) < 4096:
+                with self._lock:
+                    if source_ip not in self._source_buckets:
+                        self._source_buckets[source_ip] = src_bucket
+            else:
+                src_bucket = self._default_bucket  # bounded map; degrade rather than grow forever
+        return src_bucket.take()
 
 
 def _deterministic_ingest_id(line: str) -> str:
@@ -322,6 +343,16 @@ class SyslogUDPServer:
     def _handle_datagram(self, data: bytes, peer_ip: str) -> None:
         line = data.decode("utf-8", errors="replace").rstrip("\r\n")
         if not line:
+            # An empty/CRLF-only datagram carries no event but still costs a
+            # real recv + queue/worker cycle. Consume a rate-limit token and
+            # count it as dropped so a flood of trivial datagrams is throttled
+            # and visible in per_source_metrics(), instead of bypassing both
+            # invisibly (a flood like this previously evaded SYSLOG_MAX_EVENTS_
+            # PER_SEC entirely and never appeared in any counter).
+            self._buckets.take("")
+            with self._shed_lock:
+                self.events_dropped += 1
+                self._count_peer(peer_ip, "dropped")
             return
         # FIX 21 (reverted 2026-08-06): a prior version of this line hardcoded
         # deterministic_id=True on the theory that "UDP retransmission is
@@ -337,7 +368,7 @@ class SyslogUDPServer:
         # build_raw_event.
         event = build_raw_event(line, deterministic_id=self.deterministic_id)
         tenant_id = event.get("meta", {}).get("tenant_id")
-        if not self._buckets.take(tenant_id or ""):
+        if not self._buckets.take(tenant_id or "", source_ip=peer_ip):
             if self._try_spool(peer_ip, event):
                 with self._shed_lock:
                     self.events_spooled += 1

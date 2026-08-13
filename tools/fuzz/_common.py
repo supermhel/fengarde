@@ -61,9 +61,64 @@ def make_test_one_input(parser, source_type: str):
     return test_one_input
 
 
+def make_json_test_one_input(parser, source_type: str):
+    """Same contract as make_test_one_input, for parsers whose parse()
+    requires raw['raw'] to already be a dict (isinstance(rec, dict) check,
+    no string-with-json.loads fallback) -- k8s_audit, cloudtrail,
+    modbus_anomaly, inventory_diff. Feeding those parsers a bare fuzzed
+    string via make_test_one_input would never get past that isinstance
+    check, so every input degrades to trivially "not a finding" without
+    exercising any real field-handling logic. This decodes the fuzzed bytes
+    as JSON first and only calls parse() when that produces a dict --
+    atheris' coverage feedback still drives it toward interesting shapes
+    over the run, same as the string-based harness does for its parsers.
+    """
+    import json as _json
+
+    import atheris
+
+    def test_one_input(data: bytes) -> None:
+        fdp = atheris.FuzzedDataProvider(data)
+        text = fdp.ConsumeUnicodeNoSurrogates(fdp.remaining_bytes())
+        try:
+            rec = _json.loads(text)
+        except (ValueError, TypeError):
+            return  # not a finding -- the parser's own isinstance(rec, dict) guard exists for this
+        if not isinstance(rec, dict):
+            return
+        raw = {
+            "source_type": source_type,
+            "raw": rec,
+            "meta": {"received_at": 1700000000, "ingest_id": "fuzz"},
+        }
+        try:
+            event = parser.parse(raw)
+        except Exception as exc:  # pragma: no cover - the crash IS the finding
+            raise AssertionError(
+                f"{source_type} parser crashed on fuzzed input: {exc!r}\nrec={rec!r}"
+            ) from exc
+        if event is None:
+            return
+        errors = ocsf_validate(event)
+        if errors:
+            raise AssertionError(
+                f"{source_type} parser emitted schema-invalid OCSF: {errors}\nrec={rec!r}"
+            )
+
+    return test_one_input
+
+
 def run(parser, source_type: str) -> None:
     import atheris
 
     test_one_input = make_test_one_input(parser, source_type)
+    atheris.Setup(sys.argv, test_one_input)
+    atheris.Fuzz()
+
+
+def run_json(parser, source_type: str) -> None:
+    import atheris
+
+    test_one_input = make_json_test_one_input(parser, source_type)
     atheris.Setup(sys.argv, test_one_input)
     atheris.Fuzz()

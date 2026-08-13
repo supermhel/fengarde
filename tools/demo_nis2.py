@@ -27,7 +27,7 @@ sys.path.insert(0, str(SERVICES))
 sys.path.insert(0, str(SERVICES / "ws3-indexer"))
 from shared.bus import Bus  # noqa: E402
 
-RULE_TITLE = "Privileged database operation outside maintenance window"
+RULE_TITLE = "Privileged database operation on a banking DB"
 
 
 def _import(ws_dir, mod="main"):

@@ -15,6 +15,7 @@ never raises.
 """
 from __future__ import annotations
 
+import math
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -34,6 +35,8 @@ def to_epoch_ms(value) -> Optional[int]:
         return None
     if isinstance(value, (int, float)):
         v = float(value)
+        if not math.isfinite(v):  # JSON Infinity/-Infinity/NaN: reject, never raise
+            return None
         if v <= 0:
             return None
         if v < _SECONDS_MAX:

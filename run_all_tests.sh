@@ -9,6 +9,7 @@ fail=0
 
 echo "== Phase 0: contract validator =="
 $PY tools/validate_contract.py || fail=1
+$PY tools/test_validate_contract.py || fail=1
 echo
 echo "== A6: anti-dormancy check (rules must be satisfiable by a real parser) =="
 $PY tools/check_rule_producers.py || fail=1
@@ -55,6 +56,9 @@ $PY services/ws6-inventory/test_tenant_isolation.py || fail=1
 echo
 echo "== ws6 per-tenant API keys, hashed at rest (F1 2nd follow-up, 2026-07-30 audit) =="
 $PY services/ws6-inventory/test_keystore.py || fail=1
+echo
+echo "== ws6 manage_keys.py operator CLI (provision/revoke/list) =="
+$PY services/ws6-inventory/test_manage_keys.py || fail=1
 echo
 echo "== ws6 new-device diff (M7 Track Y): baseline, per-tenant state, restart durability =="
 $PY services/ws6-inventory/test_new_device_diff.py || fail=1
@@ -263,8 +267,14 @@ echo
 echo "== ws2 inventory_diff parser (M7 Track Y): OCSF shape + edge rejection =="
 $PY services/ws2-normalization/parsers/test_inventory_diff.py || fail=1
 echo
+echo "== ws2 parser-integrity fix regressions (non-string operation fields, VM undeploy/remove, GRANT SELECT, IPv4-mapped IPv6, inventory epoch seconds, MCP short-word false positives, OPC UA/n8n routing edges) =="
+$PY services/ws2-normalization/parsers/test_fix_parser_integrity.py || fail=1
+echo
 echo "== ws5 ollama adapter + fallback (v0.2) =="
 $PY services/ws5-ai/test_llm_adapter.py || fail=1
+echo
+echo "== ws5 LLM dedup fix regression =="
+$PY services/ws5-ai/test_fix_llm_dedup.py || fail=1
 echo
 echo "== ws1 syslog UDP listener (v0.2) =="
 $PY services/ws1-collectors/test_syslog_udp.py || fail=1
@@ -337,6 +347,9 @@ $PY services/ws3-indexer/test_fix_audit.py || fail=1
 echo
 echo "== ws3 E3: opt-in MFA/TOTP (stdlib generate+verify, login gating, backward compat) =="
 $PY services/ws3-indexer/test_fix_mfa.py || fail=1
+echo
+echo "== ws3 FIX-4/5/6/L4: no-redirect SSRF hardening, session signing, require_auth_or_die, rate limiter =="
+$PY services/ws3-indexer/test_fix_security.py || fail=1
 echo
 echo "== ws1 E6: per-source syslog metrics (bounded, thread-safe) =="
 $PY services/ws1-collectors/test_fix_metric_sources.py || fail=1

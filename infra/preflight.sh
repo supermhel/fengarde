@@ -7,13 +7,16 @@
 # Checks:
 #   1. vm.max_map_count >= 262144  (OpenSearch won't boot otherwise on Linux/WSL2)
 #   2. Docker is installed and the daemon is reachable (+ a >= 4 GB RAM hint)
-#   3. The ports FENGARDE publishes are free (6379, 9200, 5601, 8000, 8080)
+#   3. The ports FENGARDE publishes are free (TCP 6379, 9200, 5601, 8000, 8080;
+#      UDP 5514 -- ws1-collectors' syslog listener, easy to miss since every
+#      other port here is TCP)
 #
 # Exits non-zero if a BLOCKER is found. POSIX sh; works on Linux, macOS, WSL2.
 set -u
 
 REQUIRED_MAP_COUNT=262144
-PORTS="6379 9200 5601 8000 8080"
+TCP_PORTS="6379 9200 5601 8000 8080"
+UDP_PORTS="5514"
 
 problems=0
 warnings=0
@@ -99,28 +102,52 @@ fi
 echo ""
 
 # --- 3. Port availability ------------------------------------------------------
-echo "3. Required ports are free ($PORTS)"
+echo "3. Required ports are free (TCP: $TCP_PORTS; UDP: $UDP_PORTS)"
+# proto: "tcp" or "udp". UDP support was previously missing entirely -- this
+# check only ever looked at TCP listeners, so port 5514 (ws1-collectors'
+# syslog UDP listener, published on all interfaces by docker-compose.yml)
+# was never verified free even though every other published port was.
 port_in_use() {
-  p="$1"
+  p="$1"; proto="$2"
   if command -v lsof >/dev/null 2>&1; then
+    if [ "$proto" = "udp" ]; then
+      lsof -iUDP:"$p" -Pn >/dev/null 2>&1 && return 0 || return 1
+    fi
     lsof -iTCP:"$p" -sTCP:LISTEN -Pn >/dev/null 2>&1 && return 0 || return 1
   fi
   if command -v ss >/dev/null 2>&1; then
+    if [ "$proto" = "udp" ]; then
+      ss -lun 2>/dev/null | grep -q "[:.]$p[[:space:]]" && return 0 || return 1
+    fi
     ss -ltn 2>/dev/null | grep -q "[:.]$p[[:space:]]" && return 0 || return 1
   fi
   if command -v netstat >/dev/null 2>&1; then
+    if [ "$proto" = "udp" ]; then
+      netstat -an 2>/dev/null | grep -i '^udp' | grep -q "[:.]$p[[:space:]]" && return 0 || return 1
+    fi
     netstat -an 2>/dev/null | grep -i 'listen' | grep -q "[:.]$p[[:space:]]" && return 0 || return 1
   fi
   return 2  # no tool available -> unknown
 }
 checked_ports=0
-for p in $PORTS; do
-  port_in_use "$p"
+for p in $TCP_PORTS; do
+  port_in_use "$p" tcp
   rc=$?
   if [ "$rc" -eq 0 ]; then
-    fail "Port $p is already in use — FENGARDE needs it free."
+    fail "TCP port $p is already in use — FENGARDE needs it free."
     note "         Find the process:  lsof -iTCP:$p -sTCP:LISTEN   (or: ss -ltnp | grep $p)"
     note "         Then stop it, or change the host port mapping in infra/docker-compose.yml."
+  elif [ "$rc" -eq 2 ]; then
+    checked_ports=1
+  fi
+done
+for p in $UDP_PORTS; do
+  port_in_use "$p" udp
+  rc=$?
+  if [ "$rc" -eq 0 ]; then
+    fail "UDP port $p is already in use — ws1-collectors' syslog listener needs it free."
+    note "         Find the process:  lsof -iUDP:$p   (or: ss -lunp | grep $p)"
+    note "         Then stop it, or change SYSLOG_UDP_PORT / the host port mapping."
   elif [ "$rc" -eq 2 ]; then
     checked_ports=1
   fi

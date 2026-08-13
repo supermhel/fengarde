@@ -37,10 +37,6 @@ def set_trace_id(tid: str | None) -> None:
     _trace_id.set(tid or "-")
 
 
-def get_trace_id() -> str:
-    return _trace_id.get()
-
-
 class Logger:
     def __init__(self, service: str):
         self.service = service

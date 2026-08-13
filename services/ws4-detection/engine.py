@@ -464,20 +464,34 @@ class Rule:
         expr = self.condition.strip() or " and ".join(self.selections)
         tokens = re.findall(r"\(|\)|\band\b|\bor\b|\bnot\b|[\w.]+", expr)
         for cand in candidates:
-            # Probe: class-cand selections False, every other selection True.
-            # (Names the condition references but doesn't define stay absent ->
-            # the parser resolves them to False, same as at runtime.)
-            probe = {}
-            for name, sel in self.selections.items():
-                val = sel.get("class_uid") if isinstance(sel, dict) else None
-                is_cand = (val == cand and isinstance(val, (int, str))
-                           and not isinstance(val, bool))
-                probe[name] = not is_cand
-            try:
-                value, end = _parse_or(tokens, 0, probe)
-                satisfiable_without = bool(value) if end == len(tokens) else True
-            except (ValueError, IndexError, RecursionError):
-                satisfiable_without = True  # can't prove safety -> catch-all
+            # Two probes bound satisfiability without `cand`'s own selections:
+            # every OTHER selection forced True, and every OTHER selection
+            # forced False. Forcing True alone (the original probe) is
+            # unsound for a negated classless selection -- `not other_sel` is
+            # naturally True at runtime for the common case of a legitimately
+            # different-class event that simply doesn't match other_sel's
+            # fields, which the True-only probe never tries. That let a rule
+            # like `class_x_sel or not other_sel` get bucketed under
+            # class_x_sel's class_uid and silently skipped for every other
+            # class it can genuinely still match. (Names the condition
+            # references but doesn't define stay absent -> the parser
+            # resolves them to False in either probe, same as at runtime.)
+            satisfiable_without = False
+            for force_others in (True, False):
+                probe = {}
+                for name, sel in self.selections.items():
+                    val = sel.get("class_uid") if isinstance(sel, dict) else None
+                    is_cand = (val == cand and isinstance(val, (int, str))
+                               and not isinstance(val, bool))
+                    probe[name] = False if is_cand else force_others
+                try:
+                    value, end = _parse_or(tokens, 0, probe)
+                    if end == len(tokens) and bool(value):
+                        satisfiable_without = True
+                        break
+                except (ValueError, IndexError, RecursionError):
+                    satisfiable_without = True  # can't prove safety -> catch-all
+                    break
             if not satisfiable_without:
                 return cand
         return None

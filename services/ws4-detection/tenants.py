@@ -65,6 +65,18 @@ def _cache_put(key: str, value: frozenset) -> None:
         _CACHE.popitem(last=False)  # evict least-recently-used
 
 
+def invalidate_cache() -> None:
+    """Drop every cached per-tenant disabled-rules set.
+
+    main.py's hot-reload watcher only ever polled RULES_DIR/ALLOWLISTS_DIR's
+    mtime, never TENANTS_DIR -- so an operator editing a tenant config
+    on-disk (e.g. re-enabling a rule mid-incident) had no effect until the
+    whole process restarted, since `load_disabled_rules` had no TTL/mtime
+    check of its own and nothing else ever called this. The watcher now
+    polls TENANTS_DIR too and calls this whenever it changes."""
+    _CACHE.clear()
+
+
 def tenant_of(event: dict) -> str:
     """The tenant_id an event/alert belongs to (envelope v1's siem.tenant,
     or the alert's own tenant_id field). Absent -> "default", matching every

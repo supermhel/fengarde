@@ -3,7 +3,14 @@ id: 8c4e1f90-7a2b-4d33-9e55-6f1b2c3a4d03
 status: stable
 description: >
   5+ VM/datastore delete operations via the hypervisor API within 120 seconds.
-  Classic destructive pattern in a data center.
+  Classic destructive pattern in a data center. Scoped to
+  siem.source_type=vmware_vsphere -- without it, any other 6003 (API
+  Activity) producer whose activity_id-4 events also carry siem.sector=
+  datacenter (e.g. k8s_audit's delete verb, since siem.sector is an
+  operator/deployment-configurable override, not fixed per parser -- see
+  base.py's resolve_sector) would pool into this same "VM deletion" alert on
+  ordinary resource deletes, same cross-source scoping note as
+  dc_privileged_container.yml.
 level: critical
 logsource:
   category: api_activity
@@ -11,6 +18,7 @@ detection:
   vm_delete:
     class_uid: 6003
     activity_id: 4
+    siem.source_type: vmware_vsphere
   dc:
     siem.sector: datacenter
   condition: vm_delete and dc

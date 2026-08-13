@@ -42,7 +42,9 @@ def discover_rule_pack_dirs(eps: list[EntryPoint] | None = None) -> list[tuple[s
 
     A plugin whose entry point fails to import, or whose target isn't a
     real directory, is skipped individually -- never prevents detection
-    from starting."""
+    from starting. Logged (not silently swallowed): a broken installed
+    plugin should be visible to whoever set it up, not indistinguishable
+    from "no such plugin installed"."""
     if eps is None:
         try:
             eps = list(entry_points(group=_GROUP))
@@ -54,8 +56,15 @@ def discover_rule_pack_dirs(eps: list[EntryPoint] | None = None) -> list[tuple[s
             target = ep.load()
             value = target() if callable(target) else target
             path = Path(value)
-        except Exception:
+        except Exception as exc:
+            from shared.log import get_logger
+            get_logger("ws4-detection").warn(
+                f"rule-pack plugin {ep.name!r} failed to load ({exc}); skipped")
             continue
         if path.is_dir():
             found.append((ep.name, path))
+        else:
+            from shared.log import get_logger
+            get_logger("ws4-detection").warn(
+                f"rule-pack plugin {ep.name!r} target {value!r} is not a directory; skipped")
     return found
