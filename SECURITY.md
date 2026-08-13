@@ -102,7 +102,7 @@ with actual per-user identity and roles:
   identical across every replica sharing the Redis session store — a
   mismatched secret across replicas makes every replica reject every other
   replica's sessions as forged.
-- **MFA/TOTP** (`services/ws6-inventory/mfa.py`, opt-in per user) — stdlib-only
+- **MFA/TOTP** (`services/shared/mfa.py`, opt-in per user) — stdlib-only
   RFC 6238. `POST /auth/mfa/enable` provisions a secret (pending), `POST
   /auth/mfa/verify` confirms a code to activate it; once active, `/auth/login`
   requires a valid `totp_code`. Both MFA-config routes require the ACTING

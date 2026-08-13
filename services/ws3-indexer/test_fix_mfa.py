@@ -29,7 +29,7 @@ from http.server import ThreadingHTTPServer
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-for _p in (str(HERE), str(HERE.parent), str(HERE.parent / "ws6-inventory")):
+for _p in (str(HERE), str(HERE.parent), str(HERE.parent / "shared")):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 

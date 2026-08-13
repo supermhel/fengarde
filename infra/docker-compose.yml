@@ -170,6 +170,15 @@ services:
       # workstream's BUS_BACKEND=redis line above.
       - BUS_BACKEND=redis
       - REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0
+      # M7 Track Y: per-tenant baseline window. Devices first seen inside this
+      # window after a tenant appears are treated as pre-existing inventory
+      # (populate, don't alert), so standing the service up against an existing
+      # segment doesn't emit one alert per device already on it. Documented as a
+      # tunable since it shipped but never exposed here, so the only way to
+      # change it was editing this file -- added 2026-08-11 while running the
+      # new-device path end to end, which needs 0 to observe a sighting without
+      # waiting out the default hour.
+      - INVENTORY_BASELINE_SECONDS=${INVENTORY_BASELINE_SECONDS:-3600}
 
   ws7-dashboard:
     build: { context: .., dockerfile: services/ws7-dashboard/Dockerfile }

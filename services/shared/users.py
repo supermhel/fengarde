@@ -25,18 +25,43 @@ import time
 from pathlib import Path
 from typing import Optional
 
-# FENGARDE E3 MFA: the stdlib-only TOTP primitive lives in
-# services/ws6-inventory/mfa.py -- reachable here without creating a package
-# cycle by putting ws6-inventory on sys.path (mfa.py itself imports nothing
-# from shared, so there is no circular import). This is safe even when the
-# module is absent (defensive: degrade to "TOTP off") so no call site breaks.
+# FENGARDE E3 MFA: the stdlib-only TOTP primitive is `shared/mfa.py`, a SIBLING
+# of this module. It imports nothing from shared, so there is no circular
+# import; the sys.path insert only makes it importable when users.py is loaded
+# as a top-level module rather than as `shared.users`.
+#
+# It lived in services/ws6-inventory/mfa.py until 2026-08-11, reached from here
+# by walking `parent.parent / "ws6-inventory"`. That path is correct in a source
+# checkout and WRONG in every deployed image: ws3-indexer's Dockerfile copies
+# `services/shared` to /app/shared and does NOT copy ws6-inventory, so the walk
+# resolved to a nonexistent /app/ws6-inventory, the import failed, and the
+# `except` below silently set _TOTP_AVAILABLE = False. In the shipped
+# ws3-indexer container that meant `provision_totp()` raised and `verify_totp()`
+# returned False for EVERY code -- MFA inert in production while its zero-infra
+# tests passed, because in a checkout the path resolves fine. Found 2026-08-11
+# by running the MFA flow against the real container for the first time.
+# ws6-inventory never imported this module at all (its own INTERFACE.md said so:
+# "hosted here, NOT wired into this service's own auth"), so shared/ was always
+# the right home.
 try:
-    _WS6_INV = Path(__file__).resolve().parent.parent / "ws6-inventory"
-    if str(_WS6_INV) not in sys.path:
-        sys.path.insert(0, str(_WS6_INV))
+    _SHARED_DIR = Path(__file__).resolve().parent
+    if str(_SHARED_DIR) not in sys.path:
+        sys.path.insert(0, str(_SHARED_DIR))
     import mfa as _mfa  # noqa: E402
     _TOTP_AVAILABLE = True
-except Exception:  # noqa: BLE001 - TOTP must never take the whole store down
+except Exception as _totp_exc:  # noqa: BLE001 - TOTP must never take the whole store down
+    # Still defensive -- a broken TOTP import must not stop the user store from
+    # serving password auth -- but no longer SILENT. A security control that
+    # disables itself without a trace is the worst of both worlds: operators
+    # believe MFA is enforced while every code is rejected. Call sites that
+    # genuinely need TOTP still fail loudly (see provision_totp).
+    import warnings as _warnings
+    _warnings.warn(
+        f"FENGARDE: TOTP/MFA support is UNAVAILABLE ({type(_totp_exc).__name__}: "
+        f"{_totp_exc}). Password auth still works, but provision_totp() will "
+        f"raise and verify_totp() will reject every code. If this deployment "
+        f"expects MFA, it is NOT being enforced.",
+        RuntimeWarning, stacklevel=2)
     _mfa = None  # type: ignore[assignment]
     _TOTP_AVAILABLE = False
 
@@ -238,7 +263,7 @@ class UserStore:
     # -- FENGARDE E3 MFA: opt-in per-user TOTP ------------------------------
     # Every helper is a graceful no-op when the mfa module is unavailable
     # (_TOTP_AVAILABLE is False), so an environment that somehow lacks
-    # ws6-inventory/mfa.py simply behaves as if MFA were never enabled --
+    # shared/mfa.py simply behaves as if MFA were never enabled --
     # never a crash, and never an auth lock-out.
 
     def enable_totp(self, username: str, secret: str) -> None:
@@ -266,7 +291,7 @@ class UserStore:
         MFA-protected once `verify_totp` confirms a code.
         """
         if not _TOTP_AVAILABLE:
-            raise RuntimeError("TOTP support unavailable (ws6-inventory/mfa.py not loadable)")
+            raise RuntimeError("TOTP support unavailable (shared/mfa.py not loadable)")
         secret = _mfa.generate_secret()
         self.enable_totp(username, secret)
         return _mfa.otpauth_uri(secret, label=username, issuer=issuer)
