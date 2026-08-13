@@ -17,22 +17,7 @@
     },
     {
       "bom-ref": "requirements-L2",
-      "description": "requirements line 2: redis==5.0.8",
-      "externalReferences": [
-        {
-          "comment": "implicit dist url",
-          "type": "distribution",
-          "url": "https://pypi.org/simple/redis/"
-        }
-      ],
-      "name": "redis",
-      "purl": "pkg:pypi/redis@5.0.8",
-      "type": "library",
-      "version": "5.0.8"
-    },
-    {
-      "bom-ref": "requirements-L3",
-      "description": "requirements line 3: redis==8.1.0",
+      "description": "requirements line 2: redis==8.1.0",
       "externalReferences": [
         {
           "comment": "implicit dist url",
@@ -52,13 +37,10 @@
     },
     {
       "ref": "requirements-L2"
-    },
-    {
-      "ref": "requirements-L3"
     }
   ],
   "metadata": {
-    "timestamp": "2026-08-05T18:41:25.624245+00:00",
+    "timestamp": "2026-08-13T23:10:04.708030+00:00",
     "tools": {
       "components": [
         {
@@ -157,12 +139,12 @@
           ],
           "name": "cyclonedx-python-lib",
           "type": "library",
-          "version": "11.11.0"
+          "version": "11.12.0"
         }
       ]
     }
   },
-  "serialNumber": "urn:uuid:d0502275-c8dd-45bb-b9a8-f4064cd41512",
+  "serialNumber": "urn:uuid:95b3b9f9-5cc1-471b-a837-b9976e6fce33",
   "version": 1,
   "$schema": "http://cyclonedx.org/schema/bom-1.6.schema.json",
   "bomFormat": "CycloneDX",
