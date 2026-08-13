@@ -24,6 +24,10 @@ updates:
     directory: "/services/ws6-inventory"
     schedule:
       interval: "weekly"
+  - package-ecosystem: "pip"
+    directory: "/services/devkit-feeder"
+    schedule:
+      interval: "weekly"
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:

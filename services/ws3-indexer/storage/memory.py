@@ -45,44 +45,59 @@ class MemoryStore(StorageAdapter):
         return is_new
 
     def count(self, index: str) -> int:
-        return len(self._indices.get(index, {}))
+        with self._lock:
+            return len(self._indices.get(index, {}))
 
     # -- test/inspection helpers -------------------------------------------
     def indices(self) -> list[str]:
         """Names of every index that has received at least one document."""
-        return [name for name, docs in self._indices.items() if docs]
+        with self._lock:
+            return [name for name, docs in self._indices.items() if docs]
 
     def get(self, index: str, doc_id: str) -> dict | None:
-        return self._indices.get(index, {}).get(doc_id)
+        with self._lock:
+            return self._indices.get(index, {}).get(doc_id)
 
     def all_docs(self, index: str) -> list[dict]:
-        return list(self._indices.get(index, {}).values())
+        with self._lock:
+            return list(self._indices.get(index, {}).values())
 
     # -- C1 triage: cross-index lookup by alert_id --------------------------
     def find_alert(self, alert_id: str) -> tuple[str, dict] | None:
         """Locate an alert doc by id across all daily alerts-* indices (the
         client only has alert_id, not which day's index it landed in).
-        Returns (index_name, document) or None if not found."""
-        for index in self._indices:
-            if not index.startswith("alerts-"):
-                continue
-            doc = self._indices[index].get(alert_id)
-            if doc is not None:
-                return index, doc
-        return None
+        Returns (index_name, document) or None if not found.
+
+        H3 follow-up: every read here runs under ``self._lock`` -- the same
+        lock ``index()``/``index_cas()`` hold -- because a write concurrent
+        with this iteration (a new index key via ``setdefault``, or a new
+        doc_id key in a bucket) raises ``RuntimeError: dictionary changed
+        size during iteration`` in CPython. This is the DEFAULT storage
+        backend and is genuinely shared across threads (one bus-consumer
+        thread per topic, the triage HTTP server, the webhook dispatcher),
+        so this isn't a hypothetical race."""
+        with self._lock:
+            for index in self._indices:
+                if not index.startswith("alerts-"):
+                    continue
+                doc = self._indices[index].get(alert_id)
+                if doc is not None:
+                    return index, doc
+            return None
 
     # -- v0.4 Track R: cross-index lookup by report_id -----------------------
     def find_report(self, alert_id: str) -> dict | None:
         """Locate a report doc (report_id == f"{alert_id}:report") across all
         daily reports-* indices. Mirrors find_alert's lookup shape."""
         report_id = f"{alert_id}:report"
-        for index in self._indices:
-            if not index.startswith("reports-"):
-                continue
-            doc = self._indices[index].get(report_id)
-            if doc is not None:
-                return doc
-        return None
+        with self._lock:
+            for index in self._indices:
+                if not index.startswith("reports-"):
+                    continue
+                doc = self._indices[index].get(report_id)
+                if doc is not None:
+                    return doc
+            return None
 
     # -- optimistic concurrency (mirrors OpenSearchStore's seq_no CAS) ------
     def find_alert_versioned(self, alert_id: str):
@@ -111,10 +126,11 @@ class MemoryStore(StorageAdapter):
         # opensearch.py's list_alerts for the full rationale (the safe scoped
         # improvement in place of a full cross-alert correlation engine).
         docs: list[dict] = []
-        for index, bucket in self._indices.items():
-            if not index.startswith("alerts"):
-                continue
-            docs.extend(bucket.values())
+        with self._lock:
+            for index, bucket in self._indices.items():
+                if not index.startswith("alerts"):
+                    continue
+                docs.extend(bucket.values())
         if tenant_id is not None:
             docs = [d for d in docs if (d.get("tenant_id") or "default") == tenant_id]
         if status is not None:
@@ -129,12 +145,13 @@ class MemoryStore(StorageAdapter):
     def list_events(self, *, family: str | None = None, tenant_id: str | None = None,
                      limit: int = 50) -> list[dict]:
         docs: list[dict] = []
-        for index, bucket in self._indices.items():
-            if not index.startswith("events"):
-                continue
-            if family is not None and f"events-{family}" not in index:
-                continue
-            docs.extend(bucket.values())
+        with self._lock:
+            for index, bucket in self._indices.items():
+                if not index.startswith("events"):
+                    continue
+                if family is not None and f"events-{family}" not in index:
+                    continue
+                docs.extend(bucket.values())
         if tenant_id is not None:
             docs = [d for d in docs if ((d.get("siem") or {}).get("tenant") or "default") == tenant_id]
         docs.sort(key=lambda d: d.get("time") or 0, reverse=True)

@@ -9,11 +9,29 @@ from typing import Optional
 # Reuse the single source-of-truth validator in tools/. Resolve its location for
 # BOTH the repo layout (repo/services/shared -> repo/tools, parents[2]) and the
 # container layout (/app/shared -> /app/tools, parents[1]).
+#
+# Unlike this module's own MFA-import counterpart in users.py (deliberately
+# wrapped in try/except so a missing shared/mfa.py degrades to "TOTP
+# off" instead of taking the process down), a missing tools/ directory here
+# must NOT degrade silently: validate_event/SCHEMA_PATH are load-bearing for
+# every parser's OCSF validation, so a stub/no-op fallback would mean
+# malformed events pass through completely unvalidated -- worse than a crash.
+# What WAS missing was diagnosability: an unusual container layout that
+# doesn't match any of the three candidate paths raised a bare
+# ModuleNotFoundError with no indication of what to fix. Still fails loudly
+# and still refuses to import -- just says why.
 _here = Path(__file__).resolve()
-for _cand in (_here.parents[2] / "tools", _here.parents[1] / "tools", Path("/app/tools")):
+_candidates = (_here.parents[2] / "tools", _here.parents[1] / "tools", Path("/app/tools"))
+for _cand in _candidates:
     if (_cand / "validate_contract.py").exists():
         sys.path.insert(0, str(_cand))
         break
+else:
+    raise RuntimeError(
+        "shared/ocsf.py could not find tools/validate_contract.py in any of "
+        f"{[str(c) for c in _candidates]}. This is required (OCSF schema "
+        "validation, Contract A) -- not an optional dependency. Check the "
+        "container/repo layout.")
 from validate_contract import load, validate_event, SCHEMA_PATH  # noqa: E402
 
 _SCHEMA = load(SCHEMA_PATH)

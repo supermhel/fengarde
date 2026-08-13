@@ -33,9 +33,18 @@ _SECTOR_TO_FAMILY = {"bank": "bank", "datacenter": "dc", "common": "common"}
 DEFAULT_TENANT = "default"
 
 
-def _date_suffix(epoch_ms: int | None) -> str:
+def _date_suffix(epoch_ms) -> str:
     if epoch_ms:
-        dt = datetime.fromtimestamp(epoch_ms / 1000, tz=timezone.utc)
+        try:
+            dt = datetime.fromtimestamp(epoch_ms / 1000, tz=timezone.utc)
+        except (OSError, OverflowError, TypeError, ValueError) as exc:
+            # A corrupted/out-of-range doc['time'] (huge/negative epoch, or a
+            # non-numeric value from a damaged replay) raises OSError/TypeError
+            # here, not ValueError -- but every caller only catches ValueError
+            # for the "unroutable, dead-letter this one, keep the batch going"
+            # path. Normalize to that same exception type so a single poison
+            # message can't abort an entire multi-message batch drain.
+            raise ValueError(f"invalid doc time {epoch_ms!r}: {exc}") from exc
     else:
         dt = datetime.now(tz=timezone.utc)
     return dt.strftime("%Y.%m.%d")

@@ -21,6 +21,9 @@ This module makes redirect-following opt-out for the whole process:
 """
 from __future__ import annotations
 
+import ipaddress
+import socket
+import urllib.parse
 import urllib.request
 
 
@@ -47,3 +50,36 @@ def no_redirect_urlopen(req, timeout=None):
     ``urllib.error.HTTPError`` instead of being followed.
     """
     return urllib.request.urlopen(req, timeout=timeout)  # noqa: S310
+
+
+def is_unsafe_target_url(url: str) -> bool:
+    """True if ``url``'s host resolves to a private/loopback/link-local
+    address -- a scheme check alone (``http(s)://``) never rejects
+    ``http://169.254.169.254/...`` or ``http://redis:6379/...``, both valid
+    http URLs. Used at CONFIG-LOAD time for operator-authored outbound
+    targets (webhooks.py's ``contracts/webhooks/*.yml``) where the trust
+    model is "an operator with filesystem access chose this URL", same as
+    the rule-plugin trust note in ws4-detection/plugins.py -- this is
+    defense-in-depth, not a substitute for trusting that config source.
+
+    Best-effort: a static resolve at load time can't catch DNS rebinding
+    (a name that resolves safely now and to a private IP later); pair with
+    network-level egress controls for a stronger guarantee. Any failure
+    (malformed URL, DNS failure) is treated as unsafe -- fail closed, same
+    posture as ``shared.envelope``'s tenant-id validation.
+    """
+    try:
+        host = urllib.parse.urlsplit(url).hostname
+        if not host:
+            return True
+        try:
+            addr = ipaddress.ip_address(host)
+            addrs = [addr]
+        except ValueError:
+            infos = socket.getaddrinfo(host, None)
+            addrs = [ipaddress.ip_address(info[4][0]) for info in infos]
+        return any(a.is_private or a.is_loopback or a.is_link_local
+                   or a.is_reserved or a.is_multicast or a.is_unspecified
+                   for a in addrs)
+    except Exception:
+        return True

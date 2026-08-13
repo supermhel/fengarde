@@ -112,6 +112,9 @@ def _rate_limit_per_min() -> int:
 _RATE_LIMIT = _rate_limit_per_min()
 _rate_buckets: dict[str, "_TokenBucket"] = {}
 _rate_lock = threading.Lock()
+_rate_calls = 0
+_RATE_SWEEP_EVERY = 256  # mirrors shared/rbac.py::LoginRateLimiter's periodic sweep
+_RATE_STALE_S = 600  # 10 idle minutes fully refills any bucket -- safe to drop
 
 
 class _TokenBucket:
@@ -138,6 +141,7 @@ class _TokenBucket:
 
 def _rate_limit_allowed(ip: str) -> bool:
     """True if `ip` may proceed. Always True when rate limiting is off."""
+    global _rate_calls
     if _RATE_LIMIT <= 0:
         return True
     refill_per_s = _RATE_LIMIT / 60.0
@@ -146,7 +150,18 @@ def _rate_limit_allowed(ip: str) -> bool:
         if bucket is None:
             bucket = _TokenBucket(float(_RATE_LIMIT), refill_per_s)
             _rate_buckets[ip] = bucket
-        return bucket.allow()
+        result = bucket.allow()
+        # `_rate_buckets` has no TTL/cap otherwise, so it grows for the
+        # process lifetime -- one entry per distinct client IP ever seen.
+        # Periodic sweep (mirrors shared/rbac.py::LoginRateLimiter) instead
+        # of a per-call check keeps this cheap.
+        _rate_calls += 1
+        if _rate_calls % _RATE_SWEEP_EVERY == 0:
+            now = time.time()
+            stale = [k for k, b in _rate_buckets.items() if now - b.updated > _RATE_STALE_S]
+            for k in stale:
+                _rate_buckets.pop(k, None)
+        return result
 
 
 def _strip_api_v1(path: str) -> str:
@@ -335,11 +350,30 @@ def make_handler(store, users_db=None, sessions: SessionStore | None = None,
             identically."""
             return _strip_api_v1(urlparse(self.path).path)
 
+        def _rate_limit_ip(self) -> str:
+            """Client identity for rate limiting. `client_address[0]` is the
+            TCP peer -- correct for a directly-exposed instance, but behind
+            the documented nginx reverse-proxy topology every real client
+            collapses to nginx's own container IP, turning the per-IP limiter
+            into a single limiter shared by every user. Opt-in (default off,
+            matches this project's auth-is-opt-in convention): when
+            RATE_LIMIT_TRUST_PROXY_HEADER=1, trust X-Forwarded-For instead --
+            safe only because ws3-indexer's triage port isn't published to
+            the host, so this header can only be set by nginx's own
+            `proxy_set_header X-Forwarded-For $remote_addr` (which REPLACES,
+            not appends to, any client-supplied value) or by another
+            container on the same trusted docker network."""
+            if os.getenv("RATE_LIMIT_TRUST_PROXY_HEADER", "").strip().lower() in ("1", "true", "yes"):
+                xff = self.headers.get("X-Forwarded-For")
+                if xff:
+                    return xff.split(",")[0].strip()
+            return self.client_address[0] if self.client_address else ""
+
         def _check_rate_limit(self) -> bool:
             """FIX L4: per-IP token-bucket guard. Sends 429 (Retry-After) and
             returns False when the caller's IP has exhausted its bucket; a
             no-op (always True) when rate limiting is disabled."""
-            ip = self.client_address[0] if self.client_address else ""
+            ip = self._rate_limit_ip()
             if _rate_limit_allowed(ip):
                 return True
             body = json.dumps({"error": "rate limit exceeded"}).encode()

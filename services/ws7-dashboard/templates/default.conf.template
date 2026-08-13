@@ -41,6 +41,24 @@ server {
         # using a variable upstream. With a variable, nginx ignores any query string
         # appended to proxy_pass, so URI-search params are silently dropped.
         # This query: newest 50 real rule alerts (excludes ai.results which lack rule_title).
+        # SECURITY FIX: this location talks straight to OpenSearch (which
+        # never checks X-Api-Key -- DISABLE_SECURITY_PLUGIN=true) and,
+        # unlike /api/auth/, /api/triage/, /api/rules below, forwarded NO
+        # credential of any kind. That meant even a deployment with
+        # FENGARDE_API_KEY explicitly set (auth deliberately turned on) left
+        # this one alert-read endpoint wide open -- the client-side login
+        # gate in index.html protected nothing at this layer. Enforced here,
+        # in nginx itself, since OpenSearch can't do it: when FENGARDE_API_KEY
+        # is unset (the default; envsubst still substitutes it as an empty
+        # string per docker-compose.yml's ${FENGARDE_API_KEY:-}), both sides
+        # of the comparison are "" and every request passes -- unchanged,
+        # zero-config behavior. When it IS set, only a caller presenting the
+        # matching X-Api-Key gets through; everyone else gets 401, same as
+        # the other three proxied routes' backend already enforces.
+        if ($http_x_api_key != "${FENGARDE_API_KEY}") {
+            return 401;  # non-2xx -> the front end's r.ok check falls back to mock data
+        }
+
         proxy_pass $opensearch/alerts-*/_search;
         proxy_method POST;
         proxy_set_header Content-Type "application/json";
@@ -80,6 +98,11 @@ server {
         proxy_set_header Host $host;
         proxy_set_header Content-Type $content_type;
         proxy_set_header X-Api-Key "${FENGARDE_API_KEY}";
+        # Lets ws3-indexer's opt-in RATE_LIMIT_TRUST_PROXY_HEADER resolve the
+        # real client instead of every request collapsing to nginx's own
+        # container IP. $remote_addr REPLACES (does not append to) any
+        # client-supplied value, so this is not spoofable through nginx.
+        proxy_set_header X-Forwarded-For $remote_addr;
         proxy_connect_timeout 3s;
         proxy_read_timeout 5s;
     }
@@ -104,6 +127,11 @@ server {
         # behavior) -- ws3-indexer's authz check treats an empty header the
         # same as a missing one.
         proxy_set_header X-Api-Key "${FENGARDE_API_KEY}";
+        # Lets ws3-indexer's opt-in RATE_LIMIT_TRUST_PROXY_HEADER resolve the
+        # real client instead of every request collapsing to nginx's own
+        # container IP. $remote_addr REPLACES (does not append to) any
+        # client-supplied value, so this is not spoofable through nginx.
+        proxy_set_header X-Forwarded-For $remote_addr;
         proxy_connect_timeout 3s;
         proxy_read_timeout 5s;
     }
@@ -120,6 +148,11 @@ server {
         proxy_pass $ws3_rules;
         proxy_set_header Host $host;
         proxy_set_header X-Api-Key "${FENGARDE_API_KEY}";
+        # Lets ws3-indexer's opt-in RATE_LIMIT_TRUST_PROXY_HEADER resolve the
+        # real client instead of every request collapsing to nginx's own
+        # container IP. $remote_addr REPLACES (does not append to) any
+        # client-supplied value, so this is not spoofable through nginx.
+        proxy_set_header X-Forwarded-For $remote_addr;
         proxy_connect_timeout 3s;
         proxy_read_timeout 5s;
     }

@@ -19,11 +19,21 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
-      # L8 (2026-08-06 fix): grow from the original 3 to 5 parsers --
-      # db_audit (GRANT/priv-parse, FIX-3-adjacent) and vmware_vsphere
-      # (VM operation classification) round out the high-value text parsers.
+      # L8 (2026-08-06 fix): grew from the original 3 to 5 parsers -- db_audit
+      # (GRANT/priv-parse, FIX-3-adjacent) and vmware_vsphere (VM operation
+      # classification) round out the high-value text parsers.
+      # 2026-08-13 audit: extended to all 17 registered parsers (was 5/17).
+      # k8s_audit/cloudtrail/modbus_anomaly/inventory_diff use the run_json
+      # harness (tools/fuzz/_common.py) since their parse() requires
+      # raw['raw'] to already be a dict; every other target uses the
+      # original string-based harness (some of those parsers json.loads a
+      # string internally, so the same harness still exercises their real
+      # field-handling logic, not just the isinstance guard).
       matrix:
-        target: [linux_ssh, cisco_asa, windows_eventlog, db_audit, vmware_vsphere]
+        target: [linux_ssh, cisco_asa, windows_eventlog, db_audit, vmware_vsphere,
+                 generic_syslog, dns_query, cef, sysmon, active_directory,
+                 opcua_audit, n8n_audit, mcp_agent,
+                 k8s_audit, cloudtrail, modbus_anomaly, inventory_diff]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0

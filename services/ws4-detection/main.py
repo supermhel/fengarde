@@ -25,6 +25,7 @@ sys.path.insert(0, str(SERVICES))
 
 from shared.bus import Bus  # noqa: E402
 from engine import load_rules  # noqa: E402
+from window import DequeWindowCounter  # noqa: E402
 from scoring import Scorer  # noqa: E402
 from tenants import tenant_of, load_disabled_rules  # noqa: E402
 from plugins import discover_rule_pack_dirs  # noqa: E402
@@ -59,7 +60,22 @@ class Detector:
             if plugin_rule_dirs is None else plugin_rule_dirs)
         self.scorer = Scorer(SCORING_YAML)
         self.tenants_dir = tenants_dir
-        self._window_counter = None  # set by main() when BUS_BACKEND=redis
+        # Detector-owned (not Rule-owned) so it survives reload(): each
+        # DequeWindowCounter.hit()/hit_distinct() call is keyed by a string
+        # that already starts with the rule's id (engine.py's window_key),
+        # so one shared counter here correctly preserves in-flight window
+        # state across a reload the same way RedisWindowCounter does globally
+        # -- a fresh Rule object with the SAME id resumes the SAME window.
+        # Previously this was `None` on the default in-memory backend (only
+        # ever set to a real counter in main() when BUS_BACKEND=redis), which
+        # meant _load()'s `if self._window_counter is not None` skipped
+        # rewiring entirely -- every reload() built brand-new Rule objects
+        # each allocating their OWN empty DequeWindowCounter (engine.py's
+        # Rule.__init__), silently resetting every stateful rule's window to
+        # zero on every hot-reload tick, contradicting this class's own
+        # reload() docstring. main() still overwrites this with a
+        # RedisWindowCounter when BUS_BACKEND=redis/redis-sentinel.
+        self._window_counter = DequeWindowCounter()
         # M7 follow-up (2026-08-05): rule-health watchdog. Keyed by rule id (not
         # object identity) so it survives a reload() the same way window state
         # does -- an edited rule keeps its fire history, a removed-then-readded
@@ -193,12 +209,19 @@ class Detector:
         return fresh
 
 
-def rules_max_mtime(rules_dir: Path = RULES_DIR, allowlists_dir: Path = ALLOWLISTS_DIR) -> float:
-    """Max mtime across every rule/allowlist YAML, 0.0 if neither dir exists.
-    Used by the B4 hot-reload poll to detect "something on disk changed"
-    without re-parsing on every tick."""
+def rules_max_mtime(rules_dir: Path = RULES_DIR, allowlists_dir: Path = ALLOWLISTS_DIR,
+                    tenants_dir: Path = TENANTS_DIR) -> float:
+    """Max mtime across every rule/allowlist/tenant-config YAML, 0.0 if none
+    of the dirs exist. Used by the B4 hot-reload poll to detect "something on
+    disk changed" without re-parsing on every tick.
+
+    tenants_dir is included so an operator editing a tenant's disabled-rules
+    config on disk (e.g. re-enabling a rule mid-incident) actually takes
+    effect -- tenants.py's per-tenant cache has no TTL/mtime check of its
+    own; this poll + start_rule_reload_watcher's cache-clear are the only
+    invalidation path."""
     latest = 0.0
-    for d in (rules_dir, allowlists_dir):
+    for d in (rules_dir, allowlists_dir, tenants_dir):
         if not d.is_dir():
             continue
         for f in d.glob("*.yml"):
@@ -210,25 +233,31 @@ def rules_max_mtime(rules_dir: Path = RULES_DIR, allowlists_dir: Path = ALLOWLIS
 
 
 def start_rule_reload_watcher(detector: "Detector", shutdown, interval_s: float,
-                              rules_dir: Path = RULES_DIR, allowlists_dir: Path = ALLOWLISTS_DIR):
+                              rules_dir: Path = RULES_DIR, allowlists_dir: Path = ALLOWLISTS_DIR,
+                              tenants_dir: Path = TENANTS_DIR):
     """B4: opt-in mtime-poll hot-reload. Returns None (no thread) when
     ``interval_s <= 0`` -- the default, byte-for-byte the pre-B4 behavior.
     Otherwise starts a daemon thread that calls ``detector.reload()`` at
-    most once per ``interval_s`` seconds, only when the rules/allowlists
-    directories' max mtime has actually changed since the last check."""
+    most once per ``interval_s`` seconds, only when the rules/allowlists/
+    tenants directories' max mtime has actually changed since the last
+    check. Also clears tenants.py's per-tenant cache on every such tick,
+    since a tenant-config-only edit doesn't change RULES_DIR/ALLOWLISTS_DIR
+    and detector.reload() alone would never pick it up."""
     if interval_s <= 0:
         return None
     import threading
     from shared.log import get_logger
+    from tenants import invalidate_cache as invalidate_tenant_cache
     log = get_logger("ws4-detection")
 
     def _loop():
-        last_mtime = rules_max_mtime(rules_dir, allowlists_dir)
+        last_mtime = rules_max_mtime(rules_dir, allowlists_dir, tenants_dir)
         while not shutdown.wait(interval_s):
-            mtime = rules_max_mtime(rules_dir, allowlists_dir)
+            mtime = rules_max_mtime(rules_dir, allowlists_dir, tenants_dir)
             if mtime == last_mtime:
                 continue
             last_mtime = mtime
+            invalidate_tenant_cache()
             if detector.reload():
                 log.info("rules hot-reloaded", rule_count=len(detector.rules))
             # on failure, reload() already logged a warn and kept the old set

@@ -24,9 +24,11 @@ proof trail if you want to check any of it yourself):
   disabled for one tenant; every tenant gets the full global rule set unless you opt them
   out of specific rules. See [contracts/tenants/README.md](../contracts/tenants/README.md).
 - **Per-tenant credentials on WS-6 (inventory)** — `services/ws6-inventory/manage_keys.py`
-  provisions/revokes/lists scoped API keys per tenant, hashed at rest (scrypt), never
-  logged in plaintext after issuance. Rotation is provision-new → cutover → revoke-old,
-  no forced downtime.
+  provisions/revokes/lists scoped API keys per tenant, hashed at rest (HMAC-SHA256 keyed
+  by a server-side pepper — scrypt was tried first and replaced; see `keystore.py`'s
+  module docstring for why a memory-hard KDF is the wrong primitive for a high-entropy
+  random token), never logged in plaintext after issuance. Rotation is provision-new →
+  cutover → revoke-old, no forced downtime.
 - **Per-tenant users and roles** — the opt-in RBAC layer (`FENGARDE_RBAC_DB`) has a real
   `tenant_id` column on every user; your customer's analysts can get their own logins
   scoped to their own tenant, not a shared account.

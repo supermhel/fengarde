@@ -1,0 +1,29 @@
+{
+  "index_patterns": ["reports-*"],
+  "template": {
+    "settings": { "number_of_shards": 1, "number_of_replicas": 1 },
+    "mappings": {
+      "_meta": { "mapping_version": 1, "_comment": "Generated incident/NIS2 reports (reporting.py's _template_backend / nis2_template.py's build_report -- same response envelope, contracts/reporting.md's frozen schema). ism-reports-365d.json attaches by index pattern, not by a template setting." },
+      "dynamic": "false",
+      "properties": {
+        "report_id": { "type": "keyword" },
+        "alert_id": { "type": "keyword" },
+        "format": { "type": "keyword" },
+        "body": { "type": "text" },
+        "status": { "type": "keyword" },
+        "disclaimer": { "type": "text" },
+        "generated_at": { "type": "date", "format": "epoch_millis" },
+        "backend": { "type": "keyword" },
+        "backend_degraded": { "type": "boolean" },
+        "citations": {
+          "properties": {
+            "celex": { "type": "keyword" },
+            "article": { "type": "keyword" },
+            "url": { "type": "keyword" },
+            "retrieved_at": { "type": "keyword" }
+          }
+        }
+      }
+    }
+  }
+}

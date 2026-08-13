@@ -7,6 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed (2026-08-13, exhaustive repo audit fix pass)
+
+- **46 confirmed findings from a full repo audit** — 17-partition static review,
+  a documentation-discrepancy sweep, and live Docker/Redis/OpenSearch
+  verification, followed by a same-day fix pass. Full writeup, methodology,
+  and the (small) list of deliberate exceptions in `docs/audit-2026-08-13.md`.
+- **Correctness/crash fixes**: `timeutil.py`/`base.py` no longer raise on a
+  JSON `Infinity`/`NaN` timestamp (previously dead-lettered real security
+  events); `ws4-detection/engine.py`'s class_uid-bucketing satisfiability
+  probe no longer silently narrows which events a rule is ever evaluated
+  against; `ws4-detection/main.py`'s hot-reload no longer resets in-flight
+  sliding-window state on the default in-memory backend; `ws3-indexer/
+  router.py` no longer lets a malformed timestamp abort an entire batch
+  drain; `ws3-indexer/storage/memory.py`'s read paths are now lock-protected
+  against the same concurrent writes `index()`/`index_cas()` already guard
+  against; `ws2-normalization` parser routing no longer misroutes a crafted
+  `%ASA`-containing SSH username away from the real parser.
+- **Security hardening**: `shared/bus.py`'s `_MemoryBus` no longer loses
+  un-yielded messages on shutdown mid-batch, and a handler exception is now
+  reclaimable via a minimal in-memory PEL instead of permanently lost;
+  `_RedisBus.claim_pending` now streams reclaim rounds instead of buffering
+  the whole backlog in memory; the dashboard's nginx `/api/alerts` route now
+  actually enforces `X-Api-Key` (previously open even with auth "enabled",
+  since OpenSearch itself ignores that header); `ws3-indexer/webhooks.py`
+  gained SSRF host validation for operator-configured webhook URLs;
+  `ws1-collectors` empty-datagram floods no longer bypass rate limiting
+  invisibly, and gained per-source-IP token bucketing alongside the existing
+  tenant-level bucket; `shared/users.py`'s scrypt cost was raised with a
+  self-describing, backward-compatible hash format.
+- **Rule content**: `dc_mass_vm_delete.yml` scoped to its real producer,
+  closing cross-source pooling with `k8s_audit`; `bank_db_priv_esc.yml`
+  retitled to match its actual (untimed) detection logic;
+  `tools/validate_rules.py` gained a load-time check blocking a `not_in`
+  fail-open/fail-closed inversion footgun for future rule contributions.
+- **Test/CI/ops**: wired 4 previously CI-orphaned test files into
+  `run_all_tests.sh`; added `ws6-inventory/test_manage_keys.py` (coverage
+  69%→74%); parser fuzz coverage expanded from 5/17 to 17/17; dead-letter
+  queue depth now surfaced on `/metrics`/`/metrics/prom`; added the missing
+  `reports-*` OpenSearch mapping template; `preflight.sh` now checks UDP
+  5514; `dependabot.yml` now covers `devkit-feeder`.
+- **Documentation**: corrected `SECURITY.md`'s stale "v0.6" labeling (6
+  sites), `SSOT.md`'s false "zero cross-workstream imports" claim, the
+  `ws4`/`ws5` `INTERFACE.md` fair-consume default contradiction, and several
+  smaller doc/code drift findings.
+
 ### Added
 
 - **Failover-scoped live verification lane** (`make ha-verify`): two proofs

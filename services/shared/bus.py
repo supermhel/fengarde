@@ -67,6 +67,17 @@ class _MemoryBus:
         # messages the same id. Mirrors the lock WS6's InventoryStore
         # already uses for its own read-modify-write.
         self._seq_lock = threading.Lock()
+        # Minimal in-memory PEL: topic -> {msg.id: (msg, delivered_at_monotonic,
+        # delivery_count)}. Closes a real gap the module docstring's "NOTE on
+        # backend fidelity" only documented, never fixed: consume() used to
+        # remove a message from the deque unconditionally BEFORE the handler
+        # even ran, so a handler exception meant instant, permanent loss on
+        # this backend -- claim_pending() was a hardcoded no-op, unlike
+        # RedisBus's real XPENDING/XAUTOCLAIM. This doesn't change depth()/
+        # lag()/trim_acked()'s external behavior: they never counted a
+        # delivered-but-unacked message either, before or after.
+        self._pel: dict[str, dict[str, tuple]] = defaultdict(dict)
+        self._pel_lock = threading.Lock()
 
     def produce(self, topic, key, payload):
         with self._seq_lock:
@@ -79,45 +90,59 @@ class _MemoryBus:
         # was NOT atomic. Two concurrent consumers on one shared _MemoryBus could
         # both pass the `while q` check before either popped, then double-deliver
         # the last message (or hit IndexError on an already-emptied deque), and a
-        # consumer could interleave with a concurrent produce(). Fix: snapshot and
-        # clear under _seq_lock so the whole "is there a message? + pop it"
-        # sequence is atomic -- drains everything currently queued, then stops.
+        # consumer could interleave with a concurrent produce(). Fixed by popping
+        # under _seq_lock so "is there a message? + pop it" is atomic PER ITEM --
+        # each message is claimed by exactly one popleft() call, same guarantee
+        # as the original whole-batch-snapshot fix (which locked the same way,
+        # just around the whole batch instead of one item), but without that
+        # version's own regression: snapshotting the ENTIRE queue before
+        # yielding anything meant a caller that stopped iterating early
+        # (_topic_worker breaks its for-loop on shutdown mid-batch) silently
+        # lost every not-yet-yielded message in that snapshot -- they'd already
+        # been removed from `_streams[topic]` with nowhere else to go. Popping
+        # one item at a time means an abandoned iteration simply leaves the
+        # rest of the queue exactly where it was, to be picked up by the next
+        # consume() call after restart.
         #
-        # The lock is released BEFORE any yield on purpose: _seq_lock is also
+        # The lock is released BEFORE each yield on purpose: _seq_lock is also
         # taken by produce(), and a service's handler runs INSIDE this consume
-        # loop and produces on the SAME bus in the same thread (e.g. ws2 consumes
-        # raw.events -> produces normalized.events). Holding a non-reentrant lock
-        # across a yield would self-deadlock that handler. Snapshotting under the
-        # lock means anything produced mid-iteration is delivered by the next
-        # consume() call (the runner re-enters the loop regardless), so nothing is
-        # lost and at-least-once delivery is preserved.
-        #
-        # Side effect: the whole batch is removed from `_streams[topic]` up
-        # front, before the first message is yielded -- so depth()/drain()
-        # called while a caller is mid-iteration over this generator report
-        # the batch as already gone (0 remaining), not "in flight". This
-        # matches the pre-fix behavior for a single consumer (popleft() also
-        # removed each message before yielding it) and is required for the
-        # atomicity fix above; callers reading depth() for backpressure
-        # signals should be aware a large batch briefly reads as fully
-        # drained while its handlers are still running.
-        with self._seq_lock:
-            q = self._streams[topic]
-            pending = list(q)
-            q.clear()
-        for msg in pending:
+        # loop and produces on the SAME bus in the same thread (e.g. ws2
+        # consumes raw.events -> produces normalized.events). Holding a
+        # non-reentrant lock across a yield would self-deadlock that handler.
+        import time as _t
+        while True:
+            with self._seq_lock:
+                q = self._streams[topic]
+                if not q:
+                    return
+                msg = q.popleft()
+            with self._pel_lock:
+                self._pel[topic][msg.id] = (msg, _t.monotonic(), 1)
             yield msg
 
     def ack(self, msg, group=None):
-        # consume() already removed the message from the deque; nothing to ack.
-        return None
+        with self._pel_lock:
+            self._pel[msg.topic].pop(msg.id, None)
 
     def claim_pending(self, topic, group=None, min_idle_ms=0, max_redeliveries=5):
-        # MemoryBus has no persistent PEL: consume() removes-on-yield, so there is
-        # nothing to reclaim. Returns no messages and a 0 redelivery count. The
-        # runner's redelivery semantics are exercised against MemoryBus by the
-        # tests via a re-produce loop (see test_runner.py), not via this hook.
-        return iter(())
+        """Reclaim in-flight (delivered, not yet acked) messages idle at
+        least ``min_idle_ms`` -- the deque-backend mirror of RedisWindowCounter's
+        XAUTOCLAIM+XPENDING. A handler exception leaves a message unacked in
+        ``self._pel``; the next worker-loop tick's claim_pending() call (see
+        shared/runner.py's _topic_worker, which calls this before consume())
+        picks it back up instead of it being gone forever."""
+        import time as _t
+        now = _t.monotonic()
+        horizon_s = min_idle_ms / 1000.0
+        claimed: list[tuple] = []
+        with self._pel_lock:
+            for mid, (msg, delivered_at, count) in list(self._pel[topic].items()):
+                if now - delivered_at >= horizon_s:
+                    new_count = count + 1
+                    self._pel[topic][mid] = (msg, now, new_count)
+                    claimed.append((msg, new_count))
+        for msg, times in claimed:
+            yield msg, times
 
     def drain(self, topic):
         return list(self._streams[topic])
@@ -245,8 +270,16 @@ class _RedisBus:
         # XAUTOCLAIM transfers ownership of idle pending entries to us and also
         # bumps their delivery count. We then read the authoritative count via
         # XPENDING (times_delivered) per id.
+        #
+        # Yield each round's entries immediately rather than accumulating every
+        # round into one list first: a PEL backlog built up during a real
+        # consumer outage can be large, and materializing all of it in memory
+        # before the runner processes even the first message means a big
+        # backlog costs a big, avoidable memory spike right when the system is
+        # already catching up from an outage. count=50 per round already
+        # bounds each individual XAUTOCLAIM call; this just stops re-bounding
+        # it upward by buffering every round together afterward.
         start = "0-0"
-        claimed: list[Message] = []
         while True:
             res = self.r.xautoclaim(topic, group, consumer, min_idle_ms, start,
                                     count=50)
@@ -259,13 +292,11 @@ class _RedisBus:
                     continue
                 msg = self._decode_entry(topic, group, eid, fields)
                 if msg is not None:
-                    claimed.append(msg)
+                    times = self._times_delivered(topic, group, msg.id)
+                    yield msg, times
             if next_start in ("0-0", 0, "0"):
                 break
             start = next_start
-        for msg in claimed:
-            times = self._times_delivered(topic, group, msg.id)
-            yield msg, times
 
     def _times_delivered(self, topic, group, eid):
         # XPENDING <stream> <group> <start> <end> <count> returns rows of

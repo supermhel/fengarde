@@ -46,7 +46,7 @@ for pol in events-common-90d events-90d events-400d-pci alerts-365d reports-365d
 done
 
 echo "Installing index templates ..."
-for tmpl in events-common events-bank events-dc assets alerts; do
+for tmpl in events-common events-bank events-dc assets alerts reports; do
   echo " - template $tmpl"
   curl -sf -X PUT "$OS/_index_template/$tmpl" \
     -H 'Content-Type: application/json' \

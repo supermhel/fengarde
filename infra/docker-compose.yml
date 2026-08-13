@@ -235,8 +235,12 @@ services:
     environment:
       # Opt-in profile, loopback-only port -- same "no auth surprise" posture
       # as every other opt-in layer in this stack (SECURITY.md). Change this
-      # before exposing Grafana beyond localhost.
-      - GF_SECURITY_ADMIN_PASSWORD=admin
+      # before exposing Grafana beyond localhost. GF_SECURITY_ADMIN_PASSWORD
+      # was hardcoded to the literal "admin" with no override -- unlike
+      # every other credential in this file (REDIS_PASSWORD,
+      # FENGARDE_API_KEY, FENGARDE_ADMIN_PASSWORD, ...), there was no way to
+      # set a real value without editing this file directly.
+      - GF_SECURITY_ADMIN_PASSWORD=${GF_SECURITY_ADMIN_PASSWORD:-admin}
     volumes:
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
       - ./grafana/dashboards:/var/lib/grafana/dashboards:ro

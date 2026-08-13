@@ -68,17 +68,44 @@ except Exception as _totp_exc:  # noqa: BLE001 - TOTP must never take the whole 
 ROLES = ("read_only", "analyst", "admin")
 DEFAULT_TENANT = "default"
 
-_SCRYPT_N = 2 ** 14  # ~50ms/call on a modern CPU -- slow enough to matter
+# _SCRYPT_N bumped 2**14 -> 2**16 (RFC 7914's "interactive" preset was
+# 2**14; current OWASP Password Storage Cheat Sheet guidance has moved
+# higher). Not doubled all the way to OWASP's 2**17 default -- this module's
+# own original rationale ("~50ms/call... fast enough not to DoS login") is
+# still the binding constraint on an interactive login path, and 2**17 was
+# measured noticeably heavier. The stored hash now self-describes its N
+# (``scrypt$<n>$<salt>$<hash>``) specifically so N can be raised again later
+# without a migration or breaking any already-stored hash: verify_password
+# reads N back out of the string it's checking instead of assuming today's
+# constant, so a hash written under an older N keeps verifying correctly
+# even after this constant next changes.
+_SCRYPT_N = 2 ** 16
 _SCRYPT_R = 8        # against brute force, fast enough not to DoS login.
 _SCRYPT_P = 1
 _SCRYPT_DKLEN = 32
+_LEGACY_SCRYPT_N = 2 ** 14  # every hash stored before this fix used this N,
+                            # unlabeled (3-field "scrypt$salt$hash" format).
+
+
+def _scrypt_maxmem(n: int, r: int, p: int) -> int:
+    """OpenSSL's scrypt refuses to run above a default 32MB working-set cap
+    (hashlib.scrypt's own default maxmem) and raises ValueError('memory
+    limit exceeded') instead of silently ignoring it -- discovered live when
+    bumping _SCRYPT_N to 2**16 (RFC 7914's memory formula: 128*N*r*p bytes =
+    64MB at N=2**16,r=8,p=1, double the default cap) made every login and
+    every process-start (_DECOY_HASH's own hash_password("decoy") call at
+    import time) crash outright. Compute the real requirement plus headroom
+    explicitly instead of leaving it to guesswork or silently capping N low
+    enough to fit under an unrelated library default."""
+    return 128 * n * r * p * 2
 
 
 def hash_password(password: str) -> str:
     salt = os.urandom(16)
     dk = hashlib.scrypt(password.encode("utf-8"), salt=salt,
-                         n=_SCRYPT_N, r=_SCRYPT_R, p=_SCRYPT_P, dklen=_SCRYPT_DKLEN)
-    return f"scrypt${salt.hex()}${dk.hex()}"
+                         n=_SCRYPT_N, r=_SCRYPT_R, p=_SCRYPT_P, dklen=_SCRYPT_DKLEN,
+                         maxmem=_scrypt_maxmem(_SCRYPT_N, _SCRYPT_R, _SCRYPT_P))
+    return f"scrypt${_SCRYPT_N}${salt.hex()}${dk.hex()}"
 
 
 # Fixed decoy hash for the unknown-username timing defense in verify_login().
@@ -95,14 +122,30 @@ _DECOY_HASH = hash_password("decoy")
 def verify_password(password: str, stored: str) -> bool:
     """Constant-time-compare verify. Any malformed `stored` value (wrong
     algo tag, bad hex, etc.) fails closed to False, never raises -- a
-    corrupt row must not become a crash or, worse, an auth bypass."""
+    corrupt row must not become a crash or, worse, an auth bypass.
+
+    Accepts both the current 4-field format (``scrypt$N$salt$hash``, N
+    self-described so a future N bump doesn't invalidate every existing
+    hash) and the legacy 3-field format written before this fix
+    (``scrypt$salt$hash``, implicitly N=_LEGACY_SCRYPT_N)."""
     try:
-        algo, salt_hex, hash_hex = stored.split("$")
+        parts = stored.split("$")
+        if len(parts) == 4:
+            algo, n_str, salt_hex, hash_hex = parts
+            n = int(n_str)
+            if n <= 0:
+                return False
+        elif len(parts) == 3:
+            algo, salt_hex, hash_hex = parts
+            n = _LEGACY_SCRYPT_N
+        else:
+            return False
         if algo != "scrypt":
             return False
         salt = bytes.fromhex(salt_hex)
         dk = hashlib.scrypt(password.encode("utf-8"), salt=salt,
-                             n=_SCRYPT_N, r=_SCRYPT_R, p=_SCRYPT_P, dklen=_SCRYPT_DKLEN)
+                             n=n, r=_SCRYPT_R, p=_SCRYPT_P, dklen=_SCRYPT_DKLEN,
+                             maxmem=_scrypt_maxmem(n, _SCRYPT_R, _SCRYPT_P))
         return hmac.compare_digest(dk.hex(), hash_hex)
     except Exception:
         return False

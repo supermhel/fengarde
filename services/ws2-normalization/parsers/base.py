@@ -20,6 +20,7 @@ No existing parser is touched.
 """
 from __future__ import annotations
 
+import math
 import uuid
 from typing import Optional
 
@@ -101,6 +102,8 @@ def status_from_outcome(rec: dict,
     if isinstance(val, bool):
         return "Success" if val else "Failure"
     if isinstance(val, (int, float)):
+        if isinstance(val, float) and not math.isfinite(val):  # JSON Infinity/NaN: never raise
+            return default
         n = int(val)
         if 200 <= n < 400:
             return "Success"
