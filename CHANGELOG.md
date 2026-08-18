@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (2026-08-18, WS-8 cross-alert correlation)
+
+- **New `services/ws8-correlation`** — closes the top remaining
+  detection-architecture gap named by the 2026-07-29 adversarial review
+  (Design-C): a low-and-slow attacker pacing each technique under its own
+  rule's threshold used to produce N isolated alerts, never one aggregated
+  incident. A second, independent consumer group (`cg-correlate`) on the
+  existing `alerts` topic tracks per-entity (`actor:{name}` / `ip:{addr}`,
+  never merged) activity over a 24h default horizon and promotes a track to
+  an incident once it shows ≥2 distinct MITRE tactics; produces a new
+  `incidents` topic → `incidents-{tenant}-{date}` indices, indexed by WS-3
+  alongside alerts. See `docs/adr/007-cross-alert-correlation-separate-service.md`
+  and `docs/superpowers/specs/2026-08-18-ws8-correlation-build-plan.md` for
+  the full design and build record, including three real bugs found live on
+  first `docker compose up` (missing PyYAML dependency, missing `COPY
+  contracts` in the Dockerfile, missing `decode_responses=True` on the real
+  Redis client) and how each was fixed and regression-tested.
+- New `GET /incidents` + `/api/v1/incidents` on WS-3's triage API, and a
+  plain "Incidents" table view on the dashboard.
+- `contracts/allowlists/shared_infrastructure.yml` (shipped empty) — CIDR/
+  exact-match addresses (NAT gateways, proxies, VPN concentrators) that
+  never open an `ip:` correlation track.
+- `services/ws4-detection/window.py` and its `Allowlist`/`load_allowlist`
+  CIDR-allowlist loader moved to `services/shared/` so WS-8 can reuse them
+  without a cross-workstream import (ADR 004/007); WS-4's own behavior is
+  unchanged (`git mv`, re-verified against its full test suite).
+- ADR 008: declined a shared pydantic schema package (closes a 2+ month
+  dangling doc-debt item from the v0.5 plan) — contracts stay JSON Schema +
+  hand-rolled tolerant-reader validation.
+
 ### Fixed (2026-08-13, exhaustive repo audit fix pass)
 
 - **46 confirmed findings from a full repo audit** — 17-partition static review,

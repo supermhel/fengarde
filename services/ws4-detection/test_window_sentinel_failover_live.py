@@ -39,12 +39,15 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-# This file is normally executed from a COPY at /tmp inside the ws4 container
-# (see the module docstring), where `HERE` is /tmp and `window` is not
-# importable. The container's app dir is the real source of the module under
-# test -- importing the deployed copy is the point, not a convenience.
-if not (HERE / "window.py").exists():
-    sys.path.insert(0, "/app/ws4-detection")
+# window.py moved to services/shared (2026-08-18, alongside WS-8 reusing the
+# same primitive) and ships at /app/shared inside every container via
+# PYTHONPATH=/app. This file is normally executed from a COPY at /tmp inside
+# the ws4 container (see the module docstring), where `HERE` is /tmp -- but
+# /app/shared is a fixed container path regardless of where this script
+# itself runs from, so importing the deployed module no longer needs the
+# old HERE-relative copy-detection hack.
+if "/app" not in sys.path:
+    sys.path.insert(0, "/app")
 
 FAILS: list[str] = []
 
@@ -96,7 +99,7 @@ def main() -> int:
         print(f"[SKIP] window sentinel failover: Sentinel unreachable ({exc}).")
         return 0
 
-    from window import RedisWindowCounter  # noqa: E402
+    from shared.window import RedisWindowCounter  # noqa: E402
 
     counter = RedisWindowCounter(client, namespace=f"ws4:failovertest:{os.getpid()}")
     key = "sentinel-failover-probe"

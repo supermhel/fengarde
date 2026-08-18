@@ -26,6 +26,10 @@ is the documented, versioned surface for new integrations going forward.
 See contracts/triage-api.yaml for the full OpenAPI 3.1 spec.
 
   GET  /alerts   ?tenant_id=&status=&limit=   -> newest-first alert list
+  GET  /incidents ?tenant_id=&entity_type=&entity_value=&limit=
+                                               -> newest-first (by last_seen)
+                                                  correlated-incident list
+                                                  (WS-8, 2026-08-18)
   GET  /events    ?family=&tenant_id=&limit=  -> newest-first event list
   GET  /rules                                 -> rule summaries (read-only;
                                                   never exposes a rule's raw
@@ -426,6 +430,8 @@ def make_handler(store, users_db=None, sessions: SessionStore | None = None,
 
             if path == "/alerts":
                 return self._route_list_alerts(u.query)
+            if path == "/incidents":
+                return self._route_list_incidents(u.query)
             if path == "/events":
                 return self._route_list_events(u.query)
             if path == "/rules":
@@ -504,6 +510,22 @@ def make_handler(store, users_db=None, sessions: SessionStore | None = None,
                 extra["src_ip"] = src_ip
             alerts = store.list_alerts(tenant_id=tenant_id, status=status, limit=limit, **extra)
             return self._send(200, {"alerts": alerts, "count": len(alerts)})
+
+        def _route_list_incidents(self, raw_query: str):
+            session = self._require_role("read_only")
+            if session is None:
+                return
+            q = parse_qs(raw_query)
+            requested_tenant = q.get("tenant_id", [None])[0]
+            entity_type = q.get("entity_type", [None])[0]
+            if entity_type is not None and entity_type not in ("actor", "ip"):
+                raise _BadRequest("entity_type must be one of ['actor', 'ip']")
+            entity_value = q.get("entity_value", [None])[0]
+            limit = _parse_limit(q.get("limit"))
+            tenant_id = self._list_tenant_filter(session, requested_tenant)
+            incidents = store.list_incidents(tenant_id=tenant_id, entity_type=entity_type,
+                                              entity_value=entity_value, limit=limit)
+            return self._send(200, {"incidents": incidents, "count": len(incidents)})
 
         def _route_list_events(self, raw_query: str):
             session = self._require_role("read_only")

@@ -43,7 +43,7 @@ os.environ["BUS_BACKEND"] = "memory"
 from engine import Rule, load_rules  # noqa: E402
 from scoring import Scorer  # noqa: E402
 import main as ws4  # noqa: E402
-from window import RedisWindowCounter  # noqa: E402
+from shared.window import RedisWindowCounter  # noqa: E402
 
 SCORING_YAML = ROOT / "contracts" / "scoring.yaml"
 

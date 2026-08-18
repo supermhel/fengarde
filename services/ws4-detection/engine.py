@@ -31,7 +31,6 @@ from __future__ import annotations
 
 import fnmatch
 import hashlib
-import ipaddress
 import json
 import math
 import re
@@ -41,20 +40,21 @@ from pathlib import Path
 
 import yaml
 
-from window import DequeWindowCounter
-
 # Make `shared` resolvable regardless of how engine.py is imported. The
 # service entrypoint (main.py) already puts `services/` on sys.path, but
 # tools that import engine.py directly (validate_rules.py, fire_check.py,
 # the WS-4 rule-firing tests) only add `services/ws4-detection` -- without
 # this, `from shared.log import get_logger` below raises ModuleNotFoundError
 # in every one of those callers (found 2026-08-07: 14 failures, one root cause).
+# window.py moved into shared/ 2026-08-18 (WS-8 correlation reuses the same
+# primitive), so this sys.path setup must run BEFORE the window import too.
 _SERVICES_DIR = Path(__file__).resolve().parent.parent
 if str(_SERVICES_DIR) not in sys.path:
     sys.path.insert(0, str(_SERVICES_DIR))
 
 from shared.envelope import valid_tenant_id  # noqa: E402
 from shared.log import get_logger  # noqa: E402
+from shared.window import DequeWindowCounter  # noqa: E402
 
 _log = get_logger("ws4-detection")
 _DEFAULT_TENANT = "default"
@@ -104,91 +104,18 @@ def get_path(doc: dict, dotted: str):
 
 
 # --- A3: allowlists -----------------------------------------------------------
-# Loaded once per rule-load pass (see load_rules, which clears the entries for
-# its own allowlists_dir up front) and shared via a module-level cache keyed by
-# directory, so repeated `not_in: <name>` references across rules don't
-# re-read/re-parse the file within that pass. A missing/malformed allowlist
-# makes the ALLOWLIST ITSELF fail closed (Allowlist.matches() always returns
-# False -- it can never suppress anything), which makes the RULE fail OPEN
-# (the not_in selection keeps matching/firing -- see _operator_matches's
-# not_in branch and M2 in engine.py's history). A warning is printed once per
-# load pass so the misconfiguration is visible.
-_ALLOWLIST_CACHE: dict[str, "Allowlist"] = {}
-
-
-class Allowlist:
-    """A loaded allowlist: exact-match strings plus optional CIDR ranges.
-
-    `ok` is False when the file was missing/malformed; matches() then always
-    returns False -- the ALLOWLIST fails closed (never suppresses) instead of
-    raising, which is what makes a rule's `not_in` clause referencing it fail
-    OPEN (keep firing). Do not read "fails closed" here as "the rule stops
-    firing" -- it is the opposite; see the module note above _ALLOWLIST_CACHE.
-    """
-
-    def __init__(self, entries: list, ok: bool = True):
-        self.ok = ok
-        self.exact: set[str] = set()
-        self.nets: list = []
-        for entry in entries or []:
-            if not isinstance(entry, str):
-                continue
-            self.exact.add(entry)
-            try:
-                self.nets.append(ipaddress.ip_network(entry, strict=False))
-            except ValueError:
-                pass  # not CIDR-shaped; exact-match only
-
-    def matches(self, value) -> bool:
-        if not self.ok:
-            return False
-        if value is None:
-            return False
-        s = str(value)
-        if s in self.exact:
-            return True
-        try:
-            addr = ipaddress.ip_address(s)
-        except ValueError:
-            return False
-        for net in self.nets:
-            try:
-                if addr in net:
-                    return True
-            except TypeError:
-                continue  # mismatched IP version (v4 addr vs v6 net etc.)
-        return False
-
-
-def load_allowlist(allowlists_dir: Path, name: str) -> Allowlist:
-    """Load (and cache) an allowlist by name from contracts/allowlists/<name>.yml."""
-    cache_key = f"{Path(allowlists_dir).resolve()}::{name}"
-    if cache_key in _ALLOWLIST_CACHE:
-        return _ALLOWLIST_CACHE[cache_key]
-
-    path = Path(allowlists_dir) / f"{name}.yml"
-    allowlist: Allowlist
-    try:
-        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
-        entries = raw.get("entries") if isinstance(raw, dict) else None
-        if not isinstance(entries, list):
-            raise ValueError("allowlist file missing a list 'entries:' key")
-        allowlist = Allowlist(entries, ok=True)
-    except Exception as exc:  # missing file, bad YAML, bad shape -> FAIL OPEN
-        # M2 (2026-08-06): this WARNING previously claimed "will never match
-        # (fail closed)" -- the INVERSE of the real behavior. `not_in` on a
-        # broken allowlist is deliberately fail-OPEN: the rule keeps firing
-        # (noise, never a missed detection). That is the tested, intended
-        # posture; the message now says so honestly.
-        _log.warn(
-            f"allowlist '{name}' failed to load ({exc}); rule selections using "
-            f"not_in:{name} will MATCH everything (fail open - detection kept, "
-            f"expect noise)."
-        )
-        allowlist = Allowlist([], ok=False)
-
-    _ALLOWLIST_CACHE[cache_key] = allowlist
-    return allowlist
+# Moved to services/shared/allowlist.py 2026-08-18 so WS-8 correlation can
+# reuse the same loader/matcher without a cross-workstream import (see that
+# module's docstring). `Allowlist`/`load_allowlist` re-exported here so
+# every existing caller of `engine.Allowlist`/`engine.load_allowlist` (this
+# module's own `not_in` operator below, `tools/validate_rules.py`, tests)
+# keeps working unchanged -- a pure relocation, not a behavior change. A
+# missing/malformed allowlist makes the ALLOWLIST ITSELF fail closed
+# (`Allowlist.matches()` always returns False -- it can never suppress
+# anything), which makes a RULE using it in `not_in` fail OPEN (the
+# selection keeps matching/firing -- see `_operator_matches`'s `not_in`
+# branch and M2 in this file's history).
+from shared.allowlist import Allowlist, invalidate_dir, load_allowlist  # noqa: E402,F401
 
 
 _NUMERIC_OPS = {"gt", "gte", "lt", "lte", "ne"}
@@ -903,9 +830,7 @@ def load_rules(rules_dir: Path, allowlists_dir: Path | None = None) -> list[Rule
     # returning the stale broken-allowlist object forever, so a `not_in`
     # suppression the operator just repaired would silently stay disabled
     # (fail-open noise) instead of resuming suppression.
-    resolved_str = str(Path(resolved_allowlists).resolve())
-    for key in [k for k in _ALLOWLIST_CACHE if k.startswith(resolved_str + "::")]:
-        del _ALLOWLIST_CACHE[key]
+    invalidate_dir(resolved_allowlists)
     for path in sorted(Path(rules_dir).glob("*.yml")):
         raw = yaml.safe_load(path.read_text(encoding="utf-8"))
         if raw:

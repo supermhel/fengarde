@@ -4,9 +4,13 @@ Index selection (Contract E):
   * OCSF events  -> events-{sector}-{YYYY.MM.DD}   sector in {bank,dc,common}
                     (siem.sector 'datacenter' maps to the 'dc' index family)
   * alerts       -> alerts-{YYYY.MM.DD}
+  * incidents    -> incidents-{YYYY.MM.DD}   (WS-8 correlation, 2026-08-18)
 Doc id (idempotency, Contract B at-least-once):
   * events -> siem.ingest_id
   * alerts -> alert_id
+  * incidents -> incident_id (deterministic, see correlator.py -- a
+    growing incident re-routes to the SAME (index, doc_id) so WS-3's
+    existing OCC/CAS path updates one document rather than duplicating)
 
 M4 multi-tenancy (combined roadmap): a non-"default" tenant_id
 (envelope v1's `siem.tenant`, threaded onto alerts by WS-4's make_alert) gets
@@ -72,6 +76,21 @@ def _validated_tenant(tenant: str) -> str:
 
 def route(doc: dict) -> tuple[str, str]:
     """Return (index_name, doc_id) for a document. Raises ValueError if unroutable."""
+    # incident? (WS-8 correlation, 2026-08-18) -- checked before "alert_id"
+    # since an incident document has no alert_id of its own, only a list
+    # of member_alert_ids; the two shapes never collide.
+    if "incident_id" in doc:
+        tenant = _validated_tenant(doc.get("tenant_id") or DEFAULT_TENANT)
+        base = "incidents" if tenant == DEFAULT_TENANT else f"incidents-{tenant}"
+        # first_seen, not "time" or last_seen: an incident re-emits under
+        # the SAME incident_id as it grows (idempotent update, not a new
+        # doc), so the day-index it lands in must stay STABLE across
+        # re-emissions -- first_seen never changes once set, unlike
+        # last_seen, which would otherwise route a long-lived incident's
+        # later updates into a different day's index than its first write
+        # and silently fork it into two documents.
+        return f"{base}-{_date_suffix(doc.get('first_seen'))}", str(doc["incident_id"])
+
     # alert?
     if "alert_id" in doc:
         tenant = _validated_tenant(doc.get("tenant_id") or DEFAULT_TENANT)
@@ -102,4 +121,6 @@ def template_for(index_name: str) -> str:
         return "events-common"
     if index_name.startswith("alerts-"):
         return "alerts"
+    if index_name.startswith("incidents-"):
+        return "incidents"
     return "unknown"

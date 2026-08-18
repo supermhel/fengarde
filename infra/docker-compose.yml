@@ -149,6 +149,18 @@ services:
       retries: 3
       start_period: 20s
 
+  ws8-correlation:
+    build: { context: .., dockerfile: services/ws8-correlation/Dockerfile }
+    restart: unless-stopped
+    environment: ["BUS_BACKEND=redis", "REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0"]
+    depends_on: { redis: { condition: service_healthy } }
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8008/health', timeout=3)"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
   ws6-inventory:
     build: { context: .., dockerfile: services/ws6-inventory/Dockerfile }
     restart: unless-stopped
@@ -226,7 +238,7 @@ services:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus-data:/prometheus
     ports: ["127.0.0.1:9090:9090"]
-    depends_on: [ws1-collectors, ws2-normalization, ws3-indexer, ws4-detection, ws5-ai]
+    depends_on: [ws1-collectors, ws2-normalization, ws3-indexer, ws4-detection, ws5-ai, ws8-correlation]
 
   grafana:
     image: grafana/grafana:11.1.0

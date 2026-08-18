@@ -1,0 +1,23 @@
+{
+  "policy": {
+    "description": "FENGARDE retention: WS-8 correlated incidents, delete 365 days after index creation. Matches ism-alerts-365d.json's lifetime (same reasoning as ism-reports-365d.json): an incident is only as substantiable as the member alerts it cites, so retaining it for less time than those alerts would recreate the same evidentiary gap that policy was written to close. Age-based only (daily date-suffixed indices, no write alias -- see ism-events-common-90d.json). ism_template auto-attaches this policy to matching indices at creation time.",
+    "default_state": "hot",
+    "states": [
+      {
+        "name": "hot",
+        "actions": [],
+        "transitions": [
+          { "state_name": "delete", "conditions": { "min_index_age": "365d" } }
+        ]
+      },
+      {
+        "name": "delete",
+        "actions": [ { "delete": {} } ],
+        "transitions": []
+      }
+    ],
+    "ism_template": [
+      { "index_patterns": ["incidents-*"], "priority": 100 }
+    ]
+  }
+}

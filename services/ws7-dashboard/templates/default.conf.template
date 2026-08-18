@@ -156,4 +156,21 @@ server {
         proxy_connect_timeout 3s;
         proxy_read_timeout 5s;
     }
+
+    # WS-8 (2026-08-18): read-only proxy for GET /incidents (correlated
+    # incidents, services/ws3-indexer/triage_api.py::_route_list_incidents).
+    # Same shape as /api/rules above -- GET-only, same triage port, query
+    # string (tenant_id/entity_type/entity_value/limit) forwarded unchanged
+    # by nginx's default rewrite behavior.
+    location /api/incidents {
+        resolver 127.0.0.11 ipv6=off valid=30s;
+        set $ws3_incidents "http://ws3-indexer:8013";
+        rewrite ^/api/incidents$ /incidents break;
+        proxy_pass $ws3_incidents;
+        proxy_set_header Host $host;
+        proxy_set_header X-Api-Key "${FENGARDE_API_KEY}";
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_connect_timeout 3s;
+        proxy_read_timeout 5s;
+    }
 }

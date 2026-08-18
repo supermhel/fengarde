@@ -87,6 +87,7 @@
     <button data-view="inventory">Inventory</button>
     <button data-view="sources">Sources</button>
     <button data-view="coverage">Coverage</button>
+    <button data-view="incidents">Incidents</button>
   </nav>
   <!-- E13: dark/light theme toggle -->
   <button id="themeToggle" title="Toggle dark / light theme" style="margin-left:12px" aria-label="Toggle dark mode">🌙</button>
@@ -189,6 +190,24 @@
       <code>contracts/detection-coverage.md</code>) are listed separately, not silently dropped.</p>
     <div id="coverageGrid"></div>
     <div id="coverageUntagged" class="muted" style="margin-top:12px"></div>
+  </section>
+
+  <!-- WS-8 (2026-08-18): correlated incidents -- a promoted per-entity
+       (actor or ip) alert track showing >=2 distinct MITRE tactics within
+       the correlation horizon. Table only; visual design deliberately not
+       elaborated (docs/superpowers/specs/2026-08-18-ws8-correlation-build-
+       plan.md's own stated non-goal for this pass). -->
+  <section id="incidents" class="view">
+    <h3>Correlated incidents</h3>
+    <p class="muted">A track (one actor, or one source IP) is promoted here once its alerts show
+      at least two DISTINCT MITRE tactics -- evidence of a multi-stage attack that stayed under
+      any single rule's own threshold. Pivots to a new IP are not yet merged (see the design doc).</p>
+    <table id="incidentsTable">
+      <thead><tr><th>Entity</th><th>Type</th><th>Tactics</th><th>Members</th>
+        <th>Severity</th><th>Last seen</th><th></th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <div id="incidentsEmpty" class="muted" style="display:none">No correlated incidents.</div>
   </section>
 </main>
 </div><!-- /#appRoot -->
@@ -596,6 +615,49 @@ async function renderCoverage(){
     : "";
 }
 
+// ---- WS-8: correlated incidents (2026-08-18) ----
+// Same-origin proxy to ws3-indexer's GET /incidents (services/ws3-indexer/
+// triage_api.py::_route_list_incidents). Override with
+// window.INCIDENTS_API = null to force the mock-only dev harness.
+const INCIDENTS_API = (window.INCIDENTS_API !== undefined) ? window.INCIDENTS_API : "/api/incidents";
+
+async function getIncidents(){
+  if(INCIDENTS_API){
+    try{
+      const r = await fetch(INCIDENTS_API, {headers:{Accept:"application/json"}});
+      if(r.ok){ const data = await r.json(); return data.incidents || []; }
+    }catch(e){ /* fall through to mock */ }
+  }
+  return (window.SIEM_MOCK && window.SIEM_MOCK.incidents) || [];
+}
+
+async function renderIncidents(){
+  const incidents = await getIncidents();
+  const tbody = document.querySelector("#incidentsTable tbody");
+  const empty = document.getElementById("incidentsEmpty");
+  if(!incidents.length){
+    tbody.innerHTML = "";
+    empty.style.display = "";
+    return;
+  }
+  empty.style.display = "none";
+  const sorted = [...incidents].sort((a,b) => (b.last_seen||0) - (a.last_seen||0));
+  tbody.innerHTML = sorted.map(inc => {
+    const when = inc.last_seen ? new Date(inc.last_seen).toLocaleString() : "";
+    const tactics = (inc.tactics||[]).map(esc).join(", ");
+    const truncated = inc.truncated ? ' <span class="muted" title="member cap reached">(truncated)</span>' : "";
+    return `<tr>
+      <td>${esc(inc.entity_value)}</td>
+      <td>${esc(inc.entity_type)}</td>
+      <td>${tactics}</td>
+      <td>${esc(inc.member_count)}${truncated}</td>
+      <td>${esc(inc.severity)}</td>
+      <td>${esc(when)}</td>
+      <td></td>
+    </tr>`;
+  }).join("");
+}
+
 // ---- LEVEL 2: inventory ----
 let ALL=[];
 async function renderInventory(){
@@ -787,6 +849,7 @@ async function boot(){
   renderInventory();
   renderSources();
   renderCoverage().catch(err=>console.error("renderCoverage failed:",err));
+  renderIncidents().catch(err=>console.error("renderIncidents failed:",err));
 }
 initTheme();
 boot();

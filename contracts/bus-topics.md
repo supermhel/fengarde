@@ -17,20 +17,35 @@ nothing here should be read as "Kafka already works."
 | `scored.events`    | WS-4 Detection  | WS-3               | OCSF event + `siem.score`            | `src_endpoint.ip`        |
 | `ai.requests`      | WS-4 Detection  | WS-5 AI worker(s) | `{event_id, event, tier, reason}`    | `event_id`               |
 | `ai.results`       | WS-5 AI         | WS-3               | `{event_id, tier, verdict, summary, level, classification}` | `event_id` |
-| `alerts`           | WS-4, WS-5      | WS-3               | enriched alert                       | `alert_id`               |
+| `alerts`           | WS-4, WS-5      | WS-3, WS-8 (2026-08-18, second consumer group `cg-correlate` on the same topic — the bus's consumer-group model already fans out one topic to multiple independent groups, confirmed against this file's own "Consumer groups: one group per workstream" line below) | enriched alert | `alert_id` |
+| `incidents`        | WS-8 Correlation (2026-08-18, new) | WS-3            | correlated incident (entity track promoted on >=2 distinct MITRE tactics) | `incident_id` |
 | `assets.updates`   | WS-1            | WS-6 Inventory    | `{mac, ip, hostname, seen_at}`       | `mac`                    |
 | `<topic>.deadletter` | any consumer (`services/shared/runner.py`'s generic redelivery-cap logic), plus `raw.events.deadletter` produced directly by WS-2 on unparseable input | operator (`tools/dlq_peek.py`) | `{topic, group, id, delivery_count, payload}` | inherits the original message's key |
 
 **WS-3 and WS-7 do not have the same bus relationship.** WS-3 (indexer) is the
-real consumer of `normalized.events`/`scored.events`/`ai.results`/`alerts` —
-it's the only service that persists them. WS-7 (dashboard) never touches the
-bus at all; it's a static UI that reads alert/rule/inventory data over HTTP via
-nginx proxies to WS-3's REST API (see `services/ws7-dashboard/INTERFACE.md`).
-An earlier version of this table listed WS-6 as a `normalized.events`/
-`assets.updates` producer-or-consumer beyond its actual `assets.updates`→
-`raw.events` role, and WS-5/WS-7 as `scored.events`/`ai.results`/`alerts`
-consumers they never were — corrected 2026-08-07 against the real
-`bus.produce`/`bus.consume` call sites, not assumed from an earlier draft.
+real consumer of `normalized.events`/`scored.events`/`ai.results`/`alerts`/
+`incidents` — it's the only service that persists them. WS-7 (dashboard)
+never touches the bus at all; it's a static UI that reads alert/rule/
+inventory/incident data over HTTP via nginx proxies to WS-3's REST API (see
+`services/ws7-dashboard/INTERFACE.md`). An earlier version of this table
+listed WS-6 as a `normalized.events`/`assets.updates` producer-or-consumer
+beyond its actual `assets.updates`→`raw.events` role, and WS-5/WS-7 as
+`scored.events`/`ai.results`/`alerts` consumers they never were — corrected
+2026-08-07 against the real `bus.produce`/`bus.consume` call sites, not
+assumed from an earlier draft.
+
+## WS-8 correlation (2026-08-18)
+
+**Never imports WS-4 or WS-3** (bus-only, ADR 004/007). Consumes `alerts` as
+a second, independent consumer group alongside WS-3's `cg-index` — the two
+groups each get their own copy of every alert, per Redis Streams consumer-
+group semantics; WS-8 dying or lagging cannot block WS-3's indexing path.
+Reuses `services/shared/window.py`'s `RedisWindowCounter`/
+`DequeWindowCounter` primitive for per-entity sliding-window state (see
+`docs/adr/007-cross-alert-correlation-separate-service.md` and
+`docs/superpowers/specs/2026-08-18-ws8-correlation-build-plan.md` for the
+full design). Produces `incidents`, consumed only by WS-3. Full topic/
+payload/partition-key entries are in the table above.
 
 ## Envelope v1 (M1 correctness gate, additive)
 

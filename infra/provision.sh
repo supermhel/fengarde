@@ -24,7 +24,7 @@ echo "Installing ISM retention policies ..."
 # Idempotent: create-PUT first; if the policy already exists, re-PUT with
 # the stored _seq_no/_primary_term (ISM's required update handshake). The
 # seq/primary parse uses sed because the provision container is curl-only.
-for pol in events-common-90d events-90d events-400d-pci alerts-365d reports-365d; do
+for pol in events-common-90d events-90d events-400d-pci alerts-365d reports-365d incidents-365d; do
   if curl -sf -X PUT "$OS/_plugins/_ism/policies/$pol" \
        -H 'Content-Type: application/json' \
        --data-binary "@/mappings/ism-$pol.json" >/dev/null 2>&1; then
@@ -46,7 +46,7 @@ for pol in events-common-90d events-90d events-400d-pci alerts-365d reports-365d
 done
 
 echo "Installing index templates ..."
-for tmpl in events-common events-bank events-dc assets alerts reports; do
+for tmpl in events-common events-bank events-dc assets alerts reports incidents; do
   echo " - template $tmpl"
   curl -sf -X PUT "$OS/_index_template/$tmpl" \
     -H 'Content-Type: application/json' \

@@ -22,5 +22,7 @@ of blast radius — the ADR is where that conversation gets recorded once made).
 | [004](004-microservice-split-bus-only-coupling.md) | Seven-workstream split, bus-only coupling | Accepted, live |
 | [005](005-fail-closed-rule-evaluation.md) | Fail-closed detection-rule evaluation | Accepted, live |
 | [006](006-local-first-llm-triage.md) | Local-first LLM triage (Ollama, optional) | Accepted, live |
+| [007](007-cross-alert-correlation-separate-service.md) | Cross-alert correlation as a separate service (WS-8) | Accepted, live |
+| [008](008-no-pydantic-shared-schema-package.md) | No shared pydantic schema package (JSON Schema + tolerant-reader stays) | Accepted (declined), live |
 
 Format: lightweight [Michael Nygard-style](https://cognitect.com/blog/2011/11/15/documenting-architecture-decisions) ADRs — Context / Decision / Consequences.

@@ -59,6 +59,10 @@ class _LegacyAdapter(StorageAdapter):
     def list_alerts(self, *, tenant_id=None, status=None, limit=50):  # pragma: no cover
         return []
 
+    def list_incidents(self, *, tenant_id=None, entity_type=None,
+                        entity_value=None, limit=50):  # pragma: no cover
+        return []
+
     def list_events(self, *, family=None, tenant_id=None, limit=50):  # pragma: no cover
         return []
 

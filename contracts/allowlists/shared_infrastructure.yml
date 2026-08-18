@@ -1,0 +1,22 @@
+# Shared-infrastructure allowlist (WS-8 correlation, 2026-08-18): addresses
+# that legitimately serve many unrelated actors -- NAT gateways, corporate
+# proxies, VPN concentrators, load balancers. WS-8 never opens an `ip:`
+# entity track for an allowlisted address, which is the primary defense
+# against the correlation engine's own named failure mode: one shared IP
+# pulling unrelated tenants'/actors' alerts into a false "incident".
+#
+# CIDR-shaped entries match by network membership; anything else matches by
+# exact string equality (same loader/matching convention as
+# corp_ranges.yml/service_accounts.yml -- see services/ws4-detection/
+# engine.py::load_allowlist/Allowlist).
+#
+# Matches against an alert's src_endpoint.ip.
+#
+# Shipped EMPTY on purpose: with no entries nothing is suppressed, so WS-8
+# opens an ip: track for every address until you populate this file -- no
+# silent correlation-coverage change.
+#
+#   entries:
+#     - "203.0.113.5"        # corporate NAT gateway
+#     - "198.51.100.0/24"    # VPN concentrator pool
+entries: []

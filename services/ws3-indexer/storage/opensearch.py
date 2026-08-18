@@ -395,12 +395,13 @@ class OpenSearchStore(StorageAdapter):
     # The offline contract tests exercise MemoryStore.list_alerts/list_events;
     # the OpenSearch request shape is verified against a real cluster by
     # storage/test_opensearch_live.py where relevant (`make test-live`).
-    def _list(self, index_pattern: str, term_filters: dict, limit: int) -> list[dict]:
+    def _list(self, index_pattern: str, term_filters: dict, limit: int,
+              sort_field: str = "time") -> list[dict]:
         must = [{"term": {k: v}} for k, v in term_filters.items() if v is not None]
         body = {
             "size": max(1, min(int(limit), 200)),
             "query": {"bool": {"must": must}} if must else {"match_all": {}},
-            "sort": [{"time": {"order": "desc", "unmapped_type": "long"}}],
+            "sort": [{sort_field: {"order": "desc", "unmapped_type": "long"}}],
         }
         try:
             result = self._request("POST", f"/{index_pattern}/_search", body)
@@ -424,6 +425,13 @@ class OpenSearchStore(StorageAdapter):
         filters = {"tenant_id": tenant_id, "triage.status": status,
                   "actor.user.name": actor, "src_endpoint.ip": src_ip}
         return self._list("alerts-*", filters, limit)
+
+    def list_incidents(self, *, tenant_id: str | None = None,
+                        entity_type: str | None = None, entity_value: str | None = None,
+                        limit: int = 50) -> list[dict]:
+        filters = {"tenant_id": tenant_id, "entity_type": entity_type,
+                   "entity_value": entity_value}
+        return self._list("incidents-*", filters, limit, sort_field="last_seen")
 
     def list_events(self, *, family: str | None = None, tenant_id: str | None = None,
                      limit: int = 50) -> list[dict]:
