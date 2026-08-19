@@ -216,6 +216,39 @@ def test_replay_idempotency():
           "7: redelivery must re-emit under the SAME incident_id (update, not a new incident)")
 
 
+def test_incident_id_stable_across_a_horizon_bucket_boundary():
+    """Regression (adversarial review, 2026-08-19): incident_id used to
+    bucket on now_ms (wall-clock processing time), not on the track's own
+    data. Two calls to the same track processed on opposite sides of a
+    horizon-bucket boundary -- entirely plausible under real, asynchronous
+    bus delivery -- minted TWO different incident_ids for one conceptual
+    incident, silently forking it into two documents. incident_id must
+    bucket on first_seen (the earliest live member's own time) instead,
+    which stays anchored to the first alert as long as it hasn't aged out."""
+    # horizon_s=1000 -> 1,000,000ms buckets. b1 is inserted at t=999s (bucket 0,
+    # 999,000ms), b2 only 2s later at t=1001s (bucket 1, 1,001,000ms) -- a tiny
+    # gap that leaves b1 comfortably inside the 1000s window (cutoff at the
+    # second call is 1,001,000 - 1,000,000 = 1,000ms, and b1's insertion at
+    # 999,000ms is far above that), so BOTH alerts are still live and
+    # promotion fires -- the boundary crossing is the only thing under test.
+    clock = _Clock(t=999.0)
+    c = _new_correlator(horizon_s=1000, now_fn=clock)
+    incs = c.ingest_alert(_alert("b1", tactic="TA0001", actor="judy", time_ms=999000))
+    check(incs == [], "boundary: single-tactic alert must not yet promote")
+    clock.advance(2)  # now at t=1001s -- crossed the bucket boundary (999_000 -> bucket 0; 1_001_000 -> bucket 1)
+    incs = c.ingest_alert(_alert("b2", tactic="TA0002", actor="judy", time_ms=1001000))
+    check(len(incs) == 1, "boundary: second distinct-tactic alert must promote (b1 must still be live)")
+    if incs:
+        # first_seen is b1's real time (999_000ms), so the bucket must be
+        # 999_000 // 1_000_000 == 0 -- NOT the processing time's bucket
+        # (1_001_000 // 1_000_000 == 1), which is what the bug used to compute.
+        expected_id = "default:actor:judy:0"
+        check(incs[0]["incident_id"] == expected_id,
+              f"boundary: incident_id must bucket on first_seen (expected {expected_id!r}, "
+              f"got {incs[0]['incident_id']!r} -- a now_ms-bucketed id would read "
+              f"'default:actor:judy:1', forking this incident in two)")
+
+
 # --- 8. no transitive merge -------------------------------------------------
 def test_no_transitive_merge_via_shared_ip():
     c = _new_correlator()  # shared IP below is NOT allowlisted -- accepted-limitation path
@@ -266,6 +299,7 @@ def run_all():
     test_tenant_isolation()
     test_invalid_tenant_rejected_not_normalized()
     test_replay_idempotency()
+    test_incident_id_stable_across_a_horizon_bucket_boundary()
     test_no_transitive_merge_via_shared_ip()
     test_promotion_works_with_real_redis_bytes_semantics()
 

@@ -140,11 +140,11 @@ class Correlator:
     def _track_key(self, tenant: str, entity_type: str, entity_value: str) -> str:
         return f"{tenant}:{entity_type}:{entity_value}"
 
-    def _horizon_bucket(self, now_ms: int) -> int:
-        return now_ms // self.horizon_ms
+    def _horizon_bucket(self, basis_ms: int) -> int:
+        return basis_ms // self.horizon_ms
 
-    def _incident_id(self, tenant: str, entity_type: str, entity_value: str, now_ms: int) -> str:
-        return f"{tenant}:{entity_type}:{entity_value}:{self._horizon_bucket(now_ms)}"
+    def _incident_id(self, tenant: str, entity_type: str, entity_value: str, basis_ms: int) -> str:
+        return f"{tenant}:{entity_type}:{entity_value}:{self._horizon_bucket(basis_ms)}"
 
     def _update_track(self, tenant: str, entity_type: str, entity_value: str,
                        alert: dict, now_ms: int) -> dict | None:
@@ -190,13 +190,29 @@ class Correlator:
         if len(tactics) < 2:
             return None  # single-tactic (or untagged-only) track: not yet an incident
 
-        incident_id = self._incident_id(tenant, entity_type, entity_value, now_ms)
+        first_seen = min(m["time"] for m in live)
+        # Bucketed on first_seen (a property of the DATA), never on now_ms
+        # (wall-clock processing time) -- the exact anti-pattern WS-4's own
+        # Rule.alert_key() docstring calls out and avoids: "a stateful 'open
+        # incident' anchor would key the id on processing order... the exact
+        # undeduplicatable-duplicate failure this key exists to prevent."
+        # Keying on now_ms was a real bug (caught by adversarial review,
+        # 2026-08-19): a redelivery or a late-arriving alert for the SAME
+        # growing track, processed at a different wall-clock moment than the
+        # first promotion, would land in a different horizon bucket and mint
+        # a SECOND incident_id for one conceptual incident -- silently
+        # forking it into two documents, defeating the whole point of a
+        # deterministic id. first_seen is stable across re-emissions as long
+        # as the earliest live member hasn't aged out of the window between
+        # calls (the same accepted boundary-straddling edge case
+        # alert_key()'s own docstring documents, not a new one).
+        incident_id = self._incident_id(tenant, entity_type, entity_value, first_seen)
         incident = {
             "incident_id": incident_id,
             "tenant_id": tenant,
             "entity_type": entity_type,
             "entity_value": entity_value,
-            "first_seen": min(m["time"] for m in live),
+            "first_seen": first_seen,
             "last_seen": max(m["time"] for m in live),
             "tactics": tactics,
             "member_alert_ids": sorted(m["alert_id"] for m in live),
