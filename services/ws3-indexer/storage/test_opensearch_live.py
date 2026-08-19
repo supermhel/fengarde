@@ -127,8 +127,9 @@ def _test_ism_policies_install_and_attach(store: OpenSearchStore):
     # Design-A (2026-07-29 audit): was 4 -- events-common's policy was renamed
     # events-30d -> events-common-90d (retention raised so alert evidence
     # outlives the 30-day gap it used to have), and reports-365d was added
-    # (reports-* previously had no ISM policy at all).
-    check(len(policies) == 5, f"expected 5 ism-*.json policy files, found {len(policies)}")
+    # (reports-* previously had no ISM policy at all). WS-8 (2026-08-18)
+    # added incidents-365d -- 5 -> 6.
+    check(len(policies) == 6, f"expected 6 ism-*.json policy files, found {len(policies)}")
     for path in policies:
         name = path.stem.removeprefix("ism-")
         _put_ism_policy(store, name, _load_json(path))
@@ -153,6 +154,36 @@ def _test_ism_policies_install_and_attach(store: OpenSearchStore):
             time.sleep(0.5)
         check(attached == "events-common-90d",
               f"new index {idx} must auto-attach policy events-common-90d via ism_template, got {attached!r}")
+    finally:
+        try:
+            store._request("DELETE", f"/{idx}")
+        except Exception:
+            pass
+
+
+def _test_ism_incidents_policy_attach(store: OpenSearchStore):
+    """WS-8 correlation (2026-08-18): the incidents-365d policy attaches to
+    a fresh incidents-* index via ism_template, same as every other family
+    -- separate from _test_ism_policies_install_and_attach's own attach
+    check (which only exercises events-common-*) so a regression here can't
+    hide behind that one passing. Live-verified manually against a real
+    incident document produced end-to-end through the WS-8 pipeline before
+    this test was written (see docs/superpowers/specs/2026-08-18-ws8-
+    correlation-build-plan.md); this codifies that as a repeatable check."""
+    idx = f"incidents-livetest-{uuid.uuid4().hex[:8]}"
+    store._request("PUT", f"/{idx}", {})
+    try:
+        attached = None
+        for _ in range(20):
+            explain = store._request("GET", f"/_plugins/_ism/explain/{idx}")
+            info = explain.get(idx, {}) or {}
+            attached = (info.get("index.plugins.index_state_management.policy_id")
+                        or info.get("policy_id"))
+            if attached:
+                break
+            time.sleep(0.5)
+        check(attached == "incidents-365d",
+              f"new index {idx} must auto-attach policy incidents-365d via ism_template, got {attached!r}")
     finally:
         try:
             store._request("DELETE", f"/{idx}")
@@ -237,6 +268,7 @@ def main() -> None:
     _test_permanent_error_not_retried(store)
     _test_migrate_live(store)
     _test_ism_policies_install_and_attach(store)
+    _test_ism_incidents_policy_attach(store)
     _test_bulk_index_round_trips(store)
 
     if FAILS:

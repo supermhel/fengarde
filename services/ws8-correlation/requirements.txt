@@ -1,0 +1,9 @@
+# WS-8 Correlation. Core is stdlib + the shared bus/window/allowlist
+# primitives -- redis and PyYAML are the only real third-party dependencies.
+# Found crash-looping live (2026-08-18, first `docker compose up`):
+# shared/allowlist.py does `import yaml` unconditionally (it loads
+# contracts/allowlists/*.yml), so PyYAML is required, not optional, same as
+# every other service that touches shared/allowlist.py or a YAML contract
+# file (ws2-normalization, ws4-detection).
+redis==8.1.0       # matching the pin every other Redis-talking workstream uses
+PyYAML==6.0.2       # contracts/allowlists/*.yml (shared/allowlist.py)

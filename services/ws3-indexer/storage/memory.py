@@ -142,6 +142,24 @@ class MemoryStore(StorageAdapter):
         docs.sort(key=lambda d: d.get("time") or 0, reverse=True)
         return docs[:limit]
 
+    def list_incidents(self, *, tenant_id: str | None = None,
+                        entity_type: str | None = None, entity_value: str | None = None,
+                        limit: int = 50) -> list[dict]:
+        docs: list[dict] = []
+        with self._lock:
+            for index, bucket in self._indices.items():
+                if not index.startswith("incidents"):
+                    continue
+                docs.extend(bucket.values())
+        if tenant_id is not None:
+            docs = [d for d in docs if (d.get("tenant_id") or "default") == tenant_id]
+        if entity_type is not None:
+            docs = [d for d in docs if d.get("entity_type") == entity_type]
+        if entity_value is not None:
+            docs = [d for d in docs if d.get("entity_value") == entity_value]
+        docs.sort(key=lambda d: d.get("last_seen") or 0, reverse=True)
+        return docs[:limit]
+
     def list_events(self, *, family: str | None = None, tenant_id: str | None = None,
                      limit: int = 50) -> list[dict]:
         docs: list[dict] = []

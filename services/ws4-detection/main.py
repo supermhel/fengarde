@@ -25,7 +25,7 @@ sys.path.insert(0, str(SERVICES))
 
 from shared.bus import Bus  # noqa: E402
 from engine import load_rules  # noqa: E402
-from window import DequeWindowCounter  # noqa: E402
+from shared.window import DequeWindowCounter  # noqa: E402
 from scoring import Scorer  # noqa: E402
 from tenants import tenant_of, load_disabled_rules  # noqa: E402
 from plugins import discover_rule_pack_dirs  # noqa: E402
@@ -387,7 +387,7 @@ def main():
     if _backend in ("redis", "redis-sentinel"):
         try:
             import redis  # type: ignore
-            from window import RedisWindowCounter  # noqa: E402
+            from shared.window import RedisWindowCounter  # noqa: E402
             if _backend == "redis-sentinel":
                 from redis.sentinel import Sentinel  # type: ignore
                 sentinel_hosts = []

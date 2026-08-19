@@ -22,11 +22,18 @@ echo "== Sigma import: regex->glob translation + rule sanitization =="
 $PY tools/test_fix_m18_sigma_glob.py || fail=1
 $PY tools/test_import_sigma_rules.py || fail=1
 
-for ws in ws1-collectors ws2-normalization ws3-indexer ws4-detection ws5-ai ws6-inventory ws7-dashboard; do
+for ws in ws1-collectors ws2-normalization ws3-indexer ws4-detection ws5-ai ws6-inventory ws7-dashboard ws8-correlation; do
   echo
   echo "== $ws =="
   ( cd "services/$ws" && $PY test_contract.py ) || fail=1
 done
+
+echo
+echo "== ws8 sensitivity: promotion trigger + no-transitive-merge guarantees actually break under mutation =="
+$PY services/ws8-correlation/test_correlator_sensitivity.py || fail=1
+echo
+echo "== ws3 WS-8 wiring: incident routing (day-stable across growth), storage list_incidents, OpenSearch wire format =="
+$PY services/ws3-indexer/test_ws8_incidents_routing.py || fail=1
 
 echo
 echo "== ws3 v0.3 (C1): triage API (persistence, tolerant defaults, malformed input) =="
@@ -128,6 +135,9 @@ $PY services/shared/test_bus_memory_race.py || fail=1
 echo
 echo "== shared per-tenant fair consume ordering (Task M / Finding F4, 2026-08-07) =="
 $PY services/shared/test_fairness.py || fail=1
+echo
+echo "== shared allowlist (moved from ws4-detection 2026-08-18 for WS-8 reuse): CIDR/exact match, fail-closed load =="
+$PY services/shared/test_allowlist.py || fail=1
 echo
 echo "== ws2 property-based parser hardening (M1, Hypothesis) =="
 $PY services/ws2-normalization/parsers/test_property_hardening.py || fail=1

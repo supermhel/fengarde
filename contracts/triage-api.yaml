@@ -145,6 +145,32 @@ paths:
                   alerts: { type: array, items: { type: object } }
         "400": { description: invalid status/limit }
         "401": { description: unauthorized (API key or session, per whichever mode is active) }
+  /api/v1/incidents:
+    get:
+      summary: Newest-first (by last_seen) correlated-incident listing (WS-8, 2026-08-18)
+      description: >
+        A promoted entity track (>=2 distinct MITRE tactics on one actor or
+        one IP within the correlation horizon) -- see
+        docs/superpowers/specs/2026-08-18-ws8-correlation-build-plan.md.
+        Not free-text search, same bounded/filtered-listing convention as
+        /api/v1/alerts.
+      parameters:
+        - { name: tenant_id, in: query, schema: { type: string },
+            description: "Non-admin RBAC callers: ALWAYS overridden to the caller's own tenant." }
+        - { name: entity_type, in: query, schema: { type: string, enum: [actor, ip] } }
+        - { name: entity_value, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, default: 50, minimum: 1, maximum: 200 } }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  count: { type: integer }
+                  incidents: { type: array, items: { type: object } }
+        "400": { description: invalid limit }
+        "401": { description: unauthorized (API key or session, per whichever mode is active) }
   /api/v1/alerts/{alert_id}/triage:
     get:
       summary: Current triage state (default "new" if never triaged)

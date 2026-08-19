@@ -37,6 +37,7 @@ REQUIREMENTS_FILES = [
     "services/ws4-detection/requirements.txt",
     "services/ws5-ai/requirements.txt",
     "services/ws6-inventory/requirements.txt",
+    "services/ws8-correlation/requirements.txt",
     "services/devkit-feeder/requirements.txt",
 ]
 

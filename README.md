@@ -337,20 +337,22 @@ For the full Dockerized stack (collect → normalize → detect → index → da
 ```
 WS-1 Collectors ─raw.events─▶ WS-2 Normalization ─normalized.events─┬─▶ WS-3 Indexer ─▶ OpenSearch
    (Cisco ASA / AD /          (parsers → OCSF)                      └─▶ WS-4 Detection ─scored.events─▶ WS-3
-    VMware / Linux SSH)                                                  │  alerts ─▶ WS-3
+    VMware / Linux SSH)                                                  │  alerts ─▶ WS-3, WS-8
    ─assets.updates─▶ WS-6 Inventory (IP/MAC) ─raw.events─▶ (new device -> WS-2, feedback loop)
                                                                           └─ai.requests─▶ WS-5 AI (real local
                                                                                 Ollama triage, stub fallback)
                                                                                 ─ai.results/alerts─▶ WS-3
-WS-7 Dashboard ◀── HTTP only (nginx → WS-3's triage/report/rules API + WS-6's inventory API), never the bus
+WS-8 Correlation ◀─alerts (2nd consumer group)── multi-tactic entity tracks ─incidents─▶ WS-3
+WS-7 Dashboard ◀── HTTP only (nginx → WS-3's triage/report/rules/incidents API + WS-6's inventory API), never the bus
 ```
 
-The **only** coupling between backend services (WS-1 through WS-6) is the message bus —
-no service calls another's code or API directly. Everything else is a frozen contract
-under [`contracts/`](contracts/). All source-format heterogeneity is absorbed at the edge
-(one parser per source in WS-2); the interior of the system handles a single schema
-(OCSF). WS-7 is the one exception by necessity: it's a browser UI, so it reaches WS-3/WS-6
-over HTTP (via nginx) — it never touches the bus, and no backend service depends on it.
+The **only** coupling between backend services (WS-1 through WS-6, WS-8) is the message
+bus — no service calls another's code or API directly. Everything else is a frozen
+contract under [`contracts/`](contracts/). All source-format heterogeneity is absorbed at
+the edge (one parser per source in WS-2); the interior of the system handles a single
+schema (OCSF). WS-7 is the one exception by necessity: it's a browser UI, so it reaches
+WS-3/WS-6 over HTTP (via nginx) — it never touches the bus, and no backend service depends
+on it.
 
 | WS | Service | Role | Status |
 |----|---------|------|-------------|
@@ -361,6 +363,7 @@ over HTTP (via nginx) — it never touches the bus, and no backend service depen
 | 5 | `services/ws5-ai` | Triage | ✅ real local-LLM (Ollama) since v0.2, stub fallback |
 | 6 | `services/ws6-inventory` | IP/MAC inventory API (SQLite) | ✅ |
 | 7 | `services/ws7-dashboard` | Alert console | ✅ |
+| 8 | `services/ws8-correlation` | Cross-alert correlation (multi-stage incident detection) | ✅ (2026-08-18, live-verified) |
 
 For current status and the forward roadmap, see **[SSOT.md](SSOT.md)** (read that first).
 For historical design context: [`docs/PHASE0_README.md`](docs/PHASE0_README.md).

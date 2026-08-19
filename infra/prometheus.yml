@@ -1,9 +1,9 @@
 # M7 observability (2026-07-22). Scrapes the /metrics/prom exposition-format
 # route services/shared/runner.py's health server serves alongside the
 # existing JSON /metrics -- see that file's render_prometheus() docstring.
-# Only WS-1..WS-5 use shared/runner.py's serve() loop (ws6-inventory and
-# ws7-dashboard have their own HTTP surfaces, not wired to Metrics/
-# render_prometheus -- disclosed here, not silently omitted).
+# WS-1..WS-5 and, as of 2026-08-18, WS-8 use shared/runner.py's serve() loop
+# (ws6-inventory and ws7-dashboard have their own HTTP surfaces, not wired
+# to Metrics/render_prometheus -- disclosed here, not silently omitted).
 global:
   scrape_interval: 15s
 
@@ -16,4 +16,5 @@ scrape_configs:
           - ws3-indexer:8003
           - ws4-detection:8004
           - ws5-ai:8005
+          - ws8-correlation:8008
     metrics_path: /metrics/prom

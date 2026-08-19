@@ -9,9 +9,12 @@ auditable, plan-then-apply alternative to ``infra/provision.sh``'s
 unconditional "always re-PUT everything" loop, and the thing a real
 upgrade step calls.
 
-**Honest scope:** this manages TEMPLATES only (``events-bank``,
-``events-common``, ``events-dc``, ``assets``, ``alerts``). The
-``ism-*.json`` files in the same directory are ISM *retention policies*
+**Honest scope:** this manages TEMPLATES only (every non-``ism-*`` ``*.json``
+in ``contracts/opensearch-mappings/`` -- as of 2026-08-18: ``events-bank``,
+``events-common``, ``events-dc``, ``assets``, ``alerts``, ``reports``,
+``incidents``, auto-discovered by ``load_templates()``, not hand-listed
+here). The ``ism-*.json`` files in the same directory are ISM *retention
+policies*
 (a different resource at ``_plugins/_ism/policies/<name>``, installed by
 ``infra/provision.sh``) and are skipped here -- they are not index
 templates and have no ``mapping_version``.

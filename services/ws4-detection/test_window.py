@@ -16,9 +16,11 @@ import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+SERVICES = HERE.parent
 sys.path.insert(0, str(HERE))
+sys.path.insert(0, str(SERVICES))
 
-from window import DequeWindowCounter, RedisWindowCounter  # noqa: E402
+from shared.window import DequeWindowCounter, RedisWindowCounter  # noqa: E402
 
 FAILS: list[str] = []
 

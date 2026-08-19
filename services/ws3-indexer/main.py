@@ -19,7 +19,7 @@ from router import route  # noqa: E402
 from storage.memory import MemoryStore  # noqa: E402
 from shared.authz import require_auth_or_die  # noqa: E402
 
-TOPICS = ["normalized.events", "scored.events", "alerts", "ai.results"]
+TOPICS = ["normalized.events", "scored.events", "alerts", "ai.results", "incidents"]
 
 
 def make_store():
@@ -93,7 +93,8 @@ def run(bus, store) -> dict:
 # most terminal/always-running service, so it owns this. `.deadletter`
 # siblings are excluded by start_stream_reaper itself.
 _ALL_BUS_TOPICS = ["raw.events", "normalized.events", "scored.events",
-                   "ai.requests", "ai.results", "alerts", "assets.updates"]
+                   "ai.requests", "ai.results", "alerts", "assets.updates",
+                   "incidents"]
 
 
 def main():

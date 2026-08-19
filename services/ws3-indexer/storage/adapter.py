@@ -122,6 +122,15 @@ class StorageAdapter(abc.ABC):
         alert's contributing-event actor username / source IP, when given."""
 
     @abc.abstractmethod
+    def list_incidents(self, *, tenant_id: str | None = None,
+                        entity_type: str | None = None, entity_value: str | None = None,
+                        limit: int = 50) -> list[dict]:
+        """Newest-first (by ``last_seen``) correlated-incident documents
+        (WS-8, 2026-08-18), optionally filtered by ``tenant_id`` and/or an
+        exact ``entity_type``/``entity_value`` match. Same "not free-text
+        search" and "caller clamps limit" notes as :meth:`list_alerts`."""
+
+    @abc.abstractmethod
     def list_events(self, *, family: str | None = None, tenant_id: str | None = None,
                      limit: int = 50) -> list[dict]:
         """Newest-first normalized-event documents, optionally filtered by
