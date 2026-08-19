@@ -6,4 +6,4 @@
 # every other service that touches shared/allowlist.py or a YAML contract
 # file (ws2-normalization, ws4-detection).
 redis==8.1.0       # matching the pin every other Redis-talking workstream uses
-PyYAML==6.0.2       # contracts/allowlists/*.yml (shared/allowlist.py)
+PyYAML==6.0.3       # contracts/allowlists/*.yml (shared/allowlist.py)
