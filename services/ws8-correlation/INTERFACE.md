@@ -122,7 +122,12 @@ MITRE tactics), not just repeated single-tactic noise.
   allowlist, unbounded-growth EXPIRE, tenant isolation, single-tactic
   non-promotion, replay idempotency, no transitive merge) plus 3
   pivot-correlation scenarios (device: promotes across an ip change,
-  hostname fallback when mac is absent, device: never merges with actor:/ip:).
+  hostname fallback when mac is absent, device: never merges with actor:/ip:)
+  plus 2 dead-track-sweep scenarios (2026-08-20: `_sides`/`_last_incident`
+  prune correctly once a track's own `_last_touch` ages past the horizon, a
+  still-live track survives, and the sweep is actually wired into
+  `_update_track` at the right cadence — see `correlator.py`'s
+  `_sweep_dead_tracks`).
 - `python test_correlator_sensitivity.py` — mutate-and-must-fail checks on
   the promotion trigger, the no-merge guarantee, and the device pivot-link
   (same "a negative assertion that cannot fail is not a test" bar
