@@ -106,6 +106,7 @@ test-live:
 	@$(PYTHON) services/ws3-indexer/storage/test_opensearch_live.py
 	@$(PYTHON) services/ws3-indexer/storage/test_opensearch_ha_failover_live.py
 	@$(PYTHON) services/ws3-indexer/storage/test_opensearch_cas_concurrency_live.py
+	@$(PYTHON) services/ws3-indexer/storage/test_opensearch_shared_store_concurrent_live.py
 	@SESSION_TEST_REDIS=1 FENGARDE_SESSION_SECRET=$(SESSION_TEST_SECRET) $(PYTHON) services/shared/test_sessions.py
 
 # Failover-scoped live proofs (2026-08-11). Separate from `test-live` because
