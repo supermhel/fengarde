@@ -109,6 +109,10 @@
   .card{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:16px 18px;
     box-shadow:var(--shadow)}
   .card .card-top{display:flex;align-items:flex-start;justify-content:space-between;gap:8px}
+  .card-head{display:flex;align-items:center;gap:8px;min-width:0}
+  .card-icon{width:26px;height:26px;border-radius:8px;flex:0 0 auto;display:flex;align-items:center;
+    justify-content:center;background:var(--accent-soft);color:var(--accent)}
+  .card-icon .icon{width:15px;height:15px;stroke-width:1.8}
   .card .l{color:var(--muted);font-size:11.5px;text-transform:uppercase;letter-spacing:.05em;font-weight:600}
   .card .n{font-size:30px;font-weight:800;letter-spacing:-.02em;margin-top:2px}
   .delta{display:inline-flex;align-items:center;gap:3px;font-size:11px;font-weight:700;border-radius:999px;
@@ -121,6 +125,14 @@
   .card-sub{margin-top:10px;font-size:11.5px;color:var(--muted)}
   .ratio-bar{height:6px;border-radius:999px;background:var(--rowhover);overflow:hidden;margin-top:12px}
   .ratio-bar>span{display:block;height:100%;background:var(--low);border-radius:999px}
+  /* Critical-alerts card reuses the SAME --crit severity family the pills already carry
+     (see .pill.crit below) instead of the neutral accent every other card uses -- the one
+     card whose whole subject IS a severity level gets to say so in the system's own
+     strongest existing color signal, not a new one. */
+  .card.tone-crit .card-icon{background:var(--crit-soft);color:var(--crit)}
+  .card.tone-crit .delta{background:var(--crit-soft);color:var(--crit)}
+  .card.tone-crit .spark b{background:var(--crit-soft)}
+  .card.tone-crit .spark b.hi{background:var(--crit)}
 
   /* ---- panels row: posture checklist + top sources ---- */
   .panels{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:20px}
@@ -166,6 +178,16 @@
   input,select{background:var(--panel);border:1px solid var(--border);color:var(--txt);padding:7px 11px;
     border-radius:8px;font-size:13px}
   input:focus,select:focus{border-color:var(--accent)}
+  select:disabled{opacity:.45;cursor:not-allowed}
+  /* Audit's Detail column can carry a long alert_id UUID -- capped with an
+     ellipsis (full text on hover via the row's own title attribute) instead
+     of forcing the whole table wider than the page. */
+  .audit-detail{max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  /* Every table in this file is width:100% inside a max-width:1280px main --
+     on a narrower viewport (or a wide table like Audit/Events) that means
+     overflow, not a horizontally-scrollable table; wrapping each in its own
+     scroll container keeps the PAGE from scrolling sideways instead. */
+  .table-scroll{overflow-x:auto}
   .triage-status{max-width:130px} .triage-note{max-width:180px}
   .detail{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:18px;
     margin-top:14px;box-shadow:var(--shadow)}
@@ -187,10 +209,31 @@
     font-size:12px;line-height:1.6;margin:0 0 14px;box-shadow:var(--shadow)}
   .lifecycle-hint code{background:var(--rowhover);border:1px solid var(--border);padding:0 5px;border-radius:4px;
     font-size:11px}
-  details.playbook{margin-top:6px}
-  details.playbook summary{cursor:pointer;font-size:12px;color:var(--accent);font-weight:600}
+  details.playbook,details.why{margin-top:6px}
+  details.playbook summary,details.why summary{cursor:pointer;font-size:12px;color:var(--accent);font-weight:600}
   .playbook-body{background:var(--rowhover);border:1px solid var(--border);border-radius:8px;padding:8px 10px;
     font-size:12px;white-space:pre-wrap;max-width:480px;margin:4px 0 0;font-family:inherit}
+  /* Inline MITRE tag -- same quiet inline-code treatment .lifecycle-hint code already uses,
+     generalized so the alert table and incident detail can reuse it too (Operate mode: accent
+     is reserved for actions/selection, an informational tag stays neutral, not accent-colored). */
+  .tag-chip{display:inline-block;background:var(--rowhover);border:1px solid var(--border);color:var(--muted);
+    padding:1px 6px;border-radius:4px;font-size:10.5px;line-height:1.6;
+    font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-space:nowrap}
+  .rule-mitre{margin-top:3px}
+  /* Row action buttons (Report/NIS2/report-panel close) were raw unstyled <button>
+     elements -- every other actionable control in this file (filterbar, login,
+     logout, theme toggle) already runs through the token system; these three
+     never got the same treatment. Ghost style matches #logoutBtn's tier: a
+     secondary, low-emphasis action next to the primary triage-status/note controls. */
+  .report-btn,.nis2-btn,#reportClose{background:transparent;border:1px solid var(--border);
+    color:var(--muted);border-radius:7px;padding:4px 10px;cursor:pointer;font-size:11.5px;
+    font-weight:600;margin:0 4px 4px 0;font-family:inherit}
+  .report-btn:hover,.nis2-btn:hover,#reportClose:hover{border-color:var(--accent);color:var(--accent)}
+  #reportClose{float:right;margin:0}
+
+  /* ---- incidents: list + detail (reuses tr.clk's existing cursor/hover -- see below) ---- */
+  .tactic-chip{display:inline-block;background:var(--accent-soft);color:var(--accent);padding:1px 7px;
+    border-radius:999px;font-size:11px;font-weight:600;margin:0 4px 4px 0}
 
   #loginScreen{display:flex;align-items:center;justify-content:center;min-height:100vh;background:var(--bg)}
   #loginBox{background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:30px;width:300px;
@@ -204,9 +247,22 @@
     padding:10px;border-radius:9px;cursor:pointer;font-size:13px;font-weight:700}
   #loginError{color:var(--crit);font-size:12px;margin-top:10px;min-height:14px}
   #userBadge{color:var(--muted);font-size:12px;display:flex;align-items:center;gap:8px}
-  #logoutBtn{background:transparent;border:1px solid var(--border);color:var(--muted);border-radius:7px;
-    padding:4px 10px;cursor:pointer;font-size:12px}
+  #logoutBtn,#mfaOpenBtn,#mfaClose,#mfaEnableBtn,#mfaVerifyBtn{background:transparent;border:1px solid var(--border);
+    color:var(--muted);border-radius:7px;padding:4px 10px;cursor:pointer;font-size:12px;font-family:inherit}
+  #logoutBtn:hover,#mfaOpenBtn:hover,#mfaClose:hover,#mfaEnableBtn:hover,#mfaVerifyBtn:hover{
+    border-color:var(--accent);color:var(--accent)}
+  #mfaPanel input{margin-top:4px}
   #appRoot{display:none}
+
+  /* Ops cards carry more rows (per-topic + per-extra-key) than a stat card --
+     wider minmax than the generic .cards grid, and a narrower .kv label
+     column. 2026-08-20 fix: a long dotted/underscored key with no spaces
+     ("raw.events.deadletter_depth") has no natural break point, so without
+     overflow-wrap it doesn't wrap at all -- it overflows the 130px column
+     and visually collides with the value text next to it. */
+  #opsCards{grid-template-columns:repeat(auto-fit,minmax(300px,1fr))}
+  #opsCards .kv{grid-template-columns:130px 1fr;row-gap:8px}
+  #opsCards .kv .k{padding-top:1px;overflow-wrap:anywhere}
 
   .covRow{display:flex;gap:12px;align-items:flex-start;margin-bottom:10px}
   .covTactic{width:170px;flex-shrink:0;color:var(--muted);font-size:12px;padding-top:10px;font-weight:600}
@@ -238,6 +294,22 @@
       <button data-view="sources" title="Sources" aria-label="Sources">
         <svg class="icon" viewBox="0 0 24 24"><path d="M3 17l5-6 4 4 5-8 4 5"/><path d="M3 21h18"/></svg>
       </button>
+      <button data-view="events" title="Events" aria-label="Events">
+        <svg class="icon" viewBox="0 0 24 24"><path d="M8 6h13M8 12h13M8 18h13"/>
+          <circle cx="3.5" cy="6" r="1.1" fill="currentColor" stroke="none"/>
+          <circle cx="3.5" cy="12" r="1.1" fill="currentColor" stroke="none"/>
+          <circle cx="3.5" cy="18" r="1.1" fill="currentColor" stroke="none"/></svg>
+      </button>
+      <!-- 2026-08-20: per-service health/metrics (services/shared/runner.py's
+           uniform /metrics) existed on every workstream, never had a nav entry. -->
+      <button data-view="ops" title="Ops" aria-label="Ops">
+        <svg class="icon" viewBox="0 0 24 24"><path d="M3 12h4l2 8 4-16 2 8h6"/></svg>
+      </button>
+      <!-- 2026-08-20: E1 admin audit trail (GET /audit) existed, never had a nav entry. -->
+      <button data-view="audit" title="Audit" aria-label="Audit">
+        <svg class="icon" viewBox="0 0 24 24"><path d="M9 3h6l5 5v13a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"/>
+          <path d="M9 12h6M9 16h6M9 8h2"/></svg>
+      </button>
     </nav>
     <div class="sidebar-bottom">
       <button id="themeToggleRail" title="Toggle dark / light theme" aria-label="Toggle dark mode">
@@ -253,6 +325,17 @@
         FENGARDE Console
       </h1>
       <span class="status-pill" id="apiStatus"><span class="dot"></span>mock data</span>
+      <!-- 2026-08-19: time-range picker -- scopes /api/alerts and /api/events (both
+           OpenSearch-backed, both time-filterable server-side via the nginx range
+           map). Sources/Inventory/Coverage aren't time-scoped (they read the CURRENT
+           alert/rule set, not a historical window), so this deliberately doesn't
+           touch them. -->
+      <select id="rangeSelect" title="Time range" aria-label="Time range">
+        <option value="1h">Last hour</option>
+        <option value="24h" selected>Last 24 hours</option>
+        <option value="7d">Last 7 days</option>
+        <option value="30d">Last 30 days</option>
+      </select>
       <div class="topbar-actions">
         <!-- E13: dark/light theme toggle (kept, required by test_fix_ux.py) -->
         <button id="themeToggle" title="Toggle dark / light theme" aria-label="Toggle dark mode">
@@ -334,15 +417,65 @@
           <select id="savedSearches" aria-label="Saved searches"><option value="">Saved searches…</option></select>
         </div>
         <h3>Active critical alerts</h3>
-        <table><thead><tr><th>Time</th><th>Rule</th><th>Sector</th><th>Level</th><th>Score</th><th>Source</th><th>Triage</th><th>Note</th><th>Report</th></tr></thead>
-          <tbody id="alertRows"></tbody></table>
+        <div class="table-scroll"><table><thead><tr><th>Time</th><th>Rule</th><th>Sector</th><th>Level</th><th>Score</th><th>Source</th><th>Triage</th><th>Note</th><th>Report</th></tr></thead>
+          <tbody id="alertRows"></tbody></table></div>
+        <!-- 2026-08-20: the time-range picker could filter this table down to
+             ZERO rows with no explanation at all -- an empty table and a
+             broken one look identical to an analyst. Same empty-note pattern
+             #eventsEmpty/#incidentsEmpty already use. -->
+        <div id="alertsEmpty" class="empty-note" style="display:none"></div>
       </section>
 
       <!-- v0.4 Track R: incident-report draft panel, hidden until a report is requested -->
       <div id="reportPanel" class="detail" hidden>
-        <button id="reportClose" style="float:right">Close</button>
+        <button id="reportClose">Close</button>
         <h3>Incident report (draft)</h3>
+        <!-- 2026-08-20: nis2_template.py supports 3 stages x 2 languages (6
+             real, working combinations) but the NIS2 button only ever
+             requested stage=notification&lang=de -- the other 5 were
+             reachable server-side and unreachable from the UI. Only
+             meaningful once a NIS2-mode report is open (CURRENT_REPORT_NIS2);
+             harmless no-op otherwise (picks a stage/lang for a report that
+             hasn't been generated in NIS2 mode yet). -->
+        <div class="toolbar" id="nis2Controls" style="display:none">
+          <select id="nis2Stage" aria-label="NIS2 report stage">
+            <option value="early_warning">Early warning (24h)</option>
+            <option value="notification" selected>Notification (72h)</option>
+            <option value="final_report">Final report (1 month)</option>
+          </select>
+          <select id="nis2Lang" aria-label="NIS2 report language">
+            <option value="de" selected>Deutsch</option>
+            <option value="en">English</option>
+          </select>
+        </div>
         <pre id="reportBody" style="white-space:pre-wrap;font-family:inherit"></pre>
+      </div>
+
+      <!-- 2026-08-20: opt-in TOTP MFA (services/ws3-indexer/triage_api.py's
+           /auth/mfa/enable + /auth/mfa/verify) was fully built -- rate-limited,
+           password-reauth-gated, audited -- and had zero UI: no enrollment
+           button, no secret/QR display, anywhere. Only shown once a real RBAC
+           session exists (see showLoggedIn()'s "Security" button). No QR
+           image renderer (would need a library this single-file/no-build
+           project doesn't carry) -- the otpauth:// URI's own `secret=` param
+           is shown as literal text for manual entry into any authenticator
+           app, which is all a QR code encodes anyway. -->
+      <div id="mfaPanel" class="detail" hidden>
+        <button id="mfaClose" style="float:right">Close</button>
+        <h3>Two-factor authentication</h3>
+        <div id="mfaStep1">
+          <p class="muted">Re-enter your password to generate a new TOTP secret.</p>
+          <input id="mfaPassword" type="password" placeholder="Current password" autocomplete="current-password" />
+          <button id="mfaEnableBtn" type="button" style="margin-top:10px">Generate secret</button>
+        </div>
+        <div id="mfaStep2" hidden>
+          <p class="muted">Add this secret to an authenticator app (Google Authenticator, 1Password, etc.), then enter the 6-digit code it shows.</p>
+          <div class="kv"><div class="k">Secret</div><div id="mfaSecret" style="font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;word-break:break-all"></div></div>
+          <input id="mfaCode" type="text" inputmode="numeric" placeholder="6-digit code" style="margin-top:10px" />
+          <button id="mfaVerifyBtn" type="button" style="margin-top:10px">Verify &amp; activate</button>
+        </div>
+        <div id="mfaError" style="color:var(--crit);font-size:12px;margin-top:10px"></div>
+        <div id="mfaSuccess" style="color:var(--low);font-size:12px;margin-top:10px"></div>
       </div>
 
       <!-- WS-8 (2026-08-18): correlated incidents -- a promoted per-entity
@@ -351,15 +484,19 @@
       <section id="incidents" class="view">
         <div class="cards" id="incidentCards"></div>
         <h3>Correlated incidents</h3>
-        <p class="muted" style="margin-top:-6px">A track (one actor, or one source IP) is promoted here once its alerts show
-          at least two DISTINCT MITRE tactics — evidence of a multi-stage attack that stayed under
-          any single rule's own threshold. Pivots to a new IP are not yet merged.</p>
-        <table id="incidentsTable">
+        <p class="muted" style="margin-top:-6px">A track (one actor, one source IP, or one device —
+          identified by mac/hostname, which stays stable across a DHCP-driven IP change) is promoted
+          here once its alerts show at least two DISTINCT MITRE tactics — evidence of a multi-stage
+          attack that stayed under any single rule's own threshold. A host with no captured mac/hostname,
+          or an attacker who genuinely switches to a brand-new host under a brand-new identity, is the
+          remaining case that stays as separate incidents.</p>
+        <div class="table-scroll"><table id="incidentsTable">
           <thead><tr><th>Entity</th><th>Type</th><th>Tactics</th><th>Members</th>
             <th>Severity</th><th>Last seen</th><th></th></tr></thead>
           <tbody></tbody>
-        </table>
+        </table></div>
         <div id="incidentsEmpty" class="empty-note" style="display:none">No correlated incidents.</div>
+        <div id="incidentDetail"></div>
       </section>
 
       <!-- LEVEL 2 -->
@@ -368,15 +505,55 @@
           <input id="q" placeholder="Filter by IP or MAC…" />
           <select id="sector"><option value="">All sectors</option><option>bank</option><option>datacenter</option><option>common</option></select>
         </div>
-        <table><thead><tr><th>MAC</th><th>Hostname</th><th>Current IP</th><th>Sector</th><th>Type</th><th>Status</th></tr></thead>
-          <tbody id="assetRows"></tbody></table>
+        <div class="table-scroll"><table><thead><tr><th>MAC</th><th>Hostname</th><th>Current IP</th><th>Sector</th><th>Type</th><th>Status</th></tr></thead>
+          <tbody id="assetRows"></tbody></table></div>
         <div id="assetDetail"></div>
+        <!-- 2026-08-20: TenantKeyStore key metadata (rotation state, scope,
+             last-used) had no HTTP route at all (CLI-only, manage_keys.py).
+             Never key material -- see keystore.py::list_keys and app.py's
+             new GET /keys. Collapsed by default: operational detail, not
+             something an analyst needs open on every visit. -->
+        <details class="playbook" style="margin-top:16px">
+          <summary>API keys</summary>
+          <div class="table-scroll"><table style="margin-top:8px"><thead><tr><th>Key ID</th><th>Tenant</th><th>Scope</th>
+            <th>Source</th><th>Created</th><th>Last used</th></tr></thead>
+            <tbody id="keyRows"></tbody></table></div>
+          <div id="keysEmpty" class="muted" style="margin-top:6px;display:none">No keys provisioned (auth disabled, or none visible to this session).</div>
+        </details>
       </section>
 
       <!-- LEVEL 3 -->
+      <!-- 2026-08-20: this used to be 100% window.SIEM_MOCK.sources, ALWAYS --
+           getSources() had no live path at all, unlike every other view.
+           There is no real per-protocol-breakdown endpoint anywhere in the
+           backend to wire it to (checked) -- but siem.source_type (the real
+           parser identity: linux_ssh, cisco_asa, windows_eventlog, ...) IS a
+           real indexed field on every event (contracts/opensearch-mappings/
+           events-*.json), and getEvents() already fetches the real event set
+           for the Events tab. Reused here instead of inventing new mock
+           numbers -- same "derive from data already in hand" fix the Top
+           Sources panel used to replace the fake world map. -->
       <section id="sources" class="view">
-        <h3>Events by protocol / source</h3>
+        <h3>Events by source (parser)</h3>
+        <p class="muted" style="margin-top:-6px">Real event counts per <code>siem.source_type</code> (the parser that
+          produced each event), scoped by the time-range picker above.</p>
         <div id="srcBars"></div>
+        <div id="sourcesEmpty" class="empty-note" style="display:none"></div>
+      </section>
+
+      <!-- 2026-08-19: raw normalized (post-OCSF, pre-detection) event browser.
+           WS-2 always indexed these (events-{common,bank,dc}-*); the dashboard
+           previously only ever queried the scored subset (alerts). No triage
+           actions here on purpose -- these are pre-detection records, not
+           alerts; triage/report stays exclusive to the Overview alert table. -->
+      <section id="events" class="view">
+        <h3>Raw events</h3>
+        <p class="muted" style="margin-top:-6px">Normalized (OCSF) events as WS-2 produced them, before
+          detection scoring -- the pre-alert record. Scoped by the time-range picker above.</p>
+        <div class="table-scroll"><table><thead><tr><th>Time</th><th>Class</th><th>Activity</th><th>Status</th>
+          <th>Source</th><th>Actor</th><th>Sector</th></tr></thead>
+          <tbody id="eventRows"></tbody></table></div>
+        <div id="eventsEmpty" class="empty-note" style="display:none">No events in this time range.</div>
       </section>
 
       <!-- C3 (v0.5): MITRE ATT&CK/ATLAS/ICS coverage heatmap, sourced from A1's
@@ -391,6 +568,37 @@
           <code>contracts/detection-coverage.md</code>) are listed separately, not silently dropped.</p>
         <div id="coverageGrid"></div>
         <div id="coverageUntagged" class="muted" style="margin-top:12px"></div>
+        <!-- 2026-08-20: rules_view.py computes enabled/score_weight/stateful
+             per rule (tenant-scoped `enabled`) but nothing rendered them --
+             the heatmap above only ever read mitre.tactic/technique. -->
+        <h3 style="margin-top:20px">All rules</h3>
+        <div class="table-scroll"><table><thead><tr><th>Rule</th><th>Sector</th><th>Level</th><th>Score weight</th>
+          <th>Stateful</th><th>Enabled</th></tr></thead>
+          <tbody id="rulesTableBody"></tbody></table></div>
+      </section>
+
+      <!-- 2026-08-20: per-service ops/health. Every workstream's own
+           GET /metrics (services/shared/runner.py) existed and was never
+           queryable from the dashboard -- an operator had no path short of
+           `docker exec` + curl. -->
+      <section id="ops" class="view">
+        <h3>Service health</h3>
+        <p class="muted" style="margin-top:-6px">Real per-topic acked/failed/deadlettered counters and
+          service-specific extras, read live from each workstream's own <code>/metrics</code> endpoint.</p>
+        <div class="cards" id="opsCards"></div>
+      </section>
+
+      <!-- 2026-08-20: E1 admin audit trail (services/ws3-indexer/audit.py,
+           GET /audit) -- fully built, admin-scoped, append-only, and had zero
+           dashboard surface. A non-admin session (or RBAC off with no shared
+           key) gets a clean "unavailable" state, never a crash. -->
+      <section id="audit" class="view">
+        <h3>Admin audit trail</h3>
+        <p class="muted" style="margin-top:-6px">Login/logout, MFA, triage, and report-generation events.
+          Admin-scoped by the backend (<code>GET /audit</code>) -- empty here if you're not an admin.</p>
+        <div class="table-scroll"><table><thead><tr><th>Time</th><th>Event</th><th>Actor</th><th>Tenant</th><th>Detail</th></tr></thead>
+          <tbody id="auditRows"></tbody></table></div>
+        <div id="auditEmpty" class="empty-note" style="display:none">No audit entries visible (not an admin, or nothing logged yet).</div>
       </section>
     </main>
     </div><!-- /#appRoot -->
@@ -405,15 +613,47 @@ const ICONS = {
   circle: '<circle cx="12" cy="12" r="9"/>',
   pulse: '<path d="M3 12h4l2 7 4-14 2 7h6"/>',
   map: '<path d="M9 3L3 6v15l6-3 6 3 6-3V3l-6 3-6-3z"/><path d="M9 3v15M15 6v15"/>',
+  devices: '<rect x="4" y="4" width="16" height="6" rx="1.4"/><rect x="4" y="14" width="16" height="6" rx="1.4"/>'
+    + '<circle cx="8" cy="7" r=".9" fill="currentColor" stroke="none"/>'
+    + '<circle cx="8" cy="17" r=".9" fill="currentColor" stroke="none"/>',
+  warn: '<path d="M12 4L3 20h18L12 4z"/><path d="M12 10.5v3.5"/>'
+    + '<circle cx="12" cy="17" r=".9" fill="currentColor" stroke="none"/>',
+  link: '<path d="M9 15l6-6"/><path d="M8.5 12l-1.8 1.8a3 3 0 004.2 4.2l2.6-2.6"/>'
+    + '<path d="M15.5 12l1.8-1.8a3 3 0 00-4.2-4.2l-2.6 2.6"/>',
 };
 function icon(name, cls){ return `<svg class="icon ${cls||""}" viewBox="0 0 24 24">${ICONS[name]||ICONS.circle}</svg>`; }
 
 // ---- data access: live API if configured, else mock --------------------
-const INVENTORY_API = window.INVENTORY_API || null; // e.g. "http://localhost:8000"
+// 2026-08-20: this had NO default (`|| null`), unlike every other *_API
+// constant below (which all default to their nginx-proxied same-origin
+// path). Nothing anywhere -- no compose env, no injected script -- ever set
+// window.INVENTORY_API, so getAssets() always fell through to mock data on
+// every deployment. Same fix pattern as the others: default to the new
+// same-origin proxy (templates/default.conf.template's /api/inventory/ ->
+// ws6-inventory:8000), override with window.INVENTORY_API = null to force
+// mock-only.
+const INVENTORY_API = (window.INVENTORY_API !== undefined) ? window.INVENTORY_API : "/api/inventory";
 // DX4: alerts are LIVE by default, fetched same-origin from the nginx reverse
 // proxy (/api/alerts -> OpenSearch alerts-*/_search). Override with
 // window.ALERTS_API = null to force mock-only.
 const ALERTS_API = (window.ALERTS_API !== undefined) ? window.ALERTS_API : "/api/alerts";
+// 2026-08-19: raw normalized events (pre-detection) and the separate AI-triage
+// side-documents (see templates/default.conf.template's /api/ai-triage comment
+// for why these are a distinct query, not folded into /api/alerts).
+const EVENTS_API = (window.EVENTS_API !== undefined) ? window.EVENTS_API : "/api/events";
+const AI_TRIAGE_API = (window.AI_TRIAGE_API !== undefined) ? window.AI_TRIAGE_API : "/api/ai-triage";
+// Time-range picker (#rangeSelect). getAlerts()/getEvents() send the actual
+// epoch-millis lower bound as `?gte=`, computed HERE client-side -- NOT a
+// semantic string for nginx to interpret as OpenSearch date-math server-side.
+// Found live (2026-08-19): both indices' `time` field is mapped strict
+// `epoch_millis`, which does not parse a "now-24h" date-math string (see
+// templates/default.conf.template's map block for the full account) --
+// nginx now only regex-validates that `gte` is already numeric and passes it
+// through unchanged; all the "what does 24h mean" logic lives here instead.
+const RANGE_MS = {"1h": 3600000, "24h": 86400000, "7d": 604800000, "30d": 2592000000};
+const RANGE_LABELS = {"1h": "the last hour", "24h": "the last 24 hours", "7d": "the last 7 days", "30d": "the last 30 days"};
+let CURRENT_RANGE = "24h";
+function rangeGteMs(){ return Date.now() - (RANGE_MS[CURRENT_RANGE] || RANGE_MS["24h"]); }
 let LIVE = false; // true once live alerts are successfully loaded
 
 // ---- M3: RBAC session login (opt-in backend feature, see services/shared/rbac.py) ----
@@ -479,8 +719,10 @@ function showLoggedIn(){
   if(SESSION){
     badge.style.display = "flex";
     badge.innerHTML = `${esc(SESSION.username)} <span class="pill low">${esc(SESSION.role)}</span> `
+      + `<button id="mfaOpenBtn">Security</button>`
       + `<button id="logoutBtn">Sign out</button>`;
     document.getElementById("logoutBtn").onclick = doLogout;
+    document.getElementById("mfaOpenBtn").onclick = openMfaPanel;
   }
 }
 
@@ -526,9 +768,29 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 });
 
+// 2026-08-20: RBAC's own SESSION.tenant_id (set on login, see checkSession())
+// was captured but never sent to any fetch -- so a multi-tenant backend was
+// silently read/rendered as the single "default" tenant regardless of who
+// logged in. `tenantQuery()` is the one place that decision is made, reused
+// by every tenant-scoping fetch below.
+function tenantQuery(){
+  return (SESSION && SESSION.tenant_id) ? `&tenant_id=${encodeURIComponent(SESSION.tenant_id)}` : "";
+}
 async function getAssets(){
-  if(INVENTORY_API){ try{ return await (await fetch(INVENTORY_API+"/assets?limit=200")).json(); }catch(e){} }
+  if(INVENTORY_API){
+    try{ return await (await fetch(`${INVENTORY_API}/assets?limit=200${tenantQuery()}`)).json(); }
+    catch(e){}
+  }
   return window.SIEM_MOCK.assets;
+}
+async function getKeys(){
+  if(!INVENTORY_API) return [];
+  try{
+    const r = await fetch(`${INVENTORY_API}/keys`);
+    if(!r.ok) return [];
+    const data = await r.json();
+    return data.keys || [];
+  }catch(e){ return []; }
 }
 
 // Fetch REAL alerts from OpenSearch (via same-origin proxy). Maps _search hits to
@@ -537,7 +799,8 @@ async function getAssets(){
 async function getAlerts(){
   if(ALERTS_API){
     try{
-      const r = await fetch(ALERTS_API, {headers:{Accept:"application/json"}});
+      const r = await fetch(`${ALERTS_API}?gte=${rangeGteMs()}`,
+        {headers:{Accept:"application/json"}});
       if(r.ok){
         const data = await r.json();
         const hits = (((data||{}).hits||{}).hits)||[];
@@ -555,6 +818,7 @@ async function getAlerts(){
             src_endpoint: s.src_endpoint||{},
             actor: s.actor||{},
             mitre: s.mitre||null,
+            event_ids: s.event_ids||[],
             playbook: s.playbook || (s.rule && s.rule.playbook) || null
           }));
         LIVE = true;
@@ -565,7 +829,70 @@ async function getAlerts(){
   LIVE = false;
   return window.SIEM_MOCK.alerts;
 }
-function getSources(){ return window.SIEM_MOCK.sources; }
+
+// 2026-08-19: raw normalized (pre-detection) events -- events-{common,bank,dc}-*,
+// WS-2's real output. Never previously fetched by this dashboard. No mock
+// fallback data exists for this (mocks/mock_data.js has no `.events`), so an
+// unreachable proxy returns an empty list rather than fabricating sample rows.
+async function getEvents(){
+  if(!EVENTS_API) return [];
+  try{
+    const r = await fetch(`${EVENTS_API}?gte=${rangeGteMs()}`,
+      {headers:{Accept:"application/json"}});
+    if(!r.ok) return [];
+    const data = await r.json();
+    const hits = (((data||{}).hits||{}).hits)||[];
+    return hits.map(h=>h._source).filter(Boolean).map(s=>({
+      time: s.time,
+      class_uid: s.class_uid,
+      activity_id: s.activity_id,
+      status: s.status,
+      src_endpoint: s.src_endpoint||{},
+      actor: s.actor||{},
+      sector: (s.siem||{}).sector,
+      source_type: (s.siem||{}).source_type,
+    }));
+  }catch(e){ return []; }
+}
+
+// 2026-08-19: the "ai-{event_id}" side-documents WS-5 already produces and
+// OpenSearch already indexes (services/ws5-ai/main.py::_alert_payload) but
+// /api/alerts's own query deliberately excludes (no rule_title). Fetched
+// separately and joined onto the real alert client-side by shared event_ids
+// -- see attachAiTriage(). No mock fallback: absence just means no AI
+// verdict shows, never a fabricated one.
+async function getAiTriage(){
+  if(!AI_TRIAGE_API) return [];
+  try{
+    const r = await fetch(AI_TRIAGE_API, {headers:{Accept:"application/json"}});
+    if(!r.ok) return [];
+    const data = await r.json();
+    const hits = (((data||{}).hits||{}).hits)||[];
+    return hits.map(h=>h._source).filter(s => s && (s.ai || s.classification));
+  }catch(e){ return []; }
+}
+
+// Joins getAiTriage()'s side-documents onto `alerts` by shared event_ids --
+// an ai-{event_id} doc's OWN event_ids is a 1-element array (the single event
+// WS-5 triaged); a real alert's event_ids can be many (stateful rule window).
+// A match on ANY shared id is real evidence the same underlying activity was
+// triaged, not a guess -- mutates `a.ai`/`a.ai_classification` in place, adds
+// nothing when no match exists (real data or nothing, see PRODUCT.md).
+function attachAiTriage(alerts, triageDocs){
+  if(!triageDocs.length) return alerts;
+  const byEventId = {};
+  triageDocs.forEach(t => (t.event_ids||[]).forEach(eid => { if(eid) byEventId[eid] = t; }));
+  alerts.forEach(a => {
+    const hit = (a.event_ids||[]).map(eid => byEventId[eid]).find(Boolean);
+    if(hit){ a.ai = hit.ai || null; a.ai_classification = hit.classification || null; }
+  });
+  return alerts;
+}
+// 2026-08-20: replaced -- see the Sources <section>'s own comment for why
+// this used to be permanently window.SIEM_MOCK.sources with no live path.
+function sourceTypeLabel(s){
+  return String(s||"").split("_").map(w => w ? w[0].toUpperCase()+w.slice(1) : w).join(" ") || "Unknown";
+}
 const lvl = s => ({critical:"crit",high:"high",medium:"med",low:"low"}[s]||"low");
 const LEVEL_ICON = {crit:"circle", high:"circle", med:"circle", low:"check"};
 // SECURITY: alert/asset fields (hostname, IP, rule_title, etc.) originate from
@@ -575,12 +902,94 @@ const LEVEL_ICON = {crit:"circle", high:"circle", med:"circle", low:"check"};
 const esc = s => String(s==null?"":s).replace(/[&<>"']/g,
   c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 
+// ---- MITRE tag + "why" disclosure (real data only, see PRODUCT.md) ---------
+// `mitre.tactic`/`mitre.technique` is the SAME shape the Coverage heatmap already
+// reads off rules (services/ws4-detection/main.py::make_alert passes a rule's
+// mitre block onto every alert it fires) -- omitted entirely when absent, never
+// a placeholder tag (agent_tool_call_burst ships with no mitre block on purpose,
+// see SSOT.md, and must render as nothing here, not as an empty chip).
+function mitreChipHtml(mitre, wrapperClass){
+  if(!mitre || !mitre.technique) return "";
+  const label = [mitre.tactic, mitre.technique].filter(Boolean).map(esc).join(" · ");
+  return `<div class="${wrapperClass||""}"><span class="tag-chip" title="MITRE ATT&amp;CK">${label}</span></div>`;
+}
+// The analyst-facing "why": contributing event ids (Rule.contributing_event_ids(),
+// already on the alert payload as event_ids) plus the same MITRE tag -- built ONLY
+// from fields the backend actually returns, never a narrative summary invented on
+// the client. Renders nothing (no empty affordance) when neither is present.
+function whyDetailsHtml(a){
+  const lines = [];
+  if(a.mitre && a.mitre.technique) lines.push(`MITRE: ${[a.mitre.tactic, a.mitre.technique].filter(Boolean).map(esc).join(" ")}`);
+  // 2026-08-19: attachAiTriage() (real Ollama/StubLLM output, see getAiTriage())
+  // -- shown only when a real verdict was actually computed for THIS alert's own
+  // event_ids (a "classifier" tier never calls the LLM and carries no verdict/
+  // summary at all, per ws5-ai/main.py::_alert_payload's own docstring -- must
+  // not render an empty "AI triage:" line implying a verdict that isn't there).
+  // 2026-08-20: `ai.engine`/`ai.model` (llm_adapter.py) name which analyzer
+  // actually produced the verdict -- "ollama:qwen2.5" or "stub" -- rather than
+  // just asserting an LLM ran; omitted when absent (pre-upgrade alert docs).
+  if(a.ai && (a.ai.verdict || a.ai.summary)){
+    const engine = a.ai.engine ? `${a.ai.engine}${a.ai.model ? ":" + a.ai.model : ""}` : "";
+    lines.push(`AI triage (${esc(a.ai.level||"")}${engine ? ", " + esc(engine) : ""}): ${esc(a.ai.verdict||"")}${a.ai.summary ? " -- " + esc(a.ai.summary) : ""}`);
+  }
+  // 2026-08-20: the light classifier ({category, priority, confidence},
+  // services/ws5-ai/classifier.py) runs on EVERY alert (both llm and
+  // classifier tiers) and was already fetched into a.ai_classification
+  // (attachAiTriage()) but never rendered anywhere -- dead data one line
+  // from here. Distinct from a.ai (the LLM verdict, absent on the
+  // classifier tier) -- this is present whenever ANY triage ran at all.
+  if(a.ai_classification){
+    const c = a.ai_classification;
+    lines.push(`Classifier: ${esc(c.category||"")} / ${esc(c.priority||"")}`
+      + (c.confidence != null ? ` (confidence ${esc(c.confidence)})` : ""));
+  }
+  // 2026-08-20: local-IOC reputation (services/ws2-normalization/enrichment)
+  // rides inside the same payload as src_endpoint.location.country (already
+  // shown in the Top Sources tooltip) but its sibling field was never read.
+  const rep = (a.src_endpoint||{}).reputation;
+  if(rep && (rep.score != null || (rep.categories||[]).length)){
+    lines.push(`Source reputation: ${rep.score != null ? esc(rep.score) : "—"}`
+      + ((rep.categories||[]).length ? ` (${rep.categories.map(esc).join(", ")})` : ""));
+  }
+  if(a.event_ids && a.event_ids.length) lines.push(`Contributing events (${a.event_ids.length}): ${a.event_ids.map(esc).join(", ")}`);
+  if(!lines.length) return "";
+  return `<details class="why"><summary>Why</summary><div class="playbook-body">${lines.join("\n")}</div></details>`;
+}
+
 // ---- nav ----
+// 2026-08-20: the time-range picker lives in the GLOBAL header (visible on
+// every tab) but only ever scoped 2 of now-8 views (Overview, Events) --
+// silently doing nothing on the rest, with no indication why. Extended to
+// also scope Incidents (by last_seen), Audit (by ts), and Sources (now a
+// real per-parser event count, see getSources()'s replacement) where a time
+// window is genuinely meaningful, and disabled with an explanatory tooltip
+// on the views where it isn't (Inventory/Coverage/Ops read CURRENT state,
+// not a historical window -- there is no "last 24h of rule config").
+const RANGE_SCOPED_VIEWS = new Set(["global", "events", "incidents", "audit", "sources"]);
+function syncRangeSelectState(viewId){
+  const el = document.getElementById("rangeSelect");
+  if(!el) return;
+  const scoped = RANGE_SCOPED_VIEWS.has(viewId);
+  el.disabled = !scoped;
+  el.title = scoped ? "Time range" : "Time range does not apply to this view (shows current state, not a historical window)";
+}
+// 2026-08-20: deep-linkable views (#ops, #audit, ...) -- a bookmark/shared
+// link can now open directly on one tab instead of always landing on
+// Overview. Falls back to "global" on an empty/unknown hash rather than
+// erroring, same fail-open discipline as everything else in this file.
+const NAV_VIEWS = [...document.querySelectorAll("nav button")].map(b => b.dataset.view);
+function selectView(viewId){
+  if(!NAV_VIEWS.includes(viewId)) viewId = "global";
+  document.querySelectorAll("nav button").forEach(x=>x.classList.toggle("active", x.dataset.view===viewId));
+  document.querySelectorAll(".view").forEach(x=>x.classList.toggle("active", x.id===viewId));
+  syncRangeSelectState(viewId);
+}
 document.querySelectorAll("nav button").forEach(b=>b.onclick=()=>{
-  document.querySelectorAll("nav button").forEach(x=>x.classList.remove("active"));
-  document.querySelectorAll(".view").forEach(x=>x.classList.remove("active"));
-  b.classList.add("active"); document.getElementById(b.dataset.view).classList.add("active");
+  selectView(b.dataset.view);
+  history.replaceState(null, "", `#${b.dataset.view}`);
 });
+window.addEventListener("hashchange", () => selectView(location.hash.slice(1)));
+selectView(location.hash.slice(1));
 
 // ---- real-data stat-card helpers (24h bucket sparkline + real delta) -----
 // Every number here is derived from the timestamps already present on the
@@ -736,6 +1145,7 @@ function renderPosture(alerts, rules){
 async function renderGlobal(alerts){
   const assets = window.SIEM_MOCK.assets;
   if(!alerts) alerts = await getAlerts();
+  attachAiTriage(alerts, await getAiTriage());
   const statusEl = document.getElementById("apiStatus");
   if(statusEl){
     statusEl.classList.toggle("live", LIVE);
@@ -750,23 +1160,23 @@ async function renderGlobal(alerts){
 
   document.getElementById("globalCards").innerHTML = `
     <div class="card">
-      <div class="card-top"><span class="l">Active devices</span></div>
+      <div class="card-top"><span class="card-head"><span class="card-icon">${icon("devices")}</span><span class="l">Active devices</span></span></div>
       <div class="n">${active}</div>
       <div class="ratio-bar"><span style="width:${assets.length?Math.round(active/assets.length*100):0}%"></span></div>
       <div class="card-sub">${active} of ${assets.length} tracked assets</div>
     </div>
-    <div class="card">
-      <div class="card-top"><span class="l">Critical alerts</span>${deltaHtml(critBk.curCount, critBk.prevCount)}</div>
+    <div class="card tone-crit">
+      <div class="card-top"><span class="card-head"><span class="card-icon">${icon("warn")}</span><span class="l">Critical alerts</span></span>${deltaHtml(critBk.curCount, critBk.prevCount)}</div>
       <div class="n">${crit}</div>
       ${sparklineHtml(critBk.buckets)}
     </div>
     <div class="card">
-      <div class="card-top"><span class="l">Total alerts</span>${deltaHtml(totalBk.curCount, totalBk.prevCount)}</div>
+      <div class="card-top"><span class="card-head"><span class="card-icon">${icon("pulse")}</span><span class="l">Total alerts</span></span>${deltaHtml(totalBk.curCount, totalBk.prevCount)}</div>
       <div class="n">${alerts.length}</div>
       ${sparklineHtml(totalBk.buckets)}
     </div>
     <div class="card">
-      <div class="card-top"><span class="l">Correlated incidents</span>${deltaHtml(incBk.curCount, incBk.prevCount)}</div>
+      <div class="card-top"><span class="card-head"><span class="card-icon">${icon("link")}</span><span class="l">Correlated incidents</span></span>${deltaHtml(incBk.curCount, incBk.prevCount)}</div>
       <div class="n">${incidents.length}</div>
       ${sparklineHtml(incBk.buckets)}
     </div>`;
@@ -782,21 +1192,35 @@ async function renderGlobal(alerts){
     if(a.alert_id) triageByAlert[a.alert_id] = await fetchTriage(a.alert_id);
   }));
 
-  document.getElementById("alertRows").innerHTML = sorted.map(a=>{
-    const t = triageByAlert[a.alert_id] || {status:"new", note:""};
-    const aid = esc(a.alert_id||"");
-    return `
-    <tr data-rule-id="${esc(a.rule_id||"")}"><td class="muted">${esc(new Date(a.time).toLocaleTimeString())}</td>
-    <td>${esc(a.rule_title)}</td><td>${esc(a.sector||"")}</td>
-    <td><span class="pill ${lvl(a.level)}">${icon(LEVEL_ICON[lvl(a.level)])}${esc(a.level)}</span></td>
-    <td>${esc(a.score)}</td><td class="muted">${esc((a.src_endpoint||{}).ip||"")}</td>
-    <td><select class="triage-status" data-alert-id="${aid}">${triageStatusOptions(t.status)}</select></td>
-    <td><input class="triage-note" data-alert-id="${aid}" type="text" placeholder="analyst note"
-        value="${esc(t.note||"")}" /></td>
-    <td><button class="report-btn" data-alert-id="${aid}">Report</button>
-    <button class="nis2-btn" data-alert-id="${aid}" title="Draft NIS2 notification (German, Art. 23 NIS2 / §32 BSIG) -- see docs/nis2-report-generator.md">NIS2 (DE)</button>
-    ${a.playbook ? `<details class="playbook"><summary>Playbook</summary><pre class="playbook-body">${esc(a.playbook)}</pre></details>` : ""}</td></tr>`;
-  }).join("");
+  const alertsEmptyEl = document.getElementById("alertsEmpty");
+  if(!sorted.length){
+    document.getElementById("alertRows").innerHTML = "";
+    if(alertsEmptyEl){
+      alertsEmptyEl.style.display = "";
+      alertsEmptyEl.textContent = LIVE
+        ? `No alerts in ${RANGE_LABELS[CURRENT_RANGE] || "this range"}. Try a wider time range above.`
+        : "No alerts (mock data).";
+    }
+  }else{
+    if(alertsEmptyEl) alertsEmptyEl.style.display = "none";
+    document.getElementById("alertRows").innerHTML = sorted.map(a=>{
+      const t = triageByAlert[a.alert_id] || {status:"new", note:""};
+      const aid = esc(a.alert_id||"");
+      const why = whyDetailsHtml(a);
+      return `
+      <tr data-rule-id="${esc(a.rule_id||"")}"><td class="muted">${esc(new Date(a.time).toLocaleTimeString())}</td>
+      <td>${esc(a.rule_title)}${mitreChipHtml(a.mitre, "rule-mitre")}</td><td>${esc(a.sector||"")}</td>
+      <td><span class="pill ${lvl(a.level)}">${icon(LEVEL_ICON[lvl(a.level)])}${esc(a.level)}</span></td>
+      <td>${esc(a.score)}</td><td class="muted">${esc((a.src_endpoint||{}).ip||"")}</td>
+      <td><select class="triage-status" data-alert-id="${aid}">${triageStatusOptions(t.status)}</select></td>
+      <td><input class="triage-note" data-alert-id="${aid}" type="text" placeholder="analyst note"
+          value="${esc(t.note||"")}" /></td>
+      <td><button class="report-btn" data-alert-id="${aid}">Report</button>
+      <button class="nis2-btn" data-alert-id="${aid}" title="Draft NIS2 notification (German, Art. 23 NIS2 / §32 BSIG) -- see docs/nis2-report-generator.md">NIS2 (DE)</button>
+      ${a.playbook ? `<details class="playbook"><summary>Playbook</summary><pre class="playbook-body">${esc(a.playbook)}</pre></details>` : ""}
+      ${why}</td></tr>`;
+    }).join("");
+  }
 
   // wire triage controls: status change + note blur both POST the update.
   document.querySelectorAll("#alertRows .triage-status").forEach(sel => {
@@ -814,33 +1238,8 @@ async function renderGlobal(alerts){
     };
   });
 
-  // v0.4 Track R: "Report" button -> POST to generate (or re-generate) a
-  // draft incident report, then render it. Same fail-open discipline as
-  // triage: a proxy/backend failure shows an inline error, never a crash.
-  async function generateReport(alertId, query){
-    const panel = document.getElementById("reportPanel");
-    const body = document.getElementById("reportBody");
-    body.textContent = "Generating report…";
-    panel.hidden = false;
-    try{
-      const r = await fetch(`${TRIAGE_API}/alerts/${encodeURIComponent(alertId)}/report${query||""}`,
-        {method:"POST", credentials:"same-origin", headers: csrfHeaders()});
-      if(r.ok){
-        const report = await r.json();
-        // body is markdown, rendered as PLAIN TEXT (never innerHTML) --
-        // contracts/reporting.md hard rule #4: the backend is external
-        // input (a paid backend, or -- for the NIS2 mode -- deterministic
-        // but still just text), stored-XSS discipline applies identically.
-        body.textContent = report.body || "(empty report)";
-      }else{
-        body.textContent = `Error: report unavailable (HTTP ${r.status}).`;
-      }
-    }catch(e){
-      body.textContent = "Error: report service unreachable.";
-    }
-  }
   document.querySelectorAll("#alertRows .report-btn").forEach(btn => {
-    btn.onclick = () => generateReport(btn.dataset.alertId, "");
+    btn.onclick = () => generateReport(btn.dataset.alertId, "", false);
   });
   // M5: "NIS2 (DE)" button -> the SAME report endpoint, additive query
   // params select the deterministic NIS2/§32 BSIG German template instead
@@ -848,14 +1247,278 @@ async function renderGlobal(alerts){
   // docs/nis2-report-generator.md for the NIS2-vs-DORA scope caveat this
   // draft itself also states inline.
   document.querySelectorAll("#alertRows .nis2-btn").forEach(btn => {
-    btn.onclick = () => generateReport(btn.dataset.alertId, "?template=nis2&stage=notification&lang=de");
+    btn.onclick = () => {
+      const stage = document.getElementById("nis2Stage").value;
+      const lang = document.getElementById("nis2Lang").value;
+      generateReport(btn.dataset.alertId, `?template=nis2&stage=${stage}&lang=${lang}`, true);
+    };
   });
+}
+
+// v0.4 Track R: "Report"/"NIS2 (DE)" buttons -> POST to generate (or
+// re-generate) a draft incident report, then render it. Same fail-open
+// discipline as triage: a proxy/backend failure shows an inline error, never
+// a crash. Module-scope (not a renderGlobal() closure) so the NIS2
+// stage/language selectors below -- which live outside any single alert
+// row -- can re-invoke it for whichever report is currently open.
+let CURRENT_REPORT_ALERT_ID = null;
+let CURRENT_REPORT_NIS2 = false;
+async function generateReport(alertId, query, isNis2){
+  CURRENT_REPORT_ALERT_ID = alertId;
+  CURRENT_REPORT_NIS2 = !!isNis2;
+  const nis2Controls = document.getElementById("nis2Controls");
+  if(nis2Controls) nis2Controls.style.display = CURRENT_REPORT_NIS2 ? "flex" : "none";
+  const panel = document.getElementById("reportPanel");
+  const body = document.getElementById("reportBody");
+  body.textContent = "Generating report…";
+  panel.hidden = false;
+  try{
+    const r = await fetch(`${TRIAGE_API}/alerts/${encodeURIComponent(alertId)}/report${query||""}`,
+      {method:"POST", credentials:"same-origin", headers: csrfHeaders()});
+    if(r.ok){
+      const report = await r.json();
+      // body is markdown, rendered as PLAIN TEXT (never innerHTML) --
+      // contracts/reporting.md hard rule #4: the backend is external
+      // input (a paid backend, or -- for the NIS2 mode -- deterministic
+      // but still just text), stored-XSS discipline applies identically.
+      body.textContent = report.body || "(empty report)";
+    }else{
+      body.textContent = `Error: report unavailable (HTTP ${r.status}).`;
+    }
+  }catch(e){
+    body.textContent = "Error: report service unreachable.";
+  }
 }
 
 document.addEventListener("DOMContentLoaded", () => {
   const closeBtn = document.getElementById("reportClose");
   if(closeBtn) closeBtn.onclick = () => { document.getElementById("reportPanel").hidden = true; };
+  const nis2StageEl = document.getElementById("nis2Stage");
+  const nis2LangEl = document.getElementById("nis2Lang");
+  const regenerateNis2 = () => {
+    if(!CURRENT_REPORT_NIS2 || !CURRENT_REPORT_ALERT_ID) return;
+    generateReport(CURRENT_REPORT_ALERT_ID,
+      `?template=nis2&stage=${nis2StageEl.value}&lang=${nis2LangEl.value}`, true);
+  };
+  if(nis2StageEl) nis2StageEl.onchange = regenerateNis2;
+  if(nis2LangEl) nis2LangEl.onchange = regenerateNis2;
 });
+
+// ---- 2026-08-20: MFA/TOTP enrollment (services/ws3-indexer/triage_api.py's
+// /auth/mfa/enable + /auth/mfa/verify) -- see #mfaPanel's own comment above
+// for why this shipped with no UI until now. ----
+function openMfaPanel(){
+  document.getElementById("mfaStep1").hidden = false;
+  document.getElementById("mfaStep2").hidden = true;
+  document.getElementById("mfaPassword").value = "";
+  document.getElementById("mfaCode").value = "";
+  document.getElementById("mfaError").textContent = "";
+  document.getElementById("mfaSuccess").textContent = "";
+  document.getElementById("mfaPanel").hidden = false;
+}
+async function mfaEnable(){
+  const errEl = document.getElementById("mfaError");
+  errEl.textContent = "";
+  const password = document.getElementById("mfaPassword").value;
+  try{
+    const r = await fetch(`${AUTH_API}/mfa/enable`, {
+      method: "POST", credentials: "same-origin",
+      headers: {"Content-Type": "application/json", ...csrfHeaders()},
+      body: JSON.stringify({password})
+    });
+    const body = await r.json();
+    if(!r.ok){ errEl.textContent = body.error || "could not generate a secret"; return; }
+    // otpauth://totp/FENGARDE:user?secret=XXXX&issuer=FENGARDE -- the `secret`
+    // param IS the shared secret a QR code would encode; shown as text since
+    // this single-file/no-build dashboard carries no QR-rendering library.
+    const m = /[?&]secret=([^&]+)/.exec(body.otpauth_uri || "");
+    document.getElementById("mfaSecret").textContent = m ? decodeURIComponent(m[1]) : (body.otpauth_uri || "");
+    document.getElementById("mfaStep1").hidden = true;
+    document.getElementById("mfaStep2").hidden = false;
+  }catch(e){
+    errEl.textContent = "MFA service unreachable";
+  }
+}
+async function mfaVerify(){
+  const errEl = document.getElementById("mfaError");
+  const okEl = document.getElementById("mfaSuccess");
+  errEl.textContent = ""; okEl.textContent = "";
+  const password = document.getElementById("mfaPassword").value;
+  const totp_code = document.getElementById("mfaCode").value.trim();
+  try{
+    const r = await fetch(`${AUTH_API}/mfa/verify`, {
+      method: "POST", credentials: "same-origin",
+      headers: {"Content-Type": "application/json", ...csrfHeaders()},
+      body: JSON.stringify({password, totp_code})
+    });
+    const body = await r.json();
+    if(!r.ok){ errEl.textContent = body.error || "invalid code"; return; }
+    okEl.textContent = "MFA is now active on this account.";
+    document.getElementById("mfaStep2").hidden = true;
+  }catch(e){
+    errEl.textContent = "MFA service unreachable";
+  }
+}
+document.addEventListener("DOMContentLoaded", () => {
+  const mfaClose = document.getElementById("mfaClose");
+  if(mfaClose) mfaClose.onclick = () => { document.getElementById("mfaPanel").hidden = true; };
+  const mfaEnableBtn = document.getElementById("mfaEnableBtn");
+  if(mfaEnableBtn) mfaEnableBtn.onclick = mfaEnable;
+  const mfaVerifyBtn = document.getElementById("mfaVerifyBtn");
+  if(mfaVerifyBtn) mfaVerifyBtn.onclick = mfaVerify;
+});
+
+// ---- 2026-08-20: per-service ops/health (services/shared/runner.py's
+// uniform GET /metrics -- {service, topics:{topic:{result:count}}, extra?}
+// on every workstream). One generic renderer: the shape is uniform enough
+// that hand-coding 5 bespoke per-service UIs would just be restating the
+// same {topics, extra} structure five times. ----
+const OPS_SERVICES = [
+  {key: "ws1", label: "WS-1 Collectors"},
+  {key: "ws2", label: "WS-2 Normalization"},
+  {key: "ws3", label: "WS-3 Indexer"},
+  {key: "ws4", label: "WS-4 Detection"},
+  {key: "ws8", label: "WS-8 Correlation"},
+];
+async function getOpsMetrics(key){
+  try{
+    const r = await fetch(`/api/ops/${key}`, {headers:{Accept:"application/json"}});
+    if(!r.ok) return null;
+    return await r.json();
+  }catch(e){ return null; }
+}
+// One row per (topic, result) pair -- "acked: 33" reads as a fact, not JSON
+// syntax to decode. Reuses .kv, the same label/value grid every detail panel
+// in this file already uses (#assetDetail, #incidentDetail).
+function opsTopicRows(topics){
+  const entries = Object.entries(topics||{});
+  if(!entries.length) return `<div class="k">Traffic</div><div class="muted">none yet</div>`;
+  return entries.flatMap(([topic, results]) =>
+    Object.entries(results).map(([result, n]) =>
+      `<div class="k">${esc(topic)}</div><div>${esc(result)}: <b>${n}</b></div>`)
+  ).join("");
+}
+// `extra` is service-specific and can nest one level (e.g. WS-1's
+// syslog_udp.per_source.{ip}: {produced,dropped,shed}) -- a scalar renders as
+// one row, a nested object gets its own indented sub-list rather than a raw
+// JSON string, so "which IP got shed" reads directly instead of requiring
+// the analyst to parse a blob.
+// WS-4's rule_health_metrics() (main.py) keys each fired rule as a flat
+// "rule_last_fired_timestamp:{rule_id}" -> epoch-SECONDS float -- readable
+// as raw JSON, not as a fact on a card. Reshaped into "Rule {id} last fired"
+// + a real date, same as every other timestamp already shown in this file.
+// 2026-08-20 fix: the first version of this hand-coded 2 levels deep
+// (extra.key -> sub-key), which was enough for WS-4's flat extras but
+// silently produced "per_source: 172.18.0.1=[object Object]" for WS-1's
+// syslog_udp.per_source.{ip}.{produced,dropped,shed} -- a REAL 3rd level
+// (per-IP -> per-stat). Recursive now so no future extra shape, at any
+// depth, can collapse into "[object Object]" again.
+function opsRenderValue(v){
+  if(v == null) return "—";
+  if(Array.isArray(v)) return v.length ? esc(v.join(", ")) : "—";
+  if(typeof v === "object"){
+    const entries = Object.entries(v);
+    if(!entries.length) return "—";
+    return entries.map(([k,val]) =>
+      `<div style="margin-left:12px">${esc(k)}: ${opsRenderValue(val)}</div>`).join("");
+  }
+  return `<b>${esc(v)}</b>`;
+}
+function opsExtraRows(extra){
+  if(!extra || typeof extra !== "object" || !Object.keys(extra).length) return "";
+  return Object.entries(extra).map(([k,v]) => {
+    const fireMatch = /^rule_last_fired_timestamp:(.+)$/.exec(k);
+    if(fireMatch && typeof v === "number"){
+      return `<div class="k">Rule last fired</div>`
+        + `<div><span class="muted">${esc(fireMatch[1])}</span>: <b>${esc(new Date(v*1000).toLocaleString())}</b></div>`;
+    }
+    return `<div class="k">${esc(k)}</div><div>${opsRenderValue(v)}</div>`;
+  }).join("");
+}
+async function renderOps(){
+  const el = document.getElementById("opsCards");
+  if(!el) return;
+  const results = await Promise.all(OPS_SERVICES.map(s => getOpsMetrics(s.key)));
+  el.innerHTML = OPS_SERVICES.map((s,i) => {
+    const data = results[i];
+    if(!data){
+      return `<div class="card"><div class="l">${esc(s.label)}</div>
+        <div class="muted" style="margin-top:8px">unreachable</div></div>`;
+    }
+    return `<div class="card">
+      <div class="l">${esc(s.label)}</div>
+      <div class="kv" style="margin-top:10px">${opsTopicRows(data.topics)}${opsExtraRows(data.extra)}</div>
+    </div>`;
+  }).join("");
+}
+
+// ---- 2026-08-20: E1 admin audit trail (GET /audit) -- see #audit section's
+// own comment for why this had zero UI until now. ----
+const AUDIT_API = (window.AUDIT_API !== undefined) ? window.AUDIT_API : "/api/audit";
+// Every audit `detail` blob is a flat {key: scalar} dict (see every
+// self._audit(...) call site in triage_api.py -- username, role, alert_id,
+// status, reason, etc., never nested). Rendered as "key: value, key: value"
+// instead of raw JSON syntax -- same "read it, don't decode it" bar the Why
+// panel already holds AI-triage/classifier output to.
+function formatAuditDetail(detail){
+  if(!detail || typeof detail !== "object") return "";
+  return Object.entries(detail).map(([k,v]) => `${k}: ${v}`).join(", ");
+}
+async function renderAudit(){
+  const rows = document.getElementById("auditRows");
+  const empty = document.getElementById("auditEmpty");
+  if(!rows || !AUDIT_API) return;
+  try{
+    // limit=200 (the backend's own max, _MAX_LIST_LIMIT) -- headroom for the
+    // client-side time filter below, since GET /audit itself has no gte
+    // param (see /incidents' identical situation, renderIncidents()).
+    const r = await fetch(`${AUDIT_API}?limit=200`, {headers:{Accept:"application/json"}, credentials:"same-origin"});
+    if(!r.ok){
+      rows.innerHTML = "";
+      empty.style.display = "";
+      empty.textContent = "No audit entries visible (not an admin, or nothing logged yet).";
+      return;
+    }
+    const data = await r.json();
+    const all = data.entries || [];
+    const entries = all.filter(e => !e.ts || new Date(e.ts).getTime() >= rangeGteMs());
+    if(!entries.length){
+      rows.innerHTML = "";
+      empty.style.display = "";
+      empty.textContent = all.length
+        ? `No audit entries in ${RANGE_LABELS[CURRENT_RANGE] || "this range"}. Try a wider time range above.`
+        : "No audit entries visible (not an admin, or nothing logged yet).";
+      return;
+    }
+    empty.style.display = "none";
+    rows.innerHTML = entries.map(e => `<tr>
+      <td class="muted">${e.ts ? esc(new Date(e.ts).toLocaleString()) : "—"}</td>
+      <td>${esc(e.event||"")}</td>
+      <td>${esc(e.actor||"")}</td>
+      <td class="muted">${esc(e.tenant_id||"—")}</td>
+      <td class="muted audit-detail" title="${esc(formatAuditDetail(e.detail))}">${esc(formatAuditDetail(e.detail)) || "—"}</td>
+    </tr>`).join("");
+  }catch(e){ rows.innerHTML = ""; empty.style.display = ""; }
+}
+
+// ---- 2026-08-20: TenantKeyStore key metadata (GET /keys) -- see the
+// Inventory view's "API keys" <details> panel for why this had no route. ----
+async function renderKeys(){
+  const rows = document.getElementById("keyRows");
+  const empty = document.getElementById("keysEmpty");
+  if(!rows) return;
+  const keys = await getKeys();
+  if(!keys.length){ rows.innerHTML = ""; empty.style.display = ""; return; }
+  empty.style.display = "none";
+  rows.innerHTML = keys.map(k => `<tr>
+    <td class="muted">${esc(k.key_id||"")}</td>
+    <td>${esc(k.tenant_id||"")}</td>
+    <td>${esc(k.scope||"")}</td>
+    <td class="muted">${esc(k.source||"")}</td>
+    <td class="muted">${k.created_at ? esc(new Date(k.created_at).toLocaleString()) : ""}</td>
+    <td class="muted">${k.last_used_at ? esc(new Date(k.last_used_at).toLocaleString()) : "never"}</td>
+  </tr>`).join("");
+}
 
 // C2 (v0.5): poll for new alerts every POLL_INTERVAL_MS, but only when data
 // is actually live (mock mode has nothing new to fetch) and the tab is
@@ -890,7 +1553,11 @@ const RULES_API = (window.RULES_API !== undefined) ? window.RULES_API : "/api/ru
 async function getRules(){
   if(RULES_API){
     try{
-      const r = await fetch(RULES_API, {headers:{Accept:"application/json"}});
+      // 2026-08-20: rules_view.py computes per-tenant `enabled` (disabled_rules
+      // override) but this fetch never sent tenant_id, so every caller saw the
+      // SAME (tenant-agnostic) rule set regardless of who was logged in.
+      const q = SESSION && SESSION.tenant_id ? `?tenant_id=${encodeURIComponent(SESSION.tenant_id)}` : "";
+      const r = await fetch(`${RULES_API}${q}`, {headers:{Accept:"application/json"}});
       if(r.ok){ const data = await r.json(); return data.rules || []; }
     }catch(e){ /* fall through to mock */ }
   }
@@ -939,6 +1606,20 @@ async function renderCoverage(){
     ? `${untagged.length} rule(s) with no MITRE mapping (omitted rather than forced): `
       + untagged.map(r => esc(r.title||r.id)).join(", ")
     : "";
+
+  const rulesBody = document.getElementById("rulesTableBody");
+  if(rulesBody){
+    rulesBody.innerHTML = [...rules].sort((a,b)=>(a.id||"").localeCompare(b.id||"")).map(r => `<tr>
+      <td>${esc(r.title||r.id)}</td>
+      <td class="muted">${esc(r.sector||"")}</td>
+      <td>${esc(r.level||"")}</td>
+      <td>${esc(r.score_weight ?? "—")}</td>
+      <td>${r.stateful ? icon("check","icon-sm") : "—"}</td>
+      <td>${r.enabled === false
+        ? `<span class="pill high">${icon("circle")}disabled</span>`
+        : `<span class="pill low">${icon("check")}enabled</span>`}</td>
+    </tr>`).join("") || `<tr><td colspan="6" class="muted">No rules loaded.</td></tr>`;
+  }
 }
 
 // ---- WS-8: correlated incidents (2026-08-18) ----
@@ -950,7 +1631,8 @@ const INCIDENTS_API = (window.INCIDENTS_API !== undefined) ? window.INCIDENTS_AP
 async function getIncidents(){
   if(INCIDENTS_API){
     try{
-      const r = await fetch(INCIDENTS_API, {headers:{Accept:"application/json"}});
+      const q = SESSION && SESSION.tenant_id ? `?tenant_id=${encodeURIComponent(SESSION.tenant_id)}` : "";
+      const r = await fetch(`${INCIDENTS_API}${q}`, {headers:{Accept:"application/json"}});
       if(r.ok){ const data = await r.json(); return data.incidents || []; }
     }catch(e){ /* fall through to mock */ }
   }
@@ -958,14 +1640,21 @@ async function getIncidents(){
 }
 
 async function renderIncidents(){
-  const incidents = await getIncidents();
+  // 2026-08-20: incidents are the one list here with no server-side time
+  // filter (triage_api.py's /incidents takes tenant_id/entity_type/
+  // entity_value/limit, no gte) -- filtered client-side by last_seen so the
+  // header time-range picker means something on this view instead of
+  // silently no-op'ing (see RANGE_SCOPED_VIEWS).
+  const incidents = (await getIncidents()).filter(i => (i.last_seen||0) >= rangeGteMs());
   const actorCount = incidents.filter(i=>i.entity_type==="actor").length;
   const ipCount = incidents.filter(i=>i.entity_type==="ip").length;
+  const deviceCount = incidents.filter(i=>i.entity_type==="device").length;
   const truncCount = incidents.filter(i=>i.truncated).length;
   document.getElementById("incidentCards").innerHTML = `
     <div class="card"><div class="l">Total incidents</div><div class="n">${incidents.length}</div></div>
     <div class="card"><div class="l">Actor-scoped</div><div class="n">${actorCount}</div></div>
     <div class="card"><div class="l">IP-scoped</div><div class="n">${ipCount}</div></div>
+    <div class="card"><div class="l">Device-scoped</div><div class="n">${deviceCount}</div></div>
     <div class="card"><div class="l">Truncated (cap reached)</div><div class="n">${truncCount}</div></div>`;
 
   const tbody = document.querySelector("#incidentsTable tbody");
@@ -973,15 +1662,17 @@ async function renderIncidents(){
   if(!incidents.length){
     tbody.innerHTML = "";
     empty.style.display = "";
+    empty.textContent = `No correlated incidents in ${RANGE_LABELS[CURRENT_RANGE] || "this range"}. Try a wider time range above.`;
+    showIncident(null);
     return;
   }
   empty.style.display = "none";
   const sorted = [...incidents].sort((a,b) => (b.last_seen||0) - (a.last_seen||0));
-  tbody.innerHTML = sorted.map(inc => {
+  tbody.innerHTML = sorted.map((inc,i) => {
     const when = inc.last_seen ? new Date(inc.last_seen).toLocaleString() : "";
     const tactics = (inc.tactics||[]).map(esc).join(", ");
     const truncated = inc.truncated ? ' <span class="muted" title="member cap reached">(truncated)</span>' : "";
-    return `<tr>
+    return `<tr class="clk" data-i="${i}">
       <td>${esc(inc.entity_value)}</td>
       <td>${esc(inc.entity_type)}</td>
       <td>${tactics}</td>
@@ -991,6 +1682,31 @@ async function renderIncidents(){
       <td></td>
     </tr>`;
   }).join("");
+  document.querySelectorAll("#incidentsTable tbody tr").forEach(tr => tr.onclick = () => showIncident(sorted[+tr.dataset.i]));
+  // Investigation-flow detail panel (same list-click-detail pattern as #assetDetail/
+  // showAsset in the Inventory view) -- every field here is already on the incident
+  // payload the table row reads, just laid out for reading rather than scanning.
+  showIncident(sorted[0]);
+}
+function showIncident(inc){
+  const detail = document.getElementById("incidentDetail");
+  if(!inc){ detail.innerHTML = ""; return; }
+  const tactics = (inc.tactics||[]).map(t => `<span class="tactic-chip">${esc(t)}</span>`).join("") || "<span class=\"muted\">—</span>";
+  const members = (inc.member_alert_ids||[]).map(esc).join(", ") || "—";
+  detail.innerHTML = `<div class="detail">
+    <h3>${esc(inc.entity_value)} <span class="muted">(${esc(inc.entity_type)})</span></h3>
+    <div class="kv">
+      <div class="k">Tactics</div><div>${tactics}</div>
+      <div class="k">Severity</div><div>${esc(inc.severity)}</div>
+      <div class="k">Members</div><div>${esc(inc.member_count)}${inc.truncated ? ' <span class="muted" title="member cap reached">(truncated)</span>' : ""}</div>
+      <div class="k">First seen</div><div>${inc.first_seen ? esc(new Date(inc.first_seen).toLocaleString()) : "—"}</div>
+      <div class="k">Last seen</div><div>${inc.last_seen ? esc(new Date(inc.last_seen).toLocaleString()) : "—"}</div>
+      <div class="k">Incident ID</div><div class="muted">${esc(inc.incident_id||"—")}</div>
+      <div class="k">Tenant</div><div class="muted">${esc(inc.tenant_id||"default")}</div>
+    </div>
+    <h3 style="margin-top:16px">Member alerts (${(inc.member_alert_ids||[]).length})</h3>
+    <p style="font-size:12.5px;color:var(--muted);word-break:break-all">${members}</p>
+  </div>`;
 }
 
 // ---- LEVEL 2: inventory ----
@@ -1000,22 +1716,33 @@ async function renderInventory(){
 }
 function drawAssets(list){
   document.getElementById("assetRows").innerHTML = list.map((a,i)=>`
-    <tr class="clk" data-i="${i}"><td>${esc(a.mac)}</td><td>${esc(a.hostname||"")}</td>
-    <td>${esc(a.ip_current||"")}</td><td>${esc(a.sector||"")}</td><td>${esc(a.type||"")}</td>
+    <tr class="clk" data-i="${i}"><td>${esc(a.mac)}</td><td>${esc(a.hostname||"—")}</td>
+    <td>${esc(a.ip_current||"—")}</td><td>${esc(a.sector||"—")}</td><td>${esc(a.type||"—")}</td>
     <td><span class="pill ${a.status==='active'?'low':'med'}">${icon(a.status==='active'?"check":"circle")}${esc(a.status)}</span></td></tr>`).join("");
   document.querySelectorAll("#assetRows tr").forEach(tr=>tr.onclick=()=>showAsset(list[+tr.dataset.i]));
 }
+// 2026-08-20: WS-6 timestamps are ISO-8601 strings ("2026-08-19T22:18:51+00:00")
+// -- rendered raw everywhere below, unlike every OpenSearch-sourced timestamp
+// in this file (which is epoch_millis and already goes through
+// new Date(...).toLocaleString()). Falls back to the raw string if it's ever
+// something Date can't parse, rather than showing "Invalid Date".
+function fmtDate(s){
+  if(!s) return null;
+  const d = new Date(s);
+  return isNaN(d.getTime()) ? s : d.toLocaleString();
+}
 function showAsset(a){
-  const hist = (a.ip_history||[]).map(h=>`<tr><td>${esc(h.ip)}</td><td class="muted">${esc(h.from)}</td><td class="muted">${esc(h.to||"current")}</td></tr>`).join("")||"<tr><td colspan=3 class=muted>—</td></tr>";
+  const hist = (a.ip_history||[]).map(h=>`<tr><td>${esc(h.ip)}</td><td class="muted">${esc(fmtDate(h.from))}</td><td class="muted">${h.to ? esc(fmtDate(h.to)) : "current"}</td></tr>`).join("")||"<tr><td colspan=3 class=muted>—</td></tr>";
   document.getElementById("assetDetail").innerHTML = `<div class="detail">
     <h3>${esc(a.hostname||a.mac)} <span class="muted">(${esc(a.mac)})</span></h3>
     <div class="kv"><div class="k">Current IP</div><div>${esc(a.ip_current||"—")}</div>
     <div class="k">Sector</div><div>${esc(a.sector||"—")}</div>
     <div class="k">Type</div><div>${esc(a.type||"—")}</div>
     <div class="k">Protocols</div><div>${esc((a.protocols_seen||[]).join(", ")||"—")}</div>
-    <div class="k">Last seen</div><div>${esc(a.last_seen||"—")}</div></div>
+    <div class="k">Last seen</div><div>${esc(fmtDate(a.last_seen)||"—")}</div>
+    <div class="k">Tenant</div><div class="muted">${esc(a.tenant_id||"default")}</div></div>
     <h3 style="margin-top:16px">IP history</h3>
-    <table><thead><tr><th>IP</th><th>From</th><th>To</th></tr></thead><tbody>${hist}</tbody></table></div>`;
+    <div class="table-scroll"><table><thead><tr><th>IP</th><th>From</th><th>To</th></tr></thead><tbody>${hist}</tbody></table></div></div>`;
 }
 function applyFilter(){
   const q=document.getElementById("q").value.trim().toLowerCase();
@@ -1027,13 +1754,88 @@ function applyFilter(){
 document.getElementById("q").oninput=applyFilter;
 document.getElementById("sector").onchange=applyFilter;
 
-// ---- LEVEL 3: sources ----
-function renderSources(){
-  const s=getSources(), max=Math.max(...Object.values(s));
-  document.getElementById("srcBars").innerHTML = Object.entries(s).map(([k,v])=>`
-    <div class="src"><div class="lbl">${esc(k)}</div>
+// ---- LEVEL 3: sources (real event counts by parser, see the section's own
+// comment for the mock-data bug this replaced) ----
+async function renderSources(){
+  const events = await getEvents();
+  const empty = document.getElementById("sourcesEmpty");
+  const bars = document.getElementById("srcBars");
+  if(!events.length){
+    bars.innerHTML = "";
+    if(empty){
+      empty.style.display = "";
+      empty.textContent = `No events in ${RANGE_LABELS[CURRENT_RANGE] || "this range"}. Try a wider time range above.`;
+    }
+    return;
+  }
+  const counts = {};
+  events.forEach(e => {
+    const key = e.source_type || "unknown";
+    counts[key] = (counts[key]||0) + 1;
+  });
+  if(empty) empty.style.display = "none";
+  const max = Math.max(...Object.values(counts));
+  bars.innerHTML = Object.entries(counts).sort((a,b)=>b[1]-a[1]).map(([k,v])=>`
+    <div class="src"><div class="lbl">${esc(sourceTypeLabel(k))}</div>
     <div class="bar" style="flex:1"><span style="width:${(v/max*100).toFixed(1)}%"></span></div>
     <div style="width:60px;text-align:right">${v.toLocaleString()}</div></div>`).join("");
+}
+
+// 2026-08-20: class_uid/activity_id were shown as bare numbers (e.g. "3002",
+// "4") -- unreadable without memorizing the schema. Sourced from
+// contracts/ocsf-classes.md (Contract A), THIS project's own frozen,
+// restricted 8-class OCSF profile -- every one of the 17 parsers maps into
+// one of these 8 classes, so the table is exhaustive, not a guess at the
+// full public OCSF spec (which has many more classes this project never
+// emits). A class_uid/activity_id pair outside this table falls back to the
+// raw number rather than a fabricated label.
+const OCSF_CLASS_NAMES = {
+  1001: "File System Activity",
+  1002: "Kernel / Process",
+  3002: "Authentication",
+  3003: "Account Change",
+  4001: "Network Activity",
+  4002: "DNS / HTTP Activity",
+  6003: "API Activity",
+  6005: "Datastore Activity",
+};
+const OCSF_ACTIVITY_NAMES = {
+  3002: {1: "Logon", 2: "Logoff", 3: "Auth Ticket", 4: "Failure"},
+  3003: {1: "Create", 2: "Enable", 3: "Password Change", 4: "Delete", 5: "Privilege Grant"},
+  4001: {1: "Open", 2: "Close", 6: "Deny", 7: "Accept"},
+  6003: {1: "Create", 2: "Read", 3: "Update", 4: "Delete"},
+  6005: {1: "Query", 2: "Write", 3: "Update", 4: "Delete", 5: "Privileged Op"},
+};
+function ocsfClassLabel(class_uid){
+  const name = OCSF_CLASS_NAMES[class_uid];
+  return name ? `${name} <span class="muted">(${class_uid})</span>` : esc(class_uid);
+}
+function ocsfActivityLabel(class_uid, activity_id){
+  const name = (OCSF_ACTIVITY_NAMES[class_uid] || {})[activity_id];
+  return name ? `${name} <span class="muted">(${activity_id})</span>` : esc(activity_id);
+}
+
+// 2026-08-19: raw event browser -- see getEvents()'s own comment for why this
+// never existed before (only the scored alert subset was ever queried).
+async function renderEvents(){
+  const events = await getEvents();
+  const rows = document.getElementById("eventRows");
+  const empty = document.getElementById("eventsEmpty");
+  if(!events.length){
+    rows.innerHTML = "";
+    empty.style.display = "";
+    return;
+  }
+  empty.style.display = "none";
+  rows.innerHTML = events.map(e => `<tr>
+    <td class="muted">${e.time ? esc(new Date(e.time).toLocaleString()) : ""}</td>
+    <td>${ocsfClassLabel(e.class_uid)}</td>
+    <td>${ocsfActivityLabel(e.class_uid, e.activity_id)}</td>
+    <td>${esc(e.status)}</td>
+    <td class="muted">${esc((e.src_endpoint||{}).ip || (e.src_endpoint||{}).hostname || "")}</td>
+    <td class="muted">${esc(((e.actor||{}).user||{}).name || "")}</td>
+    <td>${esc(e.sector||"")}</td>
+  </tr>`).join("");
 }
 
 // ---- E13: dark / light theme -----------------------------------------
@@ -1190,10 +1992,26 @@ async function boot(){
   await enrichPlaybooks([]);  // warm the rule->playbook cache (best-effort)
   renderGlobal().catch(err=>console.error("renderGlobal failed:",err));
   renderInventory();
-  renderSources();
+  renderSources().catch(err=>console.error("renderSources failed:",err));
   renderCoverage().catch(err=>console.error("renderCoverage failed:",err));
   renderIncidents().catch(err=>console.error("renderIncidents failed:",err));
+  renderEvents().catch(err=>console.error("renderEvents failed:",err));
+  renderOps().catch(err=>console.error("renderOps failed:",err));
+  renderAudit().catch(err=>console.error("renderAudit failed:",err));
+  renderKeys().catch(err=>console.error("renderKeys failed:",err));
 }
+// Time-range picker: re-fetches the two range-scoped views (Overview's alert
+// feed, the raw Events browser). Sources/Inventory/Coverage read the CURRENT
+// set, not a historical window, so they're deliberately untouched here.
+const rangeSelectEl = document.getElementById("rangeSelect");
+if(rangeSelectEl) rangeSelectEl.onchange = () => {
+  CURRENT_RANGE = rangeSelectEl.value;
+  renderGlobal().catch(err=>console.error("renderGlobal failed:",err));
+  renderEvents().catch(err=>console.error("renderEvents failed:",err));
+  renderIncidents().catch(err=>console.error("renderIncidents failed:",err));
+  renderAudit().catch(err=>console.error("renderAudit failed:",err));
+  renderSources().catch(err=>console.error("renderSources failed:",err));
+};
 initTheme();
 boot();
 </script>

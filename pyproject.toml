@@ -58,23 +58,29 @@ ignore_missing_imports = true
 exclude = ["services/.*/mocks", "fixtures"]
 
 [tool.mutmut]
-# M2, PLAN_C Tier 2.3: mutation-testing gate, deliberately scoped narrow for
-# its FIRST pass rather than repo-wide (mutmut requires no prior footprint
-# here -- this is the honest starting baseline, not a target). Native Windows
-# mutmut isn't supported (upstream issue #397); run under WSL:
+# M2, PLAN_C Tier 2.3: mutation-testing gate. First pass (2026-07-22) was
+# deliberately narrow (sessions.py only) rather than repo-wide -- mutmut
+# required no prior footprint here, so that was the honest starting
+# baseline, not a target. Native Windows mutmut isn't supported (upstream
+# issue #397); run under WSL:
 #   wsl -e bash -lc "cd '<repo>' && python3 -m mutmut run"
-# Scope: services/shared/sessions.py only -- smallest, mypy-clean (see
-# [tool.mypy] above), highest security-relevance module in services/shared
-# (session tokens/CSRF/expiry -- a security boundary, per its own module
-# docstring). Each mutant re-runs the test command below, so scoping to one
-# file (not all 12 zero-infra test scripts in services/shared) keeps a single
-# `mutmut run` bounded to minutes, not hours, in this environment.
+# Scope, expanded 2026-08-19 (closes the "expanding scope to the rest of
+# services/shared... stays a real, disclosed follow-up" item SSOT.md
+# recorded against the first pass): sessions.py (session tokens/CSRF/expiry,
+# a security boundary) + window.py (sliding-window counters every stateful
+# detection rule and WS-8 correlation track depends on -- the highest
+# correctness-relevance module in services/shared next to sessions.py).
+# Each mutant re-runs the test command below, so scoping to two small,
+# self-contained files (not all dozen zero-infra test scripts in
+# services/shared) keeps a single `mutmut run` bounded to minutes, not
+# hours, in this environment -- the same reasoning the first pass used,
+# now applied to a second file rather than the whole directory at once.
 # Informational in CI for now (see .github/workflows/ci.yml) -- same "measure
 # first, gate later" sequencing mypy went through, so a real number lands
 # before any pass/fail threshold is chosen.
-source_paths = ["services/shared/sessions.py"]
+source_paths = ["services/shared/sessions.py", "services/shared/window.py"]
 do_not_mutate = ["*test_*.py"]
-pytest_add_cli_args_test_selection = ["tools/test_mutmut_shared.py"]
+pytest_add_cli_args_test_selection = ["tools/test_mutmut_shared.py", "tools/test_mutmut_window.py"]
 also_copy = ["tools"]
 
 [tool.coverage.run]

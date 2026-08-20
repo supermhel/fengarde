@@ -51,7 +51,9 @@ class TestOllamaParsing(unittest.TestCase):
         self.assertEqual(out["verdict"], "malicious")
         self.assertEqual(out["level"], "critical")
         self.assertIn("failed logins", out["summary"])
-        self.assertEqual(set(out), {"verdict", "summary", "level"})
+        self.assertEqual(set(out), {"verdict", "summary", "level", "engine", "model"})
+        self.assertEqual(out["engine"], "ollama")
+        self.assertEqual(out["model"], llm_adapter.OllamaLLM(url="http://x").model)
 
     def test_malformed_nonjson_output_degrades_safely(self):
         with mock.patch("urllib.request.urlopen",
@@ -60,6 +62,7 @@ class TestOllamaParsing(unittest.TestCase):
         self.assertEqual(out["verdict"], "unknown")
         self.assertEqual(out["level"], "low")
         self.assertIn("sorry", out["summary"])
+        self.assertEqual(out["engine"], "ollama")
 
     def test_out_of_enum_values_coerced(self):
         weird = json.dumps({"verdict": "TOTALLY_BAD", "level": "apocalyptic",
@@ -110,7 +113,7 @@ class TestOllamaParsing(unittest.TestCase):
                         return_value=_ollama_resp(json.dumps(
                             {"verdict": "benign", "level": "low", "summary": "ok"}))):
             out = llm_adapter.OllamaLLM(url="http://x").analyze(hostile_event, SAMPLE_REASONS)
-        self.assertEqual(set(out), {"verdict", "summary", "level"})
+        self.assertEqual(set(out), {"verdict", "summary", "level", "engine", "model"})
         self.assertIn(out["verdict"], llm_adapter._VERDICTS)
 
 
@@ -126,6 +129,9 @@ class TestFallback(unittest.TestCase):
         # stub verdict for score 85 -> malicious/critical
         self.assertEqual(out["verdict"], "malicious")
         self.assertEqual(out["level"], "critical")
+        # F (2026-08-20): a degraded verdict must say so -- "engine" must reflect
+        # the backup that actually ran, never the primary that was configured.
+        self.assertEqual(out["engine"], "stub")
 
     def test_timeout_degrades_to_stub(self):
         def boom(*a, **k):
@@ -136,6 +142,7 @@ class TestFallback(unittest.TestCase):
         with mock.patch("urllib.request.urlopen", side_effect=boom):
             out = llm.analyze(SAMPLE_EVENT, SAMPLE_REASONS)
         self.assertEqual(out["verdict"], "malicious")
+        self.assertEqual(out["engine"], "stub")
 
 
 class TestSelection(unittest.TestCase):
@@ -171,6 +178,7 @@ class TestStubRegression(unittest.TestCase):
         stub = llm_adapter.StubLLM()
         hi = stub.analyze({"siem": {"sector": "bank", "score": 85}}, ["r"])
         self.assertEqual((hi["verdict"], hi["level"]), ("malicious", "critical"))
+        self.assertEqual((hi["engine"], hi["model"]), ("stub", None))
         mid = stub.analyze({"siem": {"sector": "bank", "score": 65}}, ["r"])
         self.assertEqual((mid["verdict"], mid["level"]), ("suspicious", "high"))
         lo = stub.analyze({"siem": {"sector": "bank", "score": 10}}, [])

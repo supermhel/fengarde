@@ -136,9 +136,61 @@ def test_no_transitive_merge_is_sensitive():
           "test_no_transitive_merge_via_shared_ip() proves nothing")
 
 
+class _MutatedDeviceKeyedByIP(Correlator):
+    """Mutation of the 2026-08-19 pivot-correlation fix: key the device:
+    track by ip instead of mac/hostname -- i.e. revert to the pre-fix
+    behavior where a DHCP-driven IP change silently starts a brand-new
+    track instead of continuing the same one."""
+
+    def ingest_alert(self, alert):
+        tenant = _validated_tenant(alert.get("tenant_id"))
+        now_ms = self._now_ms()
+        incidents = []
+        src = alert.get("src_endpoint") or {}
+        src_ip = src.get("ip")
+        if src_ip and not self._allowlist.matches(src_ip):
+            inc = self._update_track(tenant, "ip", str(src_ip), alert, now_ms)
+            if inc is not None:
+                incidents.append(inc)
+        device_id = src_ip  # MUTATED: should be src.get("mac") or src.get("hostname")
+        if device_id:
+            inc = self._update_track(tenant, "device", str(device_id), alert, now_ms)
+            if inc is not None:
+                incidents.append(inc)
+        return incidents
+
+
+def test_device_pivot_correlation_is_sensitive():
+    """Run the SAME scenario test_device_track_correlates_across_ip_change()
+    uses (one host, two ips, two tactics, no actor) against the real engine
+    and the mutated (ip-keyed-device) one. The real engine must promote via
+    the device: track; the mutated engine -- which silently starts a new
+    device track per ip, same as having no device correlation at all --
+    must NOT promote, since each of its two ip-keyed "device" tracks only
+    ever sees one tactic. If the mutated engine also promoted, this
+    sensitivity check would be proving nothing about the pivot fix."""
+    real = Correlator(DequeWindowCounter(), allowlist=Allowlist([]))
+    mutated = _MutatedDeviceKeyedByIP(DequeWindowCounter(), allowlist=Allowlist([]))
+
+    events = [
+        _alert("p1", tactic="TA0043", ip="10.0.0.5", mac="AA:BB:CC:DD:EE:FF"),
+        _alert("p2", tactic="TA0006", ip="10.0.0.9", mac="AA:BB:CC:DD:EE:FF"),
+    ]
+    real_promoted = any(real.ingest_alert(e) for e in events)
+    mutated_promoted = any(mutated.ingest_alert(e) for e in events)
+
+    check(real_promoted,
+          "sensitivity: the REAL engine must promote the device: track across the ip change")
+    check(not mutated_promoted,
+          "sensitivity: the MUTATED (ip-keyed-device) engine must NOT promote -- if it "
+          "does, this mutation isn't actually exercising the pivot-correlation fix, and "
+          "test_device_track_correlates_across_ip_change() proves nothing")
+
+
 def run_all():
     test_single_tactic_promotion_trigger_is_sensitive()
     test_no_transitive_merge_is_sensitive()
+    test_device_pivot_correlation_is_sensitive()
 
 
 if __name__ == "__main__":
@@ -148,5 +200,5 @@ if __name__ == "__main__":
         for f in FAILS:
             print(f"  - {f}")
         sys.exit(1)
-    print("[OK] WS-8 sensitivity checks PASS (promotion trigger + no-merge guarantee "
-          "both proven to actually break under mutation)")
+    print("[OK] WS-8 sensitivity checks PASS (promotion trigger + no-merge guarantee + "
+          "device pivot-correlation all proven to actually break under mutation)")
