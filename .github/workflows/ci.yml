@@ -148,6 +148,15 @@ jobs:
         run: |
           python services/ws3-indexer/storage/test_opensearch_live.py
           python tools/test_migrate_opensearch.py
+      # SSOT.md's triage-row correction (2026-08-21): this proves the OCC/CAS
+      # lost-update guard under REAL concurrent writers, not just a fake
+      # transport -- was opt-in-only via `make test-live` and had gone stale
+      # in SSOT.md as "not yet exercised against a live cluster" because
+      # nothing forced it to run automatically. Wired in so that can't recur.
+      - name: OCC/CAS holds under real concurrent writers
+        env:
+          OPENSEARCH_URL: http://localhost:9200
+        run: python services/ws3-indexer/storage/test_opensearch_cas_concurrency_live.py
 
   # M2 code-quality floor (PLAN_C Tier 2.3). Lint blocks; coverage blocks at the
   # MEASURED baseline (see tools/coverage_gate.py) not the unmet-for-WS-3 85%
