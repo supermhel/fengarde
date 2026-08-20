@@ -48,6 +48,9 @@ echo
 echo "== ws3 P1-4 (2026-07-21 audit): OpenSearch _bulk API (NDJSON, partial-failure parsing) =="
 $PY services/ws3-indexer/test_bulk_index.py || fail=1
 echo
+echo "== ws3 P1-4 remainder: normalized/scored double-index is order-independent =="
+$PY services/ws3-indexer/test_double_index_order.py || fail=1
+echo
 echo "== ws3 M4.3: rule-summary read model (list_rule_summaries, tenant disable, _contracts_dir) =="
 $PY services/ws3-indexer/test_rules_view.py || fail=1
 echo
@@ -102,6 +105,9 @@ $PY services/ws3-indexer/test_router.py || fail=1
 echo
 echo "== shared runner =="
 $PY services/shared/test_runner.py || fail=1
+echo
+echo "== shared runner P1-8 remainder: XACK batching in the real consume loop =="
+$PY services/shared/test_ack_batching.py || fail=1
 echo
 echo "== shared envelope v1 (M1) =="
 $PY services/shared/test_envelope.py || fail=1

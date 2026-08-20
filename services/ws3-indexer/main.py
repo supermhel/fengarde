@@ -19,6 +19,14 @@ from router import route  # noqa: E402
 from storage.memory import MemoryStore  # noqa: E402
 from shared.authz import require_auth_or_die  # noqa: E402
 
+# ORDER IS LOAD-BEARING for the batch run() path below: `normalized.events`
+# MUST stay ahead of `scored.events`. Both carry the same logical event and
+# route to the same (index, doc_id), and run() drains them sequentially in
+# this order -- so the scored copy (the one carrying `siem.score`) lands
+# last and wins. Reordering these two silently strips the score off every
+# event the batch path indexes. The live daemon does NOT rely on this: its
+# per-topic threads have no ordering guarantee, which is why the
+# normalized-events worker writes create-only instead (normalized_handler).
 TOPICS = ["normalized.events", "scored.events", "alerts", "ai.results", "incidents"]
 
 
@@ -29,8 +37,48 @@ def make_store():
     return MemoryStore()
 
 
-def index_doc(store, doc: dict) -> bool:
+def build_handlers(store, group: str = "cg-index") -> dict:
+    """Per-topic ``{topic: (group, handler)}`` map for the live daemon.
+
+    Extracted from ``main()`` so the topic->handler wiring is testable on its
+    own: which topics get the create-only handler is a correctness property
+    (see :func:`index_doc`), not an implementation detail, and before this was
+    a dict comprehension buried inside ``main()`` no test could reach. A
+    regression here -- pointing `normalized.events` at the plain handler --
+    silently reintroduces the score-stripping double-index race, so it gets a
+    test (`test_double_index_order.py::test_normalized_topic_is_wired_create_only`).
+    """
+    def handler(payload: dict) -> None:
+        try:
+            index_doc(store, payload)
+        except ValueError:
+            pass  # unroutable doc (e.g. ai.results) -> drop, matches run()
+
+    def normalized_handler(payload: dict) -> None:
+        """`normalized.events` writes create-only -- it must never clobber the
+        scored copy of the same event (index_doc's own docstring)."""
+        try:
+            index_doc(store, payload, create_only=True)
+        except ValueError:
+            pass  # unroutable doc -> drop, same as handler()
+
+    return {t: (group, normalized_handler if t == "normalized.events" else handler)
+            for t in TOPICS}
+
+
+def index_doc(store, doc: dict, *, create_only: bool = False) -> bool:
+    """Route ``doc`` and write it.
+
+    ``create_only=True`` writes only when nothing is stored under that id yet
+    (see StorageAdapter.index_if_absent). Used for `normalized.events`, whose
+    write must never overwrite the scored copy of the same event -- both
+    topics route to the same (index, doc_id) and run on independent worker
+    threads, so without this the later-arriving normalized write silently
+    strips `siem.score` off an already-scored document.
+    """
     index, doc_id = route(doc)
+    if create_only:
+        return store.index_if_absent(index, doc_id, doc)
     return store.index(index, doc_id, doc)
 
 
@@ -118,12 +166,6 @@ def main():
 
     store = make_store()
 
-    def handler(payload: dict) -> None:
-        try:
-            index_doc(store, payload)
-        except ValueError:
-            pass  # unroutable doc (e.g. ai.results) -> drop, matches run()
-
     # C1 (v0.3): the triage API runs on its OWN port/thread, alongside the bus
     # consumer loop -- mirrors how WS-1 runs its UDP listener alongside the
     # runner's health thread (a second independent network listener, not
@@ -170,7 +212,7 @@ def main():
     reaper = start_stream_reaper(Bus(), log, shutdown, _ALL_BUS_TOPICS,
                                  interval_s=reap_interval)
 
-    handlers = {t: ("cg-index", handler) for t in TOPICS}
+    handlers = build_handlers(store)
     try:
         serve(handlers, health_port=int(os.getenv("PORT", "8003")),
               service_name="ws3-indexer", shutdown=shutdown)

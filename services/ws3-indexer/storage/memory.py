@@ -44,6 +44,18 @@ class MemoryStore(StorageAdapter):
         self._versions[(index, doc_id)] = self._versions.get((index, doc_id), 0) + 1
         return is_new
 
+    def index_if_absent(self, index: str, doc_id: str, document: dict) -> bool:
+        """Create-only write (see StorageAdapter.index_if_absent).
+
+        The existence check and the write happen under the SAME lock hold --
+        a check-then-act split here would reintroduce exactly the race this
+        method exists to close.
+        """
+        with self._lock:
+            if doc_id in self._indices.get(index, {}):
+                return False
+            return self._index_locked(index, doc_id, document)
+
     def count(self, index: str) -> int:
         with self._lock:
             return len(self._indices.get(index, {}))

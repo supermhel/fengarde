@@ -229,7 +229,8 @@ def _make_health_handler(service_name: str, state: "HealthState | None" = None,
 
 
 def _process_message(bus, topic, group, msg, handler, max_redeliveries,
-                     delivery_count, metrics: "Metrics | None" = None):
+                     delivery_count, metrics: "Metrics | None" = None,
+                     ack_fn=None):
     """Process one delivery of one message.
 
     ``delivery_count`` is how many times this message has now been delivered
@@ -239,7 +240,17 @@ def _process_message(bus, topic, group, msg, handler, max_redeliveries,
 
     Factored out so the redelivery/DLQ decision is one testable function that
     both the live worker and the MemoryBus simulation in test_runner.py drive.
+
+    ``ack_fn`` (P1-8 remainder, 2026-07-21 audit): defaults to ``None``, which
+    acks immediately via ``bus.ack(msg, group)`` -- the exact original
+    behavior, so every existing caller (including test_runner.py's direct
+    calls) is unaffected. ``_topic_worker`` below passes a closure that
+    defers the ack into a batch instead, flushed once via ``bus.ack_batch()``
+    at the end of the current consume/claim_pending pass. Only the WRITE
+    (acked vs failed vs deadlettered) is decided here; WHEN the ack physically
+    happens is the caller's choice.
     """
+    do_ack = ack_fn if ack_fn is not None else bus.ack
     if delivery_count > max_redeliveries:
         # Exhausted: poison the message to the dead-letter topic and ack it so it
         # stops being redelivered.
@@ -247,7 +258,7 @@ def _process_message(bus, topic, group, msg, handler, max_redeliveries,
                     payload={"topic": topic, "group": group, "id": msg.id,
                              "delivery_count": delivery_count,
                              "payload": msg.payload})
-        bus.ack(msg, group)
+        do_ack(msg, group)
         if metrics is not None:
             metrics.incr(topic, "deadlettered")
         return "deadlettered"
@@ -260,7 +271,7 @@ def _process_message(bus, topic, group, msg, handler, max_redeliveries,
         if metrics is not None:
             metrics.incr(topic, "failed")
         return "failed"
-    bus.ack(msg, group)
+    do_ack(msg, group)
     if metrics is not None:
         metrics.incr(topic, "acked")
     return "acked"
@@ -275,14 +286,29 @@ def _topic_worker(bus_factory, topic, group, handler, *, max_redeliveries,
         did_work = False
 
         # 1) Redeliveries first: reclaim idle PEL entries and apply the cap.
+        #
+        # P1-8 remainder (2026-07-21 audit): acks for this pass are deferred
+        # into `pending_acks` and flushed ONCE via bus.ack_batch() after the
+        # loop, instead of one XACK round-trip per message -- the batch
+        # boundary is this claim_pending() call, mirroring the read-side
+        # BUS_XREADGROUP_COUNT batching bus.py already does. If the pipeline
+        # flush itself fails, entries just stay in the PEL and get
+        # redelivered later (bus.ack_batch's own docstring) -- same
+        # at-least-once/idempotent-handler contract this whole loop already
+        # depends on, so a failed flush degrades to "slightly late
+        # redelivery," never a silent double-ack or a lost ack.
+        pending_acks: list = []
         try:
             for msg, times_delivered in bus.claim_pending(
                     topic, group, claim_idle_ms, max_redeliveries):
                 did_work = True
                 _process_message(bus, topic, group, msg, handler,
-                                  max_redeliveries, times_delivered, metrics)
+                                  max_redeliveries, times_delivered, metrics,
+                                  ack_fn=lambda m, g: pending_acks.append(m))
                 if shutdown.is_set():
                     break
+            if pending_acks:
+                bus.ack_batch(pending_acks, group)
             if state is not None:
                 state.mark_ok()
         except Exception as exc:
@@ -295,6 +321,14 @@ def _topic_worker(bus_factory, topic, group, handler, *, max_redeliveries,
         # shutdown set mid-block, so serve()'s worker.join() could time out. A
         # short block keeps shutdown latency ~= consume_block_ms. MemoryBus
         # ignores block_ms (drains and returns), so this is Redis-only cost.
+        #
+        # Same batched-ack treatment as the claim_pending pass above, at the
+        # same natural batch boundary: one bus.consume() call already reads
+        # up to BUS_XREADGROUP_COUNT messages in one XREADGROUP round-trip,
+        # so acking all of them in one XACK pipeline flush at the end of this
+        # loop matches the read side instead of paying a round-trip per
+        # message on the write side too.
+        pending_acks = []
         try:
             for msg in bus.consume(topic, group=group, block_ms=consume_block_ms):
                 did_work = True
@@ -302,9 +336,12 @@ def _topic_worker(bus_factory, topic, group, handler, *, max_redeliveries,
                 # once a message is read into a group). Redeliveries are handled by
                 # the claim_pending branch above, which carries the real count.
                 _process_message(bus, topic, group, msg, handler,
-                                 max_redeliveries, 1, metrics)
+                                 max_redeliveries, 1, metrics,
+                                 ack_fn=lambda m, g: pending_acks.append(m))
                 if shutdown.is_set():
                     break
+            if pending_acks:
+                bus.ack_batch(pending_acks, group)
             if state is not None:
                 state.mark_ok()
         except Exception as exc:
