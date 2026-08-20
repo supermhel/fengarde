@@ -6,9 +6,26 @@ design.md` (private repo, full rationale). This module implements the
 `Correlator` class only -- bus wiring lives in `main.py`.
 
 Core rules (see INTERFACE.md for the full account):
-  - Every alert updates BOTH an `actor:{name}` track and an `ip:{addr}`
-    track independently. The two NEVER merge -- no compound key, no
-    transitive join across shared entities.
+  - Every alert updates an `actor:{name}` track, an `ip:{addr}` track, and
+    (2026-08-19, pivot-correlation) a `device:{mac-or-hostname}` track,
+    each independently. The three NEVER merge -- no compound key, no
+    transitive join across shared entities. `device:` closes the
+    documented "actor pivots to a new IP" gap for the case that's actually
+    evidenced without inference: a DHCP lease renewal or NAT re-mapping
+    changes an attacker's `src_endpoint.ip` mid-attack, but
+    `src_endpoint.mac` (falling back to `.hostname`) identifies the same
+    physical/virtual host across that IP churn, straight off the same
+    parser-populated OCSF field, never guessed. An authenticated actor
+    pivoting IP was ALREADY correlated before this change -- `actor:{name}`
+    is keyed on identity alone with no IP component, so two alerts naming
+    the same actor from two different IPs already land on one track. The
+    `device:` track's real job is the harder, previously-unclosed case:
+    activity with NO captured actor identity (pre-auth recon, unauth
+    probing) that moves IP on the same host. Two alerts with no
+    `mac`/`hostname` at all, or an attacker who genuinely switches to a
+    different physical host under a brand-new identity, remain the honest,
+    accepted-limitation residual -- no real signal is left to link them
+    without fabricating one.
   - A track is promoted to an incident once its live members carry >=2
     DISTINCT `mitre.tactic` values. Score-sum is the incident's `severity`
     (ranking), never the trigger.
@@ -46,7 +63,7 @@ _ALLOWLIST_NAME = "shared_infrastructure"
 # full-scan pattern and same period as shared/window.py's own _SWEEP_EVERY
 # (a group that stops producing alerts is never revisited on its own -- we
 # only touch a track's _sides entry on a hit for THAT exact key), and the
-# same reason: an internet-facing correlator grouping by actor/ip is
+# same reason: an internet-facing correlator grouping by actor/ip/device is
 # otherwise an unbounded-growth OOM vector for an attacker who sprays many
 # distinct identities once and never repeats one (see `_sweep_dead_tracks`'s
 # own docstring and the 2026-08-19 independent-review finding this closes).
@@ -311,6 +328,21 @@ class Correlator:
         src_ip = (alert.get("src_endpoint") or {}).get("ip")
         if src_ip and not self._allowlist.matches(src_ip):
             inc = self._update_track(tenant, "ip", str(src_ip), alert, now_ms)
+            if inc is not None:
+                incidents.append(inc)
+
+        # Pivot-correlation (2026-08-19): mac/hostname is a directly
+        # parser-populated OCSF field, not an inferred link -- prefer mac
+        # (stable across a DHCP-driven IP change on the same interface),
+        # fall back to hostname when mac is absent. No allowlist check here:
+        # unlike an IP, a mac/hostname identifies one specific host, not a
+        # shared chokepoint many unrelated actors pass through, so the
+        # NAT/proxy false-merge risk the ip: allowlist exists for doesn't
+        # apply the same way.
+        src_endpoint = alert.get("src_endpoint") or {}
+        device_id = src_endpoint.get("mac") or src_endpoint.get("hostname")
+        if device_id:
+            inc = self._update_track(tenant, "device", str(device_id), alert, now_ms)
             if inc is not None:
                 incidents.append(inc)
 

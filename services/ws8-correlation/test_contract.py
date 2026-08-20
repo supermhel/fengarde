@@ -111,15 +111,23 @@ class _Clock:
         self.t += seconds
 
 
-def _alert(alert_id, tactic=None, actor=None, ip=None, score=10, tenant="default", time_ms=None):
+def _alert(alert_id, tactic=None, actor=None, ip=None, mac=None, hostname=None,
+           score=10, tenant="default", time_ms=None):
     a = {"alert_id": alert_id, "score": score, "tenant_id": tenant,
          "time": time_ms if time_ms is not None else 0}
     if tactic is not None:
         a["mitre"] = {"tactic": tactic}
     if actor is not None:
         a["actor"] = {"user": {"name": actor}}
-    if ip is not None:
-        a["src_endpoint"] = {"ip": ip}
+    if ip is not None or mac is not None or hostname is not None:
+        src = {}
+        if ip is not None:
+            src["ip"] = ip
+        if mac is not None:
+            src["mac"] = mac
+        if hostname is not None:
+            src["hostname"] = hostname
+        a["src_endpoint"] = src
     return a
 
 
@@ -270,6 +278,53 @@ def test_no_transitive_merge_via_shared_ip():
           "8: actor A, actor B, and the shared IP must be three DISTINCT tracks, never merged")
 
 
+# --- 9. pivot-correlation: mac stays stable across a DHCP IP change --------
+def test_device_track_correlates_across_ip_change():
+    """The documented "actor pivots to a new IP" gap, closed 2026-08-19:
+    same host (mac AA:BB:CC:DD:EE:FF), two DIFFERENT ips, two DIFFERENT
+    tactics, NO actor identity ever captured (pre-auth/unauthenticated --
+    the case the pre-existing actor: track can't help with, since it has
+    nothing to key on). The ip: tracks alone never see 2 tactics each
+    (one tactic per ip), so only the device: track can promote this."""
+    c = _new_correlator()
+    incs = c.ingest_alert(_alert("d1", tactic="TA0043", ip="10.0.0.5", mac="AA:BB:CC:DD:EE:FF"))
+    check(incs == [], "9: first device alert (recon, ip1) must not yet promote")
+    incs = c.ingest_alert(_alert("d2", tactic="TA0006", ip="10.0.0.9", mac="AA:BB:CC:DD:EE:FF"))
+    check(len(incs) == 1, "9: second device alert (new ip, new tactic) must promote via device: track")
+    if incs:
+        inc = incs[0]
+        check(inc["entity_type"] == "device" and inc["entity_value"] == "AA:BB:CC:DD:EE:FF",
+              "9: promoted incident must be the device: track, not an ip: track")
+        check(set(inc["tactics"]) == {"TA0043", "TA0006"}, "9: incident must carry both tactics")
+        check(sorted(inc["member_alert_ids"]) == ["d1", "d2"], "9: incident must cite both alerts")
+
+
+def test_device_track_falls_back_to_hostname_without_mac():
+    c = _new_correlator()
+    c.ingest_alert(_alert("h1", tactic="TA0043", ip="10.0.0.5", hostname="WORKSTATION7"))
+    incs = c.ingest_alert(_alert("h2", tactic="TA0006", ip="10.0.0.9", hostname="WORKSTATION7"))
+    check(len(incs) == 1, "9b: hostname-only device linkage (no mac in either alert) must still promote")
+    if incs:
+        check(incs[0]["entity_value"] == "WORKSTATION7",
+              "9b: without a mac, the device: track must key on hostname")
+
+
+def test_device_track_never_merges_with_actor_or_ip_tracks():
+    """The device: track is a THIRD independent leg, same non-merge
+    discipline as actor:/ip: (test 8) -- one alert carrying actor + ip +
+    mac all together must open three DISTINCT tracks, not one."""
+    c = _new_correlator()
+    c.ingest_alert(_alert("m1", tactic="TA0001", actor="mallory", ip="10.0.0.5",
+                           mac="11:22:33:44:55:66"))
+    keys = {
+        c._track_key("default", "actor", "mallory"),
+        c._track_key("default", "ip", "10.0.0.5"),
+        c._track_key("default", "device", "11:22:33:44:55:66"),
+    }
+    check(len(keys) == 3, "9c: actor, ip, and device must be three distinct track keys")
+    check(all(k in c._sides for k in keys), "9c: all three tracks must independently record the alert")
+
+
 # --- regression: RedisWindowCounter on a client that returns bytes --------
 def test_promotion_works_with_real_redis_bytes_semantics():
     """The exact live bug (2026-08-18): re-runs scenario 1's positive
@@ -372,6 +427,9 @@ def run_all():
     test_replay_idempotency()
     test_incident_id_stable_across_a_horizon_bucket_boundary()
     test_no_transitive_merge_via_shared_ip()
+    test_device_track_correlates_across_ip_change()
+    test_device_track_falls_back_to_hostname_without_mac()
+    test_device_track_never_merges_with_actor_or_ip_tracks()
     test_promotion_works_with_real_redis_bytes_semantics()
     test_sweep_dead_tracks_prunes_stale_but_not_live_tracks()
     test_update_track_wires_sweep_at_the_right_cadence()
@@ -385,4 +443,4 @@ if __name__ == "__main__":
             print(f"  - {f}")
         sys.exit(1)
     print("[OK] WS-8 correlation contract test PASS (8/8 design-doc scenarios "
-          "+ 2 dead-track-sweep scenarios)")
+          "+ 3 pivot-correlation device: track scenarios + 2 dead-track-sweep scenarios)")

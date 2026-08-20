@@ -207,6 +207,52 @@ def test_admin_key_is_unrestricted():
         srv.shutdown(); srv.server_close()
 
 
+def test_keys_route_never_leaks_material_and_is_tenant_scoped():
+    """2026-08-20: GET /keys had no HTTP route at all (CLI-only via
+    manage_keys.py) -- the dashboard couldn't show key metadata even though
+    TenantKeyStore.list_keys() has always computed it. Proves: (1) it never
+    returns key material, hashed or otherwise; (2) a tenant-scoped key sees
+    only its own tenant's keys, same isolation every other GET route holds."""
+    srv, port = _serve()
+    try:
+        import app as ws6
+        ws6.KEYSTORE.provision("acme", "acme-key")
+        ws6.KEYSTORE.provision("globex", "globex-key")
+
+        code, body = _get(port, "/keys", api_key="acme-key")
+        check(code == 200, f"a provisioned key should be able to list keys, got {code}")
+        keys = body["keys"]
+        check(len(keys) == 1 and keys[0]["tenant_id"] == "acme",
+              f"acme's key must see only acme's own key metadata, got {keys}")
+        check(set(keys[0]) == {"key_id", "tenant_id", "scope", "source", "created_at", "last_used_at"},
+              f"unexpected key metadata shape (material leak?): {set(keys[0])}")
+        check("acme-key" not in json.dumps(keys) and "globex-key" not in json.dumps(keys),
+              "raw key material must never appear in the /keys response")
+
+        code, body = _get(port, "/keys", api_key="globex-key")
+        check(code == 200 and len(body["keys"]) == 1 and body["keys"][0]["tenant_id"] == "globex",
+              f"globex's key must see only globex's own key, got {body}")
+    finally:
+        srv.shutdown(); srv.server_close()
+
+
+def test_keys_route_unrestricted_for_admin_and_when_auth_disabled():
+    srv, port = _serve()
+    try:
+        import app as ws6
+        code, body = _get(port, "/keys")
+        check(code == 200 and body["keys"] == [],
+              f"auth disabled (empty keystore): /keys should be 200 with an empty list, got {code} {body}")
+
+        ws6.KEYSTORE.provision("acme", "acme-key")
+        ws6.KEYSTORE.provision("*", "admin-key")
+        code, body = _get(port, "/keys", api_key="admin-key")
+        check(code == 200 and len(body["keys"]) == 2,
+              f"the unrestricted '*' key must see every tenant's keys, got {body}")
+    finally:
+        srv.shutdown(); srv.server_close()
+
+
 def test_rotation_both_keys_live_then_old_revoked_over_http():
     srv, port = _serve()
     try:
@@ -249,6 +295,8 @@ def main():
     test_tenant_scoped_key_cannot_write_another_tenant()
     test_read_only_key_can_read_but_not_write()
     test_admin_key_is_unrestricted()
+    test_keys_route_never_leaks_material_and_is_tenant_scoped()
+    test_keys_route_unrestricted_for_admin_and_when_auth_disabled()
     test_rotation_both_keys_live_then_old_revoked_over_http()
     test_legacy_single_key_migrates_and_keeps_working_over_http()
     if FAILS:
@@ -258,7 +306,8 @@ def main():
         sys.exit(1)
     print("[OK] WS-6 auth: disabled by default, enforced once provisioned, per-tenant keys isolate "
           "read+write, URL-decoded MAC lookup, read_only scope blocks writes (403), admin key "
-          "unrestricted, zero-downtime rotation + revoke, legacy single-key migration -- all over real HTTP")
+          "unrestricted, GET /keys never leaks material and is tenant-scoped, zero-downtime "
+          "rotation + revoke, legacy single-key migration -- all over real HTTP")
 
 
 if __name__ == "__main__":
