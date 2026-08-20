@@ -18,7 +18,7 @@ sys.path.insert(0, str(SERVICES))
 
 from shared.allowlist import Allowlist  # noqa: E402
 from shared.window import DequeWindowCounter, RedisWindowCounter  # noqa: E402
-from correlator import Correlator, InvalidTenant  # noqa: E402
+from correlator import Correlator, InvalidTenant, _SIDES_SWEEP_EVERY  # noqa: E402
 
 FAILS: list[str] = []
 
@@ -291,6 +291,77 @@ def test_promotion_works_with_real_redis_bytes_semantics():
               "bytes-redis: incident must cite both alerts by their real str ids, not bytes")
 
 
+# --- regression: _sides/_last_incident must not grow unbounded ------------
+def test_sweep_dead_tracks_prunes_stale_but_not_live_tracks():
+    """Regression (independent review, 2026-08-19): `_update_track`'s own
+    per-hit prune only ever touches the ONE key being hit right now, so a
+    track that receives alerts and is then never touched again grew
+    `_sides`/`_last_incident` forever -- reproduced live as 5000 sprayed
+    source IPs each opening a track that never shrank, even long after
+    every one had aged out of its own window (see `_sweep_dead_tracks`'s
+    docstring for the fix). Calls the sweep directly (same internals-access
+    style the rest of this file already uses for `_sides`/`_track_key`) so
+    the scenario doesn't depend on hitting an exact call-count boundary:
+    a promoted, still-live track and 3 abandoned one-shot tracks, advanced
+    past the horizon, one sweep call -- the abandoned ones must go, the
+    live one must not (preserving the `test_replay_idempotency` contract:
+    only evict an incident once its OWN track's membership is genuinely
+    gone, never merely because time passed)."""
+    clock = _Clock()
+    c = _new_correlator(horizon_s=60, now_fn=clock)
+
+    c.ingest_alert(_alert("s1", tactic="TA0001", actor="oscar"))
+    c.ingest_alert(_alert("s2", tactic="TA0001", actor="peggy"))
+    c.ingest_alert(_alert("s3", tactic="TA0001", actor="quinn"))
+    stale_keys = [c._track_key("default", "actor", n) for n in ("oscar", "peggy", "quinn")]
+    check(all(k in c._sides for k in stale_keys), "sweep: setup -- all 3 one-shot tracks recorded")
+
+    clock.advance(61)  # past the 60s horizon -- oscar/peggy/quinn are now stale
+
+    # a fresh, still-live, promoted track, touched AFTER the horizon passed
+    c.ingest_alert(_alert("keep1", tactic="TA0001", actor="norah"))
+    incs = c.ingest_alert(_alert("keep2", tactic="TA0002", actor="norah"))
+    keep_id = incs[0]["incident_id"]
+    keep_key = c._track_key("default", "actor", "norah")
+
+    c._sweep_dead_tracks(c._now_ms())
+
+    check(all(k not in c._sides for k in stale_keys),
+          "sweep: all 3 abandoned one-shot tracks must be pruned from _sides")
+    check(keep_key in c._sides, "sweep: a track touched after the horizon passed must survive")
+    check(keep_id in c._last_incident, "sweep: its incident must survive too")
+
+    # replay idempotency must still hold for the surviving live track
+    incs2 = c.ingest_alert(_alert("keep2", tactic="TA0002", actor="norah"))
+    check(incs2[0]["incident_id"] == keep_id,
+          "sweep: redelivery on a track that survived the sweep must still "
+          "re-emit under the SAME incident_id")
+
+
+def test_update_track_wires_sweep_at_the_right_cadence():
+    """Confirms `_sweep_dead_tracks` is actually invoked periodically from
+    `_update_track` (the previous test exercises the sweep's own logic
+    directly) -- `_SIDES_SWEEP_EVERY - 1` one-shot alerts stay below the
+    trigger point, then exactly one more call crosses it and must shrink
+    `_sides` back down, mirroring `shared/window.py`'s own `_SWEEP_EVERY`
+    cadence test shape."""
+    clock = _Clock()
+    c = _new_correlator(horizon_s=60, now_fn=clock)
+    for i in range(_SIDES_SWEEP_EVERY - 1):
+        c.ingest_alert(_alert(f"spray{i}", tactic="TA0001", actor=f"sprayed-{i}"))
+    check(len(c._sides) == _SIDES_SWEEP_EVERY - 1,
+          "cadence: no sweep should have run yet (below the trigger threshold)")
+
+    clock.advance(61)  # past the 60s horizon -- every sprayed track is now stale
+    # this single call is _update_track call #_SIDES_SWEEP_EVERY -- the sweep's
+    # own trigger point -- and opens a brand-new key that can't itself be stale
+    c.ingest_alert(_alert("trigger1", tactic="TA0001", actor="trigger-actor"))
+
+    check(len(c._sides) == 1,
+          f"cadence: crossing the sweep threshold must prune every stale track, "
+          f"leaving only the just-created one, got {len(c._sides)}")
+
+
 def run_all():
     test_positive_low_and_slow()
     test_single_tactic_never_promotes()
@@ -302,6 +373,8 @@ def run_all():
     test_incident_id_stable_across_a_horizon_bucket_boundary()
     test_no_transitive_merge_via_shared_ip()
     test_promotion_works_with_real_redis_bytes_semantics()
+    test_sweep_dead_tracks_prunes_stale_but_not_live_tracks()
+    test_update_track_wires_sweep_at_the_right_cadence()
 
 
 if __name__ == "__main__":
@@ -311,4 +384,5 @@ if __name__ == "__main__":
         for f in FAILS:
             print(f"  - {f}")
         sys.exit(1)
-    print("[OK] WS-8 correlation contract test PASS (8/8 design-doc scenarios)")
+    print("[OK] WS-8 correlation contract test PASS (8/8 design-doc scenarios "
+          "+ 2 dead-track-sweep scenarios)")

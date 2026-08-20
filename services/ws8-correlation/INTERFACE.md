@@ -97,7 +97,12 @@ MITRE tactics), not just repeated single-tactic noise.
 - `python test_contract.py` — the 8 scenarios from the design doc's test
   plan (positive low-and-slow, no false merge on single tactic, NAT/DHCP
   allowlist, unbounded-growth EXPIRE, tenant isolation, single-tactic
-  non-promotion, replay idempotency, no transitive merge).
+  non-promotion, replay idempotency, no transitive merge) plus 2
+  dead-track-sweep scenarios (2026-08-20: `_sides`/`_last_incident` prune
+  correctly once a track's own `_last_touch` ages past the horizon, a
+  still-live track survives, and the sweep is actually wired into
+  `_update_track` at the right cadence — see `correlator.py`'s
+  `_sweep_dead_tracks`).
 - `python test_correlator_sensitivity.py` — mutate-and-must-fail checks on
   the promotion trigger and the no-merge guarantee (same "a negative
   assertion that cannot fail is not a test" bar `eval/attack/

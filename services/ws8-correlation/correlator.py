@@ -41,6 +41,17 @@ DEFAULT_MEMBER_CAP = 200
 
 _ALLOWLIST_NAME = "shared_infrastructure"
 
+# How often (in _update_track calls) Correlator sweeps _sides/_last_incident
+# for tracks whose window membership has gone fully empty. Same amortized-
+# full-scan pattern and same period as shared/window.py's own _SWEEP_EVERY
+# (a group that stops producing alerts is never revisited on its own -- we
+# only touch a track's _sides entry on a hit for THAT exact key), and the
+# same reason: an internet-facing correlator grouping by actor/ip is
+# otherwise an unbounded-growth OOM vector for an attacker who sprays many
+# distinct identities once and never repeats one (see `_sweep_dead_tracks`'s
+# own docstring and the 2026-08-19 independent-review finding this closes).
+_SIDES_SWEEP_EVERY = 256
+
 
 def _to_str(x) -> str:
     """Decode a possibly-bytes value to str. NOT the same as ``str(x)`` --
@@ -117,10 +128,13 @@ class Correlator:
             )
         # incident_id -> last-emitted incident dict, so a re-emission can be
         # recognized as an UPDATE (same id) rather than manufacturing a
-        # fresh one every call. Bounded implicitly by window-key eviction
-        # (a track's members age out via the window counter; a stale
-        # incident_id entry here is harmless dead weight, not a correctness
-        # issue -- see metrics()/note on unbounded growth in INTERFACE.md).
+        # fresh one every call. NOT bounded implicitly by window-key
+        # eviction (that claim was inaccurate -- an independent 2026-08-19
+        # review found window eviction only frees the window_counter's OWN
+        # state; this dict and `_sides` below are separate side tables that
+        # were only ever written, never pruned, so a track touched exactly
+        # once grew both dicts forever). Actually bounded now by
+        # `_sweep_dead_tracks()`, called periodically from `_update_track`.
         self._last_incident: dict[str, dict] = {}
         # track_key -> {alert_id: {tactic, score, time}}. The window_counter
         # only knows MEMBERSHIP (alert_id + time); tactic/score need a side
@@ -131,8 +145,21 @@ class Correlator:
         # leak this module's own tenant-isolation discipline exists to
         # prevent elsewhere.
         self._sides: dict[str, dict] = {}
+        # track_key -> now_ms of its most recent _update_track call -- mirrors
+        # shared/window.py's own `_last[key]` exactly (same field, same
+        # purpose: staleness is measured from processing time, the SAME
+        # basis `window_counter.hit()` uses to evict, not from an event's
+        # own possibly-attacker-controlled `time` field). Used by
+        # `_sweep_dead_tracks` instead of asking the window_counter itself,
+        # since `members()` doesn't self-trim by current time -- it only
+        # reflects whatever the window counter's OWN periodic sweep (a
+        # different cadence, keyed off total hit count across every key)
+        # has gotten around to evicting so far, which is not necessarily by
+        # the time OUR sweep runs.
+        self._last_touch: dict[str, int] = {}
         self.truncated_count = 0
         self.promotions_count = 0
+        self._update_calls = 0  # counts _update_track calls, for _sweep_dead_tracks' cadence
 
     def _now_ms(self) -> int:
         return int(self._now_fn() * 1000)
@@ -146,11 +173,51 @@ class Correlator:
     def _incident_id(self, tenant: str, entity_type: str, entity_value: str, basis_ms: int) -> str:
         return f"{tenant}:{entity_type}:{entity_value}:{self._horizon_bucket(basis_ms)}"
 
+    def _sweep_dead_tracks(self, now_ms: int) -> None:
+        """Drop `_sides`/`_last_incident`/`_last_touch` entries for tracks
+        not touched within the last `horizon_s` (2026-08-19 review finding,
+        closed).
+
+        `_update_track`'s own per-hit prune (below) only touches the ONE key
+        being hit right now -- a track that simply stops receiving alerts is
+        never revisited, so its `_sides[key]` entry (and any `_last_incident`
+        entries pointing at it) would otherwise live forever, exactly the
+        unbounded per-key-dict growth `shared/window.py`'s own `_sweep()`
+        exists to prevent for the window counter itself. This is the same
+        fix at the correlator's OWN side-table layer, on the same "a full
+        scan every N calls is cheap enough, an unbounded dict is not"
+        tradeoff `shared/window.py:_SWEEP_EVERY` already accepts -- and the
+        SAME staleness basis (processing-time `now_ms`, via `_last_touch`,
+        not the window_counter's own independently-timed internal sweep).
+
+        A key only gets dropped once it hasn't been touched for a full
+        horizon -- not merely "not touched this instant" -- so a still-live
+        track (and the incident_id `test_replay_idempotency` depends on
+        staying stable across redeliveries) is never touched.
+        """
+        stale_before = now_ms - self.horizon_ms
+        dead_keys = [k for k, ts in self._last_touch.items() if ts < stale_before]
+        if not dead_keys:
+            return
+        for k in dead_keys:
+            self._sides.pop(k, None)
+            self._last_touch.pop(k, None)
+        dead_keys_set = set(dead_keys)
+        for incident_id, incident in list(self._last_incident.items()):
+            track_key = self._track_key(
+                incident["tenant_id"], incident["entity_type"], incident["entity_value"])
+            if track_key in dead_keys_set:
+                del self._last_incident[incident_id]
+
     def _update_track(self, tenant: str, entity_type: str, entity_value: str,
                        alert: dict, now_ms: int) -> dict | None:
         """Record ``alert`` on one entity track; return a fresh incident
         dict if the track is (still, or newly) promoted, else None."""
+        self._update_calls += 1
+        if self._update_calls % _SIDES_SWEEP_EVERY == 0:
+            self._sweep_dead_tracks(now_ms)
         key = self._track_key(tenant, entity_type, entity_value)
+        self._last_touch[key] = now_ms
         member = _to_str(alert.get("alert_id"))
         self.window_counter.hit(key, now_ms, self.horizon_ms, member=member)
         # _to_str()-normalized, NOT str(): a real (non-fake) redis-py client
@@ -250,6 +317,12 @@ class Correlator:
         return incidents
 
     def metrics(self) -> dict:
+        # ws8_active_tracks: was cumulative ever-seen (2026-08-19 review
+        # finding) since nothing ever removed a dead key from `_sides`. Now
+        # tracks genuinely-active tracks, lagging real time by at most
+        # `_SIDES_SWEEP_EVERY` calls (`_sweep_dead_tracks`'s own cadence) --
+        # same staleness bound `shared/window.py`'s own key count already
+        # accepts for the identical reason.
         return {
             "ws8_active_tracks": len(self._sides),
             "ws8_promotions_total": self.promotions_count,
