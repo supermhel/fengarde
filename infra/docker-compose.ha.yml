@@ -455,6 +455,25 @@ services:
       - REDIS_SENTINEL_MASTER=mymaster
       - REDIS_PASSWORD=${REDIS_PASSWORD:-}
 
+  # 2026-08-20: same gap class as the ws6-inventory row above, found the same
+  # way -- by actually running `--profile ha up` rather than assuming the
+  # override list stayed in sync with the base compose file. WS-8 correlation
+  # (added 2026-08-18, after this HA profile's app-service overrides were
+  # last written) was never added here: without this block, `ws8-correlation`
+  # (no profile tag, always active) still `depends_on: redis` from the base
+  # file, which THIS file tags `profiles: [standard]` to disable under `ha`
+  # -- an unsatisfiable dependency that made `docker compose --profile ha up`
+  # refuse to start the whole project ("depends on undefined service redis"),
+  # not just fail to wire WS-8 into the cluster.
+  ws8-correlation:
+    environment:
+      - BUS_BACKEND=redis-sentinel
+      - REDIS_SENTINEL_HOSTS=redis-sentinel-1:26379,redis-sentinel-2:26379,redis-sentinel-3:26379
+      - REDIS_SENTINEL_MASTER=mymaster
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+    depends_on: !override {redis-1: {condition: service_healthy}}
+    networks: [default, ha]
+
 networks:
   # Explicit subnet so the Redis + Sentinel nodes can be pinned to static IPs.
   #
