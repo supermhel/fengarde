@@ -10,6 +10,8 @@ Endpoints:
   GET  /assets/resolve         ?ip=&at=  -> historically-correct asset
   GET  /assets/{mac}           one asset by MAC
   POST /assets/upsert          upsert from an Observation
+  GET  /keys                   key metadata (id/tenant/scope/source/created/last_used,
+                                NEVER key material) -- tenant-narrowed like every GET above
 """
 from __future__ import annotations
 
@@ -141,6 +143,13 @@ class Handler(BaseHTTPRequestHandler):
                 ip=q.get("ip"), mac=q.get("mac"), sector=q.get("sector"),
                 status=q.get("status"), limit=_parse_limit(q.get("limit")),
                 tenant_id=tenant_id))
+        if u.path == "/keys":
+            # 2026-08-20: key metadata (never key material -- see keystore.py::
+            # list_keys) had zero HTTP route, CLI-only via manage_keys.py. Same
+            # tenant-narrowing convention as every other GET here: the '*' admin
+            # key (bound_tenant is None) or auth-disabled (KEYSTORE empty) sees
+            # every tenant's keys; a tenant-scoped key sees only its own.
+            return self._send(200, {"keys": KEYSTORE.list_keys(tenant_id=bound_tenant)})
         if u.path.startswith("/assets/"):
             # unquote: a raw path segment is never URL-decoded by urlparse
             # -- without this, a %-encoded MAC (e.g. "%3A" for ":") never
