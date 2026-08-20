@@ -247,10 +247,15 @@ def _test_bulk_index_round_trips(store: OpenSearchStore, index: str = "events-bu
     # connection object must survive across an index() call, a bulk_index()
     # call, and a count() call -- i.e. it's genuinely being reused, not
     # silently reconnecting every time (which would still pass functionally
-    # but defeat the point of this fix).
-    conn_before = store._conn
+    # but defeat the point of this fix). 2026-08-19: the connection moved
+    # from a single shared `store._conn` to a thread-local `store._local.conn`
+    # (see storage/opensearch.py's FIX note -- a shared connection isn't
+    # safe under real concurrent request/response cycles from multiple
+    # threads); this test still runs single-threaded, so "reused within the
+    # calling thread" is exactly what `_local.conn` identity proves.
+    conn_before = store._local.conn
     store.index(index, f"single-{uuid.uuid4()}", {"n": 999})
-    check(store._conn is conn_before,
+    check(store._local.conn is conn_before,
           "the HTTP connection must be REUSED across calls, not reopened each time")
 
 

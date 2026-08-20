@@ -16,7 +16,7 @@ nothing here should be read as "Kafka already works."
 | `normalized.events`| WS-2 Normalization | WS-3, WS-4       | OCSF event (Contract A)              | `src_endpoint.ip`        |
 | `scored.events`    | WS-4 Detection  | WS-3               | OCSF event + `siem.score`            | `src_endpoint.ip`        |
 | `ai.requests`      | WS-4 Detection  | WS-5 AI worker(s) | `{event_id, event, tier, reason}`    | `event_id`               |
-| `ai.results`       | WS-5 AI         | WS-3               | `{event_id, tier, verdict, summary, level, classification}` | `event_id` |
+| `ai.results`       | WS-5 AI         | WS-3               | `{event_id, tier, verdict, summary, level, classification, engine, model}` (2026-08-20: `engine`/`model` added -- which analyzer actually produced this verdict, `"ollama"`+model name or `"stub"`; `None`/`None` on the classifier tier, which never calls an LLM) | `event_id` |
 | `alerts`           | WS-4, WS-5      | WS-3, WS-8 (2026-08-18, second consumer group `cg-correlate` on the same topic — the bus's consumer-group model already fans out one topic to multiple independent groups, confirmed against this file's own "Consumer groups: one group per workstream" line below) | enriched alert | `alert_id` |
 | `incidents`        | WS-8 Correlation (2026-08-18, new) | WS-3            | correlated incident (entity track promoted on >=2 distinct MITRE tactics) | `incident_id` |
 | `assets.updates`   | WS-1            | WS-6 Inventory    | `{mac, ip, hostname, seen_at}`       | `mac`                    |

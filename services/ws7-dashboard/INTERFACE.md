@@ -16,13 +16,27 @@
 - `/api/auth/` (M3 remainder) → WS-3's `/auth/{login,logout,me}`. Nginx injects
   `FENGARDE_API_KEY` server-side on the triage/report proxies — the browser
   never holds the key.
-- WS-6 inventory API (`GET /assets`) — Contract C, via `window.INVENTORY_API`;
-  falls back to `mocks/mock_data.js` when unset. Fetches the full list and does
-  per-device lookup/filtering client-side; `/assets/{mac}` is a WS-6 contract
+- `/api/inventory/` → WS-6 inventory API (`ws6-inventory:8000`), prefix
+  stripped — `window.INVENTORY_API` now DEFAULTS to this (2026-08-20 fix: it
+  previously had no default at all, unlike every other `*_API` constant, so
+  the Inventory view showed mock data on every deployment). Fetches
+  `/assets?limit=200` and `/keys` (key metadata, never material). Falls back
+  to `mocks/mock_data.js` only if explicitly overridden with
+  `window.INVENTORY_API = null`. `/assets/{mac}` is still a WS-6 contract
   endpoint the dashboard doesn't currently call.
+- `/api/audit` (2026-08-20) → WS-3's `GET /audit`, admin-scoped by the backend's
+  own session check — the "Audit" nav view.
+- `/api/ops/{ws1,ws2,ws3,ws4,ws8}` (2026-08-20) → each workstream's own
+  `GET /metrics` (`services/shared/runner.py`) — the "Ops" nav view. Gated by
+  the same `FENGARDE_API_KEY` check `/api/alerts` uses, since these health
+  ports were previously reachable only container-to-container.
 
 ## Produces
 - Static single-file UI (`index.html`) served by nginx. No backend of its own.
+- **Deep-linkable nav** (2026-08-20): the URL hash (`#ops`, `#audit`, `#incidents`, ...)
+  selects the active view on load and via `hashchange` — bookmarkable/shareable
+  links to one tab, not just always-lands-on-Overview. Unknown/empty hash falls
+  back to Overview rather than erroring (`selectView()`).
 - All alert/triage/inventory/source-derived values are HTML-escaped via `esc()`
   before injection (stored-XSS discipline); the report view renders as text,
   never `innerHTML`.
