@@ -157,7 +157,7 @@ paths:
       parameters:
         - { name: tenant_id, in: query, schema: { type: string },
             description: "Non-admin RBAC callers: ALWAYS overridden to the caller's own tenant." }
-        - { name: entity_type, in: query, schema: { type: string, enum: [actor, ip] } }
+        - { name: entity_type, in: query, schema: { type: string, enum: [actor, ip, device] } }
         - { name: entity_value, in: query, schema: { type: string } }
         - { name: limit, in: query, schema: { type: integer, default: 50, minimum: 1, maximum: 200 } }
       responses:

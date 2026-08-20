@@ -27,6 +27,8 @@ window.SIEM_MOCK = {
     { alert_id: "al-3", time: 1750000200000, rule_title: "Auth brute-force from single source",
       level: "high", score: 70, sector: "common", src_endpoint: { ip: "203.0.113.5" },
       actor: { user: { name: "jdoe" } } }
-  ],
-  sources: { Syslog: 1243, SNMP: 512, NetFlow: 8801, WinEvent: 332, API: 96 }
+  ]
+  // 2026-08-20: `sources` (fake per-protocol counts) removed -- the Sources
+  // view now derives real counts from getEvents() (siem.source_type), same
+  // no-mock-fallback convention getEvents() itself already used.
 };

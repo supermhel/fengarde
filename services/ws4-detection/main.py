@@ -47,14 +47,25 @@ ALLOWLISTS_DIR = _CONTRACTS / "allowlists"
 
 class Detector:
     def __init__(self, tenants_dir: Path = TENANTS_DIR,
-                 plugin_rule_dirs: list[Path] | None = None):
+                 plugin_rule_dirs: list[Path] | None = None,
+                 force_linear_scan: bool = False):
         """``plugin_rule_dirs``: directories of extra rule YAML to merge in,
         same shape as ``contracts/rules/*.yml``. Defaults to whatever
         ``plugins.discover_rule_pack_dirs()`` finds installed via the
         ``fengarde.rule_packs`` entry-point group (M4.5, empty in this repo
         by default -- pass ``[]`` explicitly to skip discovery, e.g. in a
         test that wants a deterministic rule set regardless of what's
-        installed in the environment)."""
+        installed in the environment).
+
+        ``force_linear_scan`` (default False, byte-identical behavior when
+        unset): bypasses the B1 class_uid bucket index in process() and
+        evaluates every loaded rule against every event, the pre-B1
+        behavior. Exists ONLY as a measurement knob for
+        ``tools/fengarde_bench.py --compare-prefilter`` -- the "before"
+        side of the before/after number the bench module's own docstring
+        used to list as a still-open TODO (2026-08-19). Never set true in
+        a real deployment path (main()/reload() never pass it)."""
+        self._force_linear_scan = force_linear_scan
         self._plugin_rule_dirs = (
             [d for _name, d in discover_rule_pack_dirs()]
             if plugin_rule_dirs is None else plugin_rule_dirs)
@@ -165,17 +176,22 @@ class Detector:
 
     def process(self, event: dict):
         """Return (scored_event, matched_rules, action)."""
-        class_uid = event.get("class_uid")
-        # FIX 13 (2026-08-06): an event with class_uid=None (no class equality)
-        # must get only the catch-all bucket, NOT the catch-all added twice --
-        # the old expression `by_class.get(None, []) + by_class[None]` would
-        # evaluate every catch-all rule TWICE against such an event (double
-        # stateful-window hits / duplicate alerts). When the class is present,
-        # the class bucket is combined with the catch-all as before.
-        if class_uid is None:
-            candidates = self._by_class_uid[None]
+        if self._force_linear_scan:
+            # Measurement-only path (see __init__ docstring): every rule,
+            # no bucket index -- the pre-B1 linear scan.
+            candidates = self.rules
         else:
-            candidates = self._by_class_uid.get(class_uid, []) + self._by_class_uid[None]
+            class_uid = event.get("class_uid")
+            # FIX 13 (2026-08-06): an event with class_uid=None (no class equality)
+            # must get only the catch-all bucket, NOT the catch-all added twice --
+            # the old expression `by_class.get(None, []) + by_class[None]` would
+            # evaluate every catch-all rule TWICE against such an event (double
+            # stateful-window hits / duplicate alerts). When the class is present,
+            # the class bucket is combined with the catch-all as before.
+            if class_uid is None:
+                candidates = self._by_class_uid[None]
+            else:
+                candidates = self._by_class_uid.get(class_uid, []) + self._by_class_uid[None]
         # M4 multi-tenancy: a tenant's config can disable specific global
         # rules for their own events (contracts/tenants/<tenant_id>.yml).
         # Missing config/entry -> nothing disabled (fail open to detection,
