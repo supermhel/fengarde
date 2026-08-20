@@ -3,7 +3,7 @@
   "template": {
     "settings": { "number_of_shards": 1, "number_of_replicas": 1 },
     "mappings": {
-      "_meta": { "mapping_version": 3, "_comment": "Correlated/enriched alerts, 1-year retention via ISM (ism-alerts-365d.json attaches by index pattern, not by a template setting)." },
+      "_meta": { "mapping_version": 4, "_comment": "Correlated/enriched alerts, 1-year retention via ISM (ism-alerts-365d.json attaches by index pattern, not by a template setting). v4: ai.engine/ai.model added so the dashboard can show which LLM actually produced a verdict (ollama vs stub), see services/ws5-ai/llm_adapter.py." },
       "dynamic": "false",
       "properties": {
         "alert_id": { "type": "keyword" },
@@ -27,7 +27,9 @@
           "properties": {
             "verdict": { "type": "keyword" },
             "summary": { "type": "text" },
-            "level": { "type": "keyword" }
+            "level": { "type": "keyword" },
+            "engine": { "type": "keyword" },
+            "model": { "type": "keyword" }
           }
         },
         "siem": { "properties": { "tenant": { "type": "keyword" }, "sector": { "type": "keyword" }, "source_type": { "type": "keyword" } } },

@@ -103,6 +103,8 @@ class AiWorker:
                 "summary": None,
                 "level": classification["priority"],
                 "classification": classification,
+                "engine": None,
+                "model": None,
             }
         reasons = request.get("reason", [])
         eid = self._dedup_key(request)
@@ -126,6 +128,8 @@ class AiWorker:
             "summary": verdict.get("summary"),
             "level": verdict.get("level"),
             "classification": classification,
+            "engine": verdict.get("engine"),
+            "model": verdict.get("model"),
         }
         if eid is not None:
             # Cache a copy too, for the same reason -- the freshly-built
@@ -149,7 +153,8 @@ def _alert_payload(result: dict, event: dict) -> dict:
     }
     if result["tier"] != "classifier":
         alert["ai"] = {"verdict": result["verdict"], "summary": result["summary"],
-                       "level": result["level"]}
+                       "level": result["level"], "engine": result.get("engine"),
+                       "model": result.get("model")}
     return alert
 
 
