@@ -421,7 +421,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 An independent security/architecture/CI audit (28 findings, plus a
 cross-check against a prior swarm review and a dedicated HA audit — full
-detail in `SSOT.md`'s two new §1 rows and `implementation_report_2026-08-06.md`)
+detail in `SSOT.md`'s two new §1 rows and `docs/reviews/implementation_report_2026-08-06.md`)
 drove a 39-finding fix pass, followed by a second independent review that
 caught 1 CRITICAL + 4 HIGH regressions the fix pass itself introduced and
 fixed those too (commit `983efc7`).
