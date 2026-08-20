@@ -25,6 +25,7 @@ import copy
 import os
 import sys
 import threading
+from typing import Any
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(
@@ -34,7 +35,7 @@ from main import index_doc  # noqa: E402
 from router import route  # noqa: E402
 from storage.memory import MemoryStore  # noqa: E402
 
-_BASE = {
+_BASE: dict[str, Any] = {
     "time": 1_700_000_000_000,
     "class_uid": 3002,
     "activity_id": 4,

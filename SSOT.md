@@ -154,6 +154,19 @@ those words get reused loosely across specs written weeks apart.
 
 ## 4. Known doc debt (don't fix silently, flag before touching)
 
+**Before repeating an item's existing framing, re-derive it from current code
+first (2026-08-20, added after the P1-4 remainder turned out to be
+mis-filed as a perf item when it was a silent correctness bug for a
+month).** An item sitting here unfixed does not mean its label is still
+accurate — nothing forces a re-check on a cadence, so debt gets re-copied
+forward, not re-verified. Before touching or re-describing an item: read the
+actual current code it points at, don't trust the stored description.
+Especially distrust a "perf"/"inefficiency"/"wasted work" label on anything
+involving two writers converging on the same stored key — ask whether the
+LOSING write could differ in *content* from the winner's, not just whether
+a write was wasted. If yes, it's a correctness bug regardless of how it was
+originally filed.
+
 - Two perf items from `docs/superpowers/specs/2026-07-21-audit-fix-plan.md` were
   marked "OPEN, deliberately deferred" there and never carried forward into this
   file (found in the 2026-08-13 audit — the audit-fix-plan doc itself is
