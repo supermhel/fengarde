@@ -98,6 +98,34 @@ class StorageAdapter(abc.ABC):
         self.index(index, doc_id, document)
         return True
 
+    # -- create-only write (P1-4 remainder: normalized/scored double-index) --
+    #
+    # WS-3 consumes BOTH `normalized.events` and `scored.events`, and the
+    # runner gives each topic its OWN worker thread -- so the two writes for
+    # one logical event race with no ordering guarantee between them. Both
+    # route to the SAME (index, doc_id) (router.py derives the id from
+    # `siem.ingest_id`, which WS-4 passes through unchanged), and `index()`
+    # is a full-document replace. When the normalized write lands LAST it
+    # overwrites the scored copy, silently dropping `siem.score` -- the
+    # event stays indexed but loses its detection score.
+    #
+    # Fix: the normalized-events path writes create-only, so it can never
+    # clobber a scored doc. Race-free at the storage layer (no check-then-
+    # act): whichever order the two threads run in, the result converges to
+    # the scored document.
+    #
+    # Default degrades to a plain write for third-party adapters that predate
+    # this contract -- same convention as `index_cas` above (they keep the
+    # old last-writer-wins behavior, which is what they have today anyway).
+
+    def index_if_absent(self, index: str, doc_id: str, document: dict) -> bool:
+        """Write ``document`` only if ``(index, doc_id)`` does not exist yet.
+
+        :returns: ``True`` if this call wrote the document, ``False`` if one
+            was already present and this write was therefore suppressed.
+        """
+        return self.index(index, doc_id, document)
+
     # -- M4.3 versioned REST API: bounded list/browse -----------------------
     #
     # The triage API (v0.3+) can only look an alert up by exact id. M4.3 adds

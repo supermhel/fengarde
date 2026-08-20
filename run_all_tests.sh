@@ -48,6 +48,9 @@ echo
 echo "== ws3 P1-4 (2026-07-21 audit): OpenSearch _bulk API (NDJSON, partial-failure parsing) =="
 $PY services/ws3-indexer/test_bulk_index.py || fail=1
 echo
+echo "== ws3 P1-4 remainder: normalized/scored double-index is order-independent =="
+$PY services/ws3-indexer/test_double_index_order.py || fail=1
+echo
 echo "== ws3 M4.3: rule-summary read model (list_rule_summaries, tenant disable, _contracts_dir) =="
 $PY services/ws3-indexer/test_rules_view.py || fail=1
 echo

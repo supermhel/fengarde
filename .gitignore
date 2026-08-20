@@ -89,3 +89,9 @@ audit*.jsonl
 .worktrees/
 graphify-out/
 IDEA.md
+
+# impeccable skill's per-project design/product state -- local design-tool
+# convenience, not product documentation; skill still reads/writes these
+# locally, they're just no longer tracked/public
+DESIGN.md
+PRODUCT.md

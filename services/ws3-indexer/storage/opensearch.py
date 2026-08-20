@@ -313,6 +313,39 @@ class OpenSearchStore(StorageAdapter):
         assert last_exc is not None
         raise last_exc
 
+    def index_if_absent(self, index: str, doc_id: str, document: dict) -> bool:
+        """Create-only write (see StorageAdapter.index_if_absent).
+
+        Uses ``op_type=create``, which OpenSearch rejects with a 409 when the
+        document already exists. That 409 is the SUCCESS path for this
+        method's contract ("someone already wrote it, leave theirs alone"),
+        not an error -- it is what keeps a late normalized-events write from
+        clobbering the scored copy. Race-free without a read first: the
+        existence check is the write, server-side.
+
+        Every other 4xx still raises, same as :meth:`index` -- a 409 means
+        "already present", a 400 means the document itself is bad.
+        """
+        path = (f"/{index}/_doc/{urllib.parse.quote(doc_id, safe='')}"
+                "?op_type=create")
+        last_exc: BaseException | None = None
+        for attempt in range(_INDEX_RETRIES):
+            try:
+                result = self._request("PUT", path, document)
+                return result.get("result") == "created"
+            except urllib.error.HTTPError as exc:
+                if exc.code == 409:
+                    return False  # already indexed -> suppressed, not an error
+                if 400 <= exc.code < 500:
+                    raise  # permanent: bad mapping/document, don't retry
+                last_exc = exc  # 5xx: server-side transient
+            except urllib.error.URLError as exc:
+                last_exc = exc  # connection refused / timeout: transient
+            if attempt < _INDEX_RETRIES - 1:
+                time.sleep(_INDEX_BACKOFF_S * (2 ** attempt))
+        assert last_exc is not None
+        raise last_exc
+
     def count(self, index: str) -> int:
         try:
             result = self._request("GET", f"/{index}/_count")
