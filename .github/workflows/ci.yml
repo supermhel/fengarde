@@ -85,6 +85,17 @@ jobs:
           BUS_BACKEND: redis
           REDIS_URL: redis://localhost:6379/0
         run: python services/shared/test_bus_read_count.py
+      # P1-8 remainder (2026-08-20): _RedisBus.ack_batch()'s pipelined XACK is
+      # a genuinely different code path from _MemoryBus's dict-pop loop, and
+      # the zero-infra gate only ever exercises the latter. Asserts the real
+      # PEL actually drains (via XPENDING) and that a partial batch acks ONLY
+      # the ids it was handed -- an over-acking pipeline would silently
+      # swallow messages whose handler never ran, which no fake can catch.
+      - name: P1-8 remainder pipelined XACK batching on real Redis
+        env:
+          BUS_BACKEND: redis
+          REDIS_URL: redis://localhost:6379/0
+        run: python services/shared/test_ack_batching.py
       # FIX M16 (2026-08-06): Redis session + window backends against a REAL
       # broker -- test_sessions.py's Redis path is gated on SESSION_TEST_REDIS=1
       # (skipped in the zero-infra gate), and test_window.py runs the window

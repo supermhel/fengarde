@@ -37,6 +37,35 @@ def make_store():
     return MemoryStore()
 
 
+def build_handlers(store, group: str = "cg-index") -> dict:
+    """Per-topic ``{topic: (group, handler)}`` map for the live daemon.
+
+    Extracted from ``main()`` so the topic->handler wiring is testable on its
+    own: which topics get the create-only handler is a correctness property
+    (see :func:`index_doc`), not an implementation detail, and before this was
+    a dict comprehension buried inside ``main()`` no test could reach. A
+    regression here -- pointing `normalized.events` at the plain handler --
+    silently reintroduces the score-stripping double-index race, so it gets a
+    test (`test_double_index_order.py::test_normalized_topic_is_wired_create_only`).
+    """
+    def handler(payload: dict) -> None:
+        try:
+            index_doc(store, payload)
+        except ValueError:
+            pass  # unroutable doc (e.g. ai.results) -> drop, matches run()
+
+    def normalized_handler(payload: dict) -> None:
+        """`normalized.events` writes create-only -- it must never clobber the
+        scored copy of the same event (index_doc's own docstring)."""
+        try:
+            index_doc(store, payload, create_only=True)
+        except ValueError:
+            pass  # unroutable doc -> drop, same as handler()
+
+    return {t: (group, normalized_handler if t == "normalized.events" else handler)
+            for t in TOPICS}
+
+
 def index_doc(store, doc: dict, *, create_only: bool = False) -> bool:
     """Route ``doc`` and write it.
 
@@ -137,20 +166,6 @@ def main():
 
     store = make_store()
 
-    def handler(payload: dict) -> None:
-        try:
-            index_doc(store, payload)
-        except ValueError:
-            pass  # unroutable doc (e.g. ai.results) -> drop, matches run()
-
-    def normalized_handler(payload: dict) -> None:
-        """`normalized.events` writes create-only -- it must never clobber the
-        scored copy of the same event (index_doc's own docstring)."""
-        try:
-            index_doc(store, payload, create_only=True)
-        except ValueError:
-            pass  # unroutable doc -> drop, same as handler()
-
     # C1 (v0.3): the triage API runs on its OWN port/thread, alongside the bus
     # consumer loop -- mirrors how WS-1 runs its UDP listener alongside the
     # runner's health thread (a second independent network listener, not
@@ -197,9 +212,7 @@ def main():
     reaper = start_stream_reaper(Bus(), log, shutdown, _ALL_BUS_TOPICS,
                                  interval_s=reap_interval)
 
-    handlers = {t: ("cg-index",
-                    normalized_handler if t == "normalized.events" else handler)
-                for t in TOPICS}
+    handlers = build_handlers(store)
     try:
         serve(handlers, health_port=int(os.getenv("PORT", "8003")),
               service_name="ws3-indexer", shutdown=shutdown)

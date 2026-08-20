@@ -31,7 +31,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(
     os.path.abspath(__file__)))))
 
-from main import index_doc  # noqa: E402
+from main import build_handlers, index_doc  # noqa: E402
 from router import route  # noqa: E402
 from storage.memory import MemoryStore  # noqa: E402
 
@@ -155,6 +155,44 @@ def test_concurrent_writers_converge_on_the_scored_doc():
               f"attempt {attempt}: concurrent writers lost siem.score")
 
 
+def test_normalized_topic_is_wired_create_only():
+    """The daemon must actually POINT `normalized.events` at the create-only
+    handler -- the fix is worthless if the wiring regresses.
+
+    Everything else in this file proves `index_doc(create_only=True)` behaves
+    correctly; this proves the live daemon actually calls it that way. Drives
+    the real `build_handlers()` map and checks behavior through the handler
+    it returns, rather than asserting on a function name (which would pass
+    just as happily if the body were changed to a plain index()).
+    """
+    store = MemoryStore()
+    handlers = build_handlers(store)
+
+    check("normalized.events" in handlers and "scored.events" in handlers,
+          f"expected both event topics in the handler map, got {sorted(handlers)}")
+
+    _, normalized_h = handlers["normalized.events"]
+    _, scored_h = handlers["scored.events"]
+
+    # Scored lands first; the late normalized delivery must not strip its score.
+    scored_h(_scored())
+    normalized_h(_normalized())
+    check(_score_of(store, _scored()) == 70,
+          "the daemon's normalized.events handler clobbered siem.score -- it is "
+          "not wired create-only (build_handlers regression)")
+
+    # And the scored handler must still be a plain overwrite, or a genuinely
+    # updated score could never land on a doc the normalized path created.
+    store2 = MemoryStore()
+    n2 = build_handlers(store2)["normalized.events"][1]
+    s2 = build_handlers(store2)["scored.events"][1]
+    n2(_normalized())          # normalized arrives first this time
+    s2(_scored(score=90))      # scored must still be able to upgrade it
+    check(_score_of(store2, _scored()) == 90,
+          "the daemon's scored.events handler must overwrite in place -- a real "
+          "score can never reach a doc the normalized path created otherwise")
+
+
 def run_all() -> None:
     tests = [
         test_both_topics_route_to_the_same_document,
@@ -163,6 +201,7 @@ def run_all() -> None:
         test_redelivered_normalized_never_downgrades,
         test_create_only_reports_suppression,
         test_concurrent_writers_converge_on_the_scored_doc,
+        test_normalized_topic_is_wired_create_only,
     ]
     for t in tests:
         t()

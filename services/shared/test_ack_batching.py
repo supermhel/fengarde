@@ -172,6 +172,119 @@ def test_ack_batch_flush_failure_leaves_messages_for_redelivery():
           f"there")
 
 
+# --------------------------------------------------------------------------- #
+# Real-Redis coverage
+#
+# Everything above runs on _MemoryBus, whose ack_batch() is a plain loop --
+# it exercises runner.py's BATCHING WIRING but never touches the actual
+# pipelined XACK. _RedisBus.ack_batch()'s redis.pipeline(transaction=False)
+# flush is a genuinely different code path, and "a live path no test
+# executes" is exactly how the P1-4 double-index bug this same session fixed
+# stayed invisible for a month. So: same assertions, real broker, real PEL
+# checked via XPENDING -- skipped cleanly (never silently, never a failure)
+# when no Redis is reachable, same convention test_runner.py established.
+# --------------------------------------------------------------------------- #
+def _redis_reachable():
+    if os.getenv("BUS_BACKEND", "memory").lower() != "redis":
+        return False
+    try:
+        import redis  # type: ignore
+        r = redis.Redis.from_url(
+            os.getenv("REDIS_URL", "redis://localhost:6379/0"),
+            decode_responses=True, socket_connect_timeout=1)
+        r.ping()
+        return True
+    except Exception:
+        return False
+
+
+def _unique_topic(base):
+    return f"{base}.{int(time.time() * 1000)}.{os.getpid()}"
+
+
+def test_redis_ack_batch_actually_drains_the_pel():
+    """The pipelined XACK must really remove entries from the group's PEL.
+
+    A MemoryBus test cannot prove this: its ack_batch is a dict pop, while
+    _RedisBus's is a pipeline of XACKs whose wire behavior (and whether
+    every id in the batch is included) only a real broker can confirm.
+    Asserted via XPENDING, the same thing redelivery itself reads.
+    """
+    from shared.bus import _RedisBus
+
+    url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+    bus = _RedisBus(url)
+    topic = _unique_topic("ack-batch-live")
+    group = "cg-ack-batch-live"
+
+    try:
+        for i in range(12):
+            bus.produce(topic, key=str(i), payload={"n": i})
+
+        msgs = list(bus.consume(topic, group=group, block_ms=1000))
+        check(len(msgs) == 12,
+              f"expected to consume 12 messages off real Redis, got {len(msgs)}")
+
+        pending_before = bus.r.xpending(topic, group)["pending"]
+        check(pending_before == 12,
+              f"consume() must leave all 12 in the PEL unacked, "
+              f"XPENDING says {pending_before}")
+
+        bus.ack_batch(msgs, group)
+
+        pending_after = bus.r.xpending(topic, group)["pending"]
+        check(pending_after == 0,
+              f"pipelined ack_batch must drain the PEL completely, "
+              f"XPENDING still reports {pending_after} pending")
+    finally:
+        try:
+            bus.r.delete(topic)
+        except Exception:
+            pass
+
+
+def test_redis_ack_batch_acks_only_the_messages_it_was_given():
+    """A partial batch must leave the un-passed messages pending.
+
+    Guards the failure mode that actually matters on the live path: a
+    pipeline that over-acks (e.g. acking the whole stream instead of the
+    listed ids) would silently swallow messages whose handler never ran.
+    """
+    from shared.bus import _RedisBus
+
+    url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+    bus = _RedisBus(url)
+    topic = _unique_topic("ack-batch-live-partial")
+    group = "cg-ack-batch-live-partial"
+
+    try:
+        for i in range(10):
+            bus.produce(topic, key=str(i), payload={"n": i})
+        msgs = list(bus.consume(topic, group=group, block_ms=1000))
+        check(len(msgs) == 10, f"expected 10 consumed, got {len(msgs)}")
+
+        bus.ack_batch(msgs[:6], group)  # only the first 6 "succeeded"
+
+        pending = bus.r.xpending(topic, group)["pending"]
+        check(pending == 4,
+              f"exactly the 4 un-passed messages must stay pending, "
+              f"XPENDING reports {pending}")
+    finally:
+        try:
+            bus.r.delete(topic)
+        except Exception:
+            pass
+
+
+def test_redis_ack_batch_empty_is_a_noop():
+    """An empty batch must not round-trip or raise (the `if not msgs` guard)."""
+    from shared.bus import _RedisBus
+
+    url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+    bus = _RedisBus(url)
+    bus.ack_batch([], "cg-does-not-matter")  # must simply return
+
+
 def run_all() -> None:
     tests = [
         test_successful_batch_is_acked_via_one_ack_batch_call,
@@ -180,6 +293,20 @@ def run_all() -> None:
     ]
     for t in tests:
         t()
+
+    live = [
+        test_redis_ack_batch_actually_drains_the_pel,
+        test_redis_ack_batch_acks_only_the_messages_it_was_given,
+        test_redis_ack_batch_empty_is_a_noop,
+    ]
+    if _redis_reachable():
+        for t in live:
+            t()
+            print(f"  . {t.__name__}[redis]")
+    else:
+        for t in live:
+            print(f"  [SKIP] {t.__name__}[redis] "
+                  f"(no reachable Redis / BUS_BACKEND!=redis)")
     if FAILS:
         for f in FAILS:
             print(f"  FAIL: {f}")

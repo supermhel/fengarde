@@ -69,6 +69,47 @@ def _test_index_is_idempotent_upsert(store: OpenSearchStore, index: str):
           f"re-index of the same _id must update in place, got {got}")
 
 
+def _test_index_if_absent_create_only(store: OpenSearchStore, index: str):
+    """P1-4 remainder: create-only write must not clobber an existing doc.
+
+    `index_if_absent` sends `op_type=create`, and its whole contract depends
+    on OpenSearch answering an existing id with a 409 that the method then
+    treats as SUCCESS-but-suppressed rather than an error. The zero-infra
+    test (`test_double_index_order.py`) proves the ORDERING behavior on
+    MemoryStore, where "already exists" is a dict lookup -- only a real
+    cluster proves the 409 branch itself, which is the half that would break
+    silently in production if OpenSearch's response shape ever differed from
+    what the code assumes.
+    """
+    doc_id = f"live-create-{uuid.uuid4()}"
+
+    created = store.index_if_absent(index, doc_id, {"n": 1, "who": "first"})
+    check(created is True,
+          f"index_if_absent on a fresh id should report True, got {created}")
+
+    # Second create-only write to the SAME id: OpenSearch answers 409, which
+    # the method must swallow and report as False -- NOT raise, and NOT
+    # overwrite.
+    suppressed = store.index_if_absent(index, doc_id, {"n": 2, "who": "second"})
+    check(suppressed is False,
+          f"index_if_absent on an existing id should report False (suppressed), "
+          f"got {suppressed}")
+
+    got = store._request("GET", f"/{index}/_doc/{doc_id}")
+    check(got.get("_source", {}).get("who") == "first",
+          f"create-only write must NOT overwrite the existing document, got {got}")
+
+    # And the ordering property the fix actually exists for: a plain index()
+    # (the scored-events path) still upgrades the doc, and a LATER create-only
+    # write (the late normalized-events path) can no longer strip it back.
+    store.index(index, doc_id, {"n": 3, "who": "scored", "score": 70})
+    store.index_if_absent(index, doc_id, {"n": 4, "who": "late-normalized"})
+    got2 = store._request("GET", f"/{index}/_doc/{doc_id}")
+    src = got2.get("_source", {})
+    check(src.get("score") == 70 and src.get("who") == "scored",
+          f"a late create-only write must not clobber the scored document, got {got2}")
+
+
 def _test_cas_conflict_on_stale_version(store: OpenSearchStore, index: str = "alerts-livetest"):
     alert_id = f"live-alert-{uuid.uuid4()}"
     store.index(index, alert_id, {"alert_id": alert_id, "status": "open"})
@@ -269,6 +310,7 @@ def main() -> None:
     store = OpenSearchStore(url=url)
     index = "events-livetest"
     _test_index_is_idempotent_upsert(store, index)
+    _test_index_if_absent_create_only(store, index)
     _test_cas_conflict_on_stale_version(store)
     _test_permanent_error_not_retried(store)
     _test_migrate_live(store)
