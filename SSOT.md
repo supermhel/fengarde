@@ -8,18 +8,6 @@ Every other doc below is historical detail, not competing truth. If a doc disagr
 with this file, **this file wins** — go fix the doc, don't trust it standalone.
 Update this file whenever status changes; it's a living index, not an archive.
 
-**Merge status, read before trusting any "done"/"shipped" wording below**: this file
-tracks project status as work happens, including work still on an open PR, not only
-what's live on `main`. Rows below don't each restate their own merge status. As of
-2026-08-20, `main`'s actual tip is PR #64 (WS-8 correlation without device-tracking,
-dashboard visual redesign) — everything from "Third round" through "Seventh round"
-below lives on two **open, unmerged** PRs:
-[#69](https://github.com/supermhel/fengarde/pull/69) (dashboard wiring, AI
-engine/model tagging, screenshot tour) and
-[#70](https://github.com/supermhel/fengarde/pull/70) (WS-8 unbounded-growth fix).
-If you need "what does a fresh `git clone` of `main` actually have," check `README.md`'s
-capability table, which makes that narrower claim explicitly and only describes `main`.
-
 ---
 
 ## 1. Current state (as of 2026-08-20, six gap-closure rounds same day: (1) dashboard AI-triage surfacing + Events browser + time-range picker + the OpenSearch 3-node HA profile closed for real, (2) report-button styling + AI `engine`/`model` tagging + a first hidden-feature audit, (3) that audit re-run properly across all 8 workstreams (4 parallel deep-reads) after being called out as incomplete, (4) every confirmed finding from round 3 actually wired in — including a real bug found in the process (the Inventory dashboard tab silently showed mock data on every deployment), (5) a UX/visual-QA pass on everything round 4 shipped that found and fixed three more real bugs (a silently-inert time-range picker on most views, a raw-JSON-dump Ops layout with a genuine text-collision bug, an unreadable Audit detail column) plus two "real data or nothing" gap closures (OCSF class/activity names, a Sources tab that had been 100% mock data forever), and (6) a screenshot product-tour page built from the live stack and published to both a Claude artifact and `docs/` (GitHub Pages) — the first cut included a Ken-Burns video, pulled same-day after owner feedback that it "wasn't good yet" and that the 8 screenshots were inconsistently sized, followed by a second same-day fix pass (a real `<meta charset>`-missing mojibake bug, plus real dead space on data-sparse gallery tabs) after the owner said the page "still looks weird." See the rows directly below for the full account. This header date is the floor for everything in this table, not every individual row's own date)
