@@ -106,6 +106,9 @@ echo
 echo "== shared runner =="
 $PY services/shared/test_runner.py || fail=1
 echo
+echo "== shared runner P1-8 remainder: XACK batching in the real consume loop =="
+$PY services/shared/test_ack_batching.py || fail=1
+echo
 echo "== shared envelope v1 (M1) =="
 $PY services/shared/test_envelope.py || fail=1
 echo

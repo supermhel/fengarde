@@ -124,6 +124,14 @@ class _MemoryBus:
         with self._pel_lock:
             self._pel[msg.topic].pop(msg.id, None)
 
+    def ack_batch(self, msgs, group=None):
+        """Ack every message in ``msgs`` (P1-8 remainder). Additive: existing
+        single-message ``ack()`` callers are unaffected. MemoryBus has no real
+        round-trip to batch away -- this exists so callers (runner.py) can use
+        one code path regardless of backend; here it's just a loop."""
+        for msg in msgs:
+            self.ack(msg, group)
+
     def claim_pending(self, topic, group=None, min_idle_ms=0, max_redeliveries=5):
         """Reclaim in-flight (delivered, not yet acked) messages idle at
         least ``min_idle_ms`` -- the deque-backend mirror of RedisWindowCounter's
@@ -255,6 +263,32 @@ class _RedisBus:
         """Acknowledge a message after the handler has succeeded, removing it from
         the group's pending-entries list (PEL) so it is not redelivered."""
         self.r.xack(msg.topic, group, msg.id)
+
+    def ack_batch(self, msgs, group="cg-default"):
+        """XACK every message in ``msgs`` over ONE pipelined round-trip
+        instead of one XACK per message (P1-8 remainder, 2026-07-21 audit;
+        deferred at the time because it needed a safe place to accumulate
+        messages across a batch -- runner.py's _topic_worker now does that,
+        flushing at the same XREADGROUP-batch boundary BUS_XREADGROUP_COUNT
+        already reads in).
+
+        Deliberately NOT a Redis MULTI/EXEC transaction (``transaction=False``):
+        XACK calls are independent and idempotent (acking an already-acked or
+        unknown id is a no-op, not an error), so there is nothing to roll
+        back and no reason to pay for atomicity none of the callers need.
+
+        If the pipeline itself fails partway (connection drop mid-flush), the
+        unacked entries simply stay in the PEL and get redelivered later --
+        the same at-least-once/idempotent-handler contract every other path
+        in this bus already relies on. Nothing here can silently ack a
+        message this call never actually acked.
+        """
+        if not msgs:
+            return
+        pipe = self.r.pipeline(transaction=False)
+        for msg in msgs:
+            pipe.xack(msg.topic, group, msg.id)
+        pipe.execute()
 
     def claim_pending(self, topic, group="cg-default", min_idle_ms=60000,
                       max_redeliveries=5):
@@ -571,6 +605,9 @@ class _RedisSentinelBus:
 
     def ack(self, msg, group="cg-default"):
         return self._with_failover("ack", msg, group=group)
+
+    def ack_batch(self, msgs, group="cg-default"):
+        return self._with_failover("ack_batch", msgs, group=group)
 
     def claim_pending(self, topic, group="cg-default", min_idle_ms=60000,
                       max_redeliveries=5):

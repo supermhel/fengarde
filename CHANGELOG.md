@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed (2026-08-20, P1-4 remainder: WS-3 double-index silently dropped siem.score)
+
+- **Correctness bug, not the perf item it was filed as.** WS-3 consumes both
+  `normalized.events` and `scored.events` on independent per-topic worker
+  threads (no ordering guarantee between them); both carry the same event
+  and route to the same `(index, doc_id)`; only WS-4 sets `siem.score`; and
+  `OpenSearchStore.index()` is a full-document replace. Whenever the
+  normalized write landed after the scored write, it silently overwrote the
+  scored document and stripped its detection score — the event stayed
+  indexed, nothing errored, the score was just gone. Proven by execution
+  (both write orderings run against the real router + a real store) before
+  any fix was written.
+- Fixed with a new `StorageAdapter.index_if_absent` (create-only write;
+  `op_type=create` on OpenSearch, `MemoryStore`'s check-and-write under one
+  lock hold) used only by the `normalized.events` worker, so it can never
+  clobber a scored document — race-free at the storage layer, no
+  check-then-act window. `contracts/bus-topics.md`'s frozen consumer list is
+  preserved (the cheap alternative, dropping `normalized.events` from WS-3
+  entirely, would have amended that contract and meant nothing gets indexed
+  while WS-4 is down).
+- New `services/ws3-indexer/test_double_index_order.py` (6 scenarios incl. a
+  50-round concurrent-two-thread convergence check), confirmed to fail when
+  the fix is reverted.
+
+### Fixed (2026-08-20, P1-8 remainder: XACK issued one round-trip per message)
+
+- New additive `Bus.ack_batch(msgs, group)` on all three backends
+  (`_RedisBus`: one `redis.pipeline(transaction=False)` flush; `_MemoryBus`:
+  a loop; `_RedisSentinelBus`: delegates through the existing failover
+  wrapper) — `ack()`'s own signature and every pre-existing caller are
+  unchanged.
+- `services/shared/runner.py::_topic_worker`'s two consume loops now defer
+  acks into a batch and flush once per pass instead of one XACK round-trip
+  per message, at the same boundary `BUS_XREADGROUP_COUNT` already batches
+  reads at. A handler failure mid-batch is excluded from the flush (stays
+  unacked, redelivered normally); a failed pipeline flush leaves everything
+  in that batch unacked too, never a silent phantom ack.
+- New `services/shared/test_ack_batching.py` (3 scenarios, drives a real
+  `_topic_worker` run with a spy bus counting actual ack calls), confirmed
+  to fail when the batching is reverted.
+
 ### Added (2026-08-18, WS-8 cross-alert correlation)
 
 - **New `services/ws8-correlation`** — closes the top remaining
