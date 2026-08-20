@@ -9,6 +9,38 @@
 # environment -- nginx's own lowercase $host/$uri/$content_type are untouched).
 # v0.4 Track S1: ${FENGARDE_API_KEY} lets nginx inject the shared secret on the
 # triage proxy so the browser never holds the key.
+#
+# 2026-08-19: time-range picker. `/api/alerts` and the new `/api/events` proxy
+# both take a `?gte=<epoch_millis>` query param on the CLIENT's own request URI
+# (nginx always sees the current request's own $arg_* regardless of the "no
+# dynamic upstream URI" limitation the /api/alerts comment below documents --
+# that limitation is specifically about proxy_pass silently dropping a query
+# string when the proxied *upstream* address is itself a variable, which
+# never applied to reading $arg_gte off the incoming request).
+#
+# This used to be a semantic `?range=24h` mapped to an OpenSearch date-math
+# string ("now-24h") server-side. Found live (2026-08-19) that both indices'
+# `time` field is mapped `format: epoch_millis` (contracts/opensearch-mappings/
+# {alerts,events-common}.json) -- an OpenSearch/ES field pinned to that exact
+# format parses a range query's bound as a literal number ONLY; it does NOT
+# fall back to date-math resolution the way an unrestricted `date` field does,
+# so "now-24h" raised `number_format_exception` on every shard that actually
+# had matching data. Worse than a visible error: OpenSearch reports shard
+# failures as a PARTIAL result with HTTP 200, so the query silently returned
+# empty/wrong results instead of surfacing the bug -- exactly the "silent
+# wrong answer" class this project's whole fail-closed discipline exists to
+# avoid. Fixed by moving the "what does 24h mean" computation to the client
+# (trivial: Date.now() - hours*3600000, see index.html's rangeGteMs()) and
+# having nginx only validate + passthrough an already-numeric value -- no
+# date-math parsing on either side. An invalid/missing/absurd value falls
+# through to "0" (epoch start = no effective lower bound), the same
+# unrestricted-by-time behavior every endpoint had before this feature
+# existed, never a query that raises or silently drops real data.
+map $arg_gte $fengarde_gte_ms {
+    default "0";
+    ~^[0-9]+$ $arg_gte;
+}
+
 server {
     listen 80;
     server_name _;
@@ -63,7 +95,7 @@ server {
         proxy_method POST;
         proxy_set_header Content-Type "application/json";
         proxy_set_header Host $host;
-        proxy_set_body '{"size":50,"sort":[{"time":"desc"}],"query":{"exists":{"field":"rule_title"}}}';
+        proxy_set_body '{"size":50,"sort":[{"time":"desc"}],"query":{"bool":{"filter":[{"exists":{"field":"rule_title"}},{"range":{"time":{"gte":$fengarde_gte_ms}}}]}}}';
 
         # Keep the dashboard resilient: on 5xx / timeout return an empty hits array so
         # the front end falls back to mock data. NOTE: a 404 from OpenSearch (index not
@@ -78,6 +110,54 @@ server {
     location @alerts_unavailable {
         default_type application/json;
         return 200 '{"hits":{"hits":[]},"_fengarde_proxy":"opensearch_unavailable"}';
+    }
+
+    # 2026-08-19: AI triage surfacing. WS-5's LLM/classifier verdict is real and
+    # computed (services/ws5-ai/main.py), and IS persisted -- but as a separate
+    # alert_id="ai-{event_id}" document (never overwriting the real rule-fired
+    # alert's own document, which a same-id PUT would silently do since
+    # OpenSearchStore.index() is a full replace, not a partial merge -- see
+    # that file's _alert_payload() docstring). /api/alerts's own query
+    # deliberately excludes these (`exists: rule_title`), so until now they
+    # were computed, indexed, and never seen by anyone. This proxy fetches
+    # them separately; the front end joins them onto their real alert by the
+    # shared event_ids field (getAiTriage()/attachAiTriage() in index.html).
+    location = /api/ai-triage {
+        resolver 127.0.0.11 ipv6=off valid=30s;
+        set $opensearch "http://opensearch:9200";
+        if ($http_x_api_key != "${FENGARDE_API_KEY}") {
+            return 401;
+        }
+        proxy_pass $opensearch/alerts-*/_search;
+        proxy_method POST;
+        proxy_set_header Content-Type "application/json";
+        proxy_set_header Host $host;
+        proxy_set_body '{"size":200,"sort":[{"time":"desc"}],"query":{"prefix":{"alert_id":"ai-"}}}';
+        proxy_connect_timeout 3s;
+        proxy_read_timeout 5s;
+        proxy_intercept_errors on;
+        error_page 502 503 504 = @alerts_unavailable;
+    }
+
+    # 2026-08-19: Events browser. Raw normalized (post-OCSF, pre-detection)
+    # events were always indexed (events-{common,bank,dc}-*, WS-2's real
+    # output) but never queryable from the dashboard -- only the scored
+    # subset (alerts) was. Same time-range map as /api/alerts.
+    location = /api/events {
+        resolver 127.0.0.11 ipv6=off valid=30s;
+        set $opensearch "http://opensearch:9200";
+        if ($http_x_api_key != "${FENGARDE_API_KEY}") {
+            return 401;
+        }
+        proxy_pass $opensearch/events-*/_search;
+        proxy_method POST;
+        proxy_set_header Content-Type "application/json";
+        proxy_set_header Host $host;
+        proxy_set_body '{"size":100,"sort":[{"time":"desc"}],"query":{"range":{"time":{"gte":$fengarde_gte_ms}}}}';
+        proxy_connect_timeout 3s;
+        proxy_read_timeout 5s;
+        proxy_intercept_errors on;
+        error_page 502 503 504 = @alerts_unavailable;
     }
 
     # M3: same-origin proxy for the RBAC session API (/auth/login, /auth/logout,
@@ -170,6 +250,108 @@ server {
         proxy_set_header Host $host;
         proxy_set_header X-Api-Key "${FENGARDE_API_KEY}";
         proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_connect_timeout 3s;
+        proxy_read_timeout 5s;
+    }
+
+    # 2026-08-20: WS-6 inventory feed. window.INVENTORY_API (index.html) had no
+    # default -- unlike every other *_API constant here -- and nothing anywhere
+    # (no compose env, no injected script) ever set it, so the Inventory view
+    # showed mock data on EVERY deployment, silently, since it shipped. WS-6's
+    # own auth (TenantKeyStore, keystore.py) is a SEPARATE secret system from
+    # FENGARDE_API_KEY (the latter was migrated away from as ws6's auth source
+    # -- see ensure_legacy_keys_migrated) -- so unlike /api/triage/ above, this
+    # does NOT inject FENGARDE_API_KEY; it only forwards whatever X-Api-Key the
+    # browser itself presents (none, today -- matches the zero-config default
+    # of an empty keystore = auth disabled).
+    location /api/inventory/ {
+        resolver 127.0.0.11 ipv6=off valid=30s;
+        set $ws6_inventory "http://ws6-inventory:8000";
+        rewrite ^/api/inventory/(.*)$ /$1 break;
+        proxy_pass $ws6_inventory;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_connect_timeout 3s;
+        proxy_read_timeout 5s;
+    }
+
+    # 2026-08-20: E1 admin audit trail (services/ws3-indexer/audit.py) -- fully
+    # built (login/logout/mfa/triage/report events, append-only, capacity-cap)
+    # but had zero dashboard proxy. Same auth pattern as /api/rules: the
+    # backend's own _require_role("admin") gate (triage_api.py::_route_audit)
+    # does the real access control over the forwarded session cookie; this
+    # proxy just gets the request there.
+    location /api/audit {
+        resolver 127.0.0.11 ipv6=off valid=30s;
+        set $ws3_audit "http://ws3-indexer:8013";
+        rewrite ^/api/audit$ /audit break;
+        proxy_pass $ws3_audit;
+        proxy_set_header Host $host;
+        proxy_set_header X-Api-Key "${FENGARDE_API_KEY}";
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_connect_timeout 3s;
+        proxy_read_timeout 5s;
+    }
+
+    # 2026-08-20: per-service ops/health metrics. Every workstream exposes a
+    # uniform GET /metrics -> {service, topics:{topic:{result:count}}, extra?}
+    # via services/shared/runner.py's health-port server (services/shared/
+    # runner.py:204-212) -- real per-topic acked/failed/deadlettered counters
+    # plus service-specific extras (WS-1 per-source ingest metrics, WS-4
+    # rule-fire-recency, WS-8 correlator track/promotion counts) -- but these
+    # health ports were never published to the host AND never proxied here,
+    # so an operator had no path to them short of `docker exec` + curl. Same
+    # X-Api-Key gate as /api/alerts: these were previously reachable only
+    # container-to-container, so proxying them through the (host-published)
+    # dashboard is a real posture change worth gating identically, even
+    # though the upstream health-port server itself has no auth of its own.
+    location /api/ops/ws1 {
+        resolver 127.0.0.11 ipv6=off valid=30s;
+        set $ws1_ops "http://ws1-collectors:8001";
+        if ($http_x_api_key != "${FENGARDE_API_KEY}") { return 401; }
+        rewrite ^/api/ops/ws1$ /metrics break;
+        proxy_pass $ws1_ops;
+        proxy_set_header Host $host;
+        proxy_connect_timeout 3s;
+        proxy_read_timeout 5s;
+    }
+    location /api/ops/ws2 {
+        resolver 127.0.0.11 ipv6=off valid=30s;
+        set $ws2_ops "http://ws2-normalization:8002";
+        if ($http_x_api_key != "${FENGARDE_API_KEY}") { return 401; }
+        rewrite ^/api/ops/ws2$ /metrics break;
+        proxy_pass $ws2_ops;
+        proxy_set_header Host $host;
+        proxy_connect_timeout 3s;
+        proxy_read_timeout 5s;
+    }
+    location /api/ops/ws3 {
+        resolver 127.0.0.11 ipv6=off valid=30s;
+        set $ws3_ops "http://ws3-indexer:8003";
+        if ($http_x_api_key != "${FENGARDE_API_KEY}") { return 401; }
+        rewrite ^/api/ops/ws3$ /metrics break;
+        proxy_pass $ws3_ops;
+        proxy_set_header Host $host;
+        proxy_connect_timeout 3s;
+        proxy_read_timeout 5s;
+    }
+    location /api/ops/ws4 {
+        resolver 127.0.0.11 ipv6=off valid=30s;
+        set $ws4_ops "http://ws4-detection:8004";
+        if ($http_x_api_key != "${FENGARDE_API_KEY}") { return 401; }
+        rewrite ^/api/ops/ws4$ /metrics break;
+        proxy_pass $ws4_ops;
+        proxy_set_header Host $host;
+        proxy_connect_timeout 3s;
+        proxy_read_timeout 5s;
+    }
+    location /api/ops/ws8 {
+        resolver 127.0.0.11 ipv6=off valid=30s;
+        set $ws8_ops "http://ws8-correlation:8008";
+        if ($http_x_api_key != "${FENGARDE_API_KEY}") { return 401; }
+        rewrite ^/api/ops/ws8$ /metrics break;
+        proxy_pass $ws8_ops;
+        proxy_set_header Host $host;
         proxy_connect_timeout 3s;
         proxy_read_timeout 5s;
     }

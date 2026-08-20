@@ -27,6 +27,34 @@ paths:
               schema:
                 type: array
                 items: { $ref: "#/components/schemas/Asset" }
+  /keys:
+    get:
+      summary: >
+        Key metadata (2026-08-20) -- id, tenant, scope, source, created/last-used
+        timestamps, NEVER key material. Tenant-narrowed like every other GET here:
+        the unrestricted '*' admin key (or an unauthenticated request when auth is
+        disabled) sees every tenant's keys; a tenant-scoped key sees only its own.
+        Existed in TenantKeyStore.list_keys() since the keystore shipped but had no
+        HTTP route (CLI-only, manage_keys.py) until the dashboard needed it.
+      responses:
+        "200":
+          description: key metadata visible to the caller's own scope
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  keys:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        key_id: { type: string }
+                        tenant_id: { type: string }
+                        scope: { type: string, enum: [read_only, read_write] }
+                        source: { type: string }
+                        created_at: { type: string }
+                        last_used_at: { type: [string, "null"] }
   /assets/resolve:
     get:
       summary: Resolve which MAC held an IP at a given time (historically correct)

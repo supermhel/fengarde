@@ -66,6 +66,13 @@ def run():
     check(by_id["b-1"]["verdict"] == "malicious", f"b-1 verdict {by_id['b-1']['verdict']}")
     check(by_id["b-1"]["level"] == "critical", f"b-1 level {by_id['b-1']['level']}")
     check(by_id["b-2"]["verdict"] == "suspicious", f"b-2 verdict {by_id['b-2']['verdict']}")
+    # OLLAMA_URL is popped above -> StubLLM -> every llm-tier result/alert must
+    # say so, so the dashboard can show which engine actually triaged an alert.
+    check(by_id["b-1"]["engine"] == "stub", f"b-1 engine {by_id['b-1']['engine']}")
+    check(by_id["b-1"]["model"] is None, f"b-1 model {by_id['b-1']['model']} (stub has none)")
+    alert_by_eid = {a.payload["event_ids"][0]: a.payload for a in alerts}
+    check(alert_by_eid["b-1"]["ai"]["engine"] == "stub",
+          f"b-1 alert ai.engine {alert_by_eid['b-1']['ai'].get('engine')}")
 
     # H1 (2026-07-29 audit): the daemon handler (main._make_handler) must
     # write onto the ONE bus it was given, not a fresh bus per call. Reproduces

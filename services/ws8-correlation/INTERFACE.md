@@ -1,6 +1,7 @@
 # WS-8 Correlation — Interface Declaration
 
-**Status (2026-08-18): first pass, zero-infra proven, one live smoke test.**
+**Status (2026-08-19): zero-infra proven, one live smoke test (2026-08-18) +
+pivot-correlation (device: track) added 2026-08-19, zero-infra proven.**
 Implements `docs/superpowers/specs/2026-08-18-ws8-correlation-build-plan.md`
 and the approved design in `fengarde-sec`'s
 `docs/2026-08-11-cross-alert-correlation-design.md` (private repo — read
@@ -44,14 +45,36 @@ MITRE tactics), not just repeated single-tactic noise.
 
 ## Correlation model
 
-- **Per-entity tracks, never merged.** Every alert updates BOTH an
-  `actor:{name}` track and an `ip:{addr}` track independently. The two never
-  join. This is deliberate (design divergence #2): a compound `actor+ip` key
-  would make the engine blind to the exact "same account, new host" pivot it
-  exists to catch; a transitive entity graph would let one NAT gateway merge
-  unrelated tenants' alerts into a useless mega-incident. Accepted
-  limitation: a genuine pivot (alice from a new IP) surfaces as two
-  incidents, not one — correlating those is explicitly deferred.
+- **Per-entity tracks, never merged.** Every alert updates an `actor:{name}`
+  track, an `ip:{addr}` track, and (2026-08-19) a `device:{mac-or-hostname}`
+  track, all three independently. None of them join. This is deliberate
+  (design divergence #2): a compound key would make the engine blind to the
+  exact "same account, new host" pivot it exists to catch; a transitive
+  entity graph would let one NAT gateway merge unrelated tenants' alerts
+  into a useless mega-incident.
+  **Pivot-correlation (2026-08-19, closes the accepted limitation this row
+  used to name):** an authenticated actor pivoting IP was ALREADY correlated
+  before this change — `actor:{name}` keys on identity alone, no IP
+  component, so two alerts naming the same actor from two different IPs
+  land on the same track without any special handling. The real unclosed
+  case was activity with NO captured actor identity (pre-auth recon,
+  unauthenticated probing) that moves IP mid-attack on the same host — nothing
+  linked those before. `device:{mac-or-hostname}` (`src_endpoint.mac`,
+  falling back to `.hostname`, both real parser-populated OCSF fields, never
+  inferred) now catches that: a DHCP lease renewal or NAT re-mapping changes
+  `src_endpoint.ip` between two alerts, but the device track sees the same
+  host and promotes on 2 distinct tactics even though neither `ip:` track
+  alone ever does. No allowlist check applies to `device:` — unlike an IP, a
+  mac/hostname identifies one specific host, not a shared chokepoint many
+  unrelated actors pass through, so the NAT/proxy false-merge risk the `ip:`
+  allowlist exists for doesn't apply the same way.
+  **Residual accepted limitation, now narrower and named precisely:** two
+  alerts with no `mac`/`hostname` captured at all (some parsers don't emit
+  either), or an attacker who genuinely switches to a different physical
+  host under a brand-new, never-before-seen identity, still surface as
+  separate incidents — there is no real signal left to link them without
+  fabricating one, and this project's fail-closed philosophy means that
+  residual case stays deliberately unlinked rather than guessed at.
 - **Promotion trigger is tactic diversity, not score-sum.** A track is
   promoted to an incident when its live members carry >=2 DISTINCT
   `mitre.tactic` values. Score-sum survives as the incident's `severity`
@@ -97,19 +120,26 @@ MITRE tactics), not just repeated single-tactic noise.
 - `python test_contract.py` — the 8 scenarios from the design doc's test
   plan (positive low-and-slow, no false merge on single tactic, NAT/DHCP
   allowlist, unbounded-growth EXPIRE, tenant isolation, single-tactic
-  non-promotion, replay idempotency, no transitive merge).
+  non-promotion, replay idempotency, no transitive merge) plus 3
+  pivot-correlation scenarios (device: promotes across an ip change,
+  hostname fallback when mac is absent, device: never merges with actor:/ip:).
 - `python test_correlator_sensitivity.py` — mutate-and-must-fail checks on
-  the promotion trigger and the no-merge guarantee (same "a negative
-  assertion that cannot fail is not a test" bar `eval/attack/
-  test_fire_check.py` established).
+  the promotion trigger, the no-merge guarantee, and the device pivot-link
+  (same "a negative assertion that cannot fail is not a test" bar
+  `eval/attack/test_fire_check.py` established).
 
 ## Deliberately not built (this pass)
 
-Pivot-correlation across a changed IP for the same actor (accepted
-limitation, design divergence #2). Dashboard visual design beyond a plain
-table (design doc's own stated non-goal). Tagging `agent_tool_call_burst`
-with a `mitre` block (one-line follow-up, tracked separately, not bundled
-in). A tuned (vs. default) `CORRELATION_HORIZON_SECONDS`.
+Dashboard visual design beyond a plain table (design doc's own stated
+non-goal; device: now gets its own stat tile, still no deeper redesign).
+Tagging `agent_tool_call_burst` with a `mitre` block — still not built:
+no defensible single-technique mapping exists for it, not a scheduling gap.
+A tuned (vs. default) `CORRELATION_HORIZON_SECONDS` — still the untuned
+86400s default; tuning this needs real production traffic shape, which
+this project doesn't have yet, not something a code change can close.
+Pivot-correlation across a changed IP (device: track, mac/hostname-keyed)
+shipped 2026-08-19 — see the correlation model section above for what it
+closes and the narrower residual limitation it leaves.
 
 ## Run locally
 

@@ -103,19 +103,33 @@ class OpenSearchStore(StorageAdapter):
             })
         self._node_idx = 0
         self.timeout = timeout
-        self._conn: http.client.HTTPConnection | None = None
+        # FIX (2026-08-19, found live under real multi-topic-thread load via
+        # tools/fengarde_bench_live.py): this used to be a single shared
+        # ``self._conn: http.client.HTTPConnection | None``. ws3-indexer's
+        # real daemon (main.py) runs one worker thread PER topic against ONE
+        # shared OpenSearchStore instance, and http.client.HTTPConnection is
+        # NOT safe for concurrent request/response cycles on one socket --
+        # two threads racing .request()/.getresponse() on the SAME
+        # connection interleave on the wire and raise
+        # ``http.client.ResponseNotReady: Idle``. This never showed up under
+        # the low-volume single-feeder-burst traffic every prior live-Docker
+        # check used; a sustained multi-thousand-event live-bench run hits
+        # it routinely. Fixed with a thread-local connection: each thread
+        # gets its OWN socket (see _connection()/_reset_connection_locked()
+        # below), while node-selection state (_host/_port/_https/base) stays
+        # shared and _node_lock-guarded exactly as before -- only the part
+        # that genuinely can't be shared (the raw connection) is now per-thread.
+        self._local = threading.local()
         # FIX H6 follow-up (2026-08-06): one OpenSearchStore instance is
-        # shared across every topic-consumer thread (ws3-indexer/main.py
-        # runs one worker thread PER topic against the SAME store). Without a
-        # lock, two threads hitting a connection failure at the same moment
-        # could each read/mutate _node_idx / _host / _port / _https / base /
-        # _conn concurrently and corrupt which node a request actually goes
-        # to (e.g. one thread reads the post-rotation host while another has
-        # only half-applied the rotation). This lock guards node selection
-        # and the connection object's create/reset lifecycle; the actual
-        # blocking socket I/O in _request()/bulk_index() runs OUTSIDE the
-        # lock so concurrent requests aren't needlessly serialized on the
-        # network round-trip -- only the bookkeeping around them is atomic.
+        # shared across every topic-consumer thread. Without a lock, two
+        # threads hitting a connection failure at the same moment could each
+        # read/mutate _node_idx / _host / _port / _https / base concurrently
+        # and corrupt which node a request actually goes to (e.g. one thread
+        # reads the post-rotation host while another has only half-applied
+        # the rotation). This lock guards node-selection bookkeeping; the
+        # actual blocking socket I/O in _request()/bulk_index() runs OUTSIDE
+        # the lock so concurrent requests aren't needlessly serialized on
+        # the network round-trip -- only the bookkeeping around them is atomic.
         self._node_lock = threading.Lock()
         with self._node_lock:
             self._use_current_node()
@@ -141,11 +155,15 @@ class OpenSearchStore(StorageAdapter):
                 self._use_current_node()
 
     def _connection(self) -> http.client.HTTPConnection:
+        conn = getattr(self._local, "conn", None)
+        if conn is not None:
+            return conn
         with self._node_lock:
-            if self._conn is None:
-                cls = http.client.HTTPSConnection if self._https else http.client.HTTPConnection
-                self._conn = cls(self._host, self._port, timeout=self.timeout)
-            return self._conn
+            host, port, https = self._host, self._port, self._https
+        cls = http.client.HTTPSConnection if https else http.client.HTTPConnection
+        conn = cls(host, port, timeout=self.timeout)
+        self._local.conn = conn
+        return conn
 
     def _reset_connection(self) -> None:
         """Acquires self._node_lock itself -- callers must NOT already hold it."""
@@ -153,13 +171,17 @@ class OpenSearchStore(StorageAdapter):
             self._reset_connection_locked()
 
     def _reset_connection_locked(self) -> None:
-        """Caller must hold self._node_lock."""
-        if self._conn is not None:
+        """Resets the CALLING thread's own connection (thread-local, see
+        __init__'s FIX note) -- held under self._node_lock only for
+        consistency with node-selection bookkeeping, not because thread-local
+        access itself needs the lock. Caller must hold self._node_lock."""
+        conn = getattr(self._local, "conn", None)
+        if conn is not None:
             try:
-                self._conn.close()
+                conn.close()
             except Exception:
                 pass
-            self._conn = None
+            self._local.conn = None
 
     # -- low-level request helper ------------------------------------------
     def _request(self, method: str, path: str, body: dict | None = None) -> dict:
