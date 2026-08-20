@@ -62,6 +62,36 @@ Each run writes `evtx_eval_results.json` / `splunk_eval_results.json`
 (gitignored) with the full per-file confusion breakdown, mismatches, and
 parser dead-letters — not just the stdout summary.
 
+## Real numbers observed (2026-08-19)
+
+First actual run of both harnesses on record for this project — both were
+wired since 2026-07-21 but, being dataset-gated, had never been executed
+until this pass fetched both corpora. Read as a real, honestly-narrow
+snapshot, not a comprehensive detection-accuracy claim:
+
+- **EVTX-ATTACK-SAMPLES**: 278 files / 37,364 records replayed. `priv_grant`
+  TP=1, `after_hours_admin` TP=4, all other tagged rules TN across the whole
+  corpus (0 FP, 0 FN everywhere), 0 mismatches, 0 parser dead-letters. Sysmon
+  parser coverage measured at 1864/3241 (57.5%) of the corpus's Sysmon
+  records. Most of the shipped rules (bruteforce, password_spray,
+  lateral_movement, bruteforce_sourceless) saw zero corpus events shaped to
+  fire them — a real, disclosed coverage gap in what THIS corpus happens to
+  contain (mostly single-incident technique samples, not sustained bursts),
+  not a claim those rules are broken (see `eval/attack/fire_check.py` for
+  the harness that DOES exercise them, via synthetic fixtures).
+- **splunk/attack_data**: this eval lane's XML block extractor (shared with
+  the EVTX harness) only consumes XML-shaped `windows-security.log` files;
+  4 of the 22 such files in the cloned corpus are XML-shaped, yielding 20
+  replayable records, 0 TP/FP/FN (none of those specific 4 files happened to
+  carry brute-force/spray volume). The corpus's real value — brute-force/
+  spray VOLUME the single-incident EVTX corpus lacks — mostly lives in the
+  non-XML files this harness's current extractor doesn't parse; broadening
+  it to also read Splunk's non-XML raw-text export format is a real,
+  disclosed follow-up, not attempted this pass.
+
+Both are reproducible: `git clone` the two corpora per this file's fetch
+commands above, then `make eval-detection`.
+
 ## Relationship to `make attack-scorecard` (P3-2)
 
 This eval lane produces the **empirical** half of the ATT&CK coverage
