@@ -22,12 +22,21 @@ What IS measured honestly here:
 What is NOT measured here (open TODO, needs live infra):
   - p50/p99 ingest->alert latency (batch processing has no realistic queuing
     delay to measure -- that number only means something against a live bus)
-  - live-stack EPS on a defined reference box (4 vCPU / 8 GB VPS per the plan)
-  - before/after numbers for the rule prefilter (needs a harness change to
-    force a linear rule scan for comparison -- not built this pass)
+  - live-stack EPS on a defined reference box (4 vCPU / 8 GB VPS per the
+    plan) -- see tools/fengarde_bench_live.py for the live-stack sibling
+    that closes this TODO against a real Docker/Redis/OpenSearch stack
+
+What IS now measured (2026-08-19, closes the "before/after" TODO this
+docstring used to list):
+  - rule-prefilter before/after (--compare-prefilter): ws4-detection's B1
+    class_uid bucket index vs. a forced linear scan of every rule against
+    every event (Detector(force_linear_scan=True), a measurement-only knob
+    added to main.py specifically for this comparison -- never used on any
+    real code path).
 
 Run:  python tools/fengarde_bench.py --events 5000
       python tools/fengarde_bench.py --events 50000 --mixed
+      python tools/fengarde_bench.py --events 20000 --mixed --compare-prefilter
 """
 from __future__ import annotations
 
@@ -170,7 +179,7 @@ def peak_rss_mb() -> float | None:
     return None
 
 
-def run_bench(n: int, mixed: bool) -> dict:
+def run_bench(n: int, mixed: bool, force_linear_scan: bool = False) -> dict:
     bus = Bus()
     events = generate_events(n, mixed)
 
@@ -189,7 +198,7 @@ def run_bench(n: int, mixed: bool) -> dict:
     for m in ("main", "engine", "scoring"):
         sys.modules.pop(m, None)
     ws4 = _import("ws4-detection")
-    det = ws4.Detector()
+    det = ws4.Detector(force_linear_scan=force_linear_scan)
     t0 = time.perf_counter()
     c4 = ws4.run(bus, det)
     t_detect = time.perf_counter() - t0
@@ -206,6 +215,8 @@ def run_bench(n: int, mixed: bool) -> dict:
     return {
         "n_events": n,
         "mixed_sources": mixed,
+        "rule_prefilter": "linear_scan" if force_linear_scan else "class_uid_bucket",
+        "rule_count": len(det.rules),
         "counts": {"normalized": c2["normalized"], "dropped": c2["dropped"],
                    "scored": c4["scored"], "alerts": c4["alerts"],
                    "indexed": c3["indexed"]},
@@ -217,13 +228,49 @@ def run_bench(n: int, mixed: bool) -> dict:
     }
 
 
+def _run_prefilter_comparison(n: int, mixed: bool, as_json: bool) -> int:
+    """Runs the SAME generated event set through the detect stage twice --
+    once with the real B1 class_uid bucket index, once with it forced off
+    (linear scan of every rule) -- and reports the delta. Same event set
+    both times (generate_events(n, mixed) is deterministic for a given
+    call, only the wall-clock base shifts) so the comparison isolates the
+    prefilter's own effect from any other run-to-run variance."""
+    with_bucket = run_bench(n, mixed, force_linear_scan=False)
+    linear = run_bench(n, mixed, force_linear_scan=True)
+
+    t_bucket = with_bucket["stage_seconds"]["detect"]
+    t_linear = linear["stage_seconds"]["detect"]
+    speedup = (t_linear / t_bucket) if t_bucket > 0 else None
+
+    if as_json:
+        print(json.dumps({"class_uid_bucket": with_bucket, "linear_scan": linear,
+                           "detect_stage_speedup_x": round(speedup, 2) if speedup else None},
+                          indent=2))
+        return 0
+
+    print("fengarde-bench -- rule-prefilter before/after (B1 class_uid bucket vs. linear scan)")
+    print(f"  events:        {n} ({'mixed ssh/asa/syslog' if mixed else 'linux_ssh only'}), "
+          f"{with_bucket['rule_count']} rules loaded")
+    print(f"  detect stage:  bucket={t_bucket}s   linear={t_linear}s")
+    print(f"  speedup:       {round(speedup, 2)}x" if speedup else "  speedup:       n/a")
+    print("  (isolates ws4-detection's B1 class_uid index; produce/normalize/index stages "
+          "are unaffected by this flag and shown here only for context)")
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--events", type=int, default=5000)
     ap.add_argument("--mixed", action="store_true",
                      help="rotate ssh/asa/generic_syslog sources instead of ssh-only")
     ap.add_argument("--json", action="store_true", help="machine-readable output only")
+    ap.add_argument("--compare-prefilter", action="store_true",
+                     help="run detect stage twice (B1 class_uid bucket vs. forced linear "
+                          "rule scan) and print the before/after delta instead of a single result")
     args = ap.parse_args()
+
+    if args.compare_prefilter:
+        return _run_prefilter_comparison(args.events, args.mixed, args.json)
 
     result = run_bench(args.events, args.mixed)
 

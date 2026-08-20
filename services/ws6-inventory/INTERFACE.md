@@ -15,8 +15,12 @@ undocumented. `services/ws6-inventory/` now has 7 substantive modules
 
 ## Produces
 - HTTP API (Contract C): `GET /assets`, `GET /assets/resolve`, `GET /assets/{mac}`,
-  `POST /assets/upsert`. Optionally consumed by WS-7 (dashboard, via the
-  `INVENTORY_API` config). **Not consumed by WS-2**: `services/ws2-normalization/
+  `POST /assets/upsert`, `GET /keys` (2026-08-20: key metadata — id/tenant/scope/
+  source/created/last-used, never key material — tenant-narrowed like every GET
+  above; existed in `TenantKeyStore.list_keys()` since the keystore shipped but
+  had no HTTP route until now). Consumed by WS-7 (dashboard, via `INVENTORY_API` —
+  now proxied by default, `templates/default.conf.template`'s `/api/inventory/`,
+  see WS-7's own INTERFACE.md). **Not consumed by WS-2**: `services/ws2-normalization/
   enrichment/` (A5) is local-file-only (an IOC list + a static CIDR→country map) —
   it never calls this API. This was previously documented as consumed by both;
   corrected 2026-07-21.

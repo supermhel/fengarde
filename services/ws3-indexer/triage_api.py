@@ -518,8 +518,8 @@ def make_handler(store, users_db=None, sessions: SessionStore | None = None,
             q = parse_qs(raw_query)
             requested_tenant = q.get("tenant_id", [None])[0]
             entity_type = q.get("entity_type", [None])[0]
-            if entity_type is not None and entity_type not in ("actor", "ip"):
-                raise _BadRequest("entity_type must be one of ['actor', 'ip']")
+            if entity_type is not None and entity_type not in ("actor", "ip", "device"):
+                raise _BadRequest("entity_type must be one of ['actor', 'ip', 'device']")
             entity_value = q.get("entity_value", [None])[0]
             limit = _parse_limit(q.get("limit"))
             tenant_id = self._list_tenant_filter(session, requested_tenant)

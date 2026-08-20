@@ -11,9 +11,13 @@ ai.requests). Three pieces behind one `analyze(event, reasons) -> verdict` inter
                      the primary raises (connection refused / timeout / bad output).
                      A runtime LLM failure must never crash the worker.
 
-Interface: `analyze(event, reasons) -> {verdict, summary, level}`.
+Interface: `analyze(event, reasons) -> {verdict, summary, level, engine, model}`.
 verdict in {benign, suspicious, malicious} (+ "unknown" safe default);
-level   in {low, medium, high, critical}.
+level   in {low, medium, high, critical};
+engine  in {ollama, stub} -- which analyzer actually produced this verdict
+          (FallbackLLM's `engine` reflects whichever of primary/backup ran,
+          never a hardcoded "ollama" just because a primary was configured);
+model   the Ollama model name (OllamaLLM) or None (StubLLM never has one).
 
 Selection (`make_llm()`):
   * OLLAMA_URL set AND reachable -> FallbackLLM(OllamaLLM, StubLLM)
@@ -61,6 +65,10 @@ def _urlopen(req, timeout=None):
 _VERDICTS = {"benign", "suspicious", "malicious", "unknown"}
 _LEVELS = {"low", "medium", "high", "critical"}
 _SAFE_VERDICT = {"verdict": "unknown", "summary": "", "level": "low"}
+# Every analyze() return dict extends this shape with its own {engine, model} --
+# not folded into _SAFE_VERDICT itself since that constant is reused for the
+# non-dict-model-output fallback inside OllamaLLM, which still tags engine="ollama"
+# (the response really did come from Ollama, just wasn't a JSON object).
 
 # Upper bound on the Ollama HTTP response we will read into memory. A triage JSON
 # verdict is tiny; 1 MiB is generous headroom while still capping a runaway response.
@@ -142,7 +150,8 @@ class StubLLM:
             verdict, level = "benign", "low"
         summary = (f"{sector} event scored {score}; triggered: "
                    f"{', '.join(reasons) or 'none'}.")
-        return {"verdict": verdict, "summary": summary, "level": level}
+        return {"verdict": verdict, "summary": summary, "level": level,
+                "engine": "stub", "model": None}
 
 
 class OllamaLLM:
@@ -199,8 +208,12 @@ class OllamaLLM:
             # but keep its prose as the summary for the analyst.
             _log.warn("ollama returned non-JSON output", model=self.model)
             return {"verdict": "unknown", "level": "low",
-                    "summary": (text or "")[:500]}
-        return _normalize_verdict(parsed)
+                    "summary": (text or "")[:500],
+                    "engine": "ollama", "model": self.model}
+        verdict = _normalize_verdict(parsed)
+        verdict["engine"] = "ollama"
+        verdict["model"] = self.model
+        return verdict
 
 
 class FallbackLLM:
