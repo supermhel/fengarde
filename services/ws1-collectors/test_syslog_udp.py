@@ -528,11 +528,28 @@ class TestIngestSilenceDetection(unittest.TestCase):
                 udp.silent = True
                 _poll(lambda: len(log.warnings) >= 1, timeout=1.0)
 
-                # Recovery within the SAME outage: poll for stability instead
-                # of a fixed sleep so slow CI hosts get more slack.
+                # Stay silent for several MORE ticks before recovering. This
+                # is a genuinely unavoidable real wait, not flakiness of the
+                # kind the polling changes elsewhere in this test fix: the
+                # property under test is "no SECOND warning fires while
+                # still silent," which is an absence-of-event-over-elapsed-
+                # time claim -- there is no positive event to poll for, so
+                # polling can't replace it. Too short a window and a broken
+                # "warn every tick" implementation wouldn't get a second
+                # tick to fire before recovery, passing by accident (caught
+                # in review: an earlier version of this test raced exactly
+                # that way and could not fail even when the guard was
+                # deliberately removed).
+                time.sleep(interval_s * 5)
+                self.assertEqual(len(log.warnings), 1,
+                                 "must warn exactly once per continuous outage, "
+                                 "not once per watchdog tick")
+
+                # Recovery: poll for elapsed time instead of a fixed sleep so
+                # slow CI hosts get more slack before the second outage starts.
                 udp.silent = False  # recovers
                 recovery_start = time.monotonic()
-                _poll(lambda: len(log.warnings) == 1 and time.monotonic() - recovery_start >= interval_s * 2,
+                _poll(lambda: time.monotonic() - recovery_start >= interval_s * 2,
                       timeout=1.0)
                 udp.silent = True  # goes silent again -- a NEW, separate outage
                 _poll(lambda: len(log.warnings) >= 2, timeout=2.0)
