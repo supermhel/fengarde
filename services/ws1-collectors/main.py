@@ -153,10 +153,14 @@ def main() -> None:
         kernel_rcvbuf_errors = udp_rcvbuf_errors()
         if kernel_rcvbuf_errors is not None:
             m["udp_rcvbuf_errors_cumulative"] = kernel_rcvbuf_errors
+        # Ingestion-edge-redundancy design doc (fengarde-sec) step 2: the
+        # "healthy but nothing is arriving" signal /health never had.
+        m["seconds_since_last_event"] = round(udp.seconds_since_last_event(), 1)
         return {"syslog_udp": m}
 
     shutdown = threading.Event()
     depth_thread = _start_depth_watchdog(bus, log, shutdown)
+    silence_thread = _start_ingest_silence_watchdog(udp, log, shutdown)
     try:
         serve({}, health_port=int(os.getenv("PORT", "8001")),
               service_name="ws1-collectors", shutdown=shutdown,
@@ -166,6 +170,8 @@ def main() -> None:
             udp.stop()
         if depth_thread is not None:
             depth_thread.join(timeout=5)
+        if silence_thread is not None:
+            silence_thread.join(timeout=5)
 
 
 def _start_depth_watchdog(bus, log, shutdown, *, topic: str = "raw.events",
@@ -176,6 +182,56 @@ def _start_depth_watchdog(bus, log, shutdown, *, topic: str = "raw.events",
     warn_at = int(os.getenv("RAW_EVENTS_DEPTH_WARN", "100000"))
     return start_depth_watchdog(bus, log, shutdown, [topic], warn_at=warn_at,
                                 interval_s=interval_s)
+
+
+def _start_ingest_silence_watchdog(udp, log, shutdown, *, interval_s: float = 30.0):
+    """Ingestion-edge-redundancy design doc (fengarde-sec, 2026-08-06) step 2:
+    "a healthy-but-silent ws1 with no sources looks fine" today -- /health
+    only probes the bus, never whether any datagram has actually arrived.
+    Same shape as _start_depth_watchdog (periodic check, structured warn log,
+    env-configurable threshold, 0 disables) so an operator scanning ws1's
+    logs sees one consistent watchdog convention, not two.
+
+    SYSLOG_SILENCE_WARN_S default 300s (5min) -- long enough that a quiet
+    network at 3am doesn't page anyone, short enough to catch "the feed died
+    an hour ago and nobody noticed" well before an analyst would otherwise.
+    No shipped default is a measured number (same "untuned guess, disclosed"
+    posture as every other B2-class threshold in this project) -- tune
+    against real traffic patterns.
+
+    udp=None (bind failed at startup, main() logs and stays up for /health
+    only) disables this: there is nothing to watch, and "silent" would be
+    permanently and misleadingly true.
+    """
+    if udp is None:
+        return None
+    warn_after_s = float(os.getenv("SYSLOG_SILENCE_WARN_S", "300"))
+    if warn_after_s <= 0:
+        return None
+
+    import threading  # local: mirrors this module's other lazy imports
+
+    def _loop():
+        warned = False
+        while not shutdown.is_set():
+            silence_s = udp.seconds_since_last_event()
+            if silence_s >= warn_after_s:
+                if not warned:
+                    log.warn("no syslog datagrams received recently",
+                            seconds_since_last_event=round(silence_s, 1),
+                            threshold_s=warn_after_s)
+                    warned = True
+                # else: already warned, stay quiet until it recovers -- this
+                # loop's own interval_s would otherwise re-warn every 30s for
+                # as long as the outage lasts, drowning the one signal that
+                # matters (it started) in repeats of itself.
+            else:
+                warned = False
+            shutdown.wait(interval_s)
+
+    t = threading.Thread(target=_loop, name="ingest-silence-watchdog", daemon=True)
+    t.start()
+    return t
 
 
 if __name__ == "__main__":

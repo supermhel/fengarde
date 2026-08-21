@@ -300,12 +300,31 @@ The following are **known** and **deferred** to later releases:
   restarting the killed node). The triage write path is multi-replica-safe
   via optimistic concurrency (§7) and RBAC sessions are single-process only
   unless `FENGARDE_SESSION_BACKEND=redis` (§2).
-  **`services/ws1-collectors`'s UDP syslog listener has no active/passive pair
-  and is a genuine single point of failure with no HA option today** — unlike
-  Redis/OpenSearch, this component has no opt-in profile to mitigate it; a
-  deployment where ingestion availability matters needs its own
-  network-level redundancy (e.g. two listeners behind a load balancer) until
-  this is addressed upstream.
+  **`services/ws1-collectors`'s UDP syslog listener still has no active/passive
+  pair and is a genuine single point of failure with no failover option
+  today** — unlike Redis/OpenSearch, this component has no opt-in HA profile;
+  a deployment where ingestion availability matters needs its own
+  network-level redundancy (e.g. a VIP/keepalived pair — active/active on the
+  same UDP port double-ingests, not usable, see the design doc below) until
+  this is addressed upstream. **Two related gaps closed 2026-08-21** (steps
+  1-2 of a design scoped in `fengarde-sec`'s
+  `docs/2026-08-06-ingestion-edge-redundancy.md`, private repo): (1) the
+  opt-in zero-loss spool (`SYSLOG_SPOOL_PATH`, §8 above) now mounts on a
+  named Docker volume (`ws1-spool`, `infra/docker-compose.yml`) instead of
+  the container's writable layer — before this, an operator who enabled the
+  spool without also hand-editing the compose file to add a volume mount got
+  a spool that silently vanished on every container recreate, defeating the
+  entire point of turning it on; verified with a real restart-simulating
+  test (a second `BoundedSpool` instance opened against the same path a
+  first instance left events in). (2) `/metrics`' `syslog_udp` block now
+  reports `seconds_since_last_event`, and a background watchdog
+  (`SYSLOG_SILENCE_WARN_S`, default 300s, 0 disables) logs once per outage
+  when nothing has arrived — before this, a dead/misdirected/firewalled
+  source produced no signal at all: `/health` only ever probed the bus, so a
+  silently-starved ingest edge looked identical to a legitimately quiet
+  network. Steps 3-4 of that design (an actual VIP active/passive failover
+  pair) remain not built, correctly gated behind a demonstrated need per the
+  design doc's own recommended stop-point.
 - AI-triage prompt-injection guardrails. The AI service calls a local LLM; its
   verdict is advisory and enum-constrained (see threat-boundary §6), but robust
   prompt-injection defenses are still deferred.
