@@ -66,6 +66,21 @@ services:
     entrypoint: ["sh", "/provision.sh"]
     restart: "no"
 
+  # Live-Docker-caught (2026-08-21): a fresh named volume's mount point is
+  # created by Docker as root:root, and ws1-collectors runs as a non-root
+  # user (UID 10001, Dockerfile) -- without this, the FIRST real write into
+  # the volume (BoundedSpool creating spool.jsonl, or its own _rewrite()
+  # tempfile) hits Permission denied. One-shot chown, same restart:"no"
+  # pattern as `provision` above; runs once per volume lifetime, no-op
+  # (and near-instant) once ownership is already correct.
+  ws1-spool-init:
+    image: busybox:1.36
+    container_name: siem-ws1-spool-init
+    volumes:
+      - ws1-spool:/var/lib/fengarde/spool
+    entrypoint: ["chown", "10001:999", "/var/lib/fengarde/spool"]
+    restart: "no"
+
   # ---- workstream services (build context = repo root) ----
   ws1-collectors:
     build: { context: .., dockerfile: services/ws1-collectors/Dockerfile }
@@ -77,9 +92,26 @@ services:
       - REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0
       # B2 ingest-edge shedding (default 2000/s; explicit here for visibility).
       - SYSLOG_MAX_EVENTS_PER_SEC=2000
-      # Zero-loss spool is opt-in; set SYSLOG_SPOOL_PATH (on a permissioned
-      # volume, see SECURITY.md §8) + optional SYSLOG_SPOOL_MAX_BYTES to enable.
-    depends_on: { redis: { condition: service_healthy } }
+      # Zero-loss spool is opt-in and unset by default, same as always -- set
+      # SYSLOG_SPOOL_PATH to a FILE inside the named volume mounted below
+      # (see SECURITY.md §8) + optional SYSLOG_SPOOL_MAX_BYTES to enable it.
+      # MUST be a file path, not the bare mount directory -- BoundedSpool
+      # opens it as a file; pointing it at the directory itself used to fail
+      # silently (IsADirectoryError swallowed by a broad except OSError,
+      # zero-loss spool inert with zero error), now fails loud at startup
+      # instead (services/ws1-collectors/collectors/spool.py). Ingestion-
+      # edge-redundancy design doc (fengarde-sec) step 1: the volume now
+      # exists and survives a container recreate -- before this, an operator
+      # who set SYSLOG_SPOOL_PATH without ALSO hand-editing this file to add
+      # a volume mount got a spool that lived on the container's writable
+      # layer and vanished on recreate, silently defeating the entire point
+      # of enabling it.
+      # - SYSLOG_SPOOL_PATH=/var/lib/fengarde/spool/spool.jsonl
+    volumes:
+      - ws1-spool:/var/lib/fengarde/spool
+    depends_on:
+      redis: { condition: service_healthy }
+      ws1-spool-init: { condition: service_completed_successfully }
     # v0.4: /health now reports 503 when a worker can't reach the bus, so a
     # wedged-but-alive service is detectable/restartable (was a static "ok").
     healthcheck:
@@ -266,3 +298,4 @@ volumes:
   inventory-data:
   prometheus-data:
   grafana-data:
+  ws1-spool:

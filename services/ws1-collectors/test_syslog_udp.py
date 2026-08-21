@@ -301,6 +301,47 @@ class TestBoundedSpool(unittest.TestCase):
                                 min_free_bytes=1, min_free_pct=0.0)
         self.assertTrue(spool_ok.append({"i": 0}))
 
+    def test_construction_refuses_a_directory_path(self):
+        """Live-Docker-caught (2026-08-21): SYSLOG_SPOOL_PATH pointed at a
+        named volume's mount point (a directory) used to be silently
+        accepted -- every append()/drain_into() then hit IsADirectoryError,
+        caught by their own broad except OSError, and no-op'd forever with
+        zero error and zero log. A misconfigured zero-loss feature must fail
+        loud at construction, not silently become its own opposite."""
+        directory_path = Path(self._tmp.name)  # the tmpdir itself, not a file in it
+        with self.assertRaises(IsADirectoryError):
+            BoundedSpool(directory_path, max_bytes=1_000_000)
+
+    def test_replay_survives_a_process_restart(self):
+        """Ingestion-edge-redundancy design doc (fengarde-sec) step 1: "verify
+        replay-on-boot." Every other spool test appends and drains on the SAME
+        instance -- this is the one gap the design doc named: a NEW instance,
+        pointed at the SAME path (simulating a container restart with the
+        spool on a durable/named volume, per docker-compose.yml's ws1-collectors
+        service), must pick up and replay whatever the OLD instance left
+        on disk. Mechanically this should already work (BoundedSpool.__init__
+        just opens whatever file exists), but nothing proved it until now.
+        """
+        old_process_spool = BoundedSpool(self.path, max_bytes=1_000_000)
+        for i in range(5):
+            self.assertTrue(old_process_spool.append({"i": i}))
+        self.assertEqual(old_process_spool.pending_count(), 5)
+        # No drain -- the process "dies" here with events still pending,
+        # same as a container killed mid-flood before the drain loop caught up.
+        del old_process_spool
+
+        new_process_spool = BoundedSpool(self.path, max_bytes=1_000_000)
+        self.assertEqual(new_process_spool.pending_count(), 5,
+                         "a new instance pointed at the same path must see the "
+                         "prior process's un-replayed events, not start empty")
+
+        replayed_events = []
+        replayed = new_process_spool.drain_into(replayed_events.append)
+        self.assertEqual(replayed, 5)
+        self.assertEqual([e["i"] for e in replayed_events], [0, 1, 2, 3, 4],
+                         "replay-on-boot must preserve FIFO order across the restart")
+        self.assertEqual(new_process_spool.pending_count(), 0)
+
 
 class TestSyslogUDPServerSpoolFallback(unittest.TestCase):
     def setUp(self):
@@ -386,6 +427,103 @@ class TestSyslogUDPServerSpoolFallback(unittest.TestCase):
                                "the plain shed counter")
         finally:
             server.stop()
+
+
+class TestIngestSilenceDetection(unittest.TestCase):
+    """Ingestion-edge-redundancy design doc (fengarde-sec) step 2:
+    seconds_since_last_event() -- the signal /health never had for
+    "healthy but nothing is arriving"."""
+
+    def test_starts_quiet_since_construction_not_silent_forever(self):
+        bus = Bus()
+        server = SyslogUDPServer(bus, host="127.0.0.1", port=0)
+        try:
+            # No datagrams sent, no start() even called -- a fresh server
+            # reads as "quiet since just now", never a large/undefined number.
+            self.assertLess(server.seconds_since_last_event(), 1.0,
+                            "a freshly constructed server must read as recently "
+                            "quiet (construction time), not silent forever")
+        finally:
+            # __init__ binds the socket eagerly (P0-4), before start() -- must
+            # release it even though start()/stop() were never otherwise
+            # called, or the bound socket leaks past this test.
+            server.stop()
+
+    def test_receiving_a_datagram_resets_the_silence_clock(self):
+        bus = Bus()
+        server = SyslogUDPServer(bus, host="127.0.0.1", port=0, deterministic_id=True)
+        server.start()
+        try:
+            # Force the clock forward past what a real datagram should reset.
+            server._last_received_ts -= 10.0
+            self.assertGreaterEqual(server.seconds_since_last_event(), 10.0)
+
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            try:
+                sock.sendto(SYSLOG_LINE.encode(), ("127.0.0.1", server.port))
+            finally:
+                sock.close()
+
+            _poll(lambda: server.seconds_since_last_event() < 5.0, timeout=2.0)
+            self.assertLess(server.seconds_since_last_event(), 5.0,
+                            "a real received datagram must reset the silence clock")
+        finally:
+            server.stop()
+
+    def test_watchdog_warns_once_then_stays_quiet_until_recovery(self):
+        """The watchdog must not re-warn every tick for the duration of one
+        outage (that would drown the one signal that matters in repeats of
+        itself), but must warn again on a SECOND, separate silent period."""
+        import threading
+        sys.path.insert(0, str(HERE))
+        from main import _start_ingest_silence_watchdog  # noqa: E402
+
+        class _FakeUDP:
+            def __init__(self):
+                self.silent = False
+            def seconds_since_last_event(self):
+                return 999.0 if self.silent else 0.0
+
+        class _FakeLog:
+            def __init__(self):
+                self.warnings = []
+            def warn(self, msg, **kw):
+                self.warnings.append((msg, kw))
+
+        udp = _FakeUDP()
+        log = _FakeLog()
+        shutdown = threading.Event()
+        os.environ["SYSLOG_SILENCE_WARN_S"] = "0.05"
+        try:
+            t = _start_ingest_silence_watchdog(udp, log, shutdown, interval_s=0.02)
+            try:
+                udp.silent = True
+                _poll(lambda: len(log.warnings) >= 1, timeout=1.0)
+                time.sleep(0.1)  # let several more ticks pass during the SAME outage
+                self.assertEqual(len(log.warnings), 1,
+                                 "must warn exactly once per continuous outage, "
+                                 "not once per watchdog tick")
+
+                udp.silent = False  # recovers
+                time.sleep(0.1)
+                udp.silent = True  # goes silent again -- a NEW, separate outage
+                _poll(lambda: len(log.warnings) >= 2, timeout=1.0)
+                self.assertEqual(len(log.warnings), 2,
+                                 "a second, separate silent period must warn again")
+            finally:
+                shutdown.set()
+                t.join(timeout=2)
+        finally:
+            del os.environ["SYSLOG_SILENCE_WARN_S"]
+
+    def test_udp_none_disables_the_watchdog(self):
+        """A bind failure (main() logs and stays up for /health only) must not
+        make the watchdog permanently, misleadingly report silence."""
+        sys.path.insert(0, str(HERE))
+        from main import _start_ingest_silence_watchdog  # noqa: E402
+        import threading
+        result = _start_ingest_silence_watchdog(None, None, threading.Event())
+        self.assertIsNone(result, "udp=None must disable the watchdog, not crash or warn")
 
 
 if __name__ == "__main__":

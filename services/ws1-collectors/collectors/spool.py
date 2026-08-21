@@ -63,6 +63,25 @@ class BoundedSpool:
         self.min_free_pct = min_free_pct
         self._lock = threading.Lock()
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        if self.path.is_dir():
+            # Live-Docker-caught (2026-08-21, ingestion-edge-redundancy step
+            # 1): pointing SYSLOG_SPOOL_PATH at a directory (e.g. a named
+            # volume's mount point itself, an easy mistake -- "give me a
+            # spool location" reads as "give me a directory") used to be
+            # silently accepted here, then every append()/drain_into() call
+            # hit IsADirectoryError, caught by their own broad
+            # `except OSError`, and no-op'd forever with zero error and zero
+            # log -- a completely inert spool that LOOKED enabled ("syslog
+            # zero-loss spool enabled" logged at startup) while losing every
+            # event exactly as if it had never been turned on. Fail loud at
+            # construction instead, same posture as RedisSessionStore
+            # refusing to start without a signing secret -- a misconfigured
+            # zero-loss feature must not silently degrade to zero-loss's
+            # opposite.
+            raise IsADirectoryError(
+                f"SYSLOG_SPOOL_PATH must be a FILE path, not a directory: "
+                f"{self.path} is a directory. Point it at a file inside your "
+                f"mounted volume, e.g. {self.path}/spool.jsonl")
         if not self.path.exists():
             self.path.touch()
 

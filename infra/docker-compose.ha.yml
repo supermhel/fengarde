@@ -379,7 +379,14 @@ services:
       - REDIS_SENTINEL_HOSTS=redis-sentinel-1:26379,redis-sentinel-2:26379,redis-sentinel-3:26379
       - REDIS_SENTINEL_MASTER=mymaster
       - REDIS_PASSWORD=${REDIS_PASSWORD:-}
-    depends_on: !override {redis-1: {condition: service_healthy}}
+    # !override replaces the base file's whole depends_on map (Compose spec
+    # merge semantics) -- ws1-spool-init must be re-listed here or the HA
+    # profile silently loses the wait-for-chown ordering the base file's own
+    # depends_on establishes (caught while wiring the base fix, not assumed
+    # to carry over).
+    depends_on: !override
+      redis-1: {condition: service_healthy}
+      ws1-spool-init: {condition: service_completed_successfully}
     networks: [default, ha]
 
   ws2-normalization:

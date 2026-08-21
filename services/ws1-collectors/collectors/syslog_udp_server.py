@@ -322,6 +322,18 @@ class SyslogUDPServer:
         self._spool_drain_interval_s = spool_drain_interval_s
         self._spool_shutdown = threading.Event()
         self._spool_thread: Optional[threading.Thread] = None
+        # Ingestion-edge-redundancy design doc (fengarde-sec, 2026-08-06),
+        # step 2: "a healthy-but-silent ws1 with no sources looks fine" --
+        # /health only ever probed the bus, never whether anything was
+        # actually arriving on the socket. Stamped at recv time (_recv_loop),
+        # deliberately NOT at produce/spool time, so this measures the thing
+        # a dead/misdirected/firewalled source actually breaks: datagrams
+        # reaching the kernel socket at all. Initialized to construction time
+        # (not 0) so a freshly-started server with zero traffic yet reads as
+        # "quiet since boot", not "silent forever" -- the watchdog's own
+        # startup grace period is this value, for free, with no separate
+        # boot-time tracking needed.
+        self._last_received_ts = time.time()
 
         # P0-4: raw socket, not socketserver.UDPServer -- gives us a tight
         # recv loop decoupled from per-datagram handling (see module
@@ -507,11 +519,27 @@ class SyslogUDPServer:
                 continue
             if not self._running.is_set():
                 break
+            # A single float write is atomic under CPython's GIL -- no lock
+            # needed, same reasoning as every other lock-free counter this
+            # module deliberately doesn't guard (see _shed_lock's own scope:
+            # it protects multi-field aggregate updates, not single writes).
+            self._last_received_ts = time.time()
             try:
                 self._queue.put_nowait((data, addr[0]))
             except queue.Full:
                 with self._shed_lock:
                     self.events_queue_full += 1
+
+    def seconds_since_last_event(self) -> float:
+        """Wall-clock seconds since the last datagram reached the socket.
+
+        Measured at recv time, not produce/spool time -- this answers "is
+        anything arriving at all", which is a different question from
+        "is what arrives making it to the bus" (events_dropped/events_lost
+        already answer that one). See the ingestion-edge-redundancy design
+        doc (fengarde-sec) step 2 for why this didn't exist before.
+        """
+        return time.time() - self._last_received_ts
 
     def _worker_loop(self) -> None:
         while self._running.is_set():
