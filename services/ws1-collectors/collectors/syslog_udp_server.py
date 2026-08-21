@@ -40,6 +40,8 @@ on ``/metrics`` without the per-event I/O tax.
 """
 from __future__ import annotations
 
+from collections import OrderedDict
+
 import hashlib
 import queue
 import socket
@@ -173,7 +175,7 @@ class TenantTokenBuckets:
     own bucket so the configured rate is a per-tenant ceiling, not a pool.
     """
 
-    def __init__(self, rate_per_sec: float):
+    def __init__(self, rate_per_sec: float, logger=None):
         self._rate = max(rate_per_sec, 0)
         self._buckets: "dict[str, _TokenBucket]" = {}
         self._default_bucket = _TokenBucket(self._rate)
@@ -186,6 +188,7 @@ class TenantTokenBuckets:
         # of the tenant budget without weakening the tenant-wide ceiling.
         self._source_buckets: "dict[str, _TokenBucket]" = {}
         self._lock = threading.Lock()
+        self._log = logger
 
     def take(self, tenant_id: str, source_ip: "Optional[str]" = None) -> bool:
         bucket = self._default_bucket if not tenant_id else self._buckets.get(tenant_id)
@@ -198,6 +201,9 @@ class TenantTokenBuckets:
                         self._buckets[tenant_id] = bucket
             else:
                 bucket = self._default_bucket
+                if self._log is not None:
+                    self._log.warn("tenant bucket map full, degrading to shared default",
+                                   tenant_id=tenant_id, source_ip=source_ip)
         if not bucket.take():
             return False
         if not source_ip:
@@ -211,6 +217,9 @@ class TenantTokenBuckets:
                         self._source_buckets[source_ip] = src_bucket
             else:
                 src_bucket = self._default_bucket  # bounded map; degrade rather than grow forever
+                if self._log is not None:
+                    self._log.warn("source bucket map full, degrading to shared default",
+                                   tenant_id=tenant_id, source_ip=source_ip)
         return src_bucket.take()
 
 
@@ -303,7 +312,7 @@ class SyslogUDPServer:
         # B2: one bucket per tenant_id so one tenant's flood cannot shed another
         # tenant's datagrams. Events with no tenant_id fall into the shared
         # default bucket, preserving prior global behavior for unknown sources.
-        self._buckets = TenantTokenBuckets(max_events_per_sec)
+        self._buckets = TenantTokenBuckets(max_events_per_sec, logger=self.log)
         self._last_shed_log = 0.0   # throttles the shed-warning log itself: a
                                     # real flood must not turn into a log flood
         # P0-4: genuinely concurrent now (a fixed pool of worker threads all
@@ -316,7 +325,7 @@ class SyslogUDPServer:
         # this is purely additive, so it cannot regress the counters-under-
         # lock fix.
         self._peer_metrics_max = max(1, peer_metrics_max)
-        self._peer_metrics: "dict[str, dict[str, int]]" = {}
+        self._peer_metrics: "OrderedDict[str, dict[str, int]]" = OrderedDict()
         self._shed_lock = threading.Lock()
         self._spool = spool
         self._spool_drain_interval_s = spool_drain_interval_s
@@ -419,14 +428,13 @@ class SyslogUDPServer:
         counters: every datagram remains accounted for by the totals.
         """
         metrics = self._peer_metrics
-        entry = metrics.pop(peer_ip, None)  # reinsert below => LRU recency
-        if entry is None:
+        if peer_ip not in metrics:
             if len(metrics) >= self._peer_metrics_max:
-                # evict the oldest key (Python dicts preserve insertion order)
+                # evict the oldest key (OrderedDict preserves insertion order)
                 metrics.pop(next(iter(metrics)))
-            entry = {"produced": 0, "dropped": 0, "shed": 0}
-        entry[kind] += 1
-        metrics[peer_ip] = entry
+            metrics[peer_ip] = {"produced": 0, "dropped": 0, "shed": 0}
+        metrics[peer_ip][kind] += 1
+        metrics.move_to_end(peer_ip)
 
     def per_source_metrics(self) -> dict:
         """Snapshot of the bounded per-source breakdown for ``metrics_provider``.

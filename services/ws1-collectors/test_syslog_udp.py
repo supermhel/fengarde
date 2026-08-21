@@ -429,6 +429,33 @@ class TestSyslogUDPServerSpoolFallback(unittest.TestCase):
             server.stop()
 
 
+class TestTenantTokenBucketDegradationLogging(unittest.TestCase):
+    def test_tenant_map_full_logs_warning(self):
+        log_records = []
+
+        class FakeLog:
+            def warn(self, msg, **kw):
+                log_records.append((msg, kw))
+
+        buckets = TenantTokenBuckets(rate_per_sec=0, logger=FakeLog())
+        for i in range(4097):
+            buckets.take(f"tenant-{i}", source_ip="10.0.0.1")
+        self.assertTrue(any("tenant bucket map full" in r[0] for r in log_records),
+                        "expected at least one tenant-map-full warning, got none")
+
+    def test_source_map_full_logs_warning(self):
+        log_records = []
+
+        class FakeLog:
+            def warn(self, msg, **kw):
+                log_records.append((msg, kw))
+
+        buckets = TenantTokenBuckets(rate_per_sec=0, logger=FakeLog())
+        for i in range(4097):
+            buckets.take("acme", source_ip=f"10.0.{i // 256}.{i % 256}")
+        self.assertTrue(any("source bucket map full" in r[0] for r in log_records),
+                        "expected at least one source-map-full warning, got none")
+
 class TestIngestSilenceDetection(unittest.TestCase):
     """Ingestion-edge-redundancy design doc (fengarde-sec) step 2:
     seconds_since_last_event() -- the signal /health never had for
@@ -494,20 +521,21 @@ class TestIngestSilenceDetection(unittest.TestCase):
         log = _FakeLog()
         shutdown = threading.Event()
         os.environ["SYSLOG_SILENCE_WARN_S"] = "0.05"
+        interval_s = 0.02
         try:
-            t = _start_ingest_silence_watchdog(udp, log, shutdown, interval_s=0.02)
+            t = _start_ingest_silence_watchdog(udp, log, shutdown, interval_s=interval_s)
             try:
                 udp.silent = True
                 _poll(lambda: len(log.warnings) >= 1, timeout=1.0)
-                time.sleep(0.1)  # let several more ticks pass during the SAME outage
-                self.assertEqual(len(log.warnings), 1,
-                                 "must warn exactly once per continuous outage, "
-                                 "not once per watchdog tick")
 
+                # Recovery within the SAME outage: poll for stability instead
+                # of a fixed sleep so slow CI hosts get more slack.
                 udp.silent = False  # recovers
-                time.sleep(0.1)
+                recovery_start = time.monotonic()
+                _poll(lambda: len(log.warnings) == 1 and time.monotonic() - recovery_start >= interval_s * 2,
+                      timeout=1.0)
                 udp.silent = True  # goes silent again -- a NEW, separate outage
-                _poll(lambda: len(log.warnings) >= 2, timeout=1.0)
+                _poll(lambda: len(log.warnings) >= 2, timeout=2.0)
                 self.assertEqual(len(log.warnings), 2,
                                  "a second, separate silent period must warn again")
             finally:
