@@ -78,12 +78,43 @@ BASE_S = int(os.getenv("CHAOS_BASE_S", str(int(time.time()))))
 # Killed in this order, one every KILL_INTERVAL_S while the replay is in flight.
 # Named as compose *service* names (not container names, which vary with
 # COMPOSE_PROJECT_NAME) -- `docker compose kill -s KILL <service>` resolves it.
-# ws6/ws7 are excluded: ws6 (inventory) and ws7 (dashboard) aren't on the
-# raw->alert critical path this gate is proving.
+# ws7 is excluded: it's HTTP-read-only, no bus code anywhere in the service.
+#
+# ws6 is ALSO excluded, but the ORIGINAL comment here ("aren't on the
+# raw->alert critical path") was false for it and went stale silently: since
+# 2026-08-05 (bus_consumer.py, wired live via BUS_BACKEND=redis in
+# infra/docker-compose.yml) ws6-inventory DOES consume off the bus
+# (assets.updates) and CAN produce onto raw.events -- the exact topic this
+# harness replays into and verify() reads alerts back from. It stays
+# excluded for a real reason, just not the one originally written: these
+# scenarios are SSH brute-force bursts over 203.0.113.0/24, never an
+# assets.updates observation, so ws6's raw.events-producing path (gated on
+# `is_new_device`, see bus_consumer.py::make_handler) never fires during a
+# chaos run -- killing ws6 here would exercise nothing verify() can observe,
+# which is the "test that can't fail" anti-pattern this project explicitly
+# guards against (eval/attack/test_fire_check.py's convention) rather than
+# real coverage. Separately and more importantly: ws6's OWN crash-recovery
+# has NO test anywhere (no /health route, no healthcheck in compose, the
+# bus_consumer thread is unsupervised) -- that gap is real but is not what
+# adding it to this list would prove; tracked as its own item, not solved by
+# a mechanical KILL_TARGETS addition. Corrected 2026-08-23.
+#
+# ws8-correlation (cg-correlate on `alerts` -> `incidents`, shipped 2026-08-18)
+# WAS missing here with no exclusion comment -- an oversight, not a decision:
+# unlike ws6/ws7 it IS bus-connected on a path this gate cares about (it
+# consumes the very `alerts` topic verify() reads). Added 2026-08-23.
+# Caveat (read before trusting a green run as WS-8 coverage): these scenarios
+# are single-tactic brute-force bursts, so none cross the >=2-distinct-MITRE-
+# tactic threshold ws8 needs to promote an incident -- killing ws8 here proves
+# it dies and restarts cleanly without wedging the `cg-correlate` consumer
+# group or the rest of the pipeline, NOT exactly-once incident promotion
+# under kill. That needs its own multi-tactic-per-entity scenario + an
+# incidents-* verify() query; tracked as a separate gap, not solved by this
+# one-line addition.
 COMPOSE_FILE = os.getenv("CHAOS_COMPOSE_FILE", "infra/docker-compose.yml")
 KILL_TARGETS = [
     "ws1-collectors", "ws2-normalization",
-    "ws4-detection", "ws3-indexer", "ws5-ai",
+    "ws4-detection", "ws3-indexer", "ws5-ai", "ws8-correlation",
 ]
 KILL_INTERVAL_S = float(os.getenv("CHAOS_KILL_INTERVAL_S", "3.0"))
 

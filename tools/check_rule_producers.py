@@ -154,6 +154,29 @@ FIXTURES: dict[str, list[dict]] = {
                  "hostname": "plc-line4", "device_type": "plc",
                  "sector": "ot", "seen_at": 1751500000000}, "meta": {}},
     ],
+    # Gap-hunt finding (2026-08-23): sysmon shipped 2026-07-22 and was never
+    # added here -- collect_producible()'s own missing-fixture check would
+    # have caught this on day one, but nothing called collect_producible()
+    # (see main()/collect_events() below), so it silently sat unchecked for
+    # a month despite this file's own docstring claiming to check "every
+    # registered parser". Mirrors parsers/test_sysmon.py's fixtures.
+    "sysmon": [
+        {"raw": {"EventID": 1, "TimeCreated": 1750000000000, "Computer": "wks-jdoe",
+                 "Image": r"C:\Windows\System32\cmd.exe", "CommandLine": "cmd /c whoami",
+                 "ProcessId": "1234", "ParentImage": r"C:\Windows\explorer.exe",
+                 "ParentProcessId": "800", "User": "CORP\\jdoe",
+                 "Hashes": "SHA256=ABCDEF0123456789"}, "meta": {}},
+        {"raw": {"EventID": 3, "TimeCreated": 1750000001000, "Computer": "wks-jdoe",
+                 "Image": r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
+                 "User": "CORP\\jdoe",
+                 "SourceIp": "10.0.1.15", "SourcePort": "51000", "SourceHostname": "wks-jdoe",
+                 "DestinationIp": "203.0.113.9", "DestinationPort": "443",
+                 "DestinationHostname": "evil.example"}, "meta": {}},
+        {"raw": {"EventID": 11, "TimeCreated": 1750000002000, "Computer": "wks-jdoe",
+                 "Image": r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
+                 "TargetFilename": r"C:\Users\jdoe\AppData\Local\Temp\payload.exe",
+                 "User": "CORP\\jdoe"}, "meta": {}},
+    ],
 }
 
 
@@ -169,46 +192,6 @@ def flatten(doc, prefix: str = "") -> dict[str, object]:
             out[p] = v
             out.update(flatten(v, p))
     return out
-
-
-def collect_producible() -> tuple[set[str], set[tuple[str, object]]]:
-    """(all field paths ever populated, all (path, value) pairs ever observed).
-
-    Distinguishing the two matters: an EQUALITY selection like `class_uid: 6005`
-    is only satisfiable if some parser emits class_uid=6005 specifically -- the
-    path existing (class_uid is on every event) is not enough. group_by/
-    distinct_field only need the path to exist (any value groups/counts fine).
-    """
-    all_paths: set[str] = set()
-    all_pairs: set[tuple[str, object]] = set()
-    for source_type, raws in FIXTURES.items():
-        parser = _REGISTRY.get(source_type)
-        if parser is None:
-            print(f"WARNING: fixture defined for unregistered source_type "
-                  f"{source_type!r}", file=sys.stderr)
-            continue
-        for raw in raws:
-            payload = {"source_type": source_type, **raw}
-            event = parser.parse(payload)
-            if event is not None:
-                # v0.4: real events go through WS-2's parse -> enrich pipeline
-                # before a rule ever sees them (services/ws2-normalization/
-                # main.py::normalize_one). Fields enrichment adds (e.g.
-                # src_endpoint.location.country) are as "real" as parser
-                # fields for satisfiability purposes -- skipping this step
-                # would make common_impossible_travel look dormant when it
-                # isn't.
-                event = enrich(event)
-                flat = flatten(event)
-                all_paths |= set(flat)
-                all_pairs |= {(k, v) for k, v in flat.items()
-                             if isinstance(v, (str, int, float, bool)) or v is None}
-    missing = set(_REGISTRY) - set(FIXTURES)
-    if missing:
-        print(f"NOTE: no fixture for registered parser(s) {sorted(missing)} -- "
-              f"their fields are NOT checked. Add a fixture when convenient.",
-              file=sys.stderr)
-    return all_paths, all_pairs
 
 
 def rule_referenced(rule: dict) -> tuple[set[tuple[str, object]], set[str]]:
@@ -259,6 +242,25 @@ def _event_matches(event: dict, equality: set) -> bool:
 
 
 def main() -> int:
+    # Gap-hunt finding (2026-08-23): this was previously only checked inside
+    # collect_producible(), which main() never called -- a registered parser
+    # with no FIXTURES entry (sysmon, for a month) sat completely unchecked,
+    # print("[OK] ...") and all, contradicting this file's own docstring
+    # ("runs every registered parser"). A missing fixture isn't a soft NOTE:
+    # it means this gate's coverage claim is false for that parser's fields,
+    # so it fails the gate now instead of relying on someone reading stderr.
+    missing = sorted(set(_REGISTRY) - set(FIXTURES))
+    if missing:
+        print(f"[FAIL] no FIXTURES entry for registered parser(s) {missing} -- "
+              f"their fields are NOT checked by this gate. Add a fixture "
+              f"(mirror that parser's own test file) before this can pass.")
+        return 1
+    stale = sorted(set(FIXTURES) - set(_REGISTRY))
+    if stale:
+        print(f"[FAIL] FIXTURES entry for unregistered source_type(s) {stale} -- "
+              f"a removed/renamed parser left a stale fixture behind.")
+        return 1
+
     events = collect_events()
     # Global sets, kept only to write precise diagnostics.
     all_paths: set[str] = set()

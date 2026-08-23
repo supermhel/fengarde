@@ -195,8 +195,11 @@ writes are protected at two layers: an in-process lock (single replica) plus
 OpenSearch **optimistic concurrency** (`if_seq_no`/`if_primary_term` CAS with
 bounded retry, surfacing exhaustion as an honest 409) for writers the lock can't
 see — another ws3 replica against a shared cluster. The CAS wire format is
-unit-tested against a fake transport; like the rest of the OpenSearch adapter it
-has not yet been exercised against a live cluster.
+unit-tested against a fake transport, and has been **proven live** (2026-08-11,
+`test_opensearch_cas_concurrency_live.py`, 8 real threads racing a real 3-node
+cluster, sensitivity-verified: deliberately breaking the CAS lost 7/8 writes,
+confirming the test actually measures concurrency control) — wired into CI's
+`opensearch-integration` job since 2026-08-21 so this can't go stale again.
 
 ### 8. On-disk spool (WS-1 B2) stores raw events in cleartext
 

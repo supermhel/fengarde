@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import os
 import sys
+import threading
 from collections import deque
 from pathlib import Path
 
@@ -81,6 +82,17 @@ class AiWorker:
         self.llm = make_llm()
         self.classifier = LightClassifier()
         self._triage = _TriageCache(cap=seen_cap)
+        # Gap-hunt finding (2026-08-23): llm_adapter.py tags every verdict
+        # with `engine`/`model` (stub vs ollama vs the fallback-on-error
+        # path) and that tag is genuinely disclosed end-to-end -- it reaches
+        # the stored alert doc and renders per-alert in the dashboard. But
+        # nothing aggregated it: unlike ws8-correlation (main.py wires
+        # `metrics_provider=correlator.metrics`), ws5-ai's serve() call
+        # passed none, so an operator could only discover "we've silently
+        # been running on the stub for the last hour" by opening alerts one
+        # at a time or reading logs. This counter + metrics() closes that.
+        self._engine_lock = threading.Lock()
+        self._engine_counts: dict[str, int] = {}
 
     @staticmethod
     def _dedup_key(request: dict):
@@ -121,6 +133,10 @@ class AiWorker:
                 # future redelivery of the same event.
                 return dict(cached)
         verdict = self.llm.analyze(event, reasons)
+        engine = verdict.get("engine")
+        if engine:  # a genuine LLM call, not a classifier-tier/cache-hit skip
+            with self._engine_lock:
+                self._engine_counts[engine] = self._engine_counts.get(engine, 0) + 1
         result = {
             "event_id": request.get("event_id"),
             "tier": tier,
@@ -136,6 +152,17 @@ class AiWorker:
             # `result` below is also handed to bus.produce() by the caller.
             self._triage.put(eid, dict(result))
         return result
+
+    def metrics(self) -> dict:
+        """Aggregate LLM-engine mix for /metrics (see __init__'s comment for
+        why this exists) -- e.g. {"by_engine": {"stub": 12, "ollama": 3},
+        "total": 15}. Counts only genuine LLM invocations: classifier-tier
+        requests never call the LLM at all, and a cache hit (redelivery of
+        an already-triaged event) returns the prior verdict without a new
+        call, so neither increments this."""
+        with self._engine_lock:
+            by_engine = dict(self._engine_counts)
+        return {"by_engine": by_engine, "total": sum(by_engine.values())}
 
 
 def _alert_payload(result: dict, event: dict) -> dict:
@@ -218,7 +245,8 @@ def main():
 
     serve({"ai.requests": ("cg-ai", handler)},
           health_port=int(os.getenv("PORT", "8005")), service_name="ws5-ai",
-          bus_factory=bus_factory)
+          bus_factory=bus_factory,
+          metrics_provider=lambda: {"ai_triage": worker.metrics()})
 
 
 if __name__ == "__main__":

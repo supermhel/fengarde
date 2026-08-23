@@ -284,6 +284,19 @@ class Rule:
         self.condition = det.get("condition", "")
         self.selections = {k: v for k, v in det.items() if k != "condition"}
         self._allowlists_dir = allowlists_dir
+        # Gap-hunt finding (2026-08-23): an unparseable condition (valid YAML,
+        # bad boolean logic) used to fail closed to "no match" in
+        # _eval_condition with ZERO logging -- unlike the future-timestamp
+        # guard a few hundred lines below, which got an explicit warn
+        # specifically because a silent fail-closed drop was judged
+        # unacceptable. Net effect before this: a hot-reloaded rule with a
+        # typo'd condition showed "active" via /rules and simply never fired
+        # again, silently, forever. Warned ONCE per Rule instance (not once
+        # per event -- a broken condition fails on every event, and reload()
+        # builds a fresh Rule on every edit, so this naturally re-warns on
+        # each reload attempt, same "warn once until state changes"
+        # convention as ws1-collectors' ingest-silence watchdog).
+        self._condition_error_warned = False
         # Perf #1 (2026-07-29 audit): self.condition/self.selections are fixed
         # at load time and never change for this Rule's lifetime (reload()
         # builds fresh Rule instances rather than mutating one), yet
@@ -520,8 +533,23 @@ class Rule:
         # condition must fail closed to "no match", never crash the worker.
         try:
             value, end = _parse_or(tokens, 0, matched)
-            return bool(value) if end == len(tokens) else False
-        except (ValueError, IndexError, RecursionError):
+            if end != len(tokens):
+                # Trailing garbage tokens (e.g. "a b", no connective) parsed
+                # without raising, but never consumed the full condition --
+                # same silent-forever-no-match shape as the except below.
+                raise ValueError(f"condition left {len(tokens) - end} "
+                                 f"unconsumed token(s) after parsing")
+            return bool(value)
+        except (ValueError, IndexError, RecursionError) as exc:
+            if not self._condition_error_warned:
+                self._condition_error_warned = True
+                _log.warn(
+                    f"rule {self.id}: condition failed to parse/evaluate "
+                    f"({type(exc).__name__}: {exc}); failing closed to "
+                    f"no-match on every event until this rule is fixed and "
+                    f"reloaded -- it will show as 'active' via /rules but "
+                    f"never fire"
+                )
             return False
 
     def alert_key(self, event: dict) -> str:

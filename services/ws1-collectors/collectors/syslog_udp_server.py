@@ -99,7 +99,7 @@ DEFAULT_PEER_METRICS_MAX = 1024
 DEFAULT_SO_RCVBUF = 8 * 1024 * 1024
 
 
-def udp_rcvbuf_errors() -> Optional[int]:
+def udp_rcvbuf_errors(path: str = "/proc/net/snmp") -> Optional[int]:
     """Cumulative kernel-level UDP receive-buffer-overflow count for this
     host/container, i.e. datagrams the OS dropped BEFORE any Python code ever
     saw them -- the exact loss class that reads as a healthy `events_shed=0
@@ -110,9 +110,17 @@ def udp_rcvbuf_errors() -> Optional[int]:
 
     Cumulative since boot, not a rate -- a caller wanting a rate must diff two
     samples over a known interval, same convention as any other /proc counter.
+
+    ``path`` defaults to the real procfs location; overridable ONLY so
+    test_syslog_udp.py can drive the header/value-alignment parsing logic
+    itself against a controlled fixture file -- this used to have zero
+    coverage of anything but the None-fallback path (gap-hunt finding,
+    2026-08-23), leaving the exact live-proven blind spot this function
+    exists to close free to regress silently (e.g. a swapped header/value
+    line order, or a shifted column index).
     """
     try:
-        with open("/proc/net/snmp", "r", encoding="ascii") as f:
+        with open(path, "r", encoding="ascii") as f:
             header = value = None
             for line in f:
                 if line.startswith("Udp:"):

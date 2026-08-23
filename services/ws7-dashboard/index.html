@@ -1533,8 +1533,20 @@ async function pollGlobal(){
   if(document.hidden || pollInFlight) return;
   pollInFlight = true;
   try{
+    // Gap-hunt finding (2026-08-23): this used to `if(!LIVE) return` here,
+    // BEFORE renderGlobal() ever ran -- getAlerts() flips LIVE to false as a
+    // side effect the moment a fetch fails, so the one call that updates the
+    // #apiStatus badge/live class was being skipped on EXACTLY the tick that
+    // needed to show it. Net effect: the feed could die and the dashboard
+    // would freeze on its last "live data" badge forever, no visible signal
+    // -- the mirror of the ws1-collectors ingest-silence gap on the read
+    // side. Falling through to the snapshot check below fixes it: a
+    // LIVE-true -> LIVE-false transition changes the alerts snapshot (real
+    // data -> SIEM_MOCK.alerts), so it still renders and the badge flips
+    // honestly to "mock data"; recovery (mock -> real again) renders and
+    // flips back. An unchanging state (stuck live OR stuck mock) still
+    // short-circuits below exactly as before -- no extra DOM churn.
     const alerts = await getAlerts();
-    if(!LIVE) return; // nothing to poll against in mock mode
     const snapshot = JSON.stringify(alerts);
     if(snapshot === lastAlertsSnapshot) return;
     lastAlertsSnapshot = snapshot;

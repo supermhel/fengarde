@@ -157,6 +157,47 @@ jobs:
         env:
           OPENSEARCH_URL: http://localhost:9200
         run: python services/ws3-indexer/storage/test_opensearch_cas_concurrency_live.py
+      # Gap-hunt finding (2026-08-23): this pins the 2026-08-19 per-thread-
+      # connection fix (http.client.ResponseNotReady: Idle under real
+      # multi-thread contention on ONE shared OpenSearchStore -- the exact
+      # shape ws3-indexer's real daemon uses). Same "opt-in via make
+      # test-live, never actually run automatically" shape as the CAS test
+      # above before this session fixed it. Needs only a single reachable
+      # OPENSEARCH_URL (skips cleanly otherwise), so it belongs here --
+      # unlike test_opensearch_ha_failover_live.py (make test-live only,
+      # deliberately NOT wired here: it needs `docker compose kill` against
+      # a real 3-node HA profile, the same "needs actual multi-container
+      # orchestration control, not just a services: container" reason
+      # `make chaos`/`make ha-verify` also stay out of CI).
+      - name: Shared OpenSearchStore survives real concurrent request/response cycles
+        env:
+          OPENSEARCH_URL: http://localhost:9200
+        run: python services/ws3-indexer/storage/test_opensearch_shared_store_concurrent_live.py
+
+  # Gap-hunt finding (2026-08-23): test_mfa_live_e2e.py existed, passed, and
+  # caught a real production defect once (2026-08-11: MFA silently inert in
+  # the deployed image, green in every other test) -- but was reachable by
+  # NO make target at all, only a manual `docker cp` + `docker exec` runbook
+  # step in its own docstring. The exact regression it was written for could
+  # have recurred silently forever. It needs the DEPLOYED image's own module
+  # layout (that's the whole point -- the bug was in module resolution under
+  # that layout, invisible to any in-process test), so it can't just run
+  # against a checkout; this job builds the real ws3-indexer image and runs
+  # it inside a container the same way the docstring's runbook does.
+  ws3-mfa-live-e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+      - name: Build the real ws3-indexer image
+        run: docker build -f services/ws3-indexer/Dockerfile -t ws3-indexer-mfa-e2e .
+      - name: Run MFA/TOTP live e2e inside the deployed image
+        run: |
+          docker run -d --name mfa-e2e ws3-indexer-mfa-e2e sleep 300
+          docker cp services/ws3-indexer/test_mfa_live_e2e.py mfa-e2e:/tmp/test_mfa_live_e2e.py
+          docker exec mfa-e2e python /tmp/test_mfa_live_e2e.py
+      - name: Cleanup
+        if: always()
+        run: docker rm -f mfa-e2e || true
 
   # M2 code-quality floor (PLAN_C Tier 2.3). Lint blocks; coverage blocks at the
   # MEASURED baseline (see tools/coverage_gate.py) not the unmet-for-WS-3 85%

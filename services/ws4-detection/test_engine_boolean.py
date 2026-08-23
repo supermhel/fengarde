@@ -122,6 +122,57 @@ def run():
     check(one.alert_key({"siem": {"ingest_id": "abc"}}) == "x:default:abc",
           "T7: non-stateful keys on ingest_id (P1-1: tenant-namespaced, default tenant here)")
 
+    # --- Gap-hunt finding (2026-08-23): a malformed condition must WARN, once ---
+    # Before this fix, both the except-clause path (garbage tokens the parser
+    # itself rejects) and the "parsed but left tokens unconsumed" path failed
+    # closed to False with ZERO logging -- an operator hot-editing a rule with
+    # a typo'd condition got no signal at all, just a rule that shows "active"
+    # via /rules and silently never fires again.
+    import engine as engine_module
+
+    class _FakeLog:
+        def __init__(self):
+            self.warnings = []
+
+        def warn(self, msg, **fields):
+            self.warnings.append(msg)
+
+    fake_log = _FakeLog()
+    real_log = engine_module._log
+    engine_module._log = fake_log
+    try:
+        broken = Rule({
+            "id": "broken-cond", "title": "t", "level": "high",
+            "detection": {"sel": {"class_uid": 1}, "condition": "sel sel"},
+            "siem": {"score_weight": 10},
+        })
+        for _ in range(5):  # every event still evaluates the same broken rule
+            result = broken._eval_condition({"class_uid": 1})
+            check(result is False, "T4: unconsumed-tokens condition fails closed to False")
+        check(len(fake_log.warnings) == 1,
+              f"T4: malformed condition must warn EXACTLY ONCE per rule instance, "
+              f"not once per event or never; got {len(fake_log.warnings)}")
+
+        # A second, independent broken rule gets its OWN warning -- the flag
+        # is per-instance, not a module-global "already warned about anything".
+        broken2 = Rule({
+            "id": "broken-cond-2", "title": "t2", "level": "high",
+            "detection": {"sel": {"class_uid": 1}, "condition": "and and"},
+            "siem": {"score_weight": 10},
+        })
+        broken2._eval_condition({"class_uid": 1})
+        check(len(fake_log.warnings) == 2,
+              "T4: a second, independently-broken rule must warn on its own")
+
+        # A rule whose condition is fine must never warn at all.
+        fine = Rule({"id": "fine", "title": "t", "level": "high",
+                     "detection": {"sel": {"class_uid": 1}, "condition": "sel"},
+                     "siem": {"score_weight": 10}})
+        fine._eval_condition({"class_uid": 1})
+        check(len(fake_log.warnings) == 2, "T4: a well-formed condition must never warn")
+    finally:
+        engine_module._log = real_log
+
 
 def main():
     run()

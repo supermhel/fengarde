@@ -23,7 +23,8 @@ os.environ["BUS_BACKEND"] = "memory"
 
 from shared.bus import Bus  # noqa: E402
 from collectors.syslog_udp_server import (  # noqa: E402
-    SyslogUDPServer, build_raw_event, _TokenBucket, TenantTokenBuckets)
+    SyslogUDPServer, build_raw_event, _TokenBucket, TenantTokenBuckets,
+    udp_rcvbuf_errors)
 from collectors.spool import BoundedSpool  # noqa: E402
 
 SYSLOG_LINE = "<34>Oct 11 22:14:15 myhost sshd[1234]: Failed password for root"
@@ -569,6 +570,136 @@ class TestIngestSilenceDetection(unittest.TestCase):
         import threading
         result = _start_ingest_silence_watchdog(None, None, threading.Event())
         self.assertIsNone(result, "udp=None must disable the watchdog, not crash or warn")
+
+
+class TestEnvVarDegradation(unittest.TestCase):
+    """Gap-hunt finding (2026-08-23): _int_env's own docstring documents
+    "degrade to default (logged) on a malformed value instead of crashing
+    startup" -- but zero test coverage existed for that claim (for ANY of
+    its 4 original call sites), and it was applied to only 4 of the 8
+    env-var-reading knobs in main.py, an inconsistency once _float_env
+    closed the type gap. Proves the actual degrade behavior for both."""
+
+    class _FakeLog:
+        def __init__(self):
+            self.warnings = []
+
+        def warn(self, msg, **fields):
+            self.warnings.append((msg, fields))
+
+    def setUp(self):
+        sys.path.insert(0, str(HERE))
+        from main import _int_env, _float_env  # noqa: E402
+        self._int_env = _int_env
+        self._float_env = _float_env
+
+    def test_int_env_missing_uses_default_silently(self):
+        os.environ.pop("FENGARDE_TEST_INT", None)
+        log = self._FakeLog()
+        self.assertEqual(self._int_env("FENGARDE_TEST_INT", 7, log), 7)
+        self.assertEqual(log.warnings, [], "an UNSET env var is not malformed, must not warn")
+
+    def test_int_env_valid_value_parses(self):
+        os.environ["FENGARDE_TEST_INT"] = "42"
+        try:
+            log = self._FakeLog()
+            self.assertEqual(self._int_env("FENGARDE_TEST_INT", 7, log), 42)
+            self.assertEqual(log.warnings, [])
+        finally:
+            del os.environ["FENGARDE_TEST_INT"]
+
+    def test_int_env_malformed_degrades_and_warns(self):
+        os.environ["FENGARDE_TEST_INT"] = "not-a-number"
+        try:
+            log = self._FakeLog()
+            self.assertEqual(self._int_env("FENGARDE_TEST_INT", 7, log), 7)
+            self.assertEqual(len(log.warnings), 1, "a malformed value must warn exactly once")
+        finally:
+            del os.environ["FENGARDE_TEST_INT"]
+
+    def test_float_env_malformed_degrades_and_warns(self):
+        os.environ["FENGARDE_TEST_FLOAT"] = "not-a-float"
+        try:
+            log = self._FakeLog()
+            self.assertEqual(self._float_env("FENGARDE_TEST_FLOAT", 3.5, log), 3.5)
+            self.assertEqual(len(log.warnings), 1, "a malformed value must warn exactly once")
+        finally:
+            del os.environ["FENGARDE_TEST_FLOAT"]
+
+    def test_float_env_valid_value_parses(self):
+        os.environ["FENGARDE_TEST_FLOAT"] = "12.5"
+        try:
+            log = self._FakeLog()
+            self.assertEqual(self._float_env("FENGARDE_TEST_FLOAT", 3.5, log), 12.5)
+            self.assertEqual(log.warnings, [])
+        finally:
+            del os.environ["FENGARDE_TEST_FLOAT"]
+
+
+class TestUdpRcvbufErrors(unittest.TestCase):
+    """Gap-hunt finding (2026-08-23): udp_rcvbuf_errors() -- the fix for the
+    live-proven "healthy events_shed=0 events_dropped=0 while the kernel is
+    silently dropping datagrams" blind spot -- had zero coverage of its own
+    header/value-alignment parsing, only of the None-fallback path (no
+    procfs / not Linux). ``path`` is test-only-injectable (see the
+    function's docstring); production always uses the real default."""
+
+    def _fixture(self, content: str) -> str:
+        fd, path = tempfile.mkstemp()
+        os.write(fd, content.encode("ascii"))
+        os.close(fd)
+        self.addCleanup(os.remove, path)
+        return path
+
+    def test_real_shaped_snmp_output_extracts_rcvbuf_errors(self):
+        # Real /proc/net/snmp shape: Udp: header line, then Udp: value line,
+        # interleaved with other protocols' Tcp:/Ip: blocks -- the parser
+        # must skip those and find its OWN header/value pair.
+        content = (
+            "Ip: Forwarding DefaultTTL InReceives\n"
+            "Ip: 1 64 12345\n"
+            "Udp: InDatagrams NoPorts InErrors RcvbufErrors SndbufErrors\n"
+            "Udp: 999 3 0 42 0\n"
+        )
+        self.assertEqual(udp_rcvbuf_errors(self._fixture(content)), 42)
+
+    def test_rcvbuf_errors_is_zero_when_genuinely_zero(self):
+        """0 is a real, meaningful value (no kernel drops) -- must not be
+        confused with the None-means-unavailable sentinel."""
+        content = ("Udp: InDatagrams NoPorts InErrors RcvbufErrors\n"
+                   "Udp: 10 0 0 0\n")
+        self.assertEqual(udp_rcvbuf_errors(self._fixture(content)), 0)
+
+    def test_missing_rcvbuf_errors_column_returns_none(self):
+        """An older/different kernel's Udp: header without this column must
+        degrade to None, not crash or misindex into an adjacent column."""
+        content = "Udp: InDatagrams NoPorts InErrors\nUdp: 10 0 0\n"
+        self.assertIsNone(udp_rcvbuf_errors(self._fixture(content)))
+
+    def test_missing_udp_value_line_returns_none(self):
+        """A header with no matching value line (truncated/malformed procfs)
+        must not raise -- IndexError-class failures are the exact thing this
+        function's except clause exists to catch."""
+        content = "Udp: InDatagrams NoPorts InErrors RcvbufErrors\n"
+        self.assertIsNone(udp_rcvbuf_errors(self._fixture(content)))
+
+    def test_no_udp_block_at_all_returns_none(self):
+        content = "Ip: Forwarding DefaultTTL\nIp: 1 64\n"
+        self.assertIsNone(udp_rcvbuf_errors(self._fixture(content)))
+
+    def test_empty_file_returns_none(self):
+        self.assertIsNone(udp_rcvbuf_errors(self._fixture("")))
+
+    def test_nonexistent_path_returns_none_not_raise(self):
+        """Off-Linux / no procfs: the documented None-fallback path."""
+        self.assertIsNone(udp_rcvbuf_errors("/no/such/path/ever-9f3a2b"))
+
+    def test_non_numeric_value_returns_none_not_raise(self):
+        """A corrupted procfs line (non-numeric where a count is expected)
+        must fail closed to None, not raise ValueError out of /metrics."""
+        content = ("Udp: InDatagrams NoPorts InErrors RcvbufErrors\n"
+                   "Udp: 10 0 0 not-a-number\n")
+        self.assertIsNone(udp_rcvbuf_errors(self._fixture(content)))
 
 
 if __name__ == "__main__":

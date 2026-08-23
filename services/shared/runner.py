@@ -314,6 +314,14 @@ def _topic_worker(bus_factory, topic, group, handler, *, max_redeliveries,
         except Exception as exc:
             if state is not None:
                 state.mark_error(exc)  # bus unreachable -> /health reports degraded
+            # Gap-hunt finding (2026-08-23): this update /health (above) but
+            # never /metrics -- an operator watching ONLY /metrics/prom (the
+            # convention every other failure class in this file uses) saw no
+            # signal at all for "the bus connection itself is failing,"
+            # only an absence of `acked` increments, indistinguishable from
+            # a genuinely idle topic.
+            if metrics is not None:
+                metrics.incr(topic, "bus_error")
             _throttled_print_exc(topic, exc)
 
         # 2) New messages. Bound the blocking read (RedisBus.consume blocks up to
@@ -347,6 +355,8 @@ def _topic_worker(bus_factory, topic, group, handler, *, max_redeliveries,
         except Exception as exc:
             if state is not None:
                 state.mark_error(exc)
+            if metrics is not None:  # same /metrics-blind-spot fix as the claim_pending pass above
+                metrics.incr(topic, "bus_error")
             _throttled_print_exc(topic, exc)
 
         if not did_work:

@@ -37,6 +37,32 @@ def _int_env(name: str, default: int, log) -> int:
         return default
 
 
+def _float_env(name: str, default: float, log) -> float:
+    """Same degrade-not-crash contract as _int_env, for float-valued knobs.
+
+    Gap-hunt finding (2026-08-23): the "degrade, don't crash" posture
+    _int_env documents was only applied to 4 of the tuning knobs main()
+    reads (SYSLOG_SPOOL_MAX_BYTES, SYSLOG_UDP_WORKERS/QUEUE_MAXSIZE/
+    SO_RCVBUF) -- SYSLOG_UDP_PORT, SYSLOG_MAX_EVENTS_PER_SEC,
+    RAW_EVENTS_DEPTH_WARN, and SYSLOG_SILENCE_WARN_S all called raw
+    int()/float() and would crash the whole daemon over one typo'd value.
+    This fails LOUD, not silently, so it isn't the "silence is the killer"
+    class of bug -- but it contradicts this module's own stated convention
+    for what should be equally optional, equally typo-able knobs. `PORT`
+    (the health-server bind) is deliberately NOT included here: a bad value
+    there is a real deployment misconfiguration worth crashing loud over,
+    not a tuning knob to silently default around.
+    """
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        log.warn("malformed env var, using default", name=name, value=raw, default=default)
+        return default
+
+
 def build_collectors():
     syslog = SyslogCollector()
     snmp = SnmpCollector(devices_file=str(MOCKS / "sample_snmp.json"))
@@ -97,9 +123,9 @@ def main() -> None:
 
     # Live syslog ingestion (env-configurable; 5514 avoids privileged 514).
     syslog_host = os.getenv("SYSLOG_UDP_HOST", DEFAULT_HOST)
-    syslog_port = int(os.getenv("SYSLOG_UDP_PORT", str(DEFAULT_PORT)))
-    max_events_per_sec = float(os.getenv("SYSLOG_MAX_EVENTS_PER_SEC",
-                                        str(DEFAULT_MAX_EVENTS_PER_SEC)))
+    syslog_port = _int_env("SYSLOG_UDP_PORT", DEFAULT_PORT, log)
+    max_events_per_sec = _float_env("SYSLOG_MAX_EVENTS_PER_SEC",
+                                    DEFAULT_MAX_EVENTS_PER_SEC, log)
     # B2 zero-loss-under-flood opt-in (see collectors/spool.py): unset by
     # default (plain shed-and-count, no disk I/O). Set SYSLOG_SPOOL_PATH to
     # enable a bounded on-disk replay buffer for shed/dropped events.
@@ -179,7 +205,7 @@ def _start_depth_watchdog(bus, log, shutdown, *, topic: str = "raw.events",
     """B2/P2.4: thin wrapper over the shared watchdog (shared.runner) that keeps
     ws1's own env var name (RAW_EVENTS_DEPTH_WARN, default 100000, 0 disables)."""
     from shared.runner import start_depth_watchdog
-    warn_at = int(os.getenv("RAW_EVENTS_DEPTH_WARN", "100000"))
+    warn_at = _int_env("RAW_EVENTS_DEPTH_WARN", 100000, log)
     return start_depth_watchdog(bus, log, shutdown, [topic], warn_at=warn_at,
                                 interval_s=interval_s)
 
@@ -205,7 +231,7 @@ def _start_ingest_silence_watchdog(udp, log, shutdown, *, interval_s: float = 30
     """
     if udp is None:
         return None
-    warn_after_s = float(os.getenv("SYSLOG_SILENCE_WARN_S", "300"))
+    warn_after_s = _float_env("SYSLOG_SILENCE_WARN_S", 300, log)
     if warn_after_s <= 0:
         return None
 

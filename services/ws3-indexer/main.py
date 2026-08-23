@@ -66,6 +66,47 @@ def build_handlers(store, group: str = "cg-index") -> dict:
             for t in TOPICS}
 
 
+_ALERT_CAS_MAX_RETRIES = 5
+
+
+def _index_alert_preserving_triage(store, index: str, doc_id: str, doc: dict) -> bool:
+    """`alerts`-topic write for an alert_id that may already be indexed.
+
+    Same failure SHAPE as the normalized/scored siem.score clobber (P1-4),
+    a different pair of writers/field: bus delivery is at-least-once, so a
+    stale `alerts` message (WS-4's original payload, never carrying `triage`)
+    can be redelivered -- e.g. after this worker is killed mid-batch and
+    restarted -- and land AFTER an analyst has since set `triage` via
+    triage_api.py's independent index_cas-based read-modify-write. A plain
+    index() there is a full-document replace and silently erases it; the
+    alert stays indexed so nothing looks broken.
+
+    CAS retry loop (mirrors triage_api.py's own _route_triage): read the
+    current doc's `triage`, carry it into the incoming payload, write with
+    index_cas so a concurrent triage update racing this same write loses
+    cleanly (retry) rather than silently.
+    """
+    for _ in range(_ALERT_CAS_MAX_RETRIES):
+        existing = store.find_alert_versioned(doc_id)
+        if existing is None:
+            return store.index(index, doc_id, doc)
+        existing_index, existing_doc, version = existing
+        triage = existing_doc.get("triage")
+        if triage is None:
+            return store.index(index, doc_id, doc)
+        merged = dict(doc)
+        merged["triage"] = triage
+        if store.index_cas(existing_index, doc_id, merged, version):
+            return False  # doc already existed -- this call updated, not created
+        # version conflict: another writer (this same race, or a concurrent
+        # triage update) landed in between -- re-read and retry.
+    # Exhausted retries under sustained contention: fall back to a plain
+    # write rather than silently dropping the message -- a subsequent
+    # redelivery gets another chance to preserve triage. Matches run()'s own
+    # "never dead-letter on a benign race" posture.
+    return store.index(index, doc_id, doc)
+
+
 def index_doc(store, doc: dict, *, create_only: bool = False) -> bool:
     """Route ``doc`` and write it.
 
@@ -75,10 +116,18 @@ def index_doc(store, doc: dict, *, create_only: bool = False) -> bool:
     topics route to the same (index, doc_id) and run on independent worker
     threads, so without this the later-arriving normalized write silently
     strips `siem.score` off an already-scored document.
+
+    An alert doc (``alert_id`` present) never uses create_only -- a
+    redelivered alert must still be able to create the doc on first arrival
+    -- but does go through :func:`_index_alert_preserving_triage` so a stale
+    redelivery can't clobber a `triage` field a completely different writer
+    (the triage API) has since set.
     """
     index, doc_id = route(doc)
     if create_only:
         return store.index_if_absent(index, doc_id, doc)
+    if "alert_id" in doc:
+        return _index_alert_preserving_triage(store, index, doc_id, doc)
     return store.index(index, doc_id, doc)
 
 
