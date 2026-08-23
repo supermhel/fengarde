@@ -230,7 +230,7 @@ jobs:
         run: docker compose -f infra/docker-compose.yml up -d --build
       - name: Wait for the stack to report healthy
         run: |
-          for i in $(seq 1 60); do
+          for _ in $(seq 1 60); do
             unhealthy=$(docker compose -f infra/docker-compose.yml ps --format '{{.Health}}' | grep -vc '^healthy$\|^$' || true)
             if [ "$unhealthy" -eq 0 ]; then echo "stack healthy"; exit 0; fi
             sleep 5

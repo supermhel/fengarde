@@ -201,10 +201,16 @@ def main() -> int:
           f"step 5: wrong-code error was {body.get('error')!r}; it must be "
           f"identical to the wrong-password error so it is not an oracle")
 
-    # 6. Password + correct code succeeds.
+    # 6. Password + correct code succeeds. A DIFFERENT step's code than the
+    # one step 3 already consumed (2026-08-23 TOTP replay-protection fix,
+    # shared/users.py::verify_totp tracks last-accepted-counter per account
+    # -- reusing step 3's exact code here now correctly 401s, same as a
+    # real captured code could never be replayed twice). +30s is still
+    # within the server's real-time +/-1-step acceptance window since this
+    # whole e2e runs in well under 30s.
     status, body, set_cookie = _post("/auth/login",
                                      {"username": user, "password": _PASSWORD,
-                                      "totp_code": mfa.generate_code(secret)})
+                                      "totp_code": mfa.generate_code(secret, at=time.time() + 30)})
     check(status == 200,
           f"step 6: login with a VALID totp_code returned {status} {body} "
           f"-- expected 200")
