@@ -455,12 +455,25 @@ services:
     depends_on: !override {redis-1: {condition: service_healthy}}
     networks: [default, ha]
 
-  ws7-dashboard:
-    environment:
-      - BUS_BACKEND=redis-sentinel
-      - REDIS_SENTINEL_HOSTS=redis-sentinel-1:26379,redis-sentinel-2:26379,redis-sentinel-3:26379
-      - REDIS_SENTINEL_MASTER=mymaster
-      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+  # ws7-dashboard has NO override block here at all -- deliberately, not by
+  # omission. Gap-hunt finding (2026-08-23): one used to exist, setting
+  # BUS_BACKEND/REDIS_SENTINEL_HOSTS/REDIS_SENTINEL_MASTER/REDIS_PASSWORD,
+  # copy-pasted from every other workstream's real Sentinel migration. Dead
+  # config: ws7-dashboard's container is pure nginx:alpine (see its
+  # Dockerfile) -- no Python/JS process runs inside it, and its nginx
+  # template (templates/default.conf.template) only ever substitutes
+  # ${FENGARDE_API_KEY} and ${DASHBOARD_AUTH_REALM}, never any of those 4
+  # vars. Harmless (the dashboard never touched the bus), but misleading:
+  # reading the override list made it look like every base-file service had
+  # its bus wiring correctly ported to HA, when for ws7 it was inert
+  # copy-paste. It also never carried `depends_on: !override` /
+  # `networks: [default, ha]` the way every other ws1-ws8 override does --
+  # correctly: it only talks to ws3-indexer/ws6-inventory over the `default`
+  # network and needs no `ha`-network reachability. If a future ws7-dashboard
+  # split ever adds a real bus consumer, it will need a real override block
+  # (env vars AND the networking pattern) added here -- this comment exists
+  # so that addition isn't silently skipped under an "it's just ws7"
+  # assumption the way the dead env vars above were.
 
   # 2026-08-20: same gap class as the ws6-inventory row above, found the same
   # way -- by actually running `--profile ha up` rather than assuming the

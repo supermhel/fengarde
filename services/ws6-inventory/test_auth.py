@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
 import threading
 import urllib.error
@@ -287,6 +288,85 @@ def test_legacy_single_key_migrates_and_keeps_working_over_http():
         os.environ.pop("FENGARDE_API_KEY", None)
 
 
+# -- Gap-hunt finding (2026-08-23): require_auth_or_die -----------------------
+# shared/authz.py::require_auth_or_die's own docstring claimed to cover
+# "WS-3/WS-6," but ws6-inventory never called it -- FENGARDE_REQUIRE_AUTH=1
+# refused to boot ws3-indexer open, but ws6-inventory booted open regardless
+# with nothing louder than a log line. authz.py (this service's OWN module,
+# not shared/authz.py) now has its own require_auth_or_die wired into
+# app.py::serve(). Subprocess-based since it calls sys.exit(1), same
+# pattern as ws3-indexer/test_fix_security.py's equivalent tests.
+
+def test_require_auth_or_die_empty_keystore_exits_1():
+    env = dict(os.environ)
+    env.update({"FENGARDE_REQUIRE_AUTH": "1", "FENGARDE_API_KEY": "",
+                "FENGARDE_API_KEYS": "", "INVENTORY_DB": ":memory:",
+                "KEYSTORE_DB": ":memory:"})
+    code = "import authz; from app import KEYSTORE; authz.require_auth_or_die('ws6-inventory', KEYSTORE)"
+    proc = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True,
+                          text=True, cwd=str(HERE))
+    check(proc.returncode == 1,
+          f"require_auth_or_die must exit 1 with an empty keystore, got {proc.returncode} "
+          f"stderr={proc.stderr!r}")
+
+
+def test_require_auth_or_die_noop_without_env():
+    env = dict(os.environ)
+    env.pop("FENGARDE_REQUIRE_AUTH", None)
+    code = ("import authz; from app import KEYSTORE; "
+            "authz.require_auth_or_die('ws6-inventory', KEYSTORE); print('ok')")
+    proc = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True,
+                          text=True, cwd=str(HERE))
+    check(proc.returncode == 0 and "ok" in proc.stdout,
+          f"require_auth_or_die must be a no-op when FENGARDE_REQUIRE_AUTH is unset, "
+          f"got rc={proc.returncode} out={proc.stdout!r} err={proc.stderr!r}")
+
+
+def test_require_auth_or_die_provisioned_keystore_is_noop():
+    """A REQUIRE_AUTH=1 deployment with a real key provisioned must boot
+    normally -- this gate only refuses an EMPTY keystore, never a
+    populated one."""
+    env = dict(os.environ)
+    env.pop("FENGARDE_API_KEY", None)
+    env.pop("FENGARDE_API_KEYS", None)
+    env.update({"FENGARDE_REQUIRE_AUTH": "1",
+                "INVENTORY_DB": ":memory:", "KEYSTORE_DB": ":memory:"})
+    code = ("import authz; from app import KEYSTORE; "
+            "KEYSTORE.provision('acme', 'a-real-key-123'); "
+            "authz.require_auth_or_die('ws6-inventory', KEYSTORE); print('ok')")
+    proc = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True,
+                          text=True, cwd=str(HERE))
+    check(proc.returncode == 0 and "ok" in proc.stdout,
+          f"require_auth_or_die must not block a deployment with a provisioned key, "
+          f"got rc={proc.returncode} out={proc.stdout!r} err={proc.stderr!r}")
+
+
+def test_serve_actually_calls_require_auth_or_die_before_listening():
+    """Drives the REAL `serve()` entry point, not a direct call to
+    `require_auth_or_die` -- proves the wiring itself, same discipline as
+    WS-3's `test_normalized_topic_is_wired_create_only`. If a future edit
+    removes the call from `serve()`, the direct-call tests above would keep
+    passing while this one catches the regression: the process must exit(1)
+    BEFORE ever reaching `srv.serve_forever()` (never prints "listening")."""
+    env = dict(os.environ)
+    env.pop("FENGARDE_API_KEY", None)
+    env.pop("FENGARDE_API_KEYS", None)
+    env.update({"FENGARDE_REQUIRE_AUTH": "1", "INVENTORY_DB": ":memory:",
+                "KEYSTORE_DB": ":memory:"})
+    code = "from app import serve; serve(host='127.0.0.1', port=0)"
+    try:
+        proc = subprocess.run([sys.executable, "-c", code], env=env,
+                              capture_output=True, text=True, cwd=str(HERE), timeout=5)
+    except subprocess.TimeoutExpired:
+        check(False, "serve() did not exit -- it reached serve_forever() instead of "
+                     "dying on require_auth_or_die (the wiring regressed)")
+        return
+    check(proc.returncode == 1,
+          f"serve() with an empty keystore + REQUIRE_AUTH=1 must exit 1, got {proc.returncode}")
+    check('"msg": "listening"' not in proc.stdout,
+          f"serve() must die BEFORE logging \"listening\" -- got stdout={proc.stdout!r}")
+
+
 def main():
     test_auth_disabled_by_default()
     test_auth_enforced_once_a_key_is_provisioned()
@@ -299,6 +379,10 @@ def main():
     test_keys_route_unrestricted_for_admin_and_when_auth_disabled()
     test_rotation_both_keys_live_then_old_revoked_over_http()
     test_legacy_single_key_migrates_and_keeps_working_over_http()
+    test_require_auth_or_die_empty_keystore_exits_1()
+    test_require_auth_or_die_noop_without_env()
+    test_require_auth_or_die_provisioned_keystore_is_noop()
+    test_serve_actually_calls_require_auth_or_die_before_listening()
     if FAILS:
         print(f"[FAIL] ws6 auth: {len(FAILS)} problem(s)")
         for f in FAILS:

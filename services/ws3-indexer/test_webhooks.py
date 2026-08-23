@@ -81,6 +81,44 @@ def test_load_webhook_configs_valid_and_malformed():
               "omitted optional fields must default to tenant_id=None, min_score=0")
 
 
+# Gap-hunt finding (2026-08-23): every malformed-config skip above used to
+# log nothing at all -- indistinguishable from "no webhook configured" --
+# despite the good configs loading correctly the whole time.
+def test_malformed_configs_are_logged_not_silent():
+    import shared.log as shared_log
+
+    class _FakeLog:
+        def __init__(self):
+            self.warnings = []
+
+        def warn(self, msg, **fields):
+            self.warnings.append(msg)
+
+    fake_log = _FakeLog()
+    real_get_logger_fn = shared_log.get_logger
+    shared_log.get_logger = lambda *a, **k: fake_log
+    try:
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            (d / "good.yml").write_text(
+                "id: good\nurl: https://example.com/hook\nsecret_env: MY_SECRET\n")
+            (d / "missing_url.yml").write_text("id: bad\nsecret_env: X\n")
+            (d / "bad_scheme.yml").write_text(
+                "id: bad-scheme\nurl: ftp://example.com/hook\nsecret_env: X\n")
+            (d / "not_a_dict.yml").write_text("- just\n- a\n- list\n")
+            (d / "bad_yaml.yml").write_text("id: [unterminated\n")
+
+            webhooks.load_webhook_configs(d)
+            check(len(fake_log.warnings) == 4,
+                  f"exactly the 4 malformed configs must each log one warning "
+                  f"(the well-formed one must not), got {fake_log.warnings}")
+            for name in ("missing_url.yml", "bad_scheme.yml", "not_a_dict.yml", "bad_yaml.yml"):
+                check(any(name in w for w in fake_log.warnings),
+                      f"a warning must name {name}, got {fake_log.warnings}")
+    finally:
+        shared_log.get_logger = real_get_logger_fn
+
+
 def test_load_webhook_configs_empty_dir_is_a_noop():
     with tempfile.TemporaryDirectory() as d:
         check(webhooks.load_webhook_configs(Path(d)) == [],
@@ -246,6 +284,7 @@ def main():
     test_sign_verify_roundtrip()
     test_verify_rejects_tamper_and_wrong_secret()
     test_load_webhook_configs_valid_and_malformed()
+    test_malformed_configs_are_logged_not_silent()
     test_load_webhook_configs_empty_dir_is_a_noop()
     test_matches_tenant_and_score_filters()
     test_deliver_signs_correctly_and_receiver_can_verify()

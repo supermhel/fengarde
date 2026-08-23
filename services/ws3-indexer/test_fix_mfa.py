@@ -23,6 +23,7 @@ from __future__ import annotations
 import json
 import sys
 import threading
+import time
 import urllib.error
 import urllib.request
 from http.server import ThreadingHTTPServer
@@ -202,10 +203,15 @@ def test_login_requires_code_when_totp_enabled():
                                       "totp_code": "000000"})
         check(code_wrong == 401, f"login with a wrong totp_code must be 401, got {code_wrong}")
 
-        # Correct code + password -> 200.
+        # Correct code + password -> 200. A DIFFERENT step's code than the
+        # one already consumed by /auth/mfa/verify above (line ~194) --
+        # replay protection (2026-08-23) now rejects reusing that exact
+        # step, same as a real captured code could never be replayed twice.
+        # +30s is still within the server's real-time +/-1-step acceptance
+        # window since this test runs in well under 30s.
         code_ok, body_ok, _ = _request(port, "POST", "/auth/login",
                                         {"username": "alice", "password": "pw-alice-1",
-                                         "totp_code": mfa.generate_code(secret)})
+                                         "totp_code": mfa.generate_code(secret, at=time.time() + 30)})
         check(code_ok == 200, f"login with correct totp_code must succeed, got {code_ok}")
         check(body_ok.get("username") == "alice", "successful MFA login must create a session")
     finally:
@@ -345,6 +351,58 @@ def test_login_backward_compatible_totp_never_enabled():
         srv.shutdown(); srv.server_close()
 
 
+# -- Gap-hunt finding (2026-08-23): TOTP replay protection -------------------
+# verify_totp() used to accept the SAME valid code every time it was
+# resubmitted within its ~90s (+/-1-step) validity window -- a captured code
+# (sniffed, logged, shoulder-surfed) could open a second session. Fixed via
+# a per-account last-accepted-counter (users.py schema v4); these prove it.
+
+def test_totp_replay_is_rejected():
+    store, users = _fresh()
+    users.provision_totp("alice")
+    secret = users.get_user("alice")["totp_secret"]
+    code = mfa.generate_code(secret)
+
+    check(users.verify_totp("alice", code), "first use of a fresh code must succeed")
+    check(users.is_totp_enabled("alice"), "first valid code activates MFA")
+    check(not users.verify_totp("alice", code),
+          "REPLAY: the exact same code must be rejected on a second submission")
+    check(not users.verify_totp("alice", code),
+          "a third replay attempt must also be rejected, not just the second")
+
+
+def test_totp_next_step_code_still_works_after_a_replay_attempt():
+    """Replay protection must reject the REUSED step, not lock the account
+    out of MFA entirely -- the next genuinely new code must still work."""
+    store, users = _fresh()
+    users.provision_totp("bob")
+    secret = users.get_user("bob")["totp_secret"]
+    now = time.time()
+    first_code = mfa.generate_code(secret, at=now)
+
+    check(users.verify_totp("bob", first_code), "first code must succeed")
+    check(not users.verify_totp("bob", first_code), "replay of the first code must be rejected")
+
+    next_code = mfa.generate_code(secret, at=now + 30)  # next time-step
+    check(users.verify_totp("bob", next_code),
+          "a code for a LATER step the account has never used must still succeed")
+
+
+def test_totp_replay_rejection_is_per_account():
+    """One account's replay must not affect a different account's ability
+    to use ITS OWN first code -- the counter is per-row, not global."""
+    store, users = _fresh()
+    users.provision_totp("alice")
+    users.provision_totp("root")
+    alice_secret = users.get_user("alice")["totp_secret"]
+    root_secret = users.get_user("root")["totp_secret"]
+
+    check(users.verify_totp("alice", mfa.generate_code(alice_secret)),
+          "alice's first code must succeed")
+    check(users.verify_totp("root", mfa.generate_code(root_secret)),
+          "root's first code must independently succeed too")
+
+
 def main():
     test_totp_generate_and_verify()
     test_totp_clock_skew_window()
@@ -356,6 +414,9 @@ def main():
     test_mfa_verify_requires_password_reauth()
     test_mfa_reauth_rate_limited()
     test_login_backward_compatible_totp_never_enabled()
+    test_totp_replay_is_rejected()
+    test_totp_next_step_code_still_works_after_a_replay_attempt()
+    test_totp_replay_rejection_is_per_account()
 
     if FAILS:
         print(f"[FAIL] MFA/TOTP: {len(FAILS)} problem(s)")

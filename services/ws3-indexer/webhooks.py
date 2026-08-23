@@ -93,24 +93,32 @@ def verify_signature(secret: bytes, body: bytes, header_value: str | None) -> bo
 
 def load_webhook_configs(webhooks_dir: Path | None = None) -> list[WebhookConfig]:
     """One WebhookConfig per contracts/webhooks/*.yml. A malformed individual
-    file is skipped (logged nowhere yet -- same "silent skip" convention as
-    tenants.py for a missing tenant file); it never takes down every OTHER
-    configured webhook."""
+    file is skipped -- LOGGED (gap-hunt finding, 2026-08-23: this used to
+    skip with zero logging at all, "same silent-skip convention as
+    tenants.py" per this docstring's own prior wording -- an operator who
+    typo'd a webhook config got no signal anywhere that it was silently
+    inert). It never takes down every OTHER configured webhook."""
     directory = Path(webhooks_dir) if webhooks_dir is not None else WEBHOOKS_DIR
     configs: list[WebhookConfig] = []
     if not directory.is_dir():
         return configs
+    from shared.log import get_logger
+    log = get_logger("ws3-indexer-webhooks")
     for path in sorted(directory.glob("*.yml")):
         try:
             raw = yaml.safe_load(path.read_text(encoding="utf-8"))
-        except yaml.YAMLError:
+        except yaml.YAMLError as exc:
+            log.warn(f"webhook config {path.name!r} is not valid YAML ({exc}); skipped")
             continue
         if not isinstance(raw, dict):
+            log.warn(f"webhook config {path.name!r} is not a YAML mapping; skipped")
             continue
         wid, url, secret_env = raw.get("id"), raw.get("url"), raw.get("secret_env")
         if not isinstance(wid, str) or not isinstance(url, str) or not isinstance(secret_env, str):
+            log.warn(f"webhook config {path.name!r} is missing/mistyped id/url/secret_env; skipped")
             continue
         if not (url.startswith("https://") or url.startswith("http://")):
+            log.warn(f"webhook config {path.name!r} url {url!r} is not http(s); skipped")
             continue
         # SSRF hardening: a scheme check alone never rejects a URL pointing
         # at the cloud metadata endpoint or an internal service (both are
@@ -118,6 +126,8 @@ def load_webhook_configs(webhooks_dir: Path | None = None) -> list[WebhookConfig
         # rewrite the URL -- same "malformed/unsafe config is skipped, not
         # patched" posture as the checks above.
         if is_unsafe_target_url(url):
+            log.warn(f"webhook config {path.name!r} url {url!r} targets an unsafe/"
+                     f"internal address; skipped")
             continue
         tenant_id = raw.get("tenant_id")
         min_score = raw.get("min_score", 0)

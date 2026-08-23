@@ -59,7 +59,7 @@ def test_colliding_source_type_is_skipped_builtin_wins():
 def test_non_parser_class_is_skipped_not_crashed():
     eps = [_ep("wrong-type", f"{_FIXTURE}:NotAParser")]
     found = discover_plugin_parsers(existing_source_types=set(), eps=eps)
-    check(found == {}, "a plugin whose target isn't a Parser subclass must be silently skipped")
+    check(found == {}, "a plugin whose target isn't a Parser subclass must be skipped, not crash")
 
 
 def test_broken_entry_point_does_not_crash_discovery():
@@ -74,6 +74,70 @@ def test_broken_entry_point_does_not_crash_discovery():
     found = discover_plugin_parsers(existing_source_types=set(), eps=eps)
     check(list(found) == ["example_plugin_source"],
           f"two broken entry points must not prevent the good one from loading, got {list(found)}")
+
+
+# -- Gap-hunt finding (2026-08-23): broken plugins used to be swallowed with
+# zero logging -- indistinguishable from "no plugin installed" -- unlike
+# ws4-detection/plugins.py's sibling discover_rule_pack_dirs, which already
+# logged the equivalent case. Both failure classes here now warn.
+
+def test_broken_plugin_load_is_logged_not_silent():
+    import shared.log as shared_log
+
+    class _FakeLog:
+        def __init__(self):
+            self.warnings = []
+
+        def warn(self, msg, **fields):
+            self.warnings.append(msg)
+
+    fake_log = _FakeLog()
+    real_get_logger_fn = shared_log.get_logger
+    # plugins.py does `from shared.log import get_logger` INSIDE the
+    # function body (a local import per call, not cached at module-import
+    # time), so patching the shared.log module attribute here is picked up
+    # by the very next call.
+    shared_log.get_logger = lambda *a, **k: fake_log
+    try:
+        eps = [_ep("broken-module", "nonexistent_fengarde_test_plugin_module.sub:Whatever")]
+        discover_plugin_parsers(existing_source_types=set(), eps=eps)
+        check(len(fake_log.warnings) == 1,
+              f"a plugin that fails to import must log exactly one warning, got {fake_log.warnings}")
+        check(bool(fake_log.warnings) and "broken-module" in fake_log.warnings[0],
+              f"the warning must name the failing plugin, got {fake_log.warnings}")
+
+        fake_log.warnings.clear()
+        eps = [_ep("wrong-type", f"{_FIXTURE}:NotAParser")]
+        discover_plugin_parsers(existing_source_types=set(), eps=eps)
+        check(len(fake_log.warnings) == 1,
+              f"a non-Parser target must also log exactly one warning, got {fake_log.warnings}")
+    finally:
+        shared_log.get_logger = real_get_logger_fn
+
+
+def test_source_type_collision_stays_silent():
+    """The one skip class that SHOULD stay quiet: a working plugin correctly
+    deferring to a built-in/earlier plugin is not a broken plugin."""
+    import shared.log as shared_log
+
+    class _FakeLog:
+        def __init__(self):
+            self.warnings = []
+
+        def warn(self, msg, **fields):
+            self.warnings.append(msg)
+
+    fake_log = _FakeLog()
+    real_get_logger_fn = shared_log.get_logger
+    shared_log.get_logger = lambda *a, **k: fake_log
+    try:
+        eps = [_ep("colliding", f"{_FIXTURE}:CollidingParser")]
+        discover_plugin_parsers(existing_source_types={"linux_ssh"}, eps=eps)
+        check(fake_log.warnings == [],
+              f"a SOURCE_TYPE collision must NOT warn (it's a working plugin, not a "
+              f"broken one), got {fake_log.warnings}")
+    finally:
+        shared_log.get_logger = real_get_logger_fn
 
 
 def test_no_entry_points_is_a_clean_noop():
@@ -98,6 +162,8 @@ def main():
     test_broken_entry_point_does_not_crash_discovery()
     test_no_entry_points_is_a_clean_noop()
     test_real_registry_includes_no_plugins_by_default()
+    test_broken_plugin_load_is_logged_not_silent()
+    test_source_type_collision_stays_silent()
 
     if FAILS:
         print(f"[FAIL] parser plugins: {len(FAILS)} problem(s)")

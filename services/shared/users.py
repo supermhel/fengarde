@@ -178,6 +178,12 @@ _SCHEMA_MIGRATIONS: list[tuple[int, str]] = [
         ALTER TABLE users ADD COLUMN totp_secret TEXT;
         ALTER TABLE users ADD COLUMN totp_active INTEGER NOT NULL DEFAULT 0;
         """),
+    # Gap-hunt finding (2026-08-23): verify_totp() had no replay protection --
+    # a captured valid code could be resubmitted within its ~90s validity
+    # window to open a second session. -1 means "no code ever accepted yet"
+    # (a real counter is always >= 0, floor(unix_time/30)), so every existing
+    # account upgrades in place with no behavior change until its next TOTP use.
+    (4, "ALTER TABLE users ADD COLUMN totp_last_counter INTEGER NOT NULL DEFAULT -1"),
 ]
 
 CURRENT_SCHEMA_VERSION = _SCHEMA_MIGRATIONS[-1][0]
@@ -306,7 +312,8 @@ class UserStore:
         the secret ACTIVE (the two-step completion after `enable_totp`).
 
         Returns False for any failure (no secret, wrong code, missing mfa
-        module, unknown user) -- never raises.
+        module, unknown user, OR a code whose time-step has already been
+        accepted once -- replay protection, see below) -- never raises.
         """
         if not _TOTP_AVAILABLE:
             return False
@@ -316,13 +323,23 @@ class UserStore:
         secret = row["totp_secret"]
         if not secret:
             return False
-        if not _mfa.verify_code(secret, code):
+        matched_counter = _mfa.verify_code_returning_counter(secret, code)
+        if matched_counter is None:
             return False
-        # -- valid code: mark active (idempotent -- already-active accounts
-        #    just re-confirm on every login, which is harmless).
+        # Replay protection (gap-hunt finding, 2026-08-23): a code is shape-
+        # and-value valid for its whole +/-1-step window (~90s), and used to
+        # be accepted every time it was resubmitted in that window -- this
+        # was NOT "idempotent, harmless re-confirmation" as the old comment
+        # here claimed, it was a live replay hole (a sniffed/logged/shoulder-
+        # surfed code could open a second session). Reject any counter at or
+        # before the last one this account actually used; only a code for a
+        # step never yet accepted can succeed.
+        if matched_counter <= row["totp_last_counter"]:
+            return False
         with self._write_lock:
             self.db.execute(
-                "UPDATE users SET totp_active = 1 WHERE username = ?", (username,)
+                "UPDATE users SET totp_active = 1, totp_last_counter = ? WHERE username = ?",
+                (matched_counter, username),
             )
             self.db.commit()
         return True

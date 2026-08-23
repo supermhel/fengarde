@@ -129,10 +129,21 @@ def main() -> int:
     # Query the indexer for an alert from this rule mentioning THIS run's MAC.
     query = {"size": 20, "query": {"term": {"rule_id": RULE_ID}},
              "sort": [{"time": {"order": "desc", "unmapped_type": "long"}}]}
+    # Real bug found while wiring this into CI (2026-08-23): this used to
+    # hardcode `http://opensearch-1:9200` -- an HA-PROFILE-ONLY hostname
+    # (infra/docker-compose.ha.yml's opensearch-1..3), which does not exist
+    # on the plain stack this script's own docstring instructs running
+    # against (`docker compose ... up -d ws6-inventory`, no HA overlay). It
+    # never worked against the deployment it claimed to test; reading the
+    # ws3-indexer container's own OPENSEARCH_URL (correct for either
+    # profile: single node by default, comma-separated 3-node list under
+    # HA -- take the first, any live node answers this query) fixes it
+    # instead of hardcoding a second, drifting copy of that config.
     search = (
-        "import json,urllib.request;"
+        "import json,os,urllib.request;"
+        "url=os.environ.get('OPENSEARCH_URL','http://opensearch:9200').split(',')[0];"
         f"body=json.dumps({query!r}).encode();"
-        "req=urllib.request.Request('http://opensearch-1:9200/alerts-*/_search',"
+        "req=urllib.request.Request(url+'/alerts-*/_search',"
         "data=body,headers={'Content-Type':'application/json'},method='POST');"
         "print(urllib.request.urlopen(req,timeout=10).read().decode())"
     )

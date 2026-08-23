@@ -2,9 +2,18 @@
 # Consumed by WS-4 (compute score) and WS-5 (funnel routing).
 version: 1
 
-# Funnel thresholds. Single source of truth.
+# Funnel thresholds -- every value here is actually read by
+# services/ws4-detection/scoring.py::Scorer.route(). "store" (index only, no
+# classifier/LLM call) is not a third threshold: it's simply score <
+# classifier_min, the implicit else in route(). A `store_only_below` key
+# used to sit here too, implying store/classifier had its own independent
+# boundary -- it was dead config (gap-hunt finding, 2026-08-23: grepped the
+# whole repo, zero code or doc ever read it) that happened to equal
+# classifier_min's own value, so changing it alone would have silently done
+# nothing. Removed rather than wired in: nothing needs a boundary distinct
+# from classifier_min today, and an unused knob that LOOKS load-bearing is
+# worse than no knob.
 thresholds:
-  store_only_below: 20      # score < 20  -> index only
   classifier_min: 20        # 20..59      -> light ML classifier
   llm_min: 60               # >= 60       -> enqueue ai.requests for LLM
 
@@ -16,8 +25,15 @@ severity_floor:
   high: 70
   critical: 80
 
-# How to combine multiple matching rules on one event.
-combine: capped_sum   # sum of score_weight, clamped to [0,100]
+# Combine strategy for multiple matching rules on one event: Scorer.score()/
+# routing_score() hardcode max(sum of score_weight, severity floor), clamped
+# -- there has only ever been the one implemented strategy. A `combine:
+# capped_sum` key used to sit here describing only HALF of that formula (the
+# comment said "sum ... clamped", omitting the floor) and was never actually
+# read by any code (gap-hunt finding, 2026-08-23) -- a config value that
+# looks authoritative but is decorative, and whose own description didn't
+# match the real behavior it claimed to select. Removed for the same reason
+# as `store_only_below` above.
 clamp:
   min: 0
   max: 100

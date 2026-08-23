@@ -45,7 +45,17 @@ def discover_plugin_parsers(existing_source_types,
     on ``SOURCE_TYPE`` is skipped individually: one broken/malicious plugin
     package must never prevent normalization from starting at all, matching
     this repo's fail-open-on-a-single-bad-config posture everywhere else
-    (``contracts/tenants``, ``contracts/allowlists``)."""
+    (``contracts/tenants``, ``contracts/allowlists``).
+
+    A load/import failure or a wrong-type target is LOGGED (gap-hunt
+    finding, 2026-08-23: this used to swallow both with a bare ``except:
+    continue`` and no log line at all -- completely indistinguishable from
+    "no plugin installed," unlike ws4-detection/plugins.py's sibling
+    ``discover_rule_pack_dirs``, which already logged the equivalent case.
+    docs/plugin-development.md never disclosed the asymmetry either). A
+    ``SOURCE_TYPE`` collision stays a silent skip -- that's an installed,
+    WORKING plugin correctly deferring to a built-in/earlier plugin, not a
+    broken one; nothing here needs an operator's attention."""
     if eps is None:
         try:
             eps = list(entry_points(group=_GROUP))
@@ -56,9 +66,15 @@ def discover_plugin_parsers(existing_source_types,
         try:
             cls = ep.load()
             if not (isinstance(cls, type) and issubclass(cls, Parser)):
+                from shared.log import get_logger
+                get_logger("ws2-normalization").warn(
+                    f"parser plugin {ep.name!r} target is not a Parser subclass; skipped")
                 continue
             instance = cls()
-        except Exception:
+        except Exception as exc:
+            from shared.log import get_logger
+            get_logger("ws2-normalization").warn(
+                f"parser plugin {ep.name!r} failed to load ({exc}); skipped")
             continue
         source_type = getattr(instance, "SOURCE_TYPE", "")
         if not source_type or source_type in existing_source_types or source_type in found:

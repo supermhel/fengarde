@@ -29,7 +29,7 @@ from keystore import (  # noqa: E402
     SCOPE_READ_ONLY, TenantKeyStore, ensure_legacy_keys_migrated,
     warn_if_legacy_env_now_ignored, warn_missing_pepper,
 )
-from authz import warn_if_disabled  # noqa: E402
+from authz import require_auth_or_die, warn_if_disabled  # noqa: E402
 
 STORE = InventoryStore(os.getenv("INVENTORY_DB", ":memory:"))
 # Same file as STORE by default (one DB to back up), separate connection --
@@ -216,6 +216,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def serve(host="0.0.0.0", port=8000):
+    require_auth_or_die("ws6-inventory", KEYSTORE)
     warn_if_disabled("ws6-inventory", KEYSTORE)
     warn_missing_pepper()
     if not MIGRATED_TENANTS and KEYSTORE.count() > 0:

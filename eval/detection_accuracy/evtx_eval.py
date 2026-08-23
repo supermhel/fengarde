@@ -388,6 +388,25 @@ def main():
         print("  MISMATCH", m)
     for d in parse_drops[:10]:
         print("  DEADLETTER", d)
+    # Gap-hunt finding (2026-08-23): this built a full confusion matrix
+    # comparing the real WS-4 engine against an independent oracle -- the
+    # exact mechanism credited with catching the six brute-force false
+    # negatives P0-1/P0-2 fixed (2026-07-21) -- but `main()` unconditionally
+    # returned 0 regardless of `mismatches`, so even a real regression the
+    # oracle caught reported success on `$?`. Nothing currently runs this
+    # unattended (not wired into CI), so this was latent, not actively
+    # masking a failure today -- but exit-code semantics must be real before
+    # anything (a cron job, a future CI step) can rely on them. Pulled into
+    # its own function (rather than inlined here) specifically so it's
+    # testable without needing a real EVTX corpus -- test_evtx_eval.py
+    # drives it directly.
+    return _verdict(mismatches)
+
+
+def _verdict(mismatches: list) -> int:
+    if mismatches:
+        print(f"[FAIL] {len(mismatches)} mismatch(es) between the real engine and the oracle")
+        return 1
     return 0
 
 

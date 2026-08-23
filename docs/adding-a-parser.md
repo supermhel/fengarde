@@ -149,6 +149,40 @@ The test then parses your sample, validates the OCSF output, checks the `type_ui
 invariant, and confirms the class/sector match — and runs your sample through the full
 in-memory bus loop alongside the others.
 
+### Edit 4 — add a rule-producer fixture (do not skip this)
+
+`tools/check_rule_producers.py` is a separate, mandatory gate (`make test` runs it) from
+the contract test above — it proves every detection rule's fields are actually
+producible by SOME real parser, not just present in a synthetic sample. It works off its
+OWN fixture set, `FIXTURES` in that file, keyed by `source_type` — **your new parser
+needs its own entry there too**, even though it already has one in
+`raw_samples.json` for Edit 3.
+
+This step has a real history of being skipped: the `sysmon` parser shipped without a
+`FIXTURES` entry and sat completely unchecked for a month before anyone noticed (the
+gate's own missing-fixture check existed but wasn't wired into its exit code at the
+time). That's now fixed — a missing entry is a hard `[FAIL]`, not a silent skip — so
+skipping this step no longer ships silently, but it still means your first CI run fails
+instead of your PR being clean the first time.
+
+Add an entry mirroring your Edit-3 sample(s):
+
+```python
+FIXTURES: dict[str, list[dict]] = {
+    ...
+    "acme_firewall": [
+        {"raw": "...", "meta": {}},
+    ],
+}
+```
+
+Verify it's wired correctly:
+
+```sh
+python tools/check_rule_producers.py
+# -> [OK] all N rules are satisfiable by a real event ...
+```
+
 ---
 
 ## Verify
@@ -194,3 +228,4 @@ cd services/ws4-detection && python test_contract.py
 - `services/ws2-normalization/parsers/__init__.py` — the registry (Edit 2).
 - `contracts/ocsf-classes.md` — OCSF classes and activity_ids you can map to.
 - `services/ws2-normalization/test_contract.py` — the zero-infra verifier (Edit 3).
+- `tools/check_rule_producers.py` — the anti-dormancy fixture gate (Edit 4).

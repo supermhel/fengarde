@@ -199,6 +199,54 @@ jobs:
         if: always()
         run: docker rm -f mfa-e2e || true
 
+  # Gap-hunt finding (2026-08-23): tools/ot_new_device_e2e.py's own docstring
+  # says it "closes the gap" that the ot_new_device_on_segment rule had only
+  # ever fired on its own anti-dormancy fixture, never on a real producer --
+  # but that live proof was a one-time manual run (SSOT.md/CHANGELOG.md
+  # record it as "LIVE-VERIFIED END TO END 2026-08-11"), reachable by NO make
+  # target or CI job. Same shape as the MFA-e2e gap above, just needing the
+  # FULL live stack (WS-6's bus consumer -> raw.events -> WS-2 -> WS-4 -> WS-3)
+  # rather than one image. Also fixed a real, separate bug found while wiring
+  # this in: the script hardcoded `http://opensearch-1:9200`, an HA-PROFILE-
+  # ONLY hostname that doesn't exist on the plain stack its own docstring
+  # instructs running it against -- it had never actually worked. Live-
+  # verified both directions before wiring: fails with a connection error on
+  # the old hardcoded hostname, passes end-to-end once it reads the real
+  # OPENSEARCH_URL out of the ws3-indexer container instead.
+  ot-new-device-live-e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Bring up the full stack
+        # INVENTORY_BASELINE_SECONDS=0: the test's own docstring requires
+        # this -- a first sighting inside the default 3600s baseline window
+        # is treated as pre-existing inventory BY DESIGN (populate, don't
+        # alert), so the script would SKIP (not fail) without it.
+        env:
+          INVENTORY_BASELINE_SECONDS: "0"
+        run: docker compose -f infra/docker-compose.yml up -d --build
+      - name: Wait for the stack to report healthy
+        run: |
+          for i in $(seq 1 60); do
+            unhealthy=$(docker compose -f infra/docker-compose.yml ps --format '{{.Health}}' | grep -vc '^healthy$\|^$' || true)
+            if [ "$unhealthy" -eq 0 ]; then echo "stack healthy"; exit 0; fi
+            sleep 5
+          done
+          echo "stack did not reach healthy within 5 minutes"
+          docker compose -f infra/docker-compose.yml ps
+          exit 1
+      - name: Run OT new-device live e2e
+        run: python tools/ot_new_device_e2e.py
+      - name: Dump service logs on failure
+        if: failure()
+        run: docker compose -f infra/docker-compose.yml logs --tail=200
+      - name: Teardown
+        if: always()
+        run: docker compose -f infra/docker-compose.yml down -v
+
   # M2 code-quality floor (PLAN_C Tier 2.3). Lint blocks; coverage blocks at the
   # MEASURED baseline (see tools/coverage_gate.py) not the unmet-for-WS-3 85%
   # target -- see that file's docstring for why. mypy is BLOCKING as of

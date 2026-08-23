@@ -174,18 +174,42 @@ def measure(service_dir: str, source: str, scripts: list[str]) -> float:
     return float(pct)
 
 
+# Gap-hunt finding (2026-08-23): every floor above is a frozen number typed
+# in on a past measurement date, each with a disclosed 2-9pt buffer baked in
+# by comment. That buffer means real coverage can erode silently for however
+# many points it has left -- the gate keeps printing [OK] the whole way
+# down, and nothing prompts anyone to re-measure or raise the floor before
+# it actually breaches. There's no persistent baseline store across CI runs
+# to ratchet against, so this doesn't try to fail early -- it makes the
+# erosion VISIBLE instead of purely silent: a [WARN] fires once the buffer
+# still protecting a service drops under this many points, in the same CI
+# log a human is already reading, before the [FAIL] that used to be the
+# first signal anyone got.
+_LOW_BUFFER_WARN_PTS = 3.0
+
+
 def main() -> int:
     failed = False
+    warned = False
     for service_dir, (source, scripts, min_pct) in TARGETS.items():
         pct = measure(service_dir, source, scripts)
+        buffer = pct - min_pct
         status = "OK" if pct >= min_pct else "FAIL"
         if pct < min_pct:
             failed = True
-        print(f"[{status}] {service_dir}: {pct}% (gate: >={min_pct}%)")
+        print(f"[{status}] {service_dir}: {pct}% (gate: >={min_pct}%, buffer={buffer:.1f}pt)")
+        if status == "OK" and buffer < _LOW_BUFFER_WARN_PTS:
+            warned = True
+            print(f"  [WARN] {service_dir}'s buffer above its floor is down to "
+                  f"{buffer:.1f}pt (< {_LOW_BUFFER_WARN_PTS}pt) -- re-measure and "
+                  f"consider raising TARGETS' floor before this becomes a [FAIL]")
     if failed:
         print("\n[FAIL] coverage gate: one or more services regressed below their floor")
         return 1
-    print("\n[OK] coverage gate PASS")
+    if warned:
+        print("\n[OK] coverage gate PASS (see [WARN] above -- a floor's buffer is thinning)")
+    else:
+        print("\n[OK] coverage gate PASS")
     return 0
 
 

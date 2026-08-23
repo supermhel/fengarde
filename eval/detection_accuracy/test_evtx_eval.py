@@ -20,7 +20,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(SERVICES / "ws4-detection"))
 
-from evtx_eval import in_business_hours  # noqa: E402
+from evtx_eval import in_business_hours, _verdict  # noqa: E402
 from engine import _time_outside_hours  # noqa: E402  -- reuse the engine's own predicate
 
 _SPEC = {"start": "08:00", "end": "18:00"}  # common_after_hours_admin's real window
@@ -74,6 +74,23 @@ class TestInBusinessHoursMatchesEngine(unittest.TestCase):
         t_ms = _ms(10, 0, day=6)
         self.assertFalse(in_business_hours(t_ms))
         self.assertTrue(_time_outside_hours(_SPEC, t_ms))
+
+
+class TestVerdictExitCode(unittest.TestCase):
+    """Gap-hunt finding (2026-08-23): main() built a full confusion matrix
+    (oracle vs the real engine) but unconditionally `return 0`'d regardless
+    of `mismatches` -- even a real regression the oracle caught reported
+    success on `$?`. `_verdict()` is the extracted, directly-testable exit-
+    code decision (see evtx_eval.py's comment for the full account)."""
+
+    def test_no_mismatches_is_success(self):
+        self.assertEqual(_verdict([]), 0)
+
+    def test_any_mismatch_is_failure(self):
+        self.assertEqual(_verdict([{"file": "x.xml", "expected": "fired", "got": "silent"}]), 1)
+
+    def test_multiple_mismatches_still_failure(self):
+        self.assertEqual(_verdict([{"a": 1}, {"b": 2}, {"c": 3}]), 1)
 
 
 if __name__ == "__main__":
