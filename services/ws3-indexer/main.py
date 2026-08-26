@@ -172,7 +172,7 @@ def run(bus, store) -> dict:
             # alert docs straight to _bulk where any stale redelivery would
             # clobber a triage field an analyst had just set (same race class
             # as the per-message handler, just the live-production path).
-            if "alert_id" in payload and not create_only:
+            if "alert_id" in payload:
                 created = _index_alert_preserving_triage(
                     store, routed_index, doc_id, payload)
                 stats["indexed" if created else "duplicates"] += 1

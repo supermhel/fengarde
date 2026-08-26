@@ -104,7 +104,7 @@ def main():
     print(f"WS-3 indexed={c3['indexed']} dup={c3['duplicates']} unroutable={c3['unroutable']}")
     print(f"support: {c2['normalized']}/{supported} supported seeds survived "
           f"WS-2 ({c2['normalized'] / supported:.0%})" if supported else
-          f"support: 0 supported seeds in the mock corpus")
+          "support: 0 supported seeds in the mock corpus")
 
     if supported == 0:
         fails.append("WS-1's seed corpus contains no event supported by WS-2's "

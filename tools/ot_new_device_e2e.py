@@ -47,6 +47,8 @@ Run with the stack up:
 from __future__ import annotations
 
 import json
+import os
+import re
 import subprocess
 import sys
 import time
@@ -144,22 +146,6 @@ def main() -> int:
         return 1
     print(f"[e2e] produced assets.updates observation mac={mac} tenant={tenant}")
 
-    print(f"[e2e] waiting up to {_SETTLE_S}s for WS-6 -> raw.events -> WS-2 -> WS-4 -> WS-3")
-    deadline = time.time() + _SETTLE_S
-    while time.time() < deadline:
-        s = sh("docker", "exec", WS3, "python", "-c", search)
-        if s.returncode == 0:
-            try:
-                hits = json.loads(s.stdout).get("hits", {}).get("hits", [])
-            except ValueError:
-                hits = []
-            if hits:
-                break
-        time.sleep(2)
-    else:
-        print(f"[FAIL] ot new-device e2e: alert not found within {_SETTLE_S}s")
-        return 1
-
     # Query the indexer for an alert from this rule mentioning THIS run's MAC.
     query = {"size": 20, "query": {"term": {"rule_id": RULE_ID}},
              "sort": [{"time": {"order": "desc", "unmapped_type": "long"}}]}
@@ -181,6 +167,23 @@ def main() -> int:
         "data=body,headers={'Content-Type':'application/json'},method='POST');"
         "print(urllib.request.urlopen(req,timeout=10).read().decode())"
     )
+
+    print(f"[e2e] waiting up to {_SETTLE_S}s for WS-6 -> raw.events -> WS-2 -> WS-4 -> WS-3")
+    deadline = time.time() + _SETTLE_S
+    while time.time() < deadline:
+        s = sh("docker", "exec", WS3, "python", "-c", search)
+        if s.returncode == 0:
+            try:
+                hits = json.loads(s.stdout).get("hits", {}).get("hits", [])
+            except ValueError:
+                hits = []
+            if hits:
+                break
+        time.sleep(2)
+    else:
+        print(f"[FAIL] ot new-device e2e: alert not found within {_SETTLE_S}s")
+        return 1
+
     s = sh("docker", "exec", WS3, "python", "-c", search)
     if s.returncode != 0:
         # Redact any basic-auth credentials in OPENSEARCH_URL before logging.
