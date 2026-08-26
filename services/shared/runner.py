@@ -298,13 +298,14 @@ def _topic_worker(bus_factory, topic, group, handler, *, max_redeliveries,
         # depends on, so a failed flush degrades to "slightly late
         # redelivery," never a silent double-ack or a lost ack.
         pending_acks: list = []
+        bus_error_this_iter = False
         try:
             for msg, times_delivered in bus.claim_pending(
                     topic, group, claim_idle_ms, max_redeliveries):
                 did_work = True
                 _process_message(bus, topic, group, msg, handler,
-                                  max_redeliveries, times_delivered, metrics,
-                                  ack_fn=lambda m, g: pending_acks.append(m))
+                                 max_redeliveries, times_delivered, metrics,
+                                 ack_fn=lambda m, g: pending_acks.append(m))
                 if shutdown.is_set():
                     break
             if pending_acks:
@@ -312,6 +313,7 @@ def _topic_worker(bus_factory, topic, group, handler, *, max_redeliveries,
             if state is not None:
                 state.mark_ok()
         except Exception as exc:
+            bus_error_this_iter = True
             if state is not None:
                 state.mark_error(exc)  # bus unreachable -> /health reports degraded
             # Gap-hunt finding (2026-08-23): this update /health (above) but
@@ -320,8 +322,6 @@ def _topic_worker(bus_factory, topic, group, handler, *, max_redeliveries,
             # signal at all for "the bus connection itself is failing,"
             # only an absence of `acked` increments, indistinguishable from
             # a genuinely idle topic.
-            if metrics is not None:
-                metrics.incr(topic, "bus_error")
             _throttled_print_exc(topic, exc)
 
         # 2) New messages. Bound the blocking read (RedisBus.consume blocks up to
@@ -353,11 +353,12 @@ def _topic_worker(bus_factory, topic, group, handler, *, max_redeliveries,
             if state is not None:
                 state.mark_ok()
         except Exception as exc:
+            bus_error_this_iter = True
             if state is not None:
                 state.mark_error(exc)
-            if metrics is not None:  # same /metrics-blind-spot fix as the claim_pending pass above
-                metrics.incr(topic, "bus_error")
             _throttled_print_exc(topic, exc)
+        if bus_error_this_iter and metrics is not None:
+            metrics.incr(topic, "bus_error")
 
         if not did_work:
             # consume() returned empty (MemoryBus drained, or Redis block expired

@@ -308,12 +308,18 @@ class UserStore:
         return bool(row and row["totp_active"])
 
     def verify_totp(self, username: str, code: str) -> bool:
-        """Check `code` against the account's stored secret; on success mark
-        the secret ACTIVE (the two-step completion after `enable_totp`).
+        """Check `code` against the account's stored secret and record it as
+        the last accepted step for this account.
 
         Returns False for any failure (no secret, wrong code, missing mfa
         module, unknown user, OR a code whose time-step has already been
         accepted once -- replay protection, see below) -- never raises.
+
+        This is the LOGIN-path entry point. For enrollment confirmation
+        (after ``/auth/mfa/enable``) use :meth:`confirm_totp`, which
+        activates the secret without advancing the per-account
+        ``totp_last_counter`` (otherwise the very next login within the
+        code's +/-1-step window would be rejected as a replay).
         """
         if not _TOTP_AVAILABLE:
             return False
@@ -326,20 +332,50 @@ class UserStore:
         matched_counter = _mfa.verify_code_returning_counter(secret, code)
         if matched_counter is None:
             return False
-        # Replay protection (gap-hunt finding, 2026-08-23): a code is shape-
-        # and-value valid for its whole +/-1-step window (~90s), and used to
-        # be accepted every time it was resubmitted in that window -- this
-        # was NOT "idempotent, harmless re-confirmation" as the old comment
-        # here claimed, it was a live replay hole (a sniffed/logged/shoulder-
-        # surfed code could open a second session). Reject any counter at or
-        # before the last one this account actually used; only a code for a
-        # step never yet accepted can succeed.
-        if matched_counter <= row["totp_last_counter"]:
-            return False
+        # The counter read, replay check, and UPDATE must all happen under
+        # the SAME lock -- otherwise two threads verifying the same code
+        # concurrently can both read totp_last_counter=5, both pass the
+        # check, and both write counter=6 (the TOCTOU this finding fixed).
         with self._write_lock:
+            row = self.db.execute(
+                "SELECT totp_active, totp_last_counter FROM users WHERE username = ?",
+                (username,),
+            ).fetchone()
+            if row is None:
+                return False
+            if matched_counter <= row["totp_last_counter"]:
+                return False
             self.db.execute(
                 "UPDATE users SET totp_active = 1, totp_last_counter = ? WHERE username = ?",
                 (matched_counter, username),
+            )
+            self.db.commit()
+        return True
+
+    def confirm_totp(self, username: str, code: str) -> bool:
+        """Confirm an enrollment code (after ``/auth/mfa/enable``).
+
+        Unlike :meth:`verify_totp`, this does NOT advance
+        ``totp_last_counter`` -- its only job is to flip ``totp_active``
+        from 0 to 1 so the account is MFA-protected going forward.
+        If it burned the counter the user's very next real login (within
+        the same +/-1-step window) would be rejected as a replay.
+        """
+        if not _TOTP_AVAILABLE:
+            return False
+        row = self.get_user(username)
+        if row is None:
+            return False
+        secret = row["totp_secret"]
+        if not secret:
+            return False
+        matched_counter = _mfa.verify_code_returning_counter(secret, code)
+        if matched_counter is None:
+            return False
+        with self._write_lock:
+            self.db.execute(
+                "UPDATE users SET totp_active = 1 WHERE username = ?",
+                (username,),
             )
             self.db.commit()
         return True
