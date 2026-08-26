@@ -22,10 +22,19 @@ caches parsed networks. ``enrich(event)`` uses it; tests construct their own
 from __future__ import annotations
 
 import ipaddress
+import logging
 from pathlib import Path
 from typing import Optional
 
 import yaml
+
+# Fail-open by design, but NEVER silent (2026-08-26 gap-hunt finding: both
+# except paths swallowed every exception with no log line, so a malformed
+# IOC file or an enrich() bug made the whole A5 stage a silent no-op in
+# production -- indistinguishable from \"data matched nothing\"). stdlib
+# logging, not shared.log, to keep this module dependency-light and testable
+# via assertLogs.
+_LOGGER = logging.getLogger("ws2-normalization.enrichment")
 
 
 def _contracts_dir() -> Path:
@@ -60,8 +69,20 @@ _DEFAULT_GEOIP = _CONTRACTS / "enrichment" / "geoip.yml"
 def _load_entries(path: Path) -> list[dict]:
     try:
         raw = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
-    except Exception:
-        return []  # missing/unreadable/malformed -> no enrichment, never raise
+    except FileNotFoundError:
+        # Expected-ish misconfiguration (missing data file) but still worth a
+        # line: an operator should know the IOC/geo stage is a silent no-op.
+        _LOGGER.warning("enrichment data file missing (fail-open, no enrichment "
+                        "from it): %s", path)
+        return []
+    except Exception as exc:  # noqa: BLE001
+        # Malformed/unreadable file: fail-open per contract, but never swallow
+        # silently -- gap-hunt finding 4 (a broken file used to be
+        # indistinguishable from an empty one).
+        _LOGGER.warning("enrichment data file unreadable/malformed (fail-open, "
+                        "no enrichment from it): %s (%s: %s)",
+                        path, type(exc).__name__, exc)
+        return []
     entries = raw.get("entries") if isinstance(raw, dict) else None
     return [e for e in entries if isinstance(e, dict)] if isinstance(entries, list) else []
 
@@ -159,8 +180,12 @@ class Enricher:
                 loc = self._location_for(ip)
                 if loc is not None:
                     src["location"] = loc
-        except Exception:
-            pass  # fail-open: enrichment must never drop or corrupt an event
+        except Exception as exc:  # noqa: BLE001
+            # fail-open: enrichment must never drop or corrupt an event -- but
+            # the exception MUST be visible (gap-hunt finding 4), or a bug in
+            # this stage is indistinguishable from \"data matched nothing\".
+            _LOGGER.warning("enrichment exception, returning event unchanged "
+                            "(fail-open): %s: %s", type(exc).__name__, exc)
         return event
 
 

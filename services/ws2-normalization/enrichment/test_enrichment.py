@@ -117,6 +117,45 @@ class TestEnrichment(unittest.TestCase):
         self.assertEqual(e.enrich({"src_endpoint": {"ip": "1.2.3.4"}})["src_endpoint"],
                          {"ip": "1.2.3.4"})
 
+    def test_fail_open_paths_warn_not_swallowed_silently(self):
+        """Gap-hunt finding 4 (2026-08-26) regression: BOTH fail-open except
+        paths (data-file load at construction, and the in-enrich body) used to
+        swallow every exception with no log line -- a malformed IOC file or an
+        enrich() bug made the whole A5 stage a silent no-op, indistinguishable
+        from 'data matched nothing'. Both must now emit a WARNING while still
+        failing open (event unchanged, never raises)."""
+        import logging
+        logger = logging.getLogger("ws2-normalization.enrichment")
+
+        # (a) _load_entries: malformed YAML -> warn + empty data, no crash.
+        bad = self.tmp / "ioc-bad.yml"
+        bad.write_text("{ unclosed flow mapping", encoding="utf-8")
+        with self.assertLogs(logger, level="WARNING") as cap:
+            e = Enricher(ioc_path=bad, geoip_path=self.tmp / "missing-geo.yml")
+        self.assertTrue(any("enrichment" in m.getMessage() for m in cap.records),
+                        f"expected a warn about the bad data file, got {[m.getMessage() for m in cap.records]}")
+        # fail-open preserved: the event that WOULD have matched the broken
+        # file's entries still flows through untouched.
+        self.assertEqual(e.enrich({"src_endpoint": {"ip": "203.0.113.5"}})["src_endpoint"],
+                         {"ip": "203.0.113.5"})
+
+        # (b) in-enrich exception -> warn + original event returned as-is.
+        class _ExplodingSrc(dict):
+            def __setitem__(self, k, v):
+                if k == "reputation":
+                    raise RuntimeError("boom")
+                return super().__setitem__(k, v)
+
+        ev = {"src_endpoint": _ExplodingSrc({"ip": "203.0.113.5"})}
+        with self.assertLogs(logger, level="WARNING") as cap:
+            out = self.e.enrich(ev)   # self.e has real IOC data, so the
+                                      # reputation assignment actually fires
+        self.assertIs(out, ev, "fail-open: the same event object must come back")
+        self.assertEqual(out["src_endpoint"], {"ip": "203.0.113.5"},
+                         "fail-open: event must be untouched by the exception")
+        self.assertTrue(any("enrichment exception" in m.getMessage() for m in cap.records),
+                        f"expected a warn about the enrich() exception, got {[m.getMessage() for m in cap.records]}")
+
     def test_enriched_event_still_validates_against_contract_a(self):
         # The whole tolerant-reader premise: adding these fields must not make an
         # otherwise-valid OCSF event invalid.

@@ -16,7 +16,12 @@
 
 ## Produces
 - Topic `normalized.events` — OCSF event (Contract A), partition key = `src_endpoint.ip`.
-- Topic `raw.events.deadletter` — unparseable/invalid inputs with errors.
+- Topic `raw.events.deadletter` — unparseable/invalid inputs with errors. Payload is
+  the ORIGINAL `raw.events` payload verbatim (`source_type`/`raw`/`meta` at top
+  level, so `tools/dlq_peek.py --requeue` genuinely re-processes it) plus
+  `errors` (top-level, read by `eval/detection_accuracy/evtx_eval.py`) and a
+  `deadletter` metadata object (`stage`, `key`, `deadlettered_at`). The entry
+  key inherits the original message's partition key (`meta.ip`/`meta.mac`).
 
 ## Parsers (one per source type, registry in `parsers/__init__.py`)
 - `cisco_asa` → Network Activity (4001), sector common

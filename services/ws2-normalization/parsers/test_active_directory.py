@@ -104,6 +104,56 @@ class TestActiveDirectoryParser(unittest.TestCase):
         self.assertEqual(event["actor"]["user"]["name"], "jdoe")
         self.assertEqual(event["actor"]["user"]["uid"], "['weird']")
 
+    def test_workstation_dash_falls_back_to_computer(self):
+        """Gap-hunt finding 5 (2026-08-26): Windows NTLM/network logons log a
+        literal '-' WorkstationName. That's truthy, so the old
+        ``WorkstationName or Computer`` chain never reached Computer and every
+        such event grouped under src_endpoint.hostname='-' -- a permanently
+        firing noise bucket for common_bruteforce_sourceless, with every
+        coordinated-brute-force attempt colliding on ONE idempotent alert_id.
+        '-' (like ''/None) must be treated as absent so Computer wins."""
+        rec = {
+            "EventID": 4625, "TimeCreated": 1750000000000,
+            "TargetUserName": "jdoe", "IpAddress": "10.20.30.40",
+            "WorkstationName": "-", "Computer": "DC01.bankcorp.local",
+        }
+        event = PARSER.parse(_raw(rec))
+        self.assertIsNotNone(event)
+        self.assertEqual(event["src_endpoint"]["hostname"], "DC01.bankcorp.local",
+                         "'-' WorkstationName must fall back to Computer")
+        self.assertEqual(event["src_endpoint"]["ip"], "10.20.30.40")
+        self.assertEqual(validate(event), [])
+
+    def test_workstation_dash_without_computer_yields_no_hostname(self):
+        """'-' with no Computer: hostname must be ABSENT (not '-'), so the
+        event can't land in the '-' grouping bucket at all. src_endpoint is
+        still emitted because the source IP is present."""
+        rec = {
+            "EventID": 4625, "TimeCreated": 1750000000000,
+            "TargetUserName": "jdoe", "IpAddress": "10.20.30.40",
+            "WorkstationName": "-",
+        }
+        event = PARSER.parse(_raw(rec))
+        self.assertIsNotNone(event)
+        self.assertNotIn("hostname", event["src_endpoint"],
+                         "hostname must be absent when WorkstationName is '-'; "
+                         f"got {event['src_endpoint']!r}")
+        self.assertEqual(event["src_endpoint"]["ip"], "10.20.30.40")
+        self.assertEqual(validate(event), [])
+
+    def test_empty_workstation_still_falls_back_to_computer(self):
+        """Empty-string WorkstationName (falsy) keeps the pre-existing ``or``
+        fallback working end-to-end."""
+        rec = {
+            "EventID": 4625, "TimeCreated": 1750000000000,
+            "TargetUserName": "jdoe", "IpAddress": "10.20.30.40",
+            "WorkstationName": "", "Computer": "DC02",
+        }
+        event = PARSER.parse(_raw(rec))
+        self.assertIsNotNone(event)
+        self.assertEqual(event["src_endpoint"]["hostname"], "DC02")
+        self.assertEqual(validate(event), [])
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
