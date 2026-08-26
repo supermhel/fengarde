@@ -38,7 +38,18 @@ def test_known_technique_present_under_attack_framework():
     attack = coverage["by_framework"].get("attack", {})
     check("T1110" in attack, "T1110 (brute force, common_bruteforce.yml) must appear "
                               "under the 'attack' framework")
-    check("common_bruteforce" not in str(attack.get("T1110", {})) or True, "sanity: no crash")
+    # Gap-hunt finding (2026-08-26): the previous line here was
+    #   check("common_bruteforce" not in str(attack.get("T1110", {})) or True, "sanity")
+    # -- the trailing `or True` made it unconditionally green forever. It now
+    # asserts the thing that line was really probing: T1110's entry is a
+    # non-empty, correctly-attributed mapping (a coverage parser that silently
+    # produced an empty or mis-keyed entry must fail here, not pass).
+    brute_id = "6f1c8a2e-0d3b-4c11-9a21-7b5e2f9a1c01"  # common_bruteforce.yml
+    entry = attack.get("T1110")
+    check(isinstance(entry, dict) and isinstance(entry.get("rules"), list)
+          and brute_id in entry["rules"],
+          f"T1110 coverage must attribute common_bruteforce.yml (id {brute_id}), "
+          f"got {entry!r}")
 
 
 def test_rule_with_no_mitre_block_is_flagged_undeclared():

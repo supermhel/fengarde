@@ -194,11 +194,17 @@ def main() -> int:
     for service_dir, (source, scripts, min_pct) in TARGETS.items():
         pct = measure(service_dir, source, scripts)
         buffer = pct - min_pct
-        status = "OK" if pct >= min_pct else "FAIL"
-        if pct < min_pct:
+        # Floor semantics: >= min_pct passes, anything below fails. The
+        # boundary at exactly pct == min_pct is deliberately a PASS, and it is
+        # single-sourced here (gap-hunt finding 2026-08-26: the status line
+        # and the `failed` flag used two separate comparisons that could drift
+        # apart under an edit, and no test pinned the == case).
+        ok = pct >= min_pct
+        status = "OK" if ok else "FAIL"
+        if not ok:
             failed = True
         print(f"[{status}] {service_dir}: {pct}% (gate: >={min_pct}%, buffer={buffer:.1f}pt)")
-        if status == "OK" and buffer < _LOW_BUFFER_WARN_PTS:
+        if ok and buffer < _LOW_BUFFER_WARN_PTS:
             warned = True
             print(f"  [WARN] {service_dir}'s buffer above its floor is down to "
                   f"{buffer:.1f}pt (< {_LOW_BUFFER_WARN_PTS}pt) -- re-measure and "

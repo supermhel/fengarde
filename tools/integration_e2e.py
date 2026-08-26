@@ -20,6 +20,11 @@ from shared.bus import Bus  # noqa: E402
 
 bus = Bus()
 
+# Survival floor for SUPPORTED seeds (see SURVIVAL_FLOOR below): a pipeline
+# regression that kills 1 in 5 of the events it is supposed to handle must
+# fail the gate loudly, not report a green "at least one event made it".
+SURVIVAL_FLOOR = 0.8
+
 
 def _import(ws_dir, mod="main"):
     p = str(SERVICES / ws_dir)
@@ -35,7 +40,22 @@ def _import(ws_dir, mod="main"):
 def main():
     fails = []
 
-    # WS-1: produce raw.events from mocks
+    # WS-1: produce raw.events from mocks. Spy on produce() so we know the
+    # EXACT seed set (the mock corpus deliberately includes sources WS-2 has
+    # no parser for -- snmp/netflow_ipfix -- and RFC 5424 syslog lines that
+    # the RFC 3164-only generic_syslog catch-all dead-letters; those seeds
+    # are legitimately unsupported by the current pipeline and must not be
+    # counted against it, but they MUST be reported, not hidden in a pass).
+    produced_raw: list[dict] = []
+    _orig_produce = bus.produce
+
+    def _spy_produce(topic, key=None, payload=None):
+        if topic == "raw.events":
+            produced_raw.append(payload)
+        return _orig_produce(topic, key=key, payload=payload)
+
+    bus.produce = _spy_produce
+
     ws1 = _import("ws1-collectors")
     c1 = ws1.run_once(bus)
     assert c1["raw.events"] > 0
@@ -44,6 +64,24 @@ def main():
     for m in ("main", "parsers"):
         sys.modules.pop(m, None)
     ws2 = _import("ws2-normalization")
+
+    # Classify every seed WS-1 produced through the EXACT code path the
+    # pipeline runs (normalize_one = resolve -> parse -> sanitize -> validate).
+    # A seed is "supported" when WS-2 says it would have normalized it; the
+    # must-survive set is that supported subset, never the whole mock corpus.
+    # Dropped seeds are logged individually so a growing silence is visible
+    # instead of being absorbed into a pass.
+    supported = 0
+    for seed in produced_raw:
+        event, errors = ws2.normalize_one(seed)
+        if event is not None and not errors:
+            supported += 1
+            continue
+        st = seed.get("source_type")
+        detail = errors[0] if errors else "parser returned None"
+        print(f"[e2e] seed dropped (not in must-survive set): source_type={st!r} "
+              f"raw={str(seed.get('raw'))[:80]!r} -> {detail}")
+
     c2 = ws2.run(bus)
 
     # WS-4: normalized.events -> scored.events + alerts + ai.requests
@@ -64,9 +102,17 @@ def main():
     print(f"WS-2 normalized={c2['normalized']} dropped={c2['dropped']}")
     print(f"WS-4 scored={c4['scored']} alerts={c4['alerts']} ai={c4['ai_enqueued']}")
     print(f"WS-3 indexed={c3['indexed']} dup={c3['duplicates']} unroutable={c3['unroutable']}")
+    print(f"support: {c2['normalized']}/{supported} supported seeds survived "
+          f"WS-2 ({c2['normalized'] / supported:.0%})" if supported else
+          f"support: 0 supported seeds in the mock corpus")
 
-    if c2["normalized"] < 1:
-        fails.append("no events normalized end-to-end")
+    if supported == 0:
+        fails.append("WS-1's seed corpus contains no event supported by WS-2's "
+                     "registered parsers -- the pipeline has nothing to prove here")
+    elif c2["normalized"] < SURVIVAL_FLOOR * supported:
+        fails.append(f"only {c2['normalized']}/{supported} supported events survived "
+                     f"WS-2 (floor {SURVIVAL_FLOOR:.0%}) -- supported seeds must not "
+                     f"be dead-lettered en masse")
     if c4["scored"] != c2["normalized"]:
         fails.append("detection did not score every normalized event")
     if c3["indexed"] < c4["scored"]:

@@ -219,21 +219,31 @@ def rule_referenced(rule: dict) -> tuple[set[tuple[str, object]], set[str]]:
     return equality, path_only
 
 
-def collect_events() -> list[dict[str, object]]:
-    """One flattened dotted-path map per REAL event a parser produces (post-enrich).
+def collect_events() -> tuple[list[dict[str, object]], list[tuple[str, int]]]:
+    """(one flattened dotted-path map per REAL event a parser produces
+    (post-enrich), fixtures that parsed to None).
 
     Per-event (not a global union) so we can check that a rule matches and has its
-    group_by/distinct_field on the SAME event -- see main()."""
+    group_by/distinct_field on the SAME event -- see main().
+
+    The second element is the gap-hunt fix (2026-08-26): a fixture whose parser
+    returns None used to be silently dropped here, so the 'has fixture' coverage
+    claim kept passing while that fixture contributed NOTHING to the field set
+    -- the same false-coverage class as a missing FIXTURES entry, just quieter.
+    Callers must treat it as a missing fixture (main() fails the gate on it)."""
     events: list[dict[str, object]] = []
+    dropped: list[tuple[str, int]] = []
     for source_type, raws in FIXTURES.items():
         parser = _REGISTRY.get(source_type)
         if parser is None:
             continue
-        for raw in raws:
+        for i, raw in enumerate(raws):
             event = parser.parse({"source_type": source_type, **raw})
-            if event is not None:
+            if event is None:
+                dropped.append((source_type, i))
+            else:
                 events.append(flatten(enrich(event)))
-    return events
+    return events, dropped
 
 
 def _event_matches(event: dict, equality: set) -> bool:
@@ -242,14 +252,32 @@ def _event_matches(event: dict, equality: set) -> bool:
 
 
 def main() -> int:
-    # Gap-hunt finding (2026-08-23): this was previously only checked inside
+    # Gap-hunt finding (2026-08-26): this was previously only checked inside
     # collect_producible(), which main() never called -- a registered parser
     # with no FIXTURES entry (sysmon, for a month) sat completely unchecked,
     # print("[OK] ...") and all, contradicting this file's own docstring
     # ("runs every registered parser"). A missing fixture isn't a soft NOTE:
     # it means this gate's coverage claim is false for that parser's fields,
     # so it fails the gate now instead of relying on someone reading stderr.
-    missing = sorted(set(_REGISTRY) - set(FIXTURES))
+    #
+    # Scope fix (2026-08-26): the check applies to BUILT-IN parsers only. A
+    # third-party parser plugin registered via a `fengarde.parsers` entry
+    # point (docs/plugin-development.md) is not this repo's parser -- this
+    # gate cannot hold fixtures for packages it doesn't own, and failing the
+    # repo's own CI because someone pip-installed a plugin would be a false
+    # accusation. Built-ins are identified by their module (this package:
+    # `parsers.<name>` a plugin lives in its own package, e.g.
+    # `my_fengarde_plugin.parser`). Plugins are skipped with a note, never
+    # silently: the note is what keeps the coverage claim honest.
+    builtin = {st for st, p in _REGISTRY.items()
+               if (getattr(p, "__module__", "") or "").startswith("parsers.")}
+    plugins = sorted(set(_REGISTRY) - builtin)
+    if plugins:
+        print(f"[NOTE] third-party parser plugin(s) {plugins} are NOT covered by "
+              f"this gate -- it checks built-in parsers only (this repo cannot "
+              f"hold fixtures for external packages). Their fields are not in "
+              f"the producibility ground truth below.")
+    missing = sorted(builtin - set(FIXTURES))
     if missing:
         print(f"[FAIL] no FIXTURES entry for registered parser(s) {missing} -- "
               f"their fields are NOT checked by this gate. Add a fixture "
@@ -261,7 +289,18 @@ def main() -> int:
               f"a removed/renamed parser left a stale fixture behind.")
         return 1
 
-    events = collect_events()
+    events, dropped = collect_events()
+    # Gap-hunt finding (2026-08-26): a fixture that parses to None contributes
+    # zero fields to the ground truth but used to vanish silently from the
+    # 'has fixture' accounting, leaving a false coverage claim for its
+    # parser's fields. Same class as a missing FIXTURES entry: fail the gate.
+    if dropped:
+        print(f"[FAIL] fixture(s) parsed to None instead of producing an event: "
+              f"{[f'{st}[{i}]' for st, i in dropped]} -- those fields are NOT in "
+              f"the ground truth, so any rule relying on them would look "
+              f"satisfiable while never firing. Fix the fixture (mirror the "
+              f"parser's own test input) before this can pass.")
+        return 1
     # Global sets, kept only to write precise diagnostics.
     all_paths: set[str] = set()
     all_pairs: set = set()

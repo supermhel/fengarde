@@ -52,8 +52,29 @@ import sys
 import time
 import uuid
 
-WS6 = "infra-ws6-inventory-1"
-WS3 = "infra-ws3-indexer-1"
+def _container(service: str) -> str:
+    """Resolve the real container name for a compose service, regardless of
+    COMPOSE_PROJECT_NAME. Falls back to the legacy `<project>_<service>-1`
+    pattern when ps can't be parsed (e.g. running outside compose)."""
+    try:
+        out = sh("docker", "compose", "-f", "infra/docker-compose.yml", "ps", "--format", "{{.Name}}", service).stdout.strip()
+        if out:
+            return out.splitlines()[-1]
+    except Exception:
+        pass
+    # Fallback: inspect project from running containers with the known legacy name.
+    try:
+        legacy = f"infra-{service}-1"
+        out = sh("docker", "ps", "--filter", f"name={legacy}", "--format", "{{.Names}}").stdout.strip()
+        if out:
+            return out.splitlines()[0]
+    except Exception:
+        pass
+    raise SystemExit(f"[ot-e2e] cannot resolve container for service '{service}' -- is the stack up?")
+
+
+WS6 = _container("ws6-inventory")
+WS3 = _container("ws3-indexer")
 RULE_ID = "7f8091a2-b3c4-4d53-9e6f-1a2b3c4d5e6f"  # ot_new_device_on_segment
 _SETTLE_S = 25
 
@@ -123,8 +144,21 @@ def main() -> int:
         return 1
     print(f"[e2e] produced assets.updates observation mac={mac} tenant={tenant}")
 
-    print(f"[e2e] waiting {_SETTLE_S}s for WS-6 -> raw.events -> WS-2 -> WS-4 -> WS-3")
-    time.sleep(_SETTLE_S)
+    print(f"[e2e] waiting up to {_SETTLE_S}s for WS-6 -> raw.events -> WS-2 -> WS-4 -> WS-3")
+    deadline = time.time() + _SETTLE_S
+    while time.time() < deadline:
+        s = sh("docker", "exec", WS3, "python", "-c", search)
+        if s.returncode == 0:
+            try:
+                hits = json.loads(s.stdout).get("hits", {}).get("hits", [])
+            except ValueError:
+                hits = []
+            if hits:
+                break
+        time.sleep(2)
+    else:
+        print(f"[FAIL] ot new-device e2e: alert not found within {_SETTLE_S}s")
+        return 1
 
     # Query the indexer for an alert from this rule mentioning THIS run's MAC.
     query = {"size": 20, "query": {"term": {"rule_id": RULE_ID}},
@@ -149,8 +183,12 @@ def main() -> int:
     )
     s = sh("docker", "exec", WS3, "python", "-c", search)
     if s.returncode != 0:
-        print(f"[FAIL] ot new-device e2e: alert search failed: "
-              f"{(s.stderr or s.stdout).strip()[:400]}")
+        # Redact any basic-auth credentials in OPENSEARCH_URL before logging.
+        safe_url = os.environ.get("OPENSEARCH_URL", "http://opensearch:9200")
+        safe_url = re.sub(r"//[^:]+:[^@]+@", "//***:***@", safe_url)
+        msg = (s.stderr or s.stdout or "").strip()[:400]
+        msg = re.sub(r"https?://[^:]+:[^@]+@", "https://***:***@", msg)
+        print(f"[FAIL] ot new-device e2e: alert search failed (url={safe_url}): {msg}")
         return 1
     try:
         hits = json.loads(s.stdout).get("hits", {}).get("hits", [])

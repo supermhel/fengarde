@@ -61,6 +61,25 @@ def test_below_floor_is_fail():
     rc, out = _run_main_with({"svc-a": 40.0}, {"svc-a": 50.0})
     check(rc == 1, f"below-floor must FAIL, got rc={rc}")
     check("[FAIL] svc-a" in out, f"must name the failing service:\n{out}")
+    # The [WARN] guard is `ok and buffer < ...`: a WARN for a FAILING service
+    # would mean the `ok` half of the guard was deleted/relaxed (warn firing
+    # on failures too). That mutation must not pass silently, so the absence
+    # of a WARN here is asserted, not incidental.
+    check("[WARN]" not in out,
+          f"a failing service must never trigger the thin-buffer [WARN], got:\n{out}")
+
+
+def test_exactly_at_floor_passes():
+    """The boundary the whole 'floor' concept turns on: pct == min_pct meets
+    the floor (>= passes), so it must PASS -- and a `>`-mutation of the guard
+    (or a `failed` flag that used a < comparison separate from the status
+    line) must go red here. Its buffer is 0.0pt, so a thin-buffer [WARN] is
+    expected alongside the OK: meeting a floor exactly is not comfortable."""
+    rc, out = _run_main_with({"svc-a": 50.0}, {"svc-a": 50.0})
+    check(rc == 0, f"exactly at the floor must still PASS, got rc={rc}")
+    check("[OK] svc-a" in out, f"must be flagged OK at the floor:\n{out}")
+    check("[WARN] svc-a" in out,
+          f"a 0.0pt buffer at the floor must warn (it is not comfortable):\n{out}")
 
 
 def test_thin_buffer_warns_but_still_passes():
@@ -87,12 +106,19 @@ def test_multiple_services_independent_verdicts():
     check("[OK] svc-ok" in out and "[WARN] svc-ok" not in out, f"svc-ok must be clean OK:\n{out}")
     check("[WARN] svc-thin" in out, f"svc-thin must warn:\n{out}")
     check("[FAIL] svc-fail" in out, f"svc-fail must fail:\n{out}")
+    # Same load-bearing assertion as test_below_floor_is_fail: the [WARN]
+    # guard must only fire on services that are still OK. svc-fail is 20pt
+    # BELOW its floor, so a [WARN] line naming it means the `ok` half of the
+    # guard was deleted and warnings are leaking onto failures.
+    check("[WARN] svc-fail" not in out,
+          f"the failing service must not also be [WARN]ed:\n{out}")
 
 
 def run_all() -> None:
     tests = [
         test_comfortably_above_floor_is_ok_no_warn,
         test_below_floor_is_fail,
+        test_exactly_at_floor_passes,
         test_thin_buffer_warns_but_still_passes,
         test_buffer_exactly_at_warn_threshold_does_not_warn,
         test_multiple_services_independent_verdicts,

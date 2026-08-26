@@ -18,6 +18,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SCHEMA_PATH = ROOT / "contracts" / "ocsf-event.schema.json"
+FIXTURES_DIR = ROOT / "fixtures"
 
 
 def load(p):
@@ -111,17 +112,34 @@ def validate_event(event, schema):
     return errors
 
 
-def main():
+def main() -> int:
     schema = load(SCHEMA_PATH)
     args = sys.argv[1:]
     if args:
         files = [Path(a) for a in args]
     else:
-        files = sorted((ROOT / "fixtures").glob("*.json"))
+        files = sorted(FIXTURES_DIR.glob("*.json"))
+
+    # Gap-hunt finding (2026-08-26): with zero fixtures (empty/renamed
+    # fixtures dir -- or, in CI, no fixtures checked out) the loop below never
+    # runs, overall_ok stays True, and this printed "RESULT: PASS" with exit 0
+    # -- a contract gate that validated NOTHING kept the tree green. Count
+    # floor: an empty fixture set is an explicit failure, never a pass.
+    if not files:
+        print("[FAIL] ZERO fixtures were validated -- every check below is "
+              "vacuously true over an empty set, so this gate would print "
+              "PASS while validating NOTHING. The fixtures directory "
+              f"{FIXTURES_DIR} is empty or missing.")
+        return 1
 
     overall_ok = True
     for f in files:
-        event = load(f)
+        try:
+            event = load(f)
+        except (OSError, json.JSONDecodeError) as exc:
+            overall_ok = False
+            print(f"[FAIL] {f.name}: could not load ({type(exc).__name__}: {exc})")
+            continue
         errors = validate_event(event, schema)
         expect_invalid = "invalid" in f.stem
         if errors:
@@ -142,8 +160,8 @@ def main():
                 print(f"[OK ] {f.name}: valid")
 
     print("\nRESULT:", "PASS" if overall_ok else "FAIL")
-    sys.exit(0 if overall_ok else 1)
+    return 0 if overall_ok else 1
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

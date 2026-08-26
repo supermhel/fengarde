@@ -400,14 +400,14 @@ def main():
     # its own function (rather than inlined here) specifically so it's
     # testable without needing a real EVTX corpus -- test_evtx_eval.py
     # drives it directly.
-    return _verdict(mismatches)
+    rc = _verdict(mismatches)
+    if rc:
+        print(f"[FAIL] {len(mismatches)} mismatch(es) between the real engine and the oracle")
+    return rc
 
 
 def _verdict(mismatches: list) -> int:
-    if mismatches:
-        print(f"[FAIL] {len(mismatches)} mismatch(es) between the real engine and the oracle")
-        return 1
-    return 0
+    return 1 if mismatches else 0
 
 
 if __name__ == "__main__":

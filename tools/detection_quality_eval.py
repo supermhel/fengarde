@@ -37,6 +37,18 @@ ALLOWLISTS_DIR = ROOT / "contracts" / "allowlists"
 # -> macro-F1 0), not to assert a quality level.
 FLOOR = 0.5
 
+# Gap-hunt finding (2026-08-26): the macro-F1 gate above cannot go red from a
+# SINGLE rule dying. With 4 scored rules, zeroing one rule's F1 (e.g. its
+# selection field renamed in a rule edit, or a production-field typo making it
+# never match) only moves macro-F1 from 0.875 to ~0.75 -- still far above the
+# 0.5 floor, verified live. A per-rule floor is the complement: ANY scored
+# rule whose F1 is exactly 0 (no true positives at all, or zero recall) is a
+# dead rule and must fail on its own, regardless of what the others average.
+# Strictly `> 0` because F1 == 0 carries the only unambiguous meaning: the
+# rule contributes nothing. (A rule legitimately at low-but-nonzero F1 stays
+# a trip-wire question for FLOOR, not this check.)
+PER_RULE_FLOOR = 0.0
+
 # Real rule ids from contracts/rules/ (must exist in the loaded rule set).
 AFTER_HOURS_ADMIN = "9b5f2d18-3c7a-4e61-8f24-5a1d7c3e9b06"   # common_after_hours_admin.yml
 PRIV_GRANT = "7d3e9a52-1f6c-4a88-9b3d-2e5c8f1a6d40"           # common_priv_grant.yml
@@ -230,7 +242,22 @@ def main() -> int:
     for rid, m in per_rule.items():
         print(f"  {rid:<40} {m['precision']:>6.2f} {m['recall']:>6.2f} "
               f"{m['f1']:>6.2f}   {m['tp']} {m['fp']} {m['fn']} {m['tn']}")
-    print(f"  macro-F1: {overall:.3f}   (floor: >= {FLOOR})")
+    print(f"  macro-F1: {overall:.3f}   (floor: >= {FLOOR}, per-rule: > {PER_RULE_FLOOR})")
+
+    # Per-rule floor FIRST: it fails on a single dead rule regardless of the
+    # macro average (see PER_RULE_FLOOR's comment -- the macro floor cannot see
+    # one rule going to 0 among several healthy ones).
+    dead = [rid for rid, m in per_rule.items() if m["f1"] <= PER_RULE_FLOOR]
+    if dead:
+        print("[detection-quality] FAIL: per-rule F1 floor "
+              f"({PER_RULE_FLOOR} < F1 <= {PER_RULE_FLOOR}) -- the macro-F1 "
+              f"({overall:.3f}) can't hide a rule that contributes nothing:")
+        for rid in dead:
+            m = per_rule[rid]
+            print(f"    {rid}: F1={m['f1']:.3f} (P={m['precision']:.3f} "
+                  f"R={m['recall']:.3f}, TP={m['tp']} FP={m['fp']} "
+                  f"FN={m['fn']} TN={m['tn']}) -- rule is dead or never matches")
+        return 1
 
     ok = overall >= FLOOR
     if not ok:

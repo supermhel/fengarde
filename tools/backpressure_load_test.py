@@ -1,5 +1,16 @@
 """B2 backpressure under a REAL UDP flood -- live load test.
 
+NOTE (2026-08-26): this test is deliberately NOT wired into run_all_tests.sh
+or any make target -- it is a LIVE-STACK load test (it needs the docker
+compose stack up: ws1 publishing 5514/udp plus a peer container to flood
+from), which CI's zero-infra jobs never have. It is self-contained and
+safe to run by hand: every prerequisite (docker reachable, the two named
+containers up, /metrics readable, a cap set) is probed up front, and each
+absence prints an explicit [SKIP] line and exits 0 -- it can never fail a
+tree it was not given the environment to exercise, and it can never be
+mistaken for a silent no-op (every [SKIP] names what was missing). Run it
+with the stack up: `python tools/backpressure_load_test.py`.
+
 Closes the gap SSOT.md §2 records: "B2 backpressure protects Redis under a real
 flood -- **Unit-tested, not load-tested**. Token-bucket shedding + spool replay
 have unit/integration tests, but no real high-rate flood against a live Redis

@@ -4,8 +4,10 @@
 Bundles the two things that live only on this host and aren't already in
 version control:
 
-  * the RBAC user database (FENGARDE_RBAC_DB, if set and the file exists) --
-    snapshotted with sqlite3's `.backup()` API, which is safe to run against
+  * the RBAC user database (FENGARDE_RBAC_DB / --rbac-db). FAILS if the
+    configured path does not exist, so a missing DB can never silently
+    produce an archive that claims to protect it -- snapshotted with
+    sqlite3's `.backup()` API, which is safe to run against
     a DB a live service still has open (unlike a raw file copy, which can
     grab a half-written page mid-transaction).
   * contracts/ -- rules, tenant configs, webhook configs. Most of this is
@@ -80,7 +82,18 @@ def build_backup(out_dir: Path, rbac_db: Path | None, include_contracts: bool) -
     with tempfile.TemporaryDirectory() as staging_str:
         staging = Path(staging_str)
 
-        if rbac_db is not None and rbac_db.exists():
+        if rbac_db is not None:
+            if not rbac_db.exists():
+                # An explicitly configured RBAC DB that isn't there must not be
+                # silently skipped: the archive would come out looking healthy
+                # with an empty manifest and no indication that the one file the
+                # operator asked to protect is missing (live-verified: previous
+                # behavior exited 0 with a perfectly valid-looking archive).
+                raise FileNotFoundError(
+                    f"--rbac-db {rbac_db} does not exist -- refusing to create an "
+                    f"archive that silently omits the configured RBAC database "
+                    f"(file renamed or DB never initialized?)"
+                )
             dest = staging / "rbac" / rbac_db.name
             dest.parent.mkdir(parents=True, exist_ok=True)
             _backup_sqlite(rbac_db, dest)
@@ -121,7 +134,10 @@ def main() -> None:
     args = parser.parse_args()
 
     rbac_db = Path(args.rbac_db) if args.rbac_db else None
-    archive = build_backup(Path(args.out), rbac_db, include_contracts=not args.no_contracts)
+    try:
+        archive = build_backup(Path(args.out), rbac_db, include_contracts=not args.no_contracts)
+    except FileNotFoundError as exc:
+        sys.exit(f"[FAIL] backup aborted: {exc}")
     print(json.dumps({"backup": str(archive), "size_bytes": archive.stat().st_size}))
 
 

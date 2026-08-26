@@ -8,7 +8,10 @@ Run: python tools/test_validate_rules.py
 """
 from __future__ import annotations
 
+import contextlib
+import io
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -16,6 +19,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 from validate_rules import validate_rule, RULES_DIR, main  # noqa: E402
+import validate_rules as vr  # noqa: E402  -- for RULES_DIR monkeypatching in the floor tests
 
 import yaml  # noqa: E402
 
@@ -226,6 +230,82 @@ class TestValidateRule(unittest.TestCase):
             r["siem"]["distinct_field"] = "dst_endpoint.port"
         self.assertTrue(any("cannot be combined with distinct_field" in e
                             for e in self._errs(mutate)))
+
+    # -- gap-hunt (2026-08-26): siem unknown-key rejection -------------------
+
+    def test_siem_typoed_threshold_key_rejected(self):
+        # The exact defect that shipped in common_bruteforce.yml: `treshold`
+        # instead of `threshold` makes the rule STATELESS at runtime -- the
+        # engine reads only the canonical keys and silently ignores this one,
+        # so the rule fires on every matching event instead of after N.
+        errs = self._errs(lambda r: r["siem"].__setitem__("treshold", 5))
+        self.assertTrue(any("unknown key" in e and "treshold" in e for e in errs),
+                        f"expected a typo'd 'treshold' key to fail, got {errs}")
+
+    def test_siem_typoed_score_weight_key_rejected(self):
+        errs = self._errs(lambda r: r["siem"].__setitem__("score_weigth", 70))
+        self.assertTrue(any("unknown key" in e and "score_weigth" in e for e in errs),
+                        f"expected a typo'd 'score_weigth' key to fail, got {errs}")
+
+    def test_siem_all_canonical_keys_accepted(self):
+        # Every key the real engine.Rule.__init__ consumes must stay legal --
+        # the unknown-key check must reject typos, not the schema itself.
+        def mutate(r):
+            r["siem"].update(llm_gate=False, periodicity={"max_cv": 0.3},
+                             group_by="src_endpoint.ip",
+                             distinct_field="dst_endpoint.port")
+        errs = self._errs(mutate)
+        # distinct_field + periodicity don't compose: drop periodicity to
+        # isolate the unknown-key check from the (separate, already-pinned)
+        # composition rule.
+        if any("cannot be combined" in e for e in errs):
+            errs = [e for e in errs if "cannot be combined" not in e]
+        self.assertTrue(not any("unknown key" in e for e in errs),
+                        f"canonical siem keys must be accepted, got {errs}")
+
+
+class TestMainFloors(unittest.TestCase):
+    """Zero-rule / missing-file behavior of main().
+
+    Regression for the gap-hunt finding: with an empty RULES_DIR every check
+    in main() is vacuously true, so the gate printed "[OK] all 0 rule(s)
+    valid" and exited 0 -- a contributor gate that validated NOTHING kept the
+    tree green. Mutation-sound: delete the floor in main() and these tests go
+    red (rc becomes 0).
+    """
+
+    def _run_main(self, args, rules_dir=None):
+        real_dir = vr.RULES_DIR
+        buf = io.StringIO()
+        try:
+            if rules_dir is not None:
+                vr.RULES_DIR = rules_dir
+            with contextlib.redirect_stdout(buf):
+                rc = main(args)
+        finally:
+            vr.RULES_DIR = real_dir
+        return rc, buf.getvalue()
+
+    def test_empty_rules_dir_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            rc, out = self._run_main(["validate_rules.py"], rules_dir=Path(tmp))
+        self.assertNotEqual(rc, 0, f"ZERO rules must fail the gate, got rc={rc}")
+        self.assertIn("ZERO rule files", out)
+
+    def test_missing_rules_dir_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ghost = Path(tmp) / "does-not-exist"
+            rc, out = self._run_main(["validate_rules.py"], rules_dir=ghost)
+        self.assertNotEqual(rc, 0)
+        self.assertIn("ZERO rule files", out)
+
+    def test_missing_single_file_fails_cleanly(self):
+        # Used to crash with a bare FileNotFoundError traceback instead of
+        # producing a verdict -- the same "fails but says nothing" class.
+        rc, out = self._run_main(["validate_rules.py", "no_such_rule_xyz.yml"])
+        self.assertNotEqual(rc, 0)
+        self.assertIn("[FAIL]", out)
+        self.assertIn("not found", out)
 
 
 class TestShippedRules(unittest.TestCase):
