@@ -171,8 +171,11 @@ def _alert_payload(result: dict, event: dict) -> dict:
     (verdict/summary) block -- only `classification` -- rather than
     fabricating a verdict that was never actually computed."""
     alert = {
-        "alert_id": f"ai-{result['event_id']}",
-        "time": event.get("time"),
+            # Gap-hunt (2026-08-26) #18: an id-less event_id ('None') used to
+            # collapse every such alert onto the same "ai-None" id. Guard like the
+            # ai.results/alerts produce keys already do (or 'unknown').
+            "alert_id": f"ai-{result['event_id'] or 'unknown'}",
+            "time": event.get("time"),
         "level": result["level"],
         "classification": result["classification"],
         "sector": event.get("siem", {}).get("sector"),
@@ -246,7 +249,10 @@ def main():
     serve({"ai.requests": ("cg-ai", handler)},
           health_port=int(os.getenv("PORT", "8005")), service_name="ws5-ai",
           bus_factory=bus_factory,
-          metrics_provider=lambda: {"ai_triage": worker.metrics()})
+          metrics_provider=lambda: {
+              "ai_llm_total": worker.metrics()["total"],
+              **{f"ai_llm_{k}": v for k, v in worker.metrics()["by_engine"].items()},
+          })
 
 
 if __name__ == "__main__":

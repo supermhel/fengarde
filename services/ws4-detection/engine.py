@@ -325,6 +325,29 @@ class Rule:
         # of the other class -- a missed detection, found in review.
         # Catch-all (self.class_uid None) is always CORRECT, just unfiltered.
         self.class_uid = self._bucketable_class_uid()
+        # Gap-hunt follow-up (2026-08-23): _eval_condition's warn-once only
+        # fires when the rule is actually evaluated. A rule bucketed under a
+        # class_uid that never produces events (or a rule whose condition has
+        # unconsumed tokens that still "parses" without raising) would never
+        # trigger _eval_condition at all, so the silent fail-closed went
+        # undetected. Dry-run the parse here (at load time) so the warning
+        # fires regardless of whether any event of the right class ever arrives.
+        try:
+            value, end = _parse_or(
+                self._condition_tokens, 0,
+                {name: True for name in self._compiled_selections})
+            if end != len(self._condition_tokens):
+                raise ValueError(
+                    f"{end} unconsumed token(s) after parsing condition")
+        except (ValueError, IndexError, RecursionError) as exc:
+            self._condition_error_warned = True  # suppress duplicate runtime warn
+            _log.warn(
+                f"rule {self.id}: condition has a load-time parse problem "
+                f"({type(exc).__name__}: {exc}); it will fail closed to "
+                f"no-match on every event until this rule is fixed and "
+                f"reloaded -- it will show as 'active' via /rules but "
+                f"never fire"
+            )
         siem = raw.get("siem", {})
         self.sector = siem.get("sector", "common")
         self.score_weight = int(siem.get("score_weight", 0))
@@ -861,7 +884,17 @@ def load_rules(rules_dir: Path, allowlists_dir: Path | None = None) -> list[Rule
     invalidate_dir(resolved_allowlists)
     for path in sorted(Path(rules_dir).glob("*.yml")):
         raw = yaml.safe_load(path.read_text(encoding="utf-8"))
-        if raw:
-            _validate_loaded_rule(raw, path)  # FIX 2(c): reject bad rules at load time
-            rules.append(Rule(raw, allowlists_dir=resolved_allowlists))
+        if not raw:
+            # Gap-hunt (2026-08-26): an empty/zero-byte/truncated rule file
+            # parses to None/{} and was silently SKIPPED by the old `if raw:`
+            # guard -- the rule set just shrank with no error, and a
+            # hot-reload logged SUCCESS with fewer rules live. Warn instead so
+            # "rules hot-reloaded, N rules" is cross-checkable against disk.
+            _log.warn(
+                "rule file parsed to empty/None (zero-byte or truncated?); "
+                "ignoring it -- the loaded rule set is smaller than the dir "
+                "contains", file=path.name)
+            continue
+        _validate_loaded_rule(raw, path)  # FIX 2(c): reject bad rules at load time
+        rules.append(Rule(raw, allowlists_dir=resolved_allowlists))
     return rules

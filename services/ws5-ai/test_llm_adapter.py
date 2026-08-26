@@ -55,14 +55,28 @@ class TestOllamaParsing(unittest.TestCase):
         self.assertEqual(out["engine"], "ollama")
         self.assertEqual(out["model"], llm_adapter.OllamaLLM(url="http://x").model)
 
-    def test_malformed_nonjson_output_degrades_safely(self):
+    def test_malformed_nonjson_output_raises_for_fallback(self):
+        # Gap-hunt (2026-08-26) #10: a non-JSON model response used to be
+        # swallowed INSIDE OllamaLLM into a {verdict:unknown} "success" -- so
+        # the sole caller's degrade path (fallback + error counter) never
+        # engaged, and a model that never produced valid JSON looked healthy.
+        # OllamaLLM now RAISES on non-JSON; FallbackLLM (the caller) catches
+        # it and degrades, so the operator sees a degraded primary, not a
+        # silent fake success. Assert the raise here, and the degrade through
+        # FallbackLLM.
         with mock.patch("urllib.request.urlopen",
                         return_value=_ollama_resp("sorry, I cannot do that")):
-            out = llm_adapter.OllamaLLM(url="http://x").analyze(SAMPLE_EVENT, SAMPLE_REASONS)
-        self.assertEqual(out["verdict"], "unknown")
-        self.assertEqual(out["level"], "low")
-        self.assertIn("sorry", out["summary"])
-        self.assertEqual(out["engine"], "ollama")
+            with self.assertRaises(ValueError):
+                llm_adapter.OllamaLLM(url="http://x").analyze(SAMPLE_EVENT, SAMPLE_REASONS)
+        # End-to-end: FallbackLLM catches it and serves the backup verdict.
+        with mock.patch("urllib.request.urlopen",
+                        return_value=_ollama_resp("sorry, I cannot do that")):
+            fb = llm_adapter.FallbackLLM(
+                llm_adapter.OllamaLLM(url="http://x"),
+                llm_adapter.StubLLM())
+            out = fb.analyze(SAMPLE_EVENT, SAMPLE_REASONS)
+        self.assertEqual(out["engine"], "stub")
+        self.assertGreaterEqual(fb.fallbacks, 1)
 
     def test_out_of_enum_values_coerced(self):
         weird = json.dumps({"verdict": "TOTALLY_BAD", "level": "apocalyptic",
@@ -156,11 +170,19 @@ class TestSelection(unittest.TestCase):
             os.environ.update(env)
         self.assertIsInstance(llm, llm_adapter.StubLLM)
 
-    def test_ollama_url_set_but_unreachable_returns_stub(self):
+    def test_ollama_url_set_but_unreachable_returns_fallback_stubbed(self):
+        # Gap-hunt (2026-08-26) #37/#17: an unreachable-but-configured Ollama
+        # no longer returns a bare StubLLM that NEVER re-probes (pinning the
+        # process to the stub forever). It returns a FallbackLLM marked
+        # unavailable: the stub serves now, but a later periodic re-probe
+        # picks up a recovered Ollama. The caller keeps degrade-not-crash and
+        # the operator gets a fallback counter + warning, not a silent pin.
         with mock.patch.object(llm_adapter.OllamaLLM, "ping", return_value=False):
             with mock.patch.dict(os.environ, {"OLLAMA_URL": "http://nope:11434"}):
                 llm = llm_adapter.make_llm()
-        self.assertIsInstance(llm, llm_adapter.StubLLM)
+        self.assertIsInstance(llm, llm_adapter.FallbackLLM)
+        self.assertIsInstance(llm.backup, llm_adapter.StubLLM)
+        self.assertIs(llm._available, False)
 
     def test_ollama_url_set_and_reachable_returns_fallback(self):
         with mock.patch.object(llm_adapter.OllamaLLM, "ping", return_value=True):
