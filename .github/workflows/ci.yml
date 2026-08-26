@@ -234,13 +234,22 @@ jobs:
         # entirely -- both show zero non-running rows and this used to pass
         # on iteration 1 either way. Count against the compose file's own
         # service list (via `ps -a`, which includes not-yet-ready/exited
-        # containers) instead of trusting an absence of bad rows.
+        # containers) instead of trusting an absence of bad rows. Some
+        # services (devkit-feeder, provision, ws1-spool-init) are one-shot
+        # init jobs that exit 0 by design and never reach `running` -- treat
+        # a clean exit as ready too, alongside a running+healthy container.
         run: |
           expected=$(docker compose -f infra/docker-compose.yml config --services | wc -l)
           for _ in $(seq 1 60); do
             total=$(docker compose -f infra/docker-compose.yml ps -a --services | wc -l)
-            ready=$(docker compose -f infra/docker-compose.yml ps -a --format '{{.Service}} {{.State}} {{.Health}}' \
-                    | awk '$2=="running" && $3!="starting" && $3!="unhealthy" {c++} END{print c+0}')
+            # Pipe-delimited, not space-delimited: `.Health` renders as an
+            # empty string on a container with no healthcheck, and a
+            # space-joined format collapses that into a missing field under
+            # awk's default whitespace splitting -- shifting ExitCode into
+            # the Health column and silently breaking the exited-container
+            # branch below.
+            ready=$(docker compose -f infra/docker-compose.yml ps -a --format '{{.Service}}|{{.State}}|{{.Health}}|{{.ExitCode}}' \
+                    | awk -F'|' '($2=="running" && $3!="starting" && $3!="unhealthy") || ($2=="exited" && $4=="0") {c++} END{print c+0}')
             if [ "$total" -eq "$expected" ] && [ "$ready" -eq "$expected" ]; then
               echo "stack running ($ready/$expected)"; exit 0
             fi
