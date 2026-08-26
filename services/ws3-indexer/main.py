@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -86,25 +87,23 @@ def _index_alert_preserving_triage(store, index: str, doc_id: str, doc: dict) ->
     index_cas so a concurrent triage update racing this same write loses
     cleanly (retry) rather than silently.
     """
-    for _ in range(_ALERT_CAS_MAX_RETRIES):
+    for attempt in range(_ALERT_CAS_MAX_RETRIES):
         existing = store.find_alert_versioned(doc_id)
         if existing is None:
             return store.index(index, doc_id, doc)
         existing_index, existing_doc, version = existing
+        if existing_index != index:
+            continue
         triage = existing_doc.get("triage")
         if triage is None:
             return store.index(index, doc_id, doc)
         merged = dict(doc)
         merged["triage"] = triage
-        if store.index_cas(existing_index, doc_id, merged, version):
-            return False  # doc already existed -- this call updated, not created
-        # version conflict: another writer (this same race, or a concurrent
-        # triage update) landed in between -- re-read and retry.
-    # Exhausted retries under sustained contention: fall back to a plain
-    # write rather than silently dropping the message -- a subsequent
-    # redelivery gets another chance to preserve triage. Matches run()'s own
-    # "never dead-letter on a benign race" posture.
-    return store.index(index, doc_id, doc)
+        if store.index_cas(index, doc_id, merged, version):
+            return False
+        if attempt < _ALERT_CAS_MAX_RETRIES - 1:
+            time.sleep(0.05 * (2 ** attempt))
+    return False  # retries exhausted -- duplicate/no-write rather than destructive overwrite
 
 
 def index_doc(store, doc: dict, *, create_only: bool = False) -> bool:
@@ -163,11 +162,22 @@ def run(bus, store) -> dict:
         items = []
         for msg in msgs:
             try:
-                index, doc_id = route(msg.payload)
+                routed_index, doc_id = route(msg.payload)
             except ValueError:
                 stats["unroutable"] += 1
                 continue
-            items.append((index, doc_id, msg.payload))
+            payload = msg.payload
+            # Gap-hunt finding (2026-08-23): the batch bulk_index path used
+            # to bypass _index_alert_preserving_triage entirely, sending
+            # alert docs straight to _bulk where any stale redelivery would
+            # clobber a triage field an analyst had just set (same race class
+            # as the per-message handler, just the live-production path).
+            if "alert_id" in payload and not create_only:
+                created = _index_alert_preserving_triage(
+                    store, routed_index, doc_id, payload)
+                stats["indexed" if created else "duplicates"] += 1
+            else:
+                items.append((routed_index, doc_id, payload))
         if not items:
             continue
         result = bulk_index(items)

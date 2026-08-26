@@ -203,15 +203,20 @@ def test_login_requires_code_when_totp_enabled():
                                       "totp_code": "000000"})
         check(code_wrong == 401, f"login with a wrong totp_code must be 401, got {code_wrong}")
 
-        # Correct code + password -> 200. A DIFFERENT step's code than the
-        # one already consumed by /auth/mfa/verify above (line ~194) --
-        # replay protection (2026-08-23) now rejects reusing that exact
-        # step, same as a real captured code could never be replayed twice.
-        # +30s is still within the server's real-time +/-1-step acceptance
-        # window since this test runs in well under 30s.
+        # Correct code + password -> 200. Replay protection at the HTTP
+        # layer: the EXACT same code that /auth/mfa/verify already consumed
+        # must be rejected here too (not just silently accepted a second time).
+        code_replay, _, _ = _request(port, "POST", "/auth/login",
+                                     {"username": "alice", "password": "pw-alice-1",
+                                      "totp_code": code})
+        check(code_replay == 401,
+              f"replay of the enrollment code at /auth/login must be 401, got {code_replay}")
+
+        # A different step's code (the +30s branch below already existed) must
+        # still succeed -- proves the counter is per-step, not a hard lockout.
         code_ok, body_ok, _ = _request(port, "POST", "/auth/login",
-                                        {"username": "alice", "password": "pw-alice-1",
-                                         "totp_code": mfa.generate_code(secret, at=time.time() + 30)})
+                                       {"username": "alice", "password": "pw-alice-1",
+                                        "totp_code": mfa.generate_code(secret, at=time.time() + 30)})
         check(code_ok == 200, f"login with correct totp_code must succeed, got {code_ok}")
         check(body_ok.get("username") == "alice", "successful MFA login must create a session")
     finally:

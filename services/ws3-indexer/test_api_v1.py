@@ -313,7 +313,7 @@ def test_openapi_spec_mfa_and_audit_routes_are_wired():
     try:
         cookie, csrf = _login_with_csrf(port, "alice", "pw-alice-1")
 
-        for path in ("/auth/mfa/enable", "/auth/mfa/verify"):
+        for path in ("/api/v1/auth/mfa/enable", "/api/v1/auth/mfa/verify"):
             code, body = _post(port, path, body={}, cookie=cookie, csrf=csrf)
             check(code == 401 and body.get("error") == "reauthentication required",
                   f"POST {path} (RBAC on, valid session, no password) must reach the "

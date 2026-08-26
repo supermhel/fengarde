@@ -47,6 +47,49 @@ from typing import TypedDict
 
 from .adapter import StorageAdapter
 
+try:
+    from shared.log import get_logger  # noqa: E402
+except Exception:  # noqa: BLE001 - standalone/fallback; logging is best-effort
+    get_logger = None
+
+_LOG = get_logger("ws3-indexer-storage") if get_logger else None
+
+
+def _log_rw_warn(msg: str, *args, **kwargs) -> None:
+    if _LOG is not None:
+        _LOG.warning(msg, *args, **kwargs)
+    else:  # pragma: no cover - only when shared.log is unavailable
+        import logging  # noqa: PLC0415
+        logging.getLogger("ws3-indexer-storage").warning(msg, *args, **kwargs)
+
+
+def _read_error_is_index_missing(exc: urllib.error.HTTPError) -> bool:
+    """Whether a read-path HTTPError is a benign 'index missing' that the
+    read methods may swallow into an empty result (matching MemoryStore's
+    return-empty-on-no-index), versus a real server failure that MUST NOT be
+    silently turned into empty results.
+
+    Gap-hunt (2026-08-26): every read path (_list, count, _search_alert,
+    find_report) used to swallow ALL HTTPError -- including 5xx -- into an
+    empty/None result with zero logging, so a red/recovering cluster or a
+    circuit-breaker trip made GET /alerts answer 200 {alerts:[],count:0} and
+    POST /alerts/{id}/triage answer 404 'alert not found'. Only the 4xx
+    'index missing' cases are safe to collapse to empty; everything else
+    propagates so the caller/dead-letter surface an honest error.
+    """
+    if exc.code == 404:
+        return True  # index genuinely does not exist -> empty set
+    if exc.code == 400:
+        # OpenSearch raises 400 with index_not_found_exception for a pattern
+        # that matches no live (non-aliased-for-search) index in some versions.
+        try:
+            body = exc.read() or b""
+        except Exception:  # noqa: BLE001
+            body = b""
+        if b"index_not_found" in body or b"IndexNotFoundException" in body:
+            return True
+    return False
+
 # Bounded retry for a WRITE so a brief OpenSearch blip is absorbed inside one bus
 # delivery instead of leaving the message unacked -> eventually dead-lettered.
 # Transient = connection error / 5xx; permanent = 4xx (bad mapping/doc) and is
@@ -349,8 +392,12 @@ class OpenSearchStore(StorageAdapter):
     def count(self, index: str) -> int:
         try:
             result = self._request("GET", f"/{index}/_count")
-        except urllib.error.HTTPError:
-            return 0
+        except urllib.error.HTTPError as exc:
+            if _read_error_is_index_missing(exc):
+                return 0
+            _log_rw_warn("opensearch count %s failed (HTTP %s): %s",
+                        index, exc.code, exc.reason)
+            raise
         return int(result.get("count", 0))
 
     # -- C1 triage: cross-index lookup by alert_id --------------------------
@@ -371,8 +418,12 @@ class OpenSearchStore(StorageAdapter):
                 "seq_no_primary_term": True}
         try:
             result = self._request("POST", "/alerts-*/_search", body)
-        except urllib.error.HTTPError:
-            return None
+        except urllib.error.HTTPError as exc:
+            if _read_error_is_index_missing(exc):
+                return None
+            _log_rw_warn("opensearch search alert %s failed (HTTP %s): %s",
+                        alert_id, exc.code, exc.reason)
+            raise
         hits = result.get("hits", {}).get("hits", [])
         if not hits:
             return None
@@ -405,8 +456,12 @@ class OpenSearchStore(StorageAdapter):
         body = {"size": 1, "query": {"term": {"_id": report_id}}}
         try:
             result = self._request("POST", "/reports-*/_search", body)
-        except urllib.error.HTTPError:
-            return None
+        except urllib.error.HTTPError as exc:
+            if _read_error_is_index_missing(exc):
+                return None
+            _log_rw_warn("opensearch find report %s failed (HTTP %s): %s",
+                        alert_id, exc.code, exc.reason)
+            raise
         hits = result.get("hits", {}).get("hits", [])
         if not hits:
             return None
@@ -451,17 +506,44 @@ class OpenSearchStore(StorageAdapter):
     # the OpenSearch request shape is verified against a real cluster by
     # storage/test_opensearch_live.py where relevant (`make test-live`).
     def _list(self, index_pattern: str, term_filters: dict, limit: int,
-              sort_field: str = "time") -> list[dict]:
-        must = [{"term": {k: v}} for k, v in term_filters.items() if v is not None]
+              sort_field: str = "time",
+              default_filters: dict = None) -> list[dict]:
+        # `default_filters` (e.g. {"tenant_id": "default", "triage.status":
+        # "new"}): when a caller asks for the DEFAULT value of a field that
+        # MemoryStore materializes (default tenant / initial triage) but
+        # OpenSearch may have STORED ABSENT, a bare {term:...} query matches
+        # nothing. Emit {bool: {should: [{term}, {bool:{must_not:[{exists}]}}]}}
+        # so docs that carry the explicit value OR never had the field both
+        # match -- the MemoryStore-equivalent semantics. Gap-hunt (2026-08-26)
+        # #WS3-9/#WS6-9.
+        default_filters = default_filters or {}
+        must: list[dict] = []
+        for k, v in term_filters.items():
+            if v is None:
+                continue
+            if k in default_filters and v == default_filters[k]:
+                # also match docs that simply never set the field
+                clause = {"bool": {"should": [
+                    {"term": {k: v}},
+                    {"bool": {"must_not": [{"exists": {"field": k}}]}},
+                ]}}
+            else:
+                clause = {"term": {k: v}}
+            must.append(clause)
+        query = {"bool": {"must": must}} if must else {"match_all": {}}
         body = {
             "size": max(1, min(int(limit), 200)),
-            "query": {"bool": {"must": must}} if must else {"match_all": {}},
+            "query": query,
             "sort": [{sort_field: {"order": "desc", "unmapped_type": "long"}}],
         }
         try:
             result = self._request("POST", f"/{index_pattern}/_search", body)
-        except urllib.error.HTTPError:
-            return []
+        except urllib.error.HTTPError as exc:
+            if _read_error_is_index_missing(exc):
+                return []
+            _log_rw_warn("opensearch list on %s failed (HTTP %s): %s",
+                        index_pattern, exc.code, exc.reason)
+            raise
         return [hit["_source"] for hit in result.get("hits", {}).get("hits", [])
                 if isinstance(hit.get("_source"), dict)]
 
@@ -479,7 +561,9 @@ class OpenSearchStore(StorageAdapter):
         # aggregation subsystem or window state.
         filters = {"tenant_id": tenant_id, "triage.status": status,
                   "actor.user.name": actor, "src_endpoint.ip": src_ip}
-        return self._list("alerts-*", filters, limit)
+        return self._list("alerts-*", filters, limit,
+                          default_filters={"tenant_id": "default",
+                                           "triage.status": "new"})
 
     def list_incidents(self, *, tenant_id: str | None = None,
                         entity_type: str | None = None, entity_value: str | None = None,
