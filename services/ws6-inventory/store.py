@@ -66,6 +66,57 @@ def _validated_tenant(tenant_id) -> str:
     return tenant_id
 
 
+class InvalidObservation(ValueError):
+    """Raised for an observation field that can't be safely stored (non-ISO
+    `seen_at`, oversized/malformed `mac`/`hostname`/`protocol`). Mapped to a
+    400 by app.py; treated as an at-least-once delivery failure (redelivery,
+    then dead-letter) by bus_consumer.py's runner. Subclasses ValueError so
+    existing `except ValueError` handling in callers keeps working."""
+
+
+# Gap-hunt #7 (2026-08-26): client-controlled fields were accepted with no
+# length/format check -- a 100,000-char mac was stored as a PRIMARY KEY and
+# every response inlined it. Cap lengths and check a basic MAC shape at the
+# one write choke point (_validate_observation is called by upsert_with_diff).
+# MAC: the XX:XX:XX:XX:XX:XX shape every collector in this repo emits (colon or
+# dash separators); hostname/protocol: length-capped, no exotic charset check
+# (a SIEM must keep ingesting odd-but-bounded hostnames, not refuse them).
+_MAC_FORMAT = re.compile(r"^[0-9A-Fa-f]{2}(?:[:-][0-9A-Fa-f]{2}){5}$")
+_MAC_MAX_LEN = 64
+_HOSTNAME_MAX_LEN = 253   # RFC 1035 maximum FQDN; anything longer is garbage
+_PROTOCOL_MAX_LEN = 64
+
+# Gap-hunt #6 (2026-08-26): ip_history/protocols grew without bound and were
+# inlined in FULL into every hydrated read (500 observations -> ~50 KB body).
+# Cap per-asset history/protocols; see _prune_ip_history/_prune_protocols.
+_IP_HISTORY_CAP = 100
+_PROTOCOLS_CAP = 50
+
+
+def _validate_observation(obs: dict) -> None:
+    """Reject observation fields that can't be safely stored, with a clear
+    reason -- callers surface it as a 400 (API) or a delivery failure (bus).
+    ``mac`` is the primary key, so it gets the strictest treatment."""
+    mac = obs.get("mac")
+    if mac is None:
+        return  # macless observation; upsert_with_diff handles that case
+    if not isinstance(mac, str):
+        raise InvalidObservation(f"mac must be a string, got {type(mac).__name__}")
+    if len(mac) > _MAC_MAX_LEN:
+        raise InvalidObservation(f"mac too long ({len(mac)} > {_MAC_MAX_LEN} chars)")
+    if not _MAC_FORMAT.match(mac):
+        raise InvalidObservation(
+            f"mac {mac[:40]!r} does not match the expected XX:XX:XX:XX:XX:XX format")
+    for field, cap in (("hostname", _HOSTNAME_MAX_LEN), ("protocol", _PROTOCOL_MAX_LEN)):
+        value = obs.get(field)
+        if value is None:
+            continue
+        if not isinstance(value, str) or not value:
+            raise InvalidObservation(f"{field} must be a non-empty string")
+        if len(value) > cap:
+            raise InvalidObservation(f"{field} too long ({len(value)} > {cap} chars)")
+
+
 _BASELINE_SECONDS_DEFAULT = 3600
 # A baseline window exists to cover initial population, which is a minutes-to-
 # hours job. Anything longer is far more likely a typo or a stale env var than
@@ -133,13 +184,33 @@ def _normalize_seen_at(seen) -> str:
     if isinstance(seen, (int, float)):
         return datetime.fromtimestamp(seen, tz=timezone.utc).isoformat()
     if isinstance(seen, str) and seen:
+        # Gap-hunt #5 (2026-08-26): a non-empty string was previously accepted
+        # with NO ISO validation, so a corrupt value (e.g. raw epoch digits
+        # stringified by a bad collector) landed on disk verbatim and later
+        # made resolve()/the staleness check raise -- surfaced as a 400 that
+        # blamed an unrelated, well-formed caller param. Validate at this one
+        # write choke point instead: the only strings that pass are the ones
+        # _parse() can later read back.
+        try:
+            _parse(seen)
+        except (ValueError, TypeError):
+            raise InvalidObservation(
+                f"seen_at must be an ISO-8601 timestamp, got {seen!r}")
         return seen
     return _now_iso()
 
 
 class InventoryStore:
     def __init__(self, path: str = ":memory:"):
-        self.db = sqlite3.connect(path, check_same_thread=False)
+        # Gap-hunt #9 (2026-08-26): InventoryStore and TenantKeyStore default
+        # to the SAME SQLite file (app.py's KEYSTORE falls back to
+        # INVENTORY_DB) with independent connections and uncoordinated locks.
+        # WAL lets both coexist, but a concurrent write from the OTHER
+        # connection can transiently hold the writer; time out coarsely
+        # (30s) instead of immediately 500ing on "database is locked" -- and
+        # when a stall does surface, app.py's exception handler now logs it
+        # (gap-hunt #2) rather than returning a silent 500.
+        self.db = sqlite3.connect(path, check_same_thread=False, timeout=30)
         self.db.row_factory = sqlite3.Row
         # upsert() is a SELECT-then-INSERT/UPDATE read-modify-write on a shared
         # connection served from the API's request threads. Without
@@ -261,7 +332,7 @@ class InventoryStore:
         asset, _ = self.upsert_with_diff(obs)
         return asset
 
-    def upsert_with_diff(self, obs: dict) -> tuple[dict | None, bool]:
+    def upsert_with_diff(self, obs: dict, on_new_device=None) -> tuple[dict | None, bool]:
         """:meth:`upsert`, plus whether this observation is an ALERTABLE
         first-ever sighting of the MAC for its tenant (M7 Track Y).
 
@@ -269,13 +340,23 @@ class InventoryStore:
         any first sighting that lands inside the tenant's baseline window, so
         standing up the service against an existing segment populates the
         inventory instead of emitting one alert per device already there.
+
+        ``on_new_device`` (gap-hunt #1): optional callback invoked *inside the
+        write transaction, before the asset row is committed*, and only for an
+        alertable first-ever sighting. If it raises, the whole upsert is
+        rolled back (nothing persisted) and the exception propagates, so the
+        caller's at-least-once redelivery re-announces instead of silently
+        losing the alert. bus_consumer.py uses this to publish the new-device
+        notification BEFORE committing the row that would suppress a republish
+        on redelivery. The HTTP path passes no callback and is unchanged.
         """
         mac = obs.get("mac")
         if not mac:
             return None, False  # inventory is MAC-keyed (Contract C)
+        _validate_observation(obs)
         tenant_id = _validated_tenant(obs.get("tenant_id"))
         with self._write_lock:
-            return self._upsert_locked(obs, mac, tenant_id)
+            return self._upsert_locked(obs, mac, tenant_id, on_new_device=on_new_device)
 
     def _baseline_closed(self, tenant_id: str) -> bool:
         """Whether `tenant_id`'s initial-population window has elapsed.
@@ -290,89 +371,146 @@ class InventoryStore:
         existing deployment upgrading into this feature, not a fresh install --
         its inventory is already the baseline, so the window is opened closed
         rather than suppressing a genuine new device for the next hour.
+
+        Gap-hunt #4 (2026-08-26): the window is recomputed per call, not frozen
+        at first sighting. The stored ``baseline_until`` is the durable window
+        END anchor (so a restart doesn't restart the window and an
+        already-populated tenant opens closed), but while the window is still
+        open INVENTORY_BASELINE_SECONDS is re-read every call -- an operator
+        flipping it to 0 ("no baseline window") takes effect immediately
+        instead of only after the originally-configured window expired,
+        matching _baseline_seconds' "read per call" contract.
         """
         row = self.db.execute(
             "SELECT baseline_until FROM tenant_state WHERE tenant_id=?", (tenant_id,)
         ).fetchone()
+        now = datetime.now(tz=timezone.utc)
         if row is None:
             already_populated = self.db.execute(
                 "SELECT 1 FROM assets WHERE tenant_id=? LIMIT 1", (tenant_id,)
             ).fetchone() is not None
             seconds = 0 if already_populated else _baseline_seconds()
-            until = datetime.now(tz=timezone.utc) + timedelta(seconds=seconds)
+            until = now + timedelta(seconds=seconds)
             self.db.execute(
                 "INSERT INTO tenant_state(tenant_id, baseline_until) VALUES(?,?)",
                 (tenant_id, until.isoformat()),
             )
             return seconds <= 0
         try:
-            return datetime.now(tz=timezone.utc) >= _parse(row["baseline_until"])
+            until_stored = _parse(row["baseline_until"])
         except (ValueError, TypeError):
             # Unparseable marker: fail toward alerting rather than silently
             # suppressing new-device detection forever.
             return True
+        if now >= until_stored:
+            return True
+        # Window not yet closed: re-read the env var per call so disabling
+        # baselining takes effect immediately. This can only ever move toward
+        # alerting (never extend suppression): the stored row doesn't carry
+        # the window's start, so an *extended* end can't be re-derived anyway;
+        # staying alert-safe is the correct degenerate case.
+        if _baseline_seconds() <= 0:
+            return True
+        return False
 
-    def _upsert_locked(self, obs: dict, mac: str, tenant_id: str) -> tuple[dict | None, bool]:
-        ip = obs.get("ip")
-        seen = _normalize_seen_at(obs.get("seen_at"))
-        row = self.db.execute(
-            "SELECT * FROM assets WHERE tenant_id=? AND mac=?", (tenant_id, mac)
-        ).fetchone()
-        # Evaluated before the INSERT below so the tenant's own baseline row is
-        # created off the pre-insert asset count.
-        is_new_device = row is None and self._baseline_closed(tenant_id)
+    def _upsert_locked(self, obs: dict, mac: str, tenant_id: str,
+                       on_new_device=None) -> tuple[dict | None, bool]:
+        # Gap-hunt #1: this read-modify-write runs as an EXPLICIT transaction.
+        # Not for durability (SQLite commits anyway) but so a failing
+        # on_new_device callback -- i.e. bus.produce() raising -- rolls the
+        # asset row back before it is ever committed, keeping the device
+        # "unknown" for the at-least-once redelivery to announce again.
+        # Every write path commit()s/rollback()s here, so no transaction is
+        # left open between calls; defensively clear one that somehow is.
+        if self.db.in_transaction:
+            self.db.execute("ROLLBACK")
+        self.db.execute("BEGIN IMMEDIATE")
+        try:
+            ip = obs.get("ip")
+            seen = _normalize_seen_at(obs.get("seen_at"))
+            row = self.db.execute(
+                "SELECT * FROM assets WHERE tenant_id=? AND mac=?", (tenant_id, mac)
+            ).fetchone()
+            # Evaluated before the INSERT below so the tenant's own baseline row is
+            # created off the pre-insert asset count.
+            is_new_device = row is None and self._baseline_closed(tenant_id)
 
-        if row is None:
-            self.db.execute(
-                "INSERT INTO assets(tenant_id,mac,hostname,ip_current,last_seen,status) "
-                "VALUES(?,?,?,?,?, 'active')",
-                (tenant_id, mac, obs.get("hostname"), ip, seen),
-            )
-            if ip:
+            if is_new_device and on_new_device is not None:
+                # Publish BEFORE committing the state that would suppress a
+                # republish: if the callback (bus.produce) raises, the rollback
+                # below leaves the device unknown, the message stays unacked,
+                # and the redelivery announces it. A transient producer failure
+                # can no longer silently eat the one new-device alert. (The
+                # HTTP path passes no callback; nothing changes there.)
+                on_new_device(tenant_id)
+
+            pruned_history = False
+            if row is None:
                 self.db.execute(
-                    "INSERT INTO ip_history(tenant_id,mac,ip,from_ts,to_ts) VALUES(?,?,?,?,NULL)",
-                    (tenant_id, mac, ip, seen),
+                    "INSERT INTO assets(tenant_id,mac,hostname,ip_current,last_seen,status) "
+                    "VALUES(?,?,?,?,?, 'active')",
+                    (tenant_id, mac, obs.get("hostname"), ip, seen),
                 )
-        else:
-            # H2 (2026-07-30 audit): delivery is at-least-once everywhere and
-            # this HTTP API has no cross-request ordering guarantee, so a
-            # delayed/redelivered observation can arrive AFTER a newer one.
-            # Applying it unconditionally regresses ip_current/last_seen and
-            # inverts the open ip_history interval (to_ts before from_ts).
-            # If parsing fails, fail open (apply) -- same as pre-fix
-            # behavior -- since we can't prove this observation is stale.
-            try:
-                stale = _parse(seen) < _parse(row["last_seen"])
-            except (ValueError, TypeError):
-                stale = False
-            if not stale:
-                if ip and ip != row["ip_current"]:
-                    # close the open interval, open a new one
-                    self.db.execute(
-                        "UPDATE ip_history SET to_ts=? WHERE tenant_id=? AND mac=? AND to_ts IS NULL",
-                        (seen, tenant_id, mac),
-                    )
+                if ip:
                     self.db.execute(
                         "INSERT INTO ip_history(tenant_id,mac,ip,from_ts,to_ts) VALUES(?,?,?,?,NULL)",
                         (tenant_id, mac, ip, seen),
                     )
+                    pruned_history = True
+            else:
+                # H2 (2026-07-30 audit): delivery is at-least-once everywhere and
+                # this HTTP API has no cross-request ordering guarantee, so a
+                # delayed/redelivered observation can arrive AFTER a newer one.
+                # Applying it unconditionally regresses ip_current/last_seen and
+                # inverts the open ip_history interval (to_ts before from_ts).
+                # If parsing fails, fail open (apply) -- same as pre-fix
+                # behavior -- since we can't prove this observation is stale.
+                try:
+                    stale = _parse(seen) < _parse(row["last_seen"])
+                except (ValueError, TypeError):
+                    stale = False
+                if not stale:
+                    if ip and ip != row["ip_current"]:
+                        # close the open interval, open a new one
+                        self.db.execute(
+                            "UPDATE ip_history SET to_ts=? WHERE tenant_id=? AND mac=? AND to_ts IS NULL",
+                            (seen, tenant_id, mac),
+                        )
+                        self.db.execute(
+                            "INSERT INTO ip_history(tenant_id,mac,ip,from_ts,to_ts) VALUES(?,?,?,?,NULL)",
+                            (tenant_id, mac, ip, seen),
+                        )
+                        pruned_history = True
+                        self.db.execute(
+                            "UPDATE assets SET ip_current=? WHERE tenant_id=? AND mac=?",
+                            (ip, tenant_id, mac),
+                        )
                     self.db.execute(
-                        "UPDATE assets SET ip_current=? WHERE tenant_id=? AND mac=?",
-                        (ip, tenant_id, mac),
+                        "UPDATE assets SET last_seen=?, hostname=COALESCE(?,hostname) "
+                        "WHERE tenant_id=? AND mac=?",
+                        (seen, obs.get("hostname"), tenant_id, mac),
                     )
-                self.db.execute(
-                    "UPDATE assets SET last_seen=?, hostname=COALESCE(?,hostname) "
-                    "WHERE tenant_id=? AND mac=?",
-                    (seen, obs.get("hostname"), tenant_id, mac),
-                )
 
-        if obs.get("protocol"):
-            self.db.execute(
-                "INSERT OR IGNORE INTO protocols(tenant_id,mac,protocol) VALUES(?,?,?)",
-                (tenant_id, mac, obs["protocol"]),
-            )
-        self.db.commit()
-        return self.get(mac, tenant_id=tenant_id), is_new_device
+            new_protocol = False
+            if obs.get("protocol"):
+                self.db.execute(
+                    "INSERT OR IGNORE INTO protocols(tenant_id,mac,protocol) VALUES(?,?,?)",
+                    (tenant_id, mac, obs["protocol"]),
+                )
+                new_protocol = True
+
+            # Gap-hunt #6: bound per-asset history/protocol growth (only when a
+            # new row was just inserted -- that is the only time headroom shrinks).
+            if pruned_history:
+                self._prune_ip_history(tenant_id, mac)
+            if new_protocol:
+                self._prune_protocols(tenant_id, mac)
+
+            self.db.commit()
+            return self.get(mac, tenant_id=tenant_id), is_new_device
+        except BaseException:
+            self.db.rollback()
+            raise
 
     # ---- reads ----------------------------------------------------------
     def get(self, mac: str, tenant_id: str | None = None) -> dict | None:
@@ -409,13 +547,50 @@ class InventoryStore:
             "SELECT * FROM ip_history WHERE tenant_id=? AND ip=?", (tenant_id, ip)
         ).fetchall()
         for r in rows:
-            frm = _parse(r["from_ts"])
-            to = _parse(r["to_ts"]) if r["to_ts"] else None
+            try:
+                frm = _parse(r["from_ts"])
+                to = _parse(r["to_ts"]) if r["to_ts"] else None
+            except (ValueError, TypeError):
+                # Gap-hunt #5: a corrupt/legacy stored timestamp (written
+                # before seen_at validation existed) must not turn this lookup
+                # into a 400 that blames the caller's own well-formed `at` --
+                # skip the row and treat it as unknown.
+                _log.warn(
+                    "skipping corrupt ip_history row in resolve()",
+                    tenant_id=tenant_id, ip=ip, mac=r["mac"],
+                )
+                continue
             if frm <= at_dt and (to is None or at_dt < to):
                 return self.get(r["mac"], tenant_id=tenant_id)
         return None
 
     # ---- helpers --------------------------------------------------------
+    def _prune_ip_history(self, tenant_id: str, mac: str) -> None:
+        """Gap-hunt #6: ip_history is unbounded -- every DHCP change appends a
+        row and _hydrate() inlines ALL of them into every read (500 intervals
+        -> a ~50 KB response). Cap per-asset history to the _IP_HISTORY_CAP
+        most recent intervals (by from_ts, DESC). Called only when a new
+        interval was just inserted; the open (to_ts IS NULL) interval has the
+        newest from_ts and is always retained."""
+        self.db.execute(
+            "DELETE FROM ip_history WHERE tenant_id=? AND mac=? AND rowid NOT IN ("
+            "  SELECT rowid FROM ip_history WHERE tenant_id=? AND mac=? "
+            "  ORDER BY from_ts DESC LIMIT ?)",
+            (tenant_id, mac, tenant_id, mac, _IP_HISTORY_CAP),
+        )
+
+    def _prune_protocols(self, tenant_id: str, mac: str) -> None:
+        """Gap-hunt #6: protocols likewise grows without bound. Cap per-asset
+        distinct protocols at _PROTOCOLS_CAP (deterministically the first N by
+        name -- the real protocols are a small closed set; the cap exists only
+        to bound growth from garbage input)."""
+        self.db.execute(
+            "DELETE FROM protocols WHERE tenant_id=? AND mac=? AND protocol NOT IN ("
+            "  SELECT protocol FROM protocols WHERE tenant_id=? AND mac=? "
+            "  ORDER BY protocol LIMIT ?)",
+            (tenant_id, mac, tenant_id, mac, _PROTOCOLS_CAP),
+        )
+
     def _hydrate(self, row) -> dict:
         mac = row["mac"]
         tenant_id = row["tenant_id"]

@@ -18,6 +18,9 @@ from __future__ import annotations
 import json
 import os
 import sys
+import threading
+import time
+import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs, unquote
@@ -43,6 +46,35 @@ MIGRATED_TENANTS = ensure_legacy_keys_migrated(KEYSTORE)
 _MAX_LIMIT = 1000
 _DEFAULT_LIMIT = 50
 _MAX_BODY_BYTES = 1_048_576  # 1 MiB — an Observation is a few hundred bytes.
+
+# Gap-hunt #3 (2026-08-26): a failed API-key attempt previously produced ZERO
+# telemetry and was never rate-limited -- a brute-force/probe could run forever
+# unseen and with no cost. Now every failure is (1) counted on a monotonic
+# slow-fail counter (observable via auth_fail_total(), which app.py's __main__
+# feeds into the bus consumer's /metrics), (2) logged as a structured JSON line
+# (this HTTP surface deliberately avoids `shared`, so print() is the same
+# channel serve()'s startup lines already use), and (3) rate-limited per IP:
+# more than _AUTH_FAIL_LIMIT failures within _AUTH_FAIL_WINDOW_S -> 429.
+_AUTH_FAIL_WINDOW_S = 60
+_AUTH_FAIL_LIMIT = 25
+_auth_fail_lock = threading.Lock()
+_auth_fail_total = 0
+_auth_fail_by_ip: dict[str, list[float]] = {}
+
+
+def auth_fail_total() -> int:
+    """Monotonic count of failed API-key authentications since boot -- the
+    slow-fail signal for a brute-force/probe. Merged into the bus consumer's
+    /metrics ``extra`` when BUS_BACKEND wiring is present (gap-hunt #8)."""
+    return _auth_fail_total
+
+
+def _log_http_line(level: str, msg: str, **fields) -> None:
+    """Structured JSON log line to stdout (flush=True) -- the HTTP surface's
+    `shared`-free counterpart to shared.log. Only genuine failures/errors use
+    this; the per-request noise stays muted by the no-op log_message."""
+    print(json.dumps({"level": level, "service": "ws6-inventory",
+                      "msg": msg, **fields}, default=str), flush=True)
 
 
 class _BadRequest(Exception):
@@ -94,9 +126,33 @@ class Handler(BaseHTTPRequestHandler):
             return True, None, None
         ok, bound, scope = KEYSTORE.verify(self.headers.get("X-Api-Key", ""))
         if not ok:
+            if self._note_auth_failure():
+                return False, None, None  # 429 already sent
             self._send(401, {"error": "unauthorized"})
             return False, None, None
         return True, bound, scope
+
+    def _note_auth_failure(self) -> bool:
+        """Gap-hunt #3: record + log + rate-limit a failed API-key attempt.
+        Returns True when the per-IP budget is exhausted and a 429 has
+        already been sent (caller must NOT also send 401)."""
+        ip = self.client_address[0] if self.client_address else "?"
+        now = time.time()
+        with _auth_fail_lock:
+            global _auth_fail_total
+            _auth_fail_total += 1
+            window = [t for t in _auth_fail_by_ip.get(ip, [])
+                      if now - t < _AUTH_FAIL_WINDOW_S]
+            window.append(now)
+            _auth_fail_by_ip[ip] = window
+            total, in_window = _auth_fail_total, len(window)
+        _log_http_line("warning", "failed API-key authentication",
+                       client_ip=ip, method=self.command, path=self.path,
+                       auth_fail_total=total, auth_fail_in_window=in_window)
+        if in_window > _AUTH_FAIL_LIMIT:
+            self._send(429, {"error": "too many failed auth attempts, try again later"})
+            return True
+        return False
 
     def do_GET(self):
         # Any malformed input (bad ?at=, bad ?limit=) becomes a clean 4xx/5xx JSON
@@ -112,6 +168,13 @@ class Handler(BaseHTTPRequestHandler):
         except InvalidTenantId as e:
             self._send(400, {"error": str(e)})
         except Exception:  # noqa: BLE001 - never let a handler crash the thread
+            # Gap-hunt #2 (2026-08-26): this catch-all returned a bare 500 with
+            # ZERO logging (log_message is a no-op), so a real backend break
+            # was invisible. Log the traceback before answering; the log line
+            # carries path/method so the failing request is identifiable.
+            _log_http_line("error", "unhandled exception in request",
+                           method="GET", path=self.path,
+                           traceback=traceback.format_exc())
             self._send(500, {"error": "internal error"})
 
     def _route_get(self, bound_tenant: str | None = None):
@@ -175,6 +238,10 @@ class Handler(BaseHTTPRequestHandler):
         except InvalidTenantId as e:
             self._send(400, {"error": str(e)})
         except Exception:  # noqa: BLE001 - never let a handler crash the thread
+            # Gap-hunt #2: same as do_GET -- log the traceback, then 500.
+            _log_http_line("error", "unhandled exception in request",
+                           method="POST", path=self.path,
+                           traceback=traceback.format_exc())
             self._send(500, {"error": "internal error"})
 
     def _route_post(self, bound_tenant: str | None = None):
@@ -201,7 +268,14 @@ class Handler(BaseHTTPRequestHandler):
             # inventory any more than it can read one.
             if bound_tenant is not None:
                 body = {**body, "tenant_id": bound_tenant}
-            asset, is_new_device = STORE.upsert_with_diff(body)
+            try:
+                asset, is_new_device = STORE.upsert_with_diff(body)
+            except ValueError as e:
+                # Gap-hunt #5/#7: invalid observation input -- non-ISO
+                # seen_at, oversized/malformed mac/hostname/protocol,
+                # invalid tenant_id (IS-A ValueError) -- is the CALLER'S
+                # fault: a clean 400 naming the reason, never a 500.
+                raise _BadRequest(str(e))
             if not asset:
                 return self._send(400, {"error": "mac required"})
             # M7 Track Y: an alertable first-ever sighting for this tenant.
@@ -252,5 +326,14 @@ if __name__ == "__main__":
     if os.getenv("BUS_BACKEND"):
         import threading
         from bus_consumer import run_forever
-        threading.Thread(target=run_forever, args=(STORE,), daemon=True).start()
+        # Gap-hunt #8: wire the consumer's health port (default
+        # INVENTORY_BUS_HEALTH_PORT, 8006) so runner.serve's per-topic
+        # acked/failed/deadlettered counters are actually readable, and feed
+        # the auth-failure slow-fail counter (gap-hunt #3) into /metrics.
+        threading.Thread(
+            target=run_forever, args=(STORE,),
+            kwargs={"health_port": int(os.getenv("INVENTORY_BUS_HEALTH_PORT", "8006")),
+                    "metrics_provider": lambda: {"ws6_inventory.auth_fail_total": auth_fail_total()}},
+            daemon=True,
+        ).start()
     serve(port=int(os.getenv("PORT", "8000")))

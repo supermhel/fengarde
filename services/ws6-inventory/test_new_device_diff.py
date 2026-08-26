@@ -116,6 +116,24 @@ def run() -> None:
               "an already-populated tenant is treated as baselined, not re-baselined")
         upgraded.db.close()
 
+    # --- Gap-hunt #4: env var re-read per call ---------------------------
+    # _baseline_seconds() documents "read per call, not cached at import",
+    # but baseline_until was frozen into tenant_state at first sighting --
+    # flipping INVENTORY_BASELINE_SECONDS to 0 mid-window did nothing. The
+    # per-call recompute must make the change take effect immediately, same
+    # store, no restart.
+    os.environ["INVENTORY_BASELINE_SECONDS"] = "3600"
+    store_env = InventoryStore(":memory:")
+    _, first_env = store_env.upsert_with_diff(_obs("AA:BB:CC:88:88:01"))
+    check(first_env is False, "baseline window open: first sighting is population")
+    os.environ["INVENTORY_BASELINE_SECONDS"] = "0"
+    _, second_env = store_env.upsert_with_diff(_obs("AA:BB:CC:88:88:02"))
+    check(second_env is True,
+          "setting INVENTORY_BASELINE_SECONDS=0 mid-window must alert the next "
+          "new device immediately (env re-read per call)")
+    _, repeat_env = store_env.upsert_with_diff(_obs("AA:BB:CC:88:88:02"))
+    check(repeat_env is False, "a known device still never re-alerts")
+
     os.environ.pop("INVENTORY_BASELINE_SECONDS", None)
 
     # --- backward compatibility -----------------------------------------
@@ -134,7 +152,7 @@ def main() -> None:
         for f in FAILS:
             print("   -", f)
         sys.exit(1)
-    print("[OK] ws6 new-device diff (baseline, tenancy, restart durability)")
+    print("[OK] ws6 new-device diff (baseline incl. env re-read per call, tenancy, restart durability)")
 
 
 if __name__ == "__main__":

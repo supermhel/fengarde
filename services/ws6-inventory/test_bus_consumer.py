@@ -23,7 +23,7 @@ sys.path.insert(0, str(SERVICES / "ws2-normalization"))
 os.environ["BUS_BACKEND"] = "memory"
 os.environ["INVENTORY_BASELINE_SECONDS"] = "0"
 
-from shared.bus import Bus  # noqa: E402
+from shared.bus import Bus, _MemoryBus  # noqa: E402
 from shared.ocsf import validate  # noqa: E402
 from store import InventoryStore  # noqa: E402
 from bus_consumer import make_handler  # noqa: E402
@@ -35,6 +35,68 @@ FAILS: list[str] = []
 def check(cond, msg):
     if not cond:
         FAILS.append(msg)
+
+
+class _FlakyBus(_MemoryBus):
+    """Gap-hunt #1: a Bus whose first produce() raises (simulated transient
+    producer failure), succeeding thereafter -- lets the test prove a failing
+    produce can no longer silently swallow the new-device alert."""
+
+    def __init__(self):
+        super().__init__()
+        self.produce_attempts = 0
+
+    def produce(self, topic, key, payload):
+        self.produce_attempts += 1
+        if self.produce_attempts == 1:
+            raise RuntimeError("simulated transient produce failure")
+        return super().produce(topic, key, payload)
+
+
+def run_produce_failure_alert_not_lost():
+    """Gap-hunt #1 (CRITICAL): before the fix, upsert committed the asset row
+    FIRST, then produced; a transient produce() failure left the device on
+    file, the redelivery saw is_new_device=False and ACKed cleanly, and the
+    one new-device alert was permanently lost (0 messages ever published).
+
+    Now the produce happens BEFORE the commit: a failure rolls the upsert
+    back (device stays unknown), so the redelivery announces it -- the alert
+    MUST eventually be published exactly once."""
+    store = InventoryStore(":memory:")
+    bus = _FlakyBus()
+    handler = make_handler(store, bus)
+    obs = {"mac": "AA:BB:CC:DE:07:01", "ip": "10.20.0.77",
+           "hostname": "plc-gap7", "seen_at": "2026-08-10T09:00:00+00:00",
+           "tenant_id": "acme"}
+
+    raised = False
+    try:
+        handler(obs)  # first delivery: produce raises
+    except RuntimeError:
+        raised = True
+    check(raised, "a transient produce failure must propagate (message stays unacked)")
+    check(store.get("AA:BB:CC:DE:07:01", tenant_id="acme") is None,
+          "a failed produce must NOT leave the device on file (row rolled back)")
+    check(len(list(bus.consume("raw.events", group="cg-test"))) == 0,
+          "a failed produce publishes nothing")
+
+    # Redelivery of the SAME observation: the row was rolled back, so the
+    # device is still unknown -> announce runs again -> the alert is published.
+    handler(obs)
+    out = list(bus.consume("raw.events", group="cg-test"))
+    check(len(out) == 1,
+          f"redelivery after a produce failure must publish exactly the one "
+          f"lost alert, got {len(out)}")
+    check(out[0].key == "AA:BB:CC:DE:07:01", "published partition key is the device mac")
+    check(store.get("AA:BB:CC:DE:07:01", tenant_id="acme") is not None,
+          "after a successful publish the device is on file")
+
+    # A genuine repeat sighting still does NOT republish (the "known device" path
+    # must be preserved even after a produce failure was recovered).
+    handler({"mac": "AA:BB:CC:DE:07:01", "ip": "10.20.0.78",
+             "seen_at": "2026-08-10T09:05:00+00:00", "tenant_id": "acme"})
+    check(len(list(bus.consume("raw.events", group="cg-test"))) == 0,
+          "a genuine repeat sighting after the alert is not republished")
 
 
 def run() -> None:
@@ -107,6 +169,9 @@ def run() -> None:
     check(len(list(bus3.consume("raw.events", group="cg-test"))) == 0,
           "an observation with no mac is dropped, not published")
 
+    # Gap-hunt #1: a produce failure must not permanently lose the new-device alert.
+    run_produce_failure_alert_not_lost()
+
 
 def main() -> None:
     run()
@@ -115,7 +180,8 @@ def main() -> None:
         for f in FAILS:
             print("   -", f)
         sys.exit(1)
-    print("[OK] ws6 bus_consumer (assets.updates -> raw.events, real parser round-trip)")
+    print("[OK] ws6 bus_consumer (assets.updates -> raw.events, real parser round-trip, "
+          "produce-failure alert recovery)")
 
 
 if __name__ == "__main__":

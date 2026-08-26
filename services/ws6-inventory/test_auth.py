@@ -299,9 +299,10 @@ def test_legacy_single_key_migrates_and_keeps_working_over_http():
 
 def test_require_auth_or_die_empty_keystore_exits_1():
     env = dict(os.environ)
-    env.update({"FENGARDE_REQUIRE_AUTH": "1", "FENGARDE_API_KEY": "",
-                "FENGARDE_API_KEYS": "", "INVENTORY_DB": ":memory:",
-                "KEYSTORE_DB": ":memory:"})
+    env.pop("FENGARDE_API_KEY", None)
+    env.pop("FENGARDE_API_KEYS", None)
+    env.update({"FENGARDE_REQUIRE_AUTH": "1", "INVENTORY_DB": ":memory:",
+                "INVENTORY_KEYSTORE_DB": ":memory:"})
     code = "import authz; from app import KEYSTORE; authz.require_auth_or_die('ws6-inventory', KEYSTORE)"
     proc = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True,
                           text=True, cwd=str(HERE))
@@ -367,6 +368,41 @@ def test_serve_actually_calls_require_auth_or_die_before_listening():
           f"serve() must die BEFORE logging \"listening\" -- got stdout={proc.stdout!r}")
 
 
+def test_failed_auth_is_logged_and_rate_limited():
+    """Gap-hunt #3: failed API-key attempts used to produce zero telemetry and
+    were never rate-limited. Now: a monotonic slow-fail counter, a log line per
+    failure, and a small per-IP rate limit (over budget -> 429)."""
+    srv, port = _serve()
+    try:
+        import app as ws6
+        ws6.KEYSTORE.provision("acme", "correct-key")
+        # Deterministic test: clear the shared per-IP window state (earlier
+        # tests in this same process fail auth from loopback too) and shrink
+        # the budget far below the default 25.
+        with ws6._auth_fail_lock:
+            ws6._auth_fail_by_ip.clear()
+            ws6._auth_fail_total = 0
+        old_limit = ws6._AUTH_FAIL_LIMIT
+        ws6._AUTH_FAIL_LIMIT = 3
+        try:
+            codes = [_get(port, "/assets", api_key="wrong-key")[0] for _ in range(5)]
+            check(codes == [401, 401, 401, 429, 429],
+                  f"per-IP rate limit should 401 until the budget then 429, got {codes}")
+        finally:
+            ws6._AUTH_FAIL_LIMIT = old_limit
+        check(ws6.auth_fail_total() == 5,
+              f"the slow-fail counter must record all 5 failures, got {ws6.auth_fail_total()}")
+        # The limiter must never lock out a legitimate key.
+        check(_get(port, "/assets", api_key="correct-key")[0] == 200,
+              "a correct key must still succeed after rate-limited failures")
+        # The counter is monotonic: another failure keeps counting.
+        _get(port, "/assets", api_key="wrong-key")
+        check(ws6.auth_fail_total() == 6,
+              f"the slow-fail counter must keep counting, got {ws6.auth_fail_total()}")
+    finally:
+        srv.shutdown(); srv.server_close()
+
+
 def main():
     test_auth_disabled_by_default()
     test_auth_enforced_once_a_key_is_provisioned()
@@ -379,6 +415,7 @@ def main():
     test_keys_route_unrestricted_for_admin_and_when_auth_disabled()
     test_rotation_both_keys_live_then_old_revoked_over_http()
     test_legacy_single_key_migrates_and_keeps_working_over_http()
+    test_failed_auth_is_logged_and_rate_limited()
     test_require_auth_or_die_empty_keystore_exits_1()
     test_require_auth_or_die_noop_without_env()
     test_require_auth_or_die_provisioned_keystore_is_noop()
@@ -391,7 +428,8 @@ def main():
     print("[OK] WS-6 auth: disabled by default, enforced once provisioned, per-tenant keys isolate "
           "read+write, URL-decoded MAC lookup, read_only scope blocks writes (403), admin key "
           "unrestricted, GET /keys never leaks material and is tenant-scoped, zero-downtime "
-          "rotation + revoke, legacy single-key migration -- all over real HTTP")
+          "rotation + revoke, legacy single-key migration, slow-fail counter + per-IP rate limit "
+          "on failed keys -- all over real HTTP")
 
 
 if __name__ == "__main__":
