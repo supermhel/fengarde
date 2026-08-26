@@ -3,7 +3,7 @@
   "template": {
     "settings": { "number_of_shards": 1, "number_of_replicas": 1 },
     "mappings": {
-      "_meta": { "mapping_version": 5, "_comment": "Correlated/enriched alerts, 1-year retention via ISM (ism-alerts-365d.json attaches by index pattern, not by a template setting). v4: ai.engine/ai.model added so the dashboard can show which LLM actually produced a verdict (ollama vs stub), see services/ws5-ai/llm_adapter.py. v5 (gap-hunt finding, 2026-08-23): services/ws4-detection/main.py::make_alert() copies `src_endpoint`/`actor` WHOLESALE from the triggering event, which events-common.json maps far more richly (reputation, location, port, hostname, uid, domain) than this template did -- those real fields on real alerts landed in _source but were NOT indexed/searchable/aggregatable in alerts-*, silently, with no error (a dashboard filter on e.g. src_endpoint.location.country works against events-* and returns nothing against alerts-*). Expanded to match. Also dropped the dead `siem.*` block: make_alert() never sets a `siem` key on an alert doc at all (alerts carry `tenant_id`/`sector` as top-level fields instead, per router.py) -- those three properties could never be populated." },
+      "_meta": { "mapping_version": 6, "_comment": "Correlated/enriched alerts, 1-year retention via ISM (ism-alerts-365d.json attaches by index pattern, not by a template setting). v4: ai.engine/ai.model added so the dashboard can show which LLM actually produced a verdict (ollama vs stub), see services/ws5-ai/llm_adapter.py. v5 (gap-hunt finding, 2026-08-23): services/ws4-detection/main.py::make_alert() copies `src_endpoint`/`actor` WHOLESALE from the triggering event, which events-common.json maps far more richly (reputation, location, port, hostname, uid, domain) than this template did -- those real fields on real alerts landed in _source but were NOT indexed/searchable/aggregatable in alerts-*, silently, with no error (a dashboard filter on e.g. src_endpoint.location.country works against events-* and returns nothing against alerts-*). Expanded to match. Also dropped the dead `siem.*` block: make_alert() never sets a `siem` key on an alert doc at all (alerts carry `tenant_id`/`sector` as top-level fields instead, per router.py) -- those three properties could never be populated. v6 (gap-hunt finding, 2026-08-26): WS-5's classifier tier writes `classification.{category,priority,confidence}` onto the alert doc (services/ws5-ai/classifier.py); under dynamic:false those fields were unmapped -- stored but not searchable/aggregatable (a dashboard filter on classification.priority returned nothing). Mapped here." },
       "dynamic": "false",
       "properties": {
         "alert_id": { "type": "keyword" },
@@ -32,7 +32,21 @@
             "model": { "type": "keyword" }
           }
         },
-        "tenant_id": { "type": "keyword" }
+        "tenant_id": { "type": "keyword" },
+        "classification": {
+          "properties": {
+            "category": { "type": "keyword" },
+            "priority": { "type": "keyword" },
+            "confidence": { "type": "float" }
+          }
+        },
+        "triage": {
+          "properties": {
+            "status": { "type": "keyword" },
+            "note": { "type": "text" },
+            "updated_at": { "type": "long" }
+          }
+        }
       }
     }
   }

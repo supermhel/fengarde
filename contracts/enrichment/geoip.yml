@@ -5,23 +5,47 @@
 # MaxMind binary (that's a large licensed asset + external update feed, out of
 # scope and against the sovereignty constraint). Each matching entry adds an
 # OCSF-additive `src_endpoint.location` object:
-#   {"country": "<ISO-3166 alpha-2 | INTERNAL>", "source": "local-geoip"}
+#   {"country": "<ISO-3166 alpha-2>", "source": "local-geoip"}
 #
-# This coarse map is enough to unblock a country-keyed rule (e.g.
-# impossible-travel keyed on distinct country). Swap in a real GeoIP resolver
-# behind the same `src_endpoint.location` field when one is available -- the
-# field shape (and any rule reading it) stays the same.
+# `ZZ` (ISO 3166-1 alpha-2, reserved for "unknown / unassigned") marks RFC1918
+# space so a rule can distinguish internal from external sources WITHOUT
+# colliding with a real country code in the same value space -- previously this
+# used the literal "INTERNAL", which is NOT an ISO code and would, once a real
+# egress prefix was added, make a normal office->home login look like "two
+# distinct countries" against any real ISO value (impossible-travel false
+# positive). `ZZ` occupies a reserved, never-user-assigned code, so it can
+# never be mistaken for a genuine country in a distinct-country count.
 #
-# `INTERNAL` marks RFC1918 space so a rule can distinguish internal from
-# external sources without a separate flag.
+# SAMPLE PUBLIC PREFIXES (read this): the entries below the RFC1918 block map
+# documentation ranges (RFC 5737 TEST-NET-1/2/3 and the RFC 3849 IPv6
+# documentation range) to representative countries so the country-keyed rules
+# (e.g. common_impossible_travel, which distinct-counts
+# src_endpoint.location.country with a threshold of 2) can be EXERCISED
+# end-to-end by the engine on demo/test traffic -- more than one country class
+# is present, so the engine can structurally reach a 2-or-more-distinct-country
+# signal. These prefixes are NOT routable and will never appear in production
+# traffic, so a production deployment MUST replace them with its own real
+# public egress prefixes (or drop in a real GeoIP resolver behind the same
+# `src_endpoint.location` field) before these rules can fire on live traffic --
+# the field shape (and any rule reading it) stays the same either way.
 entries:
+  # RFC1918 private space -> ZZ (reserved, "internal" marker; not an ISO country)
   - cidr: "10.0.0.0/8"
-    country: "INTERNAL"
+    country: "ZZ"
   - cidr: "172.16.0.0/12"
-    country: "INTERNAL"
+    country: "ZZ"
   - cidr: "192.168.0.0/16"
-    country: "INTERNAL"
+    country: "ZZ"
+  # --- SAMPLE public entries (documentation ranges; see header) ---
+  # TEST-NET-3
   - cidr: "203.0.113.0/24"
     country: "RU"
+  # TEST-NET-2
   - cidr: "198.51.100.0/24"
     country: "CN"
+  # TEST-NET-1
+  - cidr: "192.0.2.0/24"
+    country: "US"
+  # IPv6 documentation range (RFC 3849)
+  - cidr: "2001:db8::/32"
+    country: "DE"

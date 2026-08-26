@@ -3,14 +3,22 @@ id: 1d2c3b4a-5e6f-4708-8a91-0b1c2d3e4f05
 status: stable
 description: >
   One source IP hitting 15+ DISTINCT destination ports with DENIED connections
-  within 60 seconds. Targets OCSF Network Activity (class 4001) deny events
-  (activity_id 6). Restricting to denies raises precision: a real horizontal/
-  vertical scan probes many closed/filtered ports (denied), whereas a legitimate
-  multi-port app produces accepted (activity 7) connections. Distinct-count on
-  dst_endpoint.port distinguishes a scan from many hits to a single service.
-  Out of scope by design: scans landing on OPEN ports (accepted connections) are
-  not counted here — this rule targets the closed/filtered-port probing that
-  dominates a real scan.
+  within 60 seconds -- a VERTICAL scan (many ports, one target). Targets OCSF
+  Network Activity (class 4001) deny events (activity_id 6). Restricting to
+  denies raises precision: a real vertical scan probes many closed/filtered
+  ports (denied), whereas a legitimate multi-port app produces accepted
+  (activity 7) connections. Distinct-count on dst_endpoint.port is what makes
+  "30 hits on ONE port" (a single noisy service) score 1 and stay silent, and
+  ACCEPTED connections to many ports stay silent too.
+  Scope caveat (2026-08-26): this rule detects VERTICAL scans only. A
+  HORIZONTAL sweep (one port across many hosts -- e.g. the standard SMB/SSH
+  445/22 discovery pre-lateral-movement pattern) scores a constant
+  distinct-port count of 1 and is deliberately NOT covered; the rule's shape
+  (group_by src_endpoint.ip, distinct dst_endpoint.port) is pinned by
+  test_engine_distinct_rules.py. Track horizontal coverage separately (a
+  future rule grouping on dst_endpoint.ip with distinct src_endpoint.ip, or
+  deny-volume per source). Out of scope by design: scans landing on OPEN ports
+  (accepted connections) are not counted here.
 level: high
 logsource:
   category: network_activity
