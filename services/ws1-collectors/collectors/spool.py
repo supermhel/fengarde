@@ -24,6 +24,7 @@ import json
 import os
 import tempfile
 import threading
+import time
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -51,7 +52,8 @@ class BoundedSpool:
 
     def __init__(self, path: Path | str, max_bytes: int = DEFAULT_MAX_BYTES, *,
                  min_free_bytes: int = DEFAULT_MIN_FREE_BYTES,
-                 min_free_pct: float = DEFAULT_MIN_FREE_PCT):
+                 min_free_pct: float = DEFAULT_MIN_FREE_PCT,
+                 logger=None):
         self.path = Path(path)
         self.max_bytes = max_bytes
         # M4.6: a guardrail on the VOLUME's free space, independent of
@@ -61,6 +63,16 @@ class BoundedSpool:
         # floor are checked.
         self.min_free_bytes = min_free_bytes
         self.min_free_pct = min_free_pct
+        # Gap-hunt (2026-08-26) #74/#75: the spool used to be silent about
+        # every loss class -- corrupt lines skipped with a bare `continue`,
+        # and the three append-refusal reasons (byte cap, disk-headroom
+        # refusal, write OSError) collapsing into one undocumented False.
+        # Optional logger (same pattern as TenantTokenBuckets) + counters
+        # make the loss boundary observable; None keeps tests/embedded use
+        # silent.
+        self._log = logger
+        self.corrupt_lines_skipped = 0
+        self._last_refusal_log: "dict[str, float]" = {}
         self._lock = threading.Lock()
         self.path.parent.mkdir(parents=True, exist_ok=True)
         if self.path.is_dir():
@@ -84,32 +96,101 @@ class BoundedSpool:
                 f"mounted volume, e.g. {self.path}/spool.jsonl")
         if not self.path.exists():
             self.path.touch()
+        # Determine the tail's well-formedness ONCE (a crash mid-append from a
+        # PRIOR process may have left a partial, non-newline-terminated record).
+        # After this process's first append or rewrite the file is guaranteed
+        # newline-terminated, so _tail_known_good stays True and the O(1)
+        # append path never re-reads the tail (the O(n) regression a naive
+        # per-append guard would introduce).
+        self._tail_known_good = self._check_tail_newline()
+
+    def _check_tail_newline(self) -> bool:
+        """True if the spool file is empty or its last byte is a newline."""
+        try:
+            size = self.path.stat().st_size
+        except OSError:
+            return True
+        if size == 0:
+            return True
+        try:
+            with self.path.open("rb") as f:
+                f.seek(-1, 2)
+                return f.read(1) == b"\n"
+        except OSError:
+            return True  # best-effort; a failure to read degrades to "safe"
 
     def append(self, event: dict) -> bool:
         """Append one event. Returns False (event NOT spooled, truly lost) if
         the spool is at capacity, the underlying VOLUME is critically low on
         free space, OR the write itself fails (disk full, permission error,
         etc.) -- all three are "this event didn't make it into the spool" to
-        the caller, so none of them ever raise out of append()."""
+        the caller, so none of them ever raise out of append().
+
+        Gap-hunt (2026-08-26) #73: the three refusal classes are now logged
+        distinctly (throttled) via the optional logger instead of collapsing
+        into one silent False, so an operator raising the byte cap can see
+        when the real cause was a permissions/mount error. The same fix keeps
+        the file well-formed under a torn tail: if the last byte on disk is
+        not ``\\n`` (a crash mid-append left a partial record), the new record
+        is written on a line of its OWN (a terminator ``\\n`` first) instead of
+        being concatenated onto the partial record -- a concatenation would
+        silently corrupt the new *and* the old record into one unparseable
+        line.
+        """
         line = json.dumps(event, ensure_ascii=False) + "\n"
         encoded = line.encode("utf-8")
         with self._lock:
             disk_ok, _detail = check_disk_headroom(
                 self.path.parent, min_free_bytes=self.min_free_bytes, min_free_pct=self.min_free_pct)
             if not disk_ok:
+                self._log_refusal("disk", min_free_bytes=self.min_free_bytes,
+                                  detail=str(_detail))
                 return False
             try:
                 current = self.path.stat().st_size
             except OSError:
                 current = 0
-            if current + len(encoded) > self.max_bytes:
+            # Torn-tail guard: only a non-empty file that does not end in a
+            # newline needs a terminator byte prepended. The tail state was
+            # checked ONCE at construction; every write this process performs
+            # is newline-terminated, so after the first successful append the
+            # flag is True and this read is skipped entirely (perf: the
+            # 20k-append spool-drain test stays near-linear).
+            prefix = b""
+            if not self._tail_known_good and current > 0:
+                try:
+                    with self.path.open("rb") as f:
+                        f.seek(-1, 2)
+                        prefix = b"\n" if f.read(1) != b"\n" else b""
+                except OSError:
+                    prefix = b""
+            if current + len(prefix) + len(encoded) > self.max_bytes:
+                self._log_refusal("cap", max_bytes=self.max_bytes,
+                                  size=current + len(prefix) + len(encoded))
                 return False
             try:
                 with self.path.open("ab") as f:
+                    if prefix:
+                        f.write(prefix)
                     f.write(encoded)
-            except OSError:
+            except OSError as exc:
+                self._log_refusal("write", error=str(exc), path=str(self.path))
                 return False
+            self._tail_known_good = True
             return True
+
+    def _log_refusal(self, reason: str, **fields) -> None:
+        """Throttled (1/sec per reason) structured warning for an append()
+        refusal, keeping the three loss classes (disk-headroom, byte-cap,
+        write-OSError) distinguishable in logs -- but NOT turning a flood
+        into a log flood (same posture as the server's shed throttle)."""
+        if self._log is None:
+            return
+        now = time.monotonic()
+        if now - self._last_refusal_log.get(reason, 0.0) < 1.0:
+            return
+        self._last_refusal_log[reason] = now
+        self._log.warn("spool append refused", reason=reason, **fields)
 
     def pending_count(self) -> int:
         with self._lock:
@@ -217,3 +298,5 @@ class BoundedSpool:
             except OSError:
                 pass
             raise
+        # Rewritten output is newline-terminated by construction.
+        self._tail_known_good = True

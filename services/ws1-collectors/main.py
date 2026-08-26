@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import sys
+import math
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -24,43 +25,50 @@ from collectors.netflow_collector import NetflowCollector  # noqa: E402
 MOCKS = HERE / "mocks"
 
 
-def _int_env(name: str, default: int, log) -> int:
-    """int(os.getenv(name)) that degrades to `default` (logged) on a
-    malformed value instead of crashing startup over a typo'd env var."""
-    raw = os.getenv(name)
-    if raw is None:
-        return default
-    try:
-        return int(raw)
-    except ValueError:
-        log.warn("malformed env var, using default", name=name, value=raw, default=default)
-        return default
+def _int_env(name: str, default: int, log, *, crash_on_bad: bool = False) -> int:
+    """Read an int env var.
 
-
-def _float_env(name: str, default: float, log) -> float:
-    """Same degrade-not-crash contract as _int_env, for float-valued knobs.
-
-    Gap-hunt finding (2026-08-23): the "degrade, don't crash" posture
-    _int_env documents was only applied to 4 of the tuning knobs main()
-    reads (SYSLOG_SPOOL_MAX_BYTES, SYSLOG_UDP_WORKERS/QUEUE_MAXSIZE/
-    SO_RCVBUF) -- SYSLOG_UDP_PORT, SYSLOG_MAX_EVENTS_PER_SEC,
-    RAW_EVENTS_DEPTH_WARN, and SYSLOG_SILENCE_WARN_S all called raw
-    int()/float() and would crash the whole daemon over one typo'd value.
-    This fails LOUD, not silently, so it isn't the "silence is the killer"
-    class of bug -- but it contradicts this module's own stated convention
-    for what should be equally optional, equally typo-able knobs. `PORT`
-    (the health-server bind) is deliberately NOT included here: a bad value
-    there is a real deployment misconfiguration worth crashing loud over,
-    not a tuning knob to silently default around.
+    When ``crash_on_bad`` is True (intended for bind ports where a typo is a
+    real deployment misconfiguration), a non-integer value raises
+    ``ValueError`` instead of being silently defaulted. Tuning knobs
+    (workers, queue size, buffer sizes, silence watchdog) keep the
+    degrade-not-crash behaviour so a typo doesn't take the whole daemon
+    down.
     """
     raw = os.getenv(name)
     if raw is None:
         return default
     try:
-        return float(raw)
+        value = int(raw)
+    except ValueError:
+        if crash_on_bad:
+            raise
+        log.warn("malformed env var, using default", name=name, value=raw, default=default)
+        return default
+    return value
+
+
+def _float_env(name: str, default: float, log) -> float:
+    """Read a float env var.
+
+    Like :func:`_int_env`, a malformed or non-finite value (NaN, +inf, -inf)
+    degrades to ``default`` (logged) instead of crashing startup. These are
+    tuning knobs (max events/sec, silence watchdog), so a typo or
+    non-finite value must not take the whole daemon down.
+    """
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        value = float(raw)
     except ValueError:
         log.warn("malformed env var, using default", name=name, value=raw, default=default)
         return default
+    if math.isnan(value) or math.isinf(value):
+        log.warn("env var is not a finite number, using default",
+                 name=name, value=raw, default=default)
+        return default
+    return value
 
 
 def build_collectors():
@@ -188,7 +196,7 @@ def main() -> None:
     depth_thread = _start_depth_watchdog(bus, log, shutdown)
     silence_thread = _start_ingest_silence_watchdog(udp, log, shutdown)
     try:
-        serve({}, health_port=int(os.getenv("PORT", "8001")),
+        serve({}, health_port=_int_env("PORT", 8001, log, crash_on_bad=True),
               service_name="ws1-collectors", shutdown=shutdown,
               metrics_provider=_syslog_metrics)
     finally:
