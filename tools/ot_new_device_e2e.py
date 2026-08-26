@@ -177,11 +177,16 @@ def main() -> int:
                 hits = json.loads(s.stdout).get("hits", {}).get("hits", [])
             except ValueError:
                 hits = []
-            if hits:
+            # A stale alert from an earlier run of this same rule can already
+            # be sitting in the index -- breaking on "any hit" exits the loop
+            # on iteration 1, before THIS run's alert has had time to land,
+            # and the mac check below then (correctly) fails it as stale.
+            # Only stop polling once this run's own mac shows up.
+            if hits and mac.lower() in json.dumps(hits).lower():
                 break
         time.sleep(2)
     else:
-        print(f"[FAIL] ot new-device e2e: alert not found within {_SETTLE_S}s")
+        print(f"[FAIL] ot new-device e2e: alert for mac {mac} not found within {_SETTLE_S}s")
         return 1
 
     s = sh("docker", "exec", WS3, "python", "-c", search)
