@@ -359,7 +359,7 @@ def verify(scenarios: list[Scenario]) -> int:
             break
         time.sleep(DRAIN_POLL_S)
 
-    if lost is None:
+    if lost is None or duplicated is None:
         print("[chaos] FAIL -- drain never ran (zero OpenSearch polls); "
               "is CHAOS_DRAIN_TIMEOUT_S misconfigured to zero/negative?")
         return 1
