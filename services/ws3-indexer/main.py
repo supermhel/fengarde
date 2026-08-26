@@ -93,7 +93,19 @@ def _index_alert_preserving_triage(store, index: str, doc_id: str, doc: dict) ->
             return store.index(index, doc_id, doc)
         existing_index, existing_doc, version = existing
         if existing_index != index:
-            continue
+            # Nothing about a retry changes this: the same alert_id routes to
+            # two different indices, and find_alert_versioned() will keep
+            # returning the same existing_index every time. Retrying here
+            # used to burn all _ALERT_CAS_MAX_RETRIES silently; log once so
+            # routing drift (a real bug elsewhere) is visible instead of
+            # masquerading as a quiet no-write.
+            from shared.log import get_logger  # noqa: E402
+            get_logger("ws3-indexer").warn(
+                f"alert {doc_id} already indexed under {existing_index}, not "
+                f"{index} -- skipping write (routing drift, not a transient "
+                f"conflict)"
+            )
+            return False
         triage = existing_doc.get("triage")
         if triage is None:
             return store.index(index, doc_id, doc)

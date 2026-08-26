@@ -24,6 +24,10 @@ sys.path.insert(0, str(NORMALIZATION))
 try:
     from hypothesis import HealthCheck, given, settings, strategies as st  # noqa: E402
 except ImportError:
+    # A bare sys.exit(0) here used to look identical to "all parsers
+    # survived" (both exit 0, no output) -- a missing dependency silently
+    # read as a passing property-fuzz suite instead of a skipped one.
+    print("[SKIP] property hardening: hypothesis not installed")
     sys.exit(0)
 
 from parsers import known_sources, get_parser  # noqa: E402

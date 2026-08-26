@@ -170,6 +170,8 @@ def main() -> int:
 
     print(f"[e2e] waiting up to {_SETTLE_S}s for WS-6 -> raw.events -> WS-2 -> WS-4 -> WS-3")
     deadline = time.time() + _SETTLE_S
+    hits: list = []
+    last_err = None
     while time.time() < deadline:
         s = sh("docker", "exec", WS3, "python", "-c", search)
         if s.returncode == 0:
@@ -184,26 +186,25 @@ def main() -> int:
             # Only stop polling once this run's own mac shows up.
             if hits and mac.lower() in json.dumps(hits).lower():
                 break
+        else:
+            # Transient (a single flaky docker exec) is tolerated same as
+            # before -- just keep polling. Remembered only so a genuine
+            # timeout can report *why* instead of the generic "not found".
+            last_err = (s.stderr or s.stdout or "").strip()[:400]
         time.sleep(2)
     else:
-        print(f"[FAIL] ot new-device e2e: alert for mac {mac} not found within {_SETTLE_S}s")
+        if last_err:
+            # Redact any basic-auth credentials in OPENSEARCH_URL before logging.
+            safe_url = os.environ.get("OPENSEARCH_URL", "http://opensearch:9200")
+            safe_url = re.sub(r"//[^:]+:[^@]+@", "//***:***@", safe_url)
+            msg = re.sub(r"https?://[^:]+:[^@]+@", "https://***:***@", last_err)
+            print(f"[FAIL] ot new-device e2e: alert search failing (url={safe_url}): {msg}")
+        else:
+            print(f"[FAIL] ot new-device e2e: alert for mac {mac} not found within {_SETTLE_S}s")
         return 1
-
-    s = sh("docker", "exec", WS3, "python", "-c", search)
-    if s.returncode != 0:
-        # Redact any basic-auth credentials in OPENSEARCH_URL before logging.
-        safe_url = os.environ.get("OPENSEARCH_URL", "http://opensearch:9200")
-        safe_url = re.sub(r"//[^:]+:[^@]+@", "//***:***@", safe_url)
-        msg = (s.stderr or s.stdout or "").strip()[:400]
-        msg = re.sub(r"https?://[^:]+:[^@]+@", "https://***:***@", msg)
-        print(f"[FAIL] ot new-device e2e: alert search failed (url={safe_url}): {msg}")
-        return 1
-    try:
-        hits = json.loads(s.stdout).get("hits", {}).get("hits", [])
-    except ValueError:
-        print(f"[FAIL] ot new-device e2e: unparseable search response: "
-              f"{s.stdout[:300]}")
-        return 1
+    # `hits` is the exact result that just satisfied the loop's break above --
+    # re-querying here would risk a transient failure turning an already-
+    # confirmed pass into a spurious FAIL.
 
     check(bool(hits),
           f"no alert at all from rule {RULE_ID} after a live new-device sighting "

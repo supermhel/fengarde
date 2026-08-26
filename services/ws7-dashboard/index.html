@@ -857,7 +857,15 @@ async function getAssets(){
       // is NOT data: return [] so the caller shows an honest empty state.
       if(!r.ok) return [];
       return await r.json();
-    }catch(e){}
+    }catch(e){
+      // Gap-hunt (2026-08-26): a thrown fetch (network down, DNS, timeout)
+      // fell through past this catch to the mock return below -- an outage
+      // rendered as a populated (fake) inventory instead of an honest empty
+      // state, contradicting this function's own callers (see the comment
+      // at attachAiTriage's call site: "a live inventory API that fails
+      // returns []"). Only "no API configured at all" should reach mock.
+      return [];
+    }
   }
   return window.SIEM_MOCK.assets;
 }
@@ -1615,12 +1623,20 @@ function _sumResult(topics, topic, result){
 }
 // Which workstream owns the topics that matter to the pipeline, keyed by
 // the /api/ops/<key> service and the topic name(s) it produces/consumes.
+// Gap-hunt (2026-08-26): every stage below used to name the topic it
+// PRODUCES to, not the one it CONSUMES/acks -- but "acked" only exists on
+// the consumer side, so ws2/ws4 always resolved null and rendered "—" for
+// every real run despite /api/ops/<key> genuinely returning live numbers
+// (ws2 acks raw.events, not normalized.events; ws4 acks normalized.events,
+// not alerts). WS-1 has no upstream topic to consume/ack at all -- it's
+// the pipeline's origin -- so it never had a real metric here; give it its
+// own producer-side counter instead of a lookup that can never resolve.
 const PIPE_STAGES = [
-  {key:"ws1", name:"WS-1 Collect", arrow:"raw.events", topic:"raw.events",
-   metric:"acked", note:"ingested syslog → bus"},
-  {key:"ws2", name:"WS-2 Normalize", arrow:"normalized.events", topic:"normalized.events",
+  {key:"ws1", name:"WS-1 Collect", arrow:"raw.events", extraKey:"syslog_udp.events_produced",
+   metric:"produced", note:"ingested syslog → bus"},
+  {key:"ws2", name:"WS-2 Normalize", arrow:"normalized.events", topic:"raw.events",
    metric:"acked", note:"parse → OCSF"},
-  {key:"ws4", name:"WS-4 Detect", arrow:"scored.events / alerts", topic:"alerts",
+  {key:"ws4", name:"WS-4 Detect", arrow:"scored.events / alerts", topic:"normalized.events",
    metric:"acked", note:"rules + scoring"},
   {key:"ws3", name:"WS-3 Index", arrow:"OpenSearch", topic:"alerts",
    metric:"acked", note:"index → store"},
@@ -1652,12 +1668,21 @@ async function renderMonitoring(){
     let dot = "down", dotLabel = "metrics unreachable";
     let nums = "";
     if(data){
-      const failed = _sumResult(data.topics, s.topic, "failed");
-      const acked = _sumResult(data.topics, s.topic, s.metric);
+      let failed = null, acked = null, dlqCount = null;
+      if(s.topic){
+        failed = _sumResult(data.topics, s.topic, "failed");
+        acked = _sumResult(data.topics, s.topic, s.metric);
+        // Dead-letter entries surface as their own "<topic>.deadletter" stream
+        // with an "acked" counter (runner routes poison here then acks it).
+        dlqCount = _sumResult(data.topics, s.topic + ".deadletter", "acked");
+      }else if(s.extraKey){
+        // No consumed bus topic (WS-1 is the origin) -- read its own
+        // producer-side counter out of `extra` instead of `topics`.
+        acked = s.extraKey.split(".").reduce(
+          (v, k) => (v && typeof v === "object") ? v[k] : undefined, data.extra);
+        acked = (typeof acked === "number") ? acked : null;
+      }
       const failure = (failed !== null && failed > 0);
-      // Dead-letter entries surface as their own "<topic>.deadletter" stream
-      // with an "acked" counter (runner routes poison here then acks it).
-      const dlqCount = _sumResult(data.topics, s.topic + ".deadletter", "acked");
       if(failure || (dlqCount !== null && dlqCount > 0)){
         dot = "warn";
         dotLabel = "failures detected";
@@ -1669,8 +1694,10 @@ async function renderMonitoring(){
       if(dlqCount !== null && dlqCount > 0){
         nums += `<span class="k">deadlettered</span><span class="v warn-v">${esc(dlqCount)}</span>`;
       }
-      nums += `<span class="k">acked</span><span class="v">${esc(acked === null ? "—" : acked)}</span>`;
-      nums += `<span class="k">failed</span><span class="v">${esc(failed === null ? "—" : failed)}</span>`;
+      nums += `<span class="k">${esc(s.metric)}</span><span class="v">${esc(acked === null ? "—" : acked)}</span>`;
+      if(s.topic){
+        nums += `<span class="k">failed</span><span class="v">${esc(failed === null ? "—" : failed)}</span>`;
+      }
     }else{
       anyDown = true;
       nums = `<span class="k">status</span><span class="v">unreachable</span>`;

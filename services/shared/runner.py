@@ -442,6 +442,15 @@ def serve(handlers: Handlers, *, health_port: int | None = None,
                     depths[f"{topic}.deadletter_depth"] = b.depth(f"{topic}.deadletter")
                 except Exception:
                     pass
+                # gap-hunt (2026-08-26): _pel_evicted was counted since R3-54
+                # but never exposed -- a group that never acks silently drops
+                # its oldest pending work forever with zero signal. MemoryBus-
+                # only (RedisBus has no synthetic PEL cap); AttributeError on
+                # RedisBus is expected and swallowed like depth()'s own guard.
+                try:
+                    depths[f"{topic}.pel_evicted"] = b.pel_evicted(topic)
+                except Exception:
+                    pass
         except Exception:
             pass
         if metrics_provider is not None:

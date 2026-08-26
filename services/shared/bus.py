@@ -263,6 +263,15 @@ class _MemoryBus:
             pending = {g: len(pel) for g, pel in self._pel.get(topic, {}).items()}
         return max((qlen - cur) + pending.get(g, 0) for g, cur in cursors.items())
 
+    def pel_evicted(self, topic) -> int:
+        """gap-hunt #54 companion: the eviction counter was tracked but never
+        read anywhere -- a group stuck never-acking would silently evict its
+        oldest pending work forever with zero visibility. Sums evictions
+        across every group for `topic` (a MemoryBus-only concept: RedisBus's
+        PEL lives in Redis itself and isn't synthetically capped)."""
+        with self._pel_lock:
+            return sum(n for (t, _g), n in self._pel_evicted.items() if t == topic)
+
     def trim_acked(self, topic) -> int:
         """Gap-hunt #54 companion: real acked-front trim, mirroring
         _RedisBus.trim_acked's safety proof. Only LEADING stream entries every
