@@ -18,6 +18,9 @@ echo "== B4: rule validation gate (schema, condition parse, operator safety) =="
 $PY tools/validate_rules.py || fail=1
 $PY tools/test_validate_rules.py || fail=1
 echo
+echo "== coverage gate floor/buffer tests (was orphaned -- only run directly) =="
+$PY tools/test_coverage_gate.py || fail=1
+echo
 echo "== Sigma import: regex->glob translation + rule sanitization =="
 $PY tools/test_fix_m18_sigma_glob.py || fail=1
 $PY tools/test_import_sigma_rules.py || fail=1
@@ -56,6 +59,9 @@ $PY services/ws3-indexer/test_rules_view.py || fail=1
 echo
 echo "== ws3: StorageAdapter legacy CAS/versioning default methods =="
 $PY services/ws3-indexer/test_adapter_defaults.py || fail=1
+echo
+echo "== ws3: redelivered alerts preserve analyst triage (CAS guard against clobber) =="
+$PY services/ws3-indexer/test_alert_triage_clobber.py || fail=1
 echo
 echo "== v0.4 (S1): opt-in API-key auth (ws3 triage, ws6 inventory) =="
 $PY services/ws3-indexer/test_auth.py || fail=1
@@ -291,6 +297,9 @@ $PY services/ws5-ai/test_llm_adapter.py || fail=1
 echo
 echo "== ws5 LLM dedup fix regression =="
 $PY services/ws5-ai/test_fix_llm_dedup.py || fail=1
+echo
+echo "== ws5 ai_triage engine-mix metrics (was orphaned -- never wired) =="
+$PY services/ws5-ai/test_ai_engine_metrics.py || fail=1
 echo
 echo "== ws1 syslog UDP listener (v0.2) =="
 $PY services/ws1-collectors/test_syslog_udp.py || fail=1

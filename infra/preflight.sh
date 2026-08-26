@@ -107,53 +107,64 @@ echo "3. Required ports are free (TCP: $TCP_PORTS; UDP: $UDP_PORTS)"
 # check only ever looked at TCP listeners, so port 5514 (ws1-collectors'
 # syslog UDP listener, published on all interfaces by docker-compose.yml)
 # was never verified free even though every other published port was.
-port_in_use() {
-  p="$1"; proto="$2"
-  if command -v lsof >/dev/null 2>&1; then
-    if [ "$proto" = "udp" ]; then
-      lsof -iUDP:"$p" -Pn >/dev/null 2>&1 && return 0 || return 1
+#
+# Gap-hunt (2026-08-26): with NONE of lsof/ss/netstat installed, every probe
+# landed in the `return 2` "no tool available" branch and the script ended
+# with a single WARN + exit 0 -- a pre-flight that PASSED having verified
+# ZERO ports. That is the one outcome worse than failing: an operator with
+# something already on :9200 got told "You're ready: run 'make demo'". This
+# is now a hard FAIL -- pre-flight must not bless a machine it could not
+# check. (rc==2 below is kept only as a defensive tripwire; the guard above
+# makes it unreachable.)
+if ! command -v lsof >/dev/null 2>&1 && ! command -v ss >/dev/null 2>&1 && ! command -v netstat >/dev/null 2>&1; then
+  fail "No port-checking tool found (lsof/ss/netstat) -- cannot verify required ports are free."
+  note "         Install one of:  iproute2 (ss)  |  lsof  |  net-tools (netstat)"
+  note "         Debian/Ubuntu: sudo apt install iproute2   |   RHEL: sudo dnf install iproute"
+else
+  port_in_use() {
+    p="$1"; proto="$2"
+    if command -v lsof >/dev/null 2>&1; then
+      if [ "$proto" = "udp" ]; then
+        lsof -iUDP:"$p" -Pn >/dev/null 2>&1 && return 0 || return 1
+      fi
+      lsof -iTCP:"$p" -sTCP:LISTEN -Pn >/dev/null 2>&1 && return 0 || return 1
     fi
-    lsof -iTCP:"$p" -sTCP:LISTEN -Pn >/dev/null 2>&1 && return 0 || return 1
-  fi
-  if command -v ss >/dev/null 2>&1; then
-    if [ "$proto" = "udp" ]; then
-      ss -lun 2>/dev/null | grep -q "[:.]$p[[:space:]]" && return 0 || return 1
+    if command -v ss >/dev/null 2>&1; then
+      if [ "$proto" = "udp" ]; then
+        ss -lun 2>/dev/null | grep -q "[:.]$p[[:space:]]" && return 0 || return 1
+      fi
+      ss -ltn 2>/dev/null | grep -q "[:.]$p[[:space:]]" && return 0 || return 1
     fi
-    ss -ltn 2>/dev/null | grep -q "[:.]$p[[:space:]]" && return 0 || return 1
-  fi
-  if command -v netstat >/dev/null 2>&1; then
-    if [ "$proto" = "udp" ]; then
-      netstat -an 2>/dev/null | grep -i '^udp' | grep -q "[:.]$p[[:space:]]" && return 0 || return 1
+    if command -v netstat >/dev/null 2>&1; then
+      if [ "$proto" = "udp" ]; then
+        netstat -an 2>/dev/null | grep -i '^udp' | grep -q "[:.]$p[[:space:]]" && return 0 || return 1
+      fi
+      netstat -an 2>/dev/null | grep -i 'listen' | grep -q "[:.]$p[[:space:]]" && return 0 || return 1
     fi
-    netstat -an 2>/dev/null | grep -i 'listen' | grep -q "[:.]$p[[:space:]]" && return 0 || return 1
-  fi
-  return 2  # no tool available -> unknown
-}
-checked_ports=0
-for p in $TCP_PORTS; do
-  port_in_use "$p" tcp
-  rc=$?
-  if [ "$rc" -eq 0 ]; then
-    fail "TCP port $p is already in use — FENGARDE needs it free."
-    note "         Find the process:  lsof -iTCP:$p -sTCP:LISTEN   (or: ss -ltnp | grep $p)"
-    note "         Then stop it, or change the host port mapping in infra/docker-compose.yml."
-  elif [ "$rc" -eq 2 ]; then
-    checked_ports=1
-  fi
-done
-for p in $UDP_PORTS; do
-  port_in_use "$p" udp
-  rc=$?
-  if [ "$rc" -eq 0 ]; then
-    fail "UDP port $p is already in use — ws1-collectors' syslog listener needs it free."
-    note "         Find the process:  lsof -iUDP:$p   (or: ss -lunp | grep $p)"
-    note "         Then stop it, or change SYSLOG_UDP_PORT / the host port mapping."
-  elif [ "$rc" -eq 2 ]; then
-    checked_ports=1
-  fi
-done
-if [ "$checked_ports" -eq 1 ]; then
-  warn "No port-checking tool found (lsof/ss/netstat); could not verify ports."
+    return 2  # no tool available -> unknown (unreachable: guarded above)
+  }
+  for p in $TCP_PORTS; do
+    port_in_use "$p" tcp
+    rc=$?
+    if [ "$rc" -eq 0 ]; then
+      fail "TCP port $p is already in use — FENGARDE needs it free."
+      note "         Find the process:  lsof -iTCP:$p -sTCP:LISTEN   (or: ss -ltnp | grep $p)"
+      note "         Then stop it, or change the host port mapping in infra/docker-compose.yml."
+    elif [ "$rc" -eq 2 ]; then
+      fail "TCP port $p could not be checked (no lsof/ss/netstat)."
+    fi
+  done
+  for p in $UDP_PORTS; do
+    port_in_use "$p" udp
+    rc=$?
+    if [ "$rc" -eq 0 ]; then
+      fail "UDP port $p is already in use — ws1-collectors' syslog listener needs it free."
+      note "         Find the process:  lsof -iUDP:$p   (or: ss -lunp | grep $p)"
+      note "         Then stop it, or change SYSLOG_UDP_PORT / the host port mapping."
+    elif [ "$rc" -eq 2 ]; then
+      fail "UDP port $p could not be checked (no lsof/ss/netstat)."
+    fi
+  done
 fi
 echo ""
 

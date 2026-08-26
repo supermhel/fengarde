@@ -278,18 +278,19 @@ review, the verdict, DESIGN.md, and every shipping raster carrying its provenanc
     <span class="eyebrow">Architecture</span>
     <h2>Eight independent services.<br>One message bus between them.</h2>
     <p>No service calls another directly. Every arrow below is a real Redis Streams topic — swap, restart,
-      or scale any one stage without touching the rest.</p>
+      or scale any one stage without touching the rest. (Two arrows are HTTP via the same-origin nginx
+      proxy instead: Console↔Index and Console↔Inventory-read — the dashboard talks HTTP, not streams.)</p>
   </div>
   <div class="stagegrid">
     <div class="stage"><div class="no">01</div>
       <div class="stage-head"><div class="icn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h16M4 18h9"/></svg></div><h3>Collect</h3></div>
-      <p>Syslog UDP, SNMP, NetFlow → <code class="mono">raw.events</code></p></div>
+      <p><b>Syslog UDP → <code class="mono">raw.events</code></b> — SNMP/NetFlow collectors are still 🚧 planned (mock-JSON skeletons, no parser yet; every such payload dead-letters today)</p></div>
     <div class="stage"><div class="no">02</div>
       <div class="stage-head"><div class="icn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg></div><h3>Normalize</h3></div>
       <p>17 parsers → restricted OCSF profile</p></div>
     <div class="stage live"><div class="no">03</div>
       <div class="stage-head"><div class="icn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l3 6 6 1-4.5 4.5L18 20l-6-3-6 3 1.5-6.5L3 9l6-1 3-6z"/></svg></div><h3>Detect</h3></div>
-      <p>28 rules, MITRE-tagged, stateful windows</p></div>
+      <p>28 rules, 27 MITRE-tagged, stateful windows</p></div>
     <div class="stage live"><div class="no">04</div>
       <div class="stage-head"><div class="icn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.4"/><circle cx="18" cy="6" r="2.4"/><circle cx="12" cy="18" r="2.4"/><path d="M8 7l8-1M8.4 8l3 8M15.6 8l-3 8"/></svg></div><h3>Correlate</h3></div>
       <p>Cross-alert tracks → incidents</p></div>
@@ -313,7 +314,9 @@ review, the verdict, DESIGN.md, and every shipping raster carrying its provenanc
     <span class="eyebrow">The console</span>
     <h2>What an analyst actually sees</h2>
     <p>Eight views, one running stack. Every number in every screenshot below came back from a real
-      HTTP request made seconds before capture. Scroll — the panel on the right follows.</p>
+      HTTP request made seconds before capture — unless a fallback is noted (see the "mock data" badge;
+      the Overview's Active-devices card reads the real inventory API, not the hardcoded mock, since
+      the 2026-08-26 fix). Scroll — the panel on the right follows.</p>
   </div>
 
   <div class="showcase" id="showcase">
@@ -418,7 +421,9 @@ review, the verdict, DESIGN.md, and every shipping raster carrying its provenanc
         <div class="item-body">
         <div class="no">07 / Audit</div><h3>Every admin action, appended forever</h3>
         <p>Login, logout, MFA enrollment, triage changes, report generation — an append-only trail the
-          backend gates to admins by session role, not by hiding a button in the UI.</p>
+          backend gates to admins by session role when RBAC is enabled (on the zero-config demo default
+          with RBAC off, the audit route is reachable by anyone with the API key / port access — enable
+          RBAC or dashboard auth before exposing it).</p>
         <span class="tag">WS-3</span>
         </div>
         <div class="mob-shot"><img loading="lazy" alt="FENGARDE admin audit trail table with real timestamped events including triage_update, login_success, and mfa_reauth_failure, actor, tenant, and human-readable detail columns"></div>
