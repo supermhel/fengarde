@@ -507,7 +507,7 @@ class OpenSearchStore(StorageAdapter):
     # storage/test_opensearch_live.py where relevant (`make test-live`).
     def _list(self, index_pattern: str, term_filters: dict, limit: int,
               sort_field: str = "time",
-              default_filters: dict = None) -> list[dict]:
+              default_filters: dict | None = None) -> list[dict]:
         # `default_filters` (e.g. {"tenant_id": "default", "triage.status":
         # "new"}): when a caller asks for the DEFAULT value of a field that
         # MemoryStore materializes (default tenant / initial triage) but

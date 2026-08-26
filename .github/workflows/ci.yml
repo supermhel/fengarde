@@ -229,14 +229,25 @@ jobs:
           INVENTORY_BASELINE_SECONDS: "0"
         run: docker compose -f infra/docker-compose.yml up -d --build
       - name: Wait for the stack to report healthy
+        # Gap-hunt (2026-08-26): `ps` (no `-a`) lists only RUNNING containers,
+        # so a stack that's still building/starting -- or one that crashed
+        # entirely -- both show zero non-running rows and this used to pass
+        # on iteration 1 either way. Count against the compose file's own
+        # service list (via `ps -a`, which includes not-yet-ready/exited
+        # containers) instead of trusting an absence of bad rows.
         run: |
+          expected=$(docker compose -f infra/docker-compose.yml config --services | wc -l)
           for _ in $(seq 1 60); do
-            unhealthy=$(docker compose -f infra/docker-compose.yml ps --format '{{.State}}' | grep -cv '^running$' || true)
-            if [ "$unhealthy" -eq 0 ]; then echo "stack running"; exit 0; fi
+            total=$(docker compose -f infra/docker-compose.yml ps -a --services | wc -l)
+            ready=$(docker compose -f infra/docker-compose.yml ps -a --format '{{.Service}} {{.State}} {{.Health}}' \
+                    | awk '$2=="running" && $3!="starting" && $3!="unhealthy" {c++} END{print c+0}')
+            if [ "$total" -eq "$expected" ] && [ "$ready" -eq "$expected" ]; then
+              echo "stack running ($ready/$expected)"; exit 0
+            fi
             sleep 5
           done
           echo "stack did not reach healthy within 5 minutes"
-          docker compose -f infra/docker-compose.yml ps
+          docker compose -f infra/docker-compose.yml ps -a
           exit 1
       - name: Run OT new-device live e2e
         run: python tools/ot_new_device_e2e.py

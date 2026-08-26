@@ -41,18 +41,6 @@ map $arg_gte $fengarde_gte_ms {
     ~^[0-9]+$ $arg_gte;
 }
 
-# 2026-08-26 gap-hunt: same-origin config bootstrap. The browser must
-# PRESENT X-Api-Key on every request (see the write-route guards below),
-# so the page needs a same-origin source for the key. envsubst substitutes
-# ${FENGARDE_API_KEY} into this body at container start; unset -> empty
-# string -> the JS attaches no header -> every route's empty-vs-empty
-# comparison passes (zero-config default unchanged).
-location = /api/config.js {
-    default_type application/javascript;
-    add_header Cache-Control "no-store";
-    return 200 'window.FENGARDE_API_KEY = "${FENGARDE_API_KEY}";\n';
-}
-
 server {
     listen 80;
     server_name _;
@@ -77,6 +65,18 @@ server {
 
     location / {
         try_files $uri $uri/ =404;
+    }
+
+    # 2026-08-26 gap-hunt: same-origin config bootstrap. The browser must
+    # PRESENT X-Api-Key on every request (see the write-route guards below),
+    # so the page needs a same-origin source for the key. envsubst substitutes
+    # ${FENGARDE_API_KEY} into this body at container start; unset -> empty
+    # string -> the JS attaches no header -> every route's empty-vs-empty
+    # comparison passes (zero-config default unchanged).
+    location = /api/config.js {
+        default_type application/javascript;
+        add_header Cache-Control "no-store";
+        return 200 'window.FENGARDE_API_KEY = "${FENGARDE_API_KEY}";\n';
     }
 
     # DX4: same-origin live-alerts endpoint. The front end fetches /api/alerts and
