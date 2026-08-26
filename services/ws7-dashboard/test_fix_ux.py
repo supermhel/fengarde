@@ -84,6 +84,28 @@ def run():
     check("enrichPlaybooks" in html, "E11: no playbook enrichment logic")
     check("RULE_PLAYBOOK" in html, "E11: no rule->playbook lookup cache")
 
+    # ---- Gap-hunt #52/#53: client presents the API key (fix both together) ----
+    # nginx must REQUIRE the caller-presented key on the write routes, never
+    # inject a server-side one (the #52 bypass); the JS must send it on every
+    # request via _fetch() reading /api/config.js (the #53 blinding fix).
+    check("_fetch(" in html and "X-Api-Key" in html,
+          "WS-7: no key-injecting fetch wrapper (gap-hunt #53)")
+    check('window.FENGARDE_API_KEY' in html,
+          "WS-7: no same-origin config bootstrap for the API key (gap #53)")
+
+    # ---- 2026-08-26: pipeline Monitoring view ----
+    # A dedicated end-to-end view (raw -> normalized -> scored -> indexed)
+    # built entirely from the real /api/ops/* metrics and live alert/event
+    # feeds -- never fabricated. Static assertions on the delivered HTML/JS
+    # so a future refactor can't silently drop the feature.
+    check('data-view="monitor"' in html, "monitor: no nav entry for the pipeline view")
+    check('id="monitor"' in html, "monitor: no <section id=monitor> view")
+    check("pipelineFlow" in html, "monitor: no #pipelineFlow container")
+    check("renderMonitoring" in html, "monitor: no renderMonitoring() function")
+    check("PIPE_STAGES" in html, "monitor: no PIPE_STAGES pipeline definition")
+    check("getOpsMetrics" in html, "monitor: does not read the real /api/ops/* metrics")
+    check("flowHealth" in html, "monitor: no health signal line")
+
 
 def main():
     run()

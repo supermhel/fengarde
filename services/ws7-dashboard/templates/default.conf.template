@@ -41,11 +41,32 @@ map $arg_gte $fengarde_gte_ms {
     ~^[0-9]+$ $arg_gte;
 }
 
+# 2026-08-26 gap-hunt: same-origin config bootstrap. The browser must
+# PRESENT X-Api-Key on every request (see the write-route guards below),
+# so the page needs a same-origin source for the key. envsubst substitutes
+# ${FENGARDE_API_KEY} into this body at container start; unset -> empty
+# string -> the JS attaches no header -> every route's empty-vs-empty
+# comparison passes (zero-config default unchanged).
+location = /api/config.js {
+    default_type application/javascript;
+    add_header Cache-Control "no-store";
+    return 200 'window.FENGARDE_API_KEY = "${FENGARDE_API_KEY}";\n';
+}
+
 server {
     listen 80;
     server_name _;
     root /usr/share/nginx/html;
     index index.html;
+
+    # Gap-hunt (2026-08-26): the dashboard renders attacker-influenced log
+    # fields, so ship defense-in-depth headers. CSP is scoped to same-origin
+    # + the page's own inline script/style (single-file dashboard); frame
+    # embedding, sniffing, and referrer leakage are hard-blocked.
+    add_header X-Frame-Options "DENY" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "no-referrer" always;
+    add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'" always;
 
     # v0.4 Track S2: opt-in basic-auth. Default "off" (main compose file) --
     # the override compose (docker-compose.auth.yml) sets DASHBOARD_AUTH_REALM
@@ -171,13 +192,22 @@ server {
     # FENGARDE_API_KEY set with RBAC off; the front end tells "not logged in"
     # (401) apart from "no login system at all" (404) by this exact status.
     location /api/auth/ {
+        # Gap-hunt #52/#53: require the caller-presented key (see /api/triage/
+        # for the full account) -- never inject a server-side key. The browser
+        # holds the key via /api/config.js, so the front end's 401 (RBAC on,
+        # logged out) vs 404 (RBAC off, no login system) detection still
+        # works: when the key is set the browser presents it and reaches
+        # /auth/me; when it is unset both sides compare "" == "" and pass.
         resolver 127.0.0.11 ipv6=off valid=30s;
-        set $ws3_auth "http://ws3-indexer:8013";
+        set $ws3_auth "http://ws3-indexer:${WS3_TRIAGE_PORT}";
+        if ($http_x_api_key != "${FENGARDE_API_KEY}") {
+            return 401;
+        }
         rewrite ^/api/auth/(.*)$ /auth/$1 break;
         proxy_pass $ws3_auth;
         proxy_set_header Host $host;
         proxy_set_header Content-Type $content_type;
-        proxy_set_header X-Api-Key "${FENGARDE_API_KEY}";
+        proxy_set_header X-Api-Key $http_x_api_key;
         # Lets ws3-indexer's opt-in RATE_LIMIT_TRUST_PROXY_HEADER resolve the
         # real client instead of every request collapsing to nginx's own
         # container IP. $remote_addr REPLACES (does not append to) any
@@ -196,17 +226,26 @@ server {
     # success fallback is needed here the way it is for the read-only
     # alerts feed.
     location /api/triage/ {
+        # Gap-hunt (2026-08-26) #52/#53: this used to INJECT the key
+        # server-side (proxy_set_header X-Api-Key "${FENGARDE_API_KEY}"),
+        # which with RBAC off (the documented default) let anyone reaching
+        # port 8080 POST triage decisions and read the audit log -- the key
+        # protected nothing on these routes. Now the caller must PRESENT the
+        # key itself (the JS reads it from /api/config.js and attaches it to
+        # every request). When FENGARDE_API_KEY is unset both sides compare
+        # "" == "" and every request passes (zero-config default unchanged);
+        # when set, only callers presenting the matching key get through.
         resolver 127.0.0.11 ipv6=off valid=30s;
-        set $ws3_triage "http://ws3-indexer:8013";
+        set $ws3_triage "http://ws3-indexer:${WS3_TRIAGE_PORT}";
+        if ($http_x_api_key != "${FENGARDE_API_KEY}") {
+            return 401;
+        }
         rewrite ^/api/triage/(.*)$ /$1 break;
         proxy_pass $ws3_triage;
         proxy_set_header Host $host;
         proxy_set_header Content-Type $content_type;
-        # v0.4 Track S1: forward the shared API key so the browser never holds
-        # it. Empty when FENGARDE_API_KEY is unset (auth disabled, unchanged
-        # behavior) -- ws3-indexer's authz check treats an empty header the
-        # same as a missing one.
-        proxy_set_header X-Api-Key "${FENGARDE_API_KEY}";
+        # Forward the caller-PRESENTED key (never inject one).
+        proxy_set_header X-Api-Key $http_x_api_key;
         # Lets ws3-indexer's opt-in RATE_LIMIT_TRUST_PROXY_HEADER resolve the
         # real client instead of every request collapsing to nginx's own
         # container IP. $remote_addr REPLACES (does not append to) any
@@ -222,12 +261,17 @@ server {
     # as /api/triage/ above, GET-only in practice (rules_view.py has no
     # write route), no CSRF/body forwarding needed.
     location /api/rules {
+        # Gap-hunt #52/#53: require the caller-presented key (see /api/triage/
+        # for the full account) -- never inject a server-side key.
         resolver 127.0.0.11 ipv6=off valid=30s;
-        set $ws3_rules "http://ws3-indexer:8013";
+        set $ws3_rules "http://ws3-indexer:${WS3_TRIAGE_PORT}";
+        if ($http_x_api_key != "${FENGARDE_API_KEY}") {
+            return 401;
+        }
         rewrite ^/api/rules$ /rules break;
         proxy_pass $ws3_rules;
         proxy_set_header Host $host;
-        proxy_set_header X-Api-Key "${FENGARDE_API_KEY}";
+        proxy_set_header X-Api-Key $http_x_api_key;
         # Lets ws3-indexer's opt-in RATE_LIMIT_TRUST_PROXY_HEADER resolve the
         # real client instead of every request collapsing to nginx's own
         # container IP. $remote_addr REPLACES (does not append to) any
@@ -243,12 +287,17 @@ server {
     # string (tenant_id/entity_type/entity_value/limit) forwarded unchanged
     # by nginx's default rewrite behavior.
     location /api/incidents {
+        # Gap-hunt #52/#53: require the caller-presented key (see /api/triage/
+        # for the full account) -- never inject a server-side key.
         resolver 127.0.0.11 ipv6=off valid=30s;
-        set $ws3_incidents "http://ws3-indexer:8013";
+        set $ws3_incidents "http://ws3-indexer:${WS3_TRIAGE_PORT}";
+        if ($http_x_api_key != "${FENGARDE_API_KEY}") {
+            return 401;
+        }
         rewrite ^/api/incidents$ /incidents break;
         proxy_pass $ws3_incidents;
         proxy_set_header Host $host;
-        proxy_set_header X-Api-Key "${FENGARDE_API_KEY}";
+        proxy_set_header X-Api-Key $http_x_api_key;
         proxy_set_header X-Forwarded-For $remote_addr;
         proxy_connect_timeout 3s;
         proxy_read_timeout 5s;
@@ -264,7 +313,16 @@ server {
     # does NOT inject FENGARDE_API_KEY; it only forwards whatever X-Api-Key the
     # browser itself presents (none, today -- matches the zero-config default
     # of an empty keystore = auth disabled).
+    # Gap-hunt (2026-08-26) #63: the dashboard only READS inventory (/assets,
+    # /keys); writes (/assets/upsert etc.) are collector/tool traffic that
+    # must go through ws6's own keyed API, never through the same-origin
+    # browser proxy. With an empty keystore (the documented zero-config
+    # default) an anonymous POST through this proxy would otherwise write
+    # arbitrary assets that WS-2 enrichment consults. Restrict to GET/HEAD.
     location /api/inventory/ {
+        limit_except GET HEAD {
+            deny all;
+        }
         resolver 127.0.0.11 ipv6=off valid=30s;
         set $ws6_inventory "http://ws6-inventory:8000";
         rewrite ^/api/inventory/(.*)$ /$1 break;
@@ -282,12 +340,19 @@ server {
     # does the real access control over the forwarded session cookie; this
     # proxy just gets the request there.
     location /api/audit {
+        # Gap-hunt #52/#53: require the caller-presented key (see /api/triage/
+        # for the full account) -- never inject a server-side key. The backend
+        # _require_role("admin") gate still does the real access control over
+        # the forwarded session cookie when RBAC is on.
         resolver 127.0.0.11 ipv6=off valid=30s;
-        set $ws3_audit "http://ws3-indexer:8013";
+        set $ws3_audit "http://ws3-indexer:${WS3_TRIAGE_PORT}";
+        if ($http_x_api_key != "${FENGARDE_API_KEY}") {
+            return 401;
+        }
         rewrite ^/api/audit$ /audit break;
         proxy_pass $ws3_audit;
         proxy_set_header Host $host;
-        proxy_set_header X-Api-Key "${FENGARDE_API_KEY}";
+        proxy_set_header X-Api-Key $http_x_api_key;
         proxy_set_header X-Forwarded-For $remote_addr;
         proxy_connect_timeout 3s;
         proxy_read_timeout 5s;
@@ -341,6 +406,20 @@ server {
         if ($http_x_api_key != "${FENGARDE_API_KEY}") { return 401; }
         rewrite ^/api/ops/ws4$ /metrics break;
         proxy_pass $ws4_ops;
+        proxy_set_header Host $host;
+        proxy_connect_timeout 3s;
+        proxy_read_timeout 5s;
+    }
+    location /api/ops/ws5 {
+        # Gap-hunt (2026-08-26) #57: ws5-ai WAS the one workstream with no
+        # ops/health entry at all -- its /metrics (runner health server, port
+        # 8005) was never proxied, so WS-5 dying left the dashboard's Ops
+        # view fully green. Same shape/gate as the other five.
+        resolver 127.0.0.11 ipv6=off valid=30s;
+        set $ws5_ops "http://ws5-ai:8005";
+        if ($http_x_api_key != "${FENGARDE_API_KEY}") { return 401; }
+        rewrite ^/api/ops/ws5$ /metrics break;
+        proxy_pass $ws5_ops;
         proxy_set_header Host $host;
         proxy_connect_timeout 3s;
         proxy_read_timeout 5s;

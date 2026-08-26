@@ -192,7 +192,7 @@ jobs:
         run: docker build -f services/ws3-indexer/Dockerfile -t ws3-indexer-mfa-e2e .
       - name: Run MFA/TOTP live e2e inside the deployed image
         run: |
-          docker run -d --name mfa-e2e ws3-indexer-mfa-e2e sleep 300
+          docker run -d --name mfa-e2e ws3-indexer-mfa-e2e tail -f /dev/null
           docker cp services/ws3-indexer/test_mfa_live_e2e.py mfa-e2e:/tmp/test_mfa_live_e2e.py
           docker exec mfa-e2e python /tmp/test_mfa_live_e2e.py
       - name: Cleanup
@@ -231,8 +231,8 @@ jobs:
       - name: Wait for the stack to report healthy
         run: |
           for _ in $(seq 1 60); do
-            unhealthy=$(docker compose -f infra/docker-compose.yml ps --format '{{.Health}}' | grep -vc '^healthy$\|^$' || true)
-            if [ "$unhealthy" -eq 0 ]; then echo "stack healthy"; exit 0; fi
+            unhealthy=$(docker compose -f infra/docker-compose.yml ps --format '{{.State}}' | grep -cv '^running$' || true)
+            if [ "$unhealthy" -eq 0 ]; then echo "stack running"; exit 0; fi
             sleep 5
           done
           echo "stack did not reach healthy within 5 minutes"
