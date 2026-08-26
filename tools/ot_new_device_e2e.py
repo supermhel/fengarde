@@ -54,6 +54,10 @@ import sys
 import time
 import uuid
 
+def sh(*args: str, timeout: int = 120) -> subprocess.CompletedProcess:
+    return subprocess.run(list(args), capture_output=True, text=True, timeout=timeout)
+
+
 def _container(service: str) -> str:
     """Resolve the real container name for a compose service, regardless of
     COMPOSE_PROJECT_NAME. Falls back to the legacy `<project>_<service>-1`
@@ -86,10 +90,6 @@ FAILS: list[str] = []
 def check(cond, msg):
     if not cond:
         FAILS.append(msg)
-
-
-def sh(*args: str, timeout: int = 120) -> subprocess.CompletedProcess:
-    return subprocess.run(list(args), capture_output=True, text=True, timeout=timeout)
 
 
 def _env(container: str, name: str) -> str:
