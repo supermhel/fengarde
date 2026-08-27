@@ -47,7 +47,9 @@ ALLOWLISTS_DIR = _CONTRACTS / "allowlists"
 
 
 class Detector:
-    def __init__(self, tenants_dir: Path = TENANTS_DIR,
+    def __init__(self, tenants_dir: Path | None = None,
+                 rules_dir: Path | None = None,
+                 allowlists_dir: Path | None = None,
                  plugin_rule_dirs: list[Path] | None = None,
                  force_linear_scan: bool = False):
         """``plugin_rule_dirs``: directories of extra rule YAML to merge in,
@@ -70,8 +72,18 @@ class Detector:
         self._plugin_rule_dirs = (
             [d for _name, d in discover_rule_pack_dirs()]
             if plugin_rule_dirs is None else plugin_rule_dirs)
+        # R4-30 (2026-08-27 contract gap-hunt): resolve dirs at CONSTRUCTION
+        # time, not as DEF-time default args -- a def-time default binds the
+        # module global ONCE at import, so a monkeypatched/overridden
+        # RULES_DIR would never be seen and a custom-dir instance couldn't
+        # exist. Each Detector now owns ITS dirs; _load()/reload() read
+        # self.rules_dir/self.allowlists_dir/self.tenants_dir below (never
+        # the module globals), so a detector pointed at custom dirs loads
+        # AND hot-reloads THOSE dirs, consistently.
+        self.rules_dir = Path(rules_dir) if rules_dir is not None else Path(RULES_DIR)
+        self.allowlists_dir = Path(allowlists_dir) if allowlists_dir is not None else Path(ALLOWLISTS_DIR)
+        self.tenants_dir = Path(tenants_dir) if tenants_dir is not None else Path(TENANTS_DIR)
         self.scorer = Scorer(SCORING_YAML)
-        self.tenants_dir = tenants_dir
         # Detector-owned (not Rule-owned) so it survives reload(): each
         # DequeWindowCounter.hit()/hit_distinct() call is keyed by a string
         # that already starts with the rule's id (engine.py's window_key),
@@ -158,14 +170,14 @@ class Detector:
         """Load base + plugin rules and bucket them by class_uid. Raises on
         any parse/validation error -- callers decide what to do with a
         failed load (__init__ lets it propagate; reload() catches it)."""
-        rules = load_rules(RULES_DIR, ALLOWLISTS_DIR)
+        rules = load_rules(self.rules_dir, self.allowlists_dir)
         # A plugin rule whose id collides with an already-loaded one (built-
         # in or an earlier plugin) is skipped -- whichever loaded first
         # wins, so a plugin extends detection but can never silently
         # replace an existing rule's condition.
         seen_ids = {r.id for r in rules}
         for plugin_dir in self._plugin_rule_dirs:
-            for rule in load_rules(plugin_dir, ALLOWLISTS_DIR):
+            for rule in load_rules(plugin_dir, self.allowlists_dir):
                 if rule.id in seen_ids:
                     continue
                 rules.append(rule)
@@ -322,26 +334,47 @@ class Detector:
         # a real model call; "classifier" runs only the cheap deterministic/ML
         # classifier (classifier.py) -- never the LLM, or the whole point of a
         # separate cheap tier is defeated.
+        # Gap-hunt finding (R4-27): the funnel key used to be
+        # `(event.get("siem") or {}).get("ingest_id", key)` -- the default
+        # only fires when the KEY is ABSENT, so a present-but-None ingest_id
+        # (an envelope where `ingest_id` exists with a null value) silently
+        # produced a None funnel key for EVERY such event, collapsing them
+        # all onto one ai.requests stream key. Fall back whenever the VALUE
+        # is None too, not just when the key is missing.
+        siem = event.get("siem") or {}
+        ingest_id = siem.get("ingest_id")
+        funnel_key = ingest_id if ingest_id is not None else key
         if action in ("llm", "classifier") and self._funnel_fresh(event, matched):
-            bus.produce("ai.requests", key=(event.get("siem") or {}).get("ingest_id", key),
-                        payload={"event_id": (event.get("siem") or {}).get("ingest_id"),
+            bus.produce("ai.requests", key=funnel_key,
+                        payload={"event_id": ingest_id,
                                  "event": event, "tier": action,
                                  "reason": [r.title for r in matched]})
             self._record_funnel(event, matched)  # only AFTER produce succeeded
-            self.stats["ai_enqueued"] += 1
-            n_ai += 1
-            if action == "classifier":
+            # Gap-hunt #9 (2026-08-27) miscount: ``ai_enqueued`` used to bump
+            # for BOTH the "llm" and "classifier" actions while a SEPARATE
+            # ``classifier_enqueued`` counter also existed for the latter --
+            # so ai_enqueued over-counted LLM cost by folding in every cheap
+            # classifier-tier enqueue. The counter is an LLM-COST signal
+            # (LLM $.mint is driven off it); it now counts ONLY tier="llm".
+            # Both tiers still land in ai.requests; the classifier tier is
+            # tracked by ``classifier_enqueued`` (and its own metric), never
+            # double-counted into the LLM gauge.
+            if action == "llm":
+                self.stats["ai_enqueued"] += 1
+                n_ai += 1
+            else:  # action == "classifier"
                 self.stats["classifier_enqueued"] += 1
                 n_clf += 1
         return n_alerts, n_ai, n_clf
 
 
 def rules_fingerprint(rules_dir: Path = RULES_DIR, allowlists_dir: Path = ALLOWLISTS_DIR,
-                      tenants_dir: Path = TENANTS_DIR) -> tuple:
+                      tenants_dir: Path = TENANTS_DIR,
+                      plugin_rule_dirs: list[Path] | tuple | None = None) -> tuple:
     """Sorted ``(filename, mtime)`` tuple across every rule/allowlist/tenant-
-    config YAML, ``()`` if none of the dirs exist. Used by the B4 hot-reload
-    poll to detect \"something on disk changed\" without re-parsing on every
-    tick.
+    config/plugin-pack YAML, ``()`` if none of the dirs exist. Used by the B4
+    hot-reload poll to detect "something on disk changed" without re-parsing
+    on every tick.
 
     Gap-hunt (2026-08-26): the old poll compared only the MAX mtime, so
     deleting/restoring a NON-newest file (whose mtime is rarely the max) never
@@ -349,11 +382,22 @@ def rules_fingerprint(rules_dir: Path = RULES_DIR, allowlists_dir: Path = ALLOWL
     files sees any add/remove/edit. Tenants_dir is included for the same reason
     rules_max_mtime included it (a tenant disabled-rules edit must take effect).
 
+    Gap-hunt #5 (2026-08-27): ``plugin_rule_dirs`` (the detector's
+    ``_plugin_rule_dirs``) are folded into the fingerprint so editing a
+    plugin rule pack actually changes the poll value -- before this, the
+    fingerprint ignored plugin dirs entirely, so a plugin edit could never
+    trigger a hot-reload.
+
     ``(name, mtime)`` (not a full path) is enough: on a duplicate name the
-    stable sort preserves the fixed rules->allowlists->tenants iteration order,
-    so the tuple is deterministic for a given set of dirs/files/mtimes."""
+    stable sort preserves the fixed rules->allowlists->tenants->plugins
+    iteration order, so the tuple is deterministic for a given set of
+    dirs/files/mtimes."""
     entries: list[tuple] = []
-    for d in (rules_dir, allowlists_dir, tenants_dir):
+    dirs = [rules_dir, allowlists_dir, tenants_dir]
+    for p in (plugin_rule_dirs or ()):
+        dirs.append(p)
+    for d in dirs:
+        d = Path(d)
         if not d.is_dir():
             continue
         for f in d.glob("*.yml"):
@@ -378,17 +422,24 @@ def rules_max_mtime(rules_dir: Path = RULES_DIR, allowlists_dir: Path = ALLOWLIS
 
 
 def start_rule_reload_watcher(detector: "Detector", shutdown, interval_s: float,
-                              rules_dir: Path = RULES_DIR, allowlists_dir: Path = ALLOWLISTS_DIR,
-                              tenants_dir: Path = TENANTS_DIR):
+                              rules_dir: Path | None = None,
+                              allowlists_dir: Path | None = None,
+                              tenants_dir: Path | None = None):
     """B4: opt-in mtime-poll hot-reload. Returns None (no thread) when
     ``interval_s <= 0`` -- the default, byte-for-byte the pre-B4 behavior.
     Otherwise starts a daemon thread that calls ``detector.reload()`` at
-    most once per ``interval_s`` seconds, only when the rules/allowlists/
-    tenants directories' FINGERPRINT (all files' (name, mtime), not just the
-    max mtime -- gap-hunt 2026-08-26) has actually changed since the last
-    check. Also clears tenants.py's per-tenant cache on every such tick,
-    since a tenant-config-only edit doesn't change RULES_DIR/ALLOWLISTS_DIR
-    and detector.reload() alone would never pick it up."""
+    most once per ``interval_s`` seconds, only when the directories'
+    FINGERPRINT (all files' (name, mtime), not just the max mtime -- gap-hunt
+    2026-08-26) has actually changed since the last check. Also clears
+    tenants.py's per-tenant cache on every such tick, since a tenant-config-only
+    edit doesn't change RULES_DIR/ALLOWLISTS_DIR and detector.reload() alone
+    would never pick it up.
+
+    R4-30/F7 (2026-08-27): the watched dirs resolve to the DETECTOR'S OWN
+    dirs (``rules_dir``/``allowlists_dir``/``tenants_dir``/``_plugin_rule_dirs``)
+    -- a custom-dir detector hot-reloads ITS dirs, never the module globals,
+    and plugin rule-pack edits are folded into the fingerprint so they too
+    trigger a reload. The explicit dir params remain as an override."""
     if interval_s <= 0:
         return None
     import threading
@@ -396,10 +447,18 @@ def start_rule_reload_watcher(detector: "Detector", shutdown, interval_s: float,
     from tenants import invalidate_cache as invalidate_tenant_cache
     log = get_logger("ws4-detection")
 
+    # Resolve what reload() will actually read: the detector's own dirs.
+    rules_dir = Path(rules_dir if rules_dir is not None else detector.rules_dir)
+    allowlists_dir = Path(allowlists_dir if allowlists_dir is not None else detector.allowlists_dir)
+    tenants_dir = Path(tenants_dir if tenants_dir is not None else detector.tenants_dir)
+    plugin_dirs = list(detector._plugin_rule_dirs)
+
     def _loop():
-        last = rules_fingerprint(rules_dir, allowlists_dir, tenants_dir)
+        last = rules_fingerprint(rules_dir, allowlists_dir, tenants_dir,
+                                 plugin_rule_dirs=plugin_dirs)
         while not shutdown.wait(interval_s):
-            fp = rules_fingerprint(rules_dir, allowlists_dir, tenants_dir)
+            fp = rules_fingerprint(rules_dir, allowlists_dir, tenants_dir,
+                                   plugin_rule_dirs=plugin_dirs)
             if fp == last:
                 continue
             last = fp

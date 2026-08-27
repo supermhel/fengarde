@@ -26,7 +26,9 @@ class LightClassifier:
         cls = event.get("class_uid")
         category = _CATEGORY.get(cls, "other") if isinstance(cls, int) else "other"
         sev = event.get("severity_id", 0)
-        score = event.get("siem", {}).get("score", 0)
+        # Gap-hunt (2026-08-27) #2: `siem` may be an explicit null in a hostile
+        # payload -- coerce to {} so .get("score") never raises AttributeError.
+        score = (event.get("siem") or {}).get("score", 0)
         if score >= 60 or sev >= 5:
             priority = "high"
         elif score >= 40 or sev == 4:

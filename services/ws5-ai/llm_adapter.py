@@ -200,8 +200,10 @@ class StubLLM:
     """Deterministic offline analyst. No network, used by tests and as fallback."""
 
     def analyze(self, event: dict, reasons: list[str]) -> dict:
-        score = event.get("siem", {}).get("score", 0)
-        sector = event.get("siem", {}).get("sector", "common")
+        # Gap-hunt (2026-08-27) #2: `siem` may be an explicit null in a hostile
+        # payload -- coerce to {} so .get(...) never raises AttributeError.
+        score = (event.get("siem") or {}).get("score", 0)
+        sector = (event.get("siem") or {}).get("sector", "common")
         if score >= 80:
             verdict, level = "malicious", "critical"
         elif score >= 60:

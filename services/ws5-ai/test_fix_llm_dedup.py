@@ -147,6 +147,29 @@ def run():
     w4.handle(clf_req)
     check(l4.calls == 0, f"classifier tier must not call LLM: analyze {l4.calls}x, want 0")
 
+    # R4-#36 (2026-08-27): main.py's handle() returns defensive COPIES
+    # (`dict(cached)` on a cache hit, `dict(result)` at put()) so a caller that
+    # mutates the returned result -- which the daemon handler hands straight to
+    # bus.produce(), stored by reference on BUS_BACKEND=memory -- cannot corrupt
+    # the cache entry for future redeliveries. `handle` asserting `==` only
+    # never caught a shared reference; this alias test mutates BOTH returned
+    # dicts and requires a third redelivery to still be pristine.
+    w7 = ws5.AiWorker()
+    l7 = CountingLLM()
+    w7.llm = l7
+    req7 = ai_request("alias-evt")
+    r_a = w7.handle(req7)
+    r_a["verdict"] = "MUTATED-1"    # must not touch the cache entry
+    r_b = w7.handle(req7)           # cache hit -> must be a distinct copy
+    check(r_b["verdict"] == "malicious",
+          f"R4-#36: mutating the returned result corrupted the cached copy "
+          f"(got {r_b['verdict']!r})")
+    r_b["verdict"] = "MUTATED-2"    # must not touch the cache entry either
+    r_c = w7.handle(req7)           # cache hit again
+    check(r_c["verdict"] == "malicious",
+          f"R4-#36: mutating a cache-hit result corrupted the cache "
+          f"(got {r_c['verdict']!r})")
+
 
 def main():
     run()

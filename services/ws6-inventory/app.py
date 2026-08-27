@@ -57,8 +57,26 @@ _MAX_BODY_BYTES = 1_048_576  # 1 MiB — an Observation is a few hundred bytes.
 # more than _AUTH_FAIL_LIMIT failures within _AUTH_FAIL_WINDOW_S -> 429.
 _AUTH_FAIL_WINDOW_S = 60
 _AUTH_FAIL_LIMIT = 25
+# R2-#4: auth is OPT-IN -- an empty keystore = the zero-infra/quickstart
+# default where every request is allowed. But that "auth is disabled" state
+# must only exist if auth was NEVER enabled: once a key has ever been observed
+# (provisioned) or seeded at boot, revoking the LAST key must NOT reopen the
+# service. `_AUTH_WAS_ENABLED` is a write-once-to-True latch (benign value
+# race under the threaded server: any thread setting it True is correct). It
+# is only reset by tests so each test gets a fresh, empty keystore.
+_AUTH_WAS_ENABLED = False
+# NEW-hunt read-plane #4: `_auth_fail_by_ip` buckets are otherwise pruned only
+# on the NEXT failure from the SAME IP, so a "deceased" IP's bucket (and its
+# now-empty/lingering list) stays in the dict for the process lifetime --
+# unbounded growth, one entry per distinct failing IP ever seen. Periodic
+# sweep, mirroring ws3-indexer/triage_api.py::_rate_buckets: every
+# _AUTH_FAIL_SWEEP_EVERY-th failure, drop any bucket whose last entry is
+# longer than _AUTH_FAIL_STALE_S old (default: 5 windows).
+_AUTH_FAIL_SWEEP_EVERY = 256
+_AUTH_FAIL_STALE_S = 5 * _AUTH_FAIL_WINDOW_S
 _auth_fail_lock = threading.Lock()
 _auth_fail_total = 0
+_auth_fail_calls = 0
 _auth_fail_by_ip: dict[str, list[float]] = {}
 
 
@@ -121,8 +139,19 @@ class Handler(BaseHTTPRequestHandler):
         for a tenant-scoped key -- every tenant_id this request touches
         must then be forced to it, regardless of what the caller asked
         for. scope is SCOPE_READ_ONLY/SCOPE_READ_WRITE -- do_POST rejects
-        a read-only key before it can write anything."""
-        if KEYSTORE.count() == 0:
+        a read-only key before it can write anything.
+
+        R2-#4: the "auth disabled" case is pinned to auth NEVER having
+        been enabled. `KEYSTORE.count()==0` at request time alone must not
+        reopen an already-armed service -- we keep a `_AUTH_WAS_ENABLED`
+        latch (set when any key is observed, or at boot by serve() when the
+        keystore is pre-seeded). Revoking the last key mid-session therefore
+        leaves auth ON: every request needs a key (and none verifies),
+        instead of silently serving unauthenticated traffic again."""
+        global _AUTH_WAS_ENABLED
+        if KEYSTORE.count() > 0:
+            _AUTH_WAS_ENABLED = True
+        if KEYSTORE.count() == 0 and not _AUTH_WAS_ENABLED:
             return True, None, None
         ok, bound, scope = KEYSTORE.verify(self.headers.get("X-Api-Key", ""))
         if not ok:
@@ -135,16 +164,25 @@ class Handler(BaseHTTPRequestHandler):
     def _note_auth_failure(self) -> bool:
         """Gap-hunt #3: record + log + rate-limit a failed API-key attempt.
         Returns True when the per-IP budget is exhausted and a 429 has
-        already been sent (caller must NOT also send 401)."""
+        already been sent (caller must NOT also send 401). NEW-hunt
+        read-plane #4: also runs a periodic sweep over `_auth_fail_by_ip`
+        so a "deceased" IP's bucket is dropped instead of lingering for the
+        process lifetime (see the module-level constants above)."""
         ip = self.client_address[0] if self.client_address else "?"
         now = time.time()
         with _auth_fail_lock:
-            global _auth_fail_total
+            global _auth_fail_total, _auth_fail_calls
             _auth_fail_total += 1
+            _auth_fail_calls += 1
             window = [t for t in _auth_fail_by_ip.get(ip, [])
                       if now - t < _AUTH_FAIL_WINDOW_S]
             window.append(now)
             _auth_fail_by_ip[ip] = window
+            if _auth_fail_calls % _AUTH_FAIL_SWEEP_EVERY == 0:
+                stale = [k for k, w in _auth_fail_by_ip.items()
+                         if not w or now - w[-1] >= _AUTH_FAIL_STALE_S]
+                for k in stale:
+                    _auth_fail_by_ip.pop(k, None)
             total, in_window = _auth_fail_total, len(window)
         _log_http_line("warning", "failed API-key authentication",
                        client_ip=ip, method=self.command, path=self.path,
@@ -290,9 +328,14 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def serve(host="0.0.0.0", port=8000):
+    global _AUTH_WAS_ENABLED
     require_auth_or_die("ws6-inventory", KEYSTORE)
     warn_if_disabled("ws6-inventory", KEYSTORE)
     warn_missing_pepper()
+    if KEYSTORE.count() > 0:
+        # R2-#4: a service booting with provisioned keys is and remains
+        # auth-enabled -- even if the last key is later revoked.
+        _AUTH_WAS_ENABLED = True
     if not MIGRATED_TENANTS and KEYSTORE.count() > 0:
         # Nothing migrated on THIS boot, yet the keystore is non-empty --
         # it was already seeded by an earlier boot. If a legacy env var is

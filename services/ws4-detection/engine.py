@@ -121,6 +121,13 @@ from shared.allowlist import Allowlist, invalidate_dir, load_allowlist  # noqa: 
 _NUMERIC_OPS = {"gt", "gte", "lt", "lte", "ne"}
 _CONTAINS_MAX = 200  # cap the needle length; contains is a plain (non-regex) match
 
+# Single source for the T4 condition tokenizer. tools/validate_rules.py imports
+# this (R3-#41, 2026-08-27): a hand-copied duplicate in the validator used to
+# drift from what the runtime actually parses, so the gate could call a rule
+# valid while the engine tokenizes it differently. Everything that tokenizes a
+# condition must share THIS pattern and nothing else.
+_CONDITION_TOKEN_RE = re.compile(r"\(|\)|\band\b|\bor\b|\bnot\b|[\w.]+")
+
 
 def _in_list(actual, choices: list) -> bool:
     """True if ``actual`` equals a member of ``choices`` (bool-safe: a bool must

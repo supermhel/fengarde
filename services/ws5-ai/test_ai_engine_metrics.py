@@ -9,6 +9,15 @@ Proves AiWorker.metrics() aggregates by engine correctly, and specifically
 that it counts only genuine LLM invocations: classifier-tier requests
 (no LLM call at all) and cache hits (redelivery of an already-triaged event)
 must NOT inflate the count.
+
+R2-#18 (2026-08-27): the OLD test self-built a literal ``{'ai_triage':
+worker.metrics()}`` shape -- deleting ``metrics_provider=`` from main.py's
+serve() call STILL passed, and the asserted shape was wrong (nested under
+'ai_triage' when main.py's real provider is flat `ai_llm_*` prefix). This
+rewrite exercises main()'s ACTUAL wiring: it patches shared.runner.serve,
+calls main(worker=<our worker>), and asserts the live metrics_provider it
+passes produces the flat #16 shape -- so removing metrics_provider= from
+main.py now fails the test (captured provider is None/absent).
 """
 from __future__ import annotations
 
@@ -24,6 +33,7 @@ os.environ["BUS_BACKEND"] = "memory"
 os.environ.pop("OLLAMA_URL", None)  # force StubLLM
 
 import main as ws5  # noqa: E402
+import shared.runner as runner  # noqa: E402
 
 FAILS: list[str] = []
 
@@ -92,12 +102,33 @@ def run():
     check(m == {"by_engine": {"stub": 2, "ollama": 1}, "total": 3},
           f"a second engine must tally under its own key, got {m}")
 
-    # metrics() must be reachable through main.py's actual serve() wiring,
-    # not just present on AiWorker -- drives the real lambda main() builds
-    # (mirrors WS-3's own "prove the wiring, not just the function" discipline).
-    provider_shape = {"ai_triage": worker.metrics()}
-    check("ai_triage" in provider_shape and provider_shape["ai_triage"]["total"] == 3,
-          "the metrics_provider shape main.py wires into serve() must nest under 'ai_triage'")
+    # R2-#18: exercise main()'s REAL metrics_provider wiring, not a
+    # self-built literal. Patch shared.runner.serve, call main(worker=...) so
+    # the lambda main() passes to serve() is captured exactly as production
+    # wires it, then call it and assert the flat #16 shape.
+    captured: dict = {}
+
+    def fake_serve(handlers, **kwargs):
+        captured.update(kwargs)
+
+    orig_serve = runner.serve
+    runner.serve = fake_serve
+    try:
+        ws5.main(worker=worker)
+    finally:
+        runner.serve = orig_serve
+
+    check("metrics_provider" in captured and captured["metrics_provider"] is not None,
+          "main()'s serve() call must pass a metrics_provider (deleting "
+          "metrics_provider= from main.py must fail this test)")
+
+    provider = captured["metrics_provider"]
+    flat = provider()
+    check(flat == {"ai_llm_total": 3, "ai_llm_stub": 2, "ai_llm_ollama": 1},
+          f"main()'s real provider must emit the flat #16 shape, got {flat}")
+    check("ai_triage" not in flat,
+          "metrics must NOT be nested under 'ai_triage' -- main.py uses flat "
+          "ai_llm_<key> keys")
 
 
 def main_() -> None:

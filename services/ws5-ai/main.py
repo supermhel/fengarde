@@ -17,6 +17,8 @@ tier's alert carries no `ai` (LLM verdict) block, only `classification`, and its
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import sys
 import threading
@@ -53,16 +55,16 @@ class _TriageCache:
     the LLM.
 
     Eviction models ``DequeWindowCounter`` in ws4-detection/window.py: an
-    insertion-order ``deque`` (companion to the O(1) membership structure)
-    tracks recency, and when the cap is reached the OLDEST id is dropped from
-    both. In-process-only, exactly like the deque window backend -- per-replica
-    dedup, which is the right scope for a single funnel consumer.
+    insertion-order ``deque`` keeps recency, and when the cap is reached the
+    OLDEST id is dropped. In-process-only, exactly like the deque window
+    backend -- per-replica dedup, which is the right scope for a single funnel
+    consumer.
     """
 
     def __init__(self, cap: int = _SEEN_CAP) -> None:
         self._cap = cap
         self._order: deque = deque()
-        self._m: dict = {}  # event_id -> triage result (dict keys = the membership set)
+        self._m: dict = {}  # event_id -> triage result
 
     def get(self, key: str):
         return self._m.get(key)
@@ -82,15 +84,12 @@ class AiWorker:
         self.llm = make_llm()
         self.classifier = LightClassifier()
         self._triage = _TriageCache(cap=seen_cap)
-        # Gap-hunt finding (2026-08-23): llm_adapter.py tags every verdict
-        # with `engine`/`model` (stub vs ollama vs the fallback-on-error
-        # path) and that tag is genuinely disclosed end-to-end -- it reaches
-        # the stored alert doc and renders per-alert in the dashboard. But
-        # nothing aggregated it: unlike ws8-correlation (main.py wires
-        # `metrics_provider=correlator.metrics`), ws5-ai's serve() call
-        # passed none, so an operator could only discover "we've silently
-        # been running on the stub for the last hour" by opening alerts one
-        # at a time or reading logs. This counter + metrics() closes that.
+        # llm_adapter.py tags every verdict with `engine`/`model` (stub vs
+        # ollama vs the fallback-on-error path) and that tag is disclosed
+        # end-to-end -- it reaches the stored alert doc and renders per-alert
+        # in the dashboard -- but nothing aggregated it. This counter + the
+        # module-level _metrics_provider() (wired into serve()) lets an operator
+        # see "we've silently been running on the stub" at a glance.
         self._engine_lock = threading.Lock()
         self._engine_counts: dict[str, int] = {}
 
@@ -99,8 +98,10 @@ class AiWorker:
         """The id used for dedup: the event's OCSF ``siem.ingest_id`` falling
         back to the request-level ``event_id``. Returns ``None`` when neither is
         present -- events with no id are still processed on every delivery
-        (back-compat), since there is nothing stable to dedup on."""
-        return (request.get("event", {}) or {}).get("siem", {}).get("ingest_id") \
+        (they carry no stable identity to dedup on). Gap-hunt (2026-08-27) #2:
+        ``siem`` may be an explicit null in a hostile payload -- treat it as
+        absent (``(x or {})``), never ``None.get``."""
+        return ((request.get("event", {}) or {}).get("siem") or {}).get("ingest_id") \
             or request.get("event_id")
 
     def handle(self, request: dict) -> dict:
@@ -127,10 +128,10 @@ class AiWorker:
                 # again; hand back the exact verdict we already computed. A
                 # COPY, not the cache's own dict: the caller (_make_handler)
                 # hands this straight to bus.produce(), and on
-                # BUS_BACKEND=memory a produced payload is stored by
-                # reference (no serialization) -- a later mutation of that
-                # message would otherwise corrupt this cache entry for every
-                # future redelivery of the same event.
+                # BUS_BACKEND=memory a produced payload is stored by reference
+                # (no serialization) -- a later mutation of that message would
+                # otherwise corrupt this cache entry for every future
+                # redelivery of the same event (R4-#36).
                 return dict(cached)
         verdict = self.llm.analyze(event, reasons)
         engine = verdict.get("engine")
@@ -149,20 +150,51 @@ class AiWorker:
         }
         if eid is not None:
             # Cache a copy too, for the same reason -- the freshly-built
-            # `result` below is also handed to bus.produce() by the caller.
+            # `result` is also handed to bus.produce() by the caller (R4-#36).
             self._triage.put(eid, dict(result))
         return result
 
     def metrics(self) -> dict:
-        """Aggregate LLM-engine mix for /metrics (see __init__'s comment for
-        why this exists) -- e.g. {"by_engine": {"stub": 12, "ollama": 3},
-        "total": 15}. Counts only genuine LLM invocations: classifier-tier
-        requests never call the LLM at all, and a cache hit (redelivery of
-        an already-triaged event) returns the prior verdict without a new
-        call, so neither increments this."""
+        """Aggregate LLM-engine mix for /metrics -- e.g. {"by_engine":
+        {"stub": 12, "ollama": 3}, "total": 15}. Counts only genuine LLM
+        invocations: classifier-tier requests never call the LLM at all, and a
+        cache hit (redelivery of an already-triaged event) returns the prior
+        verdict without a new call, so neither increments this."""
         with self._engine_lock:
             by_engine = dict(self._engine_counts)
         return {"by_engine": by_engine, "total": sum(by_engine.values())}
+
+
+def _metrics_provider(worker: "AiWorker") -> dict:
+    """The flat #16 metrics shape main()'s serve() call exposes on /metrics:
+    ``ai_llm_total`` plus one ``ai_llm_<engine>`` counter per engine seen.
+    Module-level so a test can exercise main()'s ACTUAL provider wiring
+    (import main, call this with a worker) rather than self-building an
+    equivalent literal (R2-#18)."""
+    m = worker.metrics()
+    return {
+        "ai_llm_total": m["total"],
+        **{f"ai_llm_{k}": v for k, v in m["by_engine"].items()},
+    }
+
+
+def _stable_event_id(result: dict, event: dict) -> str:
+    """Deterministic id for ai.results/alerts bus keys and the alert ``alert_id``.
+
+    Events WITH an id keep it (string-normalized). Id-less events used to fall
+    back to the literal 'unknown' -- every id-less alert collapsed onto the
+    same doc (alert_id='ai-unknown') and bus key 'unknown'. Gap-hunt
+    (2026-08-27) #8: derive a stable per-event id from a hash of the event
+    payload instead, so distinct id-less events no longer collide while an
+    identical redelivery of the SAME id-less event still maps to the SAME id
+    (alert indexing stays idempotent under at-least-once delivery)."""
+    eid = result.get("event_id")
+    if eid:
+        return str(eid)
+    digest = hashlib.sha256(
+        json.dumps(event, sort_keys=True, default=str).encode("utf-8")
+    ).hexdigest()[:16]
+    return f"hash-{digest}"
 
 
 def _alert_payload(result: dict, event: dict) -> dict:
@@ -170,16 +202,16 @@ def _alert_payload(result: dict, event: dict) -> dict:
     classifier tier never called an LLM, so its alert carries no `ai`
     (verdict/summary) block -- only `classification` -- rather than
     fabricating a verdict that was never actually computed."""
+    stable_id = _stable_event_id(result, event)
     alert = {
-            # Gap-hunt (2026-08-26) #18: an id-less event_id ('None') used to
-            # collapse every such alert onto the same "ai-None" id. Guard like the
-            # ai.results/alerts produce keys already do (or 'unknown').
-            "alert_id": f"ai-{result['event_id'] or 'unknown'}",
-            "time": event.get("time"),
+        "alert_id": f"ai-{stable_id}",
+        "time": event.get("time"),
         "level": result["level"],
         "classification": result["classification"],
-        "sector": event.get("siem", {}).get("sector"),
-        "event_ids": [result["event_id"]],
+        # Gap-hunt (2026-08-27) #2: `siem` may be an explicit null -- coerce to
+        # {} so .get("sector") never raises AttributeError.
+        "sector": (event.get("siem") or {}).get("sector"),
+        "event_ids": [stable_id],
     }
     if result["tier"] != "classifier":
         alert["ai"] = {"verdict": result["verdict"], "summary": result["summary"],
@@ -191,10 +223,11 @@ def _alert_payload(result: dict, event: dict) -> dict:
 def run(bus, worker: "AiWorker") -> dict:
     stats = {"analyzed": 0}
     for msg in bus.consume("ai.requests", group="cg-ai"):
+        event = msg.payload.get("event", {}) or {}
         result = worker.handle(msg.payload)
-        bus.produce("ai.results", key=result["event_id"] or "unknown", payload=result)
-        bus.produce("alerts", key=result["event_id"] or "unknown",
-                    payload=_alert_payload(result, msg.payload.get("event", {})))
+        bus.produce("ai.results", key=_stable_event_id(result, event), payload=result)
+        bus.produce("alerts", key=_stable_event_id(result, event),
+                    payload=_alert_payload(result, event))
         stats["analyzed"] += 1
     return stats
 
@@ -202,43 +235,37 @@ def run(bus, worker: "AiWorker") -> dict:
 def _make_handler(bus, worker: "AiWorker"):
     """Build the per-message daemon handler bound to ONE shared `bus`.
 
-    H1 (2026-07-29 audit): ONE Bus() per worker, not one per message. Same
-    fix as WS-2/WS-4's P1-3 -- runner.py's `_topic_worker` owns exactly one
-    topic (WS-5 consumes only ai.requests) per thread and calls this handler
-    serially on that single thread, so there is no cross-thread sharing to
-    guard against. A fresh Bus() per message was worse than the P1-3
-    per-event-connect cost it left unfixed here: on BUS_BACKEND=memory (the
-    project's documented zero-infra dev mode) `Bus()` returns a brand new,
-    isolated in-memory bus every call, so every produce() below wrote into a
-    bus nothing else ever reads -- ai.results/alerts silently stayed empty
-    forever. `bus` is taken as a parameter (rather than constructed inside)
-    so this closure is unit-testable without a live daemon loop.
+    H1 (2026-07-29 audit): ONE Bus() per worker, not one per message. On
+    BUS_BACKEND=memory a fresh Bus() per call returns a brand new, isolated
+    in-memory bus nothing else ever reads -- ai.results/alerts would silently
+    stay empty forever. `bus` is passed in so this closure is unit-testable
+    without a live daemon loop.
     """
     def handler(payload: dict) -> None:
+        event = payload.get("event", {}) or {}
         result = worker.handle(payload)
-        bus.produce("ai.results", key=result["event_id"] or "unknown", payload=result)
-        bus.produce("alerts", key=result["event_id"] or "unknown",
-                    payload=_alert_payload(result, payload.get("event", {})))
+        bus.produce("ai.results", key=_stable_event_id(result, event), payload=result)
+        bus.produce("alerts", key=_stable_event_id(result, event),
+                    payload=_alert_payload(result, event))
     return handler
 
 
-def main():
-    # Daemon (T0): consume ai.requests via the shared runner. run() above stays the
-    # batch path used by tests / the e2e harness. Real local-Ollama triage runs when
-    # OLLAMA_URL is set and reachable; otherwise the deterministic StubLLM is used.
+def main(worker: "AiWorker | None" = None):
+    # Daemon (T0): consume ai.requests via the shared runner. run() above stays
+    # the batch path used by tests / the e2e harness. Real local-Ollama triage
+    # runs when OLLAMA_URL is set and reachable; otherwise the deterministic
+    # StubLLM is used. `worker` is injectable so a test can drive main()'s real
+    # serve() wiring against a worker it controls.
     from shared.runner import serve  # noqa: E402
     from shared.log import get_logger  # noqa: E402
 
-    worker = AiWorker()
+    worker = worker or AiWorker()
     mode = type(worker.llm).__name__
     get_logger("ws5-ai").info("ai triage mode", mode=mode)
 
     handler_bus = Bus()
     handler = _make_handler(handler_bus, worker)
 
-    # Task M / Finding F4 (2026-08-07): see ws4-detection/main.py's identical
-    # comment -- same fix, same default-on/opt-out, applied to the ai.requests
-    # topic (WS-5's LLM triage queue was the other half of this gap).
     bus_factory = Bus
     if os.getenv("FENGARDE_TENANT_FAIR_CONSUME", "1").strip().lower() not in ("0", "false", "no"):
         from shared.fairness import FairConsumeBus, event_tenant_key
@@ -249,10 +276,7 @@ def main():
     serve({"ai.requests": ("cg-ai", handler)},
           health_port=int(os.getenv("PORT", "8005")), service_name="ws5-ai",
           bus_factory=bus_factory,
-          metrics_provider=lambda: {
-              "ai_llm_total": worker.metrics()["total"],
-              **{f"ai_llm_{k}": v for k, v in worker.metrics()["by_engine"].items()},
-          })
+          metrics_provider=lambda: _metrics_provider(worker))
 
 
 if __name__ == "__main__":
