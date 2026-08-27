@@ -36,6 +36,11 @@ ENV FENGARDE_API_KEY=""
 # upstream from this var; a compose override that moves ws3's triage port must
 # set the same var here so the dashboard proxy follows it -- gap-hunt #68).
 ENV WS3_TRIAGE_PORT=8013
+# OpenSearch upstream for /api/alerts (templates/default.conf.template resolves
+# it from this var -- R3-#17). Base = the singleton "opensearch" service; the HA
+# profile overrides this to a reachable node and puts the dashboard on the ha
+# network, so the 502-to-empty-fallback it previously masked is gone.
+ENV OPENSEARCH_HOST=opensearch:9200
 EXPOSE 80
 # DX4: alerts come LIVE from /api/alerts (proxied to OpenSearch). Inventory is
 # fetched from WS-6 via window.INVENTORY_API. Both fall back to mocks/mock_data.js.

@@ -20,7 +20,11 @@ services:
       fi'
     volumes: ["redis-data:/data"]
     healthcheck:
-      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" ping 2>/dev/null || redis-cli ping"]
+      # R3-#21: no more silent unauth fallback. With REDIS_PASSWORD set the
+      # ONLY healthy answer is a successful AUTH ping; falling back to a bare
+      # `redis-cli ping` made a wrong/rotated password report healthy while the
+      # bus rejected everyone. Auth off => plain ping is correct.
+      test: ["CMD-SHELL", "if [ -n \"$$REDIS_PASSWORD\" ]; then redis-cli -a \"$$REDIS_PASSWORD\" ping | grep -q PONG || exit 1; else redis-cli ping | grep -q PONG || exit 1; fi"]
       interval: 5s
       timeout: 3s
       retries: 5
@@ -102,6 +106,7 @@ services:
     ports: ["5514:5514/udp"]
     environment:
       - BUS_BACKEND=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
       - REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0
       # B2 ingest-edge shedding (default 2000/s; explicit here for visibility).
       - SYSLOG_MAX_EVENTS_PER_SEC=2000
@@ -137,7 +142,7 @@ services:
   ws2-normalization:
     build: { context: .., dockerfile: services/ws2-normalization/Dockerfile }
     restart: unless-stopped
-    environment: ["BUS_BACKEND=redis", "REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0"]
+    environment: ["BUS_BACKEND=redis", "REDIS_PASSWORD=${REDIS_PASSWORD:-}", "REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0"]
     depends_on: { redis: { condition: service_healthy } }
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8002/health', timeout=3)"]
@@ -151,6 +156,7 @@ services:
     restart: unless-stopped
     environment:
       - BUS_BACKEND=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
       - REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0
       - STORAGE_BACKEND=opensearch
       - OPENSEARCH_URL=http://opensearch:9200
@@ -187,7 +193,7 @@ services:
   ws4-detection:
     build: { context: .., dockerfile: services/ws4-detection/Dockerfile }
     restart: unless-stopped
-    environment: ["BUS_BACKEND=redis", "REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0"]
+    environment: ["BUS_BACKEND=redis", "REDIS_PASSWORD=${REDIS_PASSWORD:-}", "REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0"]
     depends_on: { redis: { condition: service_healthy } }
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8004/health', timeout=3)"]
@@ -199,7 +205,7 @@ services:
   ws5-ai:
     build: { context: .., dockerfile: services/ws5-ai/Dockerfile }
     restart: unless-stopped
-    environment: ["BUS_BACKEND=redis", "REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0"]
+    environment: ["BUS_BACKEND=redis", "REDIS_PASSWORD=${REDIS_PASSWORD:-}", "REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0"]
     depends_on: { redis: { condition: service_healthy } }
     # set OLLAMA_URL to enable the local LLM; otherwise StubLLM
     healthcheck:
@@ -212,7 +218,7 @@ services:
   ws8-correlation:
     build: { context: .., dockerfile: services/ws8-correlation/Dockerfile }
     restart: unless-stopped
-    environment: ["BUS_BACKEND=redis", "REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0"]
+    environment: ["BUS_BACKEND=redis", "REDIS_PASSWORD=${REDIS_PASSWORD:-}", "REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0"]
     depends_on: { redis: { condition: service_healthy } }
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8008/health', timeout=3)"]
@@ -250,6 +256,7 @@ services:
       # bus_consumer.py's own tests exercise, same convention as every other
       # workstream's BUS_BACKEND=redis line above.
       - BUS_BACKEND=redis
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
       - REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0
       # M7 Track Y: per-tenant baseline window. Devices first seen inside this
       # window after a tenant appears are treated as pre-existing inventory
@@ -305,6 +312,7 @@ services:
     build: { context: .., dockerfile: services/devkit-feeder/Dockerfile }
     restart: "no"
     environment:
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
       - REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0
     depends_on:
       redis: { condition: service_healthy }
