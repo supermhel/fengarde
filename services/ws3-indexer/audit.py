@@ -100,7 +100,7 @@ def _acquire_cross_process_lock(path: str):
                 return None
         import fcntl  # noqa: PLC0415  (POSIX: flock)
         f = open(lock_path, "a+b")
-        fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+        fcntl.flock(f.fileno(), fcntl.LOCK_EX)  # type: ignore[attr-defined]  # POSIX-only, guarded above
         return f
     except Exception:
         return None

@@ -32,7 +32,6 @@ SERVICES = HERE.parent
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(SERVICES))
 
-from correlator import _valid_window_time  # noqa: E402
 from test_contract import _Clock, _alert, _new_correlator  # noqa: E402
 
 FAILS: list[str] = []
@@ -108,7 +107,7 @@ def test_bogus_alert_time_is_rejected_falls_back_to_now_ms():
                     "score": 5, "mitre": {"tactic": "TA0003"},
                     "actor": {"user": {"name": "time-user"}}})
     check(side["t3"]["time"] == 1_000_000,
-          f"time: NaN time must be rejected and fall back to now_ms (got side['t3']['time'])")
+          "time: NaN time must be rejected and fall back to now_ms (got side['t3']['time'])")
 
 
 # --- NEW finding #4: fully-anonymous member id must be deterministic ---------

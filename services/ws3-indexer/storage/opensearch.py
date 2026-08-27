@@ -418,9 +418,15 @@ class OpenSearchStore(StorageAdapter):
         # indices (a re-indexed/re-timed alert), and a size-1 search with no
         # sort returns either one arbitrarily. Sort by time desc so the
         # search deterministically returns the NEWEST copy.
+        # unmapped_type: a fresh daily index that hasn't taken its first
+        # write yet has no mapping for `time` at all -- sorting a wildcard
+        # pattern where ANY matching index lacks the sort field 400s with
+        # "No mapping found for [time] in order to sort on" (live-caught in
+        # CI, 2026-08-27). Same idiom every other cross-index sort in this
+        # codebase already uses (see find_report below, _list's sort_field).
         body = {"size": 1, "query": {"term": {"_id": alert_id}},
                 "seq_no_primary_term": True,
-                "sort": [{"time": {"order": "desc"}}]}
+                "sort": [{"time": {"order": "desc", "unmapped_type": "long"}}]}
         try:
             result = self._request("POST", "/alerts-*/_search", body)
         except urllib.error.HTTPError as exc:
@@ -464,8 +470,11 @@ class OpenSearchStore(StorageAdapter):
         sort returns either arbitrarily (a stale copy). Sorting generated_at
         desc deterministically returns the NEWEST report."""
         report_id = f"{alert_id}:report"
+        # unmapped_type: same cross-index sort gap as _search_alert above --
+        # a daily reports-* index with no mapping for `generated_at` yet
+        # 400s a wildcard-pattern sort with no fallback type.
         body = {"size": 1, "query": {"term": {"_id": report_id}},
-                "sort": [{"generated_at": {"order": "desc"}}]}
+                "sort": [{"generated_at": {"order": "desc", "unmapped_type": "long"}}]}
         try:
             result = self._request("POST", "/reports-*/_search", body)
         except urllib.error.HTTPError as exc:

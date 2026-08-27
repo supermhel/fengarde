@@ -3,14 +3,18 @@
   "template": {
     "settings": { "number_of_shards": 1, "number_of_replicas": 1 },
     "mappings": {
-      "_meta": { "mapping_version": 1, "_comment": "WS-8 correlated incidents (2026-08-18), 1-year retention via ISM (ism-incidents-365d.json attaches by index pattern, matching ism-alerts-365d.json's lifetime -- an incident is only as substantiable as the alerts it cites)." },
+      "_meta": {
+        "mapping_version": 1,
+        "_comment": "WS-8 correlated incidents (2026-08-18), 1-year retention via ISM (ism-incidents-365d.json attaches by index pattern, matching ism-alerts-365d.json's lifetime -- an incident is only as substantiable as the alerts it cites).",
+        "_entity_value_full_comment": "WS-8 correlator preserves the attacker-controlled entity_value here when the id-embedded form is truncated to _ENTITY_VALUE_MAX (dynamic:false would silently drop it otherwise -- added 2026-08-27 gap-hunt #WS3-5)."
+      },
       "dynamic": "false",
       "properties": {
         "incident_id": { "type": "keyword" },
         "tenant_id": { "type": "keyword" },
         "entity_type": { "type": "keyword" },
         "entity_value": { "type": "keyword" },
-        "entity_value_full": { "type": "keyword", "description": "WS-8 correlator preserves the attacker-controlled entity_value here when the id-embedded form is truncated to _ENTITY_VALUE_MAX (dynamic:false would silently drop it otherwise -- added 2026-08-27 gap-hunt #WS3-5)." },
+        "entity_value_full": { "type": "keyword" },
         "first_seen": { "type": "date", "format": "epoch_millis" },
         "last_seen": { "type": "date", "format": "epoch_millis" },
         "tactics": { "type": "keyword" },

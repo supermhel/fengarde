@@ -20,14 +20,12 @@ Standalone unittest script, zero infra (memory bus), run from the service dir.
 """
 from __future__ import annotations
 
-import json
 import os
 import socket
 import sys
 import threading
 import time
 import unittest
-import urllib.request
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -114,7 +112,15 @@ def _run_serve(handlers, bus_factory):
 
 
 def _http_status(url, timeout=3):
+    # Both submodules imported locally, together: `urllib.request` isn't
+    # otherwise referenced at module scope (ruff's F401 correctly flags a
+    # bare top-level `import urllib.request` as unused there), but dropping
+    # it entirely breaks urlopen() below at runtime -- `import urllib.error`
+    # alone does not register `request` as an attribute of the `urllib`
+    # package, so `urllib.request.urlopen` raises AttributeError, silently
+    # swallowed by the bare except below (status always came back None).
     import urllib.error
+    import urllib.request
     try:
         with urllib.request.urlopen(url, timeout=timeout) as r:
             return r.status, r.read().decode()
@@ -205,7 +211,7 @@ class TestSyslogMetricsFlattened(unittest.TestCase):
                     "events_empty", "recv_oserror_total"):
             self.assertIn(f'field="{key}"', text,
                           f"render_prometheus must emit a gauge for flat key {key}")
-            self.assertIn(f"fengarde_extra", text)
+            self.assertIn("fengarde_extra", text)
         # The per-source breakdown is a dict leaf -> intentionally NOT a gauge.
         self.assertNotIn('field="per_source"', text)
 

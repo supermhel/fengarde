@@ -46,10 +46,11 @@ from collections import defaultdict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Callable
 
+from shared.log import get_logger
+
 # topic -> (consumer_group, handler).  handler(payload: dict) -> None; raise to fail.
 Handlers = dict[str, "tuple[str, Callable[[dict], None]]"]
 
-from shared.log import get_logger
 _log = get_logger("shared.runner")
 
 # Gap-hunt #3 (2026-08-27): the /metrics provider path used to swallow every

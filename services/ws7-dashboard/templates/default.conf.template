@@ -113,7 +113,7 @@ server {
         # embedded DNS 127.0.0.11). Without the variable, nginx resolves `opensearch`
         # at startup and fails if the container isn't up yet.
         resolver 127.0.0.11 ipv6=off valid=30s;
-        set $opensearch "http://${OPENSEARCH_HOST:-opensearch:9200}";
+        set $opensearch "http://${OPENSEARCH_HOST}";
 
         # POST a JSON query body — the only reliable way to pass query params when
         # using a variable upstream. With a variable, nginx ignores any query string
@@ -170,7 +170,7 @@ server {
     # shared event_ids field (getAiTriage()/attachAiTriage() in index.html).
     location = /api/ai-triage {
         resolver 127.0.0.11 ipv6=off valid=30s;
-        set $opensearch "http://${OPENSEARCH_HOST:-opensearch:9200}";
+        set $opensearch "http://${OPENSEARCH_HOST}";
         if ($http_x_api_key != "${FENGARDE_API_KEY}") {
             return 401;
         }
@@ -191,7 +191,7 @@ server {
     # subset (alerts) was. Same time-range map as /api/alerts.
     location = /api/events {
         resolver 127.0.0.11 ipv6=off valid=30s;
-        set $opensearch "http://${OPENSEARCH_HOST:-opensearch:9200}";
+        set $opensearch "http://${OPENSEARCH_HOST}";
         if ($http_x_api_key != "${FENGARDE_API_KEY}") {
             return 401;
         }

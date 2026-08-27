@@ -64,7 +64,7 @@ def test_pel_cap_still_evicts_prior_batches():
     bus._pel_cap = 2
     for i in range(4):
         bus.produce("t", key=None, payload={"n": i})
-    first = list(bus.consume("t"))  # batch of 4 -> all in-flight, none evictable
+    list(bus.consume("t"))  # batch of 4 -> all in-flight, none evictable
     check(bus.pel_evicted("t") == 0, "an in-flight batch must not be evicted")
 
     # a second batch: the first batch's entries are now PRIOR (yielded) work

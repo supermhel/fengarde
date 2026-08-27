@@ -505,7 +505,8 @@ def test_inventory_read_accepts_caller_presented_key_like_nginx_forwards():
                                source="migrated_legacy_shared_key")
         code, body = _get(port, "/assets", api_key="the-browser-key")
         check(code == 200,
-              f"a caller-presented key that verifies against the keystore must be accepted (as nginx now forwards it), got {code} {body}")
+              f"a caller-presented key that verifies against the keystore must "
+              f"be accepted (as nginx now forwards it), got {code} {body}")
         code, _ = _get(port, "/assets")
         check(code == 401,
               f"with auth enabled, a missing key must still be 401 (nginx forwards an empty X-Api-Key), got {code}")

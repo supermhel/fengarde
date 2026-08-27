@@ -211,7 +211,7 @@ def main() -> None:
     from shared.log import get_logger  # noqa: E402
     from collectors.syslog_udp_server import (  # noqa: E402
         SyslogUDPServer, DEFAULT_HOST, DEFAULT_PORT, DEFAULT_MAX_EVENTS_PER_SEC,
-        DEFAULT_WORKERS, DEFAULT_QUEUE_MAXSIZE, DEFAULT_SO_RCVBUF, udp_rcvbuf_errors)
+        DEFAULT_WORKERS, DEFAULT_QUEUE_MAXSIZE, DEFAULT_SO_RCVBUF)
     from collectors.spool import BoundedSpool, DEFAULT_MAX_BYTES as SPOOL_DEFAULT_MAX_BYTES  # noqa: E402
 
     log = get_logger("ws1-collectors")

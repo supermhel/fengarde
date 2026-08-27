@@ -299,6 +299,12 @@ services:
       # v0.4 Track S2: "off" = no dashboard auth (default). See
       # infra/docker-compose.auth.yml for the opt-in override.
       - DASHBOARD_AUTH_REALM=off
+      # 2026-08-27: the nginx template's `/api/alerts` upstream reads this
+      # directly (plain envsubst, not shell) -- the `:-default` fallback
+      # belongs HERE, at compose-substitution time, not inside the template
+      # (nginx's own ${} parser rejects `:` as an invalid variable-name
+      # character and refuses to start with "closing bracket... missing").
+      - OPENSEARCH_HOST=${OPENSEARCH_HOST:-opensearch:9200}
     # v0.4 Track S2: dashboard basic-auth is opt-in via a compose OVERRIDE file
     # (infra/docker-compose.auth.yml), not baked in here -- a conditional bind
     # mount of a possibly-missing host file would break the zero-friction
