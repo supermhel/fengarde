@@ -197,7 +197,14 @@ def _parse_legacy_tenant_keys(raw: str | None) -> dict[str, str]:
 
 class TenantKeyStore:
     def __init__(self, path: str = ":memory:"):
-        self.db = sqlite3.connect(path, check_same_thread=False)
+        # Gap-hunt #9 (2026-08-26): app.py defaults this store to the SAME
+        # SQLite file as InventoryStore (INVENTORY_KEYSTORE_DB falls back to
+        # INVENTORY_DB), with independent connections and uncoordinated locks.
+        # WAL lets both coexist, but a concurrent write from the inventory
+        # connection can transiently hold the writer; time out coarsely (30s)
+        # instead of immediately 500ing on "database is locked" -- and a
+        # genuine stall now shows up in app.py's exception logging (#2).
+        self.db = sqlite3.connect(path, check_same_thread=False, timeout=30)
         self.db.row_factory = sqlite3.Row
         self._write_lock = threading.Lock()
         self._init()

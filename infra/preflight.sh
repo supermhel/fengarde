@@ -43,7 +43,8 @@ case "$OS" in
       current="$(sysctl -n vm.max_map_count 2>/dev/null)"
     fi
     if [ -z "$current" ]; then
-      warn "Could not read vm.max_map_count. If OpenSearch fails to boot, run:"
+      fail "Could not read vm.max_map_count. OpenSearch WILL crash on boot if it is"
+      note "         too low. Could you check it yourself, then set:"
       note "         sudo sysctl -w vm.max_map_count=$REQUIRED_MAP_COUNT"
     elif [ "$current" -ge "$REQUIRED_MAP_COUNT" ] 2>/dev/null; then
       ok "vm.max_map_count = $current (>= $REQUIRED_MAP_COUNT)"
@@ -60,7 +61,7 @@ case "$OS" in
     note "         If OpenSearch still fails to boot, ensure Docker Desktop is up to date."
     ;;
   *)
-    warn "Unknown OS ($OS): cannot check vm.max_map_count."
+    fail "Unknown OS ($OS): cannot verify vm.max_map_count -- cannot bless this machine."
     note "         On Linux/WSL2 this must be >= $REQUIRED_MAP_COUNT:"
     note "           sudo sysctl -w vm.max_map_count=$REQUIRED_MAP_COUNT"
     ;;
@@ -107,53 +108,91 @@ echo "3. Required ports are free (TCP: $TCP_PORTS; UDP: $UDP_PORTS)"
 # check only ever looked at TCP listeners, so port 5514 (ws1-collectors'
 # syslog UDP listener, published on all interfaces by docker-compose.yml)
 # was never verified free even though every other published port was.
-port_in_use() {
-  p="$1"; proto="$2"
-  if command -v lsof >/dev/null 2>&1; then
-    if [ "$proto" = "udp" ]; then
-      lsof -iUDP:"$p" -Pn >/dev/null 2>&1 && return 0 || return 1
+#
+# Gap-hunt (2026-08-26): with NONE of lsof/ss/netstat installed, every probe
+# landed in the `return 2` "no tool available" branch and the script ended
+# with a single WARN + exit 0 -- a pre-flight that PASSED having verified
+# ZERO ports. That is the one outcome worse than failing: an operator with
+# something already on :9200 got told "You're ready: run 'make demo'". This
+# is now a hard FAIL -- pre-flight must not bless a machine it could not
+# check. (rc==2 below is kept only as a defensive tripwire; the guard above
+# makes it unreachable.)
+if ! command -v lsof >/dev/null 2>&1 && ! command -v ss >/dev/null 2>&1 && ! command -v netstat >/dev/null 2>&1; then
+  fail "No port-checking tool found (lsof/ss/netstat) -- cannot verify required ports are free."
+  note "         Install one of:  iproute2 (ss)  |  lsof  |  net-tools (netstat)"
+  note "         Debian/Ubuntu: sudo apt install iproute2   |   RHEL: sudo dnf install iproute"
+else
+  port_in_use() {
+    p="$1"; proto="$2"
+    if command -v lsof >/dev/null 2>&1; then
+      if [ "$proto" = "udp" ]; then
+        lsof -iUDP:"$p" -Pn >/dev/null 2>&1 && return 0 || return 1
+      fi
+      lsof -iTCP:"$p" -sTCP:LISTEN -Pn >/dev/null 2>&1 && return 0 || return 1
     fi
-    lsof -iTCP:"$p" -sTCP:LISTEN -Pn >/dev/null 2>&1 && return 0 || return 1
-  fi
-  if command -v ss >/dev/null 2>&1; then
-    if [ "$proto" = "udp" ]; then
-      ss -lun 2>/dev/null | grep -q "[:.]$p[[:space:]]" && return 0 || return 1
+    if command -v ss >/dev/null 2>&1; then
+      if [ "$proto" = "udp" ]; then
+        ss -lun 2>/dev/null | grep -q "[:.]$p[[:space:]]" && return 0 || return 1
+      fi
+      ss -ltn 2>/dev/null | grep -q "[:.]$p[[:space:]]" && return 0 || return 1
     fi
-    ss -ltn 2>/dev/null | grep -q "[:.]$p[[:space:]]" && return 0 || return 1
-  fi
-  if command -v netstat >/dev/null 2>&1; then
-    if [ "$proto" = "udp" ]; then
-      netstat -an 2>/dev/null | grep -i '^udp' | grep -q "[:.]$p[[:space:]]" && return 0 || return 1
+    if command -v netstat >/dev/null 2>&1; then
+      if [ "$proto" = "udp" ]; then
+        netstat -an 2>/dev/null | grep -i '^udp' | grep -q "[:.]$p[[:space:]]" && return 0 || return 1
+      fi
+      netstat -an 2>/dev/null | grep -i 'listen' | grep -q "[:.]$p[[:space:]]" && return 0 || return 1
     fi
-    netstat -an 2>/dev/null | grep -i 'listen' | grep -q "[:.]$p[[:space:]]" && return 0 || return 1
-  fi
-  return 2  # no tool available -> unknown
-}
-checked_ports=0
-for p in $TCP_PORTS; do
-  port_in_use "$p" tcp
-  rc=$?
-  if [ "$rc" -eq 0 ]; then
-    fail "TCP port $p is already in use — FENGARDE needs it free."
-    note "         Find the process:  lsof -iTCP:$p -sTCP:LISTEN   (or: ss -ltnp | grep $p)"
-    note "         Then stop it, or change the host port mapping in infra/docker-compose.yml."
-  elif [ "$rc" -eq 2 ]; then
-    checked_ports=1
-  fi
-done
-for p in $UDP_PORTS; do
-  port_in_use "$p" udp
-  rc=$?
-  if [ "$rc" -eq 0 ]; then
-    fail "UDP port $p is already in use — ws1-collectors' syslog listener needs it free."
-    note "         Find the process:  lsof -iUDP:$p   (or: ss -lunp | grep $p)"
-    note "         Then stop it, or change SYSLOG_UDP_PORT / the host port mapping."
-  elif [ "$rc" -eq 2 ]; then
-    checked_ports=1
-  fi
-done
-if [ "$checked_ports" -eq 1 ]; then
-  warn "No port-checking tool found (lsof/ss/netstat); could not verify ports."
+    return 2  # no tool available -> unknown (unreachable: guarded above)
+  }
+  for p in $TCP_PORTS; do
+    port_in_use "$p" tcp
+    rc=$?
+    if [ "$rc" -eq 0 ]; then
+      fail "TCP port $p is already in use — FENGARDE needs it free."
+      note "         Find the process:  lsof -iTCP:$p -sTCP:LISTEN   (or: ss -ltnp | grep $p)"
+      note "         Then stop it, or change the host port mapping in infra/docker-compose.yml."
+    elif [ "$rc" -eq 2 ]; then
+      fail "TCP port $p could not be checked (no lsof/ss/netstat)."
+    fi
+  done
+  for p in $UDP_PORTS; do
+    port_in_use "$p" udp
+    rc=$?
+    if [ "$rc" -eq 0 ]; then
+      fail "UDP port $p is already in use — ws1-collectors' syslog listener needs it free."
+      note "         Find the process:  lsof -iUDP:$p   (or: ss -lunp | grep $p)"
+      note "         Then stop it, or change SYSLOG_UDP_PORT / the host port mapping."
+    elif [ "$rc" -eq 2 ]; then
+      fail "UDP port $p could not be checked (no lsof/ss/netstat)."
+    fi
+  done
+fi
+echo ""
+
+# --- 4. REDIS_PASSWORD URL safety -------------------------------------------------
+# R3-28: infra/docker-compose.yml interpolates the bus URL as
+# redis://:${REDIS_PASSWORD}@redis:6379/0 -- no URL-encoding. If the password
+# contains one of the reserved URL characters (@ : / %), the URL is malformed:
+# the password (or a split after "/") corrupts the URL and every service that
+# builds its Redis client off REDIS_URL fails to authenticate, with an opaque
+# "wrong number of arguments for 'auth'"-class error. Best-fail-loud: block
+# REDIS_PASSWORD (when set) from containing those characters, so an operator
+# finds out in the doctor, not after a green-looking `make up`.
+echo "4. REDIS_PASSWORD (if set) contains no unencoded URL-reserved characters"
+if [ -n "${REDIS_PASSWORD:-}" ]; then
+  case "$REDIS_PASSWORD" in
+    *'@'*|*':'*|*'/'*|*'%'*)
+      fail "REDIS_PASSWORD contains @, :, /, or % -- those break the bus URL"
+      note "         (infra/docker-compose.yml uses redis://:${REDIS_PASSWORD}@redis:6379)."
+      note "         Set REDIS_PASSWORD to a value without those characters and re-run:"
+      note "           export REDIS_PASSWORD=\$(openssl rand -hex 16)"
+      ;;
+    *)
+      ok "REDIS_PASSWORD is URL-safe (no @ : / % characters)."
+      ;;
+  esac
+else
+  note "         (REDIS_PASSWORD unset -> Redis AUTH off; nothing to check.)"
 fi
 echo ""
 

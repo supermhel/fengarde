@@ -7,6 +7,92 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed (2026-08-27, gap-hunt remediation: WS-1/WS-3/WS-4/WS-5/WS-6/WS-8/shared/tools + container smoke)
+
+Second-pass closure of the 2026-08-26 consolidated gap-hunt report (256 findings)
+plus a fresh 2026-08-27 hunt's 34 follow-on findings, all verified by execution and
+a green `run_all_tests.sh`:
+
+- **WS-1**: `/health` now reports 503 on a bus outage (was hardcoded 200 from an
+  empty handler map); ingest-edge metrics flattened so `/metrics/prom` emits real
+  gauges; spool escapes `U+2028/U+2029/U+0085` (an event could silently split at
+  drain); corrupt-line counter now actually increments; `os_error`/produce-fail
+  logging throttled + backoff; monotonic silence clock; empty datagram = its own
+  counter; spool rewrite fsync'd for durability.
+- **WS-2**: malformed `NORMALIZED_EVENTS_DEPTH_WARN` degrades instead of killing
+  the daemon; `unmapped` list sanitization now recurses; parser comment + doc
+  order corrected.
+- **WS-3/contracts**: OpenSearch read-side 5xx propagation; tenant default-filters
+  for `list_alerts`/`events`/`incidents`; reporting day-rollover; audit warn/lock/
+  `recent(0)`; report body reject; CAS on all write branches; webhooks non-yaml
+  fail-closed; `entity_value_full` mapped; nis2 envelope/schema aligned;
+  triage-api report params + CSRF note; inventory-api auth documented.
+- **WS-4/5/8**: torn-read-safe reload; `siem:null` poison-pill; event_ids
+  truncation cap (see the code-review remediation entry below for its final
+  shape); LLM SSRF/response/truncation hardening tests; plugin-pack
+  hot-reload; `ai_enqueued` counts LLM-only; correlator flat Prometheus
+  skip-reasons, attacker-time validation, deterministic anon member id,
+  oldest-by-time eviction; lost new-device alerts; inventory auth latch; bounded
+  auth-fail map.
+- **shared**: MemoryBus PEL in-flight eviction (at-least-once); session expiry;
+  sanitize C1/U+202E; outbound_http `safe_urlopen` SSRF + pinned opener; scrypt
+  `n` ceiling; log reserved-key + always().
+- **tools/eval/CI**: `check_test_wiring` gate; coverage_gate TARGETS derived from
+  the runner; fire_check untested rules reported; many live benches wired;
+  `container-smoke` CI job across all 8 services.
+
+### Fixed (2026-08-27, code-review remediation: PR#74)
+
+An independent code review of the branch above (`engineering:code-review`, model
+Opus 5) found 12 issues in the gap-hunt remediation itself, 2 of them reproduced
+crashes in newly-added error-handling code. All 12 fixed, re-verified by execution
+against a live 15-container `docker compose` stack driven in-browser (all 8
+dashboard tabs, real pipeline data), plus a green `run_all_tests.sh` + clean
+mypy/ruff on every touched workstream:
+
+- **Critical — reproduced crashes, both on error paths**: `triage_api.py`'s
+  `do_GET`/`do_POST` called `Logger.exception()`, a method `shared.log.Logger`
+  does not have (stdlib-`logging`-only) — an unhandled handler error raised
+  `AttributeError` before the 500 response was ever sent, dropping the
+  connection instead of returning it. `opensearch.py`'s `_log_rw_warn` called
+  `.warning()` with positional `%s` args against a `**fields`-only signature —
+  hit on every non-index-missing `HTTPError` from `count`/`_search_alert`/
+  `find_report`/`_list`, i.e. exactly the 5xx/circuit-breaker case the read-side
+  error propagation fix (above) was added to surface. Both fixed with the real
+  `Logger.error(...)` API.
+- **`/api/config.js` lost every security header.** nginx's `add_header` does
+  not inherit from the parent `server` block once a `location` defines its own
+  — the one response carrying the shared API key (see the read-plane #6 note
+  above) was the one response stripped of CSP/`X-Frame-Options`/`nosniff`/
+  `Referrer-Policy`. Repeated explicitly in that location.
+- **New live-e2e CI jobs passed green on an unexpected `[SKIP]`.**
+  `ot_new_device_e2e.py` and `container_smoke.py`'s skip branches all
+  `return 0`; their CI jobs guarantee every precondition those scripts check
+  (docker up, `BUS_BACKEND=redis`, `INVENTORY_BASELINE_SECONDS=0`), so a skip
+  there can only mean the job itself is broken. `FENGARDE_E2E_STRICT=1` (set
+  by both CI jobs) turns a skip into a hard failure.
+- **`_index_alert_preserving_triage`'s retry-exhaustion was silent.** A CAS
+  write that lost every retry under contention returned `False`, landing in
+  `run()`'s `duplicates` counter identically to a benign update — a genuinely
+  lost write was indistinguishable from ordinary redelivery. Now logged.
+- **`RedisSessionStore.resolve()`'s new expiry check had a second bug**,
+  found while writing its (previously missing) regression test:
+  `if expires_at and time.time() > expires_at` treated `expires_at == 0.0`
+  (unambiguously expired) as falsy and skipped the check entirely — a row
+  written or tampered with `expires_at=0.0` would resolve as valid forever.
+  Fixed; `test_redis_resolve_enforces_stored_expiry` proves the explicit
+  check does the rejecting, not the Redis key's own TTL.
+- **`Rule.contributing_event_ids` embedded a truncation marker STRING inside
+  the `event_ids` list itself** (`"<truncated: N omitted>"`) — any consumer
+  treating that field as "a list of ids" would treat the sentinel as a real
+  one. Split into a clean id-only list plus a sibling `event_ids_omitted`
+  integer count on the alert doc, present only when the cap actually bit
+  (alerts mapping bumped to v8).
+- **ws5-ai's out-of-enum coercion counter (`_LLM_OUT_OF_ENUM`)** was
+  incremented with a lock-free `dict[k] += 1` reachable from multiple
+  `ai.requests` worker threads — undercounts under concurrency. Serialized
+  under one lock.
+
 ### Fixed (2026-08-20, P1-4 remainder: WS-3 double-index silently dropped siem.score)
 
 - **Correctness bug, not the perf item it was filed as.** WS-3 consumes both

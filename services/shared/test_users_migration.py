@@ -107,6 +107,20 @@ def main():
     test_fresh_db_lands_on_latest_version_with_new_column()
     test_existing_v1_db_upgrades_in_place_data_survives()
     test_migrate_on_already_current_db_is_a_noop()
+    try:
+        from users import verify_password, _SCRYPT_N_MAX
+        # gap-hunt (2026-08-27): a corrupt/compromised DB row carrying a huge
+        # scrypt n must be REJECTED, not fed to hashlib.scrypt (a login-path DoS).
+        huge = "0" + str(2 ** 24)  # well above the ceiling
+        # Build a fake stored password record with n=huge and assert verify
+        # returns False without running scrypt on it.
+        check(_SCRYPT_N_MAX >= (1 << 16),
+              "scrypt ceiling must stay above the interactive _SCRYPT_N=2**16")
+        ok = verify_password("x", f"scrypt${huge}$s$s$s")
+        check(ok is False,
+              f"a stored scrypt n={huge} (>cap {_SCRYPT_N_MAX}) must be rejected")
+    except (ImportError, AttributeError) as exc:  # verify_password signature varies
+        check(False, f"scrypt n-ceiling test could not run: {exc}")
 
     if FAILS:
         print(f"[FAIL] users db migration: {len(FAILS)} problem(s)")

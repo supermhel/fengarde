@@ -21,6 +21,10 @@ model   the Ollama model name (OllamaLLM) or None (StubLLM never has one).
 
 Selection (`make_llm()`):
   * OLLAMA_URL set AND reachable -> FallbackLLM(OllamaLLM, StubLLM)
+  * OLLAMA_URL set but unreachable at boot -> FallbackLLM(OllamaLLM, StubLLM)
+    MARKED unavailable (gap-hunt 2026-08-26): the backup serves until a
+    periodic re-probe finds Ollama back, instead of being pinned to a bare
+    StubLLM for the process lifetime.
   * otherwise                    -> StubLLM
 
 NOTE: this module has been exercised only against mocked HTTP responses
@@ -31,6 +35,9 @@ from __future__ import annotations
 
 import json
 import os
+import sys
+import threading
+import time
 import urllib.error
 import urllib.request
 
@@ -47,8 +54,32 @@ except Exception:  # pragma: no cover - fallback when shared not importable
 
 try:  # FIX 4: no-redirect urlopen (SSRF hardening); guarded like _log above
     from shared.outbound_http import no_redirect_urlopen as _no_redirect_urlopen
-except Exception:  # pragma: no cover - standalone fallback (redirect-following)
+except Exception as _no_redirect_import_error:  # pragma: no cover
+    # R3-57 (2026-08-26): this guard used to fail SILENTLY, so a broken /
+    # missing shared.outbound_http (or a shared layer that isn't on sys.path)
+    # quietly downgraded every LLM HTTP call to redirect-FOLLOWING urllib
+    # with zero signal. outbound_http's whole point is SSRF hardening -- its
+    # no-redirect opener replaces urllib's default redirect-following at
+    # IMPORT time -- so silently falling back is a silent security posture
+    # change. Name the consequence loudly instead: the caller (OllamaLLM)
+    # is operator-configured so the blast radius is bounded, but a hostile
+    # or misconfigured endpoint could now pivot an authenticated POST to an
+    # internal host. Print to stderr too, so it is audible even if the
+    # logger isn't wired up.
     _no_redirect_urlopen = None
+    _log.error(
+        "could not import shared.outbound_http.no_redirect_urlopen: SSRF "
+        "redirect-following hardening is DISABLED -- this process's urllib "
+        "calls WILL follow HTTP 30x redirects (a hostile/misconfigured LLM "
+        "endpoint could thus pivot an authenticated request to an internal "
+        "host: metadata service, Elasticsearch, Redis). Fix shared/outbound_http.py "
+        "and reinstall it at import time to restore the no-redirect opener.",
+        error=str(_no_redirect_import_error),
+    )
+    print(f"[ws5-ai] WARNING SSRF hardening DISABLED: "
+          f"shared.outbound_http.no_redirect_urlopen failed to import "
+          f"({_no_redirect_import_error}); urllib will follow redirects.",
+          file=sys.stderr)
 
 
 def _urlopen(req, timeout=None):
@@ -70,6 +101,32 @@ _SAFE_VERDICT = {"verdict": "unknown", "summary": "", "level": "low"}
 # non-dict-model-output fallback inside OllamaLLM, which still tags engine="ollama"
 # (the response really did come from Ollama, just wasn't a JSON object).
 
+# Gap-hunt (2026-08-26): out-of-enum / non-dict model output used to be coerced
+# to the safe defaults with NO log and NO counter, so a model that kept emitting
+# junk was invisible (and every such verdict counted as a normal success). Count
+# each coercion by field; ws5-ai/main.py exposes these via /metrics.
+_LLM_OUT_OF_ENUM = {"verdict": 0, "level": 0}
+# Review finding (2026-08-27): multiple ai.requests worker threads can call
+# _normalize_verdict() concurrently, and `dict[k] += 1` is a lock-free
+# read-modify-write -- concurrent increments on the same key can lose an
+# update (the counter undercounts). Serialize the increments and the
+# snapshot read under one lock; this is a metrics counter, not a hot path,
+# so lock contention here is not a performance concern.
+_LLM_OUT_OF_ENUM_LOCK = threading.Lock()
+
+
+def _incr_out_of_enum(*fields: str) -> None:
+    with _LLM_OUT_OF_ENUM_LOCK:
+        for f in fields:
+            _LLM_OUT_OF_ENUM[f] += 1
+
+
+def coercion_stats() -> dict:
+    """Process-wide counts of model outputs coerced to a safe default, by
+    field (verdict/level). Read by ws5-ai/main.py's metrics provider."""
+    with _LLM_OUT_OF_ENUM_LOCK:
+        return dict(_LLM_OUT_OF_ENUM)
+
 # Upper bound on the Ollama HTTP response we will read into memory. A triage JSON
 # verdict is tiny; 1 MiB is generous headroom while still capping a runaway response.
 _MAX_RESPONSE_BYTES = 1_048_576
@@ -88,8 +145,8 @@ PROMPT_TEMPLATE = (
     "Classify it and reply with STRICT JSON ONLY (no prose, no markdown fences) "
     "of exactly this shape:\n"
     '{{"verdict": "benign|suspicious|malicious", '
-    '"level": "low|medium|high|critical", '
-    '"summary": "one-line rationale"}}\n'
+        '"level": "low|medium|high|critical", '
+        '"summary": "one-line rationale"}}\n'
     "Guidance: benign=noise/expected, suspicious=needs review, malicious=clear "
     "true positive. Match level to verdict severity.\n"
     # Design-F (2026-07-29 audit): the event/reasons below come straight from
@@ -123,12 +180,29 @@ def _normalize_verdict(raw: dict) -> dict:
     malformed model output never propagates a bad enum downstream (WS-3 routing).
     """
     if not isinstance(raw, dict):
+        # Gap-hunt (2026-08-26): a non-dict JSON response (e.g. a JSON list of
+        # verdicts) used to be silently discarded into the safe default with
+        # no log. That is a model producing the wrong shape -- count it and say
+        # so instead of pretending it never happened.
+        _incr_out_of_enum("verdict", "level")
+        _log.warn("llm returned a non-dict JSON response; coercing to safe "
+                  "default", type=type(raw).__name__)
         return dict(_SAFE_VERDICT)
     verdict = str(raw.get("verdict", "")).strip().lower()
     level = str(raw.get("level", "")).strip().lower()
     summary = raw.get("summary", "")
     if not isinstance(summary, str):
         summary = json.dumps(summary)
+    # Gap-hunt (2026-08-26): out-of-enum verdict/level used to be coerced with
+    # no log/counter. Count + warn each field so a model drifting off the
+    # closed enum surfaces instead of looking like a normal successful verdict.
+    if verdict not in _VERDICTS:
+        _incr_out_of_enum("verdict")
+    if level not in _LEVELS:
+        _incr_out_of_enum("level")
+    if verdict not in _VERDICTS or level not in _LEVELS:
+        _log.warn("llm verdict coerced out-of-enum to safe default",
+                  verdict=verdict or None, severity=level or None)
     return {
         "verdict": verdict if verdict in _VERDICTS else "unknown",
         "level": level if level in _LEVELS else "low",
@@ -140,8 +214,10 @@ class StubLLM:
     """Deterministic offline analyst. No network, used by tests and as fallback."""
 
     def analyze(self, event: dict, reasons: list[str]) -> dict:
-        score = event.get("siem", {}).get("score", 0)
-        sector = event.get("siem", {}).get("sector", "common")
+        # Gap-hunt (2026-08-27) #2: `siem` may be an explicit null in a hostile
+        # payload -- coerce to {} so .get(...) never raises AttributeError.
+        score = (event.get("siem") or {}).get("score", 0)
+        sector = (event.get("siem") or {}).get("sector", "common")
         if score >= 80:
             verdict, level = "malicious", "critical"
         elif score >= 60:
@@ -178,12 +254,23 @@ class OllamaLLM:
 
     def analyze(self, event: dict, reasons: list[str]) -> dict:
         """Call the model and return a strict verdict. Raises on transport error
-        (caller — FallbackLLM — is responsible for degrading)."""
+        AND on non-JSON model output (caller -- FallbackLLM -- is responsible
+        for degrading; see the gap-hunt 2026-08-26 note below)."""
         # Bound both interpolated fields: `event` and `reasons` are attacker-
         # influenced, so cap the serialized length to keep the prompt (and the
-        # POST body to Ollama) from growing without limit.
-        event_json = json.dumps(event)[:_MAX_EVENT_CHARS]
-        reasons_str = json.dumps(reasons)[:_MAX_REASONS_CHARS]
+        # POST body to Ollama) from growing without limit. Gap-hunt
+        # (2026-08-26): the cap used to be applied as a silent slice -- log
+        # when it actually bites so an operator sees the prompt shrank.
+        event_json = json.dumps(event)
+        if len(event_json) > _MAX_EVENT_CHARS:
+            _log.warn("llm prompt event truncated", chars=len(event_json),
+                      cap=_MAX_EVENT_CHARS)
+            event_json = event_json[:_MAX_EVENT_CHARS]
+        reasons_str = json.dumps(reasons)
+        if len(reasons_str) > _MAX_REASONS_CHARS:
+            _log.warn("llm prompt reasons truncated", chars=len(reasons_str),
+                      cap=_MAX_REASONS_CHARS)
+            reasons_str = reasons_str[:_MAX_REASONS_CHARS]
         prompt = PROMPT_TEMPLATE.format(event=event_json, reasons=reasons_str)
         body = json.dumps({
             "model": self.model,
@@ -194,22 +281,43 @@ class OllamaLLM:
         req = urllib.request.Request(
             f"{self.url}/api/generate", data=body,
             headers={"Content-Type": "application/json"}, method="POST")
+        # Gap-hunt (2026-08-26): urllib's `timeout` is per-socket-read, not a
+        # total deadline -- a response that dribbled a few bytes per read (each
+        # under the 8s socket timeout) stayed alive indefinitely. Enforce a
+        # hard wall-clock deadline across the whole read and raise TimeoutError
+        # when crossed (FallbackLLM degrades; the worker never hangs forever).
+        # The read is chunked so the deadline is checked BETWEEN chunks instead
+        # of inside one blocking read() up to the cap.
+        deadline = time.monotonic() + self.timeout
+        chunks: list[bytes] = []
+        remaining = _MAX_RESPONSE_BYTES
         with _urlopen(req, timeout=self.timeout) as resp:  # noqa: S310
-            # Cap the read: a triage verdict is a few hundred bytes, so bound it so a
-            # runaway/hostile response can't exhaust memory. An over-cap response is
-            # truncated -> json.loads fails -> FallbackLLM degrades to the stub.
-            data = json.loads(resp.read(_MAX_RESPONSE_BYTES).decode())
+            while remaining > 0:
+                if time.monotonic() >= deadline:
+                    raise TimeoutError(
+                        f"ollama total timeout ({self.timeout}s) exceeded")
+                chunk = resp.read(min(4096, remaining))
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                remaining -= len(chunk)
+        # Cap the read (see _MAX_RESPONSE_BYTES): a runaway/hostile response is
+        # truncated -> json.loads fails -> FallbackLLM degrades to the stub.
+        data = json.loads(b"".join(chunks).decode())
         # Ollama wraps the model text in {"response": "..."}; that text is the JSON.
         text = data.get("response", "") if isinstance(data, dict) else ""
         try:
             parsed = json.loads(text)
-        except (json.JSONDecodeError, TypeError):
-            # Model ignored the JSON contract — degrade to a safe default verdict
-            # but keep its prose as the summary for the analyst.
-            _log.warn("ollama returned non-JSON output", model=self.model)
-            return {"verdict": "unknown", "level": "low",
-                    "summary": (text or "")[:500],
-                    "engine": "ollama", "model": self.model}
+        except (json.JSONDecodeError, TypeError) as exc:
+            # Gap-hunt (2026-08-26): a non-JSON response used to be swallowed
+            # HERE into a {verdict:unknown} "success" -- FallbackLLM's degrade
+            # path (and its error counter) never engaged, and every such
+            # verdict counted as a normal successful call. Re-raise instead so
+            # the fallback+error path runs and the operator sees the primary is
+            # emitting garbage, not noise.
+            raise ValueError(
+                f"ollama returned non-JSON output ({type(exc).__name__}): "
+                f"{(text or '')[:200]!r}") from exc
         verdict = _normalize_verdict(parsed)
         verdict["engine"] = "ollama"
         verdict["model"] = self.model
@@ -217,24 +325,73 @@ class OllamaLLM:
 
 
 class FallbackLLM:
-    """Try the primary LLM; on ANY exception, log and fall back to the backup.
+    """Try the primary LLM; on ANY failure, log and fall back to the backup.
 
     This is what keeps a flaky/absent Ollama from crashing the worker loop.
+
+    Gap-hunt (2026-08-26) #17: the primary's reachability used to be probed
+    ONCE at boot -- if Ollama was down then, make_llm() returned a bare
+    StubLLM that NEVER re-checked, pinning the deployment to the stub for the
+    process lifetime. FallbackLLM now carries an availability flag that is
+    re-probed at most once per ``re_probe_s`` when it believes the primary is
+    down, so a recovered Ollama is picked back up on demand. Also counts every
+    degrade in ``fallbacks`` (the operator-visible error counter; ws5-ai's
+    metrics provider exposes it as ai_llm_fallbacks).
     """
 
-    def __init__(self, primary, backup):
+    def __init__(self, primary, backup, re_probe_s: float = 60.0,
+                 available: bool = True):
         self.primary = primary
         self.backup = backup
+        self.re_probe_s = re_probe_s
+        self.fallbacks = 0
+        self._available = available
+        self._last_probe = time.monotonic()
+
+    def _probe_primary(self) -> bool:
+        """Lightweight reachability probe of the primary. Never raises."""
+        ping = getattr(self.primary, "ping", None)
+        if ping is None:
+            return True  # a primary without a probe is assumed reachable
+        try:
+            return bool(ping())
+        except Exception:
+            return False
+
+    def _use_primary(self) -> bool:
+        """Whether this call should attempt the primary. When the primary is
+        believed down, re-probe at most once per ``re_probe_s`` (the boot
+        probe counts as the last probe, so a boot-down Ollama isn't hammered
+        on every request)."""
+        if self._available:
+            return True
+        now = time.monotonic()
+        if now - self._last_probe < self.re_probe_s:
+            return False
+        self._last_probe = now
+        self._available = self._probe_primary()
+        return self._available
 
     def analyze(self, event: dict, reasons: list[str]) -> dict:
+        if not self._use_primary():
+            self.fallbacks += 1
+            _log.warn("llm primary unavailable; using backup instead",
+                      backup=type(self.backup).__name__)
+            return self.backup.analyze(event, reasons)
         try:
-            return self.primary.analyze(event, reasons)
+            out = self.primary.analyze(event, reasons)
+            self._available = True  # a successful call proves it is up
+            return out
         except (urllib.error.URLError, OSError, TimeoutError,
                 json.JSONDecodeError, ValueError) as exc:
+            self._available = False
+            self.fallbacks += 1
             _log.warn("llm primary failed; degrading to backup",
-                         error=str(exc), backup=type(self.backup).__name__)
+                      error=str(exc), backup=type(self.backup).__name__)
             return self.backup.analyze(event, reasons)
         except Exception as exc:  # pragma: no cover - defensive catch-all
+            self._available = False
+            self.fallbacks += 1
             _log.error("llm primary raised unexpected error; degrading",
                        error=str(exc))
             return self.backup.analyze(event, reasons)
@@ -243,15 +400,19 @@ class FallbackLLM:
 def make_llm():
     """Pick the LLM per the env contract.
 
-    OLLAMA_URL set AND server reachable -> Ollama (with stub fallback at runtime).
-    Otherwise -> StubLLM. The reachability probe means a misconfigured URL still
-    boots cleanly on the stub instead of failing every request.
+    OLLAMA_URL set AND reachable -> Ollama (with stub fallback at runtime).
+    OLLAMA_URL set but unreachable at boot -> a FallbackLLM marked unavailable:
+    the stub serves until a periodic re-probe finds Ollama back (gap-hunt
+    2026-08-26 #17; the old bare-StubLLM return never re-probed, pinning the
+    process to the stub forever).
+    Otherwise -> StubLLM.
     """
     if os.getenv("OLLAMA_URL"):
         ollama = OllamaLLM()
         if ollama.ping():
             _log.info("ai triage using local Ollama", url=ollama.url, model=ollama.model)
             return FallbackLLM(ollama, StubLLM())
-        _log.warn("OLLAMA_URL set but server unreachable; using StubLLM",
-                     url=ollama.url)
+        _log.warn("OLLAMA_URL set but server unreachable; using backup until "
+                  "a later re-probe succeeds", url=ollama.url)
+        return FallbackLLM(ollama, StubLLM(), available=False)
     return StubLLM()

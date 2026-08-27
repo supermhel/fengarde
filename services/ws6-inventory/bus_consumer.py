@@ -21,6 +21,8 @@ zero-infra -- with no dependency on `shared` at all, unchanged.
 """
 from __future__ import annotations
 
+import os
+
 from shared.bus import Bus
 from shared.log import get_logger
 from store import InventoryStore
@@ -49,44 +51,69 @@ def make_handler(store: InventoryStore, bus: Bus):
     """A shared.runner.serve()-compatible handler for the assets.updates topic."""
 
     def handler(payload: dict) -> None:
-        asset, is_new_device = store.upsert_with_diff(payload)
-        if asset is None:
+        mac = payload.get("mac")
+        if not mac:
             log.warn("assets.updates observation missing mac, dropped", payload=payload)
             return
-        if not is_new_device:
-            return
-        notification = build_notification(payload)
-        # InventoryStore resolves an absent tenant_id to the real "default"
-        # tenant (store.py::_validated_tenant), never empty/None, so this is
-        # always the tenant the observation was actually stored under -- not
-        # a guess when the observation itself omitted one.
-        tenant_id = asset.get("tenant_id")
-        meta = {"tenant_id": tenant_id}
-        bus.produce(
-            "raw.events",
-            key=asset["mac"],
-            payload={"source_type": "inventory_diff", "raw": notification, "meta": meta},
-        )
-        log.info(
-            "new device detected, published inventory-diff notification",
-            mac=asset["mac"], tenant_id=tenant_id,
-        )
+
+        def announce(tenant_id: str) -> None:
+            """Publish the new-device notification. Invoked by
+            InventoryStore.upsert_with_diff(..., on_new_device=...) INSIDE its
+            write transaction, BEFORE the asset row is committed.
+
+            Gap-hunt #1 (CRITICAL, 2026-08-26): the old order was
+            upsert-then-produce. A transient bus.produce() failure then left
+            the device committed, so the redelivery saw is_new_device=False and
+            ACKed cleanly -- the one new-device alert was permanently lost.
+            With the produce hoisted BEFORE the commit, a failure rolls the
+            upsert back, the message stays unacked, the redelivery sees a
+            still-unknown mac and announces again. A genuine repeat sighting
+            (row already committed by an acked earlier delivery) still does not
+            republish: the callback is only invoked for an-alertable
+            first-ever sightings."""
+            notification = build_notification(payload)
+            bus.produce(
+                "raw.events",
+                key=mac,
+                payload={"source_type": "inventory_diff", "raw": notification,
+                         "meta": {"tenant_id": tenant_id}},
+            )
+            log.info(
+                "new device detected, published inventory-diff notification",
+                mac=mac, tenant_id=tenant_id,
+            )
+
+        store.upsert_with_diff(payload, on_new_device=announce)
 
     return handler
 
 
-def run_forever(store: InventoryStore) -> None:
-    """Entry point for the consumer thread started from app.py's __main__."""
+def run_forever(store: InventoryStore, *, health_port: int | None = None,
+                metrics_provider=None) -> None:
+    """Entry point for the consumer thread started from app.py's __main__.
+
+    Gap-hunt #8 (2026-08-26): runner.serve() tracks this consumer's
+    acked/failed/deadlettered counters internally but only surfaces them via
+    /metrics on its health thread -- ws6 was the only consumer that passed
+    health_port=None and threw that signal away. Wire a real port (default
+    ``INVENTORY_BUS_HEALTH_PORT``, 8006: the API's 8000 is taken in the same
+    container) so the counters are actually readable and a container healthcheck
+    can target it. ``metrics_provider`` is forwarded to serve() and merged
+    under /metrics' ``extra`` (app.py passes its auth-failure slow counter).
+    """
     from shared.runner import serve
 
     bus = Bus()
+    if health_port is None:
+        health_port = int(os.getenv("INVENTORY_BUS_HEALTH_PORT", "8006"))
     serve(
         {"assets.updates": ("cg-inventory", make_handler(store, bus))},
-        health_port=None,
+        health_port=health_port,
         service_name="ws6-inventory-bus-consumer",
         # This runs on a background thread inside app.py's process; the HTTP
         # server (app.py's serve(), main thread) already owns SIGTERM/SIGINT
         # for the whole process, same convention as ws3-indexer's webhook
         # thread (services/ws3-indexer/main.py).
         install_signal_handlers=False,
+        metrics_provider=metrics_provider,
     )

@@ -212,6 +212,16 @@ def run_bench(n: int, mixed: bool, force_linear_scan: bool = False) -> dict:
     t_index = time.perf_counter() - t0
 
     total_s = t_produce + t_normalize + t_detect + t_index
+    normalized = c2["normalized"]
+    # Gap-hunt (2026-08-26) R4-107: sustained_eps was computed from the raw
+    # event count n, so a run where every parse failed (dropped ~= n) still
+    # printed a large EPS and exited 0 -- a throughput figure with no relation
+    # to what was actually processed. EPS must be expressed in events that
+    # actually made it through the pipeline, and a mass-drop must flag it.
+    processed_floor = n * 0.5
+    mass_drop = bool(normalized < processed_floor and n > 0)
+    sustained_eps = (round(normalized / total_s, 1)
+                     if (total_s > 0 and normalized > 0) else None)
     return {
         "n_events": n,
         "mixed_sources": mixed,
@@ -221,9 +231,12 @@ def run_bench(n: int, mixed: bool, force_linear_scan: bool = False) -> dict:
                    "scored": c4["scored"], "alerts": c4["alerts"],
                    "indexed": c3["indexed"]},
         "stage_seconds": {"produce": round(t_produce, 4), "normalize": round(t_normalize, 4),
-                           "detect": round(t_detect, 4), "index": round(t_index, 4)},
+                          "detect": round(t_detect, 4), "index": round(t_index, 4)},
         "total_seconds": round(total_s, 4),
-        "sustained_eps": round(n / total_s, 1) if total_s > 0 else None,
+        # EPS in events actually processed, not raw input -- a silent
+        # parse-failure run no longer reports a healthy throughput number.
+        "sustained_eps": sustained_eps,
+        "eps_dropped_majority": mass_drop,
         "peak_rss_mb": round(_rss, 1) if (_rss := peak_rss_mb()) is not None else None,
     }
 
@@ -242,9 +255,26 @@ def _run_prefilter_comparison(n: int, mixed: bool, as_json: bool) -> int:
     t_linear = linear["stage_seconds"]["detect"]
     speedup = (t_linear / t_bucket) if t_bucket > 0 else None
 
+    # Gap-hunt (2026-08-26) R4-106: the comparison used to discard the match
+    # count and only compare timing -- so a bucket-index bug that silently
+    # dropped rule matches looked like a BIGGER speedup and was reported as a
+    # win. Same event set, same rules -> the two runs MUST produce identical
+    # detection output; a discrepancy is a correctness bug, not a speed win.
+    if (with_bucket["counts"]["alerts"] != linear["counts"]["alerts"]
+            or with_bucket["counts"]["scored"] != linear["counts"]["scored"]):
+        print("[FAIL] B1 bucket-index vs linear-scan output MISMATCH:\n"
+              f"  bucket alerts={with_bucket['counts']['alerts']} scored="
+              f"{with_bucket['counts']['scored']}\n"
+              f"  linear alerts={linear['counts']['alerts']} scored="
+              f"{linear['counts']['scored']}\n"
+              "  the class_uid bucket index is silently dropping/mismatching "
+              "matches -- fix that before trusting any speed number (R4-106).")
+        return 1
+
     if as_json:
         print(json.dumps({"class_uid_bucket": with_bucket, "linear_scan": linear,
-                           "detect_stage_speedup_x": round(speedup, 2) if speedup else None},
+                           "detect_stage_speedup_x": round(speedup, 2) if speedup else None,
+                           "match_counts_identical": True},
                           indent=2))
         return 0
 
@@ -252,6 +282,8 @@ def _run_prefilter_comparison(n: int, mixed: bool, as_json: bool) -> int:
     print(f"  events:        {n} ({'mixed ssh/asa/syslog' if mixed else 'linux_ssh only'}), "
           f"{with_bucket['rule_count']} rules loaded")
     print(f"  detect stage:  bucket={t_bucket}s   linear={t_linear}s")
+    print(f"  match counts:  bucket alerts={with_bucket['counts']['alerts']} / "
+          f"linear alerts={linear['counts']['alerts']} (must match)")
     print(f"  speedup:       {round(speedup, 2)}x" if speedup else "  speedup:       n/a")
     print("  (isolates ws4-detection's B1 class_uid index; produce/normalize/index stages "
           "are unaffected by this flag and shown here only for context)")

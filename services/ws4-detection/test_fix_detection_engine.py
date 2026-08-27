@@ -62,7 +62,8 @@ def _make_ha_runner(backend, env_overrides):
     (stub_detector, fake_clients). Fakes bus/serve so main() sets up the
     counter wiring and returns without starting the server."""
     stub = SimpleNamespace(rules=[], _window_counter=None,
-                           rule_health_metrics=lambda: {})
+                           rule_health_metrics=lambda: {},
+                           metrics=lambda: {})
     env = {
         "BUS_BACKEND": backend,
         "RULES_RELOAD_INTERVAL_S": "0",
@@ -347,10 +348,21 @@ def test_fix22_funnel_dedup_gates_enqueue():
     detector.rules = [rule]
     detector._by_class_uid = {None: [rule]}
     ev = {"siem": {"sector": "common", "ingest_id": "e1"}}
-    check(detector._funnel_dedup(ev, [rule]) is True,
+    # Gap-hunt (2026-08-26) #13: check and record are SPLIT -- a fresh check
+    # must NOT itself commit the cooldown (that would break redelivery after
+    # a produce failure), and a recorded enqueue must gate the next one.
+    check(detector._funnel_fresh(ev, [rule]) is True,
           "fix22: first fire gates the funnel enqueue")
-    check(detector._funnel_dedup(ev, [rule]) is False,
-          "fix22: the same alert key within cooldown must NOT re-enqueue")
+    detector._record_funnel(ev, [rule])  # the commit happens ONLY after produce succeeded
+    check(detector._funnel_fresh(ev, [rule]) is False,
+          "fix22: the same alert key within cooldown must NOT re-enqueue "
+          "once the enqueue was actually recorded")
+    # A recorded state is required before the gate closes: checking again
+    # without recording MUST stay fresh (redelivery-safe).
+    ev2 = {"siem": {"sector": "common", "ingest_id": "e2"}}
+    check(detector._funnel_fresh(ev2, [rule]) is True,
+          "fix22: an un-recorded alert key must remain fresh (produce-failure "
+          "redelivery must re-enqueue)")
 
 
 # --- FIX L1: clock-skew WARN -------------------------------------------------

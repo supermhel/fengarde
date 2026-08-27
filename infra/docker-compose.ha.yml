@@ -110,6 +110,11 @@ services:
       - REDIS_PASSWORD=${REDIS_PASSWORD:?Set REDIS_PASSWORD before starting HA Redis}
     volumes: ["redis-data-ha-2:/data"]
     depends_on: {redis-1: {condition: service_healthy}}
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
     networks:
       ha:
         ipv4_address: 172.28.0.12
@@ -129,6 +134,11 @@ services:
       - REDIS_PASSWORD=${REDIS_PASSWORD:?Set REDIS_PASSWORD before starting HA Redis}
     volumes: ["redis-data-ha-3:/data"]
     depends_on: {redis-1: {condition: service_healthy}}
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
     networks:
       ha:
         ipv4_address: 172.28.0.13
@@ -155,7 +165,8 @@ services:
         ipv4_address: 172.28.0.21
     ports: ["127.0.0.1:26379:26379"]
     healthcheck:
-      test: ["CMD-SHELL", "redis-cli -p 26379 ping || exit 1"]
+      # R3-#22: auth-aware ping (AUTH when REDIS_PASSWORD set, else plain).
+      test: ["CMD-SHELL", "if [ -n \"$$REDIS_PASSWORD\" ]; then redis-cli -p 26379 -a \"$$REDIS_PASSWORD\" ping | grep -q PONG || exit 1; else redis-cli -p 26379 ping | grep -q PONG || exit 1; fi"]
       interval: 5s
       timeout: 3s
       retries: 5
@@ -182,7 +193,7 @@ services:
         ipv4_address: 172.28.0.22
     ports: ["127.0.0.1:26380:26379"]
     healthcheck:
-      test: ["CMD-SHELL", "redis-cli -p 26379 ping || exit 1"]
+      test: ["CMD-SHELL", "if [ -n \"$$REDIS_PASSWORD\" ]; then redis-cli -p 26379 -a \"$$REDIS_PASSWORD\" ping | grep -q PONG || exit 1; else redis-cli -p 26379 ping | grep -q PONG || exit 1; fi"]
       interval: 5s
       timeout: 3s
       retries: 5
@@ -209,7 +220,7 @@ services:
         ipv4_address: 172.28.0.23
     ports: ["127.0.0.1:26381:26379"]
     healthcheck:
-      test: ["CMD-SHELL", "redis-cli -p 26379 ping || exit 1"]
+      test: ["CMD-SHELL", "if [ -n \"$$REDIS_PASSWORD\" ]; then redis-cli -p 26379 -a \"$$REDIS_PASSWORD\" ping | grep -q PONG || exit 1; else redis-cli -p 26379 ping | grep -q PONG || exit 1; fi"]
       interval: 5s
       timeout: 3s
       retries: 5
@@ -413,11 +424,16 @@ services:
       # green on any single node loss, but the writer (pinned to opensearch-1
       # alone) would still go down with it.
       - OPENSEARCH_URL=http://opensearch-1:9200,http://opensearch-2:9200,http://opensearch-3:9200
+    # ws3-indexer-init re-listed here: the base file's depends_on (which includes
+    # it for the audit/RBAC-volume chown ordering) is fully replaced by !override
+    # under the HA profile, so without this the volume might mount root:root with
+    # no prior chown. Same convention as ws1-spool-init above.
     depends_on: !override
       redis-1: {condition: service_healthy}
       opensearch-1: {condition: service_healthy}
       opensearch-2: {condition: service_healthy}
       opensearch-3: {condition: service_healthy}
+      ws3-indexer-init: {condition: service_completed_successfully}
     networks: [default, ha]
 
   ws4-detection:
@@ -455,12 +471,35 @@ services:
     depends_on: !override {redis-1: {condition: service_healthy}}
     networks: [default, ha]
 
+  # R3-#17: ws7-dashboard now has a REAL override (not the dead env-copy it
+  # used to carry) so /api/alerts works under HA. The base file's singleton
+  # "opensearch" service is gated to the standard profile, so under `--profile
+  # ha up` the hostname `opensearch` does not resolve and the dashboard's
+  # OpenSearch proxy fell through to its 500/empty fallback. Fix: point the
+  # dashboard at a reachable node and join it to the ha network. It still only
+  # talks to ws3/ws6 (over default) and OpenSearch nodes (over ha) -- it never
+  # touches the bus, so no BUS_* env is needed here.
   ws7-dashboard:
     environment:
-      - BUS_BACKEND=redis-sentinel
-      - REDIS_SENTINEL_HOSTS=redis-sentinel-1:26379,redis-sentinel-2:26379,redis-sentinel-3:26379
-      - REDIS_SENTINEL_MASTER=mymaster
-      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+      - OPENSEARCH_HOST=opensearch-1:9200
+    networks: !override [default, ha]
+    depends_on: !override
+      - opensearch-1
+      - opensearch-2
+      - opensearch-3
+
+  # Historical note (2026-08-23): ws7-dashboard used to carry a DEAD override
+  # block, setting BUS_BACKEND/REDIS_SENTINEL_HOSTS/REDIS_SENTINEL_MASTER/
+  # REDIS_PASSWORD copy-pasted from the other workstreams' Sentinel migration.
+  # Dead config: ws7-dashboard's container is pure nginx:alpine (see its
+  # Dockerfile) -- no Python/JS process runs inside it, and its nginx
+  # template (templates/default.conf.template) only ever substituted
+  # ${FENGARDE_API_KEY} and ${DASHBOARD_AUTH_REALM} back then, never any of
+  # those 4 vars. Harmless (the dashboard never touched the bus) but
+  # misleading, so it was removed. The override block ADDED above (R3-#17) is
+  # the real one: it only re-points the OpenSearch upstream to a reachable HA
+  # node and joins the ha network -- deliberately NO bus env, because that
+  # really would be dead copy-paste.
 
   # 2026-08-20: same gap class as the ws6-inventory row above, found the same
   # way -- by actually running `--profile ha up` rather than assuming the

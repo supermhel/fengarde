@@ -45,10 +45,20 @@ def _checklist(name: str, stage: str, lang: str, alert: dict, report: dict) -> l
         problems.append(f"status must be 'draft', got {report.get('status')!r}")
 
     rule_title = alert.get("rule_title")
-    if rule_title and rule_title not in body:
+    if not rule_title:
+        # R3-#41 (2026-08-27): the old guard was `if rule_title and ...` --
+        # an alert with NO rule_title gave a VACUOUS pass on the very thing
+        # this checklist exists to assert (facts-from-input preserved). An
+        # input that carries nothing to preserve must fail loudly, not skip.
+        problems.append("input alert has NO rule_title -- the facts-from-input "
+                        "check would be vacuous (R3-#41)")
+    elif rule_title not in body:
         problems.append("rule_title from the input alert is absent from the draft")
     alert_id = alert.get("alert_id")
-    if alert_id and alert_id not in body:
+    if not alert_id:
+        problems.append("input alert has NO alert_id -- the facts-from-input "
+                        "check would be vacuous (R3-#41)")
+    elif alert_id not in body:
         problems.append("alert_id from the input alert is absent from the draft")
 
     if "DORA" not in body:
@@ -66,6 +76,15 @@ def _checklist(name: str, stage: str, lang: str, alert: dict, report: dict) -> l
 
 def main() -> int:
     total = 0
+    if not SCENARIOS:
+        # R3-#40 (2026-08-27): `all 0 drafts pass` with exit 0 was the
+        # vacuous-green failure an empty scenario module produced -- the
+        # eval reported success precisely because it tested nothing. A
+        # zero-scenario run is a floor breach, not a clean pass.
+        print("[FAIL] run_eval: SCENARIOS is empty -- every assertion below "
+              "is vacuously true over an empty corpus. The scenario module "
+              "did not load, or was emptied (R3-#40).")
+        return 1
     for name, alert, triage in SCENARIOS:
         for stage in nis2_template.STAGES:
             for lang in nis2_template.LANGUAGES:

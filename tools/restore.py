@@ -78,7 +78,18 @@ def verify_and_restore(archive_path: Path, dest: Path, force: bool = False) -> l
             raise RestoreError("archive has no manifest.json -- not a valid FENGARDE backup")
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
 
-        for entry in manifest.get("files", []):
+        files = manifest.get("files", [])
+        # Gap-hunt (2026-08-26) R4-110: an empty/absent "files" list used to
+        # make the restore loop below a silent no-op (nothing restored, exit 0)
+        # -- the natural second half of R4-101's empty backup. A backup with
+        # nothing to restore is a broken/empty archive, not a success.
+        if not files:
+            raise RestoreError(
+                "manifest declares zero files -- nothing to restore. This archive "
+                "is empty or malformed (see R4-101: a missing --rbac-db backup "
+                "produces exactly this shape). Refusing to report a false success.")
+
+        for entry in files:
             rel = entry["path"]
             staged_file = _safe_join(staging, rel)
             if not staged_file.exists():
@@ -88,14 +99,14 @@ def verify_and_restore(archive_path: Path, dest: Path, force: bool = False) -> l
                 raise RestoreError(f"checksum mismatch for {rel}: archive is corrupted or tampered")
 
         if not force:
-            for entry in manifest.get("files", []):
+            for entry in files:
                 collision = _safe_join(dest, entry["path"])
                 if collision.exists():
                     raise RestoreError(
                         f"{collision} already exists -- pass --force to overwrite (nothing written yet)")
 
         restored: list[str] = []
-        for entry in manifest.get("files", []):
+        for entry in files:
             rel = entry["path"]
             src = _safe_join(staging, rel)
             dst = _safe_join(dest, rel)

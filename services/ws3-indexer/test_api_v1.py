@@ -50,6 +50,34 @@ def _get(port, path, cookie=None):
         return e.code, json.loads(e.read().decode())
 
 
+def _post(port, path, body=None, cookie=None, csrf=None):
+    headers = {"Content-Type": "application/json"}
+    if cookie:
+        headers["Cookie"] = cookie
+    if csrf:
+        headers["X-CSRF-Token"] = csrf
+    req = urllib.request.Request(
+        f"http://127.0.0.1:{port}{path}",
+        data=json.dumps(body or {}).encode(), method="POST", headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            return resp.status, json.loads(resp.read().decode())
+    except urllib.error.HTTPError as e:
+        return e.code, json.loads(e.read().decode())
+
+
+def _login_with_csrf(port, username, password):
+    """Like _login(), but also returns the csrf_token from the response
+    body (needed for state-changing POSTs once RBAC is on)."""
+    body = json.dumps({"username": username, "password": password}).encode()
+    req = urllib.request.Request(f"http://127.0.0.1:{port}/auth/login", data=body,
+                                  method="POST", headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=5) as resp:
+        set_cookie = resp.headers.get("Set-Cookie").split(";")[0]
+        payload = json.loads(resp.read().decode())
+        return set_cookie, payload["csrf_token"]
+
+
 def _login(port, username, password):
     body = json.dumps({"username": username, "password": password}).encode()
     req = urllib.request.Request(f"http://127.0.0.1:{port}/auth/login", data=body,
@@ -248,7 +276,15 @@ def test_openapi_spec_mfa_and_audit_routes_are_wired():
     old check (GET paths only) never caught it. Prove the spec now documents
     them AND that each maps to a real route (not "no such path"). The routes
     need RBAC on for auth, so they're exercised RBAC-off: the dispatcher must
-    ROUTE them (return 401/403, not "no such path")."""
+    ROUTE them (return 401/403, not "no such path").
+
+    Gap-hunt finding (2026-08-23): this test's docstring always claimed the
+    "maps to a real route" half, but the body only ever checked the spec
+    dict against itself -- it never started a server or made a request, so
+    it could never have caught a route that's documented but not actually
+    wired (or vice versa). It now does both, mirroring
+    test_openapi_spec_get_paths_are_actually_wired's live-request pattern.
+    """
     spec = yaml.safe_load(CONTRACT_PATH.read_text(encoding="utf-8"))
     for path, method in (
         ("/api/v1/auth/mfa/enable", "post"),
@@ -258,6 +294,52 @@ def test_openapi_spec_mfa_and_audit_routes_are_wired():
         check(path in spec["paths"] and method in spec["paths"][path],
               f"spec must document {method.upper()} {path} -- the E3/E1 routes "
               f"existed in code but were absent from the spec")
+
+    # MFA routes only exist behind `if rbac_enabled and path == ...` in
+    # do_POST -- with RBAC off they are correctly, intentionally
+    # unreachable (a 404 there is right, not a bug), so proving they're
+    # ACTUALLY wired needs a real RBAC session, not RBAC-off. And with RBAC
+    # on, do_POST's CSRF gate fires for EVERY POST path before any routing
+    # decision -- a bogus path would ALSO 403 there, so testing "not 404"
+    # from an unauthenticated/no-CSRF request wouldn't discriminate a real
+    # route from a fake one. A valid session + CSRF token clears that gate
+    # and reaches each route's own body, which fails on a MISSING PASSWORD
+    # (401 "reauthentication required") -- distinct from the "no such path"
+    # a genuinely unrouted path produces even with the same valid session.
+    users = UserStore(":memory:")
+    users.create_user("alice", "pw-alice-1", role="analyst")
+    store = _seed_store()
+    srv, port = _serve(store, users_db=users)
+    try:
+        cookie, csrf = _login_with_csrf(port, "alice", "pw-alice-1")
+
+        for path in ("/api/v1/auth/mfa/enable", "/api/v1/auth/mfa/verify"):
+            code, body = _post(port, path, body={}, cookie=cookie, csrf=csrf)
+            check(code == 401 and body.get("error") == "reauthentication required",
+                  f"POST {path} (RBAC on, valid session, no password) must reach the "
+                  f"real handler's own reauth gate, not 'no such path' -- got {code} {body}")
+
+        # A genuinely unrouted path, same valid session+CSRF, to prove the
+        # contrast above is real and not just "anything with a session
+        # returns non-404" -- this one line proving the discriminator.
+        code, body = _post(port, "/totally/fake/path", body={}, cookie=cookie, csrf=csrf)
+        check(code == 404 and body.get("error") == "no such path",
+              f"an actually-unrouted path must still 404, got {code} {body}")
+
+        # /audit's _require_role("admin") returns the RBAC-off sentinel
+        # (True) unconditionally when RBAC is disabled -- so a plain
+        # RBAC-off server (unlike the MFA routes above) reaches the real
+        # handler directly and returns 200 with the (empty) audit trail.
+        plain_store = _seed_store()
+        plain_srv, plain_port = _serve(plain_store)
+        try:
+            code, body = _get(plain_port, "/audit")
+            check(code == 200 and "entries" in body,
+                  f"GET /audit (RBAC off) must route to the real handler, got {code} {body}")
+        finally:
+            plain_srv.shutdown(); plain_srv.server_close()
+    finally:
+        srv.shutdown(); srv.server_close()
 
 
 def main():

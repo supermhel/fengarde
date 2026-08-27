@@ -8,6 +8,15 @@ on:
   schedule:
     - cron: "17 3 * * *"  # 03:17 UTC daily -- off the hour, avoids the GH Actions stampede
   workflow_dispatch: {}     # manual trigger for on-demand runs
+  # R3-30: run a bounded fuzz smoke on PRs touching parsers/fuzz harness so a
+  # regression in a parser is caught at review time, not only by the nightly.
+  # Scope matrix-heavy fuzzing to the paths that actually recomp jthe harness;
+  # paths-only avoids using PR time on unrelated docs/config changes.
+  pull_request:
+    paths:
+      - "services/ws2-normalization/parsers/**"
+      - "services/ws*/**"
+      - "tools/fuzz/**"
 
 # Least-privilege default (Scorecard TokenPermissionsID): fuzzing only reads
 # the repo; corpus cache + crash-artifact upload need no extra token scope.

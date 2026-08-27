@@ -92,16 +92,43 @@ def verify_code(secret: str, code, window: int = 1, at: float | None = None) -> 
     codes instead of an unbounded set). Comparisons are constant-time
     (hmac.compare_digest). Any non-6-digit non-numeric input fails closed to
     False, never raises.
+
+    This checks the code's SHAPE-and-value only, not replay: the same valid
+    code can satisfy this twice in a row. Callers that persist per-account
+    state (see ``users.py::verify_totp``) MUST use
+    :func:`verify_code_returning_counter` instead and reject a counter
+    they've already accepted -- see that function's docstring.
+    """
+    return verify_code_returning_counter(secret, code, window=window, at=at) is not None
+
+
+def verify_code_returning_counter(secret: str, code, window: int = 1,
+                                  at: float | None = None) -> "int | None":
+    """Like :func:`verify_code`, but returns the matched time-step counter
+    (or ``None`` on no match) instead of a bare bool.
+
+    Gap-hunt finding (2026-08-23): this module's own TOTP check was
+    stateless by design (a pure function of secret+code+time), which is
+    correct for THIS function -- but ``users.py::verify_totp`` was calling
+    the bool-only ``verify_code`` and treating every success as fresh,
+    with no record of which step was last accepted. A captured valid code
+    (network sniff, shared proxy log, shoulder-surf) could be replayed
+    within its ~90s validity window (window=1 -> current step +/- 1) to
+    open a second session -- the standard RFC 6238 replay hole that
+    implementations are expected to close by tracking last-accepted-counter
+    per account and rejecting anything <= it. The counter this function
+    returns is exactly what a caller needs to implement that.
     """
     if not isinstance(code, str):
-        return False
+        return None
     if len(code) != _DIGITS or not code.isdigit():
-        return False
+        return None
     base_counter = _counter(at)
     for offset in range(-window, window + 1):
-        if hmac.compare_digest(_code_for_counter(secret, base_counter + offset), code):
-            return True
-    return False
+        candidate = base_counter + offset
+        if hmac.compare_digest(_code_for_counter(secret, candidate), code):
+            return candidate
+    return None
 
 
 def otpauth_uri(secret: str, label: str, issuer: str = _DEFAULT_ISSUER) -> str:

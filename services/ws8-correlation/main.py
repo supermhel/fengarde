@@ -41,7 +41,11 @@ def make_correlator() -> Correlator:
         # this repo (services/ws4-detection/main.py x3, shared/bus.py x2).
         client = redis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379/0"),
                                  decode_responses=True)
-        window_counter = RedisWindowCounter(client)
+        # ws8's OWN Redis zset namespace -- NOT the ws4:win default. The
+        # reference review flagged the shared default as a latent collision
+        # (a future WS-4 rule group or WS-8 entity type could collide in the
+        # same zset); INTERFACE.md documents the key prefix as ws8:corr.
+        window_counter = RedisWindowCounter(client, namespace="ws8:corr")
     return Correlator(window_counter, horizon_s=horizon_s, member_cap=member_cap)
 
 

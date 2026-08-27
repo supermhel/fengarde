@@ -91,6 +91,11 @@ undocumented. `services/ws6-inventory/` now has 7 substantive modules
 - `INVENTORY_KEYSTORE_DB` — SQLite path for the keystore (F1 hardening).
 - `INVENTORY_BASELINE_SECONDS` (default `3600`) — first-sighting baseline window
   (a device is only "new" after this window since the tenant's first observation).
+  Re-read per call while a tenant's window is still open (gap-hunt #4): flipping
+  it to `0` disables baselining immediately, no restart needed.
+- `INVENTORY_BUS_HEALTH_PORT` (default `8006`) — health/metrics port for the
+  opt-in bus consumer (`runner.serve`'s per-topic acked/failed/deadlettered
+  counters + the API's auth-failure slow counter; gap-hunt #8).
 - `FENGARDE_API_KEY` / `FENGARDE_API_KEYS` / `FENGARDE_API_KEY_PEPPER` — auth;
   `FENGARDE_API_KEYS` is the per-tenant map (`tenant:key,...`, `*:key` admin).
 - `BUS_BACKEND` / `REDIS_URL` (and the shared Redis env set) — opt-in bus consumer

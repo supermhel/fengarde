@@ -417,6 +417,231 @@ def test_update_track_wires_sweep_at_the_right_cadence():
           f"leaving only the just-created one, got {len(c._sides)}")
 
 
+# --- gap-hunt (2026-08-26): member_cap memory + tactics correctness ---------
+def test_member_cap_bounds_side_table_and_keeps_tactics():
+    """Findings #1/#2/#3 + the task's reproduction: 1 recon alert + 400
+    brute-force alerts through the REAL correlator. The bug: member_cap
+    truncated members BEFORE computing tactics, so past the cap the live
+    list showed only the one-tactic flood -> the incident silently froze
+    (alerts #199-399 emitted nothing), _sides[key] itself grew unboundedly
+    (401 entries at cap 200), and first_seen shifted as truncation moved the
+    minimum -> one incident under multiple ids. Now: side table bounded at
+    the cap, tactics/first_seen from a stable per-track aggregate, incident
+    keeps re-emitting under ONE id for the whole flood."""
+    clock = _Clock()
+    c = _new_correlator(member_cap=10, now_fn=clock)
+    incs = c.ingest_alert(_alert("recon1", tactic="TA0043", actor="mallory"))
+    check(incs == [], "cap: recon alone must not yet promote")
+    first_id = None
+    emitted = 0
+    saw_truncated = False
+    for i in range(400):
+        incs = c.ingest_alert(_alert(f"bf-{i}", tactic="TA0006", actor="mallory"))
+        if incs:
+            emitted += 1
+            if first_id is None:
+                first_id = incs[0]["incident_id"]
+            check(incs[0]["incident_id"] == first_id,
+                  f"cap: incident_id must stay STABLE under truncation (alert bf-{i})")
+            check(set(incs[0]["tactics"]) == {"TA0043", "TA0006"},
+                  f"cap: tactics must keep BOTH tactics past the cap (alert bf-{i}) -- "
+                  "a frozen single-tactic doc is the bug")
+            check(incs[0]["member_count"] <= 10,
+                  f"cap: emitted member_count must never exceed member_cap (alert bf-{i})")
+            if incs[0]["truncated"]:
+                saw_truncated = True
+    key = c._track_key("default", "actor", "mallory")
+    check(len(c._sides[key]) <= 10,
+          f"cap: side table must stay bounded at member_cap (got {len(c._sides[key])})")
+    check(emitted == 400,
+          f"cap: incident must keep re-emitting under a sustained flood (emitted {emitted}/400) -- "
+          "alerts #199-399 emitting nothing is the bug")
+    check(saw_truncated,
+          "cap: truncated flag must be set once the flood passes the cap")
+
+
+def test_severity_cap_clamps_score_sum():
+    """Truncation path (gap-hunt nit): severity = min(score sum, 1000) had
+    zero coverage; the 1000 ceiling is part of the same capped-payload
+    family as member_cap/truncated."""
+    c = _new_correlator(member_cap=20)
+    c.ingest_alert(_alert("sev1", tactic="TA0001", actor="sev-user", score=700))
+    incs = c.ingest_alert(_alert("sev2", tactic="TA0002", actor="sev-user", score=700))
+    check(len(incs) == 1, "sev-cap: two-tactic track must promote")
+    if incs:
+        check(incs[0]["severity"] == 1000,
+              f"sev-cap: score sum 1400 must clamp to 1000, got {incs[0]['severity']}")
+
+
+def test_sweep_prunes_stale_promoted_tracks_last_incident():
+    """Finding #11: the `_last_incident` pruning branch was only ever
+    exercised by UNPROMOTED one-shot tracks -- a PROMOTED track going stale
+    must also have its incident pruned (and, once the actor returns fresh,
+    a NEW incident is minted rather than resurrecting the dead one)."""
+    clock = _Clock()
+    c = _new_correlator(horizon_s=60, now_fn=clock)
+    c.ingest_alert(_alert("pd1", tactic="TA0001", actor="stale-promo"))
+    incs = c.ingest_alert(_alert("pd2", tactic="TA0002", actor="stale-promo"))
+    stale_id = incs[0]["incident_id"]
+    stale_key = c._track_key("default", "actor", "stale-promo")
+    check(stale_id in c._last_incident, "promo-sweep: promoted incident must be recorded")
+    check(stale_key in c._side_meta, "promo-sweep: aggregate must be recorded")
+
+    clock.advance(61)  # the promoted track's window membership is now fully gone
+    c._sweep_dead_tracks(c._now_ms())
+
+    check(stale_key not in c._sides, "promo-sweep: stale promoted side table must be pruned")
+    check(stale_key not in c._side_meta,
+          "promo-sweep: stale promoted aggregate must be pruned")
+    check(stale_id not in c._last_incident,
+          "promo-sweep: stale PROMOTED incident must be pruned from _last_incident "
+          "-- this branch never ran for promoted tracks before")
+
+    # the actor returning fresh must mint a NEW incident (old one is gone),
+    # and the pipeline must still work for the fresh track
+    incs = c.ingest_alert(_alert("pd3", tactic="TA0001", actor="stale-promo"))
+    incs += c.ingest_alert(_alert("pd4", tactic="TA0002", actor="stale-promo"))
+    check(len(incs) == 1, "promo-sweep: a fresh return must promote again")
+    if incs:
+        check(incs[0]["incident_id"] != stale_id,
+              "promo-sweep: a fresh track must mint a NEW incident_id, not reuse the pruned one")
+
+
+# --- gap-hunt (2026-08-26): degrade-don't-crash on malformed/no-op alerts ---
+def test_ws5_shaped_alert_is_skipped_with_reason():
+    """Finding #4: WS-5's enrichment alert payload (alert_id, time, level,
+    classification, event_ids -- no actor/src_endpoint/mitre/tenant_id)
+    used to be a SILENT no-op in correlation. Must degrade, not crash: no
+    incident, but the skip is recorded in metrics()."""
+    c = _new_correlator()
+    incs = c.ingest_alert({
+        "alert_id": "ai-ev1",
+        "time": 100,
+        "level": "medium",
+        "classification": {"label": "suspicious"},
+        "sector": "core",
+        "event_ids": ["ev-1"],
+    })
+    check(incs == [], "ws5: alert with no trackable entity -> no incident")
+    metrics = c.metrics()
+    check(metrics["ws8_skipped_alerts_by_reason"].get("no_trackable_entity") == 1,
+          f"ws5: the no-op must be recorded as a skip reason, got {metrics['ws8_skipped_alerts_by_reason']}")
+
+
+def test_missing_alert_id_never_dedups_unrelated_alerts():
+    """Finding #5: a missing alert_id stringified to the literal 'None',
+    so every id-less alert collapsed onto ONE member -- two unrelated
+    id-less alerts could never promote, and unrelated alerts deduplicated
+    against each other. Synthetic per-alert ids (time/rule/event_ids) keep
+    them distinct; redelivering the SAME id-less alert must re-derive the
+    same member (idempotency preserved)."""
+    c = _new_correlator()
+    c.ingest_alert({"time": 100, "rule_id": "r1", "event_ids": ["e1"],
+                    "score": 5, "mitre": {"tactic": "TA0001"},
+                    "actor": {"user": {"name": "no-id-user"}}})
+    incs = c.ingest_alert({"time": 200, "rule_id": "r1", "event_ids": ["e2"],
+                           "score": 5, "mitre": {"tactic": "TA0002"},
+                           "actor": {"user": {"name": "no-id-user"}}})
+    check(len(incs) == 1,
+          "no-id: two distinct id-less alerts (2 tactics) must promote -- collapsing "
+          "onto literal 'None' would leave one member and never promote")
+    if incs:
+        check(sorted(incs[0]["member_alert_ids"]) == ["anon:100:r1:e1", "anon:200:r1:e2"],
+              f"no-id: members must be distinct synthetic ids, got {incs[0]['member_alert_ids']}")
+    # redelivery of the SAME id-less alert (same time/rule/event_ids) must
+    # re-derive the same member id -> member_count stays put
+    redelivered = c.ingest_alert({"time": 200, "rule_id": "r1", "event_ids": ["e2"],
+                                  "score": 5, "mitre": {"tactic": "TA0002"},
+                                  "actor": {"user": {"name": "no-id-user"}}})
+    check(redelivered and redelivered[0]["member_count"] == 2,
+          "no-id: redelivered id-less alert must re-derive the same synthetic member id")
+    check(redelivered[0]["incident_id"] == incs[0]["incident_id"],
+          "no-id: redelivery must re-emit under the same incident_id")
+
+
+def test_entity_value_bounded_under_opensearch_doc_id_limit():
+    """Finding #7: an attacker-controlled actor/hostname past ~512 bytes
+    made the incident doc id (which embeds entity_value) an OpenSearch
+    document-id rejection -- an attacker-suppressible incident. entity_value
+    must be bounded (truncate + stable hash), the incident_id must stay
+    under 512 bytes, the original value must remain visible
+    (entity_value_full), and two distinct long values must never
+    false-merge onto one track."""
+    c = _new_correlator()
+    long_name = "x" * 600
+    c.ingest_alert(_alert("big1", tactic="TA0001", actor=long_name))
+    incs = c.ingest_alert(_alert("big2", tactic="TA0002", actor=long_name))
+    check(len(incs) == 1, "long-value: a long entity_value track must still promote")
+    if incs:
+        inc = incs[0]
+        check(len(inc["incident_id"].encode("utf-8")) <= 512,
+              f"long-value: incident_id must stay under the 512-byte OpenSearch doc-id limit, "
+              f"got {len(inc['incident_id'].encode('utf-8'))} bytes")
+        check("x" * 600 not in inc["incident_id"],
+              "long-value: the raw 600-char value must NOT be embedded in the incident_id")
+        check(len(inc["entity_value"].encode("utf-8")) <= 448,
+              f"long-value: bounded entity_value must stay under the byte budget, "
+              f"got {len(inc['entity_value'].encode('utf-8'))}")
+        check(inc["entity_value"] != long_name, "long-value: entity_value must be bounded")
+        check(inc.get("entity_value_full") == long_name,
+              "long-value: the original value must be preserved in entity_value_full")
+    other_long = "y" * 600
+    c.ingest_alert(_alert("big3", tactic="TA0003", actor=other_long))
+    check(c._track_key("default", "actor", c._bounded_entity_value(long_name)) !=
+          c._track_key("default", "actor", c._bounded_entity_value(other_long)),
+          "long-value: two distinct long values must stay on DISTINCT tracks (stable hash suffix)")
+
+
+def test_device_track_respects_allowlist():
+    """Finding #6: the device: track keyed on a spoofable, unauthenticated
+    hostname had no allowlist (unlike the ip: leg). Shared infrastructure
+    must never open a device: track either; a non-listed hostname must
+    still correlate normally."""
+    c = _new_correlator(allowlist_entries=["GATEWAY-CORP"])
+    c.ingest_alert(_alert("g1", tactic="TA0001", hostname="GATEWAY-CORP"))
+    c.ingest_alert(_alert("g2", tactic="TA0002", hostname="GATEWAY-CORP"))
+    key = c._track_key("default", "device", "GATEWAY-CORP")
+    check(key not in c._sides,
+          "device-allowlist: allowlisted hostname must never open a device: track")
+    check(c._skip_reasons.get("allowlisted_device") == 2,
+          f"device-allowlist: suppression must be observable in skip reasons, "
+          f"got {c._skip_reasons}")
+
+    c2 = _new_correlator(allowlist_entries=["GATEWAY-CORP"])
+    incs = c2.ingest_alert(_alert("n1", tactic="TA0043", hostname="WORKSTATION9"))
+    incs += c2.ingest_alert(_alert("n2", tactic="TA0006", hostname="WORKSTATION9"))
+    check(any(i["entity_type"] == "device" for i in incs),
+          "device-allowlist: a non-listed hostname must still open/promote a device: track")
+
+
+def test_actor_user_as_plain_string_degrades_not_crashes():
+    """Finding #8: a malformed `actor.user` plain string used to raise
+    AttributeError on `.get("name")`. Must degrade: no actor track, no
+    crash, and the alert's OTHER legs (ip here) keep working."""
+    c = _new_correlator()
+    incs = c.ingest_alert({
+        "alert_id": "u1", "score": 5, "tenant_id": "default", "time": 0,
+        "mitre": {"tactic": "TA0001"},
+        "actor": {"user": "plain-string-user"},
+        "src_endpoint": {"ip": "10.1.1.1"},
+    })
+    check(incs == [], "actor-string: must not crash, and no actor: track may open")
+    check(c._track_key("default", "ip", "10.1.1.1") in c._sides,
+          "actor-string: the ip: leg must still record the alert")
+
+
+def test_main_redis_window_counter_uses_own_namespace():
+    """Finding #10: main.py built RedisWindowCounter with WS-4's default
+    'ws4:win' namespace -- a latent zset collision (reference-review
+    finding). WS-8 must use its own namespace, matching INTERFACE.md's
+    documented `ws8:corr` key prefix. Static assertion on the shipped
+    wiring (make_correlator only constructs it under BUS_BACKEND=redis)."""
+    src = (HERE / "main.py").read_text(encoding="utf-8")
+    check('RedisWindowCounter(client, namespace="ws8:corr")' in src,
+          "namespace: main.py must construct RedisWindowCounter with ws8's "
+          "OWN namespace (ws8:corr), not WS-4's ws4:win default")
+
+
 def run_all():
     test_positive_low_and_slow()
     test_single_tactic_never_promotes()
@@ -433,6 +658,15 @@ def run_all():
     test_promotion_works_with_real_redis_bytes_semantics()
     test_sweep_dead_tracks_prunes_stale_but_not_live_tracks()
     test_update_track_wires_sweep_at_the_right_cadence()
+    test_member_cap_bounds_side_table_and_keeps_tactics()
+    test_severity_cap_clamps_score_sum()
+    test_sweep_prunes_stale_promoted_tracks_last_incident()
+    test_ws5_shaped_alert_is_skipped_with_reason()
+    test_missing_alert_id_never_dedups_unrelated_alerts()
+    test_entity_value_bounded_under_opensearch_doc_id_limit()
+    test_device_track_respects_allowlist()
+    test_actor_user_as_plain_string_degrades_not_crashes()
+    test_main_redis_window_counter_uses_own_namespace()
 
 
 if __name__ == "__main__":
@@ -443,4 +677,7 @@ if __name__ == "__main__":
             print(f"  - {f}")
         sys.exit(1)
     print("[OK] WS-8 correlation contract test PASS (8/8 design-doc scenarios "
-          "+ 3 pivot-correlation device: track scenarios + 2 dead-track-sweep scenarios)")
+          "+ 3 pivot-correlation device: track scenarios + 2 dead-track-sweep "
+          "scenarios + 9 gap-hunt scenarios: member-cap boundedness/tactics, "
+          "severity cap, promoted-track sweep, WS-5 skip, alert_id fallback, "
+          "entity_value bound, device allowlist, actor.user degrade, ws8 namespace)")

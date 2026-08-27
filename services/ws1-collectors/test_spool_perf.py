@@ -133,10 +133,62 @@ def test_concurrent_append_during_drain_is_not_lost():
               "either replayed in this pass or preserved for the next")
 
 
+def test_torn_tail_from_crash_is_repaired_not_corrupted():
+    """Gap-hunt (2026-08-26) #73: a crash mid-append can leave a partial,
+    non-newline-terminated record at the spool's tail. The next append() must
+    write the new record on a line of its OWN (a terminator newline first),
+    never concatenate onto the partial record -- a concatenation would silently
+    corrupt the new AND the old record into one unparseable line, then
+    drain_into()'s corrupt-line skip would silently delete both with no log."""
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "spool.jsonl"
+        # Simulate the torn state: a complete record, then a partial one
+        # truncated mid-JSON by a crash (no trailing newline).
+        path.write_text('{"i": 0}\n{"i": 1', encoding="utf-8")
+
+        spool = BoundedSpool(path, max_bytes=10_000_000)
+        check(not spool._tail_known_good,
+              "torn-tail spool must be detected as not known-good at construction")
+        ok = spool.append({"i": 2})
+        check(ok, "append after a torn tail must succeed")
+
+        replayed = []
+        spool.drain_into(lambda ev: replayed.append(ev["i"]))
+        # The complete record survives; the torn partial is dropped as corrupt
+        # (documented behavior), and the NEW record is intact on its own line.
+        check(0 in replayed, f"complete record must survive the torn tail, got {replayed}")
+        check(2 in replayed, f"post-torn append must survive intact, got {replayed}")
+        check(spool._tail_known_good, "after the repair the tail is known-good")
+        # No garbage remains: the spool drains clean to empty.
+        check(spool.pending_count() == 0, "spool must drain to empty after repair")
+
+
+def test_torn_tail_append_keeps_new_record_on_its_own_line():
+    """The repair property that actually matters (before any drain): the new
+    record must NOT be concatenated onto the torn partial record."""
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "spool.jsonl"
+        path.write_text('{"i": 0}\n{"i": 1', encoding="utf-8")
+
+        spool = BoundedSpool(path, max_bytes=10_000_000)
+        check(spool.append({"i": 2}), "append after a torn tail must succeed")
+        raw = path.read_bytes()
+        check(raw.endswith(b"\n"), "spool file must be newline-terminated after the append")
+        # Lines: {"i": 0}, the (corrupt) torn partial, {"i": 2} -- the new
+        # record is exactly one well-formed JSON line of its own, never fused
+        # with the partial above it.
+        lines = raw.decode("utf-8").splitlines()
+        check(lines[-1] == '{"i": 2}',
+              f"new record must be its own final line, got {lines[-1:]!r}")
+        check(len(lines) == 3, f"expected 3 lines (good, torn, new), got {lines}")
+
+
 def main():
     test_large_drain_stays_near_linear()
     test_produce_does_not_hold_the_lock_append_can_proceed_concurrently()
     test_concurrent_append_during_drain_is_not_lost()
+    test_torn_tail_from_crash_is_repaired_not_corrupted()
+    test_torn_tail_append_keeps_new_record_on_its_own_line()
 
     if FAILS:
         print(f"\n[FAIL] spool perf/locking (P1-6): {len(FAILS)} problem(s)")

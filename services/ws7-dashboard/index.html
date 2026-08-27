@@ -264,6 +264,25 @@
   #opsCards .kv{grid-template-columns:130px 1fr;row-gap:8px}
   #opsCards .kv .k{padding-top:1px;overflow-wrap:anywhere}
 
+  /* 2026-08-26: pipeline-monitor flow. Horizontal stages with arrows between
+     them, wrapping on narrow screens. Each stage is a card: status dot, name,
+     and one or two real counters. A red dot = /metrics unreachable or a
+     failure counter > 0; amber = found a failure/backlog; green = operating. */
+  .pipe-flow{display:flex;flex-wrap:wrap;align-items:stretch;gap:10px}
+  .pipe-stage{flex:1 1 170px;min-width:170px;border:1px solid var(--border);border-radius:10px;padding:10px 12px;background:var(--card)}
+  .pipe-stage .s-h{display:flex;align-items:center;gap:8px;font-weight:700;font-size:13.5px}
+  .pipe-arrow{align-self:center;color:var(--muted);font-size:18px;flex-shrink:0;padding:0 2px}
+  .pipe-stage .s-topic{color:var(--muted);font-size:11px;word-break:break-all;margin:2px 0 8px;font-family:var(--mono, ui-monospace, monospace)}
+  .pipe-stage .s-nums{display:grid;grid-template-columns:auto 1fr;row-gap:4px;column-gap:8px;font-size:12.5px}
+  .pipe-stage .s-nums .k{color:var(--muted)}
+  .pipe-stage .s-nums .v{text-align:right;font-weight:600}
+  .pipe-stage .s-nums .v.warn-v{color:#da5}
+  .dot{width:8px;height:8px;border-radius:50%;display:inline-block}
+  .dot.ok{background:#3a9}
+  .dot.warn{background:#da5}
+  .dot.down{background:#d33}
+  #monitorSummary .card{min-width:180px}
+
   .covRow{display:flex;gap:12px;align-items:flex-start;margin-bottom:10px}
   .covTactic{width:170px;flex-shrink:0;color:var(--muted);font-size:12px;padding-top:10px;font-weight:600}
   .covCells{display:flex;flex-wrap:wrap;gap:8px;flex:1}
@@ -300,6 +319,14 @@
           <circle cx="3.5" cy="12" r="1.1" fill="currentColor" stroke="none"/>
           <circle cx="3.5" cy="18" r="1.1" fill="currentColor" stroke="none"/></svg>
       </button>
+      <!-- 2026-08-26: end-to-end pipeline monitor. One place that shows the
+           raw -> normalized -> scored -> indexed flow with live per-stage
+           throughput, health, and backlog -- the read-side answer to the bus
+           and same-origin proxy gap-hunts (a dead edge is visible here, not
+           just the per-service Ops cards). -->
+      <button data-view="monitor" title="Monitoring" aria-label="Monitoring">
+        <svg class="icon" viewBox="0 0 24 24"><path d="M4 6h16M4 10h16M4 14h10M4 18h16"/><circle cx="18" cy="14" r="2.2"/></svg>
+      </button>
       <!-- 2026-08-20: per-service health/metrics (services/shared/runner.py's
            uniform /metrics) existed on every workstream, never had a nav entry. -->
       <button data-view="ops" title="Ops" aria-label="Ops">
@@ -324,7 +351,7 @@
         <svg class="icon" viewBox="0 0 24 24"><path d="M12 2l8 3v6c0 5-3.4 8.6-8 11-4.6-2.4-8-6-8-11V5l8-3z"/><path d="M9 12l2 2 4-4"/></svg>
         FENGARDE Console
       </h1>
-      <span class="status-pill" id="apiStatus"><span class="dot"></span>mock data</span>
+      <span class="status-pill" id="apiStatus"><span class="dot"></span>data unavailable</span>
       <!-- 2026-08-19: time-range picker -- scopes /api/alerts and /api/events (both
            OpenSearch-backed, both time-filterable server-side via the nginx range
            map). Sources/Inventory/Coverage aren't time-scoped (they read the CURRENT
@@ -577,6 +604,24 @@
           <tbody id="rulesTableBody"></tbody></table></div>
       </section>
 
+      <!-- 2026-08-26: end-to-end pipeline monitor. A live flow view of the
+           raw -> normalized -> scored -> indexed pipeline built entirely from
+           each workstream's real /metrics (via the same /api/ops/* proxies
+           the Ops tab uses) plus the live alert/event feeds. Every number is
+           a real counter -- no fabricated throughput. A stage that is down,
+           or a topic whose backlog is climbing, is visible here as a red
+           health dot / backlog warning rather than a silent blank. -->
+      <section id="monitor" class="view">
+        <h3>Pipeline monitoring</h3>
+        <p class="muted" style="margin-top:-6px">Live ingest → detect → index flow. Per-stage counters come from each
+          workstream's real <code>/metrics</code>; alert/event totals come from the same live feeds the
+          Overview uses. A red stage/source means that workstream's <code>/metrics</code> is unreachable
+          or is reporting failures — check the Ops tab for the per-service detail.</p>
+        <div id="flowHealth" class="muted" style="margin:10px 0 6px"></div>
+        <div id="pipelineFlow" class="pipe-flow"></div>
+        <div class="cards" id="monitorSummary" style="margin-top:18px"></div>
+      </section>
+
       <!-- 2026-08-20: per-service ops/health. Every workstream's own
            GET /metrics (services/shared/runner.py) existed and was never
            queryable from the dashboard -- an operator had no path short of
@@ -606,6 +651,20 @@
 </div><!-- /.shell -->
 
 <script src="mocks/mock_data.js"></script>
+<!-- Gap-hunt (2026-08-26) #53: nginx serves the API key to the same-origin
+     page via /api/config.js (envsubst at container start; empty string when
+     FENGARDE_API_KEY is unset). _fetch() below attaches it as X-Api-Key to
+     every request so a hardened deployment (key set) does NOT 401/blank the
+     dashboard, and the write routes' require-presented-key guards (nginx
+     template) are actually satisfiable by this client.
+     Gap-hunt read-plane #6 (2026-08-27): nginx serves this bootstrap only to
+     a same-origin browser subresource fetch (Sec-Fetch-Site: same-origin) and
+     GET/HEAD only -- see the /api/config.js location in default.conf.template.
+     This is defense-in-depth against non-browser/key-minting clients, NOT a
+     security boundary: any client that can render the dashboard can equally
+     read the data it boots. Treat FENGARDE_API_KEY as a deployment secret
+     (the real control) regardless. -->
+<script src="/api/config.js"></script>
 <script>
 // ---- icon() helper: single-stroke inline SVG, no emoji anywhere ----------
 const ICONS = {
@@ -622,6 +681,25 @@ const ICONS = {
     + '<path d="M15.5 12l1.8-1.8a3 3 0 00-4.2-4.2l-2.6 2.6"/>',
 };
 function icon(name, cls){ return `<svg class="icon ${cls||""}" viewBox="0 0 24 24">${ICONS[name]||ICONS.circle}</svg>`; }
+
+// ---- _fetch(): every API call goes through here -------------------------
+// Gap-hunt (2026-08-26) #53: attach X-Api-Key to EVERY request when a key
+// is configured (read from /api/config.js above). Previously the dashboard
+// never sent it -- so setting FENGARDE_API_KEY to harden a deployment 401'd
+// the browser on every real data call (every route now requires the
+// caller-presented key when one is configured) and rendered identically to
+// 'no data'. The nginx require-guards pass when the key is unset ("" == "")
+// and the header is simply omitted.
+function _apiKeyHeader(){
+  const k = (typeof window.FENGARDE_API_KEY === "string" && window.FENGARDE_API_KEY)
+    ? window.FENGARDE_API_KEY : "";
+  return k ? {"X-Api-Key": k} : {};
+}
+async function _fetch(url, opts){
+  opts = opts || {};
+  const headers = Object.assign({}, opts.headers || {}, _apiKeyHeader());
+  return fetch(url, Object.assign({}, opts, {headers}));
+}
 
 // ---- data access: live API if configured, else mock --------------------
 // 2026-08-20: this had NO default (`|| null`), unlike every other *_API
@@ -654,7 +732,7 @@ const RANGE_MS = {"1h": 3600000, "24h": 86400000, "7d": 604800000, "30d": 259200
 const RANGE_LABELS = {"1h": "the last hour", "24h": "the last 24 hours", "7d": "the last 7 days", "30d": "the last 30 days"};
 let CURRENT_RANGE = "24h";
 function rangeGteMs(){ return Date.now() - (RANGE_MS[CURRENT_RANGE] || RANGE_MS["24h"]); }
-let LIVE = false; // true once live alerts are successfully loaded
+let LIVE = false; // backend-reachability badge state; written ONLY by the render path (R4-#65)
 
 // ---- M3: RBAC session login (opt-in backend feature, see services/shared/rbac.py) ----
 // Same-origin proxy to ws3-indexer's /auth/* routes (services/ws7-dashboard/templates/
@@ -670,7 +748,7 @@ let RBAC_ACTIVE = null;  // true/false once known (checkSession() sets it), else
 async function checkSession(){
   if(!AUTH_API){ RBAC_ACTIVE = false; revealApp(); return true; }
   try{
-    const r = await fetch(`${AUTH_API}/me`, {credentials:"same-origin"});
+    const r = await _fetch(`${AUTH_API}/me`, {credentials:"same-origin"});
     if(r.status === 404){
       // No RBAC backend at all (FENGARDE_RBAC_DB unset) -- the pre-M3 default,
       // zero behavior change, same convention as every other opt-in auth layer.
@@ -730,7 +808,7 @@ async function doLogin(username, password){
   const errEl = document.getElementById("loginError");
   errEl.textContent = "";
   try{
-    const r = await fetch(`${AUTH_API}/login`, {
+    const r = await _fetch(`${AUTH_API}/login`, {
       method: "POST", credentials: "same-origin",
       headers: {"Content-Type": "application/json"},
       body: JSON.stringify({username, password})
@@ -751,7 +829,7 @@ async function doLogin(username, password){
 
 async function doLogout(){
   try{
-    await fetch(`${AUTH_API}/logout`, {
+    await _fetch(`${AUTH_API}/logout`, {
       method: "POST", credentials: "same-origin",
       headers: CSRF_TOKEN ? {"X-CSRF-Token": CSRF_TOKEN} : {}
     });
@@ -778,15 +856,30 @@ function tenantQuery(){
 }
 async function getAssets(){
   if(INVENTORY_API){
-    try{ return await (await fetch(`${INVENTORY_API}/assets?limit=200${tenantQuery()}`)).json(); }
-    catch(e){}
+    try{
+      const r = await _fetch(`${INVENTORY_API}/assets?limit=200${tenantQuery()}`);
+      // Gap-hunt (2026-08-26) #55: this never checked r.ok -- a 401/500 JSON
+      // error body parsed fine and was returned as the asset list (the
+      // Inventory view rendered error objects as devices). A non-2xx answer
+      // is NOT data: return [] so the caller shows an honest empty state.
+      if(!r.ok) return [];
+      return await r.json();
+    }catch(e){
+      // Gap-hunt (2026-08-26): a thrown fetch (network down, DNS, timeout)
+      // fell through past this catch to the mock return below -- an outage
+      // rendered as a populated (fake) inventory instead of an honest empty
+      // state, contradicting this function's own callers (see the comment
+      // at attachAiTriage's call site: "a live inventory API that fails
+      // returns []"). Only "no API configured at all" should reach mock.
+      return [];
+    }
   }
   return window.SIEM_MOCK.assets;
 }
 async function getKeys(){
   if(!INVENTORY_API) return [];
   try{
-    const r = await fetch(`${INVENTORY_API}/keys`);
+    const r = await _fetch(`${INVENTORY_API}/keys`);
     if(!r.ok) return [];
     const data = await r.json();
     return data.keys || [];
@@ -795,17 +888,35 @@ async function getKeys(){
 
 // Fetch REAL alerts from OpenSearch (via same-origin proxy). Maps _search hits to
 // the dashboard's alert shape and filters out ai.results docs (they lack a
-// rule_title/score). Falls back to mock data if the proxy is unreachable.
+// rule_title/score). On failure returns an empty list plus an honest `live`
+// flag -- NO fabrication, never SIEM_MOCK.alerts (getEvents()'s own
+// no-fabrication rule).
+// 2026-08-27 (gap-hunt R4-#65 / read-plane #3): getAlerts() is now a PURE READ --
+// it does NOT mutate the shared global `LIVE` as a side effect. It returns
+// {alerts, live} and the RENDER path (renderGlobal / renderMonitoring) owns the
+// global badge state from `live`. `live` is derived the honest way: true iff the
+// backend answered HTTP 200 WITHOUT nginx's `_fengarde_proxy:
+// "opensearch_unavailable"` outage marker. A healthy backend that simply has no
+// alerts in the selected range returns empty hits WITHOUT the marker and MUST
+// read as live (healthy-but-empty) -- previously empty-hits was misread as an
+// outage and flipped the badge to "mock".
 async function getAlerts(){
   if(ALERTS_API){
     try{
-      const r = await fetch(`${ALERTS_API}?gte=${rangeGteMs()}`,
+      const r = await _fetch(`${ALERTS_API}?gte=${rangeGteMs()}`,
         {headers:{Accept:"application/json"}});
       if(r.ok){
         const data = await r.json();
+        // nginx's OpenSearch-outage fallback (templates/default.conf.template
+        // @alerts_unavailable) answers HTTP 200 + empty hits + this marker. The
+        // MARKER is the honest "backend down" signal; empty hits WITHOUT it is a
+        // normal healthy-but-empty window, not an outage.
+        const proxyDown = !!(data && data._fengarde_proxy === "opensearch_unavailable");
+        if(proxyDown) return {alerts:[], live:false};
         const hits = (((data||{}).hits||{}).hits)||[];
+        // Any 200 that is NOT the outage marker = a live backend (even if the
+        // range has zero alerts), so `live` is NOT gated on hits.length.
         const alerts = hits.map(h=>h._source)
-          // keep only real rule alerts; drop ai.results (no rule_title/score).
           .filter(s=>s && s.rule_title)
           .map(s=>({
             alert_id: s.alert_id,
@@ -821,13 +932,11 @@ async function getAlerts(){
             event_ids: s.event_ids||[],
             playbook: s.playbook || (s.rule && s.rule.playbook) || null
           }));
-        LIVE = true;
-        return alerts;
+        return {alerts, live:true};
       }
-    }catch(e){ /* fall through to mock */ }
+    }catch(e){ /* fall through to empty */ }
   }
-  LIVE = false;
-  return window.SIEM_MOCK.alerts;
+  return {alerts:[], live:false};
 }
 
 // 2026-08-19: raw normalized (pre-detection) events -- events-{common,bank,dc}-*,
@@ -837,7 +946,7 @@ async function getAlerts(){
 async function getEvents(){
   if(!EVENTS_API) return [];
   try{
-    const r = await fetch(`${EVENTS_API}?gte=${rangeGteMs()}`,
+    const r = await _fetch(`${EVENTS_API}?gte=${rangeGteMs()}`,
       {headers:{Accept:"application/json"}});
     if(!r.ok) return [];
     const data = await r.json();
@@ -864,7 +973,7 @@ async function getEvents(){
 async function getAiTriage(){
   if(!AI_TRIAGE_API) return [];
   try{
-    const r = await fetch(AI_TRIAGE_API, {headers:{Accept:"application/json"}});
+    const r = await _fetch(AI_TRIAGE_API, {headers:{Accept:"application/json"}});
     if(!r.ok) return [];
     const data = await r.json();
     const hits = (((data||{}).hits||{}).hits)||[];
@@ -965,7 +1074,7 @@ function whyDetailsHtml(a){
 // window is genuinely meaningful, and disabled with an explanatory tooltip
 // on the views where it isn't (Inventory/Coverage/Ops read CURRENT state,
 // not a historical window -- there is no "last 24h of rule config").
-const RANGE_SCOPED_VIEWS = new Set(["global", "events", "incidents", "audit", "sources"]);
+const RANGE_SCOPED_VIEWS = new Set(["global", "events", "incidents", "audit", "sources", "monitor"]);
 function syncRangeSelectState(viewId){
   const el = document.getElementById("rangeSelect");
   if(!el) return;
@@ -1039,12 +1148,36 @@ const TRIAGE_API = (window.TRIAGE_API !== undefined) ? window.TRIAGE_API : "/api
 const TRIAGE_STATUSES = ["new", "triaged", "closed", "false_positive", "true_positive"];
 
 async function fetchTriage(alertId){
-  if(!TRIAGE_API) return {status:"new", note:""};
+  if(!TRIAGE_API) return {status:"new", note:"", _fallback:true};
   try{
-    const r = await fetch(`${TRIAGE_API}/alerts/${encodeURIComponent(alertId)}/triage`);
+    const r = await _fetch(`${TRIAGE_API}/alerts/${encodeURIComponent(alertId)}/triage`);
     if(r.ok) return await r.json();
   }catch(e){ /* fall through to default */ }
-  return {status:"new", note:""};
+  // Gap-hunt (2026-08-26) #54: returning a plain {status:"new"} on ANY
+  // failure rendered identically to a real "new" -- with the triage API
+  // down, every already-closed alert redisplays as untriaged. The
+  // _fallback flag lets callers distinguish "backend says new" from
+  // "backend unknown", so a closed alert is not silently shown as open.
+  return {status:"new", note:"", _fallback:true};
+}
+
+// Gap-hunt (2026-08-26) #50: visible, non-fabricating error surfacing for a
+// failed triage save. A small transient banner (auto-clears) rather than a
+// silent no-op -- the failure MUST be seen by the analyst who made the edit.
+function triageSaveFailed(msg){
+  let el = document.getElementById("triageError");
+  if(!el){
+    el = document.createElement("div");
+    el.id = "triageError";
+    el.style.cssText = "position:fixed;bottom:12px;left:50%;transform:translateX(-50%);" +
+      "background:#a33;color:#fff;padding:8px 14px;border-radius:6px;z-index:99;" +
+      "font-size:13px;box-shadow:0 2px 8px rgba(0,0,0,.35);max-width:80%;";
+    document.body.appendChild(el);
+  }
+  el.textContent = msg;
+  el.style.display = "block";
+  clearTimeout(triageSaveFailed._t);
+  triageSaveFailed._t = setTimeout(() => { el.style.display = "none"; }, 6000);
 }
 
 // M3: a real RBAC session (see checkSession()) must echo its csrf_token back
@@ -1058,7 +1191,7 @@ function csrfHeaders(){
 async function updateTriage(alertId, status, note){
   if(!TRIAGE_API) return null;
   try{
-    const r = await fetch(`${TRIAGE_API}/alerts/${encodeURIComponent(alertId)}/triage`, {
+    const r = await _fetch(`${TRIAGE_API}/alerts/${encodeURIComponent(alertId)}/triage`, {
       method:"POST", credentials:"same-origin",
       headers:{"Content-Type":"application/json", ...csrfHeaders()},
       body: JSON.stringify({status, note})
@@ -1122,7 +1255,9 @@ function renderPosture(alerts, rules){
   const tagged = rules.filter(r => r.mitre && r.mitre.technique).length;
   const covPct = rules.length ? Math.round((tagged/rules.length)*100) : null;
   const rows = [
-    {ok: LIVE, label: "Live pipeline data", value: LIVE ? "connected" : "mock mode"},
+    // R4-#91 (2026-08-27): no mock alerts are shown anymore, so "mock mode"
+    // was a lie. Report the honest backend state.
+    {ok: LIVE, label: "Live pipeline data", value: LIVE ? "connected" : "unavailable"},
     {ok: RBAC_ACTIVE === true, label: "RBAC session gate", value: RBAC_ACTIVE === null ? "checking…" : (RBAC_ACTIVE ? "enabled" : "disabled")},
     {ok: rules.length > 0, label: "Detection rules loaded", value: rules.length ? `${rules.length} rules` : "none loaded"},
     {ok: covPct !== null && covPct > 0, label: "MITRE-tagged coverage", value: covPct === null ? "—" : `${covPct}% of rules`},
@@ -1142,14 +1277,33 @@ function renderPosture(alerts, rules){
 // rebuilding on every tick would blow away an in-progress (unsaved) edit in
 // a triage-note <input>, so we only touch the DOM when the alert set (or
 // any triage status now returned with it) actually differs.
-async function renderGlobal(alerts){
-  const assets = window.SIEM_MOCK.assets;
-  if(!alerts) alerts = await getAlerts();
+async function renderGlobal(alerts, live){
+  // Gap-hunt (2026-08-26) #51: this used to read window.SIEM_MOCK.assets
+  // unconditionally -- the Overview's "Active devices" card rendered the
+  // hardcoded mock hosts on EVERY deployment, inches from the "live data"
+  // badge, while the real getAssets() path was only used by the separate
+  // Inventory tab. Fetch the real asset list (which already falls back to
+  // mock only when no live API is configured); a live inventory API that
+  // fails returns [] (no fabrication -- see getAssets).
+  const assets = await getAssets();
+  if(!alerts){
+    // Gap-hunt R4-#65 (2026-08-27): getAlerts() no longer mutates the shared
+    // `LIVE` global. The RENDER path owns the badge state: it reads the
+    // {alerts, live} tuple getAlerts() returns and assigns LIVE here.
+    const fetched = await getAlerts();
+    alerts = fetched.alerts;
+    live = fetched.live;
+  }
+  LIVE = live; // the render path is the ONLY place the global LIVE is written
   attachAiTriage(alerts, await getAiTriage());
   const statusEl = document.getElementById("apiStatus");
   if(statusEl){
     statusEl.classList.toggle("live", LIVE);
-    statusEl.innerHTML = `<span class="dot"></span>${LIVE ? "live data" : "mock data"}`;
+    // R4-#91 (2026-08-27): the outage path returns an EMPTY list -- mock data
+    // is never shown anymore -- so calling this "mock data" was a lie. Name the
+    // honest state instead: "live data" when the backend is up, "data
+    // unavailable" when it is not.
+    statusEl.innerHTML = `<span class="dot"></span>${LIVE ? "live data" : "data unavailable"}`;
   }
   const active = assets.filter(a=>a.status==="active").length;
   const crit = alerts.filter(a=>a.level==="critical").length;
@@ -1199,7 +1353,7 @@ async function renderGlobal(alerts){
       alertsEmptyEl.style.display = "";
       alertsEmptyEl.textContent = LIVE
         ? `No alerts in ${RANGE_LABELS[CURRENT_RANGE] || "this range"}. Try a wider time range above.`
-        : "No alerts (mock data).";
+        : "No alerts — live data unavailable (backend outage or API not configured). Nothing is fabricated.";
     }
   }else{
     if(alertsEmptyEl) alertsEmptyEl.style.display = "none";
@@ -1223,24 +1377,46 @@ async function renderGlobal(alerts){
   }
 
   // wire triage controls: status change + note blur both POST the update.
+  // Gap-hunt (2026-08-26) #50: both call sites used to discard updateTriage's
+  // result -- it returns null on ANY failure (401/403/network), so a failed
+  // save silently reverted to "new" on the next reload with no warning. Now
+  // a failure restores the previous control value and shows a visible error.
   document.querySelectorAll("#alertRows .triage-status").forEach(sel => {
     sel.onchange = async () => {
       const noteEl = document.querySelector(
         `#alertRows .triage-note[data-alert-id="${CSS.escape(sel.dataset.alertId)}"]`);
-      await updateTriage(sel.dataset.alertId, sel.value, noteEl ? noteEl.value : "");
+      const prev = sel.dataset.prevValue === undefined ? sel.value : sel.dataset.prevValue;
+      sel.dataset.prevValue = sel.value;
+      const ok = await updateTriage(sel.dataset.alertId, sel.value, noteEl ? noteEl.value : "");
+      if(ok === null){
+        sel.value = prev;
+        triageSaveFailed(`Triage status save FAILED (backend unreachable or rejected). The alert will redisplay untriaged on reload.`);
+      }
     };
   });
   document.querySelectorAll("#alertRows .triage-note").forEach(inp => {
     inp.onblur = async () => {
       const selEl = document.querySelector(
         `#alertRows .triage-status[data-alert-id="${CSS.escape(inp.dataset.alertId)}"]`);
-      await updateTriage(inp.dataset.alertId, selEl ? selEl.value : "new", inp.value);
+      const prev = inp.dataset.prevValue === undefined ? inp.value : inp.dataset.prevValue;
+      inp.dataset.prevValue = inp.value;
+      const ok = await updateTriage(inp.dataset.alertId, selEl ? selEl.value : "new", inp.value);
+      if(ok === null){
+        inp.value = prev;
+        triageSaveFailed(`Triage note save FAILED (backend unreachable or rejected). The note will be lost on reload.`);
+      }
     };
   });
 
   document.querySelectorAll("#alertRows .report-btn").forEach(btn => {
     btn.onclick = () => generateReport(btn.dataset.alertId, "", false);
   });
+  // Gap-hunt (2026-08-26) #60: this table is rebuilt from the FULL sorted set
+  // every render (poll/range change), but the severity/search filter UI stays
+  // selected -- so an active filter was silently dropped by every repaint while
+  // the control still read "Critical". Re-apply the live filter after a rebuild
+  // so what's shown matches what the filter control says is selected.
+  applyAlertFilter();
   // M5: "NIS2 (DE)" button -> the SAME report endpoint, additive query
   // params select the deterministic NIS2/§32 BSIG German template instead
   // of the generic one (nis2_template.py). DRAFT -- not legal advice; see
@@ -1273,7 +1449,7 @@ async function generateReport(alertId, query, isNis2){
   body.textContent = "Generating report…";
   panel.hidden = false;
   try{
-    const r = await fetch(`${TRIAGE_API}/alerts/${encodeURIComponent(alertId)}/report${query||""}`,
+    const r = await _fetch(`${TRIAGE_API}/alerts/${encodeURIComponent(alertId)}/report${query||""}`,
       {method:"POST", credentials:"same-origin", headers: csrfHeaders()});
     if(r.ok){
       const report = await r.json();
@@ -1321,7 +1497,7 @@ async function mfaEnable(){
   errEl.textContent = "";
   const password = document.getElementById("mfaPassword").value;
   try{
-    const r = await fetch(`${AUTH_API}/mfa/enable`, {
+    const r = await _fetch(`${AUTH_API}/mfa/enable`, {
       method: "POST", credentials: "same-origin",
       headers: {"Content-Type": "application/json", ...csrfHeaders()},
       body: JSON.stringify({password})
@@ -1346,7 +1522,7 @@ async function mfaVerify(){
   const password = document.getElementById("mfaPassword").value;
   const totp_code = document.getElementById("mfaCode").value.trim();
   try{
-    const r = await fetch(`${AUTH_API}/mfa/verify`, {
+    const r = await _fetch(`${AUTH_API}/mfa/verify`, {
       method: "POST", credentials: "same-origin",
       headers: {"Content-Type": "application/json", ...csrfHeaders()},
       body: JSON.stringify({password, totp_code})
@@ -1378,11 +1554,19 @@ const OPS_SERVICES = [
   {key: "ws2", label: "WS-2 Normalization"},
   {key: "ws3", label: "WS-3 Indexer"},
   {key: "ws4", label: "WS-4 Detection"},
+  // Gap-hunt (2026-08-26) #57: WS-5 (AI triage) was missing entirely -- with
+  // no /api/ops/ws5 proxy it had no card, so a dead WS-5 left the whole Ops
+  // page green. Added now (nginx template /api/ops/ws5 -> ws5-ai:8005/metrics).
+  // WS-6 (inventory) is an HTTP API, not a bus runner -- it has no /metrics
+  // health-port to probe (its health is the Inventory tab's asset fetch);
+  // WS-7 (dashboard) serves this page itself. Both are intentionally absent
+  // here, not forgotten -- 6 cards covers every runner-workstream.
+  {key: "ws5", label: "WS-5 AI Triage"},
   {key: "ws8", label: "WS-8 Correlation"},
 ];
 async function getOpsMetrics(key){
   try{
-    const r = await fetch(`/api/ops/${key}`, {headers:{Accept:"application/json"}});
+    const r = await _fetch(`/api/ops/${key}`, {headers:{Accept:"application/json"}});
     if(!r.ok) return null;
     return await r.json();
   }catch(e){ return null; }
@@ -1395,7 +1579,10 @@ function opsTopicRows(topics){
   if(!entries.length) return `<div class="k">Traffic</div><div class="muted">none yet</div>`;
   return entries.flatMap(([topic, results]) =>
     Object.entries(results).map(([result, n]) =>
-      `<div class="k">${esc(topic)}</div><div>${esc(result)}: <b>${n}</b></div>`)
+      // Gap-hunt (2026-08-26) #66: `n` used to be interpolated raw -- a
+      // compromised workstream's metric values are attacker-influenced, and
+      // this was the one ops value not going through esc().
+      `<div class="k">${esc(topic)}</div><div>${esc(result)}: <b>${esc(n)}</b></div>`)
   ).join("");
 }
 // `extra` is service-specific and can nest one level (e.g. WS-1's
@@ -1452,6 +1639,130 @@ async function renderOps(){
   }).join("");
 }
 
+// ---- 2026-08-26: end-to-end pipeline monitor -----------------------------
+// Builds the live raw -> normalized -> scored -> indexed flow from each
+// workstream's real /metrics (same /api/ops/* proxies the Ops tab uses) plus
+// the live alert feed. Every counter is real; nothing is fabricated. A dead
+// stage (metrics unreachable) or a topic with failed/deadlettered/backlog > 0
+// is surfaced as an amber/red health dot here, not silently.
+function _sumResult(topics, topic, result){
+  const t = (topics||{})[topic];
+  return (t && typeof t[result] === "number") ? t[result] : null;
+}
+// Which workstream owns the topics that matter to the pipeline, keyed by
+// the /api/ops/<key> service and the topic name(s) it produces/consumes.
+// Gap-hunt (2026-08-26): every stage below used to name the topic it
+// PRODUCES to, not the one it CONSUMES/acks -- but "acked" only exists on
+// the consumer side, so ws2/ws4 always resolved null and rendered "—" for
+// every real run despite /api/ops/<key> genuinely returning live numbers
+// (ws2 acks raw.events, not normalized.events; ws4 acks normalized.events,
+// not alerts). WS-1 has no upstream topic to consume/ack at all -- it's
+// the pipeline's origin -- so it never had a real metric here; give it its
+// own producer-side counter instead of a lookup that can never resolve.
+const PIPE_STAGES = [
+  {key:"ws1", name:"WS-1 Collect", arrow:"raw.events", extraKey:"syslog_udp.events_produced",
+   metric:"produced", note:"ingested syslog → bus"},
+  {key:"ws2", name:"WS-2 Normalize", arrow:"normalized.events", topic:"raw.events",
+   metric:"acked", note:"parse → OCSF"},
+  {key:"ws4", name:"WS-4 Detect", arrow:"scored.events / alerts", topic:"normalized.events",
+   metric:"acked", note:"rules + scoring"},
+  {key:"ws3", name:"WS-3 Index", arrow:"OpenSearch", topic:"alerts",
+   metric:"acked", note:"index → store"},
+];
+async function renderMonitoring(){
+  const flowEl = document.getElementById("pipelineFlow");
+  const healthEl = document.getElementById("flowHealth");
+  const sumEl = document.getElementById("monitorSummary");
+  if(!flowEl) return;
+
+  // Live alert/event totals (real feeds, same as Overview). getAlerts() is a
+  // pure read now (R4-#65): it returns {alerts, live} and this render owns the
+  // badge state it displays, so it sets LIVE here -- the render path.
+  let alerts = [];
+  let events = [];
+  try{ const f = await getAlerts(); alerts = f.alerts; LIVE = f.live; }catch(e){ alerts = []; }
+  try{ events = await getEvents(); }catch(e){ events = []; }
+
+  // One ops fetch per workstream the pipeline touches (dedup: ws3 covers
+  // both Index; ws4 Detect). Fetch once, reuse.
+  const results = {};
+  const keys = [...new Set(PIPE_STAGES.map(s => s.key))];
+  const fetched = await Promise.all(keys.map(async k => [k, await getOpsMetrics(k)]));
+  fetched.forEach(([k, d]) => { results[k] = d; });
+
+  // Build each stage's card + health.
+  let anyDown = false;
+  let anyWarn = false;
+  const cards = PIPE_STAGES.map((s, i) => {
+    const data = results[s.key];
+    let dot = "down", dotLabel = "metrics unreachable";
+    let nums = "";
+    if(data){
+      let failed = null, acked = null, dlqCount = null;
+      if(s.topic){
+        failed = _sumResult(data.topics, s.topic, "failed");
+        acked = _sumResult(data.topics, s.topic, s.metric);
+        // Dead-letter entries surface as their own "<topic>.deadletter" stream
+        // with an "acked" counter (runner routes poison here then acks it).
+        dlqCount = _sumResult(data.topics, s.topic + ".deadletter", "acked");
+      }else if(s.extraKey){
+        // No consumed bus topic (WS-1 is the origin) -- read its own
+        // producer-side counter out of `extra` instead of `topics`.
+        acked = s.extraKey.split(".").reduce(
+          (v, k) => (v && typeof v === "object") ? v[k] : undefined, data.extra);
+        acked = (typeof acked === "number") ? acked : null;
+      }
+      const failure = (failed !== null && failed > 0);
+      if(failure || (dlqCount !== null && dlqCount > 0)){
+        dot = "warn";
+        dotLabel = "failures detected";
+        anyWarn = true;
+      }else{
+        dot = "ok";
+        dotLabel = "operating";
+      }
+      if(dlqCount !== null && dlqCount > 0){
+        nums += `<span class="k">deadlettered</span><span class="v warn-v">${esc(dlqCount)}</span>`;
+      }
+      nums += `<span class="k">${esc(s.metric)}</span><span class="v">${esc(acked === null ? "—" : acked)}</span>`;
+      if(s.topic){
+        nums += `<span class="k">failed</span><span class="v">${esc(failed === null ? "—" : failed)}</span>`;
+      }
+    }else{
+      anyDown = true;
+      nums = `<span class="k">status</span><span class="v">unreachable</span>`;
+    }
+    const arrow = i < PIPE_STAGES.length - 1
+      ? `<div class="pipe-arrow" aria-hidden="true">→</div>` : "";
+    return `<div class="pipe-stage">`
+      + `<div class="s-h"><span class="dot ${dot}" title="${esc(dotLabel)}"></span>${esc(s.name)}</div>`
+      + `<div class="s-topic">${esc(s.arrow)}</div>`
+      + `<div class="muted" style="font-size:11.5px;margin-bottom:6px">${esc(s.note)}</div>`
+      + `<div class="s-nums">${nums}</div></div>${arrow}`;
+  }).join("");
+
+  flowEl.innerHTML = cards;
+
+  // Summary cards: real totals.
+  const alertCount = (alerts||[]).length;
+  const eventCount = (events||[]).length;
+  const crit = (alerts||[]).filter(a => a.level === "critical").length;
+  sumEl.innerHTML = [
+    `<div class="card"><div class="l">Alerts (range)</div><div class="n">${esc(alertCount)}</div><div class="card-sub">${esc(crit)} critical</div></div>`,
+    `<div class="card"><div class="l">Events (range)</div><div class="n">${esc(eventCount)}</div><div class="card-sub">raw activity</div></div>`,
+    `<div class="card"><div class="l">Live data</div><div class="n">${LIVE ? "yes":"no"}</div><div class="card-sub">${LIVE ? "backend reachable":"backend unreachable"}</div></div>`,
+  ].join("");
+
+  // Top-of-panel health line: honest, explicit signal.
+  if(anyDown){
+    healthEl.textContent = "⚠ Some pipeline stages are unreachable (their /metrics proxy is down). See Ops for detail.";
+  }else if(anyWarn){
+    healthEl.textContent = "⚠ Some stages report failed/deadlettered deliveries. Investigate before a backlog builds.";
+  }else{
+    healthEl.textContent = "✓ All pipeline stages reachable and reporting no failures.";
+  }
+}
+
 // ---- 2026-08-20: E1 admin audit trail (GET /audit) -- see #audit section's
 // own comment for why this had zero UI until now. ----
 const AUDIT_API = (window.AUDIT_API !== undefined) ? window.AUDIT_API : "/api/audit";
@@ -1472,11 +1783,19 @@ async function renderAudit(){
     // limit=200 (the backend's own max, _MAX_LIST_LIMIT) -- headroom for the
     // client-side time filter below, since GET /audit itself has no gte
     // param (see /incidents' identical situation, renderIncidents()).
-    const r = await fetch(`${AUDIT_API}?limit=200`, {headers:{Accept:"application/json"}, credentials:"same-origin"});
+    const r = await _fetch(`${AUDIT_API}?limit=200`, {headers:{Accept:"application/json"}, credentials:"same-origin"});
     if(!r.ok){
       rows.innerHTML = "";
       empty.style.display = "";
-      empty.textContent = "No audit entries visible (not an admin, or nothing logged yet).";
+      // Gap-hunt (2026-08-26) #62: every non-200 (502/500/401) used to render
+      // identically to "no entries -- not an admin", presenting an outage as
+      // a permissions fact. 401/403 still means "not permitted"; anything
+      // else (5xx, service down) is an outage and must say so honestly.
+      if(r.status === 401 || r.status === 403){
+        empty.textContent = "No audit entries visible (not an admin, or nothing logged yet).";
+      }else{
+        empty.textContent = `Audit log unreachable (HTTP ${r.status}). The backend may be down -- this is an outage, not an empty log.`;
+      }
       return;
     }
     const data = await r.json();
@@ -1529,16 +1848,56 @@ async function renderKeys(){
 const POLL_INTERVAL_MS = 10000;
 let lastAlertsSnapshot = null;
 let pollInFlight = false;
+// Gap-hunt (2026-08-26) #58: a range-picker change and the 10s poll both call
+// renderGlobal(); without a mutex two concurrent renders race and the stale
+// one can land last and get recorded as the current snapshot. Serialize all
+// global renders through this single promise-chain so only the freshest
+// render's result lands.
+let renderChain = Promise.resolve();
+function renderGlobalSerialized(fn){
+  renderChain = renderChain.then(fn, fn);
+  return renderChain;
+}
 async function pollGlobal(){
   if(document.hidden || pollInFlight) return;
   pollInFlight = true;
   try{
-    const alerts = await getAlerts();
-    if(!LIVE) return; // nothing to poll against in mock mode
-    const snapshot = JSON.stringify(alerts);
+    // Gap-hunt finding (2026-08-23): this used to `if(!LIVE) return` here,
+    // BEFORE renderGlobal() ever ran -- getAlerts() flipped LIVE to false as a
+    // side effect the moment a fetch failed, so the one call that updates the
+    // #apiStatus badge/live class was being skipped on EXACTLY the tick that
+    // needed to show it. Net effect: the feed could die and the dashboard
+    // would freeze on its last "live data" badge forever, no visible signal
+    // -- the mirror of the ws1-collectors ingest-silence gap on the read
+    // side. Falling through to the snapshot check below fixes it: a
+    // LIVE-true -> LIVE-false transition changes the alerts snapshot (real
+    // data -> empty list; getAlerts() returns [] on outage, never mock data),
+    // so it still renders and the badge flips honestly; recovery renders and
+    // flips back. An unchanging state (stuck live OR stuck unavailable) still
+    // short-circuits below exactly as before -- no extra DOM churn.
+    // R4-#65 (2026-08-27): getAlerts() is now a pure read ({alerts, live}); `live`
+    // is passed through to renderGlobal so the RENDER path (not the fetch) owns
+    // writing the global LIVE.
+    const fetched = await getAlerts();
+    const alerts = fetched.alerts;
+    const live = fetched.live;
+    // Gap-hunt (2026-08-26) #59: the snapshot was alerts-only, so a second
+    // analyst's triage change (status/note) never flipped the dedup and was
+    // invisible until the underlying alert SET changed. Include each alert's
+    // current triage in the comparison key -- cheap (≤50 alerts, only on
+    // changed alerts) and makes the dedup see triage writes too.
+    const triageKey = {};
+    await Promise.all((alerts||[]).slice(0, 200).map(async a => {
+      if(a.alert_id) triageKey[a.alert_id] = await fetchTriage(a.alert_id);
+    }));
+    const snapshot = JSON.stringify({alerts, triageKey});
     if(snapshot === lastAlertsSnapshot) return;
-    lastAlertsSnapshot = snapshot;
-    await renderGlobal(alerts);
+    try{
+      // Gap-hunt #58: serialize through the render mutex so this cannot race
+      // a range-picker change in flight.
+      await renderGlobalSerialized(() => renderGlobal(alerts, live));
+      lastAlertsSnapshot = snapshot;
+    }catch(e){ /* render failed -- leave snapshot unrecorded so next tick retries */ }
   }catch(e){ /* transient fetch/proxy hiccup -- next tick retries */ }
   finally{ pollInFlight = false; }
 }
@@ -1557,7 +1916,7 @@ async function getRules(){
       // override) but this fetch never sent tenant_id, so every caller saw the
       // SAME (tenant-agnostic) rule set regardless of who was logged in.
       const q = SESSION && SESSION.tenant_id ? `?tenant_id=${encodeURIComponent(SESSION.tenant_id)}` : "";
-      const r = await fetch(`${RULES_API}${q}`, {headers:{Accept:"application/json"}});
+      const r = await _fetch(`${RULES_API}${q}`, {headers:{Accept:"application/json"}});
       if(r.ok){ const data = await r.json(); return data.rules || []; }
     }catch(e){ /* fall through to mock */ }
   }
@@ -1565,7 +1924,10 @@ async function getRules(){
 }
 
 async function renderCoverage(){
-  const [rules, alerts] = await Promise.all([getRules(), getAlerts()]);
+  // getAlerts() now returns {alerts, live} (R4-#65) -- Coverage renders no
+  // badge state of its own, so it consumes only the alert list.
+  const [rules, fetched] = await Promise.all([getRules(), getAlerts()]);
+  const alerts = fetched.alerts;
   const alertCountByRuleId = {};
   alerts.forEach(a => {
     if(a.rule_id) alertCountByRuleId[a.rule_id] = (alertCountByRuleId[a.rule_id]||0) + 1;
@@ -1632,7 +1994,7 @@ async function getIncidents(){
   if(INCIDENTS_API){
     try{
       const q = SESSION && SESSION.tenant_id ? `?tenant_id=${encodeURIComponent(SESSION.tenant_id)}` : "";
-      const r = await fetch(`${INCIDENTS_API}${q}`, {headers:{Accept:"application/json"}});
+      const r = await _fetch(`${INCIDENTS_API}${q}`, {headers:{Accept:"application/json"}});
       if(r.ok){ const data = await r.json(); return data.incidents || []; }
     }catch(e){ /* fall through to mock */ }
   }
@@ -1712,7 +2074,17 @@ function showIncident(inc){
 // ---- LEVEL 2: inventory ----
 let ALL=[];
 async function renderInventory(){
-  ALL = await getAssets(); drawAssets(ALL);
+  // Gap-hunt (2026-08-26) #55: this had no .catch -- a rejected getAssets()
+  // (network/proxy down) left an unhandled rejection and a permanently
+  // empty table. getAssets() now returns [] on a failed live fetch, but a
+  // throw anywhere still gets caught here so the view degrades to a visible
+  // empty state instead of a dead tab.
+  try{
+    ALL = await getAssets();
+  }catch(e){
+    ALL = [];
+  }
+  drawAssets(ALL);
 }
 function drawAssets(list){
   document.getElementById("assetRows").innerHTML = list.map((a,i)=>`
@@ -1971,14 +2343,23 @@ let RULE_PLAYBOOK = null;   // {rule_id: playbookMarkdown} -- loaded once
 async function enrichPlaybooks(alerts){
   try{
     if(RULE_PLAYBOOK === null){
+      // Gap-hunt (2026-08-26) #61: RULE_PLAYBOOK starts null and becomes {}
+      // (or a filled map) only on a SUCCESSFUL load; an exception resets it
+      // to null below. That distinguishes "loaded empty" from "never
+      // loaded" -- a failed first warm-up (rules API down at boot) now
+      // retries on the NEXT call instead of being pinned empty forever.
       const rules = await getRules();
       RULE_PLAYBOOK = {};
       (rules||[]).forEach(r => { if(r && r.id && r.playbook) RULE_PLAYBOOK[r.id] = r.playbook; });
     }
     alerts.forEach(a => {
-      if(!a.playbook && a.rule_id && RULE_PLAYBOOK[a.rule_id]) a.playbook = RULE_PLAYBOOK[a.rule_id];
+      if(!a.playbook && a.rule_id && RULE_PLAYBOOK && RULE_PLAYBOOK[a.rule_id]) a.playbook = RULE_PLAYBOOK[a.rule_id];
     });
-  }catch(e){ /* playbook enrichment is best-effort; skip on any failure */ }
+  }catch(e){
+    // Gap-hunt #61: reset to "not yet loaded" so the NEXT call retries
+    // instead of being pinned empty forever.
+    RULE_PLAYBOOK = null;
+  }
   return alerts;
 }
 
@@ -1997,6 +2378,7 @@ async function boot(){
   renderIncidents().catch(err=>console.error("renderIncidents failed:",err));
   renderEvents().catch(err=>console.error("renderEvents failed:",err));
   renderOps().catch(err=>console.error("renderOps failed:",err));
+  renderMonitoring().catch(err=>console.error("renderMonitoring failed:",err));
   renderAudit().catch(err=>console.error("renderAudit failed:",err));
   renderKeys().catch(err=>console.error("renderKeys failed:",err));
 }
@@ -2006,7 +2388,9 @@ async function boot(){
 const rangeSelectEl = document.getElementById("rangeSelect");
 if(rangeSelectEl) rangeSelectEl.onchange = () => {
   CURRENT_RANGE = rangeSelectEl.value;
-  renderGlobal().catch(err=>console.error("renderGlobal failed:",err));
+  // Gap-hunt #58: serialize through the render mutex so a range change cannot
+  // race an in-flight poll's renderGlobal and have the stale render land last.
+  renderGlobalSerialized(() => renderGlobal()).catch(err=>console.error("renderGlobal failed:",err));
   renderEvents().catch(err=>console.error("renderEvents failed:",err));
   renderIncidents().catch(err=>console.error("renderIncidents failed:",err));
   renderAudit().catch(err=>console.error("renderAudit failed:",err));
@@ -2014,6 +2398,24 @@ if(rangeSelectEl) rangeSelectEl.onchange = () => {
 };
 initTheme();
 boot();
+// Gap-hunt (2026-08-26) #56: only the Overview tab polled (pollGlobal); every
+// other view (Inventory, Sources, Coverage, Incidents, Events, Ops, Audit,
+// Keys) rendered once at boot and never refreshed, despite copy promising
+// live /metrics data. Re-render the non-global views on the same interval --
+// cheap when nothing changed (their fetches return the current set), and it
+// only repaints the visible tab-bearing views, not the hidden Overview.
+setInterval(() => {
+  if(document.hidden) return;
+  renderSources().catch(err=>console.error("renderSources failed:",err));
+  renderCoverage().catch(err=>console.error("renderCoverage failed:",err));
+  renderIncidents().catch(err=>console.error("renderIncidents failed:",err));
+  renderEvents().catch(err=>console.error("renderEvents failed:",err));
+  renderOps().catch(err=>console.error("renderOps failed:",err));
+  renderMonitoring().catch(err=>console.error("renderMonitoring failed:",err));
+  renderAudit().catch(err=>console.error("renderAudit failed:",err));
+  renderInventory().catch(err=>console.error("renderInventory failed:",err));
+  renderKeys().catch(err=>console.error("renderKeys failed:",err));
+}, POLL_INTERVAL_MS);
 </script>
 </body>
 </html>

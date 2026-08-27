@@ -147,7 +147,10 @@ def main():
         if r.get("fired"):
             print("  ", r["file"], "FIRED", r["fired"], "| expected", r["expected"],
                   f"(supported={r['supported']})")
-    return 0
+    # Gap-hunt finding (2026-08-23): same fix as evtx_eval.py's main() --
+    # this built a real confusion matrix but never gated on it. Reuses that
+    # module's `_verdict` rather than duplicating the check.
+    return E._verdict(mismatches)
 
 
 if __name__ == "__main__":

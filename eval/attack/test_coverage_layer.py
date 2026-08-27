@@ -38,7 +38,18 @@ def test_known_technique_present_under_attack_framework():
     attack = coverage["by_framework"].get("attack", {})
     check("T1110" in attack, "T1110 (brute force, common_bruteforce.yml) must appear "
                               "under the 'attack' framework")
-    check("common_bruteforce" not in str(attack.get("T1110", {})) or True, "sanity: no crash")
+    # Gap-hunt finding (2026-08-26): the previous line here was
+    #   check("common_bruteforce" not in str(attack.get("T1110", {})) or True, "sanity")
+    # -- the trailing `or True` made it unconditionally green forever. It now
+    # asserts the thing that line was really probing: T1110's entry is a
+    # non-empty, correctly-attributed mapping (a coverage parser that silently
+    # produced an empty or mis-keyed entry must fail here, not pass).
+    brute_id = "6f1c8a2e-0d3b-4c11-9a21-7b5e2f9a1c01"  # common_bruteforce.yml
+    entry = attack.get("T1110")
+    check(isinstance(entry, dict) and isinstance(entry.get("rules"), list)
+          and brute_id in entry["rules"],
+          f"T1110 coverage must attribute common_bruteforce.yml (id {brute_id}), "
+          f"got {entry!r}")
 
 
 def test_rule_with_no_mitre_block_is_flagged_undeclared():
@@ -78,12 +89,33 @@ def test_navigator_layer_shape():
               f"declared-coverage entries must be scored 1/enabled, got {t}")
 
 
+def test_main_fails_on_empty_rule_set():
+    """NEW-hunt (2026-08-27): main() used to return 0 unconditionally, so an
+    empty/mis-shaped rules dir printed a 0-rule scorecard and exited green --
+    the same vacuous-pass shape as the empty count floors elsewhere. A
+    scorecard over zero rules must fail loudly."""
+    import contextlib, io, tempfile
+    orig_dir = coverage_layer.RULES_DIR
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            coverage_layer.RULES_DIR = Path(td)  # empty
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                rc = coverage_layer.main()
+            check(rc != 0, f"empty rules dir must FAIL, got rc={rc}")
+            check("[FAIL]" in buf.getvalue(),
+                  f"empty rules dir must print a [FAIL], got:\\n{buf.getvalue()}")
+    finally:
+        coverage_layer.RULES_DIR = orig_dir
+
+
 def run():
     test_every_rule_file_is_loaded()
     test_known_technique_present_under_attack_framework()
     test_rule_with_no_mitre_block_is_flagged_undeclared()
     test_navigator_layer_only_covers_frameworks_navigator_understands()
     test_navigator_layer_shape()
+    test_main_fails_on_empty_rule_set()
 
 
 def main():

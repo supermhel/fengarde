@@ -24,7 +24,7 @@ cd services/ws2-normalization && python test_contract.py
 
 ---
 
-## The three edits
+## The four edits
 
 We'll add a fictional `acme_firewall` parser as the running example. Substitute your
 real source type and OCSF mapping.
@@ -69,14 +69,16 @@ Now edit `acme_firewall.py`. The key pieces of a parser are:
        # classify into an OCSF class_uid + activity_id + severity
 
        event = self.base_event(
-           class_uid=4001,          # e.g. Network Activity; pick the right OCSF class
-           activity_id=6,           # per contracts/ocsf-classes.md
-           severity_id=SEV_HIGH,
-           time_ms=...,             # event time in epoch ms
-           ingest_id=meta.get("ingest_id"),
-           status="...",            # optional
-           message="...",           # optional human-readable summary
-       )
+                 class_uid=4001,          # e.g. Network Activity; pick the right OCSF class
+                 activity_id=6,           # per contracts/ocsf-classes.md
+                 severity_id=SEV_HIGH,
+                 time_ms=...,             # event time in epoch ms
+                 meta=meta,               # the raw pre-parser log record (source_type + raw + extras)
+                 ingest_id=meta.get("ingest_id"),
+                 sector="common",         # bank | datacenter | common -- feeds siem.sector for rules
+                 status="...",            # optional
+                 message="...",           # optional human-readable summary
+             )
        event["src_endpoint"] = {"ip": src_ip}   # parser fills these in
        # event["dst_endpoint"] = {...}
        # event["actor"] = {"user": {"name": user}}
@@ -104,7 +106,7 @@ Now edit `acme_firewall.py`. The key pieces of a parser are:
 ### Edit 2 — register the parser
 
 Open `services/ws2-normalization/parsers/__init__.py` and register your class in the
-registry (the `_REGISTRY` dict, around **line 33**). Add the import and add an instance to the `_REGISTRY`
+registry (the `_REGISTRY` dict, around **line 34**). Add the import and add an instance to the `_REGISTRY`
 comprehension:
 
 ```python
@@ -148,6 +150,40 @@ sample-driven. Two small additions:
 The test then parses your sample, validates the OCSF output, checks the `type_uid`
 invariant, and confirms the class/sector match — and runs your sample through the full
 in-memory bus loop alongside the others.
+
+### Edit 4 — add a rule-producer fixture (do not skip this)
+
+`tools/check_rule_producers.py` is a separate, mandatory gate (`make test` runs it) from
+the contract test above — it proves every detection rule's fields are actually
+producible by SOME real parser, not just present in a synthetic sample. It works off its
+OWN fixture set, `FIXTURES` in that file, keyed by `source_type` — **your new parser
+needs its own entry there too**, even though it already has one in
+`raw_samples.json` for Edit 3.
+
+This step has a real history of being skipped: the `sysmon` parser shipped without a
+`FIXTURES` entry and sat completely unchecked for a month before anyone noticed (the
+gate's own missing-fixture check existed but wasn't wired into its exit code at the
+time). That's now fixed — a missing entry is a hard `[FAIL]`, not a silent skip — so
+skipping this step no longer ships silently, but it still means your first CI run fails
+instead of your PR being clean the first time.
+
+Add an entry mirroring your Edit-3 sample(s):
+
+```python
+FIXTURES: dict[str, list[dict]] = {
+    ...
+    "acme_firewall": [
+        {"raw": "...", "meta": {}},
+    ],
+}
+```
+
+Verify it's wired correctly:
+
+```sh
+python tools/check_rule_producers.py
+# -> [OK] all N rules are satisfiable by a real event ...
+```
 
 ---
 
@@ -194,3 +230,4 @@ cd services/ws4-detection && python test_contract.py
 - `services/ws2-normalization/parsers/__init__.py` — the registry (Edit 2).
 - `contracts/ocsf-classes.md` — OCSF classes and activity_ids you can map to.
 - `services/ws2-normalization/test_contract.py` — the zero-infra verifier (Edit 3).
+- `tools/check_rule_producers.py` — the anti-dormancy fixture gate (Edit 4).

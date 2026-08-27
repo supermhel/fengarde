@@ -82,10 +82,18 @@ def test_never_fired_rule_absent_not_fabricated():
         detector = ws4.Detector(plugin_rule_dirs=[])
         rule_id = detector.rules[0].id
         metrics = detector.rule_health_metrics()
+        # A rule that hasn't fired must NOT appear as a fabricated
+        # `rule_last_fired_timestamp:<id>` (0.0 is a lie about when it
+        # fired) -- the deliberate prior contract. It IS surfaced via the
+        # distinct `rule_never_fired:<id>`=1 marker (gap-hunt 2026-08-26
+        # #15) so a dead rule stays visible to the Grafana panel without a
+        # made-up timestamp.
         check(f"rule_last_fired_timestamp:{rule_id}" not in metrics,
-              "a rule that hasn't fired must be ABSENT from rule_health_metrics, "
-              "not present with a fabricated 0/None value")
-        check(metrics == {}, f"expected no rule-health entries yet, got {metrics}")
+              "a rule that hasn't fired must be ABSENT from the last-fired "
+              "series, not present with a fabricated 0/None value")
+        check(metrics.get(f"rule_never_fired:{rule_id}") == 1,
+              f"a never-fired rule must be visible via rule_never_fired:"
+              f"{rule_id}, got {metrics}")
     _with_tmp_rules_dir(body)
 
 

@@ -163,8 +163,29 @@ class DequeWindowCounter:
             _, evicted_member = w.popleft()
             if evicted_member is not None:
                 members.discard(evicted_member)
-        # Redelivery guard: a member already alive in the window counts once.
+        # Redelivery guard: a member already alive in the window counts once,
+        # but its timestamp is REFRESHED to now_ms (R3-#61, 2026-08-27) --
+        # parity with RedisWindowCounter, where ZADD on an already-present
+        # member updates its score. Without the refresh, a member that keeps
+        # being redelivered just inside the window would still age out at the
+        # window boundary on the deque backend while the Redis backend kept
+        # it alive -- the two backends disagreed on when a recurring value
+        # expires.
         if member is not None and member in members:
+            for i, (_t, _m) in enumerate(w):
+                if _m == member:
+                    w[i] = (now_ms, member)
+                    break
+            # keep the deque time-sorted (C1): the refreshed entry may no
+            # longer be at its old position relative to its neighbours.
+            items = list(w)
+            items.sort(key=lambda e: e[0])
+            w = deque(items)
+            self._w[key] = w
+            while w and w[0][0] < horizon:
+                _, evicted_member = w.popleft()
+                if evicted_member is not None:
+                    members.discard(evicted_member)
             count = len(w)
         else:
             if w and now_ms < w[-1][0]:

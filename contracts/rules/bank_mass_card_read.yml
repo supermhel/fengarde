@@ -1,17 +1,26 @@
-title: One account reading many distinct database objects (bank)
+title: Mass cardholder-data read (one database object hammered, bank)
 id: d4e5f607-8192-4a31-8b4c-5d6e7f809104
 status: stable
 description: >
-  One account running 20+ SELECT/query operations against 20+ DISTINCT
-  database objects/tables within 300 seconds (OCSF Datastore Activity, class
-  6005, activity 1 Query), scoped to the bank sector. A proxy for mass
-  cardholder-data enumeration -- the PCI-DSS headline scenario this repo's
-  bank vertical exists for -- not a precise "read N distinct PANs" signal
-  (this repo's OCSF profile doesn't carry per-row/per-column read detail,
-  only which database object was touched). A legitimate reporting job that
-  scans many tables will also trip this; tune the threshold or add an
-  allowlist for known batch-report service accounts before trusting it as a
-  strong signal.
+  One database object/table receiving 20+ SELECT/query operations within 300
+  seconds (OCSF Datastore Activity, class 6005, activity 1 Query), scoped to
+  the bank sector. A proxy for mass cardholder-data enumeration -- the
+  PCI-DSS headline scenario this repo's bank vertical exists for -- not a
+  precise "read N distinct PANs" signal (this repo's OCSF profile doesn't
+  carry per-row/per-column read detail, only which database object was
+  touched).
+  Shape note (fixed 2026-08-26): this rule used to distinct-count
+  unmapped.db.object per account ("one account reading many DISTINCT
+  tables"), which was blind to the actual dump shape -- a mass dump is ONE
+  table read N million times (distinct count stays 1 forever) while a benign
+  nightly report touching 20 small tables scored 20. It now counts QUERY
+  EVENTS per object ("the same table hammered N times in a window"), which is
+  exactly the dump shape. Precision cost of the fix: the group is the OBJECT,
+  not the account, so several service accounts hammering one shared table sum
+  together -- a genuinely hot shared table (e.g. a batch-reporting tier
+  polling a reference table at >20 reads / 5 min) can false-positive; tune
+  the threshold or add an allowlist for known batch-report service accounts
+  before trusting it as a strong signal.
 level: high
 logsource:
   category: datastore_activity
@@ -29,8 +38,7 @@ siem:
   score_weight: 65
   window_seconds: 300
   threshold: 20
-  group_by: actor.user.name
-  distinct_field: unmapped.db.object
+  group_by: unmapped.db.object
 mitre:
   tactic: TA0009      # Collection
   technique: T1005    # Data from Local System

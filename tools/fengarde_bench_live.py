@@ -270,6 +270,14 @@ def main() -> int:
 
     if args.json:
         print(json.dumps(result, indent=2))
+        # Gap-hunt (2026-08-26) R4-109: a backlog that never drained
+        # (reached_target=False) is NOT a clean run -- return nonzero so a
+        # scripted caller sees the failure.
+        if "eps" in result and not result["eps"]["reached_target"]:
+            return 1
+        if not result:
+            print("[FAIL] nothing was measured (both --skip-eps and --skip-latency)")
+            return 1
         return 0
 
     print()
@@ -286,6 +294,16 @@ def main() -> int:
         latn = result["latency"]
         print(f"  ingest->alert latency: p50={latn['p50_ms']}ms p99={latn['p99_ms']}ms "
               f"({latn['samples_collected']}/{latn['k_bursts']} bursts produced a visible alert)")
+    # Gap-hunt (2026-08-26) R4-109: main() used to return 0 unconditionally, so
+    # a backlog that never drained (reached_target=False) was indistinguishable
+    # from a clean run to any scripted caller.
+    if "eps" in result and not result["eps"]["reached_target"]:
+        print("[FAIL] EPS backlog never reached the target count -- the run "
+              "did not drain; treat the numbers as inconclusive, not a clean result.")
+        return 1
+    if not result:
+        print("[FAIL] nothing was measured (both --skip-eps and --skip-latency given).")
+        return 1
     return 0
 
 

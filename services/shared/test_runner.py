@@ -476,6 +476,48 @@ def _test_prometheus_metrics_endpoint():
 
 
 # --------------------------------------------------------------------------- #
+# Gap-hunt finding (2026-08-23): _topic_worker's two except-Exception blocks
+# (bus.claim_pending / bus.consume itself raising -- connection drop, not a
+# handler failure) updated state.mark_error() (so /health goes 503) but never
+# touched Metrics -- an operator watching ONLY /metrics or /metrics/prom (the
+# convention every other outcome in this file uses) saw nothing at all for
+# this failure class, just an absence of `acked` increments, indistinguishable
+# from a genuinely idle topic. Drives the REAL _topic_worker (not a
+# reimplementation) with a fake bus whose consume()/claim_pending() both
+# raise, so both except blocks fire.
+def _test_topic_worker_bus_error_increments_metrics():
+    topic = _unique_topic("t.bus-error")
+    metrics = runner.Metrics()
+    state = runner.HealthState()
+
+    class _AlwaysBrokenBus:
+        def claim_pending(self, *_a, **_k):
+            raise ConnectionError("redis down (claim_pending)")
+
+        def consume(self, *_a, **_k):
+            raise ConnectionError("redis down (consume)")
+
+    shutdown = threading.Event()
+    t = threading.Thread(
+        target=runner._topic_worker,
+        args=(lambda: _AlwaysBrokenBus(), topic, "cg-broken", lambda p: None),
+        kwargs=dict(max_redeliveries=5, shutdown=shutdown, claim_idle_ms=60000,
+                    idle_sleep_s=0.05, consume_block_ms=100,
+                    service_name="test-svc", state=state, metrics=metrics),
+        daemon=True)
+    t.start()
+    time.sleep(0.3)  # let at least one full claim_pending+consume pass run
+    shutdown.set()
+    t.join(timeout=2)
+
+    check(state.bus_ok is False, "a permanently broken bus must leave /health degraded")
+    snap = metrics.snapshot()
+    check(snap.get(topic, {}).get("bus_error", 0) >= 1,
+          f"bus.claim_pending()/consume() raising must increment metrics "
+          f"'bus_error', not just /health -- got {snap}")
+
+
+# --------------------------------------------------------------------------- #
 # P2.4: start_depth_watchdog logs when a topic's backlog crosses warn_at, and
 # warn_at<=0 disables it (returns None, spawns no thread).
 # P1-7 (2026-07-21 audit): the watchdog now samples bus.lag() (true consumer
@@ -513,6 +555,7 @@ def _test_depth_watchdog():
 def main():
     _test_health_degraded()
     _test_metrics_counts_outcomes()
+    _test_topic_worker_bus_error_increments_metrics()
     _test_prometheus_metrics_endpoint()
     _test_depth_watchdog()
     parametrized = [

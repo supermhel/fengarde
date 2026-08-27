@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import os
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -46,7 +47,9 @@ ALLOWLISTS_DIR = _CONTRACTS / "allowlists"
 
 
 class Detector:
-    def __init__(self, tenants_dir: Path = TENANTS_DIR,
+    def __init__(self, tenants_dir: Path | None = None,
+                 rules_dir: Path | None = None,
+                 allowlists_dir: Path | None = None,
                  plugin_rule_dirs: list[Path] | None = None,
                  force_linear_scan: bool = False):
         """``plugin_rule_dirs``: directories of extra rule YAML to merge in,
@@ -69,8 +72,18 @@ class Detector:
         self._plugin_rule_dirs = (
             [d for _name, d in discover_rule_pack_dirs()]
             if plugin_rule_dirs is None else plugin_rule_dirs)
+        # R4-30 (2026-08-27 contract gap-hunt): resolve dirs at CONSTRUCTION
+        # time, not as DEF-time default args -- a def-time default binds the
+        # module global ONCE at import, so a monkeypatched/overridden
+        # RULES_DIR would never be seen and a custom-dir instance couldn't
+        # exist. Each Detector now owns ITS dirs; _load()/reload() read
+        # self.rules_dir/self.allowlists_dir/self.tenants_dir below (never
+        # the module globals), so a detector pointed at custom dirs loads
+        # AND hot-reloads THOSE dirs, consistently.
+        self.rules_dir = Path(rules_dir) if rules_dir is not None else Path(RULES_DIR)
+        self.allowlists_dir = Path(allowlists_dir) if allowlists_dir is not None else Path(ALLOWLISTS_DIR)
+        self.tenants_dir = Path(tenants_dir) if tenants_dir is not None else Path(TENANTS_DIR)
         self.scorer = Scorer(SCORING_YAML)
-        self.tenants_dir = tenants_dir
         # Detector-owned (not Rule-owned) so it survives reload(): each
         # DequeWindowCounter.hit()/hit_distinct() call is keyed by a string
         # that already starts with the rule's id (engine.py's window_key),
@@ -94,42 +107,77 @@ class Detector:
         # aggregation): each WS-4 replica reports its own view, same scope as
         # every other counter this module already tracks via shared.runner.Metrics.
         self.rule_last_fired: dict[str, float] = {}
+        # Gap-hunt (2026-08-26): the scored/alerts/ai_enqueued counters used to
+        # live ONLY in run(), the batch path the daemon never calls -- the prod
+        # detect_one path exposed zero counters. Tracked on the detector now so
+        # BOTH paths (run() and detect_one/_emit) feed the same gauges, exposed
+        # via metrics()/main()'s metrics_provider.
+        self.stats: dict[str, int] = {"scored": 0, "alerts": 0,
+                                      "ai_enqueued": 0, "classifier_enqueued": 0}
+        # R4-26 (2026-08-27): reload() swaps `rules` and `_by_class_uid` as a
+        # TORN-READ-SAFE pair. `process()`/`rule_health_metrics` read each of
+        # these attributes independently (a single LOAD_ATTR is atomic), but
+        # the SWAP is two separate STOREs -- without a lock a concurrent
+        # reload thread could interleave between them. Guarding the swap with
+        # this RLock + having process() capture its bucket index under the
+        # same lock means a reader can never observe a half-swapped rule set.
         self.rules, self._by_class_uid = self._load()
+        self._rules_lock = threading.RLock()
 
     def record_fire(self, rule_id: str, ts: float | None = None) -> None:
-        """Record that ``rule_id`` fired, for the rule-health Prometheus surface.
-
-        Never fabricates a value for a rule that hasn't fired: absence from
-        ``rule_last_fired`` (and so from ``rule_health_metrics()``'s output) IS
-        the signal that a rule is dead or has simply never fired yet -- an
-        operator distinguishes the two via how long the process has been up,
-        same as any other Prometheus gauge that only appears after a first
-        observation."""
+        """Record that ``rule_id`` fired, for the rule-health Prometheus surface."""
         self.rule_last_fired[rule_id] = time.time() if ts is None else ts
 
     def rule_health_metrics(self) -> dict:
         """Zero-arg callable shape expected by ``shared.runner.serve``'s
-        ``metrics_provider`` -- one gauge per rule that has fired at least
-        once this process, the UNIX timestamp of its most recent fire.
-        Standard Prometheus idiom (a `_timestamp_seconds` gauge, not a
-        precomputed "seconds ago") so an operator's own alert rule decides
-        the staleness threshold (`time() - metric > N`) rather than this
-        service baking one in."""
-        return {f"rule_last_fired_timestamp:{rule_id}": ts
-                for rule_id, ts in self.rule_last_fired.items()}
+        ``metrics_provider``.
+
+        TWO series, so never-firing rules are visible WITHOUT fabricating a
+        timestamp (a deliberate prior contract -- test_rule_health.py rejects
+        a made-up ``rule_last_fired_timestamp:0``):
+
+          * ``rule_last_fired_timestamp:<id>`` -- the real most-recent fire
+            epoch for rules that HAVE fired (unchanged, honest).
+          * ``rule_never_fired:<id>`` = 1 -- one gauge per LOADED rule that
+            has NEVER fired (gap-hunt 2026-08-26 #15). A dead/never-firing
+            rule is otherwise invisible to the Grafana panel built to catch
+            it; this distinct key flags it from boot without lying about the
+            last-fired time. Rebuilt from the CURRENT rule set each call, so
+            a rule removed by a reload drops out of both series.
+        """
+        out = {f"rule_last_fired_timestamp:{r.id}": self.rule_last_fired[r.id]
+               for r in self.rules if r.id in self.rule_last_fired}
+        for r in self.rules:
+            if r.id not in self.rule_last_fired:
+                out[f"rule_never_fired:{r.id}"] = 1
+        return out
+
+    def metrics(self) -> dict:
+        """Combined metrics_provider for the daemon (main()): the per-rule
+        rule-health gauges PLUS the emit-path counters that only run() used to
+        track (gap-hunt 2026-08-26) -- detect_one, the real daemon path, now
+        bumps self.stats via _emit(), so /metrics reflects production."""
+        out = self.rule_health_metrics()
+        out.update({
+            "detection_scored_total": self.stats["scored"],
+            "detection_alerts_total": self.stats["alerts"],
+            "detection_ai_enqueued_total": self.stats["ai_enqueued"],
+            "detection_classifier_enqueued_total": self.stats["classifier_enqueued"],
+        })
+        return out
 
     def _load(self):
         """Load base + plugin rules and bucket them by class_uid. Raises on
         any parse/validation error -- callers decide what to do with a
         failed load (__init__ lets it propagate; reload() catches it)."""
-        rules = load_rules(RULES_DIR, ALLOWLISTS_DIR)
+        rules = load_rules(self.rules_dir, self.allowlists_dir)
         # A plugin rule whose id collides with an already-loaded one (built-
         # in or an earlier plugin) is skipped -- whichever loaded first
         # wins, so a plugin extends detection but can never silently
         # replace an existing rule's condition.
         seen_ids = {r.id for r in rules}
         for plugin_dir in self._plugin_rule_dirs:
-            for rule in load_rules(plugin_dir, ALLOWLISTS_DIR):
+            for rule in load_rules(plugin_dir, self.allowlists_dir):
                 if rule.id in seen_ids:
                     continue
                 rules.append(rule)
@@ -170,8 +218,12 @@ class Detector:
             get_logger("ws4-detection").warn(
                 "rule reload failed, keeping previous rule set", error=repr(exc))
             return False
-        self.rules = new_rules
-        self._by_class_uid = new_by_class_uid
+        # R4-26: swap rules AND the class_uid bucket index as one critical
+        # section so a concurrent process() can never read the new rules but
+        # the old index (or vice versa) -- a torn-read of a hot-reload.
+        with self._rules_lock:
+            self.rules = new_rules
+            self._by_class_uid = new_by_class_uid
         return True
 
     def process(self, event: dict):
@@ -188,10 +240,15 @@ class Detector:
             # evaluate every catch-all rule TWICE against such an event (double
             # stateful-window hits / duplicate alerts). When the class is present,
             # the class bucket is combined with the catch-all as before.
+            # R4-26: grab the bucket index ONCE under the same lock reload() uses
+            # to swap it, so the two lookups below can never straddle a reload
+            # (the old code read self._by_class_uid twice -- two could-race loads).
+            with self._rules_lock:
+                by_uid = self._by_class_uid
             if class_uid is None:
-                candidates = self._by_class_uid[None]
+                candidates = by_uid[None]
             else:
-                candidates = self._by_class_uid.get(class_uid, []) + self._by_class_uid[None]
+                candidates = by_uid.get(class_uid, []) + by_uid[None]
         # M4 multi-tenancy: a tenant's config can disable specific global
         # rules for their own events (contracts/tenants/<tenant_id>.yml).
         # Missing config/entry -> nothing disabled (fail open to detection,
@@ -202,7 +259,15 @@ class Detector:
             candidates = [r for r in candidates if r.id not in disabled]
         matched = [r for r in candidates if r.evaluate(event)]
         score = self.scorer.score(matched)
-        event.setdefault("siem", {})["score"] = score
+        # R4-28 (2026-08-27): the old `event.setdefault("siem", {})["score"]`
+        # raised TypeError on a `siem: null` event -- setdefault returns the
+        # literal None (the key IS present) and None["score"] exploded. Read
+        # through `(event.get("siem") or {})` so a siem:null (or siem:[]) event
+        # FAILS CLOSED to a fresh empty dict (score still stamped, detection
+        # proceeds) instead of crashing the consumer.
+        siem = event.get("siem") or {}
+        siem["score"] = score
+        event["siem"] = siem
         # Design-B (2026-07-29 audit): route off routing_score, NOT the
         # analyst-facing score -- routing_score is the one that respects a
         # matched rule's llm_gate:false opt-out. The stored/displayed score
@@ -210,55 +275,171 @@ class Detector:
         action = self.scorer.route(self.scorer.routing_score(matched))
         return event, matched, action
 
-    def _funnel_dedup(self, event: dict, matched: list) -> bool:
-        """FIX 22 (2026-08-06): gate an ``ai.requests`` enqueue. Returns True
-        when at least one matched rule's alert_key is not within the LLM-funnel
-        cooldown, recording the qualifying keys via Scorer.should_enqueue_llm so
-        a hot rule fires the funnel at most once per alert-key per cooldown.
-        No matched rules -> no dedup to apply (True)."""
+    def _funnel_fresh(self, event: dict, matched: list) -> bool:
+        """FIX 22: gate an ``ai.requests`` enqueue. Returns True when at least
+        one matched rule's alert_key is not within the LLM-funnel cooldown.
+        No matched rules -> no dedup to apply (True).
+
+        Gap-hunt (2026-08-26): this is a pure CHECK -- it must NOT record the
+        cooldown (the old ``_funnel_dedup`` did, via Scorer.should_enqueue_llm,
+        which committed the cooldown BEFORE bus.produce ran). Commit the
+        cooldown with ``_record_funnel`` ONLY after produce succeeds, so a
+        produce failure leaves the gate open for redelivery to re-enqueue."""
         if not matched:
             return True
-        fresh = False
         for rule in matched:
-            if self.scorer.should_enqueue_llm(rule.alert_key(event)):
-                fresh = True
-        return fresh
+            if self.scorer.is_llm_funnel_fresh(rule.alert_key(event)):
+                return True
+        return False
+
+    def _record_funnel(self, event: dict, matched: list) -> None:
+        """Commit the LLM/classifier-funnel cooldown for every matched rule's
+        alert_key. Call ONLY after ``bus.produce('ai.requests', ...)`` returned
+        successfully (see _funnel_fresh)."""
+        for rule in matched:
+            self.scorer.record_enqueue(rule.alert_key(event))
+
+    def _emit(self, bus, event: dict, matched: list, action: str) -> tuple[int, int, int]:
+        """Emit the scored/alert/funnel records for one processed event. This
+        is the SINGLE code path behind BOTH detect_one() and run() -- the two
+        used to be independent parallel copies that had to be changed in lockstep
+        (their docstrings warned about exactly that drift). Returns
+        ``(n_alerts, n_ai_enqueued, n_classifier_enqueued)`` for run()'s stats
+        (detect_one ignores the return).
+
+        Ordering contract (gap-hunt 2026-08-26, CRITICAL): the ``ai.requests``
+        emit is CHECK -> PRODUCE -> RECORD. The funnel cooldown entry is only
+        committed AFTER ``bus.produce`` returns. If produce raises, this method
+        propagates (callers re-raise), the message stays unacked, and the next
+        redelivery re-checks a FRESH gate and re-enqueues. Committing the
+        cooldown before produce meant a produce failure silently skipped the
+        re-enqueue forever (2 alerts, 0 ai.requests, no exception/error/metric).
+        """
+        key = (event.get("src_endpoint") or {}).get("ip", "0.0.0.0")
+        bus.produce("scored.events", key=key, payload=event)
+        self.stats["scored"] += 1
+        n_alerts = n_ai = n_clf = 0
+        for rule in matched:
+            # R4-28: `(event.get("siem") or {})` so a defensive read never raises
+            # on a siem:null envelope (process() normalizes it to a dict anyway).
+            alert = make_alert(event, rule, (event.get("siem") or {})["score"])
+            bus.produce("alerts", key=alert["alert_id"], payload=alert)
+            self.record_fire(rule.id)
+            self.stats["alerts"] += 1
+            n_alerts += 1
+        # P1-2 (2026-07-21 audit): scoring.yaml/sigma-convention.md promise a
+        # 20-59 "light classifier" band, but only action==\"llm\" (>=60) ever
+        # reached ai.requests -- the band was dead, scores 20-59 got indexed and
+        # never classified. `tier` tells WS-5 which layer to run: "llm" pays for
+        # a real model call; "classifier" runs only the cheap deterministic/ML
+        # classifier (classifier.py) -- never the LLM, or the whole point of a
+        # separate cheap tier is defeated.
+        # Gap-hunt finding (R4-27): the funnel key used to be
+        # `(event.get("siem") or {}).get("ingest_id", key)` -- the default
+        # only fires when the KEY is ABSENT, so a present-but-None ingest_id
+        # (an envelope where `ingest_id` exists with a null value) silently
+        # produced a None funnel key for EVERY such event, collapsing them
+        # all onto one ai.requests stream key. Fall back whenever the VALUE
+        # is None too, not just when the key is missing.
+        siem = event.get("siem") or {}
+        ingest_id = siem.get("ingest_id")
+        funnel_key = ingest_id if ingest_id is not None else key
+        if action in ("llm", "classifier") and self._funnel_fresh(event, matched):
+            bus.produce("ai.requests", key=funnel_key,
+                        payload={"event_id": ingest_id,
+                                 "event": event, "tier": action,
+                                 "reason": [r.title for r in matched]})
+            self._record_funnel(event, matched)  # only AFTER produce succeeded
+            # Gap-hunt #9 (2026-08-27) miscount: ``ai_enqueued`` used to bump
+            # for BOTH the "llm" and "classifier" actions while a SEPARATE
+            # ``classifier_enqueued`` counter also existed for the latter --
+            # so ai_enqueued over-counted LLM cost by folding in every cheap
+            # classifier-tier enqueue. The counter is an LLM-COST signal
+            # (LLM $.mint is driven off it); it now counts ONLY tier="llm".
+            # Both tiers still land in ai.requests; the classifier tier is
+            # tracked by ``classifier_enqueued`` (and its own metric), never
+            # double-counted into the LLM gauge.
+            if action == "llm":
+                self.stats["ai_enqueued"] += 1
+                n_ai += 1
+            else:  # action == "classifier"
+                self.stats["classifier_enqueued"] += 1
+                n_clf += 1
+        return n_alerts, n_ai, n_clf
+
+
+def rules_fingerprint(rules_dir: Path = RULES_DIR, allowlists_dir: Path = ALLOWLISTS_DIR,
+                      tenants_dir: Path = TENANTS_DIR,
+                      plugin_rule_dirs: list[Path] | tuple | None = None) -> tuple:
+    """Sorted ``(filename, mtime)`` tuple across every rule/allowlist/tenant-
+    config/plugin-pack YAML, ``()`` if none of the dirs exist. Used by the B4
+    hot-reload poll to detect "something on disk changed" without re-parsing
+    on every tick.
+
+    Gap-hunt (2026-08-26): the old poll compared only the MAX mtime, so
+    deleting/restoring a NON-newest file (whose mtime is rarely the max) never
+    changed the poll value and the watcher never reloaded. A fingerprint of ALL
+    files sees any add/remove/edit. Tenants_dir is included for the same reason
+    rules_max_mtime included it (a tenant disabled-rules edit must take effect).
+
+    Gap-hunt #5 (2026-08-27): ``plugin_rule_dirs`` (the detector's
+    ``_plugin_rule_dirs``) are folded into the fingerprint so editing a
+    plugin rule pack actually changes the poll value -- before this, the
+    fingerprint ignored plugin dirs entirely, so a plugin edit could never
+    trigger a hot-reload.
+
+    ``(name, mtime)`` (not a full path) is enough: on a duplicate name the
+    stable sort preserves the fixed rules->allowlists->tenants->plugins
+    iteration order, so the tuple is deterministic for a given set of
+    dirs/files/mtimes."""
+    entries: list[tuple] = []
+    dirs = [rules_dir, allowlists_dir, tenants_dir]
+    for p in (plugin_rule_dirs or ()):
+        dirs.append(p)
+    for d in dirs:
+        d = Path(d)
+        if not d.is_dir():
+            continue
+        for f in d.glob("*.yml"):
+            try:
+                entries.append((f.name, f.stat().st_mtime))
+            except OSError:
+                pass
+    return tuple(sorted(entries))
 
 
 def rules_max_mtime(rules_dir: Path = RULES_DIR, allowlists_dir: Path = ALLOWLISTS_DIR,
                     tenants_dir: Path = TENANTS_DIR) -> float:
     """Max mtime across every rule/allowlist/tenant-config YAML, 0.0 if none
-    of the dirs exist. Used by the B4 hot-reload poll to detect "something on
-    disk changed" without re-parsing on every tick.
-
-    tenants_dir is included so an operator editing a tenant's disabled-rules
-    config on disk (e.g. re-enabling a rule mid-incident) actually takes
-    effect -- tenants.py's per-tenant cache has no TTL/mtime check of its
-    own; this poll + start_rule_reload_watcher's cache-clear are the only
-    invalidation path."""
+    of the dirs exist. Kept as a compatibility view over rules_fingerprint();
+    the B4 hot-reload poll must use rules_fingerprint() instead -- a max-mtime
+    comparison cannot see the delete/restore of a non-newest file, so such a
+    change would never trigger a reload (gap-hunt 2026-08-26)."""
     latest = 0.0
-    for d in (rules_dir, allowlists_dir, tenants_dir):
-        if not d.is_dir():
-            continue
-        for f in d.glob("*.yml"):
-            try:
-                latest = max(latest, f.stat().st_mtime)
-            except OSError:
-                pass
+    for _name, mtime in rules_fingerprint(rules_dir, allowlists_dir, tenants_dir):
+        latest = max(latest, mtime)
     return latest
 
 
 def start_rule_reload_watcher(detector: "Detector", shutdown, interval_s: float,
-                              rules_dir: Path = RULES_DIR, allowlists_dir: Path = ALLOWLISTS_DIR,
-                              tenants_dir: Path = TENANTS_DIR):
+                              rules_dir: Path | None = None,
+                              allowlists_dir: Path | None = None,
+                              tenants_dir: Path | None = None):
     """B4: opt-in mtime-poll hot-reload. Returns None (no thread) when
     ``interval_s <= 0`` -- the default, byte-for-byte the pre-B4 behavior.
     Otherwise starts a daemon thread that calls ``detector.reload()`` at
-    most once per ``interval_s`` seconds, only when the rules/allowlists/
-    tenants directories' max mtime has actually changed since the last
-    check. Also clears tenants.py's per-tenant cache on every such tick,
-    since a tenant-config-only edit doesn't change RULES_DIR/ALLOWLISTS_DIR
-    and detector.reload() alone would never pick it up."""
+    most once per ``interval_s`` seconds, only when the directories'
+    FINGERPRINT (all files' (name, mtime), not just the max mtime -- gap-hunt
+    2026-08-26) has actually changed since the last check. Also clears
+    tenants.py's per-tenant cache on every such tick, since a tenant-config-only
+    edit doesn't change RULES_DIR/ALLOWLISTS_DIR and detector.reload() alone
+    would never pick it up.
+
+    R4-30/F7 (2026-08-27): the watched dirs resolve to the DETECTOR'S OWN
+    dirs (``rules_dir``/``allowlists_dir``/``tenants_dir``/``_plugin_rule_dirs``)
+    -- a custom-dir detector hot-reloads ITS dirs, never the module globals,
+    and plugin rule-pack edits are folded into the fingerprint so they too
+    trigger a reload. The explicit dir params remain as an override."""
     if interval_s <= 0:
         return None
     import threading
@@ -266,13 +447,21 @@ def start_rule_reload_watcher(detector: "Detector", shutdown, interval_s: float,
     from tenants import invalidate_cache as invalidate_tenant_cache
     log = get_logger("ws4-detection")
 
+    # Resolve what reload() will actually read: the detector's own dirs.
+    rules_dir = Path(rules_dir if rules_dir is not None else detector.rules_dir)
+    allowlists_dir = Path(allowlists_dir if allowlists_dir is not None else detector.allowlists_dir)
+    tenants_dir = Path(tenants_dir if tenants_dir is not None else detector.tenants_dir)
+    plugin_dirs = list(detector._plugin_rule_dirs)
+
     def _loop():
-        last_mtime = rules_max_mtime(rules_dir, allowlists_dir, tenants_dir)
+        last = rules_fingerprint(rules_dir, allowlists_dir, tenants_dir,
+                                 plugin_rule_dirs=plugin_dirs)
         while not shutdown.wait(interval_s):
-            mtime = rules_max_mtime(rules_dir, allowlists_dir, tenants_dir)
-            if mtime == last_mtime:
+            fp = rules_fingerprint(rules_dir, allowlists_dir, tenants_dir,
+                                   plugin_rule_dirs=plugin_dirs)
+            if fp == last:
                 continue
-            last_mtime = mtime
+            last = fp
             invalidate_tenant_cache()
             if detector.reload():
                 log.info("rules hot-reloaded", rule_count=len(detector.rules))
@@ -284,7 +473,13 @@ def start_rule_reload_watcher(detector: "Detector", shutdown, interval_s: float,
 
 
 def make_alert(event, rule, score):
-    return {
+    # Review finding (2026-08-27): contributing_event_ids_with_omitted returns
+    # the omitted count SEPARATELY from the ids list -- see engine.py's
+    # Rule.contributing_event_ids docstring for why an in-band sentinel
+    # string embedded in `event_ids` was wrong (any consumer treating it as
+    # "a list of ids" would treat the sentinel as a real one).
+    event_ids, event_ids_omitted = rule.contributing_event_ids_with_omitted(event)
+    alert = {
         # T7: deterministic id so redelivery yields the SAME alert (idempotent),
         # not a fresh uuid that the indexer would store as a duplicate.
         "alert_id": rule.alert_key(event),
@@ -293,7 +488,10 @@ def make_alert(event, rule, score):
         "rule_title": rule.title,
         "level": rule.level,
         "score": score,
-        "sector": event.get("siem", {}).get("sector"),
+        # R4-28: `(event.get("siem") or {})` instead of `.get("siem", {})` --
+        # a siem:null event makes the latter return None and None.get() raises.
+        # Fail closed to an empty envelope, never crash.
+        "sector": (event.get("siem") or {}).get("sector"),
         # C3: passthrough of the rule's own optional mitre block (see
         # tools/validate_rules.py's shape check), so the coverage heatmap
         # can be driven off real alerts, not just the static rules list.
@@ -302,8 +500,13 @@ def make_alert(event, rule, score):
         # onto the alert so WS-3's router can index it into a tenant-scoped
         # alerts-{tenant}-{date} index (router.py). Absent tenant -> "default",
         # matching every pre-M4 event/alert (see services/shared/envelope.py).
-        "tenant_id": event.get("siem", {}).get("tenant"),
+        "tenant_id": (event.get("siem") or {}).get("tenant"),
         "src_endpoint": event.get("src_endpoint", {}),
+        # Gap-hunt (2026-08-26): 6 shipped rules key on the destination, but
+        # make_alert never copied it, so dest-field lookups on alerts-* came
+        # back empty. Mirror the src_endpoint passthrough (these are raw event
+        # fields; the OpenSearch alerts mapping declares what is indexable).
+        "dst_endpoint": event.get("dst_endpoint", {}),
         "actor": event.get("actor", {}),
         # Design-A (2026-07-29 audit): a stateful alert's window counter
         # already remembers which events/values contributed (window.py's
@@ -312,8 +515,25 @@ def make_alert(event, rule, score):
         # happened to cross the threshold. Falls back to the single
         # triggering id for non-stateful rules or when the counter has
         # nothing to report (never fabricates an id).
-        "event_ids": rule.contributing_event_ids(event),
+        "event_ids": event_ids,
+        # Gap-hunt (2026-08-26): WS-3's list_alerts filters on
+        # {"term": {"triage.status": ...}} and the alerts mapping is
+        # dynamic:false, so an ALERT MUST carry an explicit triage field
+        # at creation or every status-filtered GET returns zero results on
+        # OpenSearch (MemoryStore.List_alerts defaults a missing triage to
+        # "new", which is why the offline suite stayed green). Stamp the
+        # initial triage here so the prod read path and MemoryStore agree.
+        # Only set it when absent from a redelivered envelope so an
+        # analyst's saved triage on a pre-existing alert is never reset.
+        "triage": event.get("triage") or {"status": "new"},
     }
+    if event_ids_omitted:
+        # Only present when the _MAX_CONTRIBUTING_IDS cap actually bit (same
+        # "omitted when absent" convention this alert doc already uses for
+        # `mitre`) -- an un-truncated alert's wire shape is byte-identical to
+        # before this field existed.
+        alert["event_ids_omitted"] = event_ids_omitted
+    return alert
 
 
 def detect_one(bus, detector: "Detector", event: dict) -> None:
@@ -322,53 +542,27 @@ def detect_one(bus, detector: "Detector", event: dict) -> None:
     Backs the shared-runner handler (daemon). Raises on any failure so the
     runner leaves the message unacked for redelivery.
 
-    **Not shared with run()**: despite the name, the batch run() loop below
-    does NOT call this -- it re-implements the identical scored/alert/funnel
-    logic as an independently-maintained inline copy. The two are in sync
-    today (including the FIX 22 dedup call); a fix applied to one is not
-    mechanically guaranteed to reach the other, so change both together.
-    """
+    **Shared with run()**: ever since the gap-hunt (2026-08-26) funnel-
+    ordering fix, BOTH entry points delegate to Detector._emit(), the single
+    emission path -- the "two parallel copies that must be changed together"
+    era is over (the old copies had already drifted into the
+    cooldown-before-produce bug once; that class of defect cannot recur)."""
     event, matched, action = detector.process(event)
-    key = (event.get("src_endpoint") or {}).get("ip", "0.0.0.0")
-    bus.produce("scored.events", key=key, payload=event)
-    for rule in matched:
-        alert = make_alert(event, rule, event["siem"]["score"])
-        bus.produce("alerts", key=alert["alert_id"], payload=alert)
-        detector.record_fire(rule.id)
-    # P1-2 (2026-07-21 audit): scoring.yaml/sigma-convention.md promise a
-    # 20-59 "light classifier" band, but only action=="llm" (>=60) ever
-    # reached ai.requests -- the band was dead, scores 20-59 got indexed and
-    # never classified. `tier` tells WS-5 which layer to run: "llm" pays for
-    # a real model call; "classifier" runs only the cheap deterministic/ML
-    # classifier (classifier.py) -- never the LLM, or the whole point of a
-    # separate cheap tier is defeated.
-    if action in ("llm", "classifier") and detector._funnel_dedup(event, matched):
-        bus.produce("ai.requests", key=event["siem"].get("ingest_id", key),
-                    payload={"event_id": event["siem"].get("ingest_id"),
-                             "event": event, "tier": action,
-                             "reason": [r.title for r in matched]})
+    detector._emit(bus, event, matched, action)
 
 
 def run(bus, detector: "Detector") -> dict:
     stats = {"scored": 0, "alerts": 0, "ai_enqueued": 0, "classifier_enqueued": 0}
     for msg in bus.consume("normalized.events", group="cg-detect"):
         event, matched, action = detector.process(msg.payload)
-        key = (event.get("src_endpoint") or {}).get("ip", "0.0.0.0")
-        bus.produce("scored.events", key=key, payload=event)
+        # _emit also bumps detector.stats (the daemon-side counters, gap-hunt
+        # 2026-08-26); the local `stats` stays the per-run() view the batch
+        # harnesses assert on.
+        n_alerts, n_ai, n_clf = detector._emit(bus, event, matched, action)
         stats["scored"] += 1
-        for rule in matched:
-            alert = make_alert(event, rule, event["siem"]["score"])
-            bus.produce("alerts", key=alert["alert_id"], payload=alert)
-            detector.record_fire(rule.id)
-            stats["alerts"] += 1
-        if action in ("llm", "classifier") and detector._funnel_dedup(event, matched):  # P1-2 + FIX 22
-            bus.produce("ai.requests", key=event["siem"].get("ingest_id", key),
-                        payload={"event_id": event["siem"].get("ingest_id"),
-                                 "event": event, "tier": action,
-                                 "reason": [r.title for r in matched]})
-            stats["ai_enqueued"] += 1
-            if action == "classifier":
-                stats["classifier_enqueued"] += 1
+        stats["alerts"] += n_alerts
+        stats["ai_enqueued"] += n_ai
+        stats["classifier_enqueued"] += n_clf
     return stats
 
 
@@ -462,7 +656,8 @@ def main():
     shutdown = threading.Event()
     warn_at = int(os.getenv("DETECTION_OUTPUT_DEPTH_WARN", "100000"))
     watchdog = start_depth_watchdog(Bus(), log, shutdown,
-                                    ["scored.events", "ai.requests"], warn_at=warn_at)
+                                    ["scored.events", "ai.requests", "alerts"],
+                                    warn_at=warn_at)
     # B4: opt-in rule hot-reload, off by default (RULES_RELOAD_INTERVAL_S=0) --
     # matches the pre-existing load-once-at-startup behavior byte-for-byte.
     reload_interval = float(os.getenv("RULES_RELOAD_INTERVAL_S", "0"))
@@ -484,7 +679,11 @@ def main():
         serve({"normalized.events": ("cg-detect", handler)},
               health_port=int(os.getenv("PORT", "8004")),
               service_name="ws4-detection", shutdown=shutdown,
-              metrics_provider=detector.rule_health_metrics,
+              # Gap-hunt (2026-08-26) #11: was detector.rule_health_metrics --
+              # per-rule gauges only. detector.metrics() adds the emit-path
+              # counters (scored/alerts/ai_enqueued) that used to exist only
+              # in run(), the batch path the daemon never calls.
+              metrics_provider=detector.metrics,
               bus_factory=bus_factory)
     finally:
         if watchdog is not None:

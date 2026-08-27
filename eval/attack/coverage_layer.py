@@ -137,6 +137,18 @@ def print_summary(rules: list[dict], coverage: dict) -> None:
 
 def main() -> int:
     rules = load_rules()
+    if not rules:
+        # NEW-hunt (2026-08-27): main() previously returned 0 unconditionally,
+        # so an empty/mis-shaped rule set (RULES_DIR gone, glob empty, or a
+        # YAML that loads to []/None for every file) printed a 0-declared
+        # 'scorecard' and exited 0 -- a vacuous green exactly like the empty
+        # count floors fixed elsewhere in this repo. A scorecard over zero
+        # rules proves nothing; it must fail loudly.
+        print(f"[FAIL] coverage_layer: no rules loaded from {RULES_DIR} -- "
+              f"the directory is empty, missing, or every YAML failed to "
+              f"parse into a rule dict. A declared-coverage scorecard over "
+              f"zero rules is vacuously green (NEW-hunt).")
+        return 1
     coverage = build_coverage(rules)
     print_summary(rules, coverage)
 

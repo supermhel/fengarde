@@ -1,5 +1,5 @@
 {
-  "_comment": "Raw bus payloads (raw.events shape) for each parser, used by main.py demo and contract test.",
+  "_comment": "Raw bus payloads (raw.events shape) for each parser, used by test_contract.py.",
   "samples": [
     {
       "source_type": "cisco_asa",

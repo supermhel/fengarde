@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -66,6 +67,81 @@ def build_handlers(store, group: str = "cg-index") -> dict:
             for t in TOPICS}
 
 
+_ALERT_CAS_MAX_RETRIES = 5
+
+
+def _index_alert_preserving_triage(store, index: str, doc_id: str, doc: dict) -> bool:
+    """`alerts`-topic write for an alert_id that may already be indexed.
+
+    Same failure SHAPE as the normalized/scored siem.score clobber (P1-4),
+    a different pair of writers/field: bus delivery is at-least-once, so a
+    stale `alerts` message (WS-4's original payload, never carrying `triage`)
+    can be redelivered -- e.g. after this worker is killed mid-batch and
+    restarted -- and land AFTER an analyst has since set `triage` via
+    triage_api.py's independent index_cas-based read-modify-write. A plain
+    index() there is a full-document replace and silently erases it; the
+    alert stays indexed so nothing looks broken.
+
+    CAS retry loop (mirrors triage_api.py's own _route_triage): read the
+    current doc's `triage`, carry it into the incoming payload, write with
+    index_cas so a concurrent triage update racing this same write loses
+    cleanly (retry) rather than silently.
+    """
+    for attempt in range(_ALERT_CAS_MAX_RETRIES):
+        existing = store.find_alert_versioned(doc_id)
+        if existing is None:
+            # Brand-new alert_id: a CREATE. Route it through index_cas with
+            # version=None -- BOTH backends treat that as an unconditional
+            # write (byte-identical to the plain store.index() this used to
+            # call), but every alerts write now goes through the CAS path, so
+            # a concurrent writer landing between this read and the write is
+            # resolved deterministically instead of only the update path
+            # being guarded. (Gap-hunt finding R2-#23.)
+            return store.index_cas(index, doc_id, doc, None)
+        existing_index, existing_doc, version = existing
+        if existing_index != index:
+            # Nothing about a retry changes this: the same alert_id routes to
+            # two different indices, and find_alert_versioned() will keep
+            # returning the same existing_index every time. Retrying here
+            # used to burn all _ALERT_CAS_MAX_RETRIES silently; log once so
+            # routing drift (a real bug elsewhere) is visible instead of
+            # masquerading as a quiet no-write.
+            from shared.log import get_logger  # noqa: E402
+            get_logger("ws3-indexer").warn(
+                f"alert {doc_id} already indexed under {existing_index}, not "
+                f"{index} -- skipping write (routing drift, not a transient "
+                f"conflict)"
+            )
+            return False
+        # Carry any existing `triage` into the incoming payload. When the
+        # stored doc has no triage yet there is nothing to preserve -- but we
+        # STILL write conditionally on `version`: an analyst triage write that
+        # lands between our find_alert and this write bumps the version, our
+        # index_cas returns False, and the retry loop re-reads the fresh doc
+        # and carries that triage. The plain store.index() this branch used
+        # to call would silently destroy it. (Gap-hunt finding R2-#19.)
+        merged = dict(doc)
+        existing_triage = existing_doc.get("triage")
+        if existing_triage is not None:
+            merged["triage"] = existing_triage
+        if store.index_cas(index, doc_id, merged, version):
+            return False
+        if attempt < _ALERT_CAS_MAX_RETRIES - 1:
+            time.sleep(0.05 * (2 ** attempt))
+    # Retries exhausted under sustained CAS contention: no-write rather than a
+    # destructive overwrite, but this is a DISTINCT failure from "an update
+    # succeeded" -- both used to return False and land in run()'s same
+    # `duplicates` bucket, making a genuinely lost write indistinguishable
+    # from a benign redelivery (review finding, 2026-08-27). Log it loudly;
+    # callers still get False (fail-safe: no-write, never a clobber).
+    from shared.log import get_logger  # noqa: E402
+    get_logger("ws3-indexer").error(
+        f"alert {doc_id} in {index}: exhausted {_ALERT_CAS_MAX_RETRIES} CAS "
+        f"retries under contention -- this write did NOT land (no-write, not "
+        f"a clobber, but distinct from a benign duplicate)")
+    return False
+
+
 def index_doc(store, doc: dict, *, create_only: bool = False) -> bool:
     """Route ``doc`` and write it.
 
@@ -75,10 +151,18 @@ def index_doc(store, doc: dict, *, create_only: bool = False) -> bool:
     topics route to the same (index, doc_id) and run on independent worker
     threads, so without this the later-arriving normalized write silently
     strips `siem.score` off an already-scored document.
+
+    An alert doc (``alert_id`` present) never uses create_only -- a
+    redelivered alert must still be able to create the doc on first arrival
+    -- but does go through :func:`_index_alert_preserving_triage` so a stale
+    redelivery can't clobber a `triage` field a completely different writer
+    (the triage API) has since set.
     """
     index, doc_id = route(doc)
     if create_only:
         return store.index_if_absent(index, doc_id, doc)
+    if "alert_id" in doc:
+        return _index_alert_preserving_triage(store, index, doc_id, doc)
     return store.index(index, doc_id, doc)
 
 
@@ -114,11 +198,25 @@ def run(bus, store) -> dict:
         items = []
         for msg in msgs:
             try:
-                index, doc_id = route(msg.payload)
+                routed_index, doc_id = route(msg.payload)
             except ValueError:
                 stats["unroutable"] += 1
                 continue
-            items.append((index, doc_id, msg.payload))
+            payload = msg.payload
+            # Gap-hunt finding (2026-08-23): the batch bulk_index path used
+            # to bypass _index_alert_preserving_triage entirely, sending
+            # alert docs straight to _bulk where any stale redelivery would
+            # clobber a triage field an analyst had just set (same race class
+            # as the per-message handler above -- this is the batch/tooling
+            # path this function's own docstring describes, not the daemon's
+            # live handler() path; review finding, 2026-08-27, corrects the
+            # prior wording here which mislabeled it "live-production").
+            if "alert_id" in payload:
+                created = _index_alert_preserving_triage(
+                    store, routed_index, doc_id, payload)
+                stats["indexed" if created else "duplicates"] += 1
+            else:
+                items.append((routed_index, doc_id, payload))
         if not items:
             continue
         result = bulk_index(items)

@@ -41,12 +41,30 @@ sys.path.insert(0, str(ROOT / "services" / "ws4-detection"))
 # Reuse the REAL engine internals so the gate can never drift from runtime.
 from engine import (  # noqa: E402
     _NUMERIC_OPS, _parse_or, _parse_hhmm, _time_outside_hours,
+    _CONDITION_TOKEN_RE,
 )
 
 _UUID_RE = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
                       r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
 _LEVELS = {"informational", "low", "medium", "high", "critical"}
 _SECTORS = {"common", "bank", "datacenter"}
+# Gap-hunt finding (2026-08-26): siem.* is where a typo ships MOST quietly --
+# engine.Rule.__init__ only reads the keys below and is deliberately silent
+# about any other key (fail-open posture: a broken field must not crash the
+# consumer). A rule with `treshold: 5` instead of `threshold` is therefore
+# STATELESS at runtime: the stateful block never engages, the rule fires on
+# EVERY matching event instead of after N -- verified live by typo'ing a
+# threshold field in common_bruteforce.yml (stateless, alerting on every
+# failed login). The engine cannot be the loud one, so this gate must be:
+# reject any key the real schema does not define. The canonical set is
+# exactly the keys engine.Rule.__init__ consumes (sector, score_weight,
+# llm_gate, window_seconds, threshold, group_by, distinct_field,
+# periodicity), cross-checked 2026-08-26 against every shipped
+# contracts/rules/*.yml -- no rule uses any other key.
+_SIEM_ALLOWED_KEYS = {
+    "score_weight", "sector", "window_seconds", "threshold",
+    "group_by", "distinct_field", "llm_gate", "periodicity",
+}
 _KNOWN_OPS = set(_NUMERIC_OPS) | {"not_in", "outside_hours", "in", "contains", "glob"}
 # C3: optional MITRE tagging. Enterprise ATT&CK ("Txxxx"/"Txxxx.xxx", "TAxxxx"),
 # ATT&CK for ICS (same shape, different id space, OT rules), and ATLAS
@@ -55,7 +73,9 @@ _KNOWN_OPS = set(_NUMERIC_OPS) | {"not_in", "outside_hours", "in", "contains", "
 _MITRE_TECHNIQUE_RE = re.compile(r"^(AML\.)?T\d{4}(\.\d{3})?$")
 _MITRE_TACTIC_RE = re.compile(r"^(AML\.)?TA\d{4}$")
 _MITRE_FRAMEWORKS = {"attack", "attack-ics", "atlas"}
-_CONDITION_TOKEN_RE = re.compile(r"\(|\)|\band\b|\bor\b|\bnot\b|[\w.]+")
+# _CONDITION_TOKEN_RE imported from engine (single source, R3-#36) -- the
+# validator and the runtime must tokenize conditions identically, so a local
+# copy here would let the gate drift from the engine.
 _KEYWORDS = {"and", "or", "not", "(", ")"}
 _DAY_NAMES = {"mon", "tue", "wed", "thu", "fri", "sat", "sun"}
 
@@ -96,6 +116,25 @@ def _validate_outside_hours(spec, errors: list[str], where: str) -> None:
         if sample_true == sample_false and sample_true is False:
             errors.append(f"{where}: outside_hours window never matches any time "
                           f"(both probe timestamps returned False) -- likely a mistake")
+        # R3-#35: the always-matches case. The two fixed probes above can't
+        # catch it (a days=mon,tue window legitimately returns True on a
+        # Wednesday). Sweep the WHOLE week: if every day x several hours is
+        # outside business time, the window is empty for every possible
+        # timestamp -> the rule fires on everything, a real defect.
+        day_ms = 24 * 3600 * 1000
+        hours = (0, 6, 12, 18)
+        all_outside = True
+        for d in range(7):
+            for h in hours:
+                if not _time_outside_hours(spec, d * day_ms + h * 3600 * 1000):
+                    all_outside = False
+                    break
+            if not all_outside:
+                break
+        if all_outside:
+            errors.append(f"{where}: outside_hours window matches EVERY timestamp "
+                          f"(all 7 days x hours probed are outside business time) "
+                          f"-- the business window is empty; likely a mistake (R3-#35)")
 
 
 def _validate_mitre(mitre, errors: list[str]) -> None:
@@ -272,6 +311,16 @@ def validate_rule(rule: dict) -> list[str]:
     if not isinstance(siem, dict):
         errors.append("'siem' must be a mapping")
     else:
+        unknown_siem = set(siem) - _SIEM_ALLOWED_KEYS
+        if unknown_siem:
+            # See _SIEM_ALLOWED_KEYS: the engine silently ignores keys it does
+            # not read, so an unrecognized key here is a typo that quietly
+            # disables the intended behavior (e.g. 'treshold' makes a stateful
+            # rule stateless -- fires on every match instead of after N).
+            errors.append(f"'siem' has unknown key(s) {sorted(unknown_siem)} "
+                          f"-- the engine ignores keys it does not read "
+                          f"(allowed: {sorted(_SIEM_ALLOWED_KEYS)}), so a typo "
+                          f"here ships silently as disabled behavior")
         sw = siem.get("score_weight", 0)
         if isinstance(sw, bool) or not isinstance(sw, int) or not 0 <= sw <= 100:
             errors.append(f"siem.score_weight must be an int in [0, 100], got {sw!r}")
@@ -329,6 +378,25 @@ def main(argv: list[str]) -> int:
         paths = [Path(argv[1])]
     else:
         paths = sorted(RULES_DIR.glob("*.yml"))
+
+    # Gap-hunt finding (2026-08-26): with zero rule files (empty/renamed
+    # RULES_DIR) every check below is vacuously true -- failures stayed empty,
+    # this printed "[OK] all 0 rule(s) valid" and exited 0, so a contributor
+    # gate that was validating NOTHING kept the tree green. Count floor: an
+    # empty rule set is an explicit failure, never a pass. (A single-file
+    # invocation pointing at a path that does not exist used to crash with a
+    # bare traceback instead of a verdict; that is the same silence class.)
+    missing = [p for p in paths if not p.exists()]
+    if missing:
+        print(f"[FAIL] rule file(s) not found: {[str(m) for m in missing]}")
+        return 1
+    if not paths:
+        print(f"[FAIL] ZERO rule files found in {RULES_DIR} -- every check below "
+              f"is vacuously true over an empty set, so this gate would print "
+              f"'all 0 rules valid' and pass while validating NOTHING. The rule "
+              f"set did not load (directory missing/renamed?), or the glob is "
+              f"pointing somewhere empty.")
+        return 1
 
     seen_ids: dict[str, str] = {}
     failures: list[tuple[str, list[str]]] = []

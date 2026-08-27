@@ -43,9 +43,10 @@ network on a trusted machine. They are **not** designed to be reachable from the
 public internet or an untrusted network.
 
 - Do **not** expose the published ports (`6379`, `9200`, `5601`, `8000`, `8080`)
-  to untrusted networks. As of v0.4, `6379`/`9200`/`5601` are bound to
-  `127.0.0.1` in `infra/docker-compose.yml` by default — rebinding them to
-  `0.0.0.0` is a deliberate choice you're making, not an accident.
+  to untrusted networks. As of v0.4, all published ports (`6379`, `9200`, `5601`,
+  `8000`, `8080` — and `9090`/`3000` where the stack runs Prometheus/grafana)
+  are bound to `127.0.0.1` in `infra/docker-compose.yml` by default — rebinding
+  them to `0.0.0.0` is a deliberate choice you're making, not an accident.
 - The bundled OpenSearch runs with its security plugin **disabled** for
   zero-friction local development (`DISABLE_SECURITY_PLUGIN=true` in
   `infra/docker-compose.yml`). It must not be exposed beyond the local host.
@@ -195,8 +196,11 @@ writes are protected at two layers: an in-process lock (single replica) plus
 OpenSearch **optimistic concurrency** (`if_seq_no`/`if_primary_term` CAS with
 bounded retry, surfacing exhaustion as an honest 409) for writers the lock can't
 see — another ws3 replica against a shared cluster. The CAS wire format is
-unit-tested against a fake transport; like the rest of the OpenSearch adapter it
-has not yet been exercised against a live cluster.
+unit-tested against a fake transport, and has been **proven live** (2026-08-11,
+`test_opensearch_cas_concurrency_live.py`, 8 real threads racing a real 3-node
+cluster, sensitivity-verified: deliberately breaking the CAS lost 7/8 writes,
+confirming the test actually measures concurrency control) — wired into CI's
+`opensearch-integration` job since 2026-08-21 so this can't go stale again.
 
 ### 8. On-disk spool (WS-1 B2) stores raw events in cleartext
 
@@ -320,8 +324,9 @@ The following are **known** and **deferred** to later releases:
   reports `seconds_since_last_event`, and a background watchdog
   (`SYSLOG_SILENCE_WARN_S`, default 300s, 0 disables) logs once per outage
   when nothing has arrived — before this, a dead/misdirected/firewalled
-  source produced no signal at all: `/health` only ever probed the bus, so a
-  silently-starved ingest edge looked identical to a legitimately quiet
+  source produced no signal at all: with an empty handler map `/health` never
+  probed anything (it answered a hardcoded 200), so a silently-starved ingest
+  edge looked identical to a legitimately quiet
   network. Steps 3-4 of that design (an actual VIP active/passive failover
   pair) remain not built, correctly gated behind a demonstrated need per the
   design doc's own recommended stop-point.

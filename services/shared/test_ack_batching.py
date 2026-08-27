@@ -72,6 +72,16 @@ class _SpyBus:
         return self._inner.ack_batch(msgs, group)
 
 
+def _pending_entries(bus, topic):
+    """All unacked PEL entries across every group on ``topic``, as
+    (msg, delivered_at, delivery_count) tuples -- the MemoryBus PEL is now
+    per-group (gap-hunt #50/#52, 2026-08-26): topic -> group -> {msg.id: ...}.
+    """
+    return [entry
+            for per_group in bus._pel.get(topic, {}).values()
+            for entry in per_group.values()]
+
+
 def _run_topic_worker_briefly(spy, topic, handler, *, run_ms=300):
     shutdown = threading.Event()
     t = threading.Thread(
@@ -116,7 +126,7 @@ def test_successful_batch_is_acked_via_one_ack_batch_call():
 
     # And the messages are genuinely gone from the PEL -- not just "counted
     # as acked" by the spy without the real ack happening underneath.
-    remaining = list(spy._inner._pel.get(topic, {}))
+    remaining = _pending_entries(spy._inner, topic)
     check(remaining == [], f"PEL should be empty after ack_batch, still has {remaining}")
 
 
@@ -139,7 +149,7 @@ def test_failed_handler_is_not_batch_acked():
     check(sum(spy.ack_batch_sizes) == 4,
           f"expected exactly 4 messages batch-acked (the ones whose handler "
           f"succeeded), got {sum(spy.ack_batch_sizes)}")
-    remaining = list(spy._inner._pel.get(topic, {}).values())
+    remaining = _pending_entries(spy._inner, topic)
     check(len(remaining) == 1 and remaining[0][0].payload["n"] == 2,
           f"expected exactly the failed message (n=2) to remain in the PEL "
           f"unacked, got {[m.payload for m, *_ in remaining]}")
@@ -165,7 +175,7 @@ def test_ack_batch_flush_failure_leaves_messages_for_redelivery():
     _run_topic_worker_briefly(spy, topic, seen.append)
 
     check(len(seen) == 3, f"handler should still run for all 3, got {len(seen)}")
-    remaining = list(spy._inner._pel.get(topic, {}))
+    remaining = _pending_entries(spy._inner, topic)
     check(len(remaining) == 3,
           f"a failed flush must leave every processed-but-unflushed message "
           f"in the PEL for redelivery, found {len(remaining)} of 3 still "

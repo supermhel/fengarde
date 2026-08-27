@@ -97,9 +97,13 @@ DEFAULT_PEER_METRICS_MAX = 1024
 # full value was actually granted, but asking for headroom is still strictly
 # better than leaving the OS default (often as low as 128KB) during a burst.
 DEFAULT_SO_RCVBUF = 8 * 1024 * 1024
+# Gap-hunt (2026-08-26) #79: a persistent recv-loop OSError is retried with
+# this sleep between attempts so a wedged socket can't peg a core in a tight
+# busyloop.
+_RECV_OSERROR_BACKOFF_S = 0.1
 
 
-def udp_rcvbuf_errors() -> Optional[int]:
+def udp_rcvbuf_errors(path: str = "/proc/net/snmp") -> Optional[int]:
     """Cumulative kernel-level UDP receive-buffer-overflow count for this
     host/container, i.e. datagrams the OS dropped BEFORE any Python code ever
     saw them -- the exact loss class that reads as a healthy `events_shed=0
@@ -110,9 +114,17 @@ def udp_rcvbuf_errors() -> Optional[int]:
 
     Cumulative since boot, not a rate -- a caller wanting a rate must diff two
     samples over a known interval, same convention as any other /proc counter.
+
+    ``path`` defaults to the real procfs location; overridable ONLY so
+    test_syslog_udp.py can drive the header/value-alignment parsing logic
+    itself against a controlled fixture file -- this used to have zero
+    coverage of anything but the None-fallback path (gap-hunt finding,
+    2026-08-23), leaving the exact live-proven blind spot this function
+    exists to close free to regress silently (e.g. a swapped header/value
+    line order, or a shifted column index).
     """
     try:
-        with open("/proc/net/snmp", "r", encoding="ascii") as f:
+        with open(path, "r", encoding="ascii") as f:
             header = value = None
             for line in f:
                 if line.startswith("Udp:"):
@@ -309,12 +321,29 @@ class SyslogUDPServer:
         self.events_spooled = 0     # written to the fallback spool, pending replay
         self.events_lost = 0        # spool configured but itself at capacity
         self.events_queue_full = 0  # P0-4: worker pool saturated, queue.put_nowait refused
+        # Gap-hunt (2026-08-26) #81: an empty/CRLF-only datagram is NOT a bus
+        # produce failure -- incrementing events_dropped for it meant a flood of
+        # empty datagrams read on /metrics as a Redis outage when the bus is
+        # perfectly healthy. Distinct counter so an operator can tell "empty
+        # garbage on the wire" from "bus is down".
+        self.events_empty = 0
+        # Gap-hunt (2026-08-26) #79: a persistent (non-close) recv OSError is
+        # no longer a bare `continue` inside the recv thread -- that could
+        # become an unbounded tight busyloop pegging a core. Now counted and
+        # logged, with a short backoff sleep between retries.
+        self.recv_oserror_total = 0
+        self._recv_oserror_backoff_s = _RECV_OSERROR_BACKOFF_S
         # B2: one bucket per tenant_id so one tenant's flood cannot shed another
         # tenant's datagrams. Events with no tenant_id fall into the shared
         # default bucket, preserving prior global behavior for unknown sources.
         self._buckets = TenantTokenBuckets(max_events_per_sec, logger=self.log)
         self._last_shed_log = 0.0   # throttles the shed-warning log itself: a
                                     # real flood must not turn into a log flood
+        # Gap-hunt (2026-08-26) #77: the bus-produce-failure log had no throttle
+        # (unlike the shed path just above) -- a Redis outage at the configured
+        # event rate produced thousands of log lines/sec, burying every other
+        # signal. Same 1/sec throttle posture as _last_shed_log.
+        self._last_produce_fail_log = 0.0
         # P0-4: genuinely concurrent now (a fixed pool of worker threads all
         # call _handle_datagram), so this lock is load-bearing, not defensive.
         # FENGARDE E6: incrementally-maintained per-source breakdown for
@@ -342,7 +371,12 @@ class SyslogUDPServer:
         # "quiet since boot", not "silent forever" -- the watchdog's own
         # startup grace period is this value, for free, with no separate
         # boot-time tracking needed.
-        self._last_received_ts = time.time()
+        # Gap-hunt (2026-08-26) #80: the silence watchdog now uses a monotonic
+        # clock -- wall-clock time.time() made the elapsed-silence calculation go
+        # NEGATIVE on an NTP step backward or a VM suspend/resume, silently
+        # disabling the watchdog during the exact kind of event most likely to
+        # accompany a real outage.
+        self._last_received_ts = time.monotonic()
 
         # P0-4: raw socket, not socketserver.UDPServer -- gives us a tight
         # recv loop decoupled from per-datagram handling (see module
@@ -366,14 +400,21 @@ class SyslogUDPServer:
         if not line:
             # An empty/CRLF-only datagram carries no event but still costs a
             # real recv + queue/worker cycle. Consume a rate-limit token and
-            # count it as dropped so a flood of trivial datagrams is throttled
-            # and visible in per_source_metrics(), instead of bypassing both
-            # invisibly (a flood like this previously evaded SYSLOG_MAX_EVENTS_
-            # PER_SEC entirely and never appeared in any counter).
+            # count it so a flood of trivial datagrams is throttled and visible
+            # in per_source_metrics(), instead of bypassing both invisibly (a
+            # flood like this previously evaded SYSLOG_MAX_EVENTS_PER_SEC
+            # entirely and never appeared in any counter).
+            #
+            # Gap-hunt (2026-08-26) #81: it is counted in a DISTINCT counter
+            # (events_empty), not events_dropped -- events_dropped means "bus
+            # produce failed", and a flood of empty datagrams on a healthy bus
+            # read on /metrics exactly like a Redis outage otherwise. An
+            # operator can now tell "empty garbage on the wire" from "the bus
+            # is down".
             self._buckets.take("")
             with self._shed_lock:
-                self.events_dropped += 1
-                self._count_peer(peer_ip, "dropped")
+                self.events_empty += 1
+                self._count_peer(peer_ip, "empty")
             return
         # FIX 21 (reverted 2026-08-06): a prior version of this line hardcoded
         # deterministic_id=True on the theory that "UDP retransmission is
@@ -406,7 +447,17 @@ class SyslogUDPServer:
             with self._shed_lock:
                 self.events_dropped += 1
                 self._count_peer(peer_ip, "dropped")
-            if self.log is not None:
+                # Gap-hunt (2026-08-26) #77: throttle the produce-failure log
+                # (at most 1/sec), exactly like the shed path does. Without
+                # this a Redis outage at the configured event rate logged
+                # thousands of lines/sec.
+                now = time.monotonic()
+                if now - self._last_produce_fail_log >= 1.0:
+                    self._last_produce_fail_log = now
+                    should_log = True
+                else:
+                    should_log = False
+            if should_log and self.log is not None:
                 self.log.warn("dropped syslog datagram: bus produce failed",
                               src=peer_ip, error=str(exc),
                               spool_full=self._spool is not None)
@@ -432,7 +483,7 @@ class SyslogUDPServer:
             if len(metrics) >= self._peer_metrics_max:
                 # evict the oldest key (OrderedDict preserves insertion order)
                 metrics.pop(next(iter(metrics)))
-            metrics[peer_ip] = {"produced": 0, "dropped": 0, "shed": 0}
+            metrics[peer_ip] = {"produced": 0, "dropped": 0, "shed": 0, "empty": 0}
         metrics[peer_ip][kind] += 1
         metrics.move_to_end(peer_ip)
 
@@ -522,8 +573,21 @@ class SyslogUDPServer:
             try:
                 data, addr = self._sock.recvfrom(65535)
             except OSError:
-                # socket closed (stop()) or a transient recv error; either
-                # way, re-check _running rather than assuming shutdown.
+                # stop() closed the socket -> _running is clear; exit instead
+                # of spinning on a now-dead socket.
+                if not self._running.is_set():
+                    break
+                # Gap-hunt (2026-08-26) #79: a PERSISTENT (non-close) recv
+                # error was a bare `continue` -- an unbounded tight busyloop
+                # pegging a core with no signal. Now counted + logged and
+                # backed off briefly so a wedged socket burns one core's
+                # fraction of a second, not 100%.
+                self.recv_oserror_total += 1
+                if self.log is not None:
+                    self.log.warn("syslog udp recv error (backing off)",
+                                  errors_total=self.recv_oserror_total,
+                                  backoff_s=self._recv_oserror_backoff_s)
+                time.sleep(self._recv_oserror_backoff_s)
                 continue
             if not self._running.is_set():
                 break
@@ -531,23 +595,35 @@ class SyslogUDPServer:
             # needed, same reasoning as every other lock-free counter this
             # module deliberately doesn't guard (see _shed_lock's own scope:
             # it protects multi-field aggregate updates, not single writes).
-            self._last_received_ts = time.time()
+            self._last_received_ts = time.monotonic()
             try:
                 self._queue.put_nowait((data, addr[0]))
             except queue.Full:
                 with self._shed_lock:
                     self.events_queue_full += 1
 
+    def is_running(self) -> bool:
+        """True while the recv + worker threads are live (start() called and
+        stop() not yet). Exposed for the self-liveness wire-up in main.py's
+        health worker (gap-hunt #70): a collector whose UDP ingest daemon is
+        down must not report healthy."""
+        return self._running.is_set()
+
     def seconds_since_last_event(self) -> float:
-        """Wall-clock seconds since the last datagram reached the socket.
+        """Monotonic seconds since the last datagram reached the socket.
 
         Measured at recv time, not produce/spool time -- this answers "is
         anything arriving at all", which is a different question from
         "is what arrives making it to the bus" (events_dropped/events_lost
         already answer that one). See the ingestion-edge-redundancy design
         doc (fengarde-sec) step 2 for why this didn't exist before.
+
+        Gap-hunt (2026-08-26) #80: uses a monotonic clock, NOT wall-clock
+        time.time() -- an NTP step backward or a VM suspend/resume used to
+        make this go NEGATIVE, silently disabling the silence watchdog during
+        the exact kind of event most likely to accompany a real outage.
         """
-        return time.time() - self._last_received_ts
+        return time.monotonic() - self._last_received_ts
 
     def _worker_loop(self) -> None:
         while self._running.is_set():

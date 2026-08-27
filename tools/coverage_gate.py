@@ -22,8 +22,10 @@ Run:  python tools/coverage_gate.py
 """
 from __future__ import annotations
 
+import re
 import subprocess
 import sys
+from collections import defaultdict
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -174,18 +176,116 @@ def measure(service_dir: str, source: str, scripts: list[str]) -> float:
     return float(pct)
 
 
+# Gap-hunt finding (2026-08-23): every floor above is a frozen number typed
+# in on a past measurement date, each with a disclosed 2-9pt buffer baked in
+# by comment. That buffer means real coverage can erode silently for however
+# many points it has left -- the gate keeps printing [OK] the whole way
+# down, and nothing prompts anyone to re-measure or raise the floor before
+# it actually breaches. There's no persistent baseline store across CI runs
+# to ratchet against, so this doesn't try to fail early -- it makes the
+# erosion VISIBLE instead of purely silent: a [WARN] fires once the buffer
+# still protecting a service drops under this many points, in the same CI
+# log a human is already reading, before the [FAIL] that used to be the
+# first signal anyone got.
+_LOW_BUFFER_WARN_PTS = 3.0
+
+
+# NEW-hunt (2026-08-27): TARGETS' per-service script lists were a hand-maintained
+# PARTIAL subset -- ws4-detection listed 6 of its ~25 suites, and a NEW suite
+# added to run_all_tests.sh silently stayed out of coverage forever (and the
+# list drifted from what CI actually ran). The per-service script sets are now
+# DERIVED from run_all_tests.sh's own `$PY services/<svc>/<rel>.py` invocations
+# (the ~ absolute authority for what the zero-infra gate runs), UNION the
+# hand-written TARGETS lists so nothing already measured is lost. A suite added
+# to run_all_tests.sh is now auto-wired into coverage the next run. The hand
+# list stays as the documented anchor; run_all_tests.sh is the source of truth.
+_EXCLUDE_DERIVED = {
+    # Forces BUS_BACKEND=redis and needs the redis CLIENT lib importable to
+    # reach its non-ImportError propagation case -- the contract env doesn't
+    # install redis-client-only deps; it runs standalone in CI's
+    # redis-integration job instead. See module docstring.
+    "test_bus_redis_fallback.py",
+}
+
+# Keys whose --source path is a services/<dir> we map derive onto. Keyed by the
+# TARGETS label -> the relative source services/ dir inside its `source`.
+def _service_dir_for_source(source: str) -> str | None:
+    """Return the services/ subdir of a --source path, or None if not a
+    services/* source (e.g. test fakes whose source isn't under services/)."""
+    if source.startswith("services/"):
+        return source.split("/", 1)[1]
+    return None
+
+
+def _derive_scripts(run_all_text: str) -> dict[str, set[str]]:
+    """service-dir -> {rel test script paths} that run_all_tests.sh invokes via
+    `$PY services/<service>/<rel>.py`, plus `test_contract.py` for every service
+    in its literal `for ws in ...` loop (the run_all grep can't see that one --
+    it writes the path as `services/$ws`)."""
+    derived: dict[str, set[str]] = defaultdict(set)
+    for m in re.finditer(r"services/([^/\s]+)/(\S+\.py)", run_all_text):
+        svc, rel = m.group(1), m.group(2)
+        derived[svc].add(rel)
+    loop = re.search(r"for\s+ws\s+in\s+([^\n]+)", run_all_text)
+    if loop:
+        for svc in re.split(r"\s+", loop.group(1).strip().rstrip(";")):
+            if not svc or svc == "do":
+                continue
+            derived[svc].add("test_contract.py")
+    return derived
+
+
+def _effective_scripts(source: str, scripts: list[str],
+                       derived: dict[str, set[str]]) -> list[str]:
+    """Union of the hand-listed TARGETS scripts and the run_all_tests.sh-derived
+    set for this service's source dir (minus the documented excludes), so
+    coverage measures the FULL running suite, not a stale partial subset."""
+    svc = _service_dir_for_source(source)
+    if svc is None or svc not in derived:
+        return sorted(set(scripts))
+    extra = {r for r in derived[svc] if r not in _EXCLUDE_DERIVED}
+    return sorted(set(scripts) | extra)
+
+
 def main() -> int:
+    try:
+        derived_src = _derive_scripts((ROOT / "run_all_tests.sh").read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        derived_src = {}
     failed = False
+    warned = False
+    total_added = 0
     for service_dir, (source, scripts, min_pct) in TARGETS.items():
-        pct = measure(service_dir, source, scripts)
-        status = "OK" if pct >= min_pct else "FAIL"
-        if pct < min_pct:
+        eff_scripts = _effective_scripts(source, scripts, derived_src)
+        added = sorted(set(eff_scripts) - set(scripts))
+        if added:
+            total_added += len(added)
+            print(f"  [note] {service_dir}: {len(added)} suite(s) auto-derived from "
+                  f"run_all_tests.sh (not hand-listed in TARGETS): {', '.join(added)}")
+        pct = measure(service_dir, source, eff_scripts)
+        buffer = pct - min_pct
+        # Floor semantics: >= min_pct passes, anything below fails. The
+        # boundary at exactly pct == min_pct is deliberately a PASS, and it is
+        # single-sourced here (gap-hunt finding 2026-08-26: the status line
+        # and the `failed` flag used two separate comparisons that could drift
+        # apart under an edit, and no test pinned the == case).
+        ok = pct >= min_pct
+        status = "OK" if ok else "FAIL"
+        if not ok:
             failed = True
-        print(f"[{status}] {service_dir}: {pct}% (gate: >={min_pct}%)")
+        print(f"[{status}] {service_dir}: {pct}% (gate: >={min_pct}%, buffer={buffer:.1f}pt)")
+        if ok and buffer < _LOW_BUFFER_WARN_PTS:
+            warned = True
+            print(f"  [WARN] {service_dir}'s buffer above its floor is down to "
+                  f"{buffer:.1f}pt (< {_LOW_BUFFER_WARN_PTS}pt) -- re-measure and "
+                  f"consider raising TARGETS' floor before this becomes a [FAIL]")
     if failed:
         print("\n[FAIL] coverage gate: one or more services regressed below their floor")
         return 1
-    print("\n[OK] coverage gate PASS")
+    if warned:
+        print("\n[OK] coverage gate PASS (see [WARN] above -- a floor's buffer is thinning)")
+    else:
+        print("\n[OK] coverage gate PASS")
     return 0
 
 

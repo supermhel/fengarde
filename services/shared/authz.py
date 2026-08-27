@@ -1,4 +1,4 @@
-"""Shared API-key check for WS-3/WS-6 HTTP write surfaces (v0.4 Track S1).
+"""Shared API-key check for WS-3's HTTP write surface (v0.4 Track S1).
 
 No authentication existed on any service before v0.4 (SECURITY.md, documented
 v0.1/v0.2 limitation). This is deliberately minimal: one shared secret via
@@ -6,6 +6,14 @@ v0.1/v0.2 limitation). This is deliberately minimal: one shared secret via
 is unset, every request is allowed and one warning is logged at import time,
 so the zero-infra test gate and the homelab quickstart keep working
 unchanged. A real deployment sets `FENGARDE_API_KEY`.
+
+WS-6 does NOT use this module (gap-hunt finding, 2026-08-23: this docstring
+used to claim "WS-3/WS-6" as if both were covered here — false. WS-6 has its
+own per-tenant, hashed-at-rest keystore auth, entirely separate from
+FENGARDE_API_KEY — see services/ws6-inventory/authz.py and keystore.py,
+which now carries its own `require_auth_or_die` mirroring this module's
+fail-loud contract). `FENGARDE_REQUIRE_AUTH=1` is honored by BOTH modules
+independently; neither one's check covers the other service.
 """
 from __future__ import annotations
 

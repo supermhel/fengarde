@@ -139,6 +139,17 @@ def _ph(lang: str) -> str:
     return _PLACEHOLDER[lang]
 
 
+def _warn(msg: str) -> None:
+    """R3-#43: fail loudly (log) on a silent default-coercion, never raise.
+    Import is lazy so the module stays import-light and logging is
+    best-effort (a logging outage can't break report generation)."""
+    try:
+        from shared.log import get_logger  # noqa: PLC0415
+        get_logger("ws3-indexer-nis2").warn(msg)
+    except Exception:  # noqa: BLE001 - best-effort
+        pass
+
+
 def _fmt_time(epoch_ms) -> str:
     if not isinstance(epoch_ms, (int, float)) or isinstance(epoch_ms, bool):
         return "(unknown)"
@@ -165,10 +176,16 @@ def render_nis2_report(alert: dict, triage: dict, *, stage: str = "notification"
     with a substantive field set). ``lang``: "de" (default) or "en".
     Unknown values fall back to the defaults rather than raising -- a
     malformed query parameter must degrade gracefully, not break report
-    generation."""
+    generation. R3-#43: such a coercion is logged loudly (it used to be
+    silent, so a typo'd ?stage= silently produced the wrong regulatory
+    section)."""
     if stage not in STAGES:
+        _warn(f"nis2 report stage {stage!r} is not one of {STAGES}; coercing "
+              "to 'notification' default")
         stage = "notification"
     if lang not in LANGUAGES:
+        _warn(f"nis2 report lang {lang!r} is not one of {LANGUAGES}; coercing "
+              "to 'de' default")
         lang = "de"
     L = _LABELS[lang]
     ph = _ph(lang)
@@ -257,12 +274,25 @@ def build_report(alert: dict, triage: dict, *, stage: str = "notification",
                   lang: str = "de", requested_at: float | None = None) -> dict:
     """Same response envelope as reporting.py's _template_backend (contracts/
     reporting.md's frozen schema) -- this is an additive rendering MODE of
-    the same report, not a different contract."""
+    the same report, not a different contract.
+
+    R3-#42: contracts/nis2-de-schema.json requires `stage`/`language`/
+    `entity`/`incident` in the envelope; the generator used to omit all four
+    (the entity/incident facts live in the Markdown body as ANALYST place-
+    holders, but were never surfaced as structured fields). They are now
+    emitted: stage/language are the real, coerced values; entity/incident
+    carry the same explicit placeholders the rendered body does -- nothing
+    fabricated. R3-#43: an invalid stage/lang is logged loudly on coercion."""
     if stage not in STAGES:
+        _warn(f"nis2 build_report stage {stage!r} is not one of {STAGES}; "
+              "coercing to 'notification' default")
         stage = "notification"
     if lang not in LANGUAGES:
+        _warn(f"nis2 build_report lang {lang!r} is not one of {LANGUAGES}; "
+              "coercing to 'de' default")
         lang = "de"
     requested_at = time.time() if requested_at is None else requested_at
+    ph = _ph(lang)
     return {
         "report_id": f"{alert.get('alert_id')}:report",
         "alert_id": alert.get("alert_id"),
@@ -274,4 +304,24 @@ def build_report(alert: dict, triage: dict, *, stage: str = "notification",
         "backend": "template-nis2-de",
         "backend_degraded": False,
         "citations": _citations(),
+        # R3-#42: satisfy contracts/nis2-de-schema.json's required envelope.
+        "stage": stage,
+        "language": lang,
+        "entity": {
+            "name": ph,
+            "sector_classification": ph,
+            "competent_authority": ph,
+        },
+        "incident": {
+            "title": alert.get("rule_title") or "(unknown rule)",
+            "detected_at": _fmt_time(alert.get("time")),
+            "severity": alert.get("level") or "unknown",
+            "significant_incident_assessment": ph,
+            "suspected_malicious": None,   # null = not yet determined (Art. 23(4)(a))
+            "cross_border_impact": None,   # null = not yet determined (Art. 23(4)(a))
+            "impact_assessment": ph,
+            "indicators_of_compromise": [],
+            "root_cause": ph,
+            "mitigation_measures": ph,
+        },
     }

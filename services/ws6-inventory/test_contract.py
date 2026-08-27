@@ -9,10 +9,12 @@ Asserts the Contract C behaviours:
 """
 from __future__ import annotations
 
+import io
 import json
 import sys
 import threading
 import time
+import urllib.error
 import urllib.request
 from http.server import ThreadingHTTPServer
 from pathlib import Path
@@ -40,6 +42,20 @@ def http_post(base, path, body):
                                  headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(req) as r:
         return r.status, json.loads(r.read())
+
+
+def http_req(base, path, body=None):
+    """Like http_get/http_post but returns (status, body) for ERROR responses
+    too (urlopen raises HTTPError on >=400; the gap-hunt tests assert clean
+    400/404/500 shapes, so they need the code + body instead of an exception)."""
+    data = json.dumps(body).encode() if body is not None else None
+    headers = {"Content-Type": "application/json"} if body is not None else {}
+    req = urllib.request.Request(base + path, data=data, headers=headers)
+    try:
+        with urllib.request.urlopen(req) as r:
+            return r.status, json.loads(r.read())
+    except urllib.error.HTTPError as e:
+        return e.code, json.loads(e.read().decode())
 
 
 def run():
@@ -108,6 +124,86 @@ def run():
     check(epoch_asset2["ip_current"] == "10.0.0.21",
           f"newer ISO seen_at after an epoch seen_at should win, got {epoch_asset2['ip_current']}")
 
+    # --- Gap-hunt #5: seen_at is validated at the write choke point -------
+    # A well-formed ISO string still upserts; a NON-ISO string (e.g. epoch
+    # digits stringified by a bad collector) is rejected at write time so it
+    # can never be stored and later break resolve()/stale checks.
+    try:
+        epoch_store.upsert({"mac": "AA:BB:CC:00:44:04", "ip": "10.0.0.30",
+                            "seen_at": "2026-06-16T10:00:00+00:00"})
+        ok_iso = True
+    except ValueError:
+        ok_iso = False
+    check(ok_iso, "a well-formed ISO seen_at must still upsert")
+    for bad in ("1750000000", "not-a-date", "yesterday"):
+        try:
+            epoch_store.upsert({"mac": "AA:BB:CC:00:44:04", "ip": "10.0.0.31",
+                                "seen_at": bad})
+            check(False, f"non-ISO seen_at {bad!r} must be rejected at upsert")
+        except ValueError as e:
+            check("seen_at" in str(e), f"rejection message must name seen_at, got {e}")
+
+    # A CORRUPT stored value (written before validation existed) must degrade
+    # gracefully in resolve() -- treated as unknown, never a 400.
+    corrupt = InventoryStore(":memory:")
+    corrupt.db.execute(
+        "INSERT INTO assets(tenant_id,mac,hostname,ip_current,last_seen,status) "
+        "VALUES('default','AA:BB:CC:00:55:05','legacy-box','10.9.9.9','NOT-A-DATE','active')")
+    corrupt.db.execute(
+        "INSERT INTO ip_history(tenant_id,mac,ip,from_ts,to_ts) "
+        "VALUES('default','AA:BB:CC:00:55:05','10.9.9.9','NOT-A-DATE',NULL)")
+    corrupt.db.commit()
+    resolved_corrupt = corrupt.resolve("10.9.9.9", "2026-06-16T09:00:00+00:00")
+    check(resolved_corrupt is None,
+          "resolve() must treat a corrupt stored timestamp as unknown (None), not raise")
+    asset_corrupt = corrupt.get("AA:BB:CC:00:55:05")
+    check(asset_corrupt is not None and asset_corrupt["mac"] == "AA:BB:CC:00:55:05",
+          "get() must still return the corrupt-rowed asset without crashing")
+
+    # --- Gap-hunt #6: ip_history / protocols_seen are bounded ------------
+    cap_store = InventoryStore(":memory:")
+    cap_mac = "AA:BB:CC:00:66:06"
+    for i in range(150):  # 150 DHCP churns; monotonic seen_at
+        m = i
+        cap_store.upsert({"mac": cap_mac, "ip": f"10.99.0.{i}",
+                          "seen_at": f"2026-06-16T{10 + m // 60:02d}:{m % 60:02d}:00+00:00"})
+    hist_capped = cap_store.get(cap_mac)
+    check(len(hist_capped["ip_history"]) <= 100,
+          f"ip_history must be capped at 100 intervals per asset, got {len(hist_capped['ip_history'])}")
+    check(hist_capped["ip_history"][-1]["ip"] == "10.99.0.149",
+          "the most recent interval must be retained after capping")
+    check(hist_capped["ip_history"][0]["ip"] == "10.99.0.50"
+          or len(hist_capped["ip_history"]) < 100,
+          "the OLDEST intervals must be the ones pruned")
+    for i in range(80):  # 80 distinct protocols on the SAME asset
+        cap_store.upsert({"mac": cap_mac, "ip": "10.99.5.5",
+                          "protocol": f"PROTO-{i:02d}",
+                          "seen_at": f"2026-06-17T{10 + i // 60:02d}:{i % 60:02d}:00+00:00"})
+    protos_capped = cap_store.get(cap_mac)
+    check(len(protos_capped["protocols_seen"]) <= 50,
+          f"protocols_seen must be capped at 50 per asset, got {len(protos_capped['protocols_seen'])}")
+
+    # --- Gap-hunt #7: mac/hostname/protocol validated on upsert -----------
+    fstore = InventoryStore(":memory:")
+    for bad_obs, label in (
+        ({"mac": "A" * 100000, "ip": "10.0.0.99"}, "100,000-char mac"),
+        ({"mac": "not-a-mac", "ip": "10.0.0.98"}, "malformed mac"),
+        ({"mac": "AA:BB:CC:00:77:07", "ip": "10.0.0.97",
+          "hostname": "h" * 300}, "300-char hostname"),
+        ({"mac": "AA:BB:CC:00:77:07", "ip": "10.0.0.96",
+          "protocol": "P" * 200}, "200-char protocol"),
+    ):
+        try:
+            fstore.upsert({**bad_obs, "seen_at": "2026-06-16T10:00:00+00:00"})
+            check(False, f"{label} must be rejected on upsert")
+        except ValueError:
+            pass
+    ok_asset = fstore.upsert({"mac": "AA:BB:CC:00:77:07", "ip": "10.0.0.95",
+                              "hostname": "sw-07", "protocol": "SNMP",
+                              "seen_at": "2026-06-16T10:00:00+00:00"})
+    check(ok_asset is not None and ok_asset["mac"] == "AA:BB:CC:00:77:07",
+          "a well-formed observation (colon-hex mac, bounded hostname/protocol) must still upsert")
+
     # --- HTTP layer ---
     srv = ThreadingHTTPServer(("127.0.0.1", 0), ws6.Handler)
     port = srv.server_address[1]
@@ -126,6 +222,35 @@ def run():
         check(st == 200 and isinstance(lst, list) and len(lst) >= 1, "GET /assets list failed")
         st, _ = http_get(base, "/assets/resolve?ip=192.168.1.5&at=2026-06-16T11:00:00%2B00:00")
         check(st == 200, f"resolve over HTTP status {st}")
+
+        # Gap-hunt #5/#7 over HTTP: invalid observation input is the CALLER'S
+        # fault -> clean 400s naming the reason, never a 500.
+        st, body = http_req(base, "/assets/upsert",
+                            {"mac": "A" * 100000, "ip": "10.0.0.96",
+                             "seen_at": "2026-06-16T10:00:00+00:00"})
+        check(st == 400, f"upsert of a 100,000-char mac must be 400 over HTTP, got {st} {body}")
+        st, body = http_req(base, "/assets/upsert",
+                            {"mac": "AA:BB:CC:00:88:08", "ip": "10.0.0.95",
+                             "seen_at": "garbage-not-iso"})
+        check(st == 400 and "seen_at" in json.dumps(body),
+              f"upsert of a non-ISO seen_at must be 400 naming seen_at, got {st} {body}")
+
+        # A corrupt STORED timestamp must NOT 400 a well-formed resolve param:
+        # /assets/resolve blames the caller's `at` only when `at` itself is
+        # malformed; a corrupt DB row is the service's problem, answered 404.
+        ws6.STORE.db.execute(
+            "INSERT INTO assets(tenant_id,mac,hostname,ip_current,last_seen,status) "
+            "VALUES('default','AA:BB:CC:00:99:09','legacy','10.9.9.9','NOT-A-DATE','active')")
+        ws6.STORE.db.execute(
+            "INSERT INTO ip_history(tenant_id,mac,ip,from_ts,to_ts) "
+            "VALUES('default','AA:BB:CC:00:99:09','10.9.9.9','NOT-A-DATE',NULL)")
+        ws6.STORE.db.commit()
+        st, body = http_req(base, "/assets/resolve?ip=10.9.9.9&at=2026-06-16T09:00:00%2B00:00")
+        check(st == 404,
+              f"resolve over a corrupt stored timestamp must degrade to 404 (unknown), got {st} {body}")
+        st, body = http_req(base, "/assets/resolve?ip=10.9.9.9&at=not-a-date")
+        check(st == 400 and "at" in json.dumps(body),
+              f"a MALFORMED caller `at` param must still be a 400 naming at, got {st} {body}")
     finally:
         srv.shutdown()
 
@@ -153,8 +278,44 @@ def run():
     check(cs.get(race_mac) is not None, "asset must exist after concurrent upserts")
 
 
+def test_internal_error_is_logged():
+    """Gap-hunt #2: both request dispatchers used to swallow every exception
+    into a bare 500 with ZERO logging (log_message is a no-op), so a real
+    backend break was invisible. Force an internal error in the GET path and
+    assert the 500 is accompanied by a traceback log line on stdout."""
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), ws6.Handler)
+    port = srv.server_address[1]
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    time.sleep(0.1)
+    base = f"http://127.0.0.1:{port}"
+    orig_list = ws6.STORE.list
+
+    def _boom(*a, **k):
+        raise RuntimeError("synthetic internal error")
+
+    ws6.STORE.list = _boom
+    buf = io.StringIO()
+    try:
+        old = sys.stdout
+        sys.stdout = buf
+        try:
+            st, body = http_req(base, "/assets")
+        finally:
+            sys.stdout = old
+        check(st == 500 and body.get("error") == "internal error",
+              f"forced internal error should answer 500, got {st} {body}")
+    finally:
+        ws6.STORE.list = orig_list
+        srv.shutdown()
+        srv.server_close()
+    out = buf.getvalue()
+    check('"level": "error"' in out and "synthetic internal error" in out and "traceback" in out,
+          f"the 500 must be logged with a traceback (not silent), got stdout={out!r}")
+
+
 def main():
     run()
+    test_internal_error_is_logged()
     if FAILS:
         print(f"[FAIL] WS-6: {len(FAILS)} problem(s)")
         for f in FAILS:

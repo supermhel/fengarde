@@ -4,7 +4,7 @@
 
 COMPOSE := docker compose -f infra/docker-compose.yml
 
-.PHONY: help preflight demo test e2e nis2-demo up down ha-up ha-down chaos test-live ha-verify attack-scorecard eval-detection mutation-test
+.PHONY: help preflight demo test e2e nis2-demo up down ha-up ha-down chaos test-live ha-verify attack-scorecard eval-detection mutation-test bench
 
 PYTHON ?= python3
 
@@ -45,7 +45,7 @@ demo: preflight
 
 # Contributor inner loop — zero infrastructure.
 test:
-	@sh run_all_tests.sh
+	@bash run_all_tests.sh
 
 # v0.1 acceptance test — proves SSH brute-force -> real alert in the index,
 # idempotent under replay, with no Docker/Redis/OpenSearch.
@@ -58,7 +58,7 @@ e2e:
 nis2-demo:
 	@$(PYTHON) tools/demo_nis2.py
 
-up:
+up: preflight
 	$(COMPOSE) up -d
 
 down:
@@ -128,6 +128,7 @@ ha-verify:
 # empirical `make eval-detection` number below.
 attack-scorecard:
 	@$(PYTHON) eval/attack/coverage_layer.py
+	@$(PYTHON) eval/attack/test_coverage_layer.py
 	@$(PYTHON) eval/attack/fire_check.py
 	@$(PYTHON) eval/attack/test_fire_check.py
 
@@ -141,6 +142,7 @@ attack-scorecard:
 eval-detection:
 	@$(PYTHON) eval/detection_accuracy/evtx_eval.py
 	@$(PYTHON) eval/detection_accuracy/splunk_eval.py
+	@$(PYTHON) eval/detection_accuracy/test_evtx_eval.py
 
 # M2 mutation-testing gate (see pyproject.toml [tool.mutmut]). Scoped narrow
 # for its first pass (services/shared/sessions.py only) -- informational in
@@ -150,3 +152,19 @@ eval-detection:
 mutation-test:
 	@python3 -m mutmut run || true
 	@python3 -m mutmut results
+
+# M2 public proof artifact (PLAN_C Tier 2.1): reproducible throughput /
+# footprint benchmark for the normalize->detect->index path. Zero infra
+# (memory bus + MemoryStore) by design -- see tools/fengarde_bench.py's
+# docstring for exactly what these numbers ARE and are NOT.
+#
+# Gap-hunt finding (2026-08-23): this and its live sibling were wired to NO
+# make target and NO CI job -- hand-runnable only, silently absent from
+# `make help`. `make bench` now runs the zero-infra harness (fast, --events
+# 2000) and is wired into CI (contract-tests gate). The LIVE sibling
+# tools/fengarde_bench_live.py is deliberately MANUAL-ONLY: it needs the
+# full Docker/Redis/OpenSearch stack up and produces real latency numbers
+# that are host-dependent and not CI-deterministic -- same opt-in convention
+# as `make test-live`/`make chaos`.
+bench:
+	@$(PYTHON) tools/fengarde_bench.py --events 2000

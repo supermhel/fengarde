@@ -157,6 +157,121 @@ jobs:
         env:
           OPENSEARCH_URL: http://localhost:9200
         run: python services/ws3-indexer/storage/test_opensearch_cas_concurrency_live.py
+      # Gap-hunt finding (2026-08-23): this pins the 2026-08-19 per-thread-
+      # connection fix (http.client.ResponseNotReady: Idle under real
+      # multi-thread contention on ONE shared OpenSearchStore -- the exact
+      # shape ws3-indexer's real daemon uses). Same "opt-in via make
+      # test-live, never actually run automatically" shape as the CAS test
+      # above before this session fixed it. Needs only a single reachable
+      # OPENSEARCH_URL (skips cleanly otherwise), so it belongs here --
+      # unlike test_opensearch_ha_failover_live.py (make test-live only,
+      # deliberately NOT wired here: it needs `docker compose kill` against
+      # a real 3-node HA profile, the same "needs actual multi-container
+      # orchestration control, not just a services: container" reason
+      # `make chaos`/`make ha-verify` also stay out of CI).
+      - name: Shared OpenSearchStore survives real concurrent request/response cycles
+        env:
+          OPENSEARCH_URL: http://localhost:9200
+        run: python services/ws3-indexer/storage/test_opensearch_shared_store_concurrent_live.py
+
+  # Gap-hunt finding (2026-08-23): test_mfa_live_e2e.py existed, passed, and
+  # caught a real production defect once (2026-08-11: MFA silently inert in
+  # the deployed image, green in every other test) -- but was reachable by
+  # NO make target at all, only a manual `docker cp` + `docker exec` runbook
+  # step in its own docstring. The exact regression it was written for could
+  # have recurred silently forever. It needs the DEPLOYED image's own module
+  # layout (that's the whole point -- the bug was in module resolution under
+  # that layout, invisible to any in-process test), so it can't just run
+  # against a checkout; this job builds the real ws3-indexer image and runs
+  # it inside a container the same way the docstring's runbook does.
+  ws3-mfa-live-e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+      - name: Build the real ws3-indexer image
+        run: docker build -f services/ws3-indexer/Dockerfile -t ws3-indexer-mfa-e2e .
+      - name: Run MFA/TOTP live e2e inside the deployed image
+        run: |
+          docker run -d --name mfa-e2e ws3-indexer-mfa-e2e tail -f /dev/null
+          docker cp services/ws3-indexer/test_mfa_live_e2e.py mfa-e2e:/tmp/test_mfa_live_e2e.py
+          docker exec mfa-e2e python /tmp/test_mfa_live_e2e.py
+      - name: Cleanup
+        if: always()
+        run: docker rm -f mfa-e2e || true
+
+  # Gap-hunt finding (2026-08-23): tools/ot_new_device_e2e.py's own docstring
+  # says it "closes the gap" that the ot_new_device_on_segment rule had only
+  # ever fired on its own anti-dormancy fixture, never on a real producer --
+  # but that live proof was a one-time manual run (SSOT.md/CHANGELOG.md
+  # record it as "LIVE-VERIFIED END TO END 2026-08-11"), reachable by NO make
+  # target or CI job. Same shape as the MFA-e2e gap above, just needing the
+  # FULL live stack (WS-6's bus consumer -> raw.events -> WS-2 -> WS-4 -> WS-3)
+  # rather than one image. Also fixed a real, separate bug found while wiring
+  # this in: the script hardcoded `http://opensearch-1:9200`, an HA-PROFILE-
+  # ONLY hostname that doesn't exist on the plain stack its own docstring
+  # instructs running it against -- it had never actually worked. Live-
+  # verified both directions before wiring: fails with a connection error on
+  # the old hardcoded hostname, passes end-to-end once it reads the real
+  # OPENSEARCH_URL out of the ws3-indexer container instead.
+  ot-new-device-live-e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Bring up the full stack
+        # INVENTORY_BASELINE_SECONDS=0: the test's own docstring requires
+        # this -- a first sighting inside the default 3600s baseline window
+        # is treated as pre-existing inventory BY DESIGN (populate, don't
+        # alert), so the script would SKIP (not fail) without it.
+        env:
+          INVENTORY_BASELINE_SECONDS: "0"
+        run: docker compose -f infra/docker-compose.yml up -d --build
+      - name: Wait for the stack to report healthy
+        # Gap-hunt (2026-08-26): `ps` (no `-a`) lists only RUNNING containers,
+        # so a stack that's still building/starting -- or one that crashed
+        # entirely -- both show zero non-running rows and this used to pass
+        # on iteration 1 either way. Count against the compose file's own
+        # service list (via `ps -a`, which includes not-yet-ready/exited
+        # containers) instead of trusting an absence of bad rows. Some
+        # services (devkit-feeder, provision, ws1-spool-init) are one-shot
+        # init jobs that exit 0 by design and never reach `running` -- treat
+        # a clean exit as ready too, alongside a running+healthy container.
+        run: |
+          expected=$(docker compose -f infra/docker-compose.yml config --services | wc -l)
+          for _ in $(seq 1 60); do
+            total=$(docker compose -f infra/docker-compose.yml ps -a --services | wc -l)
+            # Pipe-delimited, not space-delimited: `.Health` renders as an
+            # empty string on a container with no healthcheck, and a
+            # space-joined format collapses that into a missing field under
+            # awk's default whitespace splitting -- shifting ExitCode into
+            # the Health column and silently breaking the exited-container
+            # branch below.
+            ready=$(docker compose -f infra/docker-compose.yml ps -a --format '{{.Service}}|{{.State}}|{{.Health}}|{{.ExitCode}}' \
+                    | awk -F'|' '($2=="running" && $3!="starting" && $3!="unhealthy") || ($2=="exited" && $4=="0") {c++} END{print c+0}')
+            if [ "$total" -eq "$expected" ] && [ "$ready" -eq "$expected" ]; then
+              echo "stack running ($ready/$expected)"; exit 0
+            fi
+            sleep 5
+          done
+          echo "stack did not reach healthy within 5 minutes"
+          docker compose -f infra/docker-compose.yml ps -a
+          exit 1
+      - name: Run OT new-device live e2e
+        # FENGARDE_E2E_STRICT=1: this job guarantees every precondition the
+        # script checks (docker up, BUS_BACKEND=redis, baseline=0) -- so here
+        # a [SKIP] can only mean the job itself is broken, and must fail the
+        # job rather than pass vacuously (review finding, 2026-08-27).
+        env:
+          FENGARDE_E2E_STRICT: "1"
+        run: python tools/ot_new_device_e2e.py
+      - name: Dump service logs on failure
+        if: failure()
+        run: docker compose -f infra/docker-compose.yml logs --tail=200
+      - name: Teardown
+        if: always()
+        run: docker compose -f infra/docker-compose.yml down -v
 
   # M2 code-quality floor (PLAN_C Tier 2.3). Lint blocks; coverage blocks at the
   # MEASURED baseline (see tools/coverage_gate.py) not the unmet-for-WS-3 85%
@@ -240,6 +355,57 @@ jobs:
   # actually build (the zero-infra gate never touches them; PR#2's live runs
   # did, but only on a developer machine). A broken Dockerfile should fail
   # here, not on an operator's first `make up`.
+  # 2026-08-27: universal container smoke -- build -> run -> health-check across
+  # EVERY app service. Closes the gap the other two live-e2e jobs (ws3-mfa,
+  # ot-new-device) leave open: they cover 2 services, and `docker-build` only
+  # builds. That means an image that BUILDS but does not BOOT (or whose health
+  # endpoint 404s, or whose /metrics is empty) shipped unchecked. This job
+  # brings up the full compose stack and runs tools/container_smoke.py, which
+  # execs into EVERY service container and asserts its health endpoint responds.
+  # Live-verified locally 2026-08-27 against the real stack: 8/8 green -- and it
+  # caught a real bug (ws7-dashboard's compose healthcheck used http://localhost/
+  # which resolved to ::1 on nginx:alpine's IPv4-only bind, so the container
+  # never reported healthy; fixed to 127.0.0.1 in infra/docker-compose.yml).
+  container-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Bring up the full stack and build every image
+        run: docker compose -f infra/docker-compose.yml up -d --build
+      - name: Wait for the stack to report healthy
+        # Same health-wait the ot-new-device job uses (ps -a includes exited
+        # init jobs; pipe-delimited so empty Health doesn't shift ExitCode).
+        run: |
+          expected=$(docker compose -f infra/docker-compose.yml config --services | wc -l)
+          for _ in $(seq 1 90); do
+            total=$(docker compose -f infra/docker-compose.yml ps -a --services | wc -l)
+            ready=$(docker compose -f infra/docker-compose.yml ps -a --format '{{.Service}}|{{.State}}|{{.Health}}|{{.ExitCode}}' \
+                    | awk -F'|' '($2=="running" && $3!="starting" && $3!="unhealthy") || ($2=="exited" && $4=="0") {c++} END{print c+0}')
+            if [ "$total" -eq "$expected" ] && [ "$ready" -eq "$expected" ]; then
+              echo "stack running ($ready/$expected)"; exit 0
+            fi
+            sleep 5
+          done
+          echo "stack did not reach healthy within 7.5 minutes"
+          docker compose -f infra/docker-compose.yml ps -a
+          exit 1
+      - name: Run universal container smoke (per-service health across all 8)
+        # FENGARDE_E2E_STRICT=1: this job brings the stack up itself, so a
+        # [SKIP] here can only mean the job is broken (review finding,
+        # 2026-08-27) -- same rationale as the ot-new-device job above.
+        env:
+          FENGARDE_E2E_STRICT: "1"
+        run: python tools/container_smoke.py
+      - name: Dump service logs on failure
+        if: failure()
+        run: docker compose -f infra/docker-compose.yml logs --tail=200
+      - name: Teardown
+        if: always()
+        run: docker compose -f infra/docker-compose.yml down -v
+
   docker-build:
     runs-on: ubuntu-latest
     steps:

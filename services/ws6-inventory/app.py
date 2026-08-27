@@ -18,6 +18,9 @@ from __future__ import annotations
 import json
 import os
 import sys
+import threading
+import time
+import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs, unquote
@@ -29,7 +32,7 @@ from keystore import (  # noqa: E402
     SCOPE_READ_ONLY, TenantKeyStore, ensure_legacy_keys_migrated,
     warn_if_legacy_env_now_ignored, warn_missing_pepper,
 )
-from authz import warn_if_disabled  # noqa: E402
+from authz import require_auth_or_die, warn_if_disabled  # noqa: E402
 
 STORE = InventoryStore(os.getenv("INVENTORY_DB", ":memory:"))
 # Same file as STORE by default (one DB to back up), separate connection --
@@ -43,6 +46,53 @@ MIGRATED_TENANTS = ensure_legacy_keys_migrated(KEYSTORE)
 _MAX_LIMIT = 1000
 _DEFAULT_LIMIT = 50
 _MAX_BODY_BYTES = 1_048_576  # 1 MiB — an Observation is a few hundred bytes.
+
+# Gap-hunt #3 (2026-08-26): a failed API-key attempt previously produced ZERO
+# telemetry and was never rate-limited -- a brute-force/probe could run forever
+# unseen and with no cost. Now every failure is (1) counted on a monotonic
+# slow-fail counter (observable via auth_fail_total(), which app.py's __main__
+# feeds into the bus consumer's /metrics), (2) logged as a structured JSON line
+# (this HTTP surface deliberately avoids `shared`, so print() is the same
+# channel serve()'s startup lines already use), and (3) rate-limited per IP:
+# more than _AUTH_FAIL_LIMIT failures within _AUTH_FAIL_WINDOW_S -> 429.
+_AUTH_FAIL_WINDOW_S = 60
+_AUTH_FAIL_LIMIT = 25
+# R2-#4: auth is OPT-IN -- an empty keystore = the zero-infra/quickstart
+# default where every request is allowed. But that "auth is disabled" state
+# must only exist if auth was NEVER enabled: once a key has ever been observed
+# (provisioned) or seeded at boot, revoking the LAST key must NOT reopen the
+# service. `_AUTH_WAS_ENABLED` is a write-once-to-True latch (benign value
+# race under the threaded server: any thread setting it True is correct). It
+# is only reset by tests so each test gets a fresh, empty keystore.
+_AUTH_WAS_ENABLED = False
+# NEW-hunt read-plane #4: `_auth_fail_by_ip` buckets are otherwise pruned only
+# on the NEXT failure from the SAME IP, so a "deceased" IP's bucket (and its
+# now-empty/lingering list) stays in the dict for the process lifetime --
+# unbounded growth, one entry per distinct failing IP ever seen. Periodic
+# sweep, mirroring ws3-indexer/triage_api.py::_rate_buckets: every
+# _AUTH_FAIL_SWEEP_EVERY-th failure, drop any bucket whose last entry is
+# longer than _AUTH_FAIL_STALE_S old (default: 5 windows).
+_AUTH_FAIL_SWEEP_EVERY = 256
+_AUTH_FAIL_STALE_S = 5 * _AUTH_FAIL_WINDOW_S
+_auth_fail_lock = threading.Lock()
+_auth_fail_total = 0
+_auth_fail_calls = 0
+_auth_fail_by_ip: dict[str, list[float]] = {}
+
+
+def auth_fail_total() -> int:
+    """Monotonic count of failed API-key authentications since boot -- the
+    slow-fail signal for a brute-force/probe. Merged into the bus consumer's
+    /metrics ``extra`` when BUS_BACKEND wiring is present (gap-hunt #8)."""
+    return _auth_fail_total
+
+
+def _log_http_line(level: str, msg: str, **fields) -> None:
+    """Structured JSON log line to stdout (flush=True) -- the HTTP surface's
+    `shared`-free counterpart to shared.log. Only genuine failures/errors use
+    this; the per-request noise stays muted by the no-op log_message."""
+    print(json.dumps({"level": level, "service": "ws6-inventory",
+                      "msg": msg, **fields}, default=str), flush=True)
 
 
 class _BadRequest(Exception):
@@ -89,14 +139,58 @@ class Handler(BaseHTTPRequestHandler):
         for a tenant-scoped key -- every tenant_id this request touches
         must then be forced to it, regardless of what the caller asked
         for. scope is SCOPE_READ_ONLY/SCOPE_READ_WRITE -- do_POST rejects
-        a read-only key before it can write anything."""
-        if KEYSTORE.count() == 0:
+        a read-only key before it can write anything.
+
+        R2-#4: the "auth disabled" case is pinned to auth NEVER having
+        been enabled. `KEYSTORE.count()==0` at request time alone must not
+        reopen an already-armed service -- we keep a `_AUTH_WAS_ENABLED`
+        latch (set when any key is observed, or at boot by serve() when the
+        keystore is pre-seeded). Revoking the last key mid-session therefore
+        leaves auth ON: every request needs a key (and none verifies),
+        instead of silently serving unauthenticated traffic again."""
+        global _AUTH_WAS_ENABLED
+        if KEYSTORE.count() > 0:
+            _AUTH_WAS_ENABLED = True
+        if KEYSTORE.count() == 0 and not _AUTH_WAS_ENABLED:
             return True, None, None
         ok, bound, scope = KEYSTORE.verify(self.headers.get("X-Api-Key", ""))
         if not ok:
+            if self._note_auth_failure():
+                return False, None, None  # 429 already sent
             self._send(401, {"error": "unauthorized"})
             return False, None, None
         return True, bound, scope
+
+    def _note_auth_failure(self) -> bool:
+        """Gap-hunt #3: record + log + rate-limit a failed API-key attempt.
+        Returns True when the per-IP budget is exhausted and a 429 has
+        already been sent (caller must NOT also send 401). NEW-hunt
+        read-plane #4: also runs a periodic sweep over `_auth_fail_by_ip`
+        so a "deceased" IP's bucket is dropped instead of lingering for the
+        process lifetime (see the module-level constants above)."""
+        ip = self.client_address[0] if self.client_address else "?"
+        now = time.time()
+        with _auth_fail_lock:
+            global _auth_fail_total, _auth_fail_calls
+            _auth_fail_total += 1
+            _auth_fail_calls += 1
+            window = [t for t in _auth_fail_by_ip.get(ip, [])
+                      if now - t < _AUTH_FAIL_WINDOW_S]
+            window.append(now)
+            _auth_fail_by_ip[ip] = window
+            if _auth_fail_calls % _AUTH_FAIL_SWEEP_EVERY == 0:
+                stale = [k for k, w in _auth_fail_by_ip.items()
+                         if not w or now - w[-1] >= _AUTH_FAIL_STALE_S]
+                for k in stale:
+                    _auth_fail_by_ip.pop(k, None)
+            total, in_window = _auth_fail_total, len(window)
+        _log_http_line("warning", "failed API-key authentication",
+                       client_ip=ip, method=self.command, path=self.path,
+                       auth_fail_total=total, auth_fail_in_window=in_window)
+        if in_window > _AUTH_FAIL_LIMIT:
+            self._send(429, {"error": "too many failed auth attempts, try again later"})
+            return True
+        return False
 
     def do_GET(self):
         # Any malformed input (bad ?at=, bad ?limit=) becomes a clean 4xx/5xx JSON
@@ -112,6 +206,13 @@ class Handler(BaseHTTPRequestHandler):
         except InvalidTenantId as e:
             self._send(400, {"error": str(e)})
         except Exception:  # noqa: BLE001 - never let a handler crash the thread
+            # Gap-hunt #2 (2026-08-26): this catch-all returned a bare 500 with
+            # ZERO logging (log_message is a no-op), so a real backend break
+            # was invisible. Log the traceback before answering; the log line
+            # carries path/method so the failing request is identifiable.
+            _log_http_line("error", "unhandled exception in request",
+                           method="GET", path=self.path,
+                           traceback=traceback.format_exc())
             self._send(500, {"error": "internal error"})
 
     def _route_get(self, bound_tenant: str | None = None):
@@ -175,6 +276,10 @@ class Handler(BaseHTTPRequestHandler):
         except InvalidTenantId as e:
             self._send(400, {"error": str(e)})
         except Exception:  # noqa: BLE001 - never let a handler crash the thread
+            # Gap-hunt #2: same as do_GET -- log the traceback, then 500.
+            _log_http_line("error", "unhandled exception in request",
+                           method="POST", path=self.path,
+                           traceback=traceback.format_exc())
             self._send(500, {"error": "internal error"})
 
     def _route_post(self, bound_tenant: str | None = None):
@@ -201,7 +306,14 @@ class Handler(BaseHTTPRequestHandler):
             # inventory any more than it can read one.
             if bound_tenant is not None:
                 body = {**body, "tenant_id": bound_tenant}
-            asset, is_new_device = STORE.upsert_with_diff(body)
+            try:
+                asset, is_new_device = STORE.upsert_with_diff(body)
+            except ValueError as e:
+                # Gap-hunt #5/#7: invalid observation input -- non-ISO
+                # seen_at, oversized/malformed mac/hostname/protocol,
+                # invalid tenant_id (IS-A ValueError) -- is the CALLER'S
+                # fault: a clean 400 naming the reason, never a 500.
+                raise _BadRequest(str(e))
             if not asset:
                 return self._send(400, {"error": "mac required"})
             # M7 Track Y: an alertable first-ever sighting for this tenant.
@@ -216,8 +328,14 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def serve(host="0.0.0.0", port=8000):
+    global _AUTH_WAS_ENABLED
+    require_auth_or_die("ws6-inventory", KEYSTORE)
     warn_if_disabled("ws6-inventory", KEYSTORE)
     warn_missing_pepper()
+    if KEYSTORE.count() > 0:
+        # R2-#4: a service booting with provisioned keys is and remains
+        # auth-enabled -- even if the last key is later revoked.
+        _AUTH_WAS_ENABLED = True
     if not MIGRATED_TENANTS and KEYSTORE.count() > 0:
         # Nothing migrated on THIS boot, yet the keystore is non-empty --
         # it was already seeded by an earlier boot. If a legacy env var is
@@ -251,5 +369,14 @@ if __name__ == "__main__":
     if os.getenv("BUS_BACKEND"):
         import threading
         from bus_consumer import run_forever
-        threading.Thread(target=run_forever, args=(STORE,), daemon=True).start()
+        # Gap-hunt #8: wire the consumer's health port (default
+        # INVENTORY_BUS_HEALTH_PORT, 8006) so runner.serve's per-topic
+        # acked/failed/deadlettered counters are actually readable, and feed
+        # the auth-failure slow-fail counter (gap-hunt #3) into /metrics.
+        threading.Thread(
+            target=run_forever, args=(STORE,),
+            kwargs={"health_port": int(os.getenv("INVENTORY_BUS_HEALTH_PORT", "8006")),
+                    "metrics_provider": lambda: {"ws6_inventory.auth_fail_total": auth_fail_total()}},
+            daemon=True,
+        ).start()
     serve(port=int(os.getenv("PORT", "8000")))

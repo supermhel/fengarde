@@ -76,10 +76,22 @@ def test_hit_different_keys_are_independent():
 
 def test_empty_window_key_is_reclaimed():
     c = DequeWindowCounter()
-    c.hit("k", 0, 1000, member="a")
-    c.hit("k", 5000, 1000, member="b")  # "a" evicted, "b" is the only live member
-    assert c.members("k") == ["b"]
-    assert "k" in c._w
+    c.hit("gone", 0, 1000, member="a")
+    c.hit("stays", 0, 60_000, member="x")
+    # Gap-hunt (2026-08-26) R4-116: this test was mis-named AND asserted the
+    # opposite of reclamation (a key retaining a live member stays in _w).
+    # Real reclamation is _sweep(): after (_SWEEP_EVERY=256) hits, keys whose
+    # NEWEST event is older than the window (idle groups) are dropped from
+    # _w/_live/_last -- that is the bounded-memory guarantee that stops an
+    # attacker's endless distinct keys from OOMing the counter. Drive it.
+    c.hit("gone", 60_000, 1000, member="stale_again")  # _last["gone"]=60000 (old)
+    for i in range(256):                               # trigger the periodic _sweep
+        c.hit(f"filler-{i}", 1_500_000 + i, 60_000, member="z")
+    assert "gone" not in c._w, "idle past-window key 'gone' must be swept (_w)"
+    assert "gone" not in c._live_members, "idle key must be swept (_live_members)"
+    assert "gone" not in c._last, "idle key must be swept (_last)"
+    # A key touched just before the sweep's horizon must survive it.
+    assert "filler-255" in c._w, "a freshly-hit key must NOT be swept"
 
 
 # ---- hit_distinct() ---------------------------------------------------------
@@ -196,6 +208,31 @@ def test_redis_hit_counts_and_evicts_like_deque():
     # horizon at t=2000 is 1000 -> zremrangebyscore drops score in [0, 999],
     # which evicts BOTH "a" (0) and "b" (500); only "c" (2000) survives.
     assert c.hit("k", 2000, 1000, member="c") == 1
+    # Gap-hunt (2026-08-26) R4-116 second half: the Redis EXPIRE ("quiet
+    # groups self-delete" guard) was real in window.py but was NEVER asserted
+    # anywhere -- the fake pipe happened to record it without any test
+    # checking it, so deleting the expire() call shipped green. Pin it by
+    # wrapping pipeline() once and inspecting the raw ops queue.
+    orig_pipeline = r.pipeline
+    captured: list = []
+
+    def _spy_pipeline():
+        p = _FakePipe(r.store)
+        base_execute = p.execute
+        # execute() clears p.ops; record a copy before it does so we can
+        # assert the expire() was issued (not merely accumulated then dropped).
+        def _recording_execute():
+            captured.append(list(p.ops))
+            return base_execute()
+        p.execute = _recording_execute
+        return p
+
+    r.pipeline = _spy_pipeline
+    c.hit("k", 4000, 1000, member="e")
+    r.pipeline = orig_pipeline
+    assert captured, "expected at least one pipeline() call"
+    assert any(op[0] == "expire" for op in captured[0]), \
+        "RedisWindowCounter must EXPIRE its zset key (self-delete guard)"
 
 
 def test_redis_hit_member_dedup_via_zadd():

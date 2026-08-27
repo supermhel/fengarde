@@ -9,8 +9,12 @@ Asserts:
 from __future__ import annotations
 
 import json
+import os
 import re
+import shutil
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -22,6 +26,41 @@ def check(c, m):
         FAILS.append(m)
 
 
+def node_check_inline_js(html):
+    """R4-#69 (2026-08-27): the substring greps below cannot catch a JS
+    syntax error -- a broken <script> would pass them and the dashboard would
+    ship dead. Run `node --check` on every extracted inline <script> block
+    (the app JS is inline; mocks/config are external src= includes). node is
+    optional in this repo's minimal venv, so when it's absent we FAIL loudly
+    rather than silently skip -- a missing node must not paper over a broken
+    script the way a substring test would."""
+    blocks = [
+        m.group(1)
+        for m in re.finditer(r"<script(?![^>]*\bsrc=)[^>]*>(.*?)</script[^>]*>", html, re.S | re.I)
+        if m.group(1).strip()
+    ]
+    if not blocks:
+        FAILS.append("no inline <script> block found to node --check")
+        return
+    node = shutil.which("node")
+    if not node:
+        FAILS.append("node not installed -- cannot node --check inline JS; a JS syntax error would pass the substring tests")
+        return
+    js = "\n;\n".join(blocks)
+    fd, tmp = tempfile.mkstemp(suffix=".js", prefix="ws7_", text=True)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(js)
+        cp = subprocess.run([node, "--check", tmp], capture_output=True, text=True)
+    finally:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+    if cp.returncode != 0:
+        FAILS.append(f"node --check failed on inline dashboard JS: {cp.stderr.strip()}")
+
+
 def run():
     html = (HERE / "index.html").read_text(encoding="utf-8")
     for view in ("global", "inventory", "sources"):
@@ -31,6 +70,9 @@ def run():
     for field in ("rule_title", "level", "score"):
         check(field in html, f"dashboard does not use alert field {field}")
     check("INVENTORY_API" in html, "no live-API switch (falls back to mock)")
+
+    # R4-#69: the syntax gate -- a JS syntax error must FAIL the contract test.
+    node_check_inline_js(html)
 
     mock = (HERE / "mocks" / "mock_data.js").read_text(encoding="utf-8")
     m = re.search(r"window\.SIEM_MOCK\s*=\s*(\{.*\});", mock, re.S)

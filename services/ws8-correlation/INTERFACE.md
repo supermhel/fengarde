@@ -35,7 +35,11 @@ MITRE tactics), not just repeated single-tactic noise.
 
 - Topic `incidents` — one document per promoted entity track:
   `incident_id, tenant_id, entity_type, entity_value, first_seen, last_seen,
-  tactics[], member_alert_ids[], member_count, severity, truncated`.
+  tactics[], member_alert_ids[], member_count, severity, truncated`. When an
+  attacker-controlled entity_value was too long for the OpenSearch doc-id
+  budget it is stored bounded (`entity_value`, 448-byte UTF-8 cap, stable
+  sha256 suffix so two long values never false-merge) with the full original
+  preserved in the additive `entity_value_full` field (2026-08-26).
   `incident_id` is deterministic
   (`{tenant}:{entity_type}:{entity_value}:{horizon_bucket}`), mirroring
   `Rule.alert_key()`'s fixed-epoch-bucket discipline (T7) — WS-8 re-emits a
@@ -75,6 +79,13 @@ MITRE tactics), not just repeated single-tactic noise.
   separate incidents — there is no real signal left to link them without
   fabricating one, and this project's fail-closed philosophy means that
   residual case stays deliberately unlinked rather than guessed at.
+  **Allowlist (2026-08-26):** shared infrastructure now never opens a
+  `device:` track either — a hostname is as spoofable/unauthenticated as
+  the `src_endpoint.ip` the `ip:` leg already allowlists, so the same
+  `shared_infrastructure.yml` suppression applies to the `device:` value
+  (mac or hostname). Fails closed: an unloadable allowlist matches nothing.
+  A suppressed no-op alert is recorded in metrics
+  (`ws8_skipped_alerts_by_reason`), never silent.
 - **Promotion trigger is tactic diversity, not score-sum.** A track is
   promoted to an incident when its live members carry >=2 DISTINCT
   `mitre.tactic` values. Score-sum survives as the incident's `severity`
@@ -103,8 +114,16 @@ MITRE tactics), not just repeated single-tactic noise.
   `corp_ranges.yml`). An `ip:` track is never opened at all for an
   allowlisted address — the primary defense against one NAT gateway or
   proxy polluting unrelated alerts into a false incident.
-- **Hard member cap** per incident. On overflow, `truncated: true` is set
-  and the drop is logged — no silent cap.
+- **Hard member cap** per incident. `member_cap` (default 200) bounds BOTH
+  the emitted payload and the in-memory side table itself (`_sides[key]`,
+  2026-08-26: it used to bound only the payload, so a sustained attack past
+  the cap grew memory unboundedly). On overflow the OLDEST members are
+  evicted and `truncated: true` is set — and the incident's `tactics`/
+  `first_seen` come from a stable per-track aggregate (`_side_meta`), so a
+  1-recon + N-brute-force track keeps re-emitting under ONE incident_id
+  with both tactics instead of silently freezing (2026-08-26 gap-hunt
+  finding: alerts #199-399 emitted nothing). Score-sum severity clamps at
+  1000.
 
 ## Environment
 
@@ -128,6 +147,14 @@ MITRE tactics), not just repeated single-tactic noise.
   still-live track survives, and the sweep is actually wired into
   `_update_track` at the right cadence — see `correlator.py`'s
   `_sweep_dead_tracks`).
+- `python test_contract.py` — plus 9 gap-hunt scenarios (2026-08-26):
+  member-cap memory boundedness + stable tactics/first_seen under a 1-recon
+  + 400-brute-force flood (the stock-default reproduction; also runnable
+  standalone as `_gap_hunt_repro.py`), severity cap, stale-PROMOTED-track
+  sweep pruning `_last_incident`, WS-5 alert skip-with-reason,
+  missing-alert_id synthetic member fallback, entity_value bounding under
+  the OpenSearch doc-id limit, device-track allowlisting, `actor.user`
+  plain-string degrade, and the `ws8:corr` Redis namespace wiring.
 - `python test_correlator_sensitivity.py` — mutate-and-must-fail checks on
   the promotion trigger, the no-merge guarantee, and the device pivot-link
   (same "a negative assertion that cannot fail is not a test" bar

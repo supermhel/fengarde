@@ -121,6 +121,13 @@ from shared.allowlist import Allowlist, invalidate_dir, load_allowlist  # noqa: 
 _NUMERIC_OPS = {"gt", "gte", "lt", "lte", "ne"}
 _CONTAINS_MAX = 200  # cap the needle length; contains is a plain (non-regex) match
 
+# Single source for the T4 condition tokenizer. tools/validate_rules.py imports
+# this (R3-#41, 2026-08-27): a hand-copied duplicate in the validator used to
+# drift from what the runtime actually parses, so the gate could call a rule
+# valid while the engine tokenizes it differently. Everything that tokenizes a
+# condition must share THIS pattern and nothing else.
+_CONDITION_TOKEN_RE = re.compile(r"\(|\)|\band\b|\bor\b|\bnot\b|[\w.]+")
+
 
 def _in_list(actual, choices: list) -> bool:
     """True if ``actual`` equals a member of ``choices`` (bool-safe: a bool must
@@ -284,6 +291,19 @@ class Rule:
         self.condition = det.get("condition", "")
         self.selections = {k: v for k, v in det.items() if k != "condition"}
         self._allowlists_dir = allowlists_dir
+        # Gap-hunt finding (2026-08-23): an unparseable condition (valid YAML,
+        # bad boolean logic) used to fail closed to "no match" in
+        # _eval_condition with ZERO logging -- unlike the future-timestamp
+        # guard a few hundred lines below, which got an explicit warn
+        # specifically because a silent fail-closed drop was judged
+        # unacceptable. Net effect before this: a hot-reloaded rule with a
+        # typo'd condition showed "active" via /rules and simply never fired
+        # again, silently, forever. Warned ONCE per Rule instance (not once
+        # per event -- a broken condition fails on every event, and reload()
+        # builds a fresh Rule on every edit, so this naturally re-warns on
+        # each reload attempt, same "warn once until state changes"
+        # convention as ws1-collectors' ingest-silence watchdog).
+        self._condition_error_warned = False
         # Perf #1 (2026-07-29 audit): self.condition/self.selections are fixed
         # at load time and never change for this Rule's lifetime (reload()
         # builds fresh Rule instances rather than mutating one), yet
@@ -312,6 +332,29 @@ class Rule:
         # of the other class -- a missed detection, found in review.
         # Catch-all (self.class_uid None) is always CORRECT, just unfiltered.
         self.class_uid = self._bucketable_class_uid()
+        # Gap-hunt follow-up (2026-08-23): _eval_condition's warn-once only
+        # fires when the rule is actually evaluated. A rule bucketed under a
+        # class_uid that never produces events (or a rule whose condition has
+        # unconsumed tokens that still "parses" without raising) would never
+        # trigger _eval_condition at all, so the silent fail-closed went
+        # undetected. Dry-run the parse here (at load time) so the warning
+        # fires regardless of whether any event of the right class ever arrives.
+        try:
+            value, end = _parse_or(
+                self._condition_tokens, 0,
+                {name: True for name in self._compiled_selections})
+            if end != len(self._condition_tokens):
+                raise ValueError(
+                    f"{end} unconsumed token(s) after parsing condition")
+        except (ValueError, IndexError, RecursionError) as exc:
+            self._condition_error_warned = True  # suppress duplicate runtime warn
+            _log.warn(
+                f"rule {self.id}: condition has a load-time parse problem "
+                f"({type(exc).__name__}: {exc}); it will fail closed to "
+                f"no-match on every event until this rule is fixed and "
+                f"reloaded -- it will show as 'active' via /rules but "
+                f"never fire"
+            )
         siem = raw.get("siem", {})
         self.sector = siem.get("sector", "common")
         self.score_weight = int(siem.get("score_weight", 0))
@@ -520,8 +563,23 @@ class Rule:
         # condition must fail closed to "no match", never crash the worker.
         try:
             value, end = _parse_or(tokens, 0, matched)
-            return bool(value) if end == len(tokens) else False
-        except (ValueError, IndexError, RecursionError):
+            if end != len(tokens):
+                # Trailing garbage tokens (e.g. "a b", no connective) parsed
+                # without raising, but never consumed the full condition --
+                # same silent-forever-no-match shape as the except below.
+                raise ValueError(f"condition left {len(tokens) - end} "
+                                 f"unconsumed token(s) after parsing")
+            return bool(value)
+        except (ValueError, IndexError, RecursionError) as exc:
+            if not self._condition_error_warned:
+                self._condition_error_warned = True
+                _log.warn(
+                    f"rule {self.id}: condition failed to parse/evaluate "
+                    f"({type(exc).__name__}: {exc}); failing closed to "
+                    f"no-match on every event until this rule is fixed and "
+                    f"reloaded -- it will show as 'active' via /rules but "
+                    f"never fire"
+                )
             return False
 
     def alert_key(self, event: dict) -> str:
@@ -607,14 +665,31 @@ class Rule:
         entries out, but it can never fabricate an id that wasn't a real hit.
         Capped at _MAX_CONTRIBUTING_IDS so one very-high-threshold rule can't
         bloat every alert document.
+
+        Returns the plain, clean list of ids only. Callers who need to know
+        whether the cap actually bit should use
+        :meth:`contributing_event_ids_with_omitted` -- review finding
+        (2026-08-27): an earlier version of this method stamped an in-band
+        `"<truncated: N omitted>"` STRING into the returned list itself, so
+        any caller treating `event_ids` as "a list of ids" (a wire/UI
+        consumer, a join against raw events) would treat that sentinel as a
+        real id. This method is kept id-list-only; the count is a sibling.
         """
+        ids, _omitted = self.contributing_event_ids_with_omitted(event)
+        return ids
+
+    def contributing_event_ids_with_omitted(self, event: dict) -> tuple[list, int]:
+        """Same as :meth:`contributing_event_ids`, but returns
+        ``(ids, omitted_count)`` -- ``omitted_count`` is 0 unless the
+        ``_MAX_CONTRIBUTING_IDS`` cap actually bit, in which case it is the
+        number of ids that were dropped (not embedded into ``ids`` itself)."""
         own_id = (event.get("siem") or {}).get("ingest_id")
         if not self.stateful:
-            return [own_id] if own_id else []
+            return ([own_id] if own_id else []), 0
         tenant = (event.get("siem") or {}).get("tenant") or "default"
         group_value = _get_path_parts(event, self._group_by_parts)
         if group_value is None:
-            return [own_id] if own_id else []
+            return ([own_id] if own_id else []), 0
         window_key = f"{self.id}:{self._namespaced_group(tenant, str(group_value))}"
         if self.distinct_field:
             # The tracked "member" for a distinct-field window IS the field
@@ -623,10 +698,22 @@ class Rule:
             ids = self._counter.distinct_members(window_key)
         else:
             ids = self._counter.members(window_key)
-        ids = [str(i) for i in ids][: self._MAX_CONTRIBUTING_IDS]
+        ids = [str(i) for i in ids]
+        # R4-29 (2026-08-27): the old `[: _MAX_CONTRIBUTING_IDS]` slice silently
+        # dropped every id past the cap, so an analyst looking at an N-event
+        # stateful alert could not tell whether the list was truncated or truly
+        # only held those ids (the alert's own rule_title claims N events occurred
+        # -- silent loss is exactly the gap Design-A was written to close). Cap
+        # explicitly and report how many were omitted as a SEPARATE value
+        # (review finding, 2026-08-27: not embedded into the ids list itself --
+        # see contributing_event_ids's docstring for why). Un-truncated lists
+        # are byte-identical to the pre-fix behavior.
+        omitted = max(0, len(ids) - self._MAX_CONTRIBUTING_IDS)
+        if omitted:
+            ids = ids[: self._MAX_CONTRIBUTING_IDS]
         if not ids and own_id:
             ids = [own_id]
-        return ids
+        return ids, omitted
 
     def evaluate(self, event: dict) -> bool:
         """Return True if this rule fires for the event (incl. stateful threshold)."""
@@ -833,7 +920,17 @@ def load_rules(rules_dir: Path, allowlists_dir: Path | None = None) -> list[Rule
     invalidate_dir(resolved_allowlists)
     for path in sorted(Path(rules_dir).glob("*.yml")):
         raw = yaml.safe_load(path.read_text(encoding="utf-8"))
-        if raw:
-            _validate_loaded_rule(raw, path)  # FIX 2(c): reject bad rules at load time
-            rules.append(Rule(raw, allowlists_dir=resolved_allowlists))
+        if not raw:
+            # Gap-hunt (2026-08-26): an empty/zero-byte/truncated rule file
+            # parses to None/{} and was silently SKIPPED by the old `if raw:`
+            # guard -- the rule set just shrank with no error, and a
+            # hot-reload logged SUCCESS with fewer rules live. Warn instead so
+            # "rules hot-reloaded, N rules" is cross-checkable against disk.
+            _log.warn(
+                "rule file parsed to empty/None (zero-byte or truncated?); "
+                "ignoring it -- the loaded rule set is smaller than the dir "
+                "contains", file=path.name)
+            continue
+        _validate_loaded_rule(raw, path)  # FIX 2(c): reject bad rules at load time
+        rules.append(Rule(raw, allowlists_dir=resolved_allowlists))
     return rules

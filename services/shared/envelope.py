@@ -14,6 +14,10 @@ import os
 import re
 import uuid
 
+from shared.log import get_logger
+
+_log = get_logger("shared.envelope")
+
 #: Version of the SIEM event/bus-envelope contract (contracts/bus-topics.md +
 #: contracts/ocsf-event.schema.json), not the OCSF ``metadata.version``.
 SCHEMA_VERSION = "1.0"
@@ -52,7 +56,22 @@ def default_tenant() -> str:
     """The tenant_id (``siem.tenant``) to stamp on events this deployment
     produces, absent an explicit per-event override. Single-tenant deployments
     (the only kind that exist today) never need to set ``TENANT_ID``."""
-    return os.getenv(_TENANT_ENV, _DEFAULT_TENANT)
+    value = os.getenv(_TENANT_ENV, _DEFAULT_TENANT)
+    if not valid_tenant_id(value):
+        # R3-#62 (2026-08-27): an invalid TENANT_ID used to be returned
+        # verbatim, embedding an unsafe string into OpenSearch index names
+        # (alerts-<tenant>-...) and contracts/tenants/<tenant_id>.yml
+        # filenames downstream. Reject it loudly and fall back to the safe
+        # default -- never silently coerce (see the module comment on
+        # _TENANT_ID_PATTERN) and never propagate the bad value.
+        _log.warn(
+            f"TENANT_ID={value!r} is not a valid tenant_id (must match "
+            f"{_TENANT_ID_PATTERN.pattern}); falling back to "
+            f"{_DEFAULT_TENANT!r}. Fix the environment before relying on "
+            f"multi-tenant isolation.",
+        )
+        return _DEFAULT_TENANT
+    return value
 
 
 def new_trace_id() -> str:

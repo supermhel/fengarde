@@ -46,12 +46,27 @@ for pol in events-common-90d events-90d events-400d-pci alerts-365d reports-365d
 done
 
 echo "Installing index templates ..."
+# Gap-hunt (2026-08-26): this loop used `curl ... && echo ok || echo "(skipped)"`,
+# which DEFEATS the script's `set -eu`: any rejected template (HTTP 4xx/5xx,
+# body error, unreachable cluster) printed "(skipped: X)" and exited 0, so a
+# broken template or a partially-down cluster "provisioned" successfully and
+# left the indexer writing with no contract mappings and no error anywhere.
+# Fail loudly instead: curl's exit status catches transport + HTTP >=400
+# (-f), and the response BODY is additionally grepped for OpenSearch's
+# "acknowledged":true so a 200-with-error-body can't slip through as success.
 for tmpl in events-common events-bank events-dc assets alerts reports incidents; do
   echo " - template $tmpl"
-  curl -sf -X PUT "$OS/_index_template/$tmpl" \
+  body=$(curl -fsS -X PUT "$OS/_index_template/$tmpl" \
     -H 'Content-Type: application/json' \
-    --data-binary "@/mappings/$tmpl.json" >/dev/null \
-    && echo "   ok" || echo "   (skipped: $tmpl)"
+    --data-binary "@/mappings/$tmpl.json") || {
+      echo "   FAILED: template $tmpl rejected by OpenSearch at $OS (curl exit $?)" >&2
+      exit 1
+  }
+  if ! printf '%s' "$body" | grep -q '"acknowledged"[[:space:]]*:[[:space:]]*true'; then
+    echo "   FAILED: OpenSearch did not acknowledge template $tmpl: $(printf '%s' "$body" | head -c 500)" >&2
+    exit 1
+  fi
+  echo "   ok"
 done
 
 echo "Provisioning complete."

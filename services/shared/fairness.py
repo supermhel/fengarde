@@ -49,6 +49,15 @@ from __future__ import annotations
 from collections import defaultdict, deque
 from typing import Callable, Iterator
 
+# R3-#68 (2026-08-27): FairConsumeBus.consume used to forward its block_ms=0
+# default straight to the inner bus, where 0 means BLOCK FOREVER on
+# XREADGROUP -- a fair wrapper around a blocking read that never returns
+# would stall the whole _topic_worker loop (claim_pending interleaving and
+# shutdown checks) indefinitely. Clamp any non-positive block to a sane
+# bounded default so the wrapper can never turn a bounded read into an
+# unbounded one.
+_DEFAULT_BLOCK_MS = 1000
+
 
 def default_tenant_key(payload: dict) -> str:
     """siem.tenant directly on the payload -- the shape WS-4 consumes
@@ -73,10 +82,11 @@ class FairConsumeBus:
         self._tenant_key_fn = tenant_key_fn
 
     def consume(self, topic, group=None, block_ms=0) -> Iterator:
+        effective_block_ms = block_ms if block_ms and block_ms > 0 else _DEFAULT_BLOCK_MS
         buckets: "dict[str, deque]" = defaultdict(deque)
         order: list[str] = []
         seen: set = set()
-        for msg in self._inner.consume(topic, group=group, block_ms=block_ms):
+        for msg in self._inner.consume(topic, group=group, block_ms=effective_block_ms):
             try:
                 tenant = self._tenant_key_fn(msg.payload) or "default"
             except Exception:

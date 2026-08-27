@@ -23,7 +23,8 @@ os.environ["BUS_BACKEND"] = "memory"
 
 from shared.bus import Bus  # noqa: E402
 from collectors.syslog_udp_server import (  # noqa: E402
-    SyslogUDPServer, build_raw_event, _TokenBucket, TenantTokenBuckets)
+    SyslogUDPServer, build_raw_event, _TokenBucket, TenantTokenBuckets,
+    udp_rcvbuf_errors)
 from collectors.spool import BoundedSpool  # noqa: E402
 
 SYSLOG_LINE = "<34>Oct 11 22:14:15 myhost sshd[1234]: Failed password for root"
@@ -569,6 +570,359 @@ class TestIngestSilenceDetection(unittest.TestCase):
         import threading
         result = _start_ingest_silence_watchdog(None, None, threading.Event())
         self.assertIsNone(result, "udp=None must disable the watchdog, not crash or warn")
+
+
+class TestEnvVarDegradation(unittest.TestCase):
+    """Gap-hunt finding (2026-08-23): _int_env's own docstring documents
+    "degrade to default (logged) on a malformed value instead of crashing
+    startup" -- but zero test coverage existed for that claim (for ANY of
+    its 4 original call sites), and it was applied to only 4 of the 8
+    env-var-reading knobs in main.py, an inconsistency once _float_env
+    closed the type gap. Proves the actual degrade behavior for both."""
+
+    class _FakeLog:
+        def __init__(self):
+            self.warnings = []
+
+        def warn(self, msg, **fields):
+            self.warnings.append((msg, fields))
+
+    def setUp(self):
+        sys.path.insert(0, str(HERE))
+        from main import _int_env, _float_env  # noqa: E402
+        self._int_env = _int_env
+        self._float_env = _float_env
+
+    def test_int_env_missing_uses_default_silently(self):
+        os.environ.pop("FENGARDE_TEST_INT", None)
+        log = self._FakeLog()
+        self.assertEqual(self._int_env("FENGARDE_TEST_INT", 7, log), 7)
+        self.assertEqual(log.warnings, [], "an UNSET env var is not malformed, must not warn")
+
+    def test_int_env_valid_value_parses(self):
+        os.environ["FENGARDE_TEST_INT"] = "42"
+        try:
+            log = self._FakeLog()
+            self.assertEqual(self._int_env("FENGARDE_TEST_INT", 7, log), 42)
+            self.assertEqual(log.warnings, [])
+        finally:
+            del os.environ["FENGARDE_TEST_INT"]
+
+    def test_int_env_malformed_degrades_and_warns(self):
+        os.environ["FENGARDE_TEST_INT"] = "not-a-number"
+        try:
+            log = self._FakeLog()
+            self.assertEqual(self._int_env("FENGARDE_TEST_INT", 7, log), 7)
+            self.assertEqual(len(log.warnings), 1, "a malformed value must warn exactly once")
+        finally:
+            del os.environ["FENGARDE_TEST_INT"]
+
+    def test_float_env_malformed_degrades_and_warns(self):
+        os.environ["FENGARDE_TEST_FLOAT"] = "not-a-float"
+        try:
+            log = self._FakeLog()
+            self.assertEqual(self._float_env("FENGARDE_TEST_FLOAT", 3.5, log), 3.5)
+            self.assertEqual(len(log.warnings), 1, "a malformed value must warn exactly once")
+        finally:
+            del os.environ["FENGARDE_TEST_FLOAT"]
+
+    def test_float_env_valid_value_parses(self):
+        os.environ["FENGARDE_TEST_FLOAT"] = "12.5"
+        try:
+            log = self._FakeLog()
+            self.assertEqual(self._float_env("FENGARDE_TEST_FLOAT", 3.5, log), 12.5)
+            self.assertEqual(log.warnings, [])
+        finally:
+            del os.environ["FENGARDE_TEST_FLOAT"]
+
+
+class TestUdpRcvbufErrors(unittest.TestCase):
+    """Gap-hunt finding (2026-08-23): udp_rcvbuf_errors() -- the fix for the
+    live-proven "healthy events_shed=0 events_dropped=0 while the kernel is
+    silently dropping datagrams" blind spot -- had zero coverage of its own
+    header/value-alignment parsing, only of the None-fallback path (no
+    procfs / not Linux). ``path`` is test-only-injectable (see the
+    function's docstring); production always uses the real default."""
+
+    def _fixture(self, content: str) -> str:
+        fd, path = tempfile.mkstemp()
+        os.write(fd, content.encode("ascii"))
+        os.close(fd)
+        self.addCleanup(os.remove, path)
+        return path
+
+    def test_real_shaped_snmp_output_extracts_rcvbuf_errors(self):
+        # Real /proc/net/snmp shape: Udp: header line, then Udp: value line,
+        # interleaved with other protocols' Tcp:/Ip: blocks -- the parser
+        # must skip those and find its OWN header/value pair.
+        content = (
+            "Ip: Forwarding DefaultTTL InReceives\n"
+            "Ip: 1 64 12345\n"
+            "Udp: InDatagrams NoPorts InErrors RcvbufErrors SndbufErrors\n"
+            "Udp: 999 3 0 42 0\n"
+        )
+        self.assertEqual(udp_rcvbuf_errors(self._fixture(content)), 42)
+
+    def test_rcvbuf_errors_is_zero_when_genuinely_zero(self):
+        """0 is a real, meaningful value (no kernel drops) -- must not be
+        confused with the None-means-unavailable sentinel."""
+        content = ("Udp: InDatagrams NoPorts InErrors RcvbufErrors\n"
+                   "Udp: 10 0 0 0\n")
+        self.assertEqual(udp_rcvbuf_errors(self._fixture(content)), 0)
+
+    def test_missing_rcvbuf_errors_column_returns_none(self):
+        """An older/different kernel's Udp: header without this column must
+        degrade to None, not crash or misindex into an adjacent column."""
+        content = "Udp: InDatagrams NoPorts InErrors\nUdp: 10 0 0\n"
+        self.assertIsNone(udp_rcvbuf_errors(self._fixture(content)))
+
+    def test_missing_udp_value_line_returns_none(self):
+        """A header with no matching value line (truncated/malformed procfs)
+        must not raise -- IndexError-class failures are the exact thing this
+        function's except clause exists to catch."""
+        content = "Udp: InDatagrams NoPorts InErrors RcvbufErrors\n"
+        self.assertIsNone(udp_rcvbuf_errors(self._fixture(content)))
+
+    def test_no_udp_block_at_all_returns_none(self):
+        content = "Ip: Forwarding DefaultTTL\nIp: 1 64\n"
+        self.assertIsNone(udp_rcvbuf_errors(self._fixture(content)))
+
+    def test_empty_file_returns_none(self):
+        self.assertIsNone(udp_rcvbuf_errors(self._fixture("")))
+
+    def test_nonexistent_path_returns_none_not_raise(self):
+        """Off-Linux / no procfs: the documented None-fallback path."""
+        self.assertIsNone(udp_rcvbuf_errors("/no/such/path/ever-9f3a2b"))
+
+    def test_non_numeric_value_returns_none_not_raise(self):
+        """A corrupted procfs line (non-numeric where a count is expected)
+        must fail closed to None, not raise ValueError out of /metrics."""
+        content = ("Udp: InDatagrams NoPorts InErrors RcvbufErrors\n"
+                   "Udp: 10 0 0 not-a-number\n")
+        self.assertIsNone(udp_rcvbuf_errors(self._fixture(content)))
+
+    def test_value_line_shorter_than_header_reaches_indexerror(self):
+        """Gap-hunt (2026-08-26) #10: a header that lists RcvbufErrors but a
+        value line with fewer columns (header.length > value.length) drives
+        ``value[idx]`` into an IndexError -- the exact branch the old
+        header-only fixture never reached (it bailed on ``value is None``
+        first). Must degrade to None, not raise."""
+        content = ("Udp: InDatagrams NoPorts InErrors RcvbufErrors SndbufErrors\n"
+                   "Udp: 10 0 0\n")
+        self.assertIsNone(udp_rcvbuf_errors(self._fixture(content)))
+
+
+class TestEnvVarNonFiniteDegradation(unittest.TestCase):
+    """Gap-hunt (2026-08-26) #9: _float_env's nan/inf guard was documented but
+    untested -- mutate-insensitive. These cases FAIL if the isnan/isinf guard
+    is reverted (a non-finite value would then flow straight through as the
+    \"parsed\" number instead of degrading to the default)."""
+
+    class _FakeLog:
+        def __init__(self):
+            self.warnings = []
+
+        def warn(self, msg, **fields):
+            self.warnings.append((msg, fields))
+
+    def setUp(self):
+        sys.path.insert(0, str(HERE))
+        from main import _float_env  # noqa: E402
+        self._float_env = _float_env
+
+    def _case(self, raw, default=3.5):
+        os.environ["FENGARDE_TEST_NONFINITE"] = raw
+        self.addCleanup(lambda: os.environ.pop("FENGARDE_TEST_NONFINITE", None))
+        log = self._FakeLog()
+        result = self._float_env("FENGARDE_TEST_NONFINITE", default, log)
+        return result, log
+
+    def test_nan_degrades_to_default_and_warns(self):
+        result, log = self._case("nan")
+        self.assertEqual(result, 3.5, "NaN must degrade to the default, not leak through")
+        self.assertEqual(len(log.warnings), 1, "a NaN value must warn exactly once")
+
+    def test_positive_inf_degrades_to_default_and_warns(self):
+        result, log = self._case("inf")
+        self.assertEqual(result, 3.5, "+inf must degrade to the default")
+        self.assertEqual(len(log.warnings), 1)
+
+    def test_negative_inf_degrades_to_default_and_warns(self):
+        result, log = self._case("-inf")
+        self.assertEqual(result, 3.5, "-inf must degrade to the default")
+        self.assertEqual(len(log.warnings), 1)
+
+
+class TestEmptyDatagramCounter(unittest.TestCase):
+    """Gap-hunt (2026-08-26) #81: an empty/CRLF-only datagram must be counted
+    in a DISTINCT events_empty counter -- NOT events_dropped (which means "bus
+    produce failed"). A flood of empty datagrams on a healthy bus must not read
+    on /metrics like a Redis outage."""
+
+    def test_empty_datagrams_increment_events_empty_not_dropped(self):
+        bus = Bus()
+        server = SyslogUDPServer(bus, host="127.0.0.1", port=0)
+        self.addCleanup(server.stop)
+        server._handle_datagram(b"", "10.0.0.1")
+        server._handle_datagram(b"\r\n", "10.0.0.1")
+        server._handle_datagram(b"", "10.0.0.2")
+        self.assertEqual(server.events_empty, 3)
+        self.assertEqual(server.events_dropped, 0,
+                         "an empty datagram is not a bus-produce failure")
+        self.assertEqual(server.events_produced, 0)
+        ps = server.per_source_metrics()
+        self.assertEqual(ps["10.0.0.1"]["empty"], 2)
+        self.assertEqual(ps["10.0.0.2"]["empty"], 1)
+
+
+class TestRecvLoopOSErrorBackoff(unittest.TestCase):
+    """Gap-hunt (2026-08-26) #79: a persistent (non-close) recv OSError must be
+    counted + logged + backed off -- NOT a bare `continue` tight-busyloop that
+    pegs a core with no signal."""
+
+    class _FakeLog:
+        def __init__(self):
+            self.warnings = []
+
+        def warn(self, msg, **fields):
+            self.warnings.append((msg, fields))
+
+    class _FakeSock:
+        def recvfrom(self, _n):
+            raise OSError("simulated persistent recv error")
+
+    def test_oserror_counts_and_backs_off_with_log(self):
+        import threading
+        import time
+        bus = Bus()
+        server = SyslogUDPServer(bus, host="127.0.0.1", port=0)
+        log = self._FakeLog()
+        server.log = log
+        # Release the real socket; drive the loop against a fake that always
+        # raises, so we exercise the OSError path deterministically.
+        server._sock.close()
+        server._sock = self._FakeSock()
+        server._running.set()
+        t = threading.Thread(target=server._recv_loop, daemon=True)
+        t.start()
+        time.sleep(0.35)  # enough for several 0.1s-backed-off retries
+        server._running.clear()
+        t.join(timeout=2)
+        self.assertGreaterEqual(server.recv_oserror_total, 2,
+                                "persistent recv errors must be counted, not silently "
+                                "continue'd in a tight busy loop")
+        self.assertTrue(
+            any("recv error" in w[0] for w in log.warnings),
+            "a persistent recv error must be logged")
+
+
+class TestSilenceClockMonotonic(unittest.TestCase):
+    """Gap-hunt (2026-08-26) #80: the silence watchdog must use a monotonic
+    clock, not wall-clock time.time() (NTP step-back / suspend can otherwise
+    make seconds_since_last_event negative and silently disable it)."""
+
+    def test_seconds_since_last_event_is_monotonic_based(self):
+        import time
+        bus = Bus()
+        server = SyslogUDPServer(bus, host="127.0.0.1", port=0)
+        self.addCleanup(server.stop)
+        server._last_received_ts -= 10.0
+        # Proves the computation is monotonic-clock-based, i.e. equal to the
+        # monotonic delta, and that no boundary handling makes it negative.
+        self.assertAlmostEqual(
+            server.seconds_since_last_event(),
+            time.monotonic() - server._last_received_ts, delta=0.5)
+        self.assertGreaterEqual(server.seconds_since_last_event(), 9.5)
+
+
+class TestProduceFailureLogThrottle(unittest.TestCase):
+    """Gap-hunt (2026-08-26) #77: the bus-produce-failure log must be
+    throttled (at most ~1/sec) like the shed path -- a Redis outage at event
+    rate must not produce thousands of log lines/sec."""
+
+    class _FakeLog:
+        def __init__(self):
+            self.warnings = []
+
+        def warn(self, msg, **fields):
+            self.warnings.append((msg, fields))
+
+        def info(self, msg, **fields):
+            pass  # teardown (server.stop) logs info; swallow in the test
+
+    class _FakeBusFail:
+        def produce(self, topic, key, payload):
+            raise ConnectionError("redis unreachable (test)")
+
+    def test_produce_fail_does_not_flood_logs(self):
+        bus = self._FakeBusFail()
+        server = SyslogUDPServer(bus, host="127.0.0.1", port=0)
+        server.log = self._FakeLog()
+        self.addCleanup(server.stop)
+        for i in range(200):
+            server._handle_datagram(f"line {i}".encode(), "10.0.0.1")
+        self.assertEqual(server.events_dropped, 200)
+        self.assertLessEqual(len(server.log.warnings), 2,
+                             "200 produce failures in <1s must throttle to ~1 log "
+                             "line, not 200")
+        self.assertGreaterEqual(len(server.log.warnings), 1)
+
+
+class TestSpoolRegressions(unittest.TestCase):
+    """Gap-hunt (2026-08-26) #74 + NEW-hunt #1 spool fixes."""
+
+    def _tmp(self):
+        import tempfile
+        td = tempfile.TemporaryDirectory()
+        self.addCleanup(td.cleanup)
+        return Path(td.name) / "spool.jsonl"
+
+    class _FakeLog:
+        def __init__(self):
+            self.warnings = []
+
+        def warn(self, msg, **fields):
+            self.warnings.append((msg, fields))
+
+    def test_drain_counts_and_logs_corrupt_lines(self):
+        """#74: a corrupt line is no longer a bare-skip; it increments
+        corrupt_lines_skipped and is logged so a replay doesn't read as clean."""
+        path = self._tmp()
+        log = self._FakeLog()
+        spool = BoundedSpool(path, max_bytes=1_000_000, logger=log)
+        spool.append({"i": 0})
+        with path.open("a", encoding="utf-8") as f:
+            f.write("not valid json\n")
+        spool.append({"i": 1})
+        replayed = []
+        count = spool.drain_into(lambda ev: replayed.append(ev["i"]))
+        self.assertEqual(count, 2, "valid events around a corrupt line still replay")
+        self.assertEqual(replayed, [0, 1])
+        self.assertEqual(spool.corrupt_lines_skipped, 1,
+                         "the skipped corrupt line must be counted, not vanish silently")
+        self.assertTrue(
+            any("corrupt line" in w[0] for w in log.warnings),
+            "skipping a corrupt line must be logged")
+
+    def test_line_separator_chars_do_not_split_an_event(self):
+        """NEW-hunt #1: an event containing U+2028 / U+2029 / NEL(0x85) used to
+        be written raw (ensure_ascii=False); a raw such char made drain_into()'s
+        splitlines() split ONE event into TWO lines, destroying it at replay.
+        ensure_ascii=True escapes them, so drain replays exactly one event."""
+        path = self._tmp()
+        spool = BoundedSpool(path, max_bytes=1_000_000)
+        ev = {"raw": "line\u2028sep\u2029nel\x85end", "n": 7}
+        self.assertTrue(spool.append(ev))
+        replayed = []
+        count = spool.drain_into(replayed.append)
+        self.assertEqual(count, 1,
+                         "an event with U+2028/U+2029/NEL must replay as ONE "
+                         "event, not be split (and silently dropped) by "
+                         "drain_into")
+        self.assertEqual(replayed[0]["raw"], "line\u2028sep\u2029nel\x85end",
+                         "the replayed event must preserve its exact text")
+        self.assertEqual(replayed[0]["n"], 7)
+        self.assertEqual(spool.pending_count(), 0)
 
 
 if __name__ == "__main__":

@@ -5,18 +5,24 @@
 - Contracts: A (OCSF schema), B (bus).
 
 ## Pipeline
-- Parse (`source_type` → registered parser) → **enrich** (A5: additive-only
-  `src_endpoint.reputation` from a local IOC list, `src_endpoint.location` from a
-  local CIDR→country map; offline/air-gap-safe, fail-open) → **sanitize** (M1:
-  strip ANSI escapes/C0 control chars from every free-text field a parser may
-  have populated from raw content — `message`, `actor.user/process.name`,
+- Parse (`source_type` → registered parser) → **sanitize** (M1: strip ANSI
+  escapes/C0 control chars from every free-text field a parser may have populated
+  from raw content — `message`, `actor.user/process.name`,
   `src_endpoint`/`dst_endpoint.hostname`, all of `unmapped.*` recursively at any
   depth, `api.request.data` — defends the log-injection surface, not browser XSS)
-  → validate against Contract A → produce.
+  then **enrich** (A5: additive-only `src_endpoint.reputation` from a local IOC
+  list, `src_endpoint.location` from a local CIDR→country map;
+  offline/air-gap-safe, fail-open; may ADD optional fields to the already-clean
+  event) → validate against Contract A → produce.
 
 ## Produces
 - Topic `normalized.events` — OCSF event (Contract A), partition key = `src_endpoint.ip`.
-- Topic `raw.events.deadletter` — unparseable/invalid inputs with errors.
+- Topic `raw.events.deadletter` — unparseable/invalid inputs with errors. Payload is
+  the ORIGINAL `raw.events` payload verbatim (`source_type`/`raw`/`meta` at top
+  level, so `tools/dlq_peek.py --requeue` genuinely re-processes it) plus
+  `errors` (top-level, read by `eval/detection_accuracy/evtx_eval.py`) and a
+  `deadletter` metadata object (`stage`, `key`, `deadlettered_at`). The entry
+  key inherits the original message's partition key (`meta.ip`/`meta.mac`).
 
 ## Parsers (one per source type, registry in `parsers/__init__.py`)
 - `cisco_asa` → Network Activity (4001), sector common

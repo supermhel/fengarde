@@ -83,6 +83,14 @@ _SCRYPT_N = 2 ** 16
 _SCRYPT_R = 8        # against brute force, fast enough not to DoS login.
 _SCRYPT_P = 1
 _SCRYPT_DKLEN = 32
+# Gap-hunt #5 (2026-08-27): verify_password reads N back out of the stored
+# hash and passes it straight to hashlib.scrypt. A corrupt or FORGED DB row
+# carrying an absurd N (e.g. 2**30) would make the login path attempt a
+# multi-GB scrypt allocation -- a login-path DoS from a single bad row.
+# Ceiling: any stored N above this fails closed BEFORE scrypt is ever
+# invoked. 2**20 is far above every legitimate value (2**14 legacy, 2**16
+# current) while still remaining a plausible upper bound.
+_SCRYPT_N_MAX = 2 ** 20
 _LEGACY_SCRYPT_N = 2 ** 14  # every hash stored before this fix used this N,
                             # unlabeled (3-field "scrypt$salt$hash" format).
 
@@ -133,7 +141,7 @@ def verify_password(password: str, stored: str) -> bool:
         if len(parts) == 4:
             algo, n_str, salt_hex, hash_hex = parts
             n = int(n_str)
-            if n <= 0:
+            if n <= 0 or n > _SCRYPT_N_MAX:
                 return False
         elif len(parts) == 3:
             algo, salt_hex, hash_hex = parts
@@ -178,6 +186,12 @@ _SCHEMA_MIGRATIONS: list[tuple[int, str]] = [
         ALTER TABLE users ADD COLUMN totp_secret TEXT;
         ALTER TABLE users ADD COLUMN totp_active INTEGER NOT NULL DEFAULT 0;
         """),
+    # Gap-hunt finding (2026-08-23): verify_totp() had no replay protection --
+    # a captured valid code could be resubmitted within its ~90s validity
+    # window to open a second session. -1 means "no code ever accepted yet"
+    # (a real counter is always >= 0, floor(unix_time/30)), so every existing
+    # account upgrades in place with no behavior change until its next TOTP use.
+    (4, "ALTER TABLE users ADD COLUMN totp_last_counter INTEGER NOT NULL DEFAULT -1"),
 ]
 
 CURRENT_SCHEMA_VERSION = _SCHEMA_MIGRATIONS[-1][0]
@@ -302,11 +316,18 @@ class UserStore:
         return bool(row and row["totp_active"])
 
     def verify_totp(self, username: str, code: str) -> bool:
-        """Check `code` against the account's stored secret; on success mark
-        the secret ACTIVE (the two-step completion after `enable_totp`).
+        """Check `code` against the account's stored secret and record it as
+        the last accepted step for this account.
 
         Returns False for any failure (no secret, wrong code, missing mfa
-        module, unknown user) -- never raises.
+        module, unknown user, OR a code whose time-step has already been
+        accepted once -- replay protection, see below) -- never raises.
+
+        This is the LOGIN-path entry point. For enrollment confirmation
+        (after ``/auth/mfa/enable``) use :meth:`confirm_totp`, which
+        activates the secret without advancing the per-account
+        ``totp_last_counter`` (otherwise the very next login within the
+        code's +/-1-step window would be rejected as a replay).
         """
         if not _TOTP_AVAILABLE:
             return False
@@ -316,13 +337,53 @@ class UserStore:
         secret = row["totp_secret"]
         if not secret:
             return False
-        if not _mfa.verify_code(secret, code):
+        matched_counter = _mfa.verify_code_returning_counter(secret, code)
+        if matched_counter is None:
             return False
-        # -- valid code: mark active (idempotent -- already-active accounts
-        #    just re-confirm on every login, which is harmless).
+        # The counter read, replay check, and UPDATE must all happen under
+        # the SAME lock -- otherwise two threads verifying the same code
+        # concurrently can both read totp_last_counter=5, both pass the
+        # check, and both write counter=6 (the TOCTOU this finding fixed).
+        with self._write_lock:
+            row = self.db.execute(
+                "SELECT totp_active, totp_last_counter FROM users WHERE username = ?",
+                (username,),
+            ).fetchone()
+            if row is None:
+                return False
+            if matched_counter <= row["totp_last_counter"]:
+                return False
+            self.db.execute(
+                "UPDATE users SET totp_active = 1, totp_last_counter = ? WHERE username = ?",
+                (matched_counter, username),
+            )
+            self.db.commit()
+        return True
+
+    def confirm_totp(self, username: str, code: str) -> bool:
+        """Confirm an enrollment code (after ``/auth/mfa/enable``).
+
+        Unlike :meth:`verify_totp`, this does NOT advance
+        ``totp_last_counter`` -- its only job is to flip ``totp_active``
+        from 0 to 1 so the account is MFA-protected going forward.
+        If it burned the counter the user's very next real login (within
+        the same +/-1-step window) would be rejected as a replay.
+        """
+        if not _TOTP_AVAILABLE:
+            return False
+        row = self.get_user(username)
+        if row is None:
+            return False
+        secret = row["totp_secret"]
+        if not secret:
+            return False
+        matched_counter = _mfa.verify_code_returning_counter(secret, code)
+        if matched_counter is None:
+            return False
         with self._write_lock:
             self.db.execute(
-                "UPDATE users SET totp_active = 1 WHERE username = ?", (username,)
+                "UPDATE users SET totp_active = 1 WHERE username = ?",
+                (username,),
             )
             self.db.commit()
         return True

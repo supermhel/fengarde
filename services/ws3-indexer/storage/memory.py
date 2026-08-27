@@ -100,16 +100,31 @@ class MemoryStore(StorageAdapter):
     # -- v0.4 Track R: cross-index lookup by report_id -----------------------
     def find_report(self, alert_id: str) -> dict | None:
         """Locate a report doc (report_id == f"{alert_id}:report") across all
-        daily reports-* indices. Mirrors find_alert's lookup shape."""
+        daily reports-* indices. Mirrors find_alert's lookup shape.
+
+        Gap-hunt finding (R4-#4): the report_id is deterministic, but the
+        daily index rolls over -- regenerating a report on a later day lands
+        in a newer daily index while yesterday's copy still exists. This
+        method used to return the FIRST (oldest, by insertion order) matching
+        doc. It now returns the NEWEST by ``generated_at``, matching
+        OpenSearchStore.find_report (which sorts generated_at desc) -- so a
+        day-1 report regenerated on day 2 resolves to the day-2 copy, not a
+        stale one."""
         report_id = f"{alert_id}:report"
+        best: dict | None = None
+        best_generated = -1
         with self._lock:
             for index in self._indices:
                 if not index.startswith("reports-"):
                     continue
                 doc = self._indices[index].get(report_id)
-                if doc is not None:
-                    return doc
-            return None
+                if doc is None:
+                    continue
+                generated = doc.get("generated_at") or 0
+                if best is None or generated >= best_generated:
+                    best = doc
+                    best_generated = generated
+        return best
 
     # -- optimistic concurrency (mirrors OpenSearchStore's seq_no CAS) ------
     def find_alert_versioned(self, alert_id: str):

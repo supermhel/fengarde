@@ -6,11 +6,17 @@ lib is unavailable. Kafka is a CANDIDATE for the central/scaled tier, not yet
 implemented (there is no _KafkaBus) — the two-backend abstraction proves the shape
 that a third backend would slot into, but do not build on Kafka until it exists.
 
-NOTE on backend fidelity: _MemoryBus.consume() drains-and-returns with a no-op ack
-(no persistent PEL), while _RedisBus has a real pending-entries list, blocking
-reads, and XAUTOCLAIM redelivery. Redelivery/DLQ semantics are therefore only
-partially exercised on MemoryBus (the runner tests re-create them via a re-produce
-loop). Anything that depends on real PEL behavior must be verified against Redis.
+NOTE on backend fidelity: _MemoryBus now mirrors _RedisBus's per-consumer-group
+semantics (gap-hunt #50/#52/#53/#54, 2026-08-26): an append-only stream, one
+delivery cursor per consumer group (EACH group receives every message -- the
+real 3-way `alerts` fan-out works on the memory backend too), a per-group PEL
+with a bounded cap + oldest-eviction so a never-acking consumer cannot grow
+unbounded, per-group acks, claim_pending() redelivery, a real acked-front
+trim, and depth()/lag() that see the PEL. The one deliberate divergence:
+MemoryBus depth() counts only messages not yet delivered to ANY group (the
+ingest-edge queue signal the watchdog wants; a delivered-but-unacked message
+is in-flight, charged to lag() instead), whereas RedisBus depth() is XLEN.
+Redelivery/DLQ semantics are exercised identically on both backends.
 
     from shared.bus import Bus
     bus = Bus()
@@ -22,9 +28,14 @@ from __future__ import annotations
 import json
 import os
 import threading
+import urllib.parse
 from dataclasses import dataclass
 from collections import defaultdict, deque
 from typing import Iterator, Optional
+
+from shared.log import get_logger
+
+_log = get_logger("shared.bus")
 
 
 @dataclass
@@ -55,8 +66,33 @@ def _next_stream_id(id_str: str) -> str:
     return f"{ms}-{int(seq or 0) + 1}"
 
 
+#: Bounded-PEL cap for the memory bus (gap-hunt #54): max unacked entries
+#: retained per (topic, group). Env-tunable so a test can force eviction with
+#: a tiny value. Default 10k -- generous for the test/dev backend, but finite,
+#: so a consumer that never acks (e.g. ws3-indexer's batch run()) cannot grow
+#: this bus's memory without bound.
+_MEMORY_BUS_PEL_CAP = int(os.getenv("MEMORY_BUS_PEL_CAP", "10000"))
+
+
 class _MemoryBus:
-    """Process-local bus for tests / no-infra dev."""
+    """Process-local bus for tests / no-infra dev.
+
+    Per-group fan-out (gap-hunt #50, 2026-08-26): the stream is append-only
+    and every consumer group tracks its OWN delivery cursor, so EACH group
+    receives every message -- the real 3-way `alerts` fan-out
+    (cg-index/cg-webhook/cg-correlate) works on this backend exactly as it
+    does on Redis Streams, instead of the old one-deque-per-topic design
+    where the first group to read wiped the topic for everyone else.
+    """
+
+    #: Cap on unacked (delivered, not yet acked) entries held per group
+    #: (gap-hunt #54). A consumer that never acks -- e.g. the ws3-indexer
+    #: batch run() path -- cannot grow this bus's memory unboundedly:
+    #: beyond the cap the OLDEST unacked entry is evicted (counted in
+    #: ``_pel_evicted`` for observability). Mirrors bounded-memory
+    #: discipline elsewhere in this repo (window counters, runner caches).
+    _pel_cap = _MEMORY_BUS_PEL_CAP
+
     def __init__(self):
         self._streams: dict[str, deque] = defaultdict(deque)
         self._seq = 0
@@ -67,17 +103,28 @@ class _MemoryBus:
         # messages the same id. Mirrors the lock WS6's InventoryStore
         # already uses for its own read-modify-write.
         self._seq_lock = threading.Lock()
-        # Minimal in-memory PEL: topic -> {msg.id: (msg, delivered_at_monotonic,
-        # delivery_count)}. Closes a real gap the module docstring's "NOTE on
-        # backend fidelity" only documented, never fixed: consume() used to
-        # remove a message from the deque unconditionally BEFORE the handler
-        # even ran, so a handler exception meant instant, permanent loss on
-        # this backend -- claim_pending() was a hardcoded no-op, unlike
-        # RedisBus's real XPENDING/XAUTOCLAIM. This doesn't change depth()/
-        # lag()/trim_acked()'s external behavior: they never counted a
-        # delivered-but-unacked message either, before or after.
-        self._pel: dict[str, dict[str, tuple]] = defaultdict(dict)
+        # Per-group delivery cursor: topic -> group -> count of stream
+        # entries already handed to that group (its private read pointer).
+        # A group first appears here on its first consume(); fan-out means
+        # every group's cursor advances independently.
+        self._cursors: dict[str, dict[str, int]] = defaultdict(dict)
+        # Per-group PEL: topic -> group -> {msg.id: (msg, delivered_at_monotonic,
+        # delivery_count)}, insertion-ordered so `next(iter(...))` is always
+        # the OLDEST unacked entry (used by the cap's eviction below).
+        # Closes the gap the module docstring's old "NOTE on backend
+        # fidelity" only documented, never fixed: consume() used to remove
+        # a message from the deque unconditionally BEFORE the handler even
+        # ran, so a handler exception meant instant, permanent loss. Now the
+        # PEL is real and per-group, like RedisBus's XPENDING/XAUTOCLAIM.
+        self._pel: dict[str, dict[str, dict[str, tuple]]] = defaultdict(dict)
         self._pel_lock = threading.Lock()
+        # gap-hunt #54 observability: (topic, group) -> evicted count.
+        self._pel_evicted: "dict[tuple, int]" = defaultdict(int)
+
+    def _group_key(self, group):
+        """Normalize the group arg: None means the conventional default
+        group name, same as _RedisBus's ``group="cg-default"`` default."""
+        return group or "cg-default"
 
     def produce(self, topic, key, payload):
         with self._seq_lock:
@@ -86,92 +133,209 @@ class _MemoryBus:
         self._streams[topic].append(Message(topic, key, payload, str(seq)))
 
     def consume(self, topic, group=None, block_ms=0) -> Iterator[Message]:
-        # L2 (2026-08-06 audit, Task H): the check-and-pop (`while q: popleft()`)
-        # was NOT atomic. Two concurrent consumers on one shared _MemoryBus could
-        # both pass the `while q` check before either popped, then double-deliver
-        # the last message (or hit IndexError on an already-emptied deque), and a
-        # consumer could interleave with a concurrent produce(). Fixed by popping
-        # under _seq_lock so "is there a message? + pop it" is atomic PER ITEM --
-        # each message is claimed by exactly one popleft() call, same guarantee
-        # as the original whole-batch-snapshot fix (which locked the same way,
-        # just around the whole batch instead of one item), but without that
-        # version's own regression: snapshotting the ENTIRE queue before
-        # yielding anything meant a caller that stopped iterating early
-        # (_topic_worker breaks its for-loop on shutdown mid-batch) silently
-        # lost every not-yet-yielded message in that snapshot -- they'd already
-        # been removed from `_streams[topic]` with nowhere else to go. Popping
-        # one item at a time means an abandoned iteration simply leaves the
-        # rest of the queue exactly where it was, to be picked up by the next
-        # consume() call after restart.
+        group_key = self._group_key(group)
+        # L2 (2026-08-06 audit, Task H): the check-and-pop was NOT atomic;
+        # the fix keeps "is there a message? + claim it" atomic PER
+        # consume() call under _seq_lock (each message is claimed by
+        # exactly one cursor advance, same guarantee as the pop-under-lock
+        # fix, and the L2 all-or-nothing batch semantics test_bus_memory_race
+        # pins). The lock is released BEFORE the yields on purpose: _seq_lock
+        # is also taken by produce(), and a service's handler runs INSIDE
+        # this consume loop and produces on the SAME bus in the same thread
+        # (e.g. ws2 consumes raw.events -> produces normalized.events).
+        # Holding a non-reentrant lock across a yield would self-deadlock
+        # that handler.
         #
-        # The lock is released BEFORE each yield on purpose: _seq_lock is also
-        # taken by produce(), and a service's handler runs INSIDE this consume
-        # loop and produces on the SAME bus in the same thread (e.g. ws2
-        # consumes raw.events -> produces normalized.events). Holding a
-        # non-reentrant lock across a yield would self-deadlock that handler.
+        # Delivered messages go into THIS GROUP's PEL (not popped from a
+        # shared deque): an abandoned iteration (topic_worker breaks its
+        # for-loop on shutdown mid-batch) leaves the rest claimable via
+        # claim_pending(), mirroring _RedisBus at-least-once semantics --
+        # nothing is ever silently lost.
         import time as _t
-        while True:
-            with self._seq_lock:
-                q = self._streams[topic]
-                if not q:
-                    return
-                msg = q.popleft()
-            with self._pel_lock:
-                self._pel[topic][msg.id] = (msg, _t.monotonic(), 1)
+        with self._seq_lock:
+            q = self._streams[topic]
+            cursor = self._cursors[topic].get(group_key, 0)
+            if cursor >= len(q):
+                return
+            batch = [q[i] for i in range(cursor, len(q))]
+            self._cursors[topic][group_key] = len(q)
+        with self._pel_lock:
+            pel = self._pel[topic].setdefault(group_key, {})
+            now = _t.monotonic()
+            in_flight = {m.id for m in batch}
+            for msg in batch:
+                pel[msg.id] = (msg, now, 1)
+            # Gap-hunt #1 (2026-08-27): the cap's oldest-eviction used to
+            # evict entries from the batch about to be yielded -- the caller
+            # receives those messages via the iterator, but claim_pending()
+            # can no longer see them, so a handler crash on one of them
+            # loses it forever (at-least-once violation). Only evict entries
+            # from PRIOR batches; if a single batch alone exceeds the cap
+            # (pathological), keep the whole in-flight batch and log loudly
+            # instead of dropping work already handed out.
+            if len(pel) > self._pel_cap:
+                evictable = [mid for mid in pel if mid not in in_flight]
+                while len(pel) > self._pel_cap and evictable:
+                    oldest_id = evictable.pop(0)
+                    del pel[oldest_id]
+                    self._pel_evicted[(topic, group_key)] += 1
+                if len(pel) > self._pel_cap:
+                    _log.warn(
+                        "MemoryBus PEL cap exceeded with the entire current "
+                        "batch in-flight; retaining it (bounded by batch "
+                        "size) rather than evicting undelivered work",
+                        topic=topic, group=group_key, cap=self._pel_cap,
+                        pel_size=len(pel))
+        for msg in batch:
             yield msg
 
     def ack(self, msg, group=None):
+        group_key = self._group_key(group)
         with self._pel_lock:
-            self._pel[msg.topic].pop(msg.id, None)
+            per_group = self._pel.get(msg.topic)
+            if per_group:
+                per_group.get(group_key, {}).pop(msg.id, None)
 
     def ack_batch(self, msgs, group=None):
-        """Ack every message in ``msgs`` (P1-8 remainder). Additive: existing
-        single-message ``ack()`` callers are unaffected. MemoryBus has no real
-        round-trip to batch away -- this exists so callers (runner.py) can use
-        one code path regardless of backend; here it's just a loop."""
+        """Ack every message in ``msgs`` (P1-8 remainder). Additive:
+        existing single-message ack() callers are unaffected. MemoryBus has
+        no real round-trip to batch away -- this exists so callers (runner.py)
+        can use one code path regardless of backend; here it's just a loop.
+        """
         for msg in msgs:
             self.ack(msg, group)
 
     def claim_pending(self, topic, group=None, min_idle_ms=0, max_redeliveries=5):
-        """Reclaim in-flight (delivered, not yet acked) messages idle at
-        least ``min_idle_ms`` -- the deque-backend mirror of RedisWindowCounter's
-        XAUTOCLAIM+XPENDING. A handler exception leaves a message unacked in
-        ``self._pel``; the next worker-loop tick's claim_pending() call (see
-        shared/runner.py's _topic_worker, which calls this before consume())
-        picks it back up instead of it being gone forever."""
+        """Reclaim this GROUP's in-flight (delivered, not yet acked) messages
+        idle at least ``min_idle_ms`` -- the mirror of _RedisBus's
+        XAUTOCLAIM+XPENDING, per group (gap-hunt #52: one group's ack must
+        not cancel another group's redelivery). A handler exception leaves a
+        message unacked in ``self._pel[topic][group]``; the next worker-loop
+        tick's claim_pending() call (runner.py's _topic_worker) picks it
+        back up instead of it being gone forever.
+        """
+        group_key = self._group_key(group)
         import time as _t
         now = _t.monotonic()
         horizon_s = min_idle_ms / 1000.0
         claimed: list[tuple] = []
         with self._pel_lock:
-            for mid, (msg, delivered_at, count) in list(self._pel[topic].items()):
+            pel = self._pel[topic].get(group_key)
+            if not pel:
+                return
+            for mid, (msg, delivered_at, count) in list(pel.items()):
                 if now - delivered_at >= horizon_s:
                     new_count = count + 1
-                    self._pel[topic][mid] = (msg, now, new_count)
+                    pel[mid] = (msg, now, new_count)
                     claimed.append((msg, new_count))
         for msg, times in claimed:
             yield msg, times
 
     def drain(self, topic):
-        return list(self._streams[topic])
+        """Messages not yet delivered to ANY consumer group (the remainder
+        past every group's cursor). A topic nothing has ever consumed from
+        returns its whole stream -- the shape tests rely on for produced-
+        but-unread topics; a fully-drained topic returns [] even though the
+        stream itself keeps the (trimmable) history, same external contract
+        as the old pop-on-consume behavior.
+        """
+        with self._seq_lock:
+            q = self._streams[topic]
+            cursors = self._cursors.get(topic, {})
+            done = max(cursors.values()) if cursors else 0
+            return list(q)[done:]
 
     def depth(self, topic) -> int:
-        """B2: unconsumed-message count, for the ingest-edge depth watchdog."""
-        return len(self._streams[topic])
-
-    def trim_acked(self, topic) -> int:
-        """MemoryBus has no PEL / no retained-after-consume entries (see the
-        module docstring's NOTE on backend fidelity) -- consume() already
-        removes a message the moment it's yielded, so there is nothing an
-        acked-entry reaper could ever find to trim. No-op, always 0."""
-        return 0
+        """B2/gap-hunt #53: messages not yet delivered to ANY consumer group --
+        the ingest-edge backlog signal the depth watchdog wants (raw events
+        still sitting in the queue unconsumed). Delivered-but-unacked work is
+        deliberately NOT here: it's in-flight to a consumer, and would double
+        count against lag() below -- depth() is the QUEUE signal, lag() is
+        the per-consumer backlog including the PEL.
+        """
+        with self._seq_lock:
+            q = self._streams[topic]
+            if not q:
+                return 0
+            cursors = self._cursors.get(topic, {})
+            done = max(cursors.values()) if cursors else 0
+            return max(0, len(q) - done)
 
     def lag(self, topic) -> int:
-        """P1-7: MemoryBus.consume() removes an entry the instant it's
-        yielded (no retained-after-consume history, no PEL) -- so depth()
-        already IS the true unconsumed backlog here, unlike _RedisBus where
-        depth()/XLEN also counts everything ever acked. Just reuse it."""
-        return self.depth(topic)
+        """P1-7 + gap-hunt #53: worst-case per-group backlog INCLUDING the
+        PEL -- (stream entries past this group's cursor = undelivered) +
+        (that group's unacked pending count). The old implementation was
+        defined as depth(), so 5 unacked messages reported lag=0: the PEL
+        was invisible. A group that read everything but acked nothing now
+        reports its full pending count. No groups yet -> nothing has read
+        anything -> the whole stream is the backlog (depth()).
+        """
+        with self._seq_lock:
+            qlen = len(self._streams[topic])
+            cursors = dict(self._cursors.get(topic, {}))
+            if not cursors:
+                # Nothing has read anything yet -> the whole stream is the
+                # backlog, same as depth(). Computed inline (not via a nested
+                # self.depth() call) because _seq_lock is NOT reentrant.
+                return qlen
+        with self._pel_lock:
+            pending = {g: len(pel) for g, pel in self._pel.get(topic, {}).items()}
+        return max((qlen - cur) + pending.get(g, 0) for g, cur in cursors.items())
+
+    def pel_evicted(self, topic) -> int:
+        """gap-hunt #54 companion: the eviction counter was tracked but never
+        read anywhere -- a group stuck never-acking would silently evict its
+        oldest pending work forever with zero visibility. Sums evictions
+        across every group for `topic` (a MemoryBus-only concept: RedisBus's
+        PEL lives in Redis itself and isn't synthetically capped)."""
+        with self._pel_lock:
+            return sum(n for (t, _g), n in self._pel_evicted.items() if t == topic)
+
+    def trim_acked(self, topic) -> int:
+        """Gap-hunt #54 companion: real acked-front trim, mirroring
+        _RedisBus.trim_acked's safety proof. Only LEADING stream entries every
+        registered group has consumed AND acked are removed (nothing any
+        group still has pending may be dropped); the append-only stream
+        would otherwise grow forever on this backend too. Every group's
+        cursor is decremented to match. A topic with zero groups is left
+        untouched (0). Holds _seq_lock across the whole op so a concurrent
+        consume() can't claim-and-pend entries between the safety snapshot
+        and the trim (a fresh group registering mid-trim would otherwise be
+        able to lose leading entries it was about to receive).
+        """
+        with self._seq_lock:
+            q = self._streams[topic]
+            if not q:
+                return 0
+            cursors = self._cursors.get(topic, {})
+            if not cursors:
+                return 0
+            entries = list(q)
+            with self._pel_lock:
+                pending_by_group = {g: set(pel) for g, pel in self._pel.get(topic, {}).items()}
+            k = min(cursors.values())
+            for group_key, cursor in cursors.items():
+                if k <= 0:
+                    break
+                pending = pending_by_group.get(group_key, set())
+                acked_prefix = 0
+                for i in range(min(cursor, k)):
+                    if entries[i].id in pending:
+                        break
+                    acked_prefix = i + 1
+                k = min(k, acked_prefix)
+            if k <= 0:
+                return 0
+            for _ in range(k):
+                if self._streams[topic]:
+                    self._streams[topic].popleft()
+            for group_key in list(self._cursors.get(topic, {})):
+                new_cursor = self._cursors[topic][group_key] - k
+                if new_cursor <= 0:
+                    del self._cursors[topic][group_key]
+                else:
+                    self._cursors[topic][group_key] = new_cursor
+        return k
 
 
 class _RedisBus:
@@ -223,10 +387,25 @@ class _RedisBus:
                         "parse_error": True, "raw": fields.get("payload"),
                     }),
                 })
+            except Exception as exc:
+                # Gap-hunt #55 (2026-08-26): a failed DLQ write must NOT skip
+                # the xack. Before, the xadd and xack shared one try block, so
+                # a DLQ outage left the poison entry permanently pending --
+                # reclaimed forever, re-raised on every claim pass, wedging the
+                # whole topic. The quarantine is best-effort; the ACK is not:
+                # once we've decided this entry is poison it must leave the PEL
+                # either way (a copy was attempted above; if the DLQ itself is
+                # down the entry is dropped rather than re-wedging the stream).
+                _log.error(
+                    "DLQ write failed for poison entry; xacking it anyway so "
+                    "it is not reclaimed forever",
+                    topic=topic, group=group, id=eid, error=str(exc))
+            try:
                 self.r.xack(topic, group, eid)
             except Exception:
-                # Best-effort quarantine; if the DLQ write itself fails we still must
-                # not re-raise (that would re-wedge the consumer). Drop this entry.
+                # If even the xack fails the entry stays pending and the next
+                # claim pass retries the whole quarantine -- at-least-once,
+                # never a silent double-quarantine.
                 pass
             return None
 
@@ -248,8 +427,19 @@ class _RedisBus:
             # BLOCK window (redis-py raises before the empty-result comes back). An
             # expired block with nothing new == an empty read, so return cleanly and
             # let the runner re-enter + interleave claim_pending() instead of logging
-            # a traceback every few seconds. Genuine ConnectionErrors are NOT caught
-            # here -> they still surface via the runner's handler.
+            # a traceback every few seconds.
+            #
+            # Gap-hunt #64 (2026-08-26): this swallow used to be fully silent, so a
+            # MISCONFIGURED socket_timeout (< block_ms) made every read time out,
+            # consume() return empty forever, and the runner sit idle -- consumption
+            # silently stopped with zero signal. Log a warning so the misconfig (or
+            # the genuine benign race) is visible. Genuine ConnectionErrors are NOT
+            # caught here -> they still surface via the runner's handler.
+            _log.warn(
+                "XREADGROUP timed out (socket_timeout racing the block window, "
+                "or socket_timeout misconfigured < block_ms); treating as an "
+                "empty read",
+                topic=topic, group=group, block_ms=block_ms)
             return
         if not resp:
             return
@@ -349,11 +539,16 @@ class _RedisBus:
         retained). No MAXLEN trim is applied here — trimming a stream mid-
         pipeline would drop unconsumed events, an audit-completeness violation
         for a bank; see the ingest-edge shedding in SyslogUDPServer instead.
-        Missing stream (never produced to) reads as depth 0, not an error."""
-        try:
-            return int(self.r.xlen(topic))
-        except Exception:
-            return 0
+        Missing stream (never produced to) reads as depth 0, not an error
+        (XLEN returns 0 for a nonexistent key natively).
+
+        Gap-hunt #56 (2026-08-26): a Redis OUTAGE used to read identically to
+        "no backlog" (every exception swallowed into a 0). Now real Redis
+        errors propagate -- all runners (depth watchdog, /metrics provider)
+        already guard with try/except and report the failure as degraded
+        instead of a false healthy 0.
+        """
+        return int(self.r.xlen(topic))
 
     def lag(self, topic) -> int:
         """P1-7 (2026-07-21 audit): the real per-topic backlog signal for
@@ -380,10 +575,17 @@ class _RedisBus:
         (undelivered + pending) for that group. A topic with no consumer
         groups yet falls back to ``depth()`` (nothing has read it, so total
         length IS the backlog).
+
+        Gap-hunt #56 (2026-08-26): a Redis OUTAGE used to read identically to
+        "no backlog" (outer exception swallowed into 0). Only a genuinely
+        missing stream (ResponseError "no such key") reads as 0; real Redis
+        errors propagate to the guarded callers (depth watchdog, /metrics).
         """
+        import redis  # cached import; needed for redis.exceptions below
         try:
             groups = self.r.xinfo_groups(topic)
-        except Exception:
+        except redis.exceptions.ResponseError:
+            # Stream doesn't exist yet (never produced to) -> no backlog.
             return 0
         if not groups:
             return self.depth(topic)
@@ -399,6 +601,11 @@ class _RedisBus:
             try:
                 summary = self.r.xpending(topic, name)
             except Exception:
+                # One group's per-group detail read failed mid-loop -- treat
+                # that group's pending as 0 rather than losing every other
+                # group's contribution. The outer xinfo_groups() above already
+                # proved Redis is reachable, so this is a per-group anomaly
+                # (e.g. group deleted mid-scan), not an outage.
                 summary = None
             pending = 0
             if summary is not None:
@@ -440,11 +647,20 @@ class _RedisBus:
         read is safe, just possibly under-trims until the next pass.
 
         Returns the number of entries removed (0 if nothing was eligible or
-        the topic doesn't exist yet)."""
+        the topic doesn't exist yet).
+
+        Gap-hunt #56 (2026-08-26): a Redis OUTAGE used to read identically to
+        "nothing to trim" (every exception swallowed into 0). Only a
+        genuinely missing stream (ResponseError) or a per-group safety
+        detail that can't be proven reads as 0; real Redis errors propagate
+        to the guarded caller (start_stream_reaper logs them as a reaper
+        failure instead of pretending nothing needed trimming).
+        """
+        import redis  # cached import; needed for redis.exceptions below
         try:
             groups = self.r.xinfo_groups(topic)
-        except Exception:
-            return 0  # stream doesn't exist yet, or a transient Redis error
+        except redis.exceptions.ResponseError:
+            return 0  # stream doesn't exist yet -> nothing to trim
         if not groups:
             return 0  # nobody has ever consumed this topic -- don't touch it
 
@@ -487,8 +703,22 @@ class _RedisBus:
             # rather than Redis's "~" approximate variant retaining an unknown
             # few extra entries near the boundary (harmless, but untestable).
             return int(self.r.xtrim(topic, minid=safe_boundary, approximate=False))
-        except Exception:
+        except redis.exceptions.ResponseError:
+            # Stream vanished between the safety computation and the trim
+            # (deleted/concurrent reaper) -> nothing left to trim, not an
+            # outage. Anything else (ConnectionError etc.) propagates (#56).
             return 0
+
+
+def _sentinel_master_url(password: str, host: str, port: int) -> str:
+    """Build the ``redis://`` URL for a Sentinel-discovered master,
+    URL-encoding the password (R3-#63, 2026-08-27). A password containing
+    reserved URL characters (``@``, ``:``, ``/``, ``#``, ...) was previously
+    interpolated raw, so redis-py's urllib.parse-based ``from_url()``
+    misparsed it (an ``@`` in the password truncated the userinfo at the
+    wrong point; a ``:`` shifted the port). ``quote(..., safe='')``
+    round-trips cleanly through ``from_url``."""
+    return f"redis://:{urllib.parse.quote(password or '', safe='')}@{host}:{port}/0"
 
 
 class _RedisSentinelBus:
@@ -512,37 +742,59 @@ class _RedisSentinelBus:
                 continue
             host, _, port = part.partition(":")
             sentinel_hosts.append((host.strip(), int(port.strip()) if port else 26379))
-        self._sentinel = None
         self._master_name = os.getenv("REDIS_SENTINEL_MASTER", "mymaster")
-        if sentinel_hosts:
-            try:
-                from redis.sentinel import Sentinel  # type: ignore
-                self._sentinel = Sentinel(
-                    sentinel_hosts, password=self._password or None,
-                    socket_timeout=1, decode_responses=True,
-                )
-            except Exception:
-                self._sentinel = None
-        self._bus = _RedisBus(url)
-        self._refresh_master()
+        if not sentinel_hosts:
+            # Gap-hunt #51 (2026-08-26): fail LOUDLY. Before, an empty
+            # REDIS_SENTINEL_HOSTS silently left _sentinel=None and this class
+            # degraded to a plain non-HA _RedisBus pinned to REDIS_URL -- zero
+            # failover, zero signal, exactly the failure mode HA was opted into
+            # to avoid. A service that asked for sentinel HA must not start as
+            # a non-HA service pretending nothing is wrong.
+            raise RuntimeError(
+                "BUS_BACKEND=redis-sentinel requested but REDIS_SENTINEL_HOSTS "
+                "is unset/empty -- refusing to silently degrade to a non-HA bus "
+                "pinned to REDIS_URL. Set REDIS_SENTINEL_HOSTS "
+                "(comma-separated host:port[,host:port...]) or use "
+                "BUS_BACKEND=redis instead.")
+        from redis.sentinel import Sentinel  # type: ignore
+        self._sentinel = Sentinel(
+            sentinel_hosts, password=self._password or None,
+            socket_timeout=1, decode_responses=True,
+        )
+        # Probe master discovery NOW (gap-hunt #51): a Sentinel that can't
+        # resolve the master at startup is a broken HA configuration, and
+        # starting a "sentinel" bus that points at a dead master -- or, worse,
+        # recovering by silently pinning to REDIS_URL -- is the same silent
+        # degradation. discover_master raising here crashes startup.
+        host, port = self._sentinel.discover_master(self._master_name)
+        new_url = _sentinel_master_url(self._password, host, port)
+        self._url = new_url
+        self._bus = _RedisBus(new_url)
 
     @property
     def r(self):
         return self._bus.r
 
-    def _refresh_master(self) -> None:
+    def _refresh_master(self) -> bool:
         if self._sentinel is None:
-            return
+            return False
         try:
             host, port = self._sentinel.discover_master(self._master_name)
-            new_url = f"redis://:{self._password or ''}@{host}:{port}/0"
+            new_url = _sentinel_master_url(self._password, host, port)
             if new_url != self._url:
                 self._url = new_url
                 self._bus = _RedisBus(new_url)
-        except Exception:
+            return True
+        except Exception as exc:
             # Sentinel temporarily unreachable -- keep using the last known bus
-            # rather than raise; the next failing call retries discovery.
-            pass
+            # rather than raise; the next failing call retries discovery. But
+            # NEVER silently: gap-hunt #51's "zero signal" complaint applies to
+            # runtime rediscovery failure just as much as to init failure.
+            _log.error(
+                "Sentinel master discovery failed; keeping the last known "
+                "master bus (no failover until discovery recovers)",
+                master=self._master_name, error=str(exc))
+            return False
 
     def _with_failover(self, method, *args, **kwargs):
         """Failover wrapper for the PLAIN (non-generator) bus methods.

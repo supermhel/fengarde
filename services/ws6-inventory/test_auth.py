@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
 import threading
 import urllib.error
@@ -33,10 +34,14 @@ def check(cond, msg):
 
 def _serve():
     """Fresh STORE + fresh, EMPTY KEYSTORE for every test -- state from one
-    test (provisioned keys, asset rows) must never leak into the next."""
+    test (provisioned keys, asset rows) must never leak into the next. Also
+    resets the module-level `_AUTH_WAS_ENABLED` latch and the auth-fail
+    counters, so each test starts from a clean, never-enabled auth state."""
     import app as ws6
     ws6.STORE = ws6.InventoryStore(":memory:")
     ws6.KEYSTORE = ws6.TenantKeyStore(":memory:")
+    ws6._AUTH_WAS_ENABLED = False
+    ws6._auth_fail_calls = 0
     srv = ThreadingHTTPServer(("127.0.0.1", 0), ws6.Handler)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     return srv, srv.server_address[1]
@@ -287,6 +292,228 @@ def test_legacy_single_key_migrates_and_keeps_working_over_http():
         os.environ.pop("FENGARDE_API_KEY", None)
 
 
+# -- Gap-hunt finding (2026-08-23): require_auth_or_die -----------------------
+# shared/authz.py::require_auth_or_die's own docstring claimed to cover
+# "WS-3/WS-6," but ws6-inventory never called it -- FENGARDE_REQUIRE_AUTH=1
+# refused to boot ws3-indexer open, but ws6-inventory booted open regardless
+# with nothing louder than a log line. authz.py (this service's OWN module,
+# not shared/authz.py) now has its own require_auth_or_die wired into
+# app.py::serve(). Subprocess-based since it calls sys.exit(1), same
+# pattern as ws3-indexer/test_fix_security.py's equivalent tests.
+
+def test_require_auth_or_die_empty_keystore_exits_1():
+    """R2-#6: this previously drove a DIRECT call to require_auth_or_die and
+    asserted rc==1 only -- not mutation-sound, since a mutation that removed
+    the call from serve() would still pass. Now it drives the real serve()
+    entry point (same discipline as
+    test_serve_actually_calls_require_auth_or_die_before_listening) and
+    asserts BOTH the exit code AND that the process dies BEFORE ever logging
+    "listening" -- i.e. the gate really stops the service, not just the
+    helper."""
+    env = dict(os.environ)
+    env.pop("FENGARDE_API_KEY", None)
+    env.pop("FENGARDE_API_KEYS", None)
+    env.update({"FENGARDE_REQUIRE_AUTH": "1", "INVENTORY_DB": ":memory:",
+                "INVENTORY_KEYSTORE_DB": ":memory:"})
+    code = "from app import serve; serve(host='127.0.0.1', port=0)"
+    try:
+        proc = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True,
+                              text=True, cwd=str(HERE), timeout=5)
+    except subprocess.TimeoutExpired:
+        check(False, "serve() did not exit with an empty keystore + REQUIRE_AUTH=1 -- "
+                     "it reached serve_forever() instead of dying (the gate regressed)")
+        return
+    check(proc.returncode == 1,
+          f"require_auth_or_die must exit 1 with an empty keystore, got {proc.returncode} "
+          f"stderr={proc.stderr!r}")
+    check('"msg": "listening"' not in proc.stdout,
+          f'serve() must die BEFORE logging "listening" -- got stdout={proc.stdout!r}')
+
+
+def test_require_auth_or_die_noop_without_env():
+    env = dict(os.environ)
+    env.pop("FENGARDE_REQUIRE_AUTH", None)
+    code = ("import authz; from app import KEYSTORE; "
+            "authz.require_auth_or_die('ws6-inventory', KEYSTORE); print('ok')")
+    proc = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True,
+                          text=True, cwd=str(HERE))
+    check(proc.returncode == 0 and "ok" in proc.stdout,
+          f"require_auth_or_die must be a no-op when FENGARDE_REQUIRE_AUTH is unset, "
+          f"got rc={proc.returncode} out={proc.stdout!r} err={proc.stderr!r}")
+
+
+def test_require_auth_or_die_provisioned_keystore_is_noop():
+    """A REQUIRE_AUTH=1 deployment with a real key provisioned must boot
+    normally -- this gate only refuses an EMPTY keystore, never a
+    populated one."""
+    env = dict(os.environ)
+    env.pop("FENGARDE_API_KEY", None)
+    env.pop("FENGARDE_API_KEYS", None)
+    env.update({"FENGARDE_REQUIRE_AUTH": "1",
+                "INVENTORY_DB": ":memory:", "INVENTORY_KEYSTORE_DB": ":memory:"})
+    code = ("import authz; from app import KEYSTORE; "
+            "KEYSTORE.provision('acme', 'a-real-key-123'); "
+            "authz.require_auth_or_die('ws6-inventory', KEYSTORE); print('ok')")
+    proc = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True,
+                          text=True, cwd=str(HERE))
+    check(proc.returncode == 0 and "ok" in proc.stdout,
+          f"require_auth_or_die must not block a deployment with a provisioned key, "
+          f"got rc={proc.returncode} out={proc.stdout!r} err={proc.stderr!r}")
+
+
+def test_serve_actually_calls_require_auth_or_die_before_listening():
+    """Drives the REAL `serve()` entry point, not a direct call to
+    `require_auth_or_die` -- proves the wiring itself, same discipline as
+    WS-3's `test_normalized_topic_is_wired_create_only`. If a future edit
+    removes the call from `serve()`, the direct-call tests above would keep
+    passing while this one catches the regression: the process must exit(1)
+    BEFORE ever reaching `srv.serve_forever()` (never prints "listening")."""
+    env = dict(os.environ)
+    env.pop("FENGARDE_API_KEY", None)
+    env.pop("FENGARDE_API_KEYS", None)
+    env.update({"FENGARDE_REQUIRE_AUTH": "1", "INVENTORY_DB": ":memory:",
+                "INVENTORY_KEYSTORE_DB": ":memory:"})
+    code = "from app import serve; serve(host='127.0.0.1', port=0)"
+    try:
+        proc = subprocess.run([sys.executable, "-c", code], env=env,
+                              capture_output=True, text=True, cwd=str(HERE), timeout=5)
+    except subprocess.TimeoutExpired:
+        check(False, "serve() did not exit -- it reached serve_forever() instead of "
+                     "dying on require_auth_or_die (the wiring regressed)")
+        return
+    check(proc.returncode == 1,
+          f"serve() with an empty keystore + REQUIRE_AUTH=1 must exit 1, got {proc.returncode}")
+    check('"msg": "listening"' not in proc.stdout,
+          f"serve() must die BEFORE logging \"listening\" -- got stdout={proc.stdout!r}")
+
+
+def test_failed_auth_is_logged_and_rate_limited():
+    """Gap-hunt #3: failed API-key attempts used to produce zero telemetry and
+    were never rate-limited. Now: a monotonic slow-fail counter, a log line per
+    failure, and a small per-IP rate limit (over budget -> 429)."""
+    srv, port = _serve()
+    try:
+        import app as ws6
+        ws6.KEYSTORE.provision("acme", "correct-key")
+        # Deterministic test: clear the shared per-IP window state (earlier
+        # tests in this same process fail auth from loopback too) and shrink
+        # the budget far below the default 25.
+        with ws6._auth_fail_lock:
+            ws6._auth_fail_by_ip.clear()
+            ws6._auth_fail_total = 0
+        old_limit = ws6._AUTH_FAIL_LIMIT
+        ws6._AUTH_FAIL_LIMIT = 3
+        try:
+            codes = [_get(port, "/assets", api_key="wrong-key")[0] for _ in range(5)]
+            check(codes == [401, 401, 401, 429, 429],
+                  f"per-IP rate limit should 401 until the budget then 429, got {codes}")
+        finally:
+            ws6._AUTH_FAIL_LIMIT = old_limit
+        check(ws6.auth_fail_total() == 5,
+              f"the slow-fail counter must record all 5 failures, got {ws6.auth_fail_total()}")
+        # The limiter must never lock out a legitimate key.
+        check(_get(port, "/assets", api_key="correct-key")[0] == 200,
+              "a correct key must still succeed after rate-limited failures")
+        # The counter is monotonic: another failure keeps counting.
+        _get(port, "/assets", api_key="wrong-key")
+        check(ws6.auth_fail_total() == 6,
+              f"the slow-fail counter must keep counting, got {ws6.auth_fail_total()}")
+    finally:
+        srv.shutdown(); srv.server_close()
+
+
+def test_revoking_last_key_does_not_reopen_service():
+    """R2-#4: `_check_auth` used to treat KEYSTORE.count()==0 at REQUEST time
+    as "auth disabled", so revoking the LAST key mid-session silently reopened
+    the service to unauthenticated traffic. With the `_AUTH_WAS_ENABLED` latch,
+    once auth has EVER been enabled (a key was provisioned/observed) it stays
+    on for the process lifetime -- an empty keystore must still 401 every
+    request instead of serving open."""
+    srv, port = _serve()
+    try:
+        import app as ws6
+        # Baseline: empty keystore + never-enabled latch = auth disabled.
+        check(_get(port, "/assets")[0] == 200,
+              "baseline: a never-enabled, empty keystore must be auth-disabled")
+        key_id = ws6.KEYSTORE.provision("acme", "the-only-key")
+        check(_get(port, "/assets")[0] == 401,
+              "provisioning a key must enable auth (401 without a key)")
+        check(_get(port, "/assets", api_key="the-only-key")[0] == 200,
+              "the provisioned key itself must work")
+        ws6.KEYSTORE.revoke(key_id)
+        check(ws6.KEYSTORE.count() == 0,
+              "sanity: the keystore is now empty after revoking the last key")
+        code, _ = _get(port, "/assets")
+        check(code == 401,
+              f"revoking the LAST key must NOT reopen the service, got {code}")
+        code, _ = _get(port, "/assets", api_key="the-only-key")
+        check(code == 401,
+              f"the revoked key must still be rejected, got {code}")
+    finally:
+        srv.shutdown(); srv.server_close()
+
+
+def test_auth_fail_by_ip_is_swept_periodically():
+    """NEW-hunt read-plane #4: `_auth_fail_by_ip` buckets (one per failing IP)
+    were pruned ONLY on the next failure from the SAME IP -- a "deceased" IP's
+    bucket (and its stale timestamps) lingered in the dict for the process
+    lifetime: unbounded memory, one entry per distinct hostile IP ever seen. A
+    periodic sweep (mirroring ws3-indexer/triage_api.py::_rate_buckets) now
+    drops stale buckets every _AUTH_FAIL_SWEEP_EVERY-th failure."""
+    srv, port = _serve()
+    try:
+        import app as ws6
+        ws6.KEYSTORE.provision("acme", "correct-key")
+        with ws6._auth_fail_lock:
+            ws6._auth_fail_by_ip.clear()
+            ws6._auth_fail_total = 0
+            ws6._auth_fail_calls = 0
+        old_every, old_stale = ws6._AUTH_FAIL_SWEEP_EVERY, ws6._AUTH_FAIL_STALE_S
+        ws6._AUTH_FAIL_SWEEP_EVERY = 2  # sweep on every 2nd failure
+        ws6._AUTH_FAIL_STALE_S = 0      # any recorded hit is immediately stale
+        try:
+            _get(port, "/assets", api_key="wrong-key")  # failure 1: records the bucket
+            with ws6._auth_fail_lock:
+                check(len(ws6._auth_fail_by_ip) == 1,
+                      "a failed attempt must record/stage its IP bucket")
+            _get(port, "/assets", api_key="wrong-key")  # failure 2: triggers the sweep
+            with ws6._auth_fail_lock:
+                check(len(ws6._auth_fail_by_ip) == 0,
+                      f"the periodic sweep must drop the stale IP bucket, got {ws6._auth_fail_by_ip}")
+        finally:
+            ws6._AUTH_FAIL_SWEEP_EVERY = old_every
+            ws6._AUTH_FAIL_STALE_S = old_stale
+    finally:
+        srv.shutdown(); srv.server_close()
+
+
+def test_inventory_read_accepts_caller_presented_key_like_nginx_forwards():
+    """NEW-hunt read-plane #2 (ws6 half): nginx's /api/inventory/ proxy now
+    forwards the browser's caller-PRESENTED X-Api-Key upstream
+    ($http_x_api_key; see ws7-dashboard/templates/default.conf.template). ws6
+    must accept exactly that header against its keystore -- the same contract
+    every other proxied route relies on. Pins the common deployment where the
+    browser's FENGARDE_API_KEY migrated into the ws6 keystore
+    (ensure_legacy_keys_migrated), so enabling ws6 auth must NOT blank the
+    dashboard's Inventory reads again."""
+    srv, port = _serve()
+    try:
+        import app as ws6
+        # ensure_legacy_keys_migrated provisions FENGARDE_API_KEY under
+        # 'default' -- simulate the outcome of that migration + a first read.
+        ws6.KEYSTORE.provision("default", "the-browser-key",
+                               source="migrated_legacy_shared_key")
+        code, body = _get(port, "/assets", api_key="the-browser-key")
+        check(code == 200,
+              f"a caller-presented key that verifies against the keystore must "
+              f"be accepted (as nginx now forwards it), got {code} {body}")
+        code, _ = _get(port, "/assets")
+        check(code == 401,
+              f"with auth enabled, a missing key must still be 401 (nginx forwards an empty X-Api-Key), got {code}")
+    finally:
+        srv.shutdown(); srv.server_close()
+
+
 def main():
     test_auth_disabled_by_default()
     test_auth_enforced_once_a_key_is_provisioned()
@@ -299,6 +526,14 @@ def main():
     test_keys_route_unrestricted_for_admin_and_when_auth_disabled()
     test_rotation_both_keys_live_then_old_revoked_over_http()
     test_legacy_single_key_migrates_and_keeps_working_over_http()
+    test_failed_auth_is_logged_and_rate_limited()
+    test_revoking_last_key_does_not_reopen_service()
+    test_auth_fail_by_ip_is_swept_periodically()
+    test_inventory_read_accepts_caller_presented_key_like_nginx_forwards()
+    test_require_auth_or_die_empty_keystore_exits_1()
+    test_require_auth_or_die_noop_without_env()
+    test_require_auth_or_die_provisioned_keystore_is_noop()
+    test_serve_actually_calls_require_auth_or_die_before_listening()
     if FAILS:
         print(f"[FAIL] ws6 auth: {len(FAILS)} problem(s)")
         for f in FAILS:
@@ -307,7 +542,9 @@ def main():
     print("[OK] WS-6 auth: disabled by default, enforced once provisioned, per-tenant keys isolate "
           "read+write, URL-decoded MAC lookup, read_only scope blocks writes (403), admin key "
           "unrestricted, GET /keys never leaks material and is tenant-scoped, zero-downtime "
-          "rotation + revoke, legacy single-key migration -- all over real HTTP")
+          "rotation + revoke, legacy single-key migration, slow-fail counter + per-IP rate limit "
+          "with periodic bucket sweep on failed keys, revoking the last key stays enforced, "
+          "caller-presented X-Api-Key forwarded from nginx accepted on reads -- all over real HTTP")
 
 
 if __name__ == "__main__":

@@ -135,6 +135,14 @@ import check_rule_producers as crp  # noqa: E402  -- reuse the same FIXTURES
 
 OUT_DIR = Path(__file__).resolve().parent / "out"
 
+# Gap-hunt fix (2026-08-26): which distinct values a rule's replays were
+# stamped with, per rule id -- "real" (the distinct values really produced by
+# the fixture pipeline) or "synthetic" (per-iteration fabricated values, the
+# fallback when the real fixtures cannot supply enough distinct values). See
+# _distinct_values_for / _replay. Populated only when a distinct_pool was
+# passed to the replay, i.e. from main(); direct test calls leave it alone.
+_DISTINCT_REPLAY_SOURCE: dict[str, str] = {}
+
 
 def _set_path(event: dict, dotted: str, value: object) -> None:
     """Write ``value`` at a dotted path, creating intermediate dicts as
@@ -335,8 +343,37 @@ def _oh_anchors(rule, span_ms: int) -> list[tuple[str, int]] | None:
     return anchors
 
 
+def _distinct_values_for(rule, events: list[dict]) -> list:
+    """Distinct REAL values of ``rule.distinct_field`` across the real fixture
+    events, first-seen order.
+
+    Gap-hunt fix (2026-08-26): ``_replay`` used to stamp a fresh synthetic
+    value per repetition for every distinct-field rule, so the 'fires, fully
+    covered' green result was guaranteed by construction -- the distinct
+    counter could never be the thing that failed, no matter how wrong the
+    rule's ``distinct_field`` was. Where the real fixtures genuinely hold at
+    least ``threshold`` distinct values of the field, the replay now uses
+    these real values instead. Values are deduped by (type name, value) so a
+    bool ``True`` never masquerades as the int ``1`` for counting purposes.
+    """
+    ordered: list = []
+    seen: set = set()
+    for e in events:
+        v = get_path(e, rule.distinct_field)
+        if v is None:
+            continue
+        try:
+            key = (type(v).__name__, v)
+        except TypeError:  # unhashable container (list/dict) -- repr it
+            key = repr(v)
+        if key not in seen:
+            seen.add(key)
+            ordered.append(v)
+    return ordered
+
+
 def _replay(rule, base_event: dict, reps: int, step_ms: int,
-            tag: str) -> bool | None:
+            tag: str, distinct_pool: list | None = None) -> bool | None:
     """Feed ``reps`` copies of ``base_event`` through the real
     ``Rule.evaluate()`` at ``step_ms`` spacing; return whether ANY of them
     fired, or None if an off-hours anchor for the whole span could not be
@@ -390,7 +427,24 @@ def _replay(rule, base_event: dict, reps: int, step_ms: int,
             if field != "time":
                 _set_path(ev, field, anchor)
         if rule.distinct_field:
-            _set_path(ev, rule.distinct_field, f"firecheck-value-{i}")
+            # Gap-hunt fix (2026-08-26): when the caller supplied a pool of
+            # REAL distinct values big enough for this replay, stamp the real
+            # values (one per repetition; len(pool) >= reps guarantees reps
+            # DISTINCT values, which is exactly the counting the rule's
+            # threshold is written against). Otherwise fall back to synthetic
+            # per-iteration values and record the fallback in
+            # _DISTINCT_REPLAY_SOURCE so a caller can report the check as
+            # weaker than a fully-real replay instead of a full pass. Direct
+            # test calls (distinct_pool=None) keep the historical synthetic
+            # behavior and record nothing.
+            if distinct_pool is not None and len(distinct_pool) >= reps:
+                _set_path(ev, rule.distinct_field,
+                          distinct_pool[i % len(distinct_pool)])
+                _DISTINCT_REPLAY_SOURCE[rule.id] = "real"
+            else:
+                _set_path(ev, rule.distinct_field, f"firecheck-value-{i}")
+                if distinct_pool is not None:
+                    _DISTINCT_REPLAY_SOURCE[rule.id] = "synthetic"
         fired = rule.evaluate(ev) or fired
     return fired
 
@@ -426,7 +480,8 @@ def _overrun_step_ms(rule, reps: int) -> int:
     return span_ms // (reps - 1) + 1
 
 
-def _try_fire(rule, events: list[dict]) -> tuple[bool, str, dict | None, bool]:
+def _try_fire(rule, events: list[dict],
+              distinct_pool: list | None = None) -> tuple[bool, str, dict | None, bool]:
     """(fired, note, fixture_event, harness_blocked) -- replay real events
     against one rule until it fires or the fixtures are exhausted. The
     returned event is the one that fired, so the boundary probes can re-use
@@ -454,7 +509,8 @@ def _try_fire(rule, events: list[dict]) -> tuple[bool, str, dict | None, bool]:
             continue
 
         reps = rule.threshold or 1
-        outcome = _replay(rule, base_event, reps, _positive_step_ms(rule, reps), f"pos{idx}")
+        outcome = _replay(rule, base_event, reps, _positive_step_ms(rule, reps),
+                          f"pos{idx}", distinct_pool)
         if outcome is None:
             blocked = True
             continue
@@ -469,7 +525,8 @@ def _try_fire(rule, events: list[dict]) -> tuple[bool, str, dict | None, bool]:
     return False, "never fired on any of its own real fixture events", None, False
 
 
-def _boundary_probe(rule, base_event: dict | None, blocked: bool = False) -> dict:
+def _boundary_probe(rule, base_event: dict | None, blocked: bool = False,
+                    distinct_pool: list | None = None) -> dict:
     """Negative half of the gate: the rule fires AT its threshold (proven by
     _try_fire) -- prove it does NOT fire just below it.
 
@@ -525,7 +582,8 @@ def _boundary_probe(rule, base_event: dict | None, blocked: bool = False) -> dic
             "detail": "threshold is 1, no sub-threshold count exists"}
     else:
         step_ms = _positive_step_ms(rule, reps)
-        outcome = _replay(rule, base_event, reps - 1, step_ms, "under")
+        outcome = _replay(rule, base_event, reps - 1, step_ms, "under",
+                          distinct_pool)
         if outcome is None:
             probes["under_threshold"] = {
                 "status": "skipped",
@@ -543,7 +601,8 @@ def _boundary_probe(rule, base_event: dict | None, blocked: bool = False) -> dic
             "detail": "threshold is 1, a single event needs no window"}
     else:
         overrun_ms = _overrun_step_ms(rule, reps)
-        outcome = _replay(rule, base_event, reps, overrun_ms, "overrun")
+        outcome = _replay(rule, base_event, reps, overrun_ms, "overrun",
+                          distinct_pool)
         if outcome is None:
             probes["window_overrun"] = {
                 "status": "skipped",
@@ -833,10 +892,18 @@ def main() -> int:
     detector = Detector(plugin_rule_dirs=[])
 
     results = []
+    untagged: list[dict] = []
     for rule in detector.rules:
         mitre = rule.raw.get("mitre")
         if not isinstance(mitre, dict) or not mitre.get("technique"):
-            continue  # coverage_layer.py already reports undeclared rules
+            # R3-#39 (2026-08-27): this was a silent `continue` -- a rule with
+            # no `mitre.technique` fell out of the verdict entirely, invisible
+            # in the very "unverified" accounting this file exists to surface.
+            # It is now counted explicitly as UNVERIFIED (it can't be
+            # empirically checked without a declared technique to key the
+            # fixture on), reported at the end, not silently dropped.
+            untagged.append({"id": rule.id, "title": rule.title})
+            continue  # coverage_layer.py independently reports undeclared rules
         fired, note, fixture, blocked = _try_fire(rule, events)
         results.append({
             "id": rule.id, "title": rule.title,
@@ -941,8 +1008,22 @@ def main() -> int:
           f"silent) -- necessity of each DECLARED predicate, not well-scopedness"
           + (f"; {len(nm_partly_held)} rule(s) had at least one predicate with no "
              f"constructible near-miss" if nm_partly_held else ""))
-    print(f"[OK] {untested} rule(s) negatively verified by NEITHER half -- "
-          f"untested, not passing -- see 'boundary'/'near_miss' in the JSON")
+    unverified = untested + len(untagged)
+    if untested:
+        print(f"[WARN] {untested} MITRE-tagged rule(s) negatively verified by "
+              f"NEITHER half -- UNVERIFIED, NOT passing (NEW-hunt): a rule with "
+              f"no held near-miss/boundary is silently negative until one is "
+              f"constructed. See 'boundary'/'near_miss' in the JSON.")
+    if untagged:
+        print(f"[WARN] {len(untagged)} rule(s) have NO mitre.technique and are "
+              f"therefore UNVERIFIED by this empirical check (R3-#39) -- not "
+              f"silently dropped, not counted as passing: "
+              f"{', '.join(str(r['id']) for r in untagged)}")
+    if unverified:
+        print(f"      ({unverified} total rule(s) remain UNVERIFIED by this "
+              f"gate's negative half -- declared-coverage and positive-fire "
+              f"checks above still hold for the {len(results)} tagged rule(s); "
+              f"an unverified rule is an open gap, not a pass.)")
     return 0
 
 

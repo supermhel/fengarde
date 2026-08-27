@@ -91,7 +91,11 @@ def load_allowlist(allowlists_dir: Path, name: str) -> Allowlist:
             raise ValueError("allowlist file missing a list 'entries:' key")
         allowlist = Allowlist(entries, ok=True)
     except Exception as exc:  # missing file, bad YAML, bad shape -> fails closed (see docstring)
-        _log.warn(
+        # R3-#66 (2026-08-27): `.always` (un-gated) rather than `.warn` -- the
+        # level gate above would otherwise drop this at
+        # FENGARDE_LOG_LEVEL=error, and an operator running error-only logs
+        # would get zero signal that an allowlist was silently failing closed.
+        _log.always(
             f"allowlist '{name}' failed to load ({exc}); it will never "
             f"match/suppress anything until fixed (fails closed)."
         )

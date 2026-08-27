@@ -26,6 +26,14 @@ with a built-in one is skipped (the built-in wins); a plugin rule whose
 whichever loaded first) is skipped too. A plugin extends FENGARDE, it can
 never silently override behavior this repo already ships.
 
+**A collision is skipped silently** (both are working plugins, one just
+deferred to another — nothing an operator needs to act on). **A genuinely
+broken plugin (import error, wrong base type, a rule-pack target that isn't
+a real directory) is skipped but LOGGED** at `warn` level, naming the
+plugin, on both extension points — one bad plugin still never prevents the
+rest of the service from starting, but it no longer looks identical to "no
+plugin installed" in your logs.
+
 ## A worked example
 
 Directory layout for a plugin package (e.g. `fengarde-acme-plugin`):

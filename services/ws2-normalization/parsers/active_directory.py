@@ -36,6 +36,26 @@ _EVENT_MAP = {
 }
 
 
+def _hostname(value) -> Optional[str]:
+    """WorkstationName -> src_endpoint.hostname, treating Windows's literal
+    ``'-'`` (what NTLM/network logons log when there is no interactive
+    workstation) as ABSENT.
+
+    2026-08-26 gap-hunt finding: ``safe_str(rec.get("WorkstationName") or
+    rec.get("Computer"))`` let '-' through -- it's a truthy, non-empty string,
+    so the ``or Computer`` fallback never fired and every such event was
+    grouped under src_endpoint.hostname='-'. Downstream,
+    common_bruteforce_sourceless treated '-' as a real host (a permanently
+    firing noise bucket), and because the coordinated-attack rules key their
+    deterministic alert_id on src_endpoint.hostname, all of those events
+    collided on one idempotent alert -- hiding brute-forces inside a bucket
+    seeded by legitimately different workstations. Empty/None are covered by
+    ``safe_str``; '-' (and its whitespace-wrapped variants) is the case the
+    ``or`` chain missed."""
+    v = safe_str(value)
+    return None if v == "-" else v
+
+
 class ActiveDirectoryParser(Parser):
     SOURCE_TYPE = "active_directory"
     SECTOR = "bank"
@@ -75,7 +95,7 @@ class ActiveDirectoryParser(Parser):
         user = safe_str(rec.get("TargetUserName") or rec.get("SubjectUserName"))
         domain = safe_str(rec.get("TargetDomainName") or rec.get("SubjectDomainName"))
         ip = valid_ip(rec.get("IpAddress") or meta.get("ip"))
-        host = safe_str(rec.get("WorkstationName") or rec.get("Computer"))
+        host = _hostname(rec.get("WorkstationName")) or _hostname(rec.get("Computer"))
         mac = valid_mac(rec.get("MacAddress"))
 
         verb = {1: "Logon", 2: "Logoff", 3: "Auth ticket", 4: "Failed logon"}[activity_id]
