@@ -672,6 +672,28 @@ def test_gate_fails_when_every_rule_loses_its_mitre_block():
           "gate did not explain that zero rules were checked")
 
 
+def test_unverified_and_untagged_rules_are_warned_not_claimed_passing():
+    """R3-#39 + NEW-hunt (2026-08-27): a rule negatively verified by NEITHER
+    half, and a rule with NO mitre.technique, used to be silently invisible
+    under an `[OK] n rule(s)` line -- the exact 'nothing tested, looks green'
+    shape this repo keeps killing. Both must now surface as [WARN] and be
+    counted UNVERIFIED, never claimed *passing*, while the positive fire check
+    still holds (rc stays 0 on the real set -- these are open gaps, not
+    failures, and the gate's exit-0 pinning makes that explicit)."""
+    rc, out = _run_main_capturing()
+    check(rc == 0, f"real rule set must still exit 0 (unverified != failed), got {rc}")
+    check("[WARN]" in out, "unverified/untagged rules must be [WARN]ed, not [OK]ed")
+    check("UNVERIFIED" in out.upper(),
+          "unverified rules must be labelled UNVERIFIED, not claimed passing")
+    # The old bug line opened with "[OK] {n} rule(s) negatively verified by
+    # NEITHER half" -- its exact wording must be gone.
+    check("negatively verified by NEITHER half -- untested, not passing -- see"
+          not in out, "the old [OK]-under-unverified phrasing must be gone")
+    check("NO mitre.technique" in out,
+          "rules without a mitre.technique must be named as UNVERIFIED, not "
+          "silently `continue`d past")
+
+
 def test_canary_is_green_while_zero_rules_are_checked():
     """Pins the canary's real scope, so nobody re-derives the claim this
     replaced: the canary passes in the zero-rule scenario. It probes the
@@ -790,6 +812,7 @@ def main():
     test_gate_exits_nonzero_end_to_end_on_a_stateless_rule_ignoring_a_predicate()
     test_gate_fails_when_zero_rules_are_checked()
     test_gate_fails_when_every_rule_loses_its_mitre_block()
+    test_unverified_and_untagged_rules_are_warned_not_claimed_passing()
     test_canary_is_green_while_zero_rules_are_checked()
     test_canary_does_not_mutate_the_shared_template()
     test_canary_fires_on_the_real_fixture_set()

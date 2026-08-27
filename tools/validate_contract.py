@@ -103,6 +103,23 @@ def check_invariant(event, errors):
             f".type_uid: invariant violated: {t} != class_uid*100+activity_id "
             f"({c}*100+{a}={c*100+a})"
         )
+    # R3-37 (2026-08-27 contract gap-hunt): check_invariant enforced
+    # type_uid == class_uid*100+activity_id but NEVER checked the OCSF class
+    # hierarchy -- a fixture with class_uid in one category but a
+    # category_uid naming a different category (e.g. class_uid 3002, a
+    # category-3 Network Activity class, tagged category_uid 6 IAM) passed
+    # the gate. In OCSF class_uid encodes `category*1000 + class_in_category`,
+    # so category_uid MUST equal `class_uid // 1000`. Enforced only when
+    # category_uid is present and properly typed -- a missing/wrong-typed
+    # value is reported by the schema pass and must not fabricate an error
+    # here (same convention as the type_uid guard above).
+    cat = event.get("category_uid")
+    if (isinstance(cat, int) and not isinstance(cat, bool)
+            and cat != c // 1000):
+        errors.append(
+            f".category_uid: invariant violated: {cat} != class_uid//1000 "
+            f"({c}//1000={c//1000})"
+        )
 
 
 def validate_event(event, schema):

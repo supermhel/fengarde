@@ -188,6 +188,29 @@ def _real_ip(r):
     return ip if ip and ip != "-" else None
 
 
+def _real_host(r) -> str:
+    """Mirror of the real engine's hostname fallback
+    (services/ws2-normalization/parsers/active_directory.py::_hostname):
+    WorkstationName taken unless it is Windows's literal ``-`` placeholder
+    (NTLM/network logons with no interactive workstation), in which case fall
+    back to Computer -- and a ``-`` Computer is also treated as absent.
+
+    R4-#138 (2026-08-27): the oracle previously keyed
+    common_bruteforce_sourceless on ``WorkstationName or Computer or ''``
+    with NO ``-`` guard, so every placeholder event pooled under one
+    'host' bucket -- and since that rule groups on hostname, a few
+    legitimately-distinct workstations all logged by NTLM produced the
+    exact false positive the fixed engine (and its anti-dormancy fixture)
+    already suppressed. Keeping the oracle divergent silently over-judged
+    (or under-judged) the rule on exactly this traffic shape."""
+    ws = r.get("WorkstationName")
+    host = ws if (isinstance(ws, str) and ws.strip() and ws.strip() != "-") else ""
+    if not host:
+        comp = r.get("Computer")
+        host = comp if (isinstance(comp, str) and comp.strip() and comp.strip() != "-") else ""
+    return host
+
+
 def oracle(records):
     """records: time-sorted supported Security records. Returns {rule_id: bool}."""
     exp = {}
@@ -228,7 +251,7 @@ def oracle(records):
     # correctly whether or not a source IP was recorded.
     by_host = defaultdict(list)
     for r in failed:
-        host = r.get("WorkstationName") or r.get("Computer") or ""
+        host = _real_host(r)
         by_host[host].append((r["TimeCreated"], r.get("TargetUserName") or ""))
     exp[RULE_BRUTE_SOURCELESS] = any(
         sliding_distinct_max(sorted(p), 120_000) >= 5 for p in by_host.values())

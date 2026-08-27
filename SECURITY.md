@@ -43,9 +43,10 @@ network on a trusted machine. They are **not** designed to be reachable from the
 public internet or an untrusted network.
 
 - Do **not** expose the published ports (`6379`, `9200`, `5601`, `8000`, `8080`)
-  to untrusted networks. As of v0.4, `6379`/`9200`/`5601` are bound to
-  `127.0.0.1` in `infra/docker-compose.yml` by default — rebinding them to
-  `0.0.0.0` is a deliberate choice you're making, not an accident.
+  to untrusted networks. As of v0.4, all published ports (`6379`, `9200`, `5601`,
+  `8000`, `8080` — and `9090`/`3000` where the stack runs Prometheus/grafana)
+  are bound to `127.0.0.1` in `infra/docker-compose.yml` by default — rebinding
+  them to `0.0.0.0` is a deliberate choice you're making, not an accident.
 - The bundled OpenSearch runs with its security plugin **disabled** for
   zero-friction local development (`DISABLE_SECURITY_PLUGIN=true` in
   `infra/docker-compose.yml`). It must not be exposed beyond the local host.

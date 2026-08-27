@@ -41,6 +41,7 @@ sys.path.insert(0, str(ROOT / "services" / "ws4-detection"))
 # Reuse the REAL engine internals so the gate can never drift from runtime.
 from engine import (  # noqa: E402
     _NUMERIC_OPS, _parse_or, _parse_hhmm, _time_outside_hours,
+    _CONDITION_TOKEN_RE,
 )
 
 _UUID_RE = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
@@ -72,7 +73,9 @@ _KNOWN_OPS = set(_NUMERIC_OPS) | {"not_in", "outside_hours", "in", "contains", "
 _MITRE_TECHNIQUE_RE = re.compile(r"^(AML\.)?T\d{4}(\.\d{3})?$")
 _MITRE_TACTIC_RE = re.compile(r"^(AML\.)?TA\d{4}$")
 _MITRE_FRAMEWORKS = {"attack", "attack-ics", "atlas"}
-_CONDITION_TOKEN_RE = re.compile(r"\(|\)|\band\b|\bor\b|\bnot\b|[\w.]+")
+# _CONDITION_TOKEN_RE imported from engine (single source, R3-#36) -- the
+# validator and the runtime must tokenize conditions identically, so a local
+# copy here would let the gate drift from the engine.
 _KEYWORDS = {"and", "or", "not", "(", ")"}
 _DAY_NAMES = {"mon", "tue", "wed", "thu", "fri", "sat", "sun"}
 

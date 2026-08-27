@@ -61,7 +61,7 @@ In short, it's three small edits:
 
 1. Add a new parser module under `services/ws2-normalization/parsers/`, subclassing
    `Parser` (copy `linux_ssh.py` as your template).
-2. Register it in `services/ws2-normalization/parsers/__init__.py` (the `_REGISTRY` dict, around line 33).
+2. Register it in `services/ws2-normalization/parsers/__init__.py` (the `_REGISTRY` dict, around line 34).
 3. Add a sample + expectation so `test_contract.py` exercises it.
 
 Then verify with `python test_contract.py`. Done.

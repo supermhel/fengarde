@@ -89,12 +89,33 @@ def test_navigator_layer_shape():
               f"declared-coverage entries must be scored 1/enabled, got {t}")
 
 
+def test_main_fails_on_empty_rule_set():
+    """NEW-hunt (2026-08-27): main() used to return 0 unconditionally, so an
+    empty/mis-shaped rules dir printed a 0-rule scorecard and exited green --
+    the same vacuous-pass shape as the empty count floors elsewhere. A
+    scorecard over zero rules must fail loudly."""
+    import contextlib, io, tempfile
+    orig_dir = coverage_layer.RULES_DIR
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            coverage_layer.RULES_DIR = Path(td)  # empty
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                rc = coverage_layer.main()
+            check(rc != 0, f"empty rules dir must FAIL, got rc={rc}")
+            check("[FAIL]" in buf.getvalue(),
+                  f"empty rules dir must print a [FAIL], got:\\n{buf.getvalue()}")
+    finally:
+        coverage_layer.RULES_DIR = orig_dir
+
+
 def run():
     test_every_rule_file_is_loaded()
     test_known_technique_present_under_attack_framework()
     test_rule_with_no_mitre_block_is_flagged_undeclared()
     test_navigator_layer_only_covers_frameworks_navigator_understands()
     test_navigator_layer_shape()
+    test_main_fails_on_empty_rule_set()
 
 
 def main():

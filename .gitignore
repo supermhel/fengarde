@@ -82,6 +82,8 @@ docs/posts/*
 
 # E1 audit-log runtime data (append-only JSONL, never committed)
 audit*.jsonl
+audit*.jsonl.lock
+# cross-process audit trim lock (created at runtime by the E1 file lock #6 fix)
 
 # Agent / editor / local scratch (not project artifacts)
 .hermes/

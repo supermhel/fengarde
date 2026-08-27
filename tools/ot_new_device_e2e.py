@@ -93,7 +93,24 @@ def check(cond, msg):
 
 
 def _env(container: str, name: str) -> str:
-    return sh("docker", "exec", container, "sh", "-c", f"echo ${name}").stdout.strip()
+    r = sh("docker", "exec", container, "sh", "-c", f"echo ${name}")
+    # Gap-hunt finding (R4-#119): docker exec's returncode was discarded, so a
+    # STOPPED container (or one that died between the `docker inspect` gate and
+    # this call) returned "" here with rc!=0 -- which then matched the
+    # empty-backend [SKIP] branch below and exited 0. That silently skipped
+    # the whole new-device proof whenever a container was down, exactly the
+    # "no per-invocation verdict" shape this file exists to kill. A failed
+    # exec is now fatal and loud, never a green skip.
+    if r.returncode != 0:
+        detail = (r.stderr or r.stdout or "docker exec returned "
+                  f"{r.returncode}").strip()[:400]
+        raise SystemExit(f"[ot-e2e] failed to read env {name} from container "
+                         f"'{container}' (returncode {r.returncode}): {detail} "
+                         f"-- the container is stopped or not running "
+                         f"(make up / docker compose up -d). Not a skip: a "
+                         f"stopped container must fail loudly, not pass "
+                         f"vacuously (R4-#119).")
+    return r.stdout.strip()
 
 
 def main() -> int:

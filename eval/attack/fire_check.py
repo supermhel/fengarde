@@ -892,10 +892,18 @@ def main() -> int:
     detector = Detector(plugin_rule_dirs=[])
 
     results = []
+    untagged: list[dict] = []
     for rule in detector.rules:
         mitre = rule.raw.get("mitre")
         if not isinstance(mitre, dict) or not mitre.get("technique"):
-            continue  # coverage_layer.py already reports undeclared rules
+            # R3-#39 (2026-08-27): this was a silent `continue` -- a rule with
+            # no `mitre.technique` fell out of the verdict entirely, invisible
+            # in the very "unverified" accounting this file exists to surface.
+            # It is now counted explicitly as UNVERIFIED (it can't be
+            # empirically checked without a declared technique to key the
+            # fixture on), reported at the end, not silently dropped.
+            untagged.append({"id": rule.id, "title": rule.title})
+            continue  # coverage_layer.py independently reports undeclared rules
         fired, note, fixture, blocked = _try_fire(rule, events)
         results.append({
             "id": rule.id, "title": rule.title,
@@ -1000,8 +1008,22 @@ def main() -> int:
           f"silent) -- necessity of each DECLARED predicate, not well-scopedness"
           + (f"; {len(nm_partly_held)} rule(s) had at least one predicate with no "
              f"constructible near-miss" if nm_partly_held else ""))
-    print(f"[OK] {untested} rule(s) negatively verified by NEITHER half -- "
-          f"untested, not passing -- see 'boundary'/'near_miss' in the JSON")
+    unverified = untested + len(untagged)
+    if untested:
+        print(f"[WARN] {untested} MITRE-tagged rule(s) negatively verified by "
+              f"NEITHER half -- UNVERIFIED, NOT passing (NEW-hunt): a rule with "
+              f"no held near-miss/boundary is silently negative until one is "
+              f"constructed. See 'boundary'/'near_miss' in the JSON.")
+    if untagged:
+        print(f"[WARN] {len(untagged)} rule(s) have NO mitre.technique and are "
+              f"therefore UNVERIFIED by this empirical check (R3-#39) -- not "
+              f"silently dropped, not counted as passing: "
+              f"{', '.join(str(r['id']) for r in untagged)}")
+    if unverified:
+        print(f"      ({unverified} total rule(s) remain UNVERIFIED by this "
+              f"gate's negative half -- declared-coverage and positive-fire "
+              f"checks above still hold for the {len(results)} tagged rule(s); "
+              f"an unverified rule is an open gap, not a pass.)")
     return 0
 
 

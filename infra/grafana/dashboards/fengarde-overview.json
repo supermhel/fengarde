@@ -44,17 +44,30 @@
       ]
     },
     {
-      "id": 4,
-      "title": "Rule staleness (seconds since last fire, ws4-detection only)",
-      "type": "timeseries",
-      "description": "M7 follow-up (2026-08-05, rule-health watchdog): a rule absent from this panel has never fired THIS PROCESS -- it is not yet distinguishable from 'never fired since deploy' vs. genuinely dead; that distinction is on the operator, same honesty caveat as this dashboard's other panels. A rule present and climbing is the real dead-rule signal this panel exists for.",
-      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 16 },
-      "targets": [
+          "id": 4,
+          "title": "Rule staleness (seconds since last fire, ws4-detection only)",
+          "type": "timeseries",
+          "description": "M7 follow-up (2026-08-05, rule-health watchdog): a rule absent from this panel has never fired THIS PROCESS -- it is not yet distinguishable from 'never fired since deploy' vs. genuinely dead; that distinction is on the operator, same honesty caveat as this dashboard's other panels. A rule present and climbing is the real dead-rule signal this panel exists for.",
+          "gridPos": { "h": 8, "w": 24, "x": 0, "y": 16 },
+          "targets": [
+            {
+              "expr": "time() - fengarde_extra{field=~\"rule_last_fired_timestamp:.*\"}",
+              "legendFormat": "{{field}}"
+            }
+          ]
+        },
         {
-          "expr": "time() - fengarde_extra{field=~\"rule_last_fired_timestamp:.*\"}",
-          "legendFormat": "{{field}}"
+          "id": 5,
+          "title": "Bus errors (rate/s) -- bus unreachable, awaiting recovery",
+          "type": "timeseries",
+          "description": "Gap-hunt finding (2026-08-23): /metrics never surfaced the bus-connection failure class -- a worker whose bus host is down increments per-topic result=\"bus_error\" (services/shared/runner.py::_topic_worker), but the old dashboard had no panel consuming it, so an operator saw only an absence of `acked` increments, indistinguishable from a genuinely idle topic. A non-flat line here (or the panel going non-empty) is the distinct early-warning signal; 0 is the healthy steady state.",
+          "gridPos": { "h": 8, "w": 24, "x": 0, "y": 24 },
+          "targets": [
+            {
+              "expr": "sum by (service, topic) (rate(fengarde_topic_events_total{result=\"bus_error\"}[1m]))",
+              "legendFormat": "{{service}} / {{topic}}"
+            }
+          ]
         }
       ]
     }
-  ]
-}

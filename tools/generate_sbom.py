@@ -26,20 +26,20 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 OUTPUT = ROOT / "sbom.json"
 
-# Runtime requirements.txt files (ws7-dashboard is static+nginx with no Python
-# deps). devkit-feeder is INCLUDED since H9 moved its redis dep out of the
-# inline Dockerfile pip-install and into a requirements.txt -- it is now part
-# of the deployable system's manifest like every other service.
-REQUIREMENTS_FILES = [
-    "services/ws1-collectors/requirements.txt",
-    "services/ws2-normalization/requirements.txt",
-    "services/ws3-indexer/requirements.txt",
-    "services/ws4-detection/requirements.txt",
-    "services/ws5-ai/requirements.txt",
-    "services/ws6-inventory/requirements.txt",
-    "services/ws8-correlation/requirements.txt",
-    "services/devkit-feeder/requirements.txt",
-]
+# Runtime requirements.txt files. NEW-hunt (2026-08-27): this was a hardcoded
+# hand list that silently dropped any service whose requirements.txt was added
+# later (the classic partial-manifest drift this repo keeps hunting). It now
+# GLOBs services/*/requirements.txt, so a new deployable service with deps is
+# picked up automatically (ws7-dashboard is static+nginx with no Python deps,
+# so it has no requirements.txt and is naturally absent; devkit-feeder carries
+# one since H9 moved its redis dep into a manifest, so it is included).
+# merged_requirements() still treats a file that exists in the glob but cannot
+# be read/staged as missing (R4-117's guard stays meaningful for the rare
+# between-snapshot delete).
+REQUIREMENTS_FILES = sorted(
+    str(p.relative_to(ROOT)).replace("\\", "/")
+    for p in ROOT.glob("services/*/requirements.txt")
+)
 
 
 def merged_requirements():

@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed (2026-08-27, gap-hunt remediation: WS-1/WS-3/WS-4/WS-5/WS-6/WS-8/shared/tools + container smoke)
+
+Second-pass closure of the 2026-08-26 consolidated gap-hunt report (256 findings)
+plus a fresh 2026-08-27 hunt's 34 follow-on findings, all verified by execution and
+a green `run_all_tests.sh`:
+
+- **WS-1**: `/health` now reports 503 on a bus outage (was hardcoded 200 from an
+  empty handler map); ingest-edge metrics flattened so `/metrics/prom` emits real
+  gauges; spool escapes `U+2028/U+2029/U+0085` (an event could silently split at
+  drain); corrupt-line counter now actually increments; `os_error`/produce-fail
+  logging throttled + backoff; monotonic silence clock; empty datagram = its own
+  counter; spool rewrite fsync'd for durability.
+- **WS-2**: malformed `NORMALIZED_EVENTS_DEPTH_WARN` degrades instead of killing
+  the daemon; `unmapped` list sanitization now recurses; parser comment + doc
+  order corrected.
+- **WS-3/contracts**: OpenSearch read-side 5xx propagation; tenant default-filters
+  for `list_alerts`/`events`/`incidents`; reporting day-rollover; audit warn/lock/
+  `recent(0)`; report body reject; CAS on all write branches; webhooks non-yaml
+  fail-closed; `entity_value_full` mapped; nis2 envelope/schema aligned;
+  triage-api report params + CSRF note; inventory-api auth documented.
+- **WS-4/5/8**: torn-read-safe reload; `siem:null` poison-pill; event_ids
+  truncation marker; LLM SSRF/response/truncation hardening tests; plugin-pack
+  hot-reload; `ai_enqueued` counts LLM-only; correlator flat Prometheus
+  skip-reasons, attacker-time validation, deterministic anon member id,
+  oldest-by-time eviction; lost new-device alerts; inventory auth latch; bounded
+  auth-fail map.
+- **shared**: MemoryBus PEL in-flight eviction (at-least-once); session expiry;
+  sanitize C1/U+202E; outbound_http `safe_urlopen` SSRF + pinned opener; scrypt
+  `n` ceiling; log reserved-key + always().
+- **tools/eval/CI**: `check_test_wiring` gate; coverage_gate TARGETS derived from
+  the runner; fire_check untested rules reported; many live benches wired;
+  `container-smoke` CI job across all 8 services.
+
 ### Fixed (2026-08-20, P1-4 remainder: WS-3 double-index silently dropped siem.score)
 
 - **Correctness bug, not the perf item it was filed as.** WS-3 consumes both

@@ -7,6 +7,14 @@ cd "$ROOT"
 PY="${PYTHON:-python3}"
 fail=0
 
+# Reject positional args (R4-#127): this script takes none; an arg used to be
+# silently ignored, so `./run_all_tests.sh --help` (or a typo) ran the WHOLE
+# suite invisible to the caller. Unknown/extra args now fail fast with usage.
+if [ "$#" -gt 0 ]; then
+  echo "usage: $0   (no arguments; the zero-infra CI gate has no options)" >&2
+  exit 64
+fi
+
 echo "== Phase 0: contract validator =="
 $PY tools/validate_contract.py || fail=1
 $PY tools/test_validate_contract.py || fail=1
@@ -20,6 +28,9 @@ $PY tools/test_validate_rules.py || fail=1
 echo
 echo "== coverage gate floor/buffer tests (was orphaned -- only run directly) =="
 $PY tools/test_coverage_gate.py || fail=1
+echo
+echo "== R4-#123: every test_*.py must be wired (or a documented live-only orphan) =="
+$PY tools/check_test_wiring.py || fail=1
 echo
 echo "== Sigma import: regex->glob translation + rule sanitization =="
 $PY tools/test_fix_m18_sigma_glob.py || fail=1
@@ -35,6 +46,9 @@ echo
 echo "== ws8 sensitivity: promotion trigger + no-transitive-merge guarantees actually break under mutation =="
 $PY services/ws8-correlation/test_correlator_sensitivity.py || fail=1
 echo
+echo "== ws8 NEW-hunt regression: flat prometheus skip keys + skew-future/NaN time rejected + fully-anonymous deterministic member id + oldest-by-time member-cap eviction =="
+$PY services/ws8-correlation/test_correlator_new_hunt.py || fail=1
+echo
 echo "== ws3 WS-8 wiring: incident routing (day-stable across growth), storage list_incidents, OpenSearch wire format =="
 $PY services/ws3-indexer/test_ws8_incidents_routing.py || fail=1
 
@@ -42,7 +56,16 @@ echo
 echo "== ws3 v0.3 (C1): triage API (persistence, tolerant defaults, malformed input) =="
 $PY services/ws3-indexer/test_triage_api.py || fail=1
 echo
-echo "== ws3: optimistic concurrency (CAS) for multi-replica triage writes =="
+echo "== ws3 read-plane (2026-08-27 gap-hunt): list_alerts/events/incidents default-tenant parity =="
+$PY services/ws3-indexer/test_opensearch_list_default_filters.py || fail=1
+echo
+echo "== ws3 MemoryStore (R4-#4): find_report returns the NEWEST across a daily rollover =="
+$PY services/ws3-indexer/test_find_report_newest.py || fail=1
+echo
+echo "== ws4 _emit funnel key (R4-#27: present-but-None ingest_id falls back to src-ip) =="
+$PY services/ws3-indexer/test_ws4_emit_ingest_key.py || fail=1
+echo
+echo "== ws3 optimistic concurrency (CAS) for multi-replica triage writes =="
 $PY services/ws3-indexer/test_storage_cas.py || fail=1
 echo
 echo "== ws3 (P1.3): OpenSearch index transient-retry / permanent-surface =="
@@ -130,6 +153,18 @@ echo
 echo "== shared bus fan-out (multi-consumer-group fan-out + ack independence) =="
 $PY services/shared/test_bus_groups.py || fail=1
 echo
+echo "== shared bus PEL-cap in-flight eviction (2026-08-27 gap-hunt #1: at-least-once) =="
+$PY services/shared/test_bus_pel_cap.py || fail=1
+echo
+echo "== shared runner metrics provider error logging (2026-08-27 gap-hunt #3) =="
+$PY services/shared/test_runner_metrics.py || fail=1
+echo
+echo "== shared outbound_http SSRF guard + pinned opener (2026-08-27 gap-hunt #5/#9, R3-58/65) =="
+$PY services/shared/test_outbound_http.py || fail=1
+echo
+echo "== shared window redelivery timestamp-refresh parity (2026-08-27 gap-hunt #6, R3-61) =="
+$PY services/shared/test_window.py || fail=1
+echo
 echo "== shared bus read count (P1-8: XREADGROUP batch size; RedisBus-only, opt-in via make test-live) =="
 $PY services/shared/test_bus_read_count.py || fail=1
 echo
@@ -159,6 +194,9 @@ $PY services/ws2-normalization/parsers/test_property_hardening.py || fail=1
 echo
 echo "== ws2 log-injection defense (M1, ANSI/control-char sanitize) =="
 $PY services/ws2-normalization/test_sanitize.py || fail=1
+echo
+echo "== ws2 chaos-ws8 gap-hunt findings (#4 _int_env degrade-not-crash, #5 unmapped top-level LIST wildcard) =="
+$PY services/ws2-normalization/test_fix_chaos_gap_hunt.py || fail=1
 echo
 echo "== ws4 window counters (T6) =="
 $PY services/ws4-detection/test_window.py || fail=1
@@ -234,6 +272,9 @@ echo
 echo "== ws4 FIX 1/2/13/14/22/L1 regression: Sentinel HA wiring, poison-pill rejection, clock-skew warn =="
 $PY services/ws4-detection/test_fix_detection_engine.py || fail=1
 echo
+echo "== ws4 R4-30/F7/F8 regression: Detector owns ITS rule dirs, plugin packs hot-reload via fingerprint, ai_enqueued counts LLM tier only =="
+$PY services/ws4-detection/test_fix_plugin_reload_and_llm_metrics.py || fail=1
+echo
 echo "== ws2 parsers: generic syslog + windows event log (v0.2) =="
 $PY services/ws2-normalization/parsers/test_generic_syslog.py || fail=1
 $PY services/ws2-normalization/parsers/test_windows_eventlog.py || fail=1
@@ -304,8 +345,14 @@ echo
 echo "== ws5 ai_triage engine-mix metrics (was orphaned -- never wired) =="
 $PY services/ws5-ai/test_ai_engine_metrics.py || fail=1
 echo
+echo "== ws5 gap-hunt fixes (siem:null poison-pill + id-less event ids) =="
+$PY services/ws5-ai/test_fix_ws5_gap_hunt.py || fail=1
+echo
 echo "== ws1 syslog UDP listener (v0.2) =="
 $PY services/ws1-collectors/test_syslog_udp.py || fail=1
+echo
+echo "== ws1 health/metrics (gap-hunt #70/#71/#76: /health 503 on bus outage, flat gauges) =="
+$PY services/ws1-collectors/test_main_health_metrics.py || fail=1
 echo
 echo "== ws1 P1-6 (2026-07-21 audit): spool drain O(n) + lock released across produce() =="
 $PY services/ws1-collectors/test_spool_perf.py || fail=1
@@ -390,6 +437,9 @@ $PY eval/detection_accuracy/test_evtx_eval.py || fail=1
 echo
 echo "== ws7 UX fixes: saved searches, dark mode, alert lifecycle (static assertions) =="
 $PY services/ws7-dashboard/test_fix_ux.py || fail=1
+echo
+echo "== ws7 read-plane regression: LIVE ownership, outage marker, config.js gate, badge copy =="
+$PY services/ws7-dashboard/test_fix_read_plane.py || fail=1
 
 echo
 if [ "$fail" -eq 0 ]; then echo "ALL TESTS PASS"; else echo "SOME TESTS FAILED"; fi

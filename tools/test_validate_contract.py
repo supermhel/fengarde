@@ -74,6 +74,43 @@ class TestCheckInvariant(unittest.TestCase):
         check_invariant({"class_uid": 3002}, errors)
         self.assertEqual(errors, [])
 
+    def test_bad_category_uid_is_reported(self):
+        """R3-37: class_uid and category_uid must agree on the OCSF class
+        hierarchy. class_uid encodes category*1000, so 3002 MUST carry
+        category_uid 3 -- a 5 (IAM) silently mislabels the class and passed
+        the old gate (which only checked type_uid). type_uid is still valid
+        here, isolating the category_uid violation as its own error."""
+        errors: list = []
+        check_invariant(
+            {"class_uid": 3002, "activity_id": 2, "type_uid": 300202,
+             "category_uid": 5}, errors)
+        self.assertEqual(len(errors), 1)
+        self.assertIn("category_uid", errors[0])
+        self.assertIn("invariant violated", errors[0])
+
+    def test_valid_category_uid_holds_silently(self):
+        errors: list = []
+        check_invariant(
+            {"class_uid": 3002, "activity_id": 2, "type_uid": 300202,
+             "category_uid": 3}, errors)
+        self.assertEqual(errors, [])
+
+    def test_wrong_typed_category_uid_does_not_crash(self):
+        """A wrong-typed category_uid (already reported by the schema pass)
+        must not fabricate an arithmetic error in check_invariant."""
+        errors: list = []
+        check_invariant(
+            {"class_uid": 3002, "activity_id": 2, "type_uid": 300202,
+             "category_uid": "3-agent"}, errors)
+        self.assertEqual(errors, [])
+
+    def test_bool_category_uid_is_not_treated_as_int(self):
+        errors: list = []
+        check_invariant(
+            {"class_uid": 3002, "activity_id": 2, "type_uid": 300202,
+             "category_uid": True}, errors)
+        self.assertEqual(errors, [])
+
 
 class TestMainFloor(unittest.TestCase):
     """Zero-fixture behavior of main().
