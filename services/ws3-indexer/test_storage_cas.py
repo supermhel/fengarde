@@ -325,7 +325,6 @@ def test_alert_rewrite_uses_get_not_stale_search_under_frozen_refresh():
           f"a regression to find_alert_versioned here reproduces the live bug "
           f"(got {fake.search_calls} search call(s), expected still 1 from the "
           f"first message's genuine miss)")
-    stored = store._docs[("alerts-2026.08.28", "a1")][0] if hasattr(store, "_docs") else None
     check(fake._docs[("alerts-2026.08.28", "a1")][0]["time"] == 2,
           "the second (newer) payload must be what's actually stored")
 
