@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import time
 import urllib.error
 import urllib.request
@@ -52,8 +53,32 @@ except Exception:  # pragma: no cover - fallback when shared not importable
 
 try:  # FIX 4: no-redirect urlopen (SSRF hardening); guarded like _log above
     from shared.outbound_http import no_redirect_urlopen as _no_redirect_urlopen
-except Exception:  # pragma: no cover - standalone fallback (redirect-following)
+except Exception as _no_redirect_import_error:  # pragma: no cover
+    # R3-57 (2026-08-26): this guard used to fail SILENTLY, so a broken /
+    # missing shared.outbound_http (or a shared layer that isn't on sys.path)
+    # quietly downgraded every LLM HTTP call to redirect-FOLLOWING urllib
+    # with zero signal. outbound_http's whole point is SSRF hardening -- its
+    # no-redirect opener replaces urllib's default redirect-following at
+    # IMPORT time -- so silently falling back is a silent security posture
+    # change. Name the consequence loudly instead: the caller (OllamaLLM)
+    # is operator-configured so the blast radius is bounded, but a hostile
+    # or misconfigured endpoint could now pivot an authenticated POST to an
+    # internal host. Print to stderr too, so it is audible even if the
+    # logger isn't wired up.
     _no_redirect_urlopen = None
+    _log.error(
+        "could not import shared.outbound_http.no_redirect_urlopen: SSRF "
+        "redirect-following hardening is DISABLED -- this process's urllib "
+        "calls WILL follow HTTP 30x redirects (a hostile/misconfigured LLM "
+        "endpoint could thus pivot an authenticated request to an internal "
+        "host: metadata service, Elasticsearch, Redis). Fix shared/outbound_http.py "
+        "and reinstall it at import time to restore the no-redirect opener.",
+        error=str(_no_redirect_import_error),
+    )
+    print(f"[ws5-ai] WARNING SSRF hardening DISABLED: "
+          f"shared.outbound_http.no_redirect_urlopen failed to import "
+          f"({_no_redirect_import_error}); urllib will follow redirects.",
+          file=sys.stderr)
 
 
 def _urlopen(req, timeout=None):

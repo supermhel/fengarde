@@ -12,6 +12,8 @@ Also verifies:
     genuinely triaged again (LLM called) rather than falsely suppressed;
   * events with NO ingest_id/event_id are still processed on every delivery
     (back-compat, nothing stable to dedup on);
+  * the two-level fallback (R4-39): siem.ingest_id ABSENT but the request-level
+    event_id PRESENT still dedups against that event_id;
   * the classifier tier never touches the LLM (dedup is LLM-path only).
 """
 from __future__ import annotations
@@ -101,6 +103,39 @@ def run():
     w3.handle(noid)
     w3.handle(noid)
     check(l3.calls == 2, f"no-id events must each be processed: analyze {l3.calls}x, want 2")
+
+    # R4-39 (2026-08-27): the two-level dedup fallback -- siem.ingest_id ABSENT
+    # on a request that DOES carry a request-level event_id must still dedup on
+    # the event_id (ai_request() stamps ingest_id, so pop it to leave siem but
+    # with no ingest_id). The fallback is what makes redelivery of events that
+    # lack an OCSF siem.ingest_id idempotent against the request path.
+    w5 = ws5.AiWorker()
+    l5 = CountingLLM()
+    w5.llm = l5
+    fallback = ai_request("fb-evt")
+    fallback["event"]["siem"].pop("ingest_id")  # siem present, ingest_id gone
+    check(w5._dedup_key(fallback) == "fb-evt",
+          "R4-39: _dedup_key must fall back to the request-level event_id when "
+          "siem.ingest_id is absent")
+    w5.handle(fallback)
+    w5.handle(fallback)
+    check(l5.calls == 1, "R4-39: dedup via event_id fallback failed -- a request "
+          "with siem.ingest_id absent but event_id present must analyze ONLY once "
+          f"(analyze {l5.calls}x, want 1)")
+    check(w5.handle(fallback) == w5.handle(fallback),
+          "R4-39: fallback-deduped redelivery must return the identical cached "
+          "result (event_id fallback key)")
+    # Belt-and-suspenders: siem entirely ABSENT (not just missing ingest_id) must
+    # also dedup on the request-level event_id.
+    w6 = ws5.AiWorker()
+    l6 = CountingLLM()
+    w6.llm = l6
+    no_siem = {"reason": [], "event_id": "no-siem-evt",
+               "event": {"class_uid": 6005, "time": 1750000000000}}
+    w6.handle(no_siem)
+    w6.handle(no_siem)
+    check(l6.calls == 1, "R4-39: siem entirely absent must still dedup on the "
+          f"request-level event_id (analyze {l6.calls}x, want 1)")
 
     # classifier tier never touches the LLM regardless of ids.
     w4 = ws5.AiWorker()

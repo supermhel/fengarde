@@ -674,7 +674,22 @@ class Rule:
             ids = self._counter.distinct_members(window_key)
         else:
             ids = self._counter.members(window_key)
-        ids = [str(i) for i in ids][: self._MAX_CONTRIBUTING_IDS]
+        ids = [str(i) for i in ids]
+        # R4-29 (2026-08-27): the old `[: _MAX_CONTRIBUTING_IDS]` slice silently
+        # dropped every id past the cap, so an analyst looking at an N-event
+        # stateful alert could not tell whether the list was truncated or truly
+        # only held those ids (the alert's own rule_title claims N events occurred
+        # -- silent loss is exactly the gap Design-A was written to close). Cap
+        # explicitly and, ONLY when the cap actually bit, stamp a truncation
+        # marker onto the returned list so the alert doc's `event_ids` discloses
+        # that evidence was dropped rather than pretending it wasn't. Un-truncated
+        # lists are byte-identical to the pre-fix behavior.
+        truncated = len(ids) > self._MAX_CONTRIBUTING_IDS
+        if truncated:
+            omitted = len(ids) - self._MAX_CONTRIBUTING_IDS
+            ids = ids[: self._MAX_CONTRIBUTING_IDS]
+            ids.append(f"<truncated: {omitted} event id(s) omitted; "
+                       f"list capped at {self._MAX_CONTRIBUTING_IDS}>")
         if not ids and own_id:
             ids = [own_id]
         return ids

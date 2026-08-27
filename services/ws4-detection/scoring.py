@@ -20,6 +20,16 @@ except Exception:  # pragma: no cover - fallback when shared not importable
         warn = error = info
     _log = _NullLog()
 
+# R4-24 (2026-08-27): scoring.yaml's top-level `version` key is read by nothing
+# -- every value in that file is consumed (thresholds/severity_floor/clamp), but
+# the declared schema version was dead config. Minimal wiring: the Scorer now
+# reads it at construction and warns ONCE if it is missing or not 1 (the only
+# version this scorer is written against), so a future bump of that key -- the
+# exact signal that this file's expectations may now be stale -- is loud rather
+# than silent. Module-level set keeps it a warn-once-per-process guarantee even
+# if multiple Scorer instances are built.
+_SCORING_VERSION_WARNED = False
+
 
 class Scorer:
     # Gap-hunt (2026-08-26): severity_floor's keys must EXACTLY match the set
@@ -45,6 +55,14 @@ class Scorer:
                 "a typo'd/missing key silently floors that level to 0")
         self.clamp_min = cfg["clamp"]["min"]
         self.clamp_max = cfg["clamp"]["max"]
+        # R4-24: read + validate the document `version` (see module note).
+        global _SCORING_VERSION_WARNED
+        if not _SCORING_VERSION_WARNED and cfg.get("version") != 1:
+            _SCORING_VERSION_WARNED = True
+            _log.warn(
+                "scoring.yaml 'version' is missing or not 1; this scorer was "
+                f"written against the version-1 layout (got {cfg.get('version')!r})")
+        self.version = cfg.get("version")
         # FIX 22 (2026-08-06): in-memory dedup of LLM/classifier-funnel enqueues
         # per alert key. A hot stateful rule fires repeatedly within its window
         # bucket with the SAME alert_key; without dedup every fire re-queues WS-5

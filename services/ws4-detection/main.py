@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import os
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -101,7 +102,15 @@ class Detector:
         # via metrics()/main()'s metrics_provider.
         self.stats: dict[str, int] = {"scored": 0, "alerts": 0,
                                       "ai_enqueued": 0, "classifier_enqueued": 0}
+        # R4-26 (2026-08-27): reload() swaps `rules` and `_by_class_uid` as a
+        # TORN-READ-SAFE pair. `process()`/`rule_health_metrics` read each of
+        # these attributes independently (a single LOAD_ATTR is atomic), but
+        # the SWAP is two separate STOREs -- without a lock a concurrent
+        # reload thread could interleave between them. Guarding the swap with
+        # this RLock + having process() capture its bucket index under the
+        # same lock means a reader can never observe a half-swapped rule set.
         self.rules, self._by_class_uid = self._load()
+        self._rules_lock = threading.RLock()
 
     def record_fire(self, rule_id: str, ts: float | None = None) -> None:
         """Record that ``rule_id`` fired, for the rule-health Prometheus surface."""
@@ -197,8 +206,12 @@ class Detector:
             get_logger("ws4-detection").warn(
                 "rule reload failed, keeping previous rule set", error=repr(exc))
             return False
-        self.rules = new_rules
-        self._by_class_uid = new_by_class_uid
+        # R4-26: swap rules AND the class_uid bucket index as one critical
+        # section so a concurrent process() can never read the new rules but
+        # the old index (or vice versa) -- a torn-read of a hot-reload.
+        with self._rules_lock:
+            self.rules = new_rules
+            self._by_class_uid = new_by_class_uid
         return True
 
     def process(self, event: dict):
@@ -215,10 +228,15 @@ class Detector:
             # evaluate every catch-all rule TWICE against such an event (double
             # stateful-window hits / duplicate alerts). When the class is present,
             # the class bucket is combined with the catch-all as before.
+            # R4-26: grab the bucket index ONCE under the same lock reload() uses
+            # to swap it, so the two lookups below can never straddle a reload
+            # (the old code read self._by_class_uid twice -- two could-race loads).
+            with self._rules_lock:
+                by_uid = self._by_class_uid
             if class_uid is None:
-                candidates = self._by_class_uid[None]
+                candidates = by_uid[None]
             else:
-                candidates = self._by_class_uid.get(class_uid, []) + self._by_class_uid[None]
+                candidates = by_uid.get(class_uid, []) + by_uid[None]
         # M4 multi-tenancy: a tenant's config can disable specific global
         # rules for their own events (contracts/tenants/<tenant_id>.yml).
         # Missing config/entry -> nothing disabled (fail open to detection,
@@ -229,7 +247,15 @@ class Detector:
             candidates = [r for r in candidates if r.id not in disabled]
         matched = [r for r in candidates if r.evaluate(event)]
         score = self.scorer.score(matched)
-        event.setdefault("siem", {})["score"] = score
+        # R4-28 (2026-08-27): the old `event.setdefault("siem", {})["score"]`
+        # raised TypeError on a `siem: null` event -- setdefault returns the
+        # literal None (the key IS present) and None["score"] exploded. Read
+        # through `(event.get("siem") or {})` so a siem:null (or siem:[]) event
+        # FAILS CLOSED to a fresh empty dict (score still stamped, detection
+        # proceeds) instead of crashing the consumer.
+        siem = event.get("siem") or {}
+        siem["score"] = score
+        event["siem"] = siem
         # Design-B (2026-07-29 audit): route off routing_score, NOT the
         # analyst-facing score -- routing_score is the one that respects a
         # matched rule's llm_gate:false opt-out. The stored/displayed score
@@ -282,7 +308,9 @@ class Detector:
         self.stats["scored"] += 1
         n_alerts = n_ai = n_clf = 0
         for rule in matched:
-            alert = make_alert(event, rule, event["siem"]["score"])
+            # R4-28: `(event.get("siem") or {})` so a defensive read never raises
+            # on a siem:null envelope (process() normalizes it to a dict anyway).
+            alert = make_alert(event, rule, (event.get("siem") or {})["score"])
             bus.produce("alerts", key=alert["alert_id"], payload=alert)
             self.record_fire(rule.id)
             self.stats["alerts"] += 1
@@ -295,8 +323,8 @@ class Detector:
         # classifier (classifier.py) -- never the LLM, or the whole point of a
         # separate cheap tier is defeated.
         if action in ("llm", "classifier") and self._funnel_fresh(event, matched):
-            bus.produce("ai.requests", key=event["siem"].get("ingest_id", key),
-                        payload={"event_id": event["siem"].get("ingest_id"),
+            bus.produce("ai.requests", key=(event.get("siem") or {}).get("ingest_id", key),
+                        payload={"event_id": (event.get("siem") or {}).get("ingest_id"),
                                  "event": event, "tier": action,
                                  "reason": [r.title for r in matched]})
             self._record_funnel(event, matched)  # only AFTER produce succeeded
@@ -395,7 +423,10 @@ def make_alert(event, rule, score):
         "rule_title": rule.title,
         "level": rule.level,
         "score": score,
-        "sector": event.get("siem", {}).get("sector"),
+        # R4-28: `(event.get("siem") or {})` instead of `.get("siem", {})` --
+        # a siem:null event makes the latter return None and None.get() raises.
+        # Fail closed to an empty envelope, never crash.
+        "sector": (event.get("siem") or {}).get("sector"),
         # C3: passthrough of the rule's own optional mitre block (see
         # tools/validate_rules.py's shape check), so the coverage heatmap
         # can be driven off real alerts, not just the static rules list.
@@ -404,7 +435,7 @@ def make_alert(event, rule, score):
         # onto the alert so WS-3's router can index it into a tenant-scoped
         # alerts-{tenant}-{date} index (router.py). Absent tenant -> "default",
         # matching every pre-M4 event/alert (see services/shared/envelope.py).
-        "tenant_id": event.get("siem", {}).get("tenant"),
+        "tenant_id": (event.get("siem") or {}).get("tenant"),
         "src_endpoint": event.get("src_endpoint", {}),
         # Gap-hunt (2026-08-26): 6 shipped rules key on the destination, but
         # make_alert never copied it, so dest-field lookups on alerts-* came

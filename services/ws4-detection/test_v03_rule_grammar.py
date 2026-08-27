@@ -245,6 +245,7 @@ def run():
     det.scorer = Scorer(det_main.SCORING_YAML)
     det.tenants_dir = det_main.TENANTS_DIR  # M4: process() needs this attribute too
     det._force_linear_scan = False  # 2026-08-19: process() needs this attribute too
+    det._rules_lock = __import__("threading").RLock()  # R4-26: process() acquires it
     for cls, act in ((3002, 4), (4001, 6)):
         _ev, matched, _action = det.process({"class_uid": cls, "activity_id": act,
                                              "siem": {"ingest_id": f"t{cls}"}})
