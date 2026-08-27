@@ -137,7 +137,12 @@ class BoundedSpool:
         silently corrupt the new *and* the old record into one unparseable
         line.
         """
-        line = json.dumps(event, ensure_ascii=False) + "\n"
+        # Gap-hunt (2026-08-26) NEW-hunt #1: ensure_ascii=True (NOT False) so
+        # that U+2028/U+2029 line separators and U+0085 NEL inside an event's
+        # text are escaped as \\u2028/\\u2029/\\u0085 -- a raw such char in the
+        # on-disk JSONL line would make drain_into()'s splitlines() split a
+        # SINGLE event into two lines, silently destroying it at replay.
+        line = json.dumps(event, ensure_ascii=True) + "\n"
         encoded = line.encode("utf-8")
         with self._lock:
             disk_ok, _detail = check_disk_headroom(
@@ -262,7 +267,15 @@ class BoundedSpool:
             except (ValueError, TypeError):
                 # corrupt line (e.g. a torn write from a crash mid-append)
                 # -- drop just this one line, don't block the rest of the
-                # spool behind unparseable data forever.
+                # spool behind unparseable data forever. Gap-hunt (2026-08-26)
+                # #74: count it and log it so a replay with corrupt lines
+                # doesn't read as a fully-clean success -- the caller's
+                # "replayed N" line and this counter together tell the truth.
+                self.corrupt_lines_skipped += 1
+                if self._log is not None:
+                    self._log.warn("spool drain skipped corrupt line",
+                                   line_no=i + 1,
+                                   corrupt_total=self.corrupt_lines_skipped)
                 i += 1
                 continue
             try:
@@ -291,7 +304,20 @@ class BoundedSpool:
             with os.fdopen(fd, "w", encoding="utf-8") as f:
                 for line in lines:
                     f.write(line + "\n")
+                f.flush()
+                os.fsync(f.fileno())
             os.replace(tmp_path, self.path)
+            # Durability (R4-#78): fsync the parent directory so the rename
+            # itself is persisted, not just the file contents -- otherwise a
+            # crash right after os.replace can still lose the new name.
+            try:
+                dir_fd = os.open(str(self.path.parent), os.O_RDONLY)
+                try:
+                    os.fsync(dir_fd)
+                finally:
+                    os.close(dir_fd)
+            except OSError:
+                pass  # directory fsync is best-effort (some platforms unsupported)
         except BaseException:
             try:
                 os.unlink(tmp_path)

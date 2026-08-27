@@ -23,8 +23,30 @@ from shared.sanitize import strip_ansi_and_control  # noqa: E402
 from parsers import resolve  # noqa: E402
 from enrichment import enrich  # noqa: E402
 
+
+def _int_env(name: str, default: int, log, *, crash_on_bad: bool = False) -> int:
+    """Read an int env var, degrading to ``default`` on a malformed value.
+
+    Mirrors ws1-collectors/main.py::_int_env (NEWS hunt #4): the previous
+    bare ``int(os.getenv(...))`` raised ``ValueError`` on a typo'd tuning knob
+    and killed the daemon at startup. Tuning values degrade-to-default-logged
+    instead; ``crash_on_bad`` keeps the opt-in loud path for bind ports. ``log``
+    may be None to skip the degradation warning (tests)."""
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        if crash_on_bad:
+            raise
+        if log is not None:
+            log.warn("malformed env var, using default",
+                     name=name, value=raw, default=default)
+        return default
+
 # Free-text fields any parser may populate from raw, attacker-controlled log
-# content -- sanitized uniformly here (one choke point for all 10 parsers)
+# content -- sanitized uniformly here (one choke point for all 17 parsers)
 # rather than in each parser individually. (path, is_list) where is_list means
 # "a list of dicts with this key", used for actor.user/process which some
 # parsers may extend; today none do, so this stays a flat dotted-path walk.
@@ -85,7 +107,13 @@ def _sanitize_free_text(event: dict) -> dict:
         if cursor is None:
             continue
         if leaf == "*":
-            if isinstance(cursor, dict):
+            if isinstance(cursor, (dict, list)):
+                # The wildcard must recurse into a top-level unmapped LIST as
+                # well as a dict (NEWS hunt #5): before this fix a producer
+                # putting an array under `unmapped` skipped the whole subtree
+                # and hostile control chars/ANSI survived into downstream
+                # sinks. Mirror the explicit-path handling below, which
+                # recurses on any dict/list value.
                 _sanitize_tree(cursor)
             continue
         if isinstance(cursor, dict) and leaf in cursor:
@@ -269,7 +297,7 @@ def main():
 
     # P2.4: watch WS-2's own output topic for backpressure buildup (see
     # start_depth_watchdog's docstring for why this is signal-only, never a trim).
-    warn_at = int(os.getenv("NORMALIZED_EVENTS_DEPTH_WARN", "100000"))
+    warn_at = _int_env("NORMALIZED_EVENTS_DEPTH_WARN", 100000, log)
     watchdog = start_depth_watchdog(Bus(), log, shutdown, ["normalized.events"],
                                     warn_at=warn_at)
     try:

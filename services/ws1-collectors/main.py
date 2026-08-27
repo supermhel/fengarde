@@ -21,6 +21,7 @@ from shared.bus import Bus  # noqa: E402
 from collectors.syslog_collector import SyslogCollector  # noqa: E402
 from collectors.snmp_collector import SnmpCollector  # noqa: E402
 from collectors.netflow_collector import NetflowCollector  # noqa: E402
+from collectors.syslog_udp_server import udp_rcvbuf_errors  # noqa: E402  # gap-hunt #71: needed at module scope by _syslog_metrics (was import-only-inside-main)
 
 MOCKS = HERE / "mocks"
 
@@ -107,12 +108,103 @@ def run_once(bus) -> dict:
     return {"raw.events": raw_count, "assets.updates": asset_count}
 
 
+# Gap-hunt (2026-08-26) #70: WS-1's daemon /health used to be a hardcoded 200
+# forever -- main() called serve({}, ...) with an EMPTY handler map, so zero
+# _topic_worker threads ever started and the runner's HealthState (only ever
+# flipped by those workers) stayed permanently "ok", even with the bus
+# unreachable and the UDP ingest daemon dead. By registering a REAL liveness
+# worker here we give the runner at least one worker thread to drive /health:
+#   * bus unreachable -> the worker's consume() raises -> /health reports 503;
+#   * UDP daemon down -> the handler raises on every heartbeat -> the message
+#     is never acked, piling it into the PEL and counting "failed" on /metrics.
+# WS-1 is a producer (it has no bus-consumer contract), so this is a private
+# self-check topic fed by _start_syslog_liveness_producer() below.
+_HEALTH_TOPIC = "ws1.liveness"
+_HEALTH_GROUP = "ws1-health"
+
+
+def build_health_handlers(udp):
+    """Runner handler map for the ws1 daemon (see _HEALTH_TOPIC docstring)."""
+
+    def handler(payload):
+        # A real worker that must both reach the bus AND prove the UDP ingest
+        # daemon -- WS-1's actual reason to exist -- is still running.
+        if udp is None or not udp.is_running():
+            raise RuntimeError("syslog UDP ingest daemon is not running")
+
+    return {_HEALTH_TOPIC: (_HEALTH_GROUP, handler)}
+
+
+def _start_syslog_liveness_producer(bus, log, shutdown, *, interval_s: float = 5.0):
+    """Feed build_health_handlers()'s worker so the UDP-alive check actually
+    runs (the handler only fires when a heartbeat arrives on its topic). Same
+    shape as the other watchdog threads; publishes an empty JSON probe so the
+    liveness worker re-checks UDP aliveness every interval."""
+    import threading  # local: mirrors this module's other lazy imports
+
+    def _loop():
+        while not shutdown.is_set():
+            try:
+                bus.produce(_HEALTH_TOPIC, key="ws1", payload={"probe": 1})
+            except Exception as exc:
+                if log is not None:
+                    log.warn("liveness heartbeat failed", error=str(exc))
+            shutdown.wait(interval_s)
+
+    t = threading.Thread(target=_loop, name="syslog-liveness-producer", daemon=True)
+    t.start()
+    return t
+
+
+def _syslog_metrics(udp) -> dict:
+    """WS-1's ingest-edge metrics, FLAT (gap-hunt #71/#76).
+
+    /metrics/prom (shared.runner.render_prometheus) only renders top-level
+    NUMERIC leaves of the extra dict -- a nested ``{"syslog_udp": {...}}``
+    wrapper made every ingest-edge gauge invisible to Prometheus scraping while
+    the scrape looked structurally valid and simply empty. Return the counters
+    at the top level so events_produced/dropped/shed/spooled/lost/queue_full
+    and the new events_empty/recv_oserror_total all render as real gauges. The
+    per-source breakdown stays a (JSON-only) dict leaf, as intended.
+    """
+    if udp is None:
+        return {}
+    m = {
+        "events_produced": udp.events_produced,
+        "events_dropped": udp.events_dropped,
+        "events_shed": udp.events_shed,
+        "events_spooled": udp.events_spooled,
+        "events_lost": udp.events_lost,
+        "events_queue_full": udp.events_queue_full,
+        "events_empty": udp.events_empty,          # gap-hunt #81 (distinct from dropped)
+        "recv_oserror_total": udp.recv_oserror_total,  # gap-hunt #79
+        # FENGARDE E6: bounded per-source breakdown {ip: {produced, dropped,
+        # shed, empty}} -- a dict with a capped (LRU-evicted) map, so /metrics
+        # can show which peer IPs are flooding/shedding without the map itself
+        # growing without bound. Aggregates above stay authoritative (and
+        # lossless); this is a visibility partition (JSON-only in /metrics/prom).
+        "per_source": udp.per_source_metrics(),
+    }
+    # P0-4: the kernel-level drop counter (RcvbufErrors) -- the loss class that
+    # reads as a healthy events_shed=0/events_dropped=0 at the app layer alone
+    # (live-proven). None off-Linux / procfs unavailable; omitted rather than
+    # reported as a misleading 0.
+    kernel_rcvbuf_errors = udp_rcvbuf_errors()
+    if kernel_rcvbuf_errors is not None:
+        m["udp_rcvbuf_errors_cumulative"] = kernel_rcvbuf_errors
+    # Ingestion-edge-redundancy design doc (fengarde-sec) step 2: the "healthy
+    # but nothing is arriving" signal /health never had.
+    m["seconds_since_last_event"] = round(udp.seconds_since_last_event(), 1)
+    return m
+
+
 def main() -> None:
     # Daemon: seed raw.events once from the bundled mock sources (offline-friendly),
     # then start the REAL live ingestion path — a UDP syslog listener — and stay up
     # behind the runner's /health endpoint until SIGTERM. WS-1 is a producer, not a
-    # bus consumer, so it uses the runner's health-only mode (empty handler map);
-    # the runner owns the signal handling + graceful shutdown loop.
+    # bus consumer, so the runner gets a self-check health worker (gap-hunt #70)
+    # instead of the old empty handler map that left /health a hardcoded 200; the
+    # runner owns the signal handling + graceful shutdown loop.
     import threading  # noqa: E402
 
     from shared.runner import serve  # noqa: E402
@@ -163,42 +255,19 @@ def main() -> None:
         log.error("syslog UDP bind failed", host=syslog_host, port=syslog_port,
                   error=str(exc))
 
-    def _syslog_metrics() -> dict:
-        if udp is None:
-            return {}
-        m = {
-            "events_produced": udp.events_produced,
-            "events_dropped": udp.events_dropped,
-            "events_shed": udp.events_shed,
-            "events_spooled": udp.events_spooled,
-            "events_lost": udp.events_lost,
-            "events_queue_full": udp.events_queue_full,
-            # FENGARDE E6: bounded per-source breakdown {ip: {produced,
-            # dropped, shed}} -- a dict with a capped (LRU-evicted) map, so
-            # /metrics can show which peer IPs are flooding/shedding without
-            # the map itself growing without bound. Aggregates above stay
-            # authoritative (and lossless); this is a visibility partition.
-            "per_source": udp.per_source_metrics(),
-        }
-        # P0-4: the kernel-level drop counter (RcvbufErrors) -- the loss
-        # class that reads as a healthy events_shed=0/events_dropped=0 at the
-        # app layer alone (live-proven). None off-Linux / procfs unavailable;
-        # omitted rather than reported as a misleading 0.
-        kernel_rcvbuf_errors = udp_rcvbuf_errors()
-        if kernel_rcvbuf_errors is not None:
-            m["udp_rcvbuf_errors_cumulative"] = kernel_rcvbuf_errors
-        # Ingestion-edge-redundancy design doc (fengarde-sec) step 2: the
-        # "healthy but nothing is arriving" signal /health never had.
-        m["seconds_since_last_event"] = round(udp.seconds_since_last_event(), 1)
-        return {"syslog_udp": m}
-
     shutdown = threading.Event()
     depth_thread = _start_depth_watchdog(bus, log, shutdown)
     silence_thread = _start_ingest_silence_watchdog(udp, log, shutdown)
+    # Gap-hunt (2026-08-26) #70: a REAL handler map (not serve({})) so the
+    # runner starts at least one worker thread and /health is no longer a
+    # hardcoded-200 lie; the liveness producer feeds the self-check worker.
+    liveness_thread = _start_syslog_liveness_producer(bus, log, shutdown)
     try:
-        serve({}, health_port=_int_env("PORT", 8001, log, crash_on_bad=True),
+        serve(build_health_handlers(udp),
+              health_port=_int_env("PORT", 8001, log, crash_on_bad=True),
               service_name="ws1-collectors", shutdown=shutdown,
-              metrics_provider=_syslog_metrics)
+              metrics_provider=lambda: _syslog_metrics(udp),
+              bus_factory=lambda: bus)
     finally:
         if udp is not None:
             udp.stop()
@@ -206,6 +275,8 @@ def main() -> None:
             depth_thread.join(timeout=5)
         if silence_thread is not None:
             silence_thread.join(timeout=5)
+        if liveness_thread is not None:
+            liveness_thread.join(timeout=5)
 
 
 def _start_depth_watchdog(bus, log, shutdown, *, topic: str = "raw.events",
