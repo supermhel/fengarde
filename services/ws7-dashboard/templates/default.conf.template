@@ -73,9 +73,34 @@ server {
     # ${FENGARDE_API_KEY} into this body at container start; unset -> empty
     # string -> the JS attaches no header -> every route's empty-vs-empty
     # comparison passes (zero-config default unchanged).
+    # Gap-hunt read-plane #6 (2026-08-27): this body is the API key in
+    # plaintext, served to any client that reaches this port, so the nginx
+    # X-Api-Key gate on the data routes only stops NON-browser clients -- a
+    # tool/script can curl THIS file and mint the key, bypassing the gate
+    # entirely. That residual exposure cannot be fully closed here: a trusted
+    # same-origin page must be able to load the key (it re-presents it as
+    # X-Api-Key on every guarded request), so withholding it would break the
+    # whole client-presented-key model. The proportionate mitigation below
+    # serves the bootstrap ONLY to a real same-origin browser subresource
+    # fetch, identified by the Sec-Fetch-Site request-header that browsers set
+    # on subresource loads ("same-origin", immune to the repo's no-referrer
+    # Referrer-Policy). Plain curl/wget, scanners, and cross-origin <img>/<script>
+    # dumps send no such header (or "cross-site") and get 403. NOTE: this is
+    # defense-in-depth, NOT a security boundary -- Sec-Fetch-Site is
+    # client-declared and spoofable, it excludes pre-fetch-metadata browsers,
+    # and any client that can render this dashboard is equally entitled to the
+    # data it boots. HTTPS termination + treating FENGARDE_API_KEY as a
+    # deployment secret (infra/SECURITY notes) are the real controls.
     location = /api/config.js {
         default_type application/javascript;
         add_header Cache-Control "no-store";
+        # Read-only bootstrap: reject any state-changing method.
+        limit_except GET HEAD {
+            deny all;
+        }
+        set $fengarde_cfg_ok 0;
+        if ($http_sec_fetch_site = "same-origin") { set $fengarde_cfg_ok 1; }
+        if ($fengarde_cfg_ok = 0) { return 403; }
         return 200 'window.FENGARDE_API_KEY = "${FENGARDE_API_KEY}";\n';
     }
 
@@ -310,9 +335,19 @@ server {
     # own auth (TenantKeyStore, keystore.py) is a SEPARATE secret system from
     # FENGARDE_API_KEY (the latter was migrated away from as ws6's auth source
     # -- see ensure_legacy_keys_migrated) -- so unlike /api/triage/ above, this
-    # does NOT inject FENGARDE_API_KEY; it only forwards whatever X-Api-Key the
-    # browser itself presents (none, today -- matches the zero-config default
-    # of an empty keystore = auth disabled).
+    # does NOT compare against FENGARDE_API_KEY or inject it; the dashboard is
+    # valid only if ws6's keystore recognizes the caller-presented key.
+    # NEW-hunt read-plane #2 (2026-08-27): this route previously forwarded NO
+    # X-Api-Key upstream at all. When ws6 keystore auth was enabled, every
+    # dashboard Inventory read got 401 -- the view silently blanked. Now nginx
+    # forwards the caller-PRESENTED key ($http_x_api_key, empty/no-op when the
+    # browser holds none, matching the zero-config empty-keystore default where
+    # ws6 is auth-disabled) and lets ws6 validate it against its own keystore,
+    # the same mechanism every other proxied route uses. The browser's key IS
+    # valid on ws6 when it came from a FENGARDE_API_KEY/FENGARDE_API_KEYS
+    # migration (ensure_legacy_keys_migrated provisions those into the ws6
+    # keystore); a manage_keys.py-provisioned ws6-only key needs the browser
+    # configured with it -- never silently served an unauthenticated dashboard.
     # Gap-hunt (2026-08-26) #63: the dashboard only READS inventory (/assets,
     # /keys); writes (/assets/upsert etc.) are collector/tool traffic that
     # must go through ws6's own keyed API, never through the same-origin
@@ -328,6 +363,7 @@ server {
         rewrite ^/api/inventory/(.*)$ /$1 break;
         proxy_pass $ws6_inventory;
         proxy_set_header Host $host;
+        proxy_set_header X-Api-Key $http_x_api_key;
         proxy_set_header X-Forwarded-For $remote_addr;
         proxy_connect_timeout 3s;
         proxy_read_timeout 5s;

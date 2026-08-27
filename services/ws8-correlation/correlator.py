@@ -42,6 +42,8 @@ Core rules (see INTERFACE.md for the full account):
 from __future__ import annotations
 
 import hashlib
+import json
+import math
 import sys
 import time
 from pathlib import Path
@@ -69,6 +71,15 @@ DEFAULT_MEMBER_CAP = 200
 # 513-byte id would silently dead-letter an incident (gap-hunt finding,
 # 2026-08-26) -- see `_bounded_entity_value`.
 _ENTITY_VALUE_MAX_BYTES = 448
+
+# Tolerated source clock drift for alert `time` values that drive the
+# correlator's per-track anchors (first_seen -> incident_id bucket, and the
+# member-cap eviction ordering). Same ceiling WS-4's
+# engine.py::_MAX_CLOCK_SKEW_MS applies to a stateful rule's event time:
+# an attacker who stamps an alert implausibly far ahead of wall-clock
+# must not be able to shift a track's first_seen (and thereby the whole
+# incident_id horizon bucket) or its eviction ordering.
+_MAX_CLOCK_SKEW_MS = 300_000  # 5 minutes of tolerated source clock drift
 
 _ALLOWLIST_NAME = "shared_infrastructure"
 
@@ -127,6 +138,27 @@ def _validated_tenant(tenant) -> str:
     if tenant != DEFAULT_TENANT and not valid_tenant_id(tenant):
         raise InvalidTenant(f"invalid tenant_id {tenant!r}")
     return tenant
+
+
+def _valid_window_time(value, now_ms: int) -> int | None:
+    """Return alert ``time`` as epoch-ms int if it can safely drive the
+    track's anchors (first_seen -> incident_id bucket, member-cap eviction
+    ordering), else None (fail closed). Rejects bool, non-numeric, NaN/inf,
+    and timestamps implausibly far ahead of the correlator's wall clock
+    (see _MAX_CLOCK_SKEW_MS). Past timestamps always pass -- that is
+    legitimate historical replay. Same guard WS-4's
+    engine.py::_valid_window_time applies to ITS stateful windows; WS-8's
+    alert ``time`` is equally attacker-controlled, so a skew-future
+    timestamp must not drive first_seen/incident_id/eviction ordering
+    (gap-hunt finding, 2026-08-27)."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    now = int(value)
+    if now > now_ms + _MAX_CLOCK_SKEW_MS:
+        return None
+    return now
 
 
 def _file_mtime_ns(path: Path) -> "int | None":
@@ -226,7 +258,6 @@ class Correlator:
         # 2026-08-26 gap-hunt: every WS-5 alert used to be a SILENT no-op in
         # correlation; degrade-don't-crash means the silence is observable.
         self._skip_reasons: dict[str, int] = {}
-        self._anon_seq = 0  # last-resort synthetic member ids for fully anonymous alerts
         self.truncated_count = 0
         self.promotions_count = 0
         self._update_calls = 0  # counts _update_track calls, for _sweep_dead_tracks' cadence
@@ -273,8 +304,11 @@ class Correlator:
         deterministic, so redelivery of the same id-less alert re-derives
         the same member (idempotency preserved), and distinct for different
         alerts (no false dedup). A fully anonymous alert (none of those
-        fields either) gets a unique per-instance sequence id -- it can't be
-        deduplicated, but it must never MERGE with a different alert.
+        fields either) gets a deterministic hash of its own payload -- it
+        can't be deduplicated on a field, but it must never MERGE with a
+        different alert, and redelivery of the SAME anon alert must re-derive
+        the same member (2026-08-27 finding: the old per-instance anon-seq
+        counter made the same anon alert redelivered 3x inflate to 3 members).
         """
         alert_id = alert.get("alert_id")
         if alert_id not in (None, ""):
@@ -292,8 +326,23 @@ class Correlator:
             parts.append("|".join(_to_str(e) for e in ev))
         if parts:
             return "anon:" + ":".join(parts)
-        self._anon_seq += 1
-        return f"anon-seq:{self._anon_seq}"
+        # A fully anonymous alert (none of alert_id/time/rule_id/event_ids
+        # either) can't be deduplicated on any of those fields. Used to mint
+        # a per-instance sequence id (anon-seq:{n}) -- the ONE
+        # non-deterministic member id in the correlator: the same anon alert
+        # redelivered 3x (at-least-once bus) inflated into 3 members, and a
+        # multi-replica deployment couldn't agree on a member id at all.
+        # Now hash the payload instead: deterministic across processes, so
+        # redelivery re-derives the same member (idempotency preserved) and
+        # distinct anon alerts stay distinct (a 64-bit digest collision is
+        # negligible for a member id). Mirrors WS-4
+        # engine.py::_event_fingerprint's sorted-key JSON approach.
+        try:
+            blob = json.dumps(alert, sort_keys=True, default=str)
+        except (TypeError, ValueError):
+            blob = repr(alert)
+        digest = hashlib.sha256(blob.encode("utf-8", "replace")).hexdigest()[:16]
+        return f"anon:{digest}"
 
     def _sweep_dead_tracks(self, now_ms: int) -> None:
         """Drop `_sides`/`_side_meta`/`_last_incident`/`_last_touch` entries
@@ -370,11 +419,23 @@ class Correlator:
         # is dropped from the side table too, so a quiet track's side entry
         # shrinks to empty exactly when its window state does.
         side = self._sides.setdefault(key, {})
+        # Attacker-controlled alert `time` must not be trusted to drive the
+        # track's anchors (first_seen -> incident_id bucket, member-cap
+        # eviction ordering): present a skew-future/non-numeric time and it
+        # used to shift first_seen and the whole horizon bucket (2026-08-27
+        # finding). Apply the same _valid_window_time guard WS-4 uses; a
+        # rejected value falls back to now_ms (honest processing time).
+        valid_time = _valid_window_time(alert.get("time"), now_ms)
         entry = {
             "alert_id": member,
             "tactic": (alert.get("mitre") or {}).get("tactic"),
             "score": alert.get("score") or 0,
-            "time": alert.get("time") or now_ms,
+            # `valid_time or now_ms`: a rejected/falsy time (None, 0, NaN,
+            # non-numeric, skew-future) falls back to the honest processing
+            # time -- preserving the original `alert.get("time") or now_ms`
+            # fallback WHILE adding the _valid_window_time guard, and keeping
+            # a data-anchored first_seen only for genuine nonzero past times.
+            "time": valid_time or now_ms,
         }
         side[member] = entry
         for stale_id in list(side):
@@ -573,10 +634,21 @@ class Correlator:
         # `_SIDES_SWEEP_EVERY` calls (`_sweep_dead_tracks`'s own cadence) --
         # same staleness bound `shared/window.py`'s own key count already
         # accepts for the identical reason.
-        return {
+        #
+        # ws8_skipped_alerts_by_reason stays as the nested dict -- that is the
+        # /metrics JSON contract (test_ws5_shaped_alert_is_skipped_with_reason
+        # reads it). render_prometheus (shared/runner.py) only emits NUMERIC
+        # leaves as gauges, so the nested dict was invisible to /metrics/prom:
+        # add a sibling FLAT `ws8_skipped_reason_<reason>` numeric key per
+        # reason (2026-08-27 finding) -- sibling series, never repurposing the
+        # honest nested field.
+        out = {
             "ws8_active_tracks": len(self._sides),
             "ws8_promotions_total": self.promotions_count,
             "ws8_truncated_total": self.truncated_count,
             "ws8_skipped_alerts_by_reason": dict(self._skip_reasons),
             "ws8_skipped_total": sum(self._skip_reasons.values()),
         }
+        for reason, count in self._skip_reasons.items():
+            out[f"ws8_skipped_reason_{reason}"] = count
+        return out

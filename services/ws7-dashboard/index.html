@@ -351,7 +351,7 @@
         <svg class="icon" viewBox="0 0 24 24"><path d="M12 2l8 3v6c0 5-3.4 8.6-8 11-4.6-2.4-8-6-8-11V5l8-3z"/><path d="M9 12l2 2 4-4"/></svg>
         FENGARDE Console
       </h1>
-      <span class="status-pill" id="apiStatus"><span class="dot"></span>mock data</span>
+      <span class="status-pill" id="apiStatus"><span class="dot"></span>data unavailable</span>
       <!-- 2026-08-19: time-range picker -- scopes /api/alerts and /api/events (both
            OpenSearch-backed, both time-filterable server-side via the nginx range
            map). Sources/Inventory/Coverage aren't time-scoped (they read the CURRENT
@@ -656,7 +656,14 @@
      FENGARDE_API_KEY is unset). _fetch() below attaches it as X-Api-Key to
      every request so a hardened deployment (key set) does NOT 401/blank the
      dashboard, and the write routes' require-presented-key guards (nginx
-     template) are actually satisfiable by this client. -->
+     template) are actually satisfiable by this client.
+     Gap-hunt read-plane #6 (2026-08-27): nginx serves this bootstrap only to
+     a same-origin browser subresource fetch (Sec-Fetch-Site: same-origin) and
+     GET/HEAD only -- see the /api/config.js location in default.conf.template.
+     This is defense-in-depth against non-browser/key-minting clients, NOT a
+     security boundary: any client that can render the dashboard can equally
+     read the data it boots. Treat FENGARDE_API_KEY as a deployment secret
+     (the real control) regardless. -->
 <script src="/api/config.js"></script>
 <script>
 // ---- icon() helper: single-stroke inline SVG, no emoji anywhere ----------
@@ -725,7 +732,7 @@ const RANGE_MS = {"1h": 3600000, "24h": 86400000, "7d": 604800000, "30d": 259200
 const RANGE_LABELS = {"1h": "the last hour", "24h": "the last 24 hours", "7d": "the last 7 days", "30d": "the last 30 days"};
 let CURRENT_RANGE = "24h";
 function rangeGteMs(){ return Date.now() - (RANGE_MS[CURRENT_RANGE] || RANGE_MS["24h"]); }
-let LIVE = false; // true once live alerts are successfully loaded
+let LIVE = false; // backend-reachability badge state; written ONLY by the render path (R4-#65)
 
 // ---- M3: RBAC session login (opt-in backend feature, see services/shared/rbac.py) ----
 // Same-origin proxy to ws3-indexer's /auth/* routes (services/ws7-dashboard/templates/
@@ -881,7 +888,18 @@ async function getKeys(){
 
 // Fetch REAL alerts from OpenSearch (via same-origin proxy). Maps _search hits to
 // the dashboard's alert shape and filters out ai.results docs (they lack a
-// rule_title/score). Falls back to mock data if the proxy is unreachable.
+// rule_title/score). On failure returns an empty list plus an honest `live`
+// flag -- NO fabrication, never SIEM_MOCK.alerts (getEvents()'s own
+// no-fabrication rule).
+// 2026-08-27 (gap-hunt R4-#65 / read-plane #3): getAlerts() is now a PURE READ --
+// it does NOT mutate the shared global `LIVE` as a side effect. It returns
+// {alerts, live} and the RENDER path (renderGlobal / renderMonitoring) owns the
+// global badge state from `live`. `live` is derived the honest way: true iff the
+// backend answered HTTP 200 WITHOUT nginx's `_fengarde_proxy:
+// "opensearch_unavailable"` outage marker. A healthy backend that simply has no
+// alerts in the selected range returns empty hits WITHOUT the marker and MUST
+// read as live (healthy-but-empty) -- previously empty-hits was misread as an
+// outage and flipped the badge to "mock".
 async function getAlerts(){
   if(ALERTS_API){
     try{
@@ -889,40 +907,36 @@ async function getAlerts(){
         {headers:{Accept:"application/json"}});
       if(r.ok){
         const data = await r.json();
+        // nginx's OpenSearch-outage fallback (templates/default.conf.template
+        // @alerts_unavailable) answers HTTP 200 + empty hits + this marker. The
+        // MARKER is the honest "backend down" signal; empty hits WITHOUT it is a
+        // normal healthy-but-empty window, not an outage.
+        const proxyDown = !!(data && data._fengarde_proxy === "opensearch_unavailable");
+        if(proxyDown) return {alerts:[], live:false};
         const hits = (((data||{}).hits||{}).hits)||[];
-        // Gap-hunt finding (2026-08-23): nginx's OpenSearch-outage fallback
-        // returns HTTP 200 with empty hits. Treat empty-hits as "no live data"
-        // rather than success -- only non-empty hits declare LIVE=true.
-        if(hits.length){
-          const alerts = hits.map(h=>h._source)
-            .filter(s=>s && s.rule_title)
-            .map(s=>({
-              alert_id: s.alert_id,
-              rule_id: s.rule_id,
-              time: s.time,
-              rule_title: s.rule_title,
-              level: s.level,
-              score: s.score,
-              sector: s.sector,
-              src_endpoint: s.src_endpoint||{},
-              actor: s.actor||{},
-              mitre: s.mitre||null,
-              event_ids: s.event_ids||[],
-              playbook: s.playbook || (s.rule && s.rule.playbook) || null
-            }));
-          LIVE = true;
-          return alerts;
-        }
+        // Any 200 that is NOT the outage marker = a live backend (even if the
+        // range has zero alerts), so `live` is NOT gated on hits.length.
+        const alerts = hits.map(h=>h._source)
+          .filter(s=>s && s.rule_title)
+          .map(s=>({
+            alert_id: s.alert_id,
+            rule_id: s.rule_id,
+            time: s.time,
+            rule_title: s.rule_title,
+            level: s.level,
+            score: s.score,
+            sector: s.sector,
+            src_endpoint: s.src_endpoint||{},
+            actor: s.actor||{},
+            mitre: s.mitre||null,
+            event_ids: s.event_ids||[],
+            playbook: s.playbook || (s.rule && s.rule.playbook) || null
+          }));
+        return {alerts, live:true};
       }
     }catch(e){ /* fall through to empty */ }
   }
-  // Gap-hunt finding (2026-08-23): on any failure path (unreachable API,
-  // empty hits from outage, no API configured) return [] rather than
-  // SIEM_MOCK.alerts. Fabricating data on a backend outage contradicts
-  // getEvents()'s own no-fabrication rule; an empty table with an honest
-  // "mock data" badge is the correct signal.
-  LIVE = false;
-  return [];
+  return {alerts:[], live:false};
 }
 
 // 2026-08-19: raw normalized (pre-detection) events -- events-{common,bank,dc}-*,
@@ -1241,7 +1255,9 @@ function renderPosture(alerts, rules){
   const tagged = rules.filter(r => r.mitre && r.mitre.technique).length;
   const covPct = rules.length ? Math.round((tagged/rules.length)*100) : null;
   const rows = [
-    {ok: LIVE, label: "Live pipeline data", value: LIVE ? "connected" : "mock mode"},
+    // R4-#91 (2026-08-27): no mock alerts are shown anymore, so "mock mode"
+    // was a lie. Report the honest backend state.
+    {ok: LIVE, label: "Live pipeline data", value: LIVE ? "connected" : "unavailable"},
     {ok: RBAC_ACTIVE === true, label: "RBAC session gate", value: RBAC_ACTIVE === null ? "checking…" : (RBAC_ACTIVE ? "enabled" : "disabled")},
     {ok: rules.length > 0, label: "Detection rules loaded", value: rules.length ? `${rules.length} rules` : "none loaded"},
     {ok: covPct !== null && covPct > 0, label: "MITRE-tagged coverage", value: covPct === null ? "—" : `${covPct}% of rules`},
@@ -1261,7 +1277,7 @@ function renderPosture(alerts, rules){
 // rebuilding on every tick would blow away an in-progress (unsaved) edit in
 // a triage-note <input>, so we only touch the DOM when the alert set (or
 // any triage status now returned with it) actually differs.
-async function renderGlobal(alerts){
+async function renderGlobal(alerts, live){
   // Gap-hunt (2026-08-26) #51: this used to read window.SIEM_MOCK.assets
   // unconditionally -- the Overview's "Active devices" card rendered the
   // hardcoded mock hosts on EVERY deployment, inches from the "live data"
@@ -1270,12 +1286,24 @@ async function renderGlobal(alerts){
   // mock only when no live API is configured); a live inventory API that
   // fails returns [] (no fabrication -- see getAssets).
   const assets = await getAssets();
-  if(!alerts) alerts = await getAlerts();
+  if(!alerts){
+    // Gap-hunt R4-#65 (2026-08-27): getAlerts() no longer mutates the shared
+    // `LIVE` global. The RENDER path owns the badge state: it reads the
+    // {alerts, live} tuple getAlerts() returns and assigns LIVE here.
+    const fetched = await getAlerts();
+    alerts = fetched.alerts;
+    live = fetched.live;
+  }
+  LIVE = live; // the render path is the ONLY place the global LIVE is written
   attachAiTriage(alerts, await getAiTriage());
   const statusEl = document.getElementById("apiStatus");
   if(statusEl){
     statusEl.classList.toggle("live", LIVE);
-    statusEl.innerHTML = `<span class="dot"></span>${LIVE ? "live data" : "mock data"}`;
+    // R4-#91 (2026-08-27): the outage path returns an EMPTY list -- mock data
+    // is never shown anymore -- so calling this "mock data" was a lie. Name the
+    // honest state instead: "live data" when the backend is up, "data
+    // unavailable" when it is not.
+    statusEl.innerHTML = `<span class="dot"></span>${LIVE ? "live data" : "data unavailable"}`;
   }
   const active = assets.filter(a=>a.status==="active").length;
   const crit = alerts.filter(a=>a.level==="critical").length;
@@ -1647,10 +1675,12 @@ async function renderMonitoring(){
   const sumEl = document.getElementById("monitorSummary");
   if(!flowEl) return;
 
-  // Live alert/event totals (real feeds, same as Overview).
+  // Live alert/event totals (real feeds, same as Overview). getAlerts() is a
+  // pure read now (R4-#65): it returns {alerts, live} and this render owns the
+  // badge state it displays, so it sets LIVE here -- the render path.
   let alerts = [];
   let events = [];
-  try{ alerts = await getAlerts(); }catch(e){ alerts = []; }
+  try{ const f = await getAlerts(); alerts = f.alerts; LIVE = f.live; }catch(e){ alerts = []; }
   try{ events = await getEvents(); }catch(e){ events = []; }
 
   // One ops fetch per workstream the pipeline touches (dedup: ws3 covers
@@ -1720,7 +1750,7 @@ async function renderMonitoring(){
   sumEl.innerHTML = [
     `<div class="card"><div class="l">Alerts (range)</div><div class="n">${esc(alertCount)}</div><div class="card-sub">${esc(crit)} critical</div></div>`,
     `<div class="card"><div class="l">Events (range)</div><div class="n">${esc(eventCount)}</div><div class="card-sub">raw activity</div></div>`,
-    `<div class="card"><div class="l">Live data</div><div class="n">${LIVE ? "yes":"no"}</div><div class="card-sub">${LIVE ? "backend reachable":"backend unreachable / mock"}</div></div>`,
+    `<div class="card"><div class="l">Live data</div><div class="n">${LIVE ? "yes":"no"}</div><div class="card-sub">${LIVE ? "backend reachable":"backend unreachable"}</div></div>`,
   ].join("");
 
   // Top-of-panel health line: honest, explicit signal.
@@ -1833,19 +1863,24 @@ async function pollGlobal(){
   pollInFlight = true;
   try{
     // Gap-hunt finding (2026-08-23): this used to `if(!LIVE) return` here,
-    // BEFORE renderGlobal() ever ran -- getAlerts() flips LIVE to false as a
-    // side effect the moment a fetch fails, so the one call that updates the
+    // BEFORE renderGlobal() ever ran -- getAlerts() flipped LIVE to false as a
+    // side effect the moment a fetch failed, so the one call that updates the
     // #apiStatus badge/live class was being skipped on EXACTLY the tick that
     // needed to show it. Net effect: the feed could die and the dashboard
     // would freeze on its last "live data" badge forever, no visible signal
     // -- the mirror of the ws1-collectors ingest-silence gap on the read
     // side. Falling through to the snapshot check below fixes it: a
     // LIVE-true -> LIVE-false transition changes the alerts snapshot (real
-    // data -> SIEM_MOCK.alerts), so it still renders and the badge flips
-    // honestly to "mock data"; recovery (mock -> real again) renders and
-    // flips back. An unchanging state (stuck live OR stuck mock) still
+    // data -> empty list; getAlerts() returns [] on outage, never mock data),
+    // so it still renders and the badge flips honestly; recovery renders and
+    // flips back. An unchanging state (stuck live OR stuck unavailable) still
     // short-circuits below exactly as before -- no extra DOM churn.
-    const alerts = await getAlerts();
+    // R4-#65 (2026-08-27): getAlerts() is now a pure read ({alerts, live}); `live`
+    // is passed through to renderGlobal so the RENDER path (not the fetch) owns
+    // writing the global LIVE.
+    const fetched = await getAlerts();
+    const alerts = fetched.alerts;
+    const live = fetched.live;
     // Gap-hunt (2026-08-26) #59: the snapshot was alerts-only, so a second
     // analyst's triage change (status/note) never flipped the dedup and was
     // invisible until the underlying alert SET changed. Include each alert's
@@ -1860,7 +1895,7 @@ async function pollGlobal(){
     try{
       // Gap-hunt #58: serialize through the render mutex so this cannot race
       // a range-picker change in flight.
-      await renderGlobalSerialized(() => renderGlobal(alerts));
+      await renderGlobalSerialized(() => renderGlobal(alerts, live));
       lastAlertsSnapshot = snapshot;
     }catch(e){ /* render failed -- leave snapshot unrecorded so next tick retries */ }
   }catch(e){ /* transient fetch/proxy hiccup -- next tick retries */ }
@@ -1889,7 +1924,10 @@ async function getRules(){
 }
 
 async function renderCoverage(){
-  const [rules, alerts] = await Promise.all([getRules(), getAlerts()]);
+  // getAlerts() now returns {alerts, live} (R4-#65) -- Coverage renders no
+  // badge state of its own, so it consumes only the alert list.
+  const [rules, fetched] = await Promise.all([getRules(), getAlerts()]);
+  const alerts = fetched.alerts;
   const alertCountByRuleId = {};
   alerts.forEach(a => {
     if(a.rule_id) alertCountByRuleId[a.rule_id] = (alertCountByRuleId[a.rule_id]||0) + 1;
