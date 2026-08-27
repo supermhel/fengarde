@@ -116,6 +116,25 @@ def _validate_outside_hours(spec, errors: list[str], where: str) -> None:
         if sample_true == sample_false and sample_true is False:
             errors.append(f"{where}: outside_hours window never matches any time "
                           f"(both probe timestamps returned False) -- likely a mistake")
+        # R3-#35: the always-matches case. The two fixed probes above can't
+        # catch it (a days=mon,tue window legitimately returns True on a
+        # Wednesday). Sweep the WHOLE week: if every day x several hours is
+        # outside business time, the window is empty for every possible
+        # timestamp -> the rule fires on everything, a real defect.
+        day_ms = 24 * 3600 * 1000
+        hours = (0, 6, 12, 18)
+        all_outside = True
+        for d in range(7):
+            for h in hours:
+                if not _time_outside_hours(spec, d * day_ms + h * 3600 * 1000):
+                    all_outside = False
+                    break
+            if not all_outside:
+                break
+        if all_outside:
+            errors.append(f"{where}: outside_hours window matches EVERY timestamp "
+                          f"(all 7 days x hours probed are outside business time) "
+                          f"-- the business window is empty; likely a mistake (R3-#35)")
 
 
 def _validate_mitre(mitre, errors: list[str]) -> None:

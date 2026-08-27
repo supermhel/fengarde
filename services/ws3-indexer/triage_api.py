@@ -806,6 +806,13 @@ def make_handler(store, users_db=None, sessions: SessionStore | None = None,
             code = body.get("totp_code")
             if not isinstance(code, str):
                 return self._send(400, {"error": "totp_code (string) is required"})
+            # Enrollment confirmation uses verify_totp (the LOGIN path), which
+            # advances totp_last_counter -- deliberately: it CONSUMES the
+            # enrollment code so that same code can't be replayed at /auth/login
+            # (replay protection). A fresh step's code (e.g. +30s) still works,
+            # proven by test_fix_mfa. confirm_totp exists for any caller that
+            # must activate WITHOUT consuming -- but the HTTP route needs the
+            # consume, so it uses verify_totp.
             if not users_db.verify_totp(target, code):
                 self._audit("mfa_verify_failure", actor=session.username,
                             tenant_id=session.tenant_id, detail={"target": target})

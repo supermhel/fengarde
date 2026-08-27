@@ -132,6 +132,19 @@ class TestValidateRule(unittest.TestCase):
                                                "tz_offset_minutes": 60}}}))
         self.assertEqual(errs, [])
 
+    def test_outside_hours_never_falsely_flagged_always_matches(self):
+        # R3-#35 regression: both fixed probes land on Thursday, so a
+        # days=mon,tue window returns True for both -- the OLD two-probe check
+        # could not tell "always matches" from "the probe day just isn't a
+        # business day". The whole-week sweep must NOT flag a legitimate
+        # mon/tue window (Monday noon is inside business hours).
+        errs = self._errs(lambda r: r["detection"].__setitem__(
+            "sel", {"time": {"outside_hours": {"start": "08:00", "end": "18:00",
+                                               "days": ["mon", "tue"],
+                                               "tz_offset_minutes": 60}}}))
+        self.assertEqual(errs, [], f"legit mon/tue window must pass, got {errs}")
+        self.assertFalse(any("EVERY timestamp" in e for e in errs))
+
     def test_score_weight_out_of_range(self):
         self.assertTrue(any("score_weight" in e for e in self._errs(
             lambda r: r["siem"].update(score_weight=150))))

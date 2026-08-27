@@ -350,7 +350,7 @@ def test_require_auth_or_die_provisioned_keystore_is_noop():
     env.pop("FENGARDE_API_KEY", None)
     env.pop("FENGARDE_API_KEYS", None)
     env.update({"FENGARDE_REQUIRE_AUTH": "1",
-                "INVENTORY_DB": ":memory:", "KEYSTORE_DB": ":memory:"})
+                "INVENTORY_DB": ":memory:", "INVENTORY_KEYSTORE_DB": ":memory:"})
     code = ("import authz; from app import KEYSTORE; "
             "KEYSTORE.provision('acme', 'a-real-key-123'); "
             "authz.require_auth_or_die('ws6-inventory', KEYSTORE); print('ok')")
@@ -372,7 +372,7 @@ def test_serve_actually_calls_require_auth_or_die_before_listening():
     env.pop("FENGARDE_API_KEY", None)
     env.pop("FENGARDE_API_KEYS", None)
     env.update({"FENGARDE_REQUIRE_AUTH": "1", "INVENTORY_DB": ":memory:",
-                "KEYSTORE_DB": ":memory:"})
+                "INVENTORY_KEYSTORE_DB": ":memory:"})
     code = "from app import serve; serve(host='127.0.0.1', port=0)"
     try:
         proc = subprocess.run([sys.executable, "-c", code], env=env,

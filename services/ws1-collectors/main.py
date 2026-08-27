@@ -223,7 +223,11 @@ def main() -> None:
 
     # Live syslog ingestion (env-configurable; 5514 avoids privileged 514).
     syslog_host = os.getenv("SYSLOG_UDP_HOST", DEFAULT_HOST)
-    syslog_port = _int_env("SYSLOG_UDP_PORT", DEFAULT_PORT, log)
+    # R2-#9: crash-on-bad like the health PORT -- this is a BIND port, so a
+    # typo'd or non-numeric SYSLOG_UDP_PORT must fail loudly rather than
+    # silently listening on the default (a silently-wrong listener is worse
+    # than a crashed daemon). The tuning knobs below still degrade by design.
+    syslog_port = _int_env("SYSLOG_UDP_PORT", DEFAULT_PORT, log, crash_on_bad=True)
     max_events_per_sec = _float_env("SYSLOG_MAX_EVENTS_PER_SEC",
                                     DEFAULT_MAX_EVENTS_PER_SEC, log)
     # B2 zero-loss-under-flood opt-in (see collectors/spool.py): unset by
