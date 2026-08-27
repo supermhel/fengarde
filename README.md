@@ -103,21 +103,23 @@ make down                                 # stop the stack and remove volumes
 
 ---
 
-## What's real (on `main` today — last tagged release is v0.5.0)
+## What's real (on `main` today — last tagged release is v0.6.0)
 
 FENGARDE ships a **working detection pipeline**. We are deliberate about what is
 real versus what is planned — this is a security tool, so accuracy matters more than
 a long feature list. This table describes the current tip of `main`, not just the
-last tag: v0.5.0 (`v0.4.0`/`v0.5.0` tags both live, `v0.1.0` also now tagged for the
-original acceptance-test milestone) shipped 2026-07-23, and real, tested work has
-landed on `main` since without a new tag of its own — most recently WS-8's
-unbounded-growth fix and cross-alert pivot-correlation (device-scoped tracking),
-a full dashboard backend-wiring pass, and the screenshot product tour now live at
-[supermhel.github.io/fengarde](https://supermhel.github.io/fengarde/) (PRs #64/#69/#70,
-merged through 2026-08-20) — if you need a pinned, tagged release rather than the
-moving tip, use `v0.5.0` and expect it to be missing anything below dated after
-2026-07-23. See [SSOT.md](SSOT.md) for the authoritative, continuously updated
-status — this table is a snapshot, that file is the source of truth.
+last tag: v0.6.0 (`v0.1.0` through `v0.6.0` all tagged) shipped 2026-08-27 — it
+closes 310 commits' worth of work that had accumulated on `main` since v0.5.0
+(2026-07-23) with no release boundary of its own: WS-8 cross-alert correlation
+(device-scoped pivot tracking, unbounded-growth fix), the repo-wide chaos gate
+(`make chaos`, 40 scenarios / 0 lost / 0 duplicated across 6 SIGKILLed services),
+a full dashboard backend-wiring pass, ingestion-edge spool durability + silence
+watchdog, RBAC/MFA hardening, and the screenshot product tour now live at
+[supermhel.github.io/fengarde](https://supermhel.github.io/fengarde/) — if you need
+a pinned, tagged release rather than the moving tip, use `v0.6.0`. See
+[CHANGELOG.md](CHANGELOG.md) for the itemized list and [SSOT.md](SSOT.md) for the
+authoritative, continuously updated status — this table is a snapshot, that file
+is the source of truth.
 
 | Capability | Status | Notes |
 |---|---|---|

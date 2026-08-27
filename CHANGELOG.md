@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed (2026-08-27, CI: Dependabot codeql-action version skew)
+
+Dependabot opened three separate PRs (#75 `init`, #76 `analyze`, #77 `upload-sarif`),
+each bumping ONE of three `codeql-action` sub-action pins that were all previously on
+the same SHA. `init`/`analyze` live in the same workflow and must move together —
+CodeQL's own post-action step compares the config version `init` wrote against the
+version `analyze` is running, so landing #75 or #76 alone broke CI:
+`Loaded a configuration file for version '4.37.8', but running version '4.37.7'`.
+Fixed by cherry-picking all three Dependabot commits onto one branch (PR #78) so
+`init`/`analyze`/`upload-sarif` land on the same SHA in one atomic change; confirmed
+green before merge. #75/#76 closed as superseded, #77/#78 merged.
+
+## [0.6.0] - 2026-08-27
+
+First tagged release since v0.5.0 (2026-07-23) — 310 commits' worth of shipped,
+tested work that had never been cut into a version. Closes the gap SSOT.md's own
+review flagged: everything below was already proven/live-verified on `main`, just
+never given a release boundary. See `SSOT.md` §1 for the full narrative account of
+each dated round; this section is the changelog-format summary.
+
 ### Fixed (2026-08-27, gap-hunt remediation: WS-1/WS-3/WS-4/WS-5/WS-6/WS-8/shared/tools + container smoke)
 
 Second-pass closure of the 2026-08-26 consolidated gap-hunt report (256 findings)
