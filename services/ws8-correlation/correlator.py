@@ -51,9 +51,12 @@ SERVICES = HERE.parent
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(SERVICES))
 
-from shared.allowlist import Allowlist, load_allowlist  # noqa: E402
+from shared.allowlist import Allowlist, load_allowlist, invalidate_dir  # noqa: E402
 from shared.envelope import valid_tenant_id  # noqa: E402
+from shared.log import get_logger  # noqa: E402
 from shared.window import DequeWindowCounter  # noqa: E402
+
+_log = get_logger("ws8-correlation")
 
 DEFAULT_TENANT = "default"
 DEFAULT_HORIZON_S = 86400  # 24h -- a starting default, not a measured one (see INTERFACE.md)
@@ -126,6 +129,14 @@ def _validated_tenant(tenant) -> str:
     return tenant
 
 
+def _file_mtime_ns(path: Path) -> "int | None":
+    """st_mtime_ns of ``path``, or None if the file is absent/stat fails."""
+    try:
+        return path.stat().st_mtime_ns
+    except OSError:
+        return None
+
+
 class Correlator:
     """Tracks per-(tenant, entity_type, entity_value) alert activity and
     promotes a track to an incident on multi-tactic evidence.
@@ -148,12 +159,19 @@ class Correlator:
         self._now_fn = now_fn
         if allowlist is not None:
             self._allowlist = allowlist
+            # No on-disk reload source: a caller-injected allowlist (tests)
+            # has no directory to watch, so the reload hook is a no-op.
+            self._allowlists_dir: "Path | None" = None
+            self._allowlist_path: "Path | None" = None
+            self._allowlist_mtime: "int | None" = None
         else:
-            self._allowlist = load_allowlist(
-                Path(allowlists_dir) if allowlists_dir else
-                (_contracts_dir() / "allowlists"),
-                _ALLOWLIST_NAME,
-            )
+            self._allowlists_dir = Path(allowlists_dir) if allowlists_dir else (
+                _contracts_dir() / "allowlists")
+            self._allowlist_path = self._allowlists_dir / f"{_ALLOWLIST_NAME}.yml"
+            # R3-59 (2026-08-26): remember the on-disk mtime so
+            # reload_allowlist_if_changed() can detect an operator edit.
+            self._allowlist_mtime = _file_mtime_ns(self._allowlist_path)
+            self._allowlist = load_allowlist(self._allowlists_dir, _ALLOWLIST_NAME)
         # incident_id -> last-emitted incident dict, so a re-emission can be
         # recognized as an UPDATE (same id) rather than manufacturing a
         # fresh one every call. NOT bounded implicitly by window-key
@@ -437,6 +455,35 @@ class Correlator:
             self.promotions_count += 1
         return incident
 
+    def reload_allowlist_if_changed(self) -> bool:
+        """R3-59 (2026-08-26): hot-reload the allowlist when the file on disk
+        changes.
+
+        WS-8 never called ``allowlist.invalidate_dir``, so once a
+        shared_infrastructure.yml was loaded (cached in shared/allowlist's
+        module cache) a subsequent operator edit stayed invisible for the
+        process lifetime -- and, worse, an allowlist that failed to load was
+        cached ``ok=False`` forever, so a broken file that was later fixed
+        kept NOT suppressing (opening ip:/device: tracks) until restart.
+        This is called on every ingest (cheap stat against the remembered
+        mtime); when the file changed, invalidate_dir() drops the stale cache
+        entry and load_allowlist() re-reads the new one.
+
+        Returns True if a reload actually happened. A no-op when the
+        correlator was constructed with a caller-injected ``allowlist`` (no
+        on-disk source to watch)."""
+        if self._allowlists_dir is None or self._allowlist_path is None:
+            return False
+        mtime = _file_mtime_ns(self._allowlist_path)
+        if mtime is None or mtime == self._allowlist_mtime:
+            return False
+        invalidate_dir(self._allowlists_dir)  # the R3-59 hook that was never called
+        self._allowlist_mtime = mtime
+        self._allowlist = load_allowlist(self._allowlists_dir, _ALLOWLIST_NAME)
+        _log.info("allowlist re-loaded after on-disk change",
+                  path=str(self._allowlist_path))
+        return True
+
     def ingest_alert(self, alert: dict) -> list[dict]:
         """Feed one alert through its entity tracks. Returns 0-3 fresh/
         updated incident dicts (actor-track, ip-track, and device-track
@@ -447,6 +494,11 @@ class Correlator:
         tenant = _validated_tenant(alert.get("tenant_id"))
         now_ms = self._now_ms()
         incidents: list[dict] = []
+
+        # R3-59 run-loop reload: an on-disk allowlist edit (or a repaired
+        # previously-broken file) must take effect without a restart. Cheap
+        # stat; no-op unless the file changed.
+        self.reload_allowlist_if_changed()
 
         # Degrade, don't crash on a malformed actor block: `.get("user") or
         # {}` alone still returns a plain-string user, and a string has no

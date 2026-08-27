@@ -33,12 +33,18 @@ _ANSI_OTHER = re.compile(r"\x1b.")
 # C0 control chars (0x00-0x1F) and DEL (0x7F), EXCEPT plain tab -- stripping
 # tab too would mangle otherwise-legitimate tabular log content for no
 # security benefit (tab can't forge a new line or move the cursor).
-_CONTROL_CHARS = re.compile(r"[\x00-\x08\x0a-\x1f\x7f]")
+# Gap-hunt (2026-08-26) R3-69: also strip C1 controls (0x80-0x9F) and the
+# Unicode right-to-left override U+202E -- a real display-spoofing vector
+# (an attacker can reorder a visible log line/binary-payload bytes with an
+# invisible RLO), and C1 range is a legacy-VT strike class the C0-only regex
+# silently missed.
+_CONTROL_CHARS = re.compile(r"[\x00-\x08\x0a-\x1f\x7f\x80-\x9f\u202e]")
 
 
 def strip_ansi_and_control(value: Optional[str]) -> Optional[str]:
-    """Remove ANSI escape sequences and C0/DEL control chars (tab excepted)
-    from a string. ``None`` and non-str input pass through unchanged (the
+    """Remove ANSI escape sequences and control chars (tab excepted),
+    including C0, DEL, the C1 range (0x80-0x9F), and the U+202E right-to-left
+    override (R3-69). ``None`` and non-str input pass through unchanged (the
     caller's own type contract, not this function's problem to enforce).
     Bounded, no backtracking risk (fixed-class regexes, no nested quantifiers)
     -- safe to run on attacker-controlled input, no ReDoS."""

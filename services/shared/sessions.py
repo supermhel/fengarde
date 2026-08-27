@@ -221,10 +221,24 @@ class RedisSessionStore:
         sig = data.pop("sig", None)
         if not sig or not hmac.compare_digest(str(sig), _sign(data)):
             return None
+        # Gap-hunt (2026-08-26) R3-60: expiry rested entirely on the Redis key
+        # TTL; resolve() never compared expires_at against now. A TTL that was
+        # missed/failed to set (or a Redis-backed row living past its bound for
+        # any reason) resolved as a live session indefinitely. Enforce the
+        # stored expiry explicitly, mirroring the MemoryStore contract.
+        expires_at = float(data["expires_at"])
+        if expires_at and time.time() > expires_at:
+            # best-effort tombstone so a repeated stale resolve doesn't re-read
+            # the same dead row
+            try:
+                self.r.delete(_REDIS_KEY_PREFIX + token)
+            except Exception:
+                pass
+            return None
         return Session(
             username=str(data["username"]), role=str(data["role"]),
             tenant_id=str(data["tenant_id"]),
-            expires_at=float(data["expires_at"]),
+            expires_at=expires_at,
             csrf_token=str(data["csrf_token"]),
         )
 
