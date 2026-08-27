@@ -28,7 +28,7 @@ import time
 import urllib.error
 import urllib.request
 
-from shared.outbound_http import no_redirect_urlopen  # noqa: E402
+from shared.outbound_http import no_redirect_urlopen, is_unsafe_target_url  # noqa: E402
 
 _DISCLAIMER = ("DRAFT — automatically generated. Not legal advice. "
                "Review before any regulatory submission.")
@@ -118,6 +118,14 @@ def _validate_backend_response(resp: dict) -> bool:
 def _call_http_backend(alert: dict, triage: dict, events: list, requested_at: float) -> dict | None:
     url = os.getenv("FENGARDE_SEC_REPORT_URL")
     if not url:
+        return None
+    # R3-#58: SSRF guard -- the backend URL is operator-configured, but a
+    # hostile/misconfigured value must not let this process reach internal
+    # hosts. Reject unsafe targets BEFORE any request (webhooks parity).
+    if is_unsafe_target_url(url):
+        import logging
+        logging.getLogger("ws3-indexer").warning(
+            "reporting backend refused: unsafe target URL blocked (R3-#58): %s", url)
         return None
     payload = json.dumps({
         "alert": alert, "triage": triage, "events": events,

@@ -126,6 +126,28 @@ def test_opensearch_store_list_incidents_wire_format():
           f"unexpected term filters: {terms!r}")
 
 
+def test_incidents_mapping_declares_entity_value_full():
+    """Gap-hunt #WS3-5: ws8-correlation/correlator.py writes `entity_value_full`
+    (the untruncated attacker-controlled value) onto the incident, but the
+    incidents mapping is dynamic:false -- an undeclared field is SILENTLY
+    dropped at index time. The mapping must declare it as keyword."""
+    import json
+    mapping_path = (HERE.parent.parent / "contracts" / "opensearch-mappings"
+                    / "incidents.json")
+    mapping = json.loads(mapping_path.read_text(encoding="utf-8"))
+    props = mapping["template"]["mappings"]["properties"]
+    check(props.get("entity_value_full") is not None
+          and props["entity_value_full"].get("type") == "keyword",
+          f"incidents.json (dynamic:false) must declare entity_value_full as "
+          f"keyword, got {props.get('entity_value_full')!r}")
+
+    # Every structure the WS-8 correlator emits must be declared (dynamic:false
+    # silently drops anything missing). This is the field the fix added.
+    check("truncated" in props and "member_alert_ids" in props
+          and "tactics" in props and "severity" in props,
+          "sanity: the other incident fields must still be declared")
+
+
 def run_all():
     test_route_default_tenant()
     test_route_scoped_tenant()
@@ -133,6 +155,7 @@ def run_all():
     test_route_invalid_tenant_rejected()
     test_memory_store_list_incidents_round_trip_and_filters()
     test_opensearch_store_list_incidents_wire_format()
+    test_incidents_mapping_declares_entity_value_full()
 
 
 if __name__ == "__main__":

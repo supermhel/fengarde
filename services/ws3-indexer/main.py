@@ -90,7 +90,14 @@ def _index_alert_preserving_triage(store, index: str, doc_id: str, doc: dict) ->
     for attempt in range(_ALERT_CAS_MAX_RETRIES):
         existing = store.find_alert_versioned(doc_id)
         if existing is None:
-            return store.index(index, doc_id, doc)
+            # Brand-new alert_id: a CREATE. Route it through index_cas with
+            # version=None -- BOTH backends treat that as an unconditional
+            # write (byte-identical to the plain store.index() this used to
+            # call), but every alerts write now goes through the CAS path, so
+            # a concurrent writer landing between this read and the write is
+            # resolved deterministically instead of only the update path
+            # being guarded. (Gap-hunt finding R2-#23.)
+            return store.index_cas(index, doc_id, doc, None)
         existing_index, existing_doc, version = existing
         if existing_index != index:
             # Nothing about a retry changes this: the same alert_id routes to
@@ -106,11 +113,17 @@ def _index_alert_preserving_triage(store, index: str, doc_id: str, doc: dict) ->
                 f"conflict)"
             )
             return False
-        triage = existing_doc.get("triage")
-        if triage is None:
-            return store.index(index, doc_id, doc)
+        # Carry any existing `triage` into the incoming payload. When the
+        # stored doc has no triage yet there is nothing to preserve -- but we
+        # STILL write conditionally on `version`: an analyst triage write that
+        # lands between our find_alert and this write bumps the version, our
+        # index_cas returns False, and the retry loop re-reads the fresh doc
+        # and carries that triage. The plain store.index() this branch used
+        # to call would silently destroy it. (Gap-hunt finding R2-#19.)
         merged = dict(doc)
-        merged["triage"] = triage
+        existing_triage = existing_doc.get("triage")
+        if existing_triage is not None:
+            merged["triage"] = existing_triage
         if store.index_cas(index, doc_id, merged, version):
             return False
         if attempt < _ALERT_CAS_MAX_RETRIES - 1:

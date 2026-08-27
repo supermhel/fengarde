@@ -582,10 +582,21 @@ class OpenSearchStore(StorageAdapter):
                         limit: int = 50) -> list[dict]:
         filters = {"tenant_id": tenant_id, "entity_type": entity_type,
                    "entity_value": entity_value}
-        return self._list("incidents-*", filters, limit, sort_field="last_seen")
+        # Gap-hunt (2026-08-27) #WS3-1 read-plane: MemoryStore.list_incidents
+        # materializes the default tenant ("default") for a doc whose
+        # tenant_id is ABSENT; OpenSearch may store it absent, so a bare
+        # {"term": {"tenant_id":"default"}} matches nothing. Emit the
+        # default-filter should-clause so docs that carry the explicit value
+        # OR never had the field both match.
+        return self._list("incidents-*", filters, limit, sort_field="last_seen",
+                          default_filters={"tenant_id": "default"})
 
     def list_events(self, *, family: str | None = None, tenant_id: str | None = None,
                      limit: int = 50) -> list[dict]:
         pattern = f"events-{family}*" if family else "events-*"
         filters = {"siem.tenant": tenant_id}
-        return self._list(pattern, filters, limit)
+        # Same default-tenant materialization parity as list_incidents above
+        # (MemoryStore.list_events reads (siem.tenant or "default")); events
+        # carry tenant under siem.tenant, not top-level tenant_id.
+        return self._list(pattern, filters, limit,
+                          default_filters={"siem.tenant": "default"})

@@ -202,10 +202,25 @@ paths:
         "404": { description: report not generated yet, or not visible }
     post:
       summary: Generate and store a draft report (role >= analyst)
-      parameters: [ { name: alert_id, in: path, required: true, schema: { type: string } } ]
+      parameters:
+        - { name: alert_id, in: path, required: true, schema: { type: string } }
+        - { name: template, in: query, schema: { type: string, enum: [generic, nis2] },
+            description: "Report renderer. Defaults to 'generic' if absent." }
+        - { name: stage, in: query, schema: { type: string, enum: [early_warning, notification, final_report] },
+            description: "NIS2 stage (ignored unless template=nis2). Defaults to 'notification' if absent/invalid (code coerces with a loud warn)." }
+        - { name: lang, in: query, schema: { type: string, enum: [de, en] },
+            description: "NIS2 language (defaults to 'de' if absent/invalid, coerced with a warn)." }
       responses:
         "200": { description: the generated report document }
+        "400": { description: alert_id/template/stage/lang invalid }
         "404": { description: alert not found / not visible }
+    # CSRF note (2026-08-27, R3-#45): every state-changing route here (POST
+    # /report, POST /triage, POST /auth/*) is protected from cross-origin
+    # writes by the same-origin nginx proxy (the dashboard is served and
+    # proxied from one origin) plus the caller-presented X-Api-Key gate; there
+    # is no cookie-based session that a cross-site form could abuse. An operator
+    # exposing the triage API directly (no nginx front) must put it behind an
+    # authenticating reverse proxy or enforce a CSRF token.
   /api/v1/events:
     get:
       summary: Newest-first normalized-event listing (not free-text search)

@@ -177,6 +177,96 @@ def test_backoff_between_cas_retries():
           "a successful CAS write after retry must bump the version")
 
 
+def test_no_plain_non_cas_index_call_for_alert_writes():
+    """R2-#19/#23: BOTH branches that used to bail out to a plain
+    store.index() -- the create branch (existing is None) and the
+    existing-doc-with-no-triage branch -- must now route through
+    index_cas. A plain index() there silently destroys any concurrent
+    triage write that lands between the read and the write."""
+    store = MemoryStore()
+    plain_calls = []
+    orig_index = store.index
+
+    def recording_index(index, doc_id, document):
+        plain_calls.append((index, doc_id))
+        return orig_index(index, doc_id, document)
+
+    store.index = recording_index  # type: ignore[method-assign]
+    try:
+        check(index_doc(store, _alert("no-cas-1")) is True,
+              "first create of a brand-new alert_id must succeed")
+        check(index_doc(store, _alert("no-cas-1")) is False,
+              "redelivery with no triage set yet must report as a duplicate")
+        index, doc, version = store.find_alert_versioned("no-cas-1")
+        doc = dict(doc)
+        doc["triage"] = {"status": "triaged", "note": "", "updated_at": 1}
+        store.index_cas(index, "no-cas-1", doc, version)
+        index_doc(store, _alert("no-cas-1"))  # redelivery while triage IS set
+    finally:
+        store.index = orig_index  # type: ignore[method-assign]
+
+    check(len(plain_calls) == 0,
+          f"no alerts-topic write may fall back to a plain non-CAS store.index(); got {plain_calls}")
+
+
+def test_create_path_uses_index_cas_with_version_none():
+    """R2-#23: the very first write of an alert_id (existing is None) must
+    call index_cas(..., version=None) -- not store.index -- so a create
+    racing a concurrent write resolves through the same CAS path as every
+    other alert write."""
+    store = MemoryStore()
+    cas_calls = []
+    orig_cas = store.index_cas
+
+    def recording_cas(index, doc_id, document, version):
+        cas_calls.append((doc_id, version))
+        return orig_cas(index, doc_id, document, version)
+
+    store.index_cas = recording_cas  # type: ignore[method-assign]
+    try:
+        index_doc(store, _alert("create-cas-1"))
+    finally:
+        store.index_cas = orig_cas  # type: ignore[method-assign]
+
+    check(len(cas_calls) == 1
+          and cas_calls[0] == ("create-cas-1", None),
+          f"a brand-new alert's create must call index_cas with version=None, got {cas_calls}")
+
+
+def test_concurrent_triage_on_triage_none_path_is_preserved():
+    """R2-#19: the doc exists but has NO triage yet; an analyst triage write
+    lands between this redelivery's find_alert and its write. Because the
+    branch writes through index_cas (not a plain index()), the version
+    conflict is detected, the loop re-reads the fresher doc and carries the
+    triage, and the concurrent analyst write survives."""
+    store = MemoryStore()
+    index_doc(store, _alert("concurrent-1"))  # no triage yet
+
+    orig_cas = store.index_cas
+    first = [True]
+
+    def conflict_once(index, doc_id, document, ver):
+        if first[0]:
+            first[0] = False
+            # simulate the peer analyst write landing between our read+write
+            i2, d2, v2 = store.find_alert_versioned(doc_id)
+            d2 = dict(d2)
+            d2["triage"] = {"status": "true_positive", "note": "confirmed", "updated_at": 9}
+            orig_cas(i2, doc_id, d2, v2)
+            return False  # our (stale) write loses the version race
+        return orig_cas(index, doc_id, document, ver)
+
+    store.index_cas = conflict_once  # type: ignore[method-assign]
+    try:
+        index_doc(store, _alert("concurrent-1"))
+    finally:
+        store.index_cas = orig_cas  # type: ignore[method-assign]
+
+    _, stored, _ = store.find_alert_versioned("concurrent-1")
+    check(stored.get("triage", {}).get("status") == "true_positive",
+          "a concurrent triage write racing the no-triage CAS path must survive the redelivery")
+
+
 def test_two_different_alerts_are_independent():
     """The daemon must actually route the `alerts` topic through
     `index_doc` (not some bypassed plain store.index call) -- drives the
@@ -249,6 +339,9 @@ def run_all() -> None:
         test_redelivered_alert_before_any_triage_is_a_harmless_noop,
         test_retry_exhaustion_under_sustained_contention_preserves_triage,
         test_backoff_between_cas_retries,
+        test_no_plain_non_cas_index_call_for_alert_writes,
+        test_create_path_uses_index_cas_with_version_none,
+        test_concurrent_triage_on_triage_none_path_is_preserved,
         test_two_different_alerts_are_independent,
         test_alerts_topic_is_wired_through_the_preserving_path,
         test_triage_update_still_reaches_the_document,

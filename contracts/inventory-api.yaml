@@ -7,6 +7,23 @@ info:
     Implemented by WS-6, consumed by WS-2 (enrichment) and WS-7 (dashboard).
 servers:
   - url: http://inventory:8000
+security:
+  - ApiKeyAuth: []
+components:
+  securitySchemes:
+    # R3-#46 (2026-08-27): the tenant-key auth this service actually enforces.
+    # When the TenantKeyStore is empty (auth off), a request without a key is
+    # permitted (open, single-tenant default). Once any key is seeded, every
+    # request MUST present a valid tenant-scoped X-Api-Key (401/429 otherwise).
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-Api-Key
+      description: >
+        Tenant-scoped API key. Auth ON once the TenantKeyStore holds at least one
+        key; empty keystore = open default. Read routes are tenant-narrowed by the
+        key's scope; write routes validate the key; failed attempts are rate-limited
+        per source IP (429).
 paths:
   /assets:
     get:

@@ -10,6 +10,7 @@
         "tenant_id": { "type": "keyword" },
         "entity_type": { "type": "keyword" },
         "entity_value": { "type": "keyword" },
+        "entity_value_full": { "type": "keyword", "description": "WS-8 correlator preserves the attacker-controlled entity_value here when the id-embedded form is truncated to _ENTITY_VALUE_MAX (dynamic:false would silently drop it otherwise -- added 2026-08-27 gap-hunt #WS3-5)." },
         "first_seen": { "type": "date", "format": "epoch_millis" },
         "last_seen": { "type": "date", "format": "epoch_millis" },
         "tactics": { "type": "keyword" },

@@ -110,6 +110,16 @@ def load_webhook_configs(webhooks_dir: Path | None = None) -> list[WebhookConfig
         except yaml.YAMLError as exc:
             log.warn(f"webhook config {path.name!r} is not valid YAML ({exc}); skipped")
             continue
+        except (OSError, UnicodeDecodeError) as exc:
+            # Gap-hunt finding (R2-#3): a config that can't be READ is as
+            # malformed as one that can't parse -- before this, an unreadable
+            # or non-UTF-8 file let read_text()'s OSError/UnicodeDecodeError
+            # escape and took down config loading entirely (every OTHER
+            # webhook config too). Now it is skipped with a loud warning,
+            # fail-closed: delivery for THAT config alone is dropped, the
+            # rest keep working.
+            log.warn(f"webhook config {path.name!r} could not be read ({exc}); skipped")
+            continue
         if not isinstance(raw, dict):
             log.warn(f"webhook config {path.name!r} is not a YAML mapping; skipped")
             continue

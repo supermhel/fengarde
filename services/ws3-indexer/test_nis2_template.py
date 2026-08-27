@@ -110,6 +110,67 @@ def test_build_report_matches_frozen_envelope():
     check(report["backend_degraded"] is False, "a successful NIS2 render is never 'degraded'")
 
 
+def test_build_report_envelope_matches_nis2_schema():
+    """R3-#42: contracts/nis2-de-schema.json requires stage/language/
+    disclaimer/entity/incident in the envelope; the generator used to ship
+    all of that only inside the Markdown body. Prove build_report's envelope
+    now validates against the schema (and never fabricates entity facts --
+    every entity field stays an explicit placeholder)."""
+    import json
+    import jsonschema
+    schema_path = (HERE.parent.parent / "contracts" / "nis2-de-schema.json")
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+
+    report = nis2_template.build_report(_ALERT, _TRIAGE,
+                                        stage="notification", lang="de")
+    jsonschema.validate(report, schema)  # raises on any required-field/type violation
+
+    check(report["stage"] == "notification" and report["language"] == "de",
+          "the envelope must carry the real (coerced) stage/language")
+    check(report["disclaimer"], "disclaimer is required by the schema and must be present")
+    ent = report["entity"]
+    check(all(v == nis2_template._PLACEHOLDER["de"]
+              for v in (ent["name"], ent["sector_classification"], ent["competent_authority"])),
+          "entity facts must remain ANALYST placeholders, never fabricated from the alert")
+    inc = report["incident"]
+    check(inc["title"] == _ALERT["rule_title"] and inc["severity"] == _ALERT["level"],
+          "incident title/severity come from the real alert")
+    check(inc["suspected_malicious"] is None and inc["cross_border_impact"] is None,
+          "the early-warning boolean judgements default to null (not yet determined), per the schema")
+
+
+def test_invalid_stage_lang_coercion_is_logged_loudly():
+    """R3-#43: a typo'd ?stage= / ?lang= used to silently produce the wrong
+    regulatory section. Coercion to defaults must now be logged (warn), not
+    silent -- while still rendering, never raising."""
+    import shared.log as shared_log
+
+    class _FakeLog:
+        def __init__(self):
+            self.warnings = []
+
+        def warn(self, msg, **fields):
+            self.warnings.append(msg)
+
+    fake = _FakeLog()
+    real = shared_log.get_logger
+    shared_log.get_logger = lambda *a, **k: fake
+    try:
+        nis2_template.build_report(_ALERT, _TRIAGE, stage="not-a-stage", lang="fr")
+        nis2_template.render_nis2_report(_ALERT, _TRIAGE, stage="nope", lang="xx")
+    finally:
+        shared_log.get_logger = real
+
+    check(any("stage" in w and "not-a-stage" in w for w in fake.warnings),
+          f"a bad stage must be logged loudly, got {fake.warnings}")
+    check(any("lang" in w and "fr" in w for w in fake.warnings),
+          f"a bad lang must be logged loudly, got {fake.warnings}")
+    check(any("stage" in w and "nope" in w for w in fake.warnings),
+          "render_nis2_report must also log its stage coercion")
+    check(any("lang" in w and "xx" in w for w in fake.warnings),
+          "render_nis2_report must also log its lang coercion")
+
+
 # -- HTTP wiring: ?template=nis2&stage=&lang= on the existing report route --
 
 def _serve(store):
