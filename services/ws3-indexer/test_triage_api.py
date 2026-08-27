@@ -173,12 +173,70 @@ def run():
 
 def main():
     run()
+    run_xff_rate_limit_keying()
     if FAILS:
         print(f"[FAIL] triage API: {len(FAILS)} problem(s)")
         for f in FAILS:
             print("   -", f)
         sys.exit(1)
     print("[OK] WS-3 triage API: persistence + tolerant defaults + malformed-input handling")
+
+
+# -- FIX (#8): X-Forwarded-For rate-limit keying gets real coverage ---------
+def run_xff_rate_limit_keying():
+    """The RATE_LIMIT_TRUST_PROXY_HEADER=1 branch of _rate_limit_ip was
+    previously exercised nowhere. Under that env the per-IP token bucket must
+    be keyed on the X-Forwarded-For value (the real client behind nginx), not
+    the TCP peer (nginx's own IP). Two requests from the SAME XFF exhaust one
+    bucket -> 3rd is 429; a DIFFERENT XFF gets its OWN bucket -> still served.
+    env RATE_LIMIT_REQUESTS_PER_MIN is read at import time, so enable the
+    limiter by setting the module global directly for this test."""
+    import os as _os
+    store = MemoryStore()
+    alert = {"alert_id": "a-1", "time": 1750000000000, "level": "high",
+            "rule_title": "test rule", "score": 70}
+    idx, doc_id = route(alert)
+    store.index(idx, doc_id, alert)
+
+    saved_limit = triage_api._RATE_LIMIT
+    saved_env = _os.environ.get("RATE_LIMIT_TRUST_PROXY_HEADER")
+    triage_api._rate_buckets.clear()
+    try:
+        _os.environ["RATE_LIMIT_TRUST_PROXY_HEADER"] = "1"
+        triage_api._RATE_LIMIT = 2  # 2 requests/minute per XFF bucket
+        srv, port = start_server(store)
+        try:
+            def get_with_xff(xff):
+                req = urllib.request.Request(
+                    f"http://127.0.0.1:{port}/alerts/a-1/triage",
+                    headers={"X-Forwarded-For": xff}, method="GET")
+                try:
+                    with urllib.request.urlopen(req, timeout=5) as resp:
+                        return resp.status
+                except urllib.error.HTTPError as e:
+                    return e.code
+
+            # same XFF: the first two pass the limiter (=reach the 401 auth
+            # gate, not 429); the third is throttled.
+            check(get_with_xff("203.0.113.7") != 429,
+                  "first request for an XFF must clear the rate limit")
+            check(get_with_xff("203.0.113.7") != 429,
+                  "second request for the same XFF must clear the rate limit")
+            check(get_with_xff("203.0.113.7") == 429,
+                  "third request for the same XFF must be rate-limited (429)")
+            # a DIFFERENT XFF uses a fresh bucket: still allowed -- proving the
+            # limiter keyed on XFF, not the TCP peer (nginx) IP.
+            check(get_with_xff("203.0.113.9") != 429,
+                  "a different XFF must NOT be throttled by another's bucket")
+        finally:
+            srv.shutdown(); srv.server_close()
+    finally:
+        triage_api._RATE_LIMIT = saved_limit
+        triage_api._rate_buckets.clear()
+        if saved_env is None:
+            _os.environ.pop("RATE_LIMIT_TRUST_PROXY_HEADER", None)
+        else:
+            _os.environ["RATE_LIMIT_TRUST_PROXY_HEADER"] = saved_env
 
 
 if __name__ == "__main__":

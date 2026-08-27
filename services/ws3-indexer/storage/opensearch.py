@@ -414,8 +414,13 @@ class OpenSearchStore(StorageAdapter):
     # storage/test_opensearch_live.py::_test_cas_conflict_on_stale_version
     # (`make test-live`).
     def _search_alert(self, alert_id: str) -> dict | None:
+        # FIX (#12): the same _id can exist in two adjacent daily alerts-*
+        # indices (a re-indexed/re-timed alert), and a size-1 search with no
+        # sort returns either one arbitrarily. Sort by time desc so the
+        # search deterministically returns the NEWEST copy.
         body = {"size": 1, "query": {"term": {"_id": alert_id}},
-                "seq_no_primary_term": True}
+                "seq_no_primary_term": True,
+                "sort": [{"time": {"order": "desc"}}]}
         try:
             result = self._request("POST", "/alerts-*/_search", body)
         except urllib.error.HTTPError as exc:
@@ -451,9 +456,16 @@ class OpenSearchStore(StorageAdapter):
     # -- v0.4 Track R: cross-index lookup by report_id -----------------------
     def find_report(self, alert_id: str) -> dict | None:
         """Locate a report doc (report_id == f"{alert_id}:report") across all
-        daily reports-* indices. Mirrors _search_alert's shape."""
+        daily reports-* indices. Mirrors _search_alert's shape.
+
+        FIX (#4): the report_id is deterministic, but the daily index rolls
+        over -- regenerating a report on a later day lands in a newer daily
+        index while yesterday's copy still exists. A size-1 search with no
+        sort returns either arbitrarily (a stale copy). Sorting generated_at
+        desc deterministically returns the NEWEST report."""
         report_id = f"{alert_id}:report"
-        body = {"size": 1, "query": {"term": {"_id": report_id}}}
+        body = {"size": 1, "query": {"term": {"_id": report_id}},
+                "sort": [{"generated_at": {"order": "desc"}}]}
         try:
             result = self._request("POST", "/reports-*/_search", body)
         except urllib.error.HTTPError as exc:

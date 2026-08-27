@@ -84,6 +84,8 @@ from shared.authz import check_api_key, warn_if_disabled  # noqa: E402
 from shared.log import get_logger  # noqa: E402
 from shared.rbac import role_at_least, can_access_tenant, LoginRateLimiter  # noqa: E402
 from shared.sessions import SessionStore, make_session_store  # noqa: E402
+
+_LOG = get_logger("ws3-indexer-triage")  # noqa: E402 - module-level handler logger
 import reporting  # noqa: E402
 import rules_view  # noqa: E402
 import nis2_template  # noqa: E402
@@ -265,7 +267,15 @@ def make_handler(store, users_db=None, sessions: SessionStore | None = None,
         def _current_session(self):
             if not rbac_enabled:
                 return None
-            return sessions.resolve(self._session_token())
+            token = self._session_token()
+            if not token:
+                return None
+            try:
+                return sessions.resolve(token)
+            except Exception:  # noqa: BLE001 - FIX (#3): a session-store outage
+                # must never 500 every auth-gated request; degrade to
+                # "no session" (fail-open) and let the auth gate answer 401.
+                return None
 
         def _require_role(self, minimum_role: str):
             """Return the active session if it satisfies `minimum_role`, or
@@ -412,7 +422,10 @@ def make_handler(store, users_db=None, sessions: SessionStore | None = None,
                 self._route_get(path)
             except _BadRequest as e:
                 self._send(400, {"error": str(e)})
-            except Exception:  # noqa: BLE001 - never let a handler crash the thread
+            except Exception as e:  # noqa: BLE001 - never let a handler crash the thread
+                # FIX (#3): log the real exception before answering a bare 500 --
+                # an unhandled handler error is invisible to operators otherwise.
+                _LOG.exception("GET %s raised: %r", self.path, e)
                 self._send(500, {"error": "internal error"})
 
         def _route_auth_me(self):
@@ -585,7 +598,10 @@ def make_handler(store, users_db=None, sessions: SessionStore | None = None,
                 self._route_post(path)
             except _BadRequest as e:
                 self._send(400, {"error": str(e)})
-            except Exception:  # noqa: BLE001 - never let a handler crash the thread
+            except Exception as e:  # noqa: BLE001 - never let a handler crash the thread
+                # FIX (#3): log the exception BEFORE answering a bare 500 --
+                # an unhandled handler error is invisible to operators otherwise.
+                _LOG.exception("POST %s raised: %r", self.path, e)
                 self._send(500, {"error": "internal error"})
 
         def _read_json_body(self, max_bytes: int) -> dict:
@@ -826,14 +842,13 @@ def make_handler(store, users_db=None, sessions: SessionStore | None = None,
             if length < 0:
                 raise _BadRequest("invalid Content-Length")
             if length > _MAX_BODY_BYTES:
-                # Reading only _MAX_BODY_BYTES here would still leave
-                # length - _MAX_BODY_BYTES unread on the socket -- on a
-                # keep-alive connection those stray bytes get misparsed as
-                # the start of the next request. Closing the connection
-                # instead of trying to fully drain an oversized,
-                # attacker-sized body is the standard http.server escape
-                # hatch (same fix as _route_triage's sibling bug below).
+                # FIX (#11): reject an oversized body (close connection to
+                # avoid leaving unread bytes that corrupt the next request on
+                # a keep-alive connection, then a 400) -- same as the triage
+                # route. This endpoint takes no body, so only drain the small,
+                # legitimate Content-Length case.
                 self.close_connection = True
+                raise _BadRequest("request body too large")
             elif length > 0:
                 self.rfile.read(length)
             if not report_alert_id:

@@ -69,11 +69,48 @@ def test_unknown_tenant_disables_nothing():
           "an unknown tenant must leave every rule enabled")
 
 
+def test_contracts_dir_container_layout():
+    """Fixes the nagging zero-coverage gap on the CONTAINER branch of
+    _contracts_dir(). On a Docker deployment _HERE = /app/ws3-indexer (only
+    ONE parent up) and contracts live at /app/contracts; before the v0.5 fix
+    GET /rules silently returned 0 rules on every live deployment because the
+    two-parents-up host math didn't match. Simulate that layout in a temp dir
+    and confirm _contracts_dir() resolves via the _SERVICES (=/app) probe and
+    list_rule_summaries() actually reads the rule from it."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        app = Path(td) / "app"
+        rules_dir = app / "contracts" / "rules"
+        rules_dir.mkdir(parents=True)
+        (rules_dir / "container.yml").write_text(
+            "id: ctr-rule\ntitle: container-rule\nlevel: medium\n",
+            encoding="utf-8")
+        # container math: _HERE=/app/ws3-indexer -> _SERVICES=/app,
+        # _ROOT=_SERVICES.parent (in a real container that's /, no contracts).
+        save = (rules_view._SERVICES, rules_view._ROOT,
+                rules_view.RULES_DIR, rules_view.TENANTS_DIR)
+        try:
+            rules_view._SERVICES = app
+            rules_view._ROOT = app.parent
+            d = rules_view._contracts_dir()
+            check(d == app / "contracts",
+                  f"container layout must resolve to {app / 'contracts'}, got {d}")
+            rules_view.RULES_DIR = d / "rules"
+            rules_view.TENANTS_DIR = d / "tenants"
+            summaries = rules_view.list_rule_summaries()
+            check(any(s["id"] == "ctr-rule" for s in summaries),
+                  "the container rule must be listed via the /app contracts dir")
+        finally:
+            (rules_view._SERVICES, rules_view._ROOT,
+             rules_view.RULES_DIR, rules_view.TENANTS_DIR) = save
+
+
 def main():
     test_contracts_dir_resolves_to_a_real_rules_dir()
     test_list_all_rules_no_tenant()
     test_malformed_tenant_id_disables_nothing()
     test_unknown_tenant_disables_nothing()
+    test_contracts_dir_container_layout()
     if FAILS:
         print(f"[FAIL] rules_view: {len(FAILS)} problem(s)")
         for f in FAILS:

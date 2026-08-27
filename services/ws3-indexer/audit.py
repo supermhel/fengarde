@@ -75,6 +75,37 @@ def _warn(msg: str) -> None:
         pass
 
 
+def _acquire_cross_process_lock(path: str):
+    """Best-effort exclusive cross-process lock next to ``path`` (a ``.lock``
+    sibling file) so a trim's file read-modify-rewrite can't race a SECOND
+    auditor process (multi-replica). Returns an open file handle whose
+    close() releases the lock, or ``None`` when the platform can't file-lock
+    (then only the in-process ``threading.Lock`` guards the trim -- the
+    single-replica case; cross-replica coordination degrades to best-effort,
+    matching the module's fail-open posture)."""
+    lock_path = path + ".lock"
+    try:
+        if os.name == "nt":  # Windows: msvcrt byte-range lock
+            import msvcrt  # noqa: PLC0415
+            f = open(lock_path, "a+b")
+            try:
+                if os.fstat(f.fileno()).st_size == 0:
+                    f.write(b"\0")
+                    f.flush()
+                f.seek(0)
+                msvcrt.locking(f.fileno(), msvcrt.LK_LOCK, 1)
+                return f
+            except Exception:
+                f.close()
+                return None
+        import fcntl  # noqa: PLC0415  (POSIX: flock)
+        f = open(lock_path, "a+b")
+        fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+        return f
+    except Exception:
+        return None
+
+
 class AuditLog:
     """Append-only JSONL audit log with a tail-cap and fail-open writes.
 
@@ -117,10 +148,15 @@ class AuditLog:
 
     def recent(self, limit: int | None = None) -> list[dict]:
         """The most recent entries, newest first (the shape /audit wants).
-        ``limit`` defaults to the whole log (already bounded by the cap)."""
+        ``limit`` defaults to the whole log (already bounded by the cap), and
+        ``limit=0`` intentionally returns nothing (FIX #10: the naive
+        ``entries[-0:]`` slice silently returned the WHOLE log -- a request
+        for 0 entries must not yield everything)."""
         with self._lock:
             entries = self._read_all_locked()
-        if limit is not None and limit >= 0:
+        if limit == 0:
+            return []
+        if limit is not None and limit > 0:
             entries = entries[-limit:]
         entries.reverse()
         return entries
@@ -153,10 +189,21 @@ class AuditLog:
     def _trim_locked(self) -> None:
         """Keep only the newest ``max_entries`` entries (drop the oldest)
         via a same-dir temp file + atomic replace, so a crash mid-trim never
-        leaves a truncated audit log in place of the real one."""
-        entries = self._read_all_locked()[-self.max_entries:]
+        leaves a truncated audit log in place of the real one.
+
+        FIX (#6): multi-replica safety. The in-process ``threading.Lock``
+        only serializes trims WITHIN one replica; two SEPARATE ws3 replicas
+        trimming around the same append could each rewrite the file and the
+        last one to ``os.replace`` could clobber entries the other had
+        written. The whole read-modify-rewrite therefore runs under an
+        advisory cross-process ``.lock`` file too (best-effort -- see
+        _acquire_cross_process_lock)."""
         tmp = self.path + ".tmp"
+        # Acquire BEFORE the read so a cooperating replica's concurrent trim
+        # sees a consistent read-modify-rewrite, not an interleaved one.
+        lock = _acquire_cross_process_lock(self.path)
         try:
+            entries = self._read_all_locked()[-self.max_entries:]
             parent = os.path.dirname(self.path)
             if parent:
                 os.makedirs(parent, exist_ok=True)
@@ -177,6 +224,9 @@ class AuditLog:
             # the next append.
             self._count = len(self._read_all_locked())
             return
+        finally:
+            if lock is not None:
+                lock.close()  # releases the cross-process lock
         self._count = len(entries)
 
     def _read_all_locked(self) -> list[dict]:
@@ -196,10 +246,13 @@ class AuditLog:
                         continue
                     if isinstance(obj, dict):
                         entries.append(obj)
-        except FileNotFoundError:
-            pass
-        except OSError:
-            pass
+        except FileNotFoundError as e:
+            # FIX (#5): a missing log is a normal first-run (empty), but a
+            # silently-swallowed read is how a broken/removed file becomes an
+            # invisible empty /audit -- warn so it's not masked.
+            _warn(f"audit log {self.path} not found (treating as empty): {e}")
+        except OSError as e:
+            _warn(f"audit log read failed (fail-open, treating as empty): {e}")
         return entries
 
 
