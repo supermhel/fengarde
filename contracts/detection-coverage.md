@@ -3,6 +3,23 @@
 Ground truth: OCSF classes actually emitted by shipped parsers, cross-referenced against
 detection rules. Update this file in the same PR as any parser or rule change.
 
+> **Enforcement note (R3-#48, 2026-08-27):** this matrix is a maintained *document*,
+> not a machine-checked gate. The operative automated enforcement is
+> `tools/check_rule_producers.py` (in the CI gate), which proves every rule's
+> selections are satisfiable by values a real parser emits, and
+> `eval/attack/fire_check.py`, which proves a tagged rule fires on its own real
+> fixture. This file is the human-readable map of which class has which real
+> producer/rule -- it can drift on its own without breaking the gate, so treat the
+> two tools as the source of truth for "is a rule dormant", not this doc.
+>
+> **Rule filename convention (R3-#47, 2026-08-27):** the `<sector>_<name>.yml`
+> naming is a strong convention, not a validator-enforced invariant. 13 of the 28
+> shipped files use a rule-family prefix instead (`agent_*`, `cloud_*`, `n8n_*`,
+> `ot_*`) -- that's deliberate: the sector is DECLARED inside each file
+> (`siem.sector`), never inferred from the filename, so the prefix is a grouping
+> convenience, not the source of truth. Do not "fix" these names to match a
+> `<sector>_` regex; the validator correctly does not enforce it.
+
 ## Classes emitted by parsers today
 
 | class_uid | Class | Emitted by | Rules covering it |

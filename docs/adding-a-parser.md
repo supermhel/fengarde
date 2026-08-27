@@ -69,14 +69,16 @@ Now edit `acme_firewall.py`. The key pieces of a parser are:
        # classify into an OCSF class_uid + activity_id + severity
 
        event = self.base_event(
-           class_uid=4001,          # e.g. Network Activity; pick the right OCSF class
-           activity_id=6,           # per contracts/ocsf-classes.md
-           severity_id=SEV_HIGH,
-           time_ms=...,             # event time in epoch ms
-           ingest_id=meta.get("ingest_id"),
-           status="...",            # optional
-           message="...",           # optional human-readable summary
-       )
+                 class_uid=4001,          # e.g. Network Activity; pick the right OCSF class
+                 activity_id=6,           # per contracts/ocsf-classes.md
+                 severity_id=SEV_HIGH,
+                 time_ms=...,             # event time in epoch ms
+                 meta=meta,               # the raw pre-parser log record (source_type + raw + extras)
+                 ingest_id=meta.get("ingest_id"),
+                 sector="common",         # bank | datacenter | common -- feeds siem.sector for rules
+                 status="...",            # optional
+                 message="...",           # optional human-readable summary
+             )
        event["src_endpoint"] = {"ip": src_ip}   # parser fills these in
        # event["dst_endpoint"] = {...}
        # event["actor"] = {"user": {"name": user}}

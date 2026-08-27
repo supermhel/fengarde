@@ -324,8 +324,9 @@ The following are **known** and **deferred** to later releases:
   reports `seconds_since_last_event`, and a background watchdog
   (`SYSLOG_SILENCE_WARN_S`, default 300s, 0 disables) logs once per outage
   when nothing has arrived — before this, a dead/misdirected/firewalled
-  source produced no signal at all: `/health` only ever probed the bus, so a
-  silently-starved ingest edge looked identical to a legitimately quiet
+  source produced no signal at all: with an empty handler map `/health` never
+  probed anything (it answered a hardcoded 200), so a silently-starved ingest
+  edge looked identical to a legitimately quiet
   network. Steps 3-4 of that design (an actual VIP active/passive failover
   pair) remain not built, correctly gated behind a demonstrated need per the
   design doc's own recommended stop-point.

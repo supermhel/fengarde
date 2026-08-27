@@ -35,6 +35,42 @@ def check(c, m):
 
 def run():
     html = (HERE / "index.html").read_text(encoding="utf-8")
+    # R4-#69: the substring checks below can't catch a JS SYNTAX error -- run
+    # `node --check` on the inline <script> too (mirrors test_contract's
+    # node_check_inline_js). Fails loudly if node is missing.
+    _node_check_inline_js(html)
+
+
+def _node_check_inline_js(html: str):
+    import re
+    import shutil
+    import subprocess
+    import tempfile
+
+    scripts = re.findall(r"<script(?![^>]*\bsrc=)[^>]*>(.*?)</script>", html, re.S)
+    # Strip the leading `//<![CDATA[` / `//]]>` wrappers some inline scripts use.
+    js = "\n".join(s.strip() for s in scripts)
+    if not js.strip():
+        FAILS.append("no inline <script> block found to node --check")
+        return
+    node = shutil.which("node")
+    if not node:
+        FAILS.append("node not installed -- cannot node --check inline JS; a JS "
+                     "syntax error would pass the substring tests (R3-#69)")
+        return
+    with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False, encoding="utf-8") as f:
+        f.write(js)
+        tmp = f.name
+    try:
+        cp = subprocess.run([node, "--check", tmp], capture_output=True, text=True)
+        if cp.returncode != 0:
+            FAILS.append(f"inline JS failed node --check:\n{cp.stderr.strip()[:500]}")
+    finally:
+        try:
+            import os
+            os.unlink(tmp)
+        except OSError:
+            pass
 
     # ---- E12: saved searches (pure client-side, localStorage) ----
     check('id="saveFilter"' in html, "E12: missing Save-filter button")
