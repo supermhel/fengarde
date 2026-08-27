@@ -93,7 +93,7 @@ def _acquire_cross_process_lock(path: str):
                     f.write(b"\0")
                     f.flush()
                 f.seek(0)
-                msvcrt.locking(f.fileno(), msvcrt.LK_LOCK, 1)
+                msvcrt.locking(f.fileno(), msvcrt.LK_LOCK, 1)  # type: ignore[attr-defined]  # Windows-only, guarded above
                 return f
             except Exception:
                 f.close()
