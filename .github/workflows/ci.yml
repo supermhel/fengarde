@@ -259,6 +259,12 @@ jobs:
           docker compose -f infra/docker-compose.yml ps -a
           exit 1
       - name: Run OT new-device live e2e
+        # FENGARDE_E2E_STRICT=1: this job guarantees every precondition the
+        # script checks (docker up, BUS_BACKEND=redis, baseline=0) -- so here
+        # a [SKIP] can only mean the job itself is broken, and must fail the
+        # job rather than pass vacuously (review finding, 2026-08-27).
+        env:
+          FENGARDE_E2E_STRICT: "1"
         run: python tools/ot_new_device_e2e.py
       - name: Dump service logs on failure
         if: failure()
@@ -387,6 +393,11 @@ jobs:
           docker compose -f infra/docker-compose.yml ps -a
           exit 1
       - name: Run universal container smoke (per-service health across all 8)
+        # FENGARDE_E2E_STRICT=1: this job brings the stack up itself, so a
+        # [SKIP] here can only mean the job is broken (review finding,
+        # 2026-08-27) -- same rationale as the ot-new-device job above.
+        env:
+          FENGARDE_E2E_STRICT: "1"
         run: python tools/container_smoke.py
       - name: Dump service logs on failure
         if: failure()

@@ -473,7 +473,13 @@ def start_rule_reload_watcher(detector: "Detector", shutdown, interval_s: float,
 
 
 def make_alert(event, rule, score):
-    return {
+    # Review finding (2026-08-27): contributing_event_ids_with_omitted returns
+    # the omitted count SEPARATELY from the ids list -- see engine.py's
+    # Rule.contributing_event_ids docstring for why an in-band sentinel
+    # string embedded in `event_ids` was wrong (any consumer treating it as
+    # "a list of ids" would treat the sentinel as a real one).
+    event_ids, event_ids_omitted = rule.contributing_event_ids_with_omitted(event)
+    alert = {
         # T7: deterministic id so redelivery yields the SAME alert (idempotent),
         # not a fresh uuid that the indexer would store as a duplicate.
         "alert_id": rule.alert_key(event),
@@ -509,7 +515,7 @@ def make_alert(event, rule, score):
         # happened to cross the threshold. Falls back to the single
         # triggering id for non-stateful rules or when the counter has
         # nothing to report (never fabricates an id).
-        "event_ids": rule.contributing_event_ids(event),
+        "event_ids": event_ids,
         # Gap-hunt (2026-08-26): WS-3's list_alerts filters on
         # {"term": {"triage.status": ...}} and the alerts mapping is
         # dynamic:false, so an ALERT MUST carry an explicit triage field
@@ -521,6 +527,13 @@ def make_alert(event, rule, score):
         # analyst's saved triage on a pre-existing alert is never reset.
         "triage": event.get("triage") or {"status": "new"},
     }
+    if event_ids_omitted:
+        # Only present when the _MAX_CONTRIBUTING_IDS cap actually bit (same
+        # "omitted when absent" convention this alert doc already uses for
+        # `mitre`) -- an un-truncated alert's wire shape is byte-identical to
+        # before this field existed.
+        alert["event_ids_omitted"] = event_ids_omitted
+    return alert
 
 
 def detect_one(bus, detector: "Detector", event: dict) -> None:

@@ -128,7 +128,18 @@ def _index_alert_preserving_triage(store, index: str, doc_id: str, doc: dict) ->
             return False
         if attempt < _ALERT_CAS_MAX_RETRIES - 1:
             time.sleep(0.05 * (2 ** attempt))
-    return False  # retries exhausted -- duplicate/no-write rather than destructive overwrite
+    # Retries exhausted under sustained CAS contention: no-write rather than a
+    # destructive overwrite, but this is a DISTINCT failure from "an update
+    # succeeded" -- both used to return False and land in run()'s same
+    # `duplicates` bucket, making a genuinely lost write indistinguishable
+    # from a benign redelivery (review finding, 2026-08-27). Log it loudly;
+    # callers still get False (fail-safe: no-write, never a clobber).
+    from shared.log import get_logger  # noqa: E402
+    get_logger("ws3-indexer").error(
+        f"alert {doc_id} in {index}: exhausted {_ALERT_CAS_MAX_RETRIES} CAS "
+        f"retries under contention -- this write did NOT land (no-write, not "
+        f"a clobber, but distinct from a benign duplicate)")
+    return False
 
 
 def index_doc(store, doc: dict, *, create_only: bool = False) -> bool:
@@ -196,7 +207,10 @@ def run(bus, store) -> dict:
             # to bypass _index_alert_preserving_triage entirely, sending
             # alert docs straight to _bulk where any stale redelivery would
             # clobber a triage field an analyst had just set (same race class
-            # as the per-message handler, just the live-production path).
+            # as the per-message handler above -- this is the batch/tooling
+            # path this function's own docstring describes, not the daemon's
+            # live handler() path; review finding, 2026-08-27, corrects the
+            # prior wording here which mislabeled it "live-production").
             if "alert_id" in payload:
                 created = _index_alert_preserving_triage(
                     store, routed_index, doc_id, payload)

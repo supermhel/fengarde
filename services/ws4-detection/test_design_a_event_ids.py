@@ -117,8 +117,58 @@ def run():
               f"non-stateful alert must keep the single triggering id, got {alert3['event_ids']}")
 
 
+def _run_truncation_cap():
+    """Review finding (2026-08-27): _MAX_CONTRIBUTING_IDS capping used to
+    embed a `"<truncated: N omitted>"` string INSIDE the `event_ids` list
+    itself -- any consumer treating that field as "a list of ids" (a wire
+    consumer, a join against raw events) would treat the sentinel as a real
+    id. Fixed to report the omitted count as a separate `event_ids_omitted`
+    field, `event_ids` staying a clean list of real ids only, capped at
+    Rule._MAX_CONTRIBUTING_IDS. This proves both halves: the cap still
+    binds, and the count is reported OUT of band, not embedded in-band.
+    """
+    from engine import Rule as _Rule  # noqa: E402 - local import, matches module layout
+
+    det = ws4.Detector()
+    fired_event, fired_rule = None, None
+    n = _Rule._MAX_CONTRIBUTING_IDS + 7  # a few more than the cap so it actually bites
+    for i in range(n):
+        ev, matched, _ = det.process(failed_auth("203.0.113.99", 1750000000000 + i * 1000, i))
+        for r in matched:
+            if "brute-force" in r.title:
+                fired_event, fired_rule = ev, r
+    check(fired_rule is not None, "brute-force rule never fired -- can't test truncation")
+    if fired_rule is None:
+        return
+    alert = ws4.make_alert(fired_event, fired_rule, fired_event["siem"]["score"])
+    cap = _Rule._MAX_CONTRIBUTING_IDS
+    check(len(alert["event_ids"]) == cap,
+          f"event_ids must be capped at {cap}, got {len(alert['event_ids'])}")
+    check(all(i.startswith("auth-") for i in alert["event_ids"]),
+          f"every entry in event_ids must be a real ingest_id, never a "
+          f"truncation-marker string, got {alert['event_ids']}")
+    check(alert.get("event_ids_omitted") == n - cap,
+          f"event_ids_omitted must report the real omitted count "
+          f"({n - cap}), got {alert.get('event_ids_omitted')!r}")
+
+    # And the un-truncated case must NOT carry the field at all (omitted when
+    # absent, same convention as `mitre`).
+    det2 = ws4.Detector()
+    fired_event2, fired_rule2 = None, None
+    for i in range(3):
+        ev, matched, _ = det2.process(failed_auth("203.0.113.100", 1750000000000 + i * 1000, i))
+        for r in matched:
+            if "brute-force" in r.title:
+                fired_event2, fired_rule2 = ev, r
+    if fired_rule2 is not None:
+        alert2 = ws4.make_alert(fired_event2, fired_rule2, fired_event2["siem"]["score"])
+        check("event_ids_omitted" not in alert2,
+              "an un-truncated alert must not carry event_ids_omitted at all")
+
+
 def main():
     run()
+    _run_truncation_cap()
     if FAILS:
         print(f"[FAIL] Design-A event_ids wiring: {len(FAILS)} problem(s)")
         for f in FAILS:

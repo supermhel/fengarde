@@ -227,7 +227,14 @@ class RedisSessionStore:
         # any reason) resolved as a live session indefinitely. Enforce the
         # stored expiry explicitly, mirroring the MemoryStore contract.
         expires_at = float(data["expires_at"])
-        if expires_at and time.time() > expires_at:
+        # Review finding (2026-08-27): `if expires_at and ...` treated
+        # expires_at == 0.0 (unambiguously expired: epoch 1970) as falsy and
+        # SKIPPED the check entirely -- a row somehow written or tampered
+        # with expires_at=0.0 would resolve as valid forever, the exact
+        # failure this fix exists to close. expires_at is always a real
+        # float on every row this store writes (create() always sets it),
+        # so there's no "missing" case to guard against here.
+        if time.time() > expires_at:
             # best-effort tombstone so a repeated stale resolve doesn't re-read
             # the same dead row
             try:

@@ -56,11 +56,18 @@ _LOG = get_logger("ws3-indexer-storage") if get_logger else None
 
 
 def _log_rw_warn(msg: str, *args, **kwargs) -> None:
+    """Log a read-path warning. Callers pass a %-style ``msg`` + positional
+    ``args`` (the stdlib-logging convention) -- shared.log.Logger only takes
+    a plain message plus keyword fields (no `.warning()`/positional-args
+    method exists on it), so the %-formatting happens here before handing
+    off to whichever logger is available.
+    """
+    formatted = msg % args if args else msg
     if _LOG is not None:
-        _LOG.warning(msg, *args, **kwargs)
+        _LOG.warn(formatted, **kwargs)
     else:  # pragma: no cover - only when shared.log is unavailable
         import logging  # noqa: PLC0415
-        logging.getLogger("ws3-indexer-storage").warning(msg, *args, **kwargs)
+        logging.getLogger("ws3-indexer-storage").warning(formatted, **kwargs)
 
 
 def _read_error_is_index_missing(exc: urllib.error.HTTPError) -> bool:

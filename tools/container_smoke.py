@@ -25,6 +25,7 @@ Run with the stack up (docker compose -f infra/docker-compose.yml up -d --build)
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 
@@ -42,6 +43,13 @@ HEALTH_PROBES: dict[str, str] = {
 }
 
 FAILS: list[str] = []
+
+# Review finding (2026-08-27): the [SKIP]-then-return-0 shape below is right
+# for a developer without a stack up, but the CI job that runs this script
+# brings the stack up itself first -- so in CI a SKIP can only mean the job
+# is broken, and returning 0 hides that. CI sets FENGARDE_E2E_STRICT=1 so a
+# skip there fails loudly instead of passing vacuously.
+_STRICT = os.getenv("FENGARDE_E2E_STRICT", "").strip().lower() in ("1", "true", "yes")
 
 
 def _try_sh(*args: str) -> str:
@@ -120,9 +128,12 @@ def check(cond: bool, msg: str) -> None:
 def run() -> None:
     # Prereq: docker reachable.
     if _try_sh("docker", "version").startswith("__ERROR__"):
-        print("[SKIP] docker not reachable on this host -- the container smoke "
+        tag = "[FAIL: unexpected skip]" if _STRICT else "[SKIP]"
+        print(f"{tag} docker not reachable on this host -- the container smoke "
               "needs `docker compose -f infra/docker-compose.yml up -d --build` "
               "first; skipping (never a silent pass).")
+        if _STRICT:
+            sys.exit(1)
         return
 
     print("FENGARDE universal container smoke -- build->run->health across all app services")

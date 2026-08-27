@@ -71,6 +71,7 @@ import os
 import sys
 import threading
 import time
+import traceback
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -425,7 +426,10 @@ def make_handler(store, users_db=None, sessions: SessionStore | None = None,
             except Exception as e:  # noqa: BLE001 - never let a handler crash the thread
                 # FIX (#3): log the real exception before answering a bare 500 --
                 # an unhandled handler error is invisible to operators otherwise.
-                _LOG.exception("GET %s raised: %r", self.path, e)
+                # shared.log.Logger has no `.exception()` (stdlib-logging-only
+                # method) -- use `.error()` with the traceback as a field.
+                _LOG.error("GET handler raised", path=self.path, error=repr(e),
+                           traceback=traceback.format_exc())
                 self._send(500, {"error": "internal error"})
 
         def _route_auth_me(self):
@@ -601,7 +605,10 @@ def make_handler(store, users_db=None, sessions: SessionStore | None = None,
             except Exception as e:  # noqa: BLE001 - never let a handler crash the thread
                 # FIX (#3): log the exception BEFORE answering a bare 500 --
                 # an unhandled handler error is invisible to operators otherwise.
-                _LOG.exception("POST %s raised: %r", self.path, e)
+                # shared.log.Logger has no `.exception()` (stdlib-logging-only
+                # method) -- use `.error()` with the traceback as a field.
+                _LOG.error("POST handler raised", path=self.path, error=repr(e),
+                           traceback=traceback.format_exc())
                 self._send(500, {"error": "internal error"})
 
         def _read_json_body(self, max_bytes: int) -> dict:

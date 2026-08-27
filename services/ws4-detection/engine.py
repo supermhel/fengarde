@@ -665,14 +665,31 @@ class Rule:
         entries out, but it can never fabricate an id that wasn't a real hit.
         Capped at _MAX_CONTRIBUTING_IDS so one very-high-threshold rule can't
         bloat every alert document.
+
+        Returns the plain, clean list of ids only. Callers who need to know
+        whether the cap actually bit should use
+        :meth:`contributing_event_ids_with_omitted` -- review finding
+        (2026-08-27): an earlier version of this method stamped an in-band
+        `"<truncated: N omitted>"` STRING into the returned list itself, so
+        any caller treating `event_ids` as "a list of ids" (a wire/UI
+        consumer, a join against raw events) would treat that sentinel as a
+        real id. This method is kept id-list-only; the count is a sibling.
         """
+        ids, _omitted = self.contributing_event_ids_with_omitted(event)
+        return ids
+
+    def contributing_event_ids_with_omitted(self, event: dict) -> tuple[list, int]:
+        """Same as :meth:`contributing_event_ids`, but returns
+        ``(ids, omitted_count)`` -- ``omitted_count`` is 0 unless the
+        ``_MAX_CONTRIBUTING_IDS`` cap actually bit, in which case it is the
+        number of ids that were dropped (not embedded into ``ids`` itself)."""
         own_id = (event.get("siem") or {}).get("ingest_id")
         if not self.stateful:
-            return [own_id] if own_id else []
+            return ([own_id] if own_id else []), 0
         tenant = (event.get("siem") or {}).get("tenant") or "default"
         group_value = _get_path_parts(event, self._group_by_parts)
         if group_value is None:
-            return [own_id] if own_id else []
+            return ([own_id] if own_id else []), 0
         window_key = f"{self.id}:{self._namespaced_group(tenant, str(group_value))}"
         if self.distinct_field:
             # The tracked "member" for a distinct-field window IS the field
@@ -687,19 +704,16 @@ class Rule:
         # stateful alert could not tell whether the list was truncated or truly
         # only held those ids (the alert's own rule_title claims N events occurred
         # -- silent loss is exactly the gap Design-A was written to close). Cap
-        # explicitly and, ONLY when the cap actually bit, stamp a truncation
-        # marker onto the returned list so the alert doc's `event_ids` discloses
-        # that evidence was dropped rather than pretending it wasn't. Un-truncated
-        # lists are byte-identical to the pre-fix behavior.
-        truncated = len(ids) > self._MAX_CONTRIBUTING_IDS
-        if truncated:
-            omitted = len(ids) - self._MAX_CONTRIBUTING_IDS
+        # explicitly and report how many were omitted as a SEPARATE value
+        # (review finding, 2026-08-27: not embedded into the ids list itself --
+        # see contributing_event_ids's docstring for why). Un-truncated lists
+        # are byte-identical to the pre-fix behavior.
+        omitted = max(0, len(ids) - self._MAX_CONTRIBUTING_IDS)
+        if omitted:
             ids = ids[: self._MAX_CONTRIBUTING_IDS]
-            ids.append(f"<truncated: {omitted} event id(s) omitted; "
-                       f"list capped at {self._MAX_CONTRIBUTING_IDS}>")
         if not ids and own_id:
             ids = [own_id]
-        return ids
+        return ids, omitted
 
     def evaluate(self, event: dict) -> bool:
         """Return True if this rule fires for the event (incl. stateful threshold)."""

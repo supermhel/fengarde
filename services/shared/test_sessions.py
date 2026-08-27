@@ -20,6 +20,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))
 
 from shared.sessions import SessionStore, RedisSessionStore, make_session_store  # noqa: E402
+from shared import sessions as _sessions_mod  # noqa: E402
 
 FAILS: list[str] = []
 
@@ -72,6 +73,47 @@ def _body_expiry(make_store):
     store = make_store(0)  # immediate expiry
     token = store.create("bob", "viewer", "acme")
     check(store.resolve(token) is None, "a 0-ttl session must already be expired")
+
+
+def _test_redis_resolve_enforces_stored_expiry():
+    """R3-60 regression (2026-08-26/27): resolve() must reject a row whose
+    stored `expires_at` is in the past even when the Redis key's own TTL
+    has NOT yet evicted it (e.g. a TTL that was set wrong, or a replica
+    lag/clock-skew scenario where the key outlives its logical deadline).
+
+    The existing `_body_expiry` test (ttl_s=0) does NOT exercise this: on
+    RedisSessionStore, ttl_s<=0 makes create() return a token WITHOUT ever
+    writing a row (`if self.ttl_s <= 0: return token`), so resolve()==None
+    there proves "no such key", not "stored expires_at enforced". This test
+    creates a REAL row with a long TTL, then rewrites its `expires_at`
+    field directly (re-signed, matching a real tampered/stale row) to be
+    in the past while leaving the Redis TTL alone, and asserts resolve()
+    still rejects it -- proving the explicit expires_at comparison this
+    finding added, not the TTL, is what closes the request.
+    """
+    if not _redis_reachable():
+        print("  [SKIP] test_redis_resolve_enforces_stored_expiry (SESSION_TEST_REDIS!=1 or no reachable Redis)")
+        return
+    store = RedisSessionStore(ttl_s=3600)  # long TTL: the key itself must NOT have expired
+    token = store.create("eve", "viewer", "acme")
+    check(store.resolve(token) is not None, "sanity: freshly-created session must resolve")
+
+    key = _sessions_mod._REDIS_KEY_PREFIX + token
+    data = store.r.hgetall(key)
+    data.pop("sig", None)
+    data["expires_at"] = str(0.0)  # 1970 -- unambiguously in the past
+    data["sig"] = _sessions_mod._sign(data)
+    store.r.hset(key, mapping=data)
+
+    ttl_before = store.r.ttl(key)
+    check(ttl_before > 0, f"sanity: the Redis key TTL must still be live (got {ttl_before}) -- "
+          "otherwise this test proves nothing about the expires_at check specifically")
+    check(store.resolve(token) is None,
+          "resolve() must reject a row with a past expires_at even though the "
+          "Redis key's own TTL has not evicted it yet")
+    check(store.r.exists(key) == 0,
+          "resolve() must best-effort tombstone (delete) a row it rejected for "
+          "expiry, so a repeated stale resolve doesn't re-read the same dead row")
 
 
 def _body_invalidate(make_store):
@@ -133,6 +175,7 @@ def main():
         ("test_count", _body_count),
     ]:
         _run_parametrized(name, body)
+    _test_redis_resolve_enforces_stored_expiry()
 
     if FAILS:
         print(f"\n[FAIL] sessions: {len(FAILS)} problem(s)")

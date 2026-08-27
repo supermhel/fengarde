@@ -94,6 +94,16 @@ server {
     location = /api/config.js {
         default_type application/javascript;
         add_header Cache-Control "no-store";
+        # nginx `add_header` is NOT inherited from the parent `server` block
+        # once THIS block defines any add_header of its own (Cache-Control
+        # above) -- so the response carrying the API key would otherwise be
+        # the one response stripped of every security header (CSP,
+        # X-Frame-Options, nosniff, Referrer-Policy) defined at :54-57.
+        # Repeat them explicitly rather than rely on inheritance.
+        add_header X-Frame-Options "DENY" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header Referrer-Policy "no-referrer" always;
+        add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'" always;
         # Read-only bootstrap: reject any state-changing method.
         limit_except GET HEAD {
             deny all;

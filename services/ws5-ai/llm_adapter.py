@@ -36,6 +36,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -105,12 +106,26 @@ _SAFE_VERDICT = {"verdict": "unknown", "summary": "", "level": "low"}
 # junk was invisible (and every such verdict counted as a normal success). Count
 # each coercion by field; ws5-ai/main.py exposes these via /metrics.
 _LLM_OUT_OF_ENUM = {"verdict": 0, "level": 0}
+# Review finding (2026-08-27): multiple ai.requests worker threads can call
+# _normalize_verdict() concurrently, and `dict[k] += 1` is a lock-free
+# read-modify-write -- concurrent increments on the same key can lose an
+# update (the counter undercounts). Serialize the increments and the
+# snapshot read under one lock; this is a metrics counter, not a hot path,
+# so lock contention here is not a performance concern.
+_LLM_OUT_OF_ENUM_LOCK = threading.Lock()
+
+
+def _incr_out_of_enum(*fields: str) -> None:
+    with _LLM_OUT_OF_ENUM_LOCK:
+        for f in fields:
+            _LLM_OUT_OF_ENUM[f] += 1
 
 
 def coercion_stats() -> dict:
     """Process-wide counts of model outputs coerced to a safe default, by
     field (verdict/level). Read by ws5-ai/main.py's metrics provider."""
-    return dict(_LLM_OUT_OF_ENUM)
+    with _LLM_OUT_OF_ENUM_LOCK:
+        return dict(_LLM_OUT_OF_ENUM)
 
 # Upper bound on the Ollama HTTP response we will read into memory. A triage JSON
 # verdict is tiny; 1 MiB is generous headroom while still capping a runaway response.
@@ -169,8 +184,7 @@ def _normalize_verdict(raw: dict) -> dict:
         # verdicts) used to be silently discarded into the safe default with
         # no log. That is a model producing the wrong shape -- count it and say
         # so instead of pretending it never happened.
-        _LLM_OUT_OF_ENUM["verdict"] += 1
-        _LLM_OUT_OF_ENUM["level"] += 1
+        _incr_out_of_enum("verdict", "level")
         _log.warn("llm returned a non-dict JSON response; coercing to safe "
                   "default", type=type(raw).__name__)
         return dict(_SAFE_VERDICT)
@@ -183,12 +197,12 @@ def _normalize_verdict(raw: dict) -> dict:
     # no log/counter. Count + warn each field so a model drifting off the
     # closed enum surfaces instead of looking like a normal successful verdict.
     if verdict not in _VERDICTS:
-        _LLM_OUT_OF_ENUM["verdict"] += 1
+        _incr_out_of_enum("verdict")
     if level not in _LEVELS:
-        _LLM_OUT_OF_ENUM["level"] += 1
+        _incr_out_of_enum("level")
     if verdict not in _VERDICTS or level not in _LEVELS:
-            _log.warn("llm verdict coerced out-of-enum to safe default",
-                      verdict=verdict or None, severity=level or None)
+        _log.warn("llm verdict coerced out-of-enum to safe default",
+                  verdict=verdict or None, severity=level or None)
     return {
         "verdict": verdict if verdict in _VERDICTS else "unknown",
         "level": level if level in _LEVELS else "low",

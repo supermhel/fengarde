@@ -86,6 +86,20 @@ _SETTLE_S = 25
 
 FAILS: list[str] = []
 
+# Review finding (2026-08-27): every [SKIP] branch below returns 0 (pass),
+# which is right for a developer running this by hand against a partial
+# stack -- but the CI job wires this script's OWN preconditions (docker up,
+# BUS_BACKEND=redis, INVENTORY_BASELINE_SECONDS=0), so in CI a SKIP can only
+# mean the job itself is broken, and a green exit code hides that. CI sets
+# FENGARDE_E2E_STRICT=1 so a skip there is a hard failure instead.
+_STRICT = os.getenv("FENGARDE_E2E_STRICT", "").strip().lower() in ("1", "true", "yes")
+
+
+def _skip(msg: str) -> int:
+    tag = "[FAIL: unexpected skip]" if _STRICT else "[SKIP]"
+    print(f"{tag} ot new-device e2e: {msg}")
+    return 1 if _STRICT else 0
+
 
 def check(cond, msg):
     if not cond:
@@ -115,27 +129,25 @@ def _env(container: str, name: str) -> str:
 
 def main() -> int:
     if sh("docker", "version").returncode != 0:
-        print("[SKIP] ot new-device e2e: docker is not reachable.")
-        return 0
+        return _skip("docker is not reachable.")
     for c in (WS6, WS3):
         if sh("docker", "inspect", c).returncode != 0:
-            print(f"[SKIP] ot new-device e2e: {c} is not running (make up).")
-            return 0
+            return _skip(f"{c} is not running (make up).")
 
     if _env(WS6, "BUS_BACKEND") in ("", "memory"):
-        print("[SKIP] ot new-device e2e: WS-6 has no bus backend, so its "
-              "new-device signal is never republished -- the chain under test "
-              "does not exist in this deployment.")
-        return 0
+        return _skip(
+            "WS-6 has no bus backend, so its new-device signal is never "
+            "republished -- the chain under test does not exist in this "
+            "deployment.")
 
     baseline = _env(WS6, "INVENTORY_BASELINE_SECONDS")
     if baseline != "0":
-        print(f"[SKIP] ot new-device e2e: INVENTORY_BASELINE_SECONDS={baseline or 'unset (default 3600)'}. "
-              f"A first sighting inside the baseline window is treated as "
-              f"pre-existing inventory BY DESIGN, so no alert is expected and "
-              f"waiting would prove nothing. Recreate ws6 with "
-              f"INVENTORY_BASELINE_SECONDS=0 to run this.")
-        return 0
+        return _skip(
+            f"INVENTORY_BASELINE_SECONDS={baseline or 'unset (default 3600)'}. "
+            f"A first sighting inside the baseline window is treated as "
+            f"pre-existing inventory BY DESIGN, so no alert is expected and "
+            f"waiting would prove nothing. Recreate ws6 with "
+            f"INVENTORY_BASELINE_SECONDS=0 to run this.")
 
     # A MAC and a TENANT unique to this run. The MAC keeps a stale alert from
     # satisfying the assertion; the fresh tenant guarantees an open baseline
