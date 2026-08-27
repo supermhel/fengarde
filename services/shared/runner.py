@@ -49,6 +49,29 @@ from typing import Callable
 # topic -> (consumer_group, handler).  handler(payload: dict) -> None; raise to fail.
 Handlers = dict[str, "tuple[str, Callable[[dict], None]]"]
 
+from shared.log import get_logger
+_log = get_logger("shared.runner")
+
+# Gap-hunt #3 (2026-08-27): the /metrics provider path used to swallow every
+# provider error with a bare `pass` -- a broken bus factory or metrics
+# provider rendered /metrics as a silent {} with zero signal. Warn once per
+# (component, error type) so the failure is visible in the logs without
+# spamming once per /metrics scrape.
+_metric_warned: set = set()
+_metric_warn_lock = threading.Lock()
+
+
+def _warn_once(component: str, exc: BaseException) -> None:
+    key = (component, type(exc).__name__)
+    with _metric_warn_lock:
+        if key in _metric_warned:
+            return
+        _metric_warned.add(key)
+    _log.warn(
+        "metrics provider error ignored; the affected metric is unavailable "
+        "until it recovers",
+        component=component, error_type=type(exc).__name__, error=str(exc))
+
 # P2-4 (2026-07-21 audit): a poison message redelivered in a tight loop used to
 # call traceback.print_exc() on every single delivery -- turning one bad
 # message into an unbounded stderr flood (and the syscall/format cost that
@@ -56,6 +79,12 @@ Handlers = dict[str, "tuple[str, Callable[[dict], None]]"]
 # traceback at most once per _THROTTLE_WINDOW_S per (topic, exception type),
 # with a count of how many were suppressed in between.
 _THROTTLE_WINDOW_S = 30.0
+# Gap-hunt #2 (2026-08-27): _throttle_state is a module-global dict keyed
+# (topic, exc_type) that was never pruned -- a service that sees a long tail
+# of distinct (topic, exception) pairs grew it without bound. Cap it: at
+# most _THROTTLE_STATE_MAX entries, oldest (by last emission) evicted when a
+# brand-new key would push it past the cap.
+_THROTTLE_STATE_MAX = 256
 _throttle_lock = threading.Lock()
 _throttle_state: "dict[tuple[str, str], dict]" = {}
 
@@ -67,6 +96,13 @@ def _throttled_print_exc(topic: str, exc: BaseException) -> None:
         st = _throttle_state.get(key)
         if st is None or now - st["last"] >= _THROTTLE_WINDOW_S:
             suppressed = st["suppressed"] if st else 0
+            if (key not in _throttle_state
+                    and len(_throttle_state) >= _THROTTLE_STATE_MAX):
+                # bound memory (gap-hunt #2): drop the oldest bucket before
+                # inserting a brand-new one.
+                oldest_key = min(
+                    _throttle_state, key=lambda k: _throttle_state[k]["last"])
+                del _throttle_state[oldest_key]
             _throttle_state[key] = {"last": now, "suppressed": 0}
             emit = True
         else:
@@ -367,6 +403,53 @@ def _topic_worker(bus_factory, topic, group, handler, *, max_redeliveries,
             shutdown.wait(idle_sleep_s)
 
 
+def _serialize_metrics(bus_factory, handlers, metrics_provider) -> dict:
+    """Merge deadletter-topic depth + PEL-eviction counters into whatever the
+    caller's own metrics_provider already returns. A dead-letter topic has no
+    consumer group ANYWHERE in this codebase -- nothing else ever reports how
+    many messages are sitting in it, so the only way to notice a real backlog
+    was running tools/dlq_peek.py by hand (found live: raw.events.deadletter
+    held 80 real entries with zero visibility on a running Docker/Redis
+    stack). bus_factory() returns a fresh client per call; on RedisBus that
+    client points at the SAME shared server, so .depth() reads the real,
+    shared stream length. On the default MemoryBus (test/dev only) each fresh
+    instance is empty by construction, so this reads 0 there -- uninformative,
+    not misleading, consistent with MemoryBus's documented reduced-fidelity
+    scope elsewhere in this module.
+
+    A broken bus factory / depth() / provider must NEVER silent-drop (gap-
+    hunt #3): each failure is logged once per (component, error type) via
+    _warn_once so /metrics degrades to a partial dict with visible signal
+    instead of a silent {}.
+    """
+    depths = {}
+    try:
+        b = bus_factory()
+    except Exception as exc:
+        _warn_once("bus_factory", exc)
+        b = None
+    if b is not None:
+        for topic in handlers:
+            try:
+                depths[f"{topic}.deadletter_depth"] = b.depth(f"{topic}.deadletter")
+            except Exception as exc:
+                _warn_once("deadletter_depth", exc)
+            # gap-hunt (2026-08-26): _pel_evicted was counted since R3-54 but
+            # never exposed -- a group that never acks silently drops its
+            # oldest pending work forever with zero signal. MemoryBus-only
+            # (RedisBus has no synthetic PEL cap); AttributeError on RedisBus
+            # is expected and logged like depth()'s own guard.
+            try:
+                depths[f"{topic}.pel_evicted"] = b.pel_evicted(topic)
+            except Exception as exc:
+                _warn_once("pel_evicted", exc)
+    if metrics_provider is not None:
+        try:
+            depths.update(metrics_provider())
+        except Exception as exc:
+            _warn_once("metrics_provider", exc)
+    return depths
+
 def serve(handlers: Handlers, *, health_port: int | None = None,
           max_redeliveries: int = 5, shutdown: threading.Event | None = None,
           service_name: str | None = None, claim_idle_ms: int = 60000,
@@ -421,44 +504,10 @@ def serve(handlers: Handlers, *, health_port: int | None = None,
     metrics = Metrics()
 
     def _combined_metrics_provider():
-        """Merge deadletter-topic depth into whatever the caller's own
-        metrics_provider already returns. A dead-letter topic has no
-        consumer group ANYWHERE in this codebase -- nothing else ever
-        reports how many messages are sitting in it, so the only way to
-        notice a real backlog was running tools/dlq_peek.py by hand (found
-        live: raw.events.deadletter held 80 real entries with zero
-        visibility on a running Docker/Redis stack). bus_factory() returns
-        a fresh client per call; on RedisBus that client points at the SAME
-        shared server, so .depth() reads the real, shared stream length.
-        On the default MemoryBus (test/dev only) each fresh instance is
-        empty by construction, so this reads 0 there -- uninformative, not
-        misleading, consistent with MemoryBus's documented reduced-fidelity
-        scope elsewhere in this module."""
-        depths = {}
-        try:
-            b = bus_factory()
-            for topic in handlers:
-                try:
-                    depths[f"{topic}.deadletter_depth"] = b.depth(f"{topic}.deadletter")
-                except Exception:
-                    pass
-                # gap-hunt (2026-08-26): _pel_evicted was counted since R3-54
-                # but never exposed -- a group that never acks silently drops
-                # its oldest pending work forever with zero signal. MemoryBus-
-                # only (RedisBus has no synthetic PEL cap); AttributeError on
-                # RedisBus is expected and swallowed like depth()'s own guard.
-                try:
-                    depths[f"{topic}.pel_evicted"] = b.pel_evicted(topic)
-                except Exception:
-                    pass
-        except Exception:
-            pass
-        if metrics_provider is not None:
-            try:
-                depths.update(metrics_provider())
-            except Exception:
-                pass  # the health handler already treats a broken provider as non-fatal
-        return depths
+        """Merge deadletter-topic depth + PEL-eviction counters into whatever
+        the caller's own metrics_provider already returns. See
+        _serialize_metrics for the details."""
+        return _serialize_metrics(bus_factory, handlers, metrics_provider)
 
     # Health thread (stdlib ThreadingHTTPServer, mirrors ws6/app.py).
     health_srv = None

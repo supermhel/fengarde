@@ -28,6 +28,7 @@ from __future__ import annotations
 import json
 import os
 import threading
+import urllib.parse
 from dataclasses import dataclass
 from collections import defaultdict, deque
 from typing import Iterator, Optional
@@ -161,12 +162,30 @@ class _MemoryBus:
         with self._pel_lock:
             pel = self._pel[topic].setdefault(group_key, {})
             now = _t.monotonic()
+            in_flight = {m.id for m in batch}
             for msg in batch:
                 pel[msg.id] = (msg, now, 1)
-            while len(pel) > self._pel_cap:
-                oldest_id = next(iter(pel))
-                del pel[oldest_id]
-                self._pel_evicted[(topic, group_key)] += 1
+            # Gap-hunt #1 (2026-08-27): the cap's oldest-eviction used to
+            # evict entries from the batch about to be yielded -- the caller
+            # receives those messages via the iterator, but claim_pending()
+            # can no longer see them, so a handler crash on one of them
+            # loses it forever (at-least-once violation). Only evict entries
+            # from PRIOR batches; if a single batch alone exceeds the cap
+            # (pathological), keep the whole in-flight batch and log loudly
+            # instead of dropping work already handed out.
+            if len(pel) > self._pel_cap:
+                evictable = [mid for mid in pel if mid not in in_flight]
+                while len(pel) > self._pel_cap and evictable:
+                    oldest_id = evictable.pop(0)
+                    del pel[oldest_id]
+                    self._pel_evicted[(topic, group_key)] += 1
+                if len(pel) > self._pel_cap:
+                    _log.warn(
+                        "MemoryBus PEL cap exceeded with the entire current "
+                        "batch in-flight; retaining it (bounded by batch "
+                        "size) rather than evicting undelivered work",
+                        topic=topic, group=group_key, cap=self._pel_cap,
+                        pel_size=len(pel))
         for msg in batch:
             yield msg
 
@@ -691,6 +710,17 @@ class _RedisBus:
             return 0
 
 
+def _sentinel_master_url(password: str, host: str, port: int) -> str:
+    """Build the ``redis://`` URL for a Sentinel-discovered master,
+    URL-encoding the password (R3-#63, 2026-08-27). A password containing
+    reserved URL characters (``@``, ``:``, ``/``, ``#``, ...) was previously
+    interpolated raw, so redis-py's urllib.parse-based ``from_url()``
+    misparsed it (an ``@`` in the password truncated the userinfo at the
+    wrong point; a ``:`` shifted the port). ``quote(..., safe='')``
+    round-trips cleanly through ``from_url``."""
+    return f"redis://:{urllib.parse.quote(password or '', safe='')}@{host}:{port}/0"
+
+
 class _RedisSentinelBus:
     """Redis Streams bus backed by Sentinel master discovery, for the HA
     opt-in profile (see infra/docker-compose.ha.yml). Delegates every
@@ -737,7 +767,7 @@ class _RedisSentinelBus:
         # recovering by silently pinning to REDIS_URL -- is the same silent
         # degradation. discover_master raising here crashes startup.
         host, port = self._sentinel.discover_master(self._master_name)
-        new_url = f"redis://:{self._password or ''}@{host}:{port}/0"
+        new_url = _sentinel_master_url(self._password, host, port)
         self._url = new_url
         self._bus = _RedisBus(new_url)
 
@@ -750,7 +780,7 @@ class _RedisSentinelBus:
             return False
         try:
             host, port = self._sentinel.discover_master(self._master_name)
-            new_url = f"redis://:{self._password or ''}@{host}:{port}/0"
+            new_url = _sentinel_master_url(self._password, host, port)
             if new_url != self._url:
                 self._url = new_url
                 self._bus = _RedisBus(new_url)

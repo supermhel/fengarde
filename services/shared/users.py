@@ -83,6 +83,14 @@ _SCRYPT_N = 2 ** 16
 _SCRYPT_R = 8        # against brute force, fast enough not to DoS login.
 _SCRYPT_P = 1
 _SCRYPT_DKLEN = 32
+# Gap-hunt #5 (2026-08-27): verify_password reads N back out of the stored
+# hash and passes it straight to hashlib.scrypt. A corrupt or FORGED DB row
+# carrying an absurd N (e.g. 2**30) would make the login path attempt a
+# multi-GB scrypt allocation -- a login-path DoS from a single bad row.
+# Ceiling: any stored N above this fails closed BEFORE scrypt is ever
+# invoked. 2**20 is far above every legitimate value (2**14 legacy, 2**16
+# current) while still remaining a plausible upper bound.
+_SCRYPT_N_MAX = 2 ** 20
 _LEGACY_SCRYPT_N = 2 ** 14  # every hash stored before this fix used this N,
                             # unlabeled (3-field "scrypt$salt$hash" format).
 
@@ -133,7 +141,7 @@ def verify_password(password: str, stored: str) -> bool:
         if len(parts) == 4:
             algo, n_str, salt_hex, hash_hex = parts
             n = int(n_str)
-            if n <= 0:
+            if n <= 0 or n > _SCRYPT_N_MAX:
                 return False
         elif len(parts) == 3:
             algo, salt_hex, hash_hex = parts
