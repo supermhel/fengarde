@@ -186,6 +186,150 @@ def test_opensearch_cas_wire_format():
           "a hit without _seq_no/_primary_term must yield version=None")
 
 
+def test_opensearch_get_versioned_wire_format():
+    """get_versioned (2026-08-28 live-stack race fix) must issue a direct GET
+    on the EXACT (index, doc_id), not a cross-index search -- that's the
+    whole point: a GET is immediately consistent (bypasses OpenSearch's
+    refresh_interval), a _search is not."""
+    store = OpenSearchStore(url="http://fake:9200")
+    fake = _FakeTransport()
+    store._request = fake
+
+    # -- a found doc: method/path must be a plain GET on the known index,
+    #    never a wildcard search
+    fake.responses = [{"found": True, "_seq_no": 7, "_primary_term": 2,
+                        "_source": {"alert_id": "a1", "score": 70}}]
+    result = store.get_versioned("alerts-2026.07.08", "a1")
+    check(result is not None, "a found doc must return (doc, version)")
+    doc, version = result
+    check(doc == {"alert_id": "a1", "score": 70}, f"doc must be the _source, got {doc}")
+    check(version == (7, 2), f"version must be (_seq_no, _primary_term), got {version}")
+    method, path, body = fake.calls[0]
+    check(method == "GET", f"get_versioned must issue a GET, got {method}")
+    check(path == "/alerts-2026.07.08/_doc/a1",
+          f"GET must target the exact known index, not a wildcard search, got {path}")
+    check(body is None, "a GET carries no body")
+
+    # -- 404 (not found at this index) -> None, not an exception
+    fake.responses = [urllib.error.HTTPError("http://x", 404, "Not Found", {}, io.BytesIO(b"{}"))]
+    check(store.get_versioned("alerts-2026.07.08", "missing") is None,
+          "a 404 GET must return None, not raise")
+
+    # -- found:false in the body (OpenSearch's own shape for a genuinely
+    #    absent doc on some code paths) -> also None
+    fake.responses = [{"found": False}]
+    check(store.get_versioned("alerts-2026.07.08", "a1") is None,
+          "found:false in the response body must return None")
+
+    # -- a non-404 HTTP error must propagate, never be swallowed as "absent"
+    fake.responses = [urllib.error.HTTPError("http://x", 500, "boom", {}, io.BytesIO(b"{}"))]
+    try:
+        store.get_versioned("alerts-2026.07.08", "a1")
+        check(False, "a 500 must propagate, not be silently treated as not-found")
+    except urllib.error.HTTPError:
+        pass
+
+
+class _FrozenRefreshTransport:
+    """Reproduces the exact live-stack race (2026-08-28): a document GET is
+    immediately consistent, but a cross-index _search only sees state as of
+    the LAST refresh -- frozen here at construction time, deliberately never
+    advancing, to model refresh_interval lagging behind a burst of rapid
+    same-alert_id writes. GET must therefore be the path
+    `_index_alert_preserving_triage` actually uses on the hot repeat-write
+    case; a regression back to the search-based read would see this fake's
+    permanently-stale (empty) search results and either loop or duplicate.
+    """
+
+    def __init__(self):
+        self._docs: dict[tuple[str, str], tuple[dict, int, int]] = {}  # (index, id) -> (source, seq_no, term)
+        self.get_calls = 0
+        self.search_calls = 0
+
+    def __call__(self, method, path, body=None):
+        if method == "GET":
+            self.get_calls += 1
+            index, doc_id = path.split("/_doc/")
+            index = index.lstrip("/")
+            doc_id = urllib.parse.unquote(doc_id)
+            found = self._docs.get((index, doc_id))
+            if found is None:
+                raise urllib.error.HTTPError("http://x", 404, "Not Found", {}, io.BytesIO(b"{}"))
+            source, seq_no, term = found
+            return {"found": True, "_seq_no": seq_no, "_primary_term": term, "_source": source}
+        if method == "POST" and path.endswith("/_search"):
+            self.search_calls += 1
+            # Frozen: this fake's search NEVER reflects anything __call__ has
+            # written via PUT below -- exactly what an un-refreshed index
+            # looks like to a client.
+            return {"hits": {"hits": []}}
+        if method == "PUT":
+            self.search_calls += 0  # no-op, kept for readability of the branch list
+            index, rest = path.lstrip("/").split("/_doc/")
+            doc_id_part, _, query = rest.partition("?")
+            doc_id = urllib.parse.unquote(doc_id_part)
+            existing = self._docs.get((index, doc_id))
+            if "if_seq_no=" in query:
+                want_seq = int(query.split("if_seq_no=")[1].split("&")[0])
+                want_term = int(query.split("if_primary_term=")[1].split("&")[0])
+                if existing is None or existing[1] != want_seq or existing[2] != want_term:
+                    raise urllib.error.HTTPError("http://x", 409, "Conflict", {}, io.BytesIO(b"{}"))
+                new_seq = existing[1] + 1
+            else:
+                new_seq = (existing[1] + 1) if existing else 0
+            self._docs[(index, doc_id)] = (body, new_seq, 1)
+            return {"result": "updated" if existing else "created"}
+        raise AssertionError(f"unexpected call: {method} {path}")
+
+
+def test_alert_rewrite_uses_get_not_stale_search_under_frozen_refresh():
+    """The actual bug, reproduced: a stateful rule re-firing on every event
+    past its threshold (engine.py's `count >= threshold`) can emit several
+    `alerts` messages for the SAME deterministic alert_id within
+    milliseconds. Live-caught 2026-08-28 via fengarde_bench_live.py: 4/10
+    latency bursts never produced a visible alert within 120s (586
+    "exhausted 5 CAS retries" errors, 19 alert_ids) because the OLD
+    find_alert_versioned-based read saw refresh-stale (empty) search
+    results for a doc THIS SAME PROCESS had just written.
+
+    Regression shape under test: with a transport whose _search NEVER
+    reflects a write (frozen refresh), a second write to the SAME
+    (index, doc_id) must still succeed in ONE CAS attempt via the direct
+    GET path -- and must never fall back to the slow/stale search on this
+    hot repeat-write case at all.
+    """
+    import main as ws3_main  # noqa: E402 - local import, avoids polluting module scope above
+
+    store = OpenSearchStore(url="http://fake:9200")
+    fake = _FrozenRefreshTransport()
+    store._request = fake
+
+    doc1 = {"alert_id": "a1", "time": 1, "siem": {"score": 70}}
+    created = ws3_main._index_alert_preserving_triage(store, "alerts-2026.08.28", "a1", doc1)
+    check(created is True, "first write of a brand-new alert_id must create")
+    check(fake.search_calls == 1,
+          f"the CREATE path falls back to the drift-check search exactly once "
+          f"on a genuine miss -- got {fake.search_calls}")
+
+    # Second message for the SAME alert_id (the rule re-firing on the next
+    # event past threshold) -- this is where the bug lived.
+    doc2 = {"alert_id": "a1", "time": 2, "siem": {"score": 70}}
+    result2 = ws3_main._index_alert_preserving_triage(store, "alerts-2026.08.28", "a1", doc2)
+    check(result2 is False,  # False == "updated, not a fresh create" (see index_doc's contract)
+          "the second write to an already-created alert_id must be treated as an update")
+    check(fake.get_calls == 2,
+          f"the repeat write must be resolved by GET (create-read + update-read), "
+          f"got {fake.get_calls} GET call(s)")
+    check(fake.search_calls == 1,
+          f"the repeat write must NEVER fall back to the stale/frozen search -- "
+          f"a regression to find_alert_versioned here reproduces the live bug "
+          f"(got {fake.search_calls} search call(s), expected still 1 from the "
+          f"first message's genuine miss)")
+    stored = store._docs[("alerts-2026.08.28", "a1")][0] if hasattr(store, "_docs") else None
+    check(fake._docs[("alerts-2026.08.28", "a1")][0]["time"] == 2,
+          "the second (newer) payload must be what's actually stored")
+
+
 # --------------------------------------------------------------------------- #
 # 3. triage_api bounded retry over CAS conflicts
 # --------------------------------------------------------------------------- #
@@ -312,8 +456,10 @@ def main():
     test_memory_cas()
     test_memory_cas_check_then_write_is_atomic()
     test_opensearch_cas_wire_format()
+    test_opensearch_get_versioned_wire_format()
     test_triage_retry_on_conflict()
     test_concurrent_writers_same_alert_no_lost_update()
+    test_alert_rewrite_uses_get_not_stale_search_under_frozen_refresh()
     if FAILS:
         print(f"[FAIL] storage CAS: {len(FAILS)} problem(s)")
         for f in FAILS:

@@ -62,6 +62,15 @@ except ImportError:  # Windows
 ROOT = Path(__file__).resolve().parents[1]
 SERVICES = ROOT / "services"
 os.environ["BUS_BACKEND"] = "memory"
+# Review finding (2026-08-28): shared.log.Logger writes every gated-in record
+# straight to stdout, unconditional of this script's own --json flag -- a
+# single large batch (this tool's whole point) routinely exceeds
+# _MemoryBus's per-group PEL cap in one shot, which is EXPECTED here (see
+# shared/bus.py's own comment on that warn) but wrote raw log lines ahead of
+# --json's JSON blob, breaking `... | jq .`/any machine parser. setdefault,
+# not a hard override: a caller who explicitly sets FENGARDE_LOG_LEVEL (e.g.
+# to debug something) still wins.
+os.environ.setdefault("FENGARDE_LOG_LEVEL", "error")
 sys.path.insert(0, str(SERVICES))
 
 from shared.bus import Bus  # noqa: E402

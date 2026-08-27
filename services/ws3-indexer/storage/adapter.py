@@ -90,6 +90,41 @@ class StorageAdapter(abc.ABC):
         index, doc = found
         return index, doc, None
 
+    # -- live-stack race fix (2026-08-28): read-your-own-write for a KNOWN
+    # (index, doc_id) --------------------------------------------------------
+    #
+    # find_alert_versioned's cross-index _search (OpenSearchStore) is bounded
+    # by the cluster's refresh_interval (default 1s) -- fine for the triage
+    # API, which only has an alert_id and genuinely needs the cross-index
+    # lookup, but WRONG for a caller that already knows the exact index (the
+    # bus consumer, via route()): a stateful rule that re-fires on every
+    # event past its threshold (engine.py's `count >= self.threshold`, not
+    # `==`) can emit several `alerts` messages sharing one deterministic
+    # alert_id within the same burst, arriving faster than refresh_interval.
+    # Each subsequent message's find_alert_versioned then reads a STALE
+    # version (search hasn't caught up to the write this same process just
+    # made), so its index_cas conditional write loses to the REAL current
+    # state every time -- live-caught 2026-08-28 via fengarde_bench_live.py:
+    # 4/10 latency bursts never produced a visible alert within 120s, 586
+    # "exhausted 5 CAS retries" errors across 19 alert_ids in one run.
+    #
+    # get_versioned() reads by exact (index, doc_id) instead of cross-index
+    # search -- OpenSearchStore's override uses a direct GET, which is
+    # immediately consistent (bypasses the search/refresh layer entirely),
+    # closing the race for both same-process rapid succession AND a genuine
+    # concurrent cross-process writer (the triage API thread).
+    def get_versioned(self, index: str, doc_id: str):
+        """Return ``(doc, version)`` for ``(index, doc_id)`` exactly, or
+        ``None`` if absent at that index. Default degrades to
+        :meth:`find_alert_versioned` filtered by index (works, but inherits
+        whatever consistency characteristics that adapter's cross-index
+        lookup has -- third-party adapters get the old behavior, never
+        worse; see :meth:`OpenSearchStore.get_versioned` for the real fix)."""
+        found = self.find_alert_versioned(doc_id)
+        if found is None or found[0] != index:
+            return None
+        return found[1], found[2]
+
     def index_cas(self, index: str, doc_id: str, document: dict, version) -> bool:
         """Write ``document`` only if ``(index, doc_id)`` is still at
         ``version``. Returns ``True`` on success, ``False`` on a version

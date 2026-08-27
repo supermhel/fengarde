@@ -134,6 +134,19 @@ class MemoryStore(StorageAdapter):
         index, doc = found
         return index, doc, self._versions.get((index, alert_id), 0)
 
+    def get_versioned(self, index: str, doc_id: str):
+        """Exact-(index, doc_id) read -- see StorageAdapter's docstring for
+        the live-stack race this closes on OpenSearchStore. MemoryStore's
+        dict-backed reads are already immediately consistent (no
+        refresh-interval concept to lag behind), so this is the same data
+        find_alert_versioned would return, just addressed directly instead
+        of scanned for -- same lock discipline as `get()`."""
+        with self._lock:
+            doc = self._indices.get(index, {}).get(doc_id)
+            if doc is None:
+                return None
+            return doc, self._versions.get((index, doc_id), 0)
+
     def index_cas(self, index: str, doc_id: str, document: dict, version) -> bool:
         with self._lock:
             if version is None:  # legacy unconditional write
