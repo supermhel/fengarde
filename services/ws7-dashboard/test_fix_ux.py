@@ -47,7 +47,7 @@ def _node_check_inline_js(html: str):
     import subprocess
     import tempfile
 
-    scripts = re.findall(r"<script(?![^>]*\bsrc=)[^>]*>(.*?)</script>", html, re.S | re.I)
+    scripts = re.findall(r"<script(?![^>]*\bsrc=)[^>]*>(.*?)</script\s*>", html, re.S | re.I)
     # Strip the leading `//<![CDATA[` / `//]]>` wrappers some inline scripts use.
     js = "\n".join(s.strip() for s in scripts)
     if not js.strip():

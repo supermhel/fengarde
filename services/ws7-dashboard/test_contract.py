@@ -36,7 +36,7 @@ def node_check_inline_js(html):
     script the way a substring test would."""
     blocks = [
         m.group(1)
-        for m in re.finditer(r"<script(?![^>]*\bsrc=)[^>]*>(.*?)</script>", html, re.S | re.I)
+        for m in re.finditer(r"<script(?![^>]*\bsrc=)[^>]*>(.*?)</script\s*>", html, re.S | re.I)
         if m.group(1).strip()
     ]
     if not blocks:
