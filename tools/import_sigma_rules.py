@@ -422,6 +422,13 @@ def main(argv: list[str]) -> int:
         )
         for err in errors:
             print(f"   - {err}")
+        # Gap-hunt (2026-08-26) R4-112: a lossy import used to return 0, so a
+        # batch/CI loop treated a narrowed rule as a clean success. The file IS
+        # written (the operator decides whether the narrowing is acceptable),
+        # but the exit code must signal the loss so automation can notice.
+        print("[FAIL] import was LOSSY -- the written rule is not equivalent to "
+              "the Sigma original; review and re-import or edit by hand.")
+        return 1
     return 0
 
 

@@ -105,6 +105,18 @@ def main() -> None:
     print(f"WS-5 analyzed={c5['analyzed']} (passthrough stub)")
     print(f"WS-3 indexed={c3['indexed']} dup={c3['duplicates']} unroutable={c3['unroutable']}")
 
+    # --- assert R4-105: WS-5 actually consumed every ai.requests WS-4 enqueued ---
+    # Removing WS-5's run() from this script used to leave every acceptance
+    # check green (its triage stage was printed but never asserted). The
+    # passthrough stub returns one analyzed verdict per consumed ai.requests,
+    # so the honest signal is that analyzed covers the enqueued count.
+    ai_enqueued = c4.get('ai_enqueued', 0)
+    if c5.get('analyzed', 0) < ai_enqueued:
+        fails.append(
+            f"WS-5 triage stage consumed {c5.get('analyzed', 0)} ai.requests "
+            f"but WS-4 enqueued {ai_enqueued} -- the AI triage leg of the "
+            f"pipeline did not complete (R4-105)")
+
     # --- assert: 10/10 normalized to auth-failure ---
     if c2["normalized"] != 10:
         fails.append(f"expected 10 normalized auth events, got {c2['normalized']}")

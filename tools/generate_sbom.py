@@ -42,21 +42,30 @@ REQUIREMENTS_FILES = [
 ]
 
 
-def merged_requirements() -> str:
+def merged_requirements():
     """Combine every service's requirements.txt into one deduplicated,
     sorted list -- comments stripped (they're per-file context that doesn't
     survive merging meaningfully; the SBOM's provenance is this repo, not
-    the comment)."""
+    the comment).
+
+    Returns ``(text, missing)`` where ``missing`` names any EXPECTED
+    requirements file that is absent from disk. Gap-hunt (2026-08-26)
+    R4-117: a renamed/missing requirements file used to be dropped silently,
+    and ``--check`` compared two sides that BOTH omitted it, so a real repo
+    drift passed as green. The caller treats a non-empty ``missing`` as an
+    error (always in ``--check``)."""
     packages: set[str] = set()
+    missing: list[str] = []
     for rel in REQUIREMENTS_FILES:
         path = ROOT / rel
         if not path.exists():
+            missing.append(rel)
             continue
         for line in path.read_text().splitlines():
             line = line.split("#", 1)[0].strip()
             if line:
                 packages.add(line)
-    return "\n".join(sorted(packages)) + "\n"
+    return "\n".join(sorted(packages)) + "\n", missing
 
 
 def _components(path: Path) -> list:
@@ -73,7 +82,17 @@ def main() -> int:
     check_mode = "--check" in sys.argv
     before = _components(OUTPUT) if check_mode and OUTPUT.exists() else None
 
-    merged_text = merged_requirements()
+    merged_text, missing = merged_requirements()
+    if missing:
+        msg = (f"[FAIL] expected requirements files missing from disk "
+               f"({len(missing)}): {', '.join(missing)} -- a renamed or "
+               f"uncommitted requirements file silently drops those deps "
+               f"from the SBOM (R4-117).")
+        if check_mode:
+            print(msg + " Regenerate/restore them and commit the SBOM.")
+            return 1
+        print(msg + " Proceeding with the files present.")
+
     merged_path = ROOT / ".merged-requirements.txt"
     merged_path.write_text(merged_text)
 

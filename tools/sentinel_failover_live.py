@@ -116,7 +116,16 @@ def main() -> int:
 
     log = sh("docker", "exec", WS4, "sh", "-c", f"cat {LOG}").stdout
     print(log.strip())
-    rc = 0 if ("[OK]" in log or "[SKIP]" in log) else 1
+    # Gap-hunt (2026-08-26) R4-111: a post-kill [SKIP] is Sentinel FAILING to
+    # promote -- the exact HA property under test -- but it used to count as
+    # success here (rc=0 when "[OK]" OR "[SKIP]"), so "master never moved off
+    # the killed primary" passed green. After the kill ONLY "[OK]" proves the
+    # failover happened; [SKIP]/[FAIL]/no-verdict are all failures.
+    rc = 0 if "[OK]" in log else 1
+    if rc != 0:
+        print("[FAIL] post-kill probe did not report [OK] -- the Sentinel "
+              "election did not move the master (a no-promotion IS a failover "
+              "failure, not a skip).")
 
     print(f"[host] restarting {container}")
     if sh("docker", "start", container).returncode != 0:

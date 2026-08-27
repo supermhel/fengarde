@@ -93,7 +93,15 @@ def main() -> int:
 
     log = sh("docker", "exec", WS4, "sh", "-c", f"cat {LOG}").stdout
     print(log.strip())
-    rc = 0 if ("[OK]" in log or "[SKIP]" in log) else 1
+    # Gap-hunt (2026-08-26) R4-111: a post-kill [SKIP] is the primary never
+    # moving -- the exact HA property under test -- and used to count as
+    # success (rc=0 on "[OK]" OR "[SKIP]"). After the kill ONLY "[OK]" proves
+    # failover happened.
+    rc = 0 if "[OK]" in log else 1
+    if rc != 0:
+        print("[FAIL] post-kill probe did not report [OK] -- the Sentinel "
+              "election did not move the master (no-promotion is a failover "
+              "failure, not a skip).")
 
     print(f"[host] restarting {container}")
     if sh("docker", "start", container).returncode != 0:
