@@ -349,6 +349,52 @@ jobs:
   # actually build (the zero-infra gate never touches them; PR#2's live runs
   # did, but only on a developer machine). A broken Dockerfile should fail
   # here, not on an operator's first `make up`.
+  # 2026-08-27: universal container smoke -- build -> run -> health-check across
+  # EVERY app service. Closes the gap the other two live-e2e jobs (ws3-mfa,
+  # ot-new-device) leave open: they cover 2 services, and `docker-build` only
+  # builds. That means an image that BUILDS but does not BOOT (or whose health
+  # endpoint 404s, or whose /metrics is empty) shipped unchecked. This job
+  # brings up the full compose stack and runs tools/container_smoke.py, which
+  # execs into EVERY service container and asserts its health endpoint responds.
+  # Live-verified locally 2026-08-27 against the real stack: 8/8 green -- and it
+  # caught a real bug (ws7-dashboard's compose healthcheck used http://localhost/
+  # which resolved to ::1 on nginx:alpine's IPv4-only bind, so the container
+  # never reported healthy; fixed to 127.0.0.1 in infra/docker-compose.yml).
+  container-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Bring up the full stack and build every image
+        run: docker compose -f infra/docker-compose.yml up -d --build
+      - name: Wait for the stack to report healthy
+        # Same health-wait the ot-new-device job uses (ps -a includes exited
+        # init jobs; pipe-delimited so empty Health doesn't shift ExitCode).
+        run: |
+          expected=$(docker compose -f infra/docker-compose.yml config --services | wc -l)
+          for _ in $(seq 1 90); do
+            total=$(docker compose -f infra/docker-compose.yml ps -a --services | wc -l)
+            ready=$(docker compose -f infra/docker-compose.yml ps -a --format '{{.Service}}|{{.State}}|{{.Health}}|{{.ExitCode}}' \
+                    | awk -F'|' '($2=="running" && $3!="starting" && $3!="unhealthy") || ($2=="exited" && $4=="0") {c++} END{print c+0}')
+            if [ "$total" -eq "$expected" ] && [ "$ready" -eq "$expected" ]; then
+              echo "stack running ($ready/$expected)"; exit 0
+            fi
+            sleep 5
+          done
+          echo "stack did not reach healthy within 7.5 minutes"
+          docker compose -f infra/docker-compose.yml ps -a
+          exit 1
+      - name: Run universal container smoke (per-service health across all 8)
+        run: python tools/container_smoke.py
+      - name: Dump service logs on failure
+        if: failure()
+        run: docker compose -f infra/docker-compose.yml logs --tail=200
+      - name: Teardown
+        if: always()
+        run: docker compose -f infra/docker-compose.yml down -v
+
   docker-build:
     runs-on: ubuntu-latest
     steps:

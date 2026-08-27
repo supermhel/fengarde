@@ -81,6 +81,19 @@ services:
     entrypoint: ["chown", "10001:999", "/var/lib/fengarde/spool"]
     restart: "no"
 
+  # R3-20: one-shot chown for ws3-indexer's audit/RBAC named volume. Same
+  # one-shot + restart:"no" pattern as ws1-spool-init above: a fresh named
+  # volume mounts root:root, but ws3-indexer runs as uid 10001 (Dockerfile
+  # USER app), so the first audit.jsonl or RBAC sqlite write would Permission
+  # denied without this. No-op once ownership is already correct.
+  ws3-indexer-init:
+    image: busybox:1.36
+    container_name: siem-ws3-indexer-init
+    volumes:
+      - ws3-indexer-data:/app/ws3-indexer/data
+    entrypoint: ["chown", "10001:10001", "/app/ws3-indexer/data"]
+    restart: "no"
+
   # ---- workstream services (build context = repo root) ----
   ws1-collectors:
     build: { context: .., dockerfile: services/ws1-collectors/Dockerfile }
@@ -146,9 +159,24 @@ services:
       - TRIAGE_PORT=8013
       # v0.4 Track S1: opt-in shared-secret auth (unset = open + warning log).
       - FENGARDE_API_KEY=${FENGARDE_API_KEY:-}
+      # R3-20: audit.jsonl (default /app/ws3-indexer/storage/audit.jsonl) and the
+      # opt-in RBAC sqlite (FENGARDE_RBAC_DB) must survive a container recreate --
+      # point both into the named volume mounted at /app/ws3-indexer/data below.
+      # RBAC stays UNOFFBIG (the pre-M4.2 default) unless the operator sets
+      # FENGARDE_RBAC_DB to a path inside this same volume.
+      - FENGARDE_AUDIT_LOG=/app/ws3-indexer/data/audit.jsonl
+      # - FENGARDE_RBAC_DB=/app/ws3-indexer/data/rbac.sqlite
+    # Deploy fix (same bug class as ws1's spool volume, live-docker-caught
+    # 2026-08-21): a fresh named volume is created root:root, but this service
+    # drops to uid 10001 (Dockerfile USER app) -- without a one-shot chown the
+    # FIRST audit write (and any RBAC sqlite) hits Permission denied. ws3-data-init
+    # chowns /app/ws3-indexer/data to 10001 before the service starts.
+    volumes:
+      - ws3-indexer-data:/app/ws3-indexer/data
     depends_on:
       redis: { condition: service_healthy }
       opensearch: { condition: service_healthy }
+      ws3-indexer-init: { condition: service_completed_successfully }
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8003/health', timeout=3)"]
       interval: 20s
@@ -203,6 +231,15 @@ services:
     ports: ["127.0.0.1:8000:8000"]
     volumes: ["inventory-data:/data"]
     depends_on: { redis: { condition: service_healthy } }
+    # R3-19: bus-consumer health (INVENTORY_BUS_HEALTH_PORT, default 8006) is the
+    # live liveness signal -- the consumer daemon thread can die while the HTTP
+    # server keeps answering (gap-hunt #24). Wired since 2026-08-26; now enforced.
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8006/health', timeout=3)"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
     environment:
       # v0.4 Track S1: opt-in shared-secret auth (unset = open + warning log).
       - FENGARDE_API_KEY=${FENGARDE_API_KEY:-}
@@ -234,6 +271,20 @@ services:
     # reach it to ship logs.)
     ports: ["127.0.0.1:8080:80"]
     depends_on: [ws6-inventory]
+    # R3-19: nginx:alpine ships busybox `wget` (not curl/python), so the liveness
+    # probe is a wget GET of the root page (fails on non-2xx) -- functionally the
+    # "curl -f http://localhost/" check, written to the image's actual tooling.
+    # 2026-08-27 live-verified: `localhost` can resolve to ::1 first; nginx:alpine
+    # binds 0.0.0.0:80 (IPv4) only, so `wget http://localhost/` got "Connection
+    # refused" and the container never reported healthy. Probe 127.0.0.1 (IPv4)
+    # explicitly -- this is why the universal container-smoke caught ws7-dashboard
+    # as unhealthy while its nginx was actually up.
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1/ || exit 1"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
     environment:
       # v0.4 Track S1: forwarded to ws3-indexer on the triage proxy so the
       # browser never holds the key. Must match ws3-indexer's FENGARDE_API_KEY.
@@ -299,3 +350,5 @@ volumes:
   prometheus-data:
   grafana-data:
   ws1-spool:
+  # R3-20: ws3-indexer persists audit.jsonl + opt-in RBAC sqlite (FENGARDE_RBAC_DB).
+  ws3-indexer-data:
