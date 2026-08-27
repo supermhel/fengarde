@@ -43,7 +43,8 @@ case "$OS" in
       current="$(sysctl -n vm.max_map_count 2>/dev/null)"
     fi
     if [ -z "$current" ]; then
-      warn "Could not read vm.max_map_count. If OpenSearch fails to boot, run:"
+      fail "Could not read vm.max_map_count. OpenSearch WILL crash on boot if it is"
+      note "         too low. Could you check it yourself, then set:"
       note "         sudo sysctl -w vm.max_map_count=$REQUIRED_MAP_COUNT"
     elif [ "$current" -ge "$REQUIRED_MAP_COUNT" ] 2>/dev/null; then
       ok "vm.max_map_count = $current (>= $REQUIRED_MAP_COUNT)"
@@ -60,7 +61,7 @@ case "$OS" in
     note "         If OpenSearch still fails to boot, ensure Docker Desktop is up to date."
     ;;
   *)
-    warn "Unknown OS ($OS): cannot check vm.max_map_count."
+    fail "Unknown OS ($OS): cannot verify vm.max_map_count -- cannot bless this machine."
     note "         On Linux/WSL2 this must be >= $REQUIRED_MAP_COUNT:"
     note "           sudo sysctl -w vm.max_map_count=$REQUIRED_MAP_COUNT"
     ;;
@@ -165,6 +166,33 @@ else
       fail "UDP port $p could not be checked (no lsof/ss/netstat)."
     fi
   done
+fi
+echo ""
+
+# --- 4. REDIS_PASSWORD URL safety -------------------------------------------------
+# R3-28: infra/docker-compose.yml interpolates the bus URL as
+# redis://:${REDIS_PASSWORD}@redis:6379/0 -- no URL-encoding. If the password
+# contains one of the reserved URL characters (@ : / %), the URL is malformed:
+# the password (or a split after "/") corrupts the URL and every service that
+# builds its Redis client off REDIS_URL fails to authenticate, with an opaque
+# "wrong number of arguments for 'auth'"-class error. Best-fail-loud: block
+# REDIS_PASSWORD (when set) from containing those characters, so an operator
+# finds out in the doctor, not after a green-looking `make up`.
+echo "4. REDIS_PASSWORD (if set) contains no unencoded URL-reserved characters"
+if [ -n "${REDIS_PASSWORD:-}" ]; then
+  case "$REDIS_PASSWORD" in
+    *'@'*|*':'*|*'/'*|*'%'*)
+      fail "REDIS_PASSWORD contains @, :, /, or % -- those break the bus URL"
+      note "         (infra/docker-compose.yml uses redis://:${REDIS_PASSWORD}@redis:6379)."
+      note "         Set REDIS_PASSWORD to a value without those characters and re-run:"
+      note "           export REDIS_PASSWORD=\$(openssl rand -hex 16)"
+      ;;
+    *)
+      ok "REDIS_PASSWORD is URL-safe (no @ : / % characters)."
+      ;;
+  esac
+else
+  note "         (REDIS_PASSWORD unset -> Redis AUTH off; nothing to check.)"
 fi
 echo ""
 

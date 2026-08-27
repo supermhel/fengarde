@@ -127,6 +127,9 @@ echo
 echo "== shared bus lag (P1-7: real backlog signal; RedisBus half is opt-in via make test-live) =="
 $PY services/shared/test_bus_lag.py || fail=1
 echo
+echo "== shared bus fan-out (multi-consumer-group fan-out + ack independence) =="
+$PY services/shared/test_bus_groups.py || fail=1
+echo
 echo "== shared bus read count (P1-8: XREADGROUP batch size; RedisBus-only, opt-in via make test-live) =="
 $PY services/shared/test_bus_read_count.py || fail=1
 echo

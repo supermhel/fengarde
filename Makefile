@@ -58,7 +58,7 @@ e2e:
 nis2-demo:
 	@$(PYTHON) tools/demo_nis2.py
 
-up:
+up: preflight
 	$(COMPOSE) up -d
 
 down:

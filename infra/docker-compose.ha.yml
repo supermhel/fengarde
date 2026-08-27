@@ -110,6 +110,11 @@ services:
       - REDIS_PASSWORD=${REDIS_PASSWORD:?Set REDIS_PASSWORD before starting HA Redis}
     volumes: ["redis-data-ha-2:/data"]
     depends_on: {redis-1: {condition: service_healthy}}
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
     networks:
       ha:
         ipv4_address: 172.28.0.12
@@ -129,6 +134,11 @@ services:
       - REDIS_PASSWORD=${REDIS_PASSWORD:?Set REDIS_PASSWORD before starting HA Redis}
     volumes: ["redis-data-ha-3:/data"]
     depends_on: {redis-1: {condition: service_healthy}}
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
     networks:
       ha:
         ipv4_address: 172.28.0.13
@@ -413,11 +423,16 @@ services:
       # green on any single node loss, but the writer (pinned to opensearch-1
       # alone) would still go down with it.
       - OPENSEARCH_URL=http://opensearch-1:9200,http://opensearch-2:9200,http://opensearch-3:9200
+    # ws3-indexer-init re-listed here: the base file's depends_on (which includes
+    # it for the audit/RBAC-volume chown ordering) is fully replaced by !override
+    # under the HA profile, so without this the volume might mount root:root with
+    # no prior chown. Same convention as ws1-spool-init above.
     depends_on: !override
       redis-1: {condition: service_healthy}
       opensearch-1: {condition: service_healthy}
       opensearch-2: {condition: service_healthy}
       opensearch-3: {condition: service_healthy}
+      ws3-indexer-init: {condition: service_completed_successfully}
     networks: [default, ha]
 
   ws4-detection:

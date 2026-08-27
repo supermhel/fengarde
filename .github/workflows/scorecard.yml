@@ -19,7 +19,8 @@ on:
   # tools/verify_action_pins.py; this covers the part only execution can.
   workflow_dispatch: {}
 
-permissions: read-all
+permissions:
+  contents: read
 
 jobs:
   analysis:
