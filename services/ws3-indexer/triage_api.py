@@ -672,6 +672,41 @@ def route_post_triage(self, alert_id: str):
     return self._send(409, {"error": "conflicting concurrent updates, retry"})
 
 
+class _DepsAccess:
+    """Descriptor giving `deps` on BOTH the instance (routes: self.deps.store)
+    and the make_handler-rendered subclass (test: Handler_Class.deps.store).
+
+    A bare @property is only invoked on INSTANCE access; `SomeClass.deps`
+    returns the property object itself, breaking the route-decomposition test
+    that inspects the returned handler class's `.deps.store`. This descriptor
+    delegates to the class attribute `_deps` for both access modes.
+    """
+    __slots__ = ("_name",)
+
+    def __set_name__(self, owner, name):
+        self._name = name
+
+    def __get__(self, obj, objtype=None):
+        # Instance access (obj is the Handler instance): find `_deps` on the
+        # instance OR its class/MRO (make_handler sets it as a class attribute
+        # on the returned subclass). Class access (`Handler_Class.deps`, obj is
+        # None -> objtype is the class) resolves the same way.
+        deps = None
+        if obj is not None and "_deps" in obj.__dict__:
+            deps = obj.__dict__["_deps"]
+        if deps is None:
+            for base in objtype.__mro__:
+                if "_deps" in base.__dict__:
+                    deps = base.__dict__["_deps"]
+                    break
+        if deps is None:
+            raise RuntimeError("Handler.deps accessed before make_handler bound it")
+        return deps
+
+    def __set__(self, obj, value):
+        obj._deps = value
+
+
 class Handler(BaseHTTPRequestHandler):
     """Thin assembled HTTP handler. Shared request helpers live here; the
     per-route logic lives in the module-level `route_*`/`mfa_*` functions.
@@ -680,7 +715,11 @@ class Handler(BaseHTTPRequestHandler):
 
     timeout = 15
 
-    deps: "_Deps | None" = None  # set on the per-server subclass by make_handler
+    # Set on the per-server subclass by make_handler. Declared as Optional but
+    # ALWAYS present on a server built by make_handler; `deps` (the custom
+    # descriptor below) narrows the type + fails loud if accessed bare.
+    _deps: "_Deps | None" = None
+    deps = _DepsAccess()
 
     # -- shared helpers (request-scoped) ------------------------------------
 
@@ -954,7 +993,7 @@ def make_handler(store, users_db=None, sessions: SessionStore | None = None,
     _audit = audit_log if audit_log is not None else audit.default_audit()
 
     class _BoundHandler(Handler):
-        deps = _Deps(store=store, users_db=users_db, sessions=sessions,
+        _deps = _Deps(store=store, users_db=users_db, sessions=sessions,
                      rate_limiter=rate_limiter, audit_log=_audit,
                      rbac_enabled=rbac_enabled)
 
