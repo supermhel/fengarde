@@ -214,12 +214,13 @@ def _find_fixture_sources() -> set[str]:
         crp = ROOT / "tools" / "check_rule_producers.py"
         if crp.exists():
             spec = importlib.util.spec_from_file_location("crp_fixtures", crp)
-            mod = importlib.util.module_from_spec(spec)
-            try:
-                spec.loader.exec_module(mod)  # type: ignore[union-attr]
-                sources |= set(getattr(mod, "FIXTURES", {}))
-            except Exception:
-                pass
+            if spec is not None and spec.loader is not None:
+                mod = importlib.util.module_from_spec(spec)
+                try:
+                    spec.loader.exec_module(mod)
+                    sources |= set(getattr(mod, "FIXTURES", {}))
+                except Exception:
+                    pass
     else:
         sources |= set(getattr(check_rule_producers, "FIXTURES", {}))
     # 2) parsed ws2 contract-test samples (mocks/*.json).
@@ -532,7 +533,10 @@ def _require_hashes(pins: dict[str, str], req: Path) -> list[str]:
     for i, line in enumerate(lines):
         if not re.match(r"\s*(PyYAML|redis)==[\d.]+", line):
             continue
-        pkg = re.match(r"\s*(PyYAML|redis)", line).group(1)
+        m = re.match(r"\s*(PyYAML|redis)", line)
+        if m is None:
+            continue
+        pkg = m.group(1)
         # continuation: the next line (or a following indented line) must be
         # a --hash= entry for this same package block.
         has_hash = False
