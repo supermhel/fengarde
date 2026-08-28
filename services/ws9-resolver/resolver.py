@@ -342,7 +342,8 @@ class EntityResolver:
             side[member] = time_ms
             if len(side) > self.member_cap:
                 # Evict the OLDEST member (by time) -- mirror ws8:466-471.
-                oldest = min(side, key=side.get)
+                # Typed key fn (mypy: dict.get is overloaded -> arg-type).
+                oldest = min(side, key=lambda k: side[k])
                 del side[oldest]
                 # Remember it in the bounded evicted-LRU so a redelivery of the
                 # evicted alert is NOT counted as a fresh state change (D3).

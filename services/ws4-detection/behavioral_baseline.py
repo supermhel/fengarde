@@ -162,7 +162,7 @@ class BehavioralBaseline:
     def __init__(
         self,
         *,
-        counter: Optional[object] = None,
+        counter: Optional["DequeWindowCounter"] = None,
         warm_up_ms: int = 86_400_000,  # 24h: reference window AND maturity span
         min_observations: int = 50,
         max_entities: int = 10_000,

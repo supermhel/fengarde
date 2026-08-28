@@ -212,8 +212,8 @@ def _edge_spec(type_a: str, type_b: str) -> "tuple[str, str, str] | None":
     ordering reasons."""
     if type_a == type_b:
         return None
-    key = tuple(sorted((type_a, type_b), key=_ENTITY_TYPE_ORDER.index))
-    return _EDGE_KINDS[key]
+    pair: "tuple[str, str]" = tuple(sorted((type_a, type_b), key=_ENTITY_TYPE_ORDER.index))  # type: ignore[assignment]
+    return _EDGE_KINDS[pair]
 
 
 def _provenance_event_id(alert: dict, member_id: str) -> str:
