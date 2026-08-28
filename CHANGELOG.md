@@ -8,6 +8,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed (2026-08-28, WS-3: live-stack CAS race under stateful-rule re-fire)
+### Added (2026-08-28, Phase 2 — entity/context plane: ADR-009 + WS-9 resolver + incident graph + baselines)
+
+- **ADR-009 (owner-ratified): entity-plane bus topics.** `docs/adr/009-entity-plane-bus-topics.md`
+  + `contracts/bus-topics.md` amended with two additive topics: `entity.updates` (deterministic
+  entity_id, idempotent under redelivery) and `incident.graph` (version 1, provenance-carrying
+  edges, no transitive inference), plus a **new WS-9 resolver service**.
+- **WS-9 entity resolver (WP-2-B).** `services/ws9-resolver/` — sha256(tenant|type|canonical)
+  entity_id; edge canonicalization mirroring ws8 (IP via `shared.ocsf.valid_ip`, MAC lowercased,
+  usernames case-folded); replay-safe; emits `entity.updates` on the memory bus; INTERFACE.md.
+- **Incident relationship edges (WP-2-C).** WS-8 correlator now emits `incident.graph` with
+  provenance edges — only same-alert co-occurrences (no transitive inference, proven by test),
+  redelivery-identical, member-set-bounded, pruned by the existing `_sweep_dead_tracks`.
+- **Behavioral baselines (WP-2-D).** `services/ws4-detection/behavioral_baseline.py` —
+  learn-then-detect baselines reusing `shared.window.DequeWindowCounter` (no new store),
+  bounded/deterministic/replay-safe. Not wired into the rule engine yet (honest scope).
+- **OT point config (WP-2-E).** `contracts/ot-points/` — machine-readable OT point map
+  (meaning/criticality/allowed-writers/maintenance-window), twin-derived sample; documents the
+  FPR relationship honestly.
+- **Exposure-aware scoring schema (WP-2-F).** `contracts/scoring.yaml` gains an inert
+  (enabled:false) `exposure` extension; schema-additive; wired `test_exposure_scoring.py`.
+- **Sanitizer gap fix (WP-2-G).** `ws2-normalization/main.py` `_FREE_TEXT_PATHS` extended to
+  cover real mapped free-text gaps (`api.operation`, `actor.user.domain`, `actor.user.uid`);
+  `unmapped.*` wildcard confirmed mutation-sound. (Roadmap's "_FREE_TEXT_PATHS gone" claim was
+  stale — it lives in `main.py`.)
+- **Bounded per-IP enrichment cache (WP-2-H).** `Enricher` gains an OrderedDict per-IP result
+  cache (cap 10_000, LRU, miss-marker; junk IPs never cached); additive, thread-safe.
+- **triage_api decomposition (WP-2-I).** `services/ws3-indexer/triage_api.py` decomposed:
+  ~788-line closure → ~30-line assembler + 16 per-route `Handler` functions + `ROUTE_INVENTORY`;
+  behavior-preserving (ws3 suite incl. MFA live-e2e green).
+
+### Added (2026-08-28, MSSP distribution: partner list + quickstart went live)
 
 Re-measuring the README's live-stack Performance table surfaced a real bug
 instead of clean numbers: 4/10 latency bursts against the live Docker stack
