@@ -170,30 +170,30 @@ python tools/fengarde_bench.py --events 20000 --mixed
 ```
 
 One-command, reproducible by anyone with a clone — no Docker required. Measured
-2026-08-07 on the same class of sandbox host as the original 2026-07-16 number
-(not a fixed reference VPS, see caveat below):
+2026-08-28 (not a fixed reference VPS, see caveat below), re-measured after
+`shared/bus.py`'s per-group PEL rewrite (2026-08-27) which raised throughput
+from the prior 2026-08-07 numbers rather than lowering it:
 
 | Metric | Value |
 |---|---|
-| Sustained EPS (5,000 events, `linux_ssh` only) | ~570 events/sec |
-| Sustained EPS (20,000 events, mixed `ssh`/`asa`/`generic_syslog`) | ~1,300-1,600 events/sec |
-| Peak resident memory (20,000-event run) | ~100 MB |
+| Sustained EPS (5,000 events, `linux_ssh` only) | ~985 events/sec |
+| Sustained EPS (20,000 events, mixed `ssh`/`asa`/`generic_syslog`) | ~2,500-2,650 events/sec |
+| Peak resident memory (20,000-event run) | ~114 MB |
 
-**Down from the 2026-07-16 numbers (~13,000 EPS) — two separate causes, not one:**
-(1) a real bug in the benchmark script itself: synthetic events were timestamped
-marching *forward* from "now" (`base_s + seq`), so past ~300 events every
-subsequent event tripped the engine's 5-minute future-event anti-poisoning
-guard, flooding stdout with one warning per stateful rule per event during the
-timed section — fixed 2026-08-07 (`tools/fengarde_bench.py`, same bug class
-already fixed once in `eval/attack/fire_check.py` and once in
-`tools/chaos_test.py`, never applied here). (2) even after that fix, real
-throughput is genuinely lower than 2026-07-16 — the code now does more work per
-event than it did then (a larger rule set, the A5 enrichment stage, the M1
-recursive log-injection sanitizer over `unmapped.*`, structured logging
-replacing bare `print()`), and nobody has re-profiled where the remaining cost
-actually goes. Read this as the current honest number, not a regression that's
-been root-caused down to a single line — if raw batch throughput matters for
-your deployment, treat ~1,500 EPS as today's real baseline, not ~13,000.
+**Up from the 2026-08-07 numbers (~1,300-1,600 EPS)** — the per-group PEL
+rewrite that landed in the WS-8 gap-hunt (PR#74, 2026-08-27) changed
+`_MemoryBus`'s consume/produce/ack internals; nobody has profiled exactly
+which part of that rewrite the gain comes from, so read this as the current
+honest number, not a root-caused optimization result. **A real bug was found
+and fixed in the same pass**: the rewrite's new PEL-cap warning
+(`shared/bus.py`, fires when a single batch exceeds the configurable
+in-flight cap — expected and harmless for this tool's deliberately oversized
+one-shot batches) wrote straight to stdout unconditional of this script's
+own `--json` flag, so `python tools/fengarde_bench.py --json | jq .` failed
+on the log lines ahead of the JSON blob. Fixed 2026-08-28
+(`tools/fengarde_bench.py` sets `FENGARDE_LOG_LEVEL=error` for its own run,
+`setdefault` so an explicit caller override still wins) — `--json` output is
+clean JSON again, verified by piping it straight through `json.load`.
 
 **Read before citing these numbers anywhere:** this is a **zero-infra CPU-bound
 baseline** — one process, the in-memory bus, `MemoryStore` — measuring how fast
@@ -204,20 +204,21 @@ claim on its own — see the live-stack numbers directly below for that side of 
 
 **Rule-prefilter before/after** (`--compare-prefilter`, closes a TODO this
 section used to list): on the current 28-rule set, WS-4's B1 class_uid bucket
-index measured **1.18x faster** than a forced linear scan of every rule
-against every event (7.34s vs 8.67s detect-stage time, 20,000 mixed events).
-Real but modest at this rule count — consistent with B1's own "matters more
-past ~50 rules" framing; re-run this as the rule set grows.
+index measured **1.12x faster** than a forced linear scan of every rule
+against every event (5.80s vs 6.51s detect-stage time, 20,000 mixed events,
+re-measured 2026-08-28). Real but modest at this rule count — consistent with
+B1's own "matters more past ~50 rules" framing; re-run this as the rule set
+grows.
 
 **Live-stack numbers** (`tools/fengarde_bench_live.py`, needs `make up` /
 Docker running — closes the "no p50/p99, no live EPS" TODO this section used
-to carry): measured 2026-08-19 against the real Redis + OpenSearch stack —
+to carry): re-measured 2026-08-28 against the real Redis + OpenSearch stack —
 
 | Metric | Value |
 |---|---|
-| Live sustained EPS (5,000 mixed events, real Redis + real OpenSearch) | ~44 events/sec |
-| Ingest→alert latency, p50 (10 brute-force bursts) | ~2,052 ms |
-| Ingest→alert latency, p99 (10 brute-force bursts) | ~2,061 ms |
+| Live sustained EPS (5,000 mixed events, real Redis + real OpenSearch) | ~43.9 events/sec |
+| Ingest→alert latency, p50 (10 brute-force bursts) | ~2,045 ms |
+| Ingest→alert latency, p99 (10 brute-force bursts) | ~2,063 ms |
 
 An order of magnitude below the zero-infra ~1,500 EPS number above, as
 expected once real Redis Streams network I/O and real OpenSearch indexing
@@ -226,6 +227,27 @@ bounded by) are actually in the loop — this is the honest "closer to
 production" number, the batch number above is the CPU-bound ceiling. Same
 "not a fixed reference box" caveat: this ran on whatever machine invoked it,
 not the roadmap's defined 4 vCPU / 8 GB reference VPS.
+
+**2026-08-28 fix note:** this re-measurement is what caught a real bug, not
+just a refresh — the previous run (2026-08-19) silently ate 4/10 latency
+bursts (586 "exhausted CAS retries" errors, alerts never landing within the
+120s timeout) because `_index_alert_preserving_triage` in
+`services/ws3-indexer/main.py` read the *current* alert state via a
+cross-index **search** (`find_alert_versioned`), which is bounded by
+OpenSearch's default 1s `refresh_interval`. A stateful detection rule
+re-fires on every event once past its threshold, so one burst can emit
+several `alerts` messages for the *same* deterministic `alert_id` within
+milliseconds — each retry's search-based read saw stale, already-superseded
+state and lost every CAS attempt against a write the same process had just
+made moments earlier. Fixed by adding `StorageAdapter.get_versioned()` — an
+exact `(index, doc_id)` read (a direct GET on OpenSearch, immediately
+consistent, no refresh lag) — and using it as the primary read in the CAS
+retry loop, falling back to the cross-index search only on a genuine miss
+(preserving the existing day-boundary routing-drift check). Regression test:
+`services/ws3-indexer/test_storage_cas.py::test_alert_rewrite_uses_get_not_stale_search_under_frozen_refresh`,
+mutation-verified (reverting the fix reproduces the exact failure signature
+against a fake transport with permanently-stale search). The table above is
+the post-fix run: 10/10 bursts succeeded, zero CAS-exhaustion errors.
 
 ---
 
