@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (2026-08-28, Phase 0 + Phase 1 packages: coverage guard, nightly eval, supply chain, AI-to-OT twin)
+
+- **Lane-coverage meta-guard (WP-0.1-A, never-cut).** `tools/check_lane_coverage.py` — 6
+  coverage assertions (bus-dependent compose services ↔ `tools/chaos_test.py::KILL_TARGETS`;
+  registered parsers ↔ fixture + fuzz harness + `fuzz.yml`; `contracts/rules/*.yml` ↔ ATT&CK
+  scorecard input; `test_*_live*.py` ↔ CI or an explicit allowlist; HTTP-surface auth ↔ an
+  auth call or `FENGARDE-OPEN-BY-DESIGN` marker; cross-service pip-pin consistency) plus a
+  `--self-test` anti-dormancy guard proving each assertion can turn RED. Wired into
+  `run_all_tests.sh` as a hard FAIL in both modes. WP-0.1-B (HTTP-surface auth) folds in as
+  assertion #5: `/metrics` + `/metrics/prom` are now a **recorded** accepted open surface
+  (inline marker in `services/shared/runner.py`, documented in `SECURITY.md` §11).
+- **Nightly evaluation workflow (WP-0.2-A + 0.2-B).** `.github/workflows/nightly-eval.yml`
+  (cron 03:00 UTC, SHA-pinned, opt-in live lane) runs the detection-quality canary, EVTX and
+  Splunk corpus replays, and appends one row per run to the committed `eval/trend.jsonl`
+  (real first row: macro-F1 0.875, with `untested_rules` explicit). The lane also asserts the
+  WS-4 rule-health Prometheus series on a live scrape when configured.
+- **Cosign + SLSA release signing (WP-0.3-A1).** `.github/workflows/release.yml` — keyless
+  cosign signing of release artifacts + images, SLSA v1 provenance via
+  `slsa-github-generator`, all SHA-pinned; `SECURITY.md` gains a "Verifying release artifacts"
+  section with copy-pasteable verification commands. (OpenSSF Best Practices badge = owner
+  follow-up.)
+- **pip hash-pinning (WP-0.3-A2 + A3).** Every service `requirements.txt` now carries real
+  `sha256 --hash` entries for its entire third-party surface (redis 8.1.0 + PyYAML), so
+  `pip install --require-hashes` is enforceable; PyYAML pin drift unified to **6.0.2**
+  across all 8 services (ws8 was on 6.0.3).
+- **AI-to-OT attack-chain twin (WP-1-A..G, Phase 1).** `eval/twin/` — `plc_sim.py`
+  (deterministic, loopback-only simulated PLC), `scenario.py` (7-step AI-to-OT chain in RAW
+  source formats through the real parsers; the un-parserable `external_content` step is
+  reported as a gap, never faked), `oracle.yaml` (machine-readable grading target, all
+  referenced rule IDs real), `negative_controls.py` (4 benign scenarios — measured
+  **FPR 1/4 = 0.25**, a real finding not hidden), `degradation.py` (delay/duplicate/
+  reorder/loss, deterministic, loss is strict-subset), `report.py` + `make twin` + nightly
+  lane (full scorecard: TPR 1.0, FPR 0.25, chain_fidelity 0.0 honestly, all metrics
+  harness-measured), and **`baseline.json` frozen (WP-1-G)** before Phase 2's entity plane.
+
 ### Added (2026-08-28, MSSP distribution: partner list + quickstart went live)
 
 - **MSSP partner registration path live.** `docs/mssp-quickstart.md` linked from README; draft

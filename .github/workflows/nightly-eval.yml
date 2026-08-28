@@ -1,0 +1,230 @@
+# Nightly detection-accuracy evaluation (WP-0.2-A + WP-0.2-B).
+#
+# Re-measures detection quality on a schedule and appends ONE row to the
+# committed trend file eval/trend.jsonl so a published macro-F1 number cannot
+# silently decay into a claim nobody regenerated.
+#
+# This is an OPT-IN LIVE lane, deliberately NOT part of the zero-infra PR gate
+# (ci.yml / run_all_tests.sh): it fetches the two GITIGNORED third-party
+# corpora (EVTX-ATTACK-SAMPLES, splunk/attack_data) and replays them through
+# the real WS-2 -> WS-4 pipeline. It must not fail the zero-infra gate just
+# because a corpus download is unavailable, but a download that is ATTEMPTED
+# and ERRORS must fail LOUDLY (never a silent skip), while an
+# intentionally-off lane (repo var NIGHTLY_EVAL_MODE=quality-only) skips
+# cleanly with a message.
+#
+# fire_check.py is intentionally NOT wired here: it is already a BLOCKING step
+# of the zero-infra gate (run_all_tests.sh, M7) and runs on its own synthetic
+# fixtures. This nightly lane is for the CORPUS oracle runs (evtx/splunk) which
+# are today manual -- see eval/detection_accuracy/README.md.
+#
+# Actions are SHA-pinned to 40-char commit SHAs, matching the convention used
+# across every workflow in this repo (ci.yml pins all 35 uses; see
+# tools/verify_action_pins.py).
+name: Nightly Eval
+
+on:
+  schedule:
+    # 03:00 UTC daily.
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+
+# Least-privilege default (mirrors ci.yml): read repo contents; the only write
+# is the per-run trend artifact upload (actions/upload-artifact), which --
+# as in ci.yml's attack-scorecard job -- needs no extra repo write scope.
+permissions:
+  contents: read
+
+jobs:
+  nightly-eval:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Install deps
+        # python-evtx: required by the EVTX corpus lane (both corpora eval
+        # scripts SKIP cleanly without it, but this lane fetches the corpus so
+        # it is a real dependency here, not optional).
+        run: pip install pyyaml python-evtx
+
+      # ---- corpus fetch (opt-in live lane) --------------------------------
+      # NIGHTLY_EVAL_MODE is a repository variable:
+      #   unset / "corpus"  -> clone both corpora; a failed clone FAILS the job
+      #                        loudly (a broken download is never silent).
+      #   "quality-only"    -> skip the fetch + evtx/splunk lanes cleanly; the
+      #                        zero-infra quality canary + trend row still run.
+      - name: Fetch corpus corpora (EVTX-ATTACK-SAMPLES + splunk/attack_data)
+        env:
+          NIGHTLY_EVAL_MODE: ${{ vars.NIGHTLY_EVAL_MODE }}
+        run: |
+          set -euo pipefail
+          if [ "${NIGHTLY_EVAL_MODE:-corpus}" = "quality-only" ]; then
+            echo "[SKIP] NIGHTLY_EVAL_MODE=quality-only -- corpus fetch + evtx/splunk lanes disabled; clean skip, not a failure."
+            exit 0
+          fi
+          echo "Cloning EVTX-ATTACK-SAMPLES (GPL-3.0, gitignored)..."
+          git clone --depth 1 https://github.com/sbousseaden/EVTX-ATTACK-SAMPLES eval/detection_accuracy/evtx-samples
+          echo "Cloning splunk/attack_data (gitignored)..."
+          git clone --depth 1 https://github.com/splunk/attack_data eval/detection_accuracy/splunk-attack-data
+
+      # ---- eval entry points ----------------------------------------------
+      - name: Detection-quality canary (macro-F1 floor, zero-infra)
+        run: python tools/detection_quality_eval.py
+
+      - name: EVTX oracle replay (corpus lane)
+        run: python eval/detection_accuracy/evtx_eval.py
+
+      - name: Splunk attack_data oracle replay (corpus lane)
+        run: python eval/detection_accuracy/splunk_eval.py
+
+      # ---- append ONE trend row ------------------------------------------
+      # Reads the gitignored evtx/splunk result JSONs each lane just wrote,
+      # recomputes the detection-quality macro-F1, and appends a single
+      # schema-v1 row to the committed eval/trend.jsonl.
+      - name: Append ONE trend row to eval/trend.jsonl
+        run: |
+          python - <<'PY'
+          import json
+          import sys
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          HERE = Path.cwd()
+          EVTX_DIR = HERE / "eval" / "detection_accuracy"
+
+          # Stable ORACLE rule id -> name (mirrors eval/detection_accuracy/evtx_eval.py::RULE_NAMES).
+          ORACLE = {
+              "6f1c8a2e-0d3b-4c11-9a21-7b5e2f9a1c01": "bruteforce",
+              "4f8a2c61-9e3d-4b57-8a1c-6d2e5f7a8b90": "password_spray",
+              "2e3d4c5b-6f70-4819-9b02-1c2d3e4f5061": "lateral_movement",
+              "7d3e9a52-1f6c-4a88-9b3d-2e5c8f1a6d40": "priv_grant",
+              "9b5f2d18-3c7a-4e61-8f24-5a1d7c3e9b06": "after_hours_admin",
+              "8c2f5a91-4d16-4e8b-9c3a-1f6b2e7d5a83": "bruteforce_sourceless",
+          }
+          NAME2ID = {v: k for k, v in ORACLE.items()}
+
+          def load_json(p):
+              try:
+                  return json.loads(Path(p).read_text(encoding="utf-8"))
+              except (OSError, json.JSONDecodeError):
+                  return None
+
+          # --- detection-quality (zero-infra, always runs) -----------------
+          sys.path.insert(0, str(HERE / "tools"))
+          import detection_quality_eval as D
+          rules = D.load_engine_rules()
+          results = D.entry_results(D.CORPUS, rules)
+          scored = D.references(D.CORPUS)
+          per_rule_dq = {rid: D.rule_metrics(results, rid) for rid in sorted(scored)}
+          macro_f1 = D.macro_f1(per_rule_dq)
+          quality_events = len(D.CORPUS)
+
+          # --- corpus lanes (evtx + splunk) --------------------------------
+          evtx = load_json(EVTX_DIR / "evtx_eval_results.json")
+          splunk = load_json(EVTX_DIR / "splunk_eval_results.json")
+
+          corpora = []
+          corpus_size = 0
+          parser_coverage_pct = None
+          per_rule = {rid: {"tp": 0, "fp": 0, "fn": 0, "tn": 0} for rid in ORACLE}
+
+          if evtx is not None:
+              corpora.append("evtx")
+              c = evtx["corpus"]
+              corpus_size += int(c["records_supported"])
+              rel = c["records_security"] + c["records_sysmon"]
+              if rel:
+                  parser_coverage_pct = round(100 * c["records_supported"] / rel, 1)
+              for name, m in evtx["confusion"].items():
+                  rid = NAME2ID.get(name)
+                  if rid is None:
+                      continue
+                  for k in ("tp", "fp", "fn", "tn"):
+                      per_rule[rid][k] += int(m[k])
+          if splunk is not None:
+              corpora.append("splunk")
+              corpus_size += int(splunk.get("supported_records", 0))
+              for name, m in splunk["confusion"].items():
+                  rid = NAME2ID.get(name)
+                  if rid is None:
+                      continue
+                  for k in ("tp", "fp", "fn", "tn"):
+                      per_rule[rid][k] += int(m[k])
+          if corpus_size or macro_f1 > 0:
+              corpora.append("quality")
+
+          # A rule that never had an expected-positive (tp+fn == 0) NEVER met
+          # attack-shaped events in the corpus; it must be surfaced, never
+          # implied-passing (the stateful burst rules reliably land here).
+          untested = [ORACLE[rid] for rid in per_rule
+                      if per_rule[rid]["tp"] + per_rule[rid]["fn"] == 0]
+
+          row = {
+              "_schema": "1",
+              "date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+              "corpora": sorted(corpora),
+              "corpus_size": corpus_size,
+              "per_rule": per_rule,
+              "macro_f1": round(macro_f1, 4),
+              "quality_corpus_events": quality_events,
+              "parser_coverage_pct": parser_coverage_pct,
+              "untested_rules": untested,
+          }
+
+          trend = EVTX_DIR.parent / "trend.jsonl"
+          with trend.open("a", encoding="utf-8") as fh:
+              fh.write(json.dumps(row) + "\n")
+          print("APPENDED:", json.dumps(row))
+          PY
+
+      # ---- WP-1-F: AI-to-OT twin scorecard (zero-infra, runs nightly) -----
+      # The full twin (plc sim -> scenario -> real parsers -> real detector ->
+      # oracle grading) is memory-bus/in-process, so this lane needs no
+      # container. It appends its own twin row to the SAME trend file and
+      # writes eval/twin/report.json, uploaded with the trend artifact below.
+      - name: WP-1-F twin scorecard
+        run: python eval/twin/report.py
+
+      # ---- WP-0.2-B: assert the rule-health Prometheus series is present ----
+      # The WS-4 watchdog (services/ws4-detection/main.py record_fire() /
+      # rule_health_metrics(), served by services/shared/runner.py on PORT,
+      # default 8004) emits rule_last_fired_timestamp:<id> and rule_never_fired:<id>.
+      # PROMETHEUS_METRICS_URL is a repository variable:
+      #   set      -> scrape /metrics/prom; fail LOUDLY if unreachable OR if no
+      #               rule-health series is present (a live surface asserted).
+      #   unset    -> not configured in this repo -> clean skip, not a failure.
+      - name: WP-0.2-B -- assert rule-health Prometheus series present
+        env:
+          PROMETHEUS_METRICS_URL: ${{ vars.PROMETHEUS_METRICS_URL }}
+        run: |
+          url="${PROMETHEUS_METRICS_URL:-}"
+          if [ -z "$url" ]; then
+            echo "[SKIP] PROMETHEUS_METRICS_URL unset -- WS-4 rule-health surface not configured in this repo; clean skip, not a failure."
+            exit 0
+          fi
+          echo "Scraping $url"
+          body="$(curl -fsS --max-time 30 "$url")" \
+            || { echo "[FAIL] cannot scrape $url (is the WS-4 watchdog daemon serving /metrics/prom?)"; exit 1; }
+          if printf '%s' "$body" | grep -Eq 'rule_(last_fired_timestamp|never_fired):'; then
+            echo "[OK] rule-health series present in /metrics/prom"
+          else
+            echo "[FAIL] /metrics/prom reachable but no rule_last_fired_timestamp:/rule_never_fired: series present"
+            exit 1
+          fi
+
+      # ------- persist the (grown) trend file beyond the run ----------------
+      # Row is appended in-place above; the whole file (schema header + every
+      # accumulated row) is published as a per-run artifact. This job does NOT
+      # push back to main (least-privilege contents: read; "do not auto-commit"
+      # convention) -- rows live in the committed seed file and the per-run
+      # artifacts, appended again by whoever runs the lane locally.
+      - name: Upload detection-accuracy trend artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: detection-accuracy-trend
+          path: |
+            eval/trend.jsonl
+            eval/twin/report.json
+          if-no-files-found: error

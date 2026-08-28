@@ -5,5 +5,22 @@
 # contracts/allowlists/*.yml), so PyYAML is required, not optional, same as
 # every other service that touches shared/allowlist.py or a YAML contract
 # file (ws2-normalization, ws4-detection).
-redis==8.1.0       # matching the pin every other Redis-talking workstream uses
-PyYAML==6.0.3       # contracts/allowlists/*.yml (shared/allowlist.py)
+# matching the pin every other Redis-talking workstream uses
+redis==8.1.0 \
+    --hash=sha256:a4fe1aac3d3b3cc791d4b3d5931c5a956045dc951ee74d1c913ee3ac4d2ee9fb \
+    --hash=sha256:6e1a19beef9225c83efd689c7e6b7da2d5215b1f42cd13b7fc3714d0a09c7b25
+# contracts/allowlists/*.yml (shared/allowlist.py)
+PyYAML==6.0.2 \
+    --hash=sha256:01179a4a8559ab5de078078f37e5c1a30d76bb88519906844fd7bdea1b7729ff \
+    --hash=sha256:39693e1f8320ae4f43943590b49779ffb98acb81f788220ea932a6b6c51004d8 \
+    --hash=sha256:8388ee1976c416731879ac16da0aff3f63b286ffdd57cdeb95f3f2e085687563 \
+    --hash=sha256:7e7401d0de89a9a855c839bc697c079a4af81cf878373abd7dc625847d25cbd8 \
+    --hash=sha256:a4d3091415f010369ae4ed1fc6b79def9416358877534caf6a0fdd2146c87a3e \
+    --hash=sha256:e10ce637b18caea04431ce14fabcf5c64a1c61ec9c56b071a4b7ca131ca52d44 \
+    --hash=sha256:80bab7bfc629882493af4aa31a4cfa43a4c57c83813253626916b8c7ada83476 \
+    --hash=sha256:3ad2a3decf9aaba3d29c8f537ac4b243e36bef957511b4766cb0057d32b0be85 \
+    --hash=sha256:70b189594dbe54f75ab3a1acec5f1e3faa7e8cf2f1e08d9b561cb41b845f69d5 \
+    --hash=sha256:ec031d5d2feb36d1d1a24380e4db6d43695f3748343d99434e6f5f9156aaa2ed \
+    --hash=sha256:9056c1ecd25795207ad294bcf39f2db3d845767be0ea6e6a34d856f006006083 \
+    --hash=sha256:3b1fdb9dc17f5a7677423d508ab4f243a726dea51fa5e70992e59a7411c89d19 \
+    --hash=sha256:d584d9ec91ad65861cc08d42e834324ef890a082e591037abe114850ff7bbc3e

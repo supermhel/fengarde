@@ -1,0 +1,67 @@
+{
+  "report": {
+    "schema_version": "1",
+    "run_type": "twin",
+    "date": "2026-08-28T12:10:43+00:00",
+    "seed": 7,
+    "basis": "harness-measured"
+  },
+  "metrics": {
+    "tpr": 1.0,
+    "fpr": 0.25,
+    "mttd_seconds": 60,
+    "mtti": null,
+    "mttr": null,
+    "chain_fidelity": 0.0,
+    "evidence_completeness": 0.9375,
+    "false_correlation_rate": 0.0,
+    "alert_reduction_ratio": 0.0,
+    "incident_reconstruction_time_ms": null,
+    "severity_calibration_error": 0.0,
+    "mutation_robustness": null,
+    "degradation_behavior": {
+      "delay": "deterministic",
+      "duplicate": "deterministic",
+      "reorder": "deterministic",
+      "loss": "deterministic",
+      "loss_is_strict_subset": true,
+      "basis": "harness-measured"
+    },
+    "attribution_accuracy": 1.0
+  },
+  "context": {
+    "chain_steps": [
+      "external_content",
+      "n8n_execution",
+      "agent_mcp_tool_call",
+      "credential_use",
+      "modbus_write",
+      "plc_state_change",
+      "process_anomaly"
+    ],
+    "parsed_count": 6,
+    "gap_count": 1,
+    "gap_steps": [
+      "external_content"
+    ],
+    "negative_controls": {
+      "approved-maintenance-window": 1,
+      "authorized-operator": 0,
+      "unrelated-writes": 0,
+      "benign-n8n-edits": 0
+    },
+    "oracle_expected_sequence": [
+      "external_content",
+      "n8n_execution",
+      "agent_mcp_tool_call",
+      "credential_use",
+      "modbus_write",
+      "plc_state_change",
+      "process_anomaly"
+    ],
+    "alert_count": 7,
+    "incident_promotions": 0
+  },
+  "finding": "FPR=0.25: approved-maintenance-window negative control fires ot_modbus_unauthorized_write (9c1d2e3f) on the coil-space write; documented coarse-rule tradeoff, not hidden.",
+  "elapsed_seconds": 0.826
+}

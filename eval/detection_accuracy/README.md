@@ -62,6 +62,42 @@ Each run writes `evtx_eval_results.json` / `splunk_eval_results.json`
 (gitignored) with the full per-file confusion breakdown, mismatches, and
 parser dead-letters — not just the stdout summary.
 
+## Nightly cadence and the committed trend file
+
+**Cadence: nightly, 03:00 UTC.** `.github/workflows/nightly-eval.yml`
+(`workflow_dispatch` also available) re-measures detection accuracy on a
+schedule so a published macro-F1 number cannot silently decay into a claim
+nobody regenerated. The lane is **opt-in and live** — it is deliberately NOT
+part of the zero-infra PR gate, because it fetches the two gitignored corpora
+above (it clones `EVTX-ATTACK-SAMPLES` and `splunk/attack_data` into
+`evtx-samples/` / `splunk-attack-data/` on a fresh runner). A corpus download
+that is attempted and errors **fails the job loudly**; only an explicitly-off
+lane (repo variable `NIGHTLY_EVAL_MODE=quality-only`) skips cleanly with a
+message. `eval/attack/fire_check.py` is intentionally **not** wired here — it
+is already a blocking step of the zero-infra gate (M7 in `run_all_tests.sh`)
+and needs no corpus.
+
+The workflow runs `tools/detection_quality_eval.py` (the macro-F1 canary) plus
+`evtx_eval.py` and `splunk_eval.py` against the fetched corpora, then appends
+**one row per run** to `eval/trend.jsonl` (committed — the file's first line is
+a `#` header comment; each object carries `"_schema": "1"`):
+
+| Field | Meaning |
+|---|---|
+| `_schema` | `"1"` — stable, so trend rows stay comparable across runs |
+| `date` | ISO date (`YYYY-MM-DD`, UTC) of the run |
+| `corpora` | which lanes contributed (`evtx` / `splunk` / `quality`) |
+| `corpus_size` | total supported records replayed by the corpus lanes (evtx `records_supported` + splunk `supported_records`) |
+| `per_rule` | `rule_id -> {tp,fp,fn,tn}`, keyed by the stable ORACLE rule ids from `evtx_eval.py`, summed across the corpus lanes |
+| `macro_f1` | the detection-quality canary's macro-F1 (≥ the documented 0.5 floor) |
+| `quality_corpus_events` | size of the canary's hand-authored labeled corpus |
+| `parser_coverage_pct` | combined Security+Sysmon parser coverage from the EVTX corpus (e.g. 42.3%) or `null` when no corpus lane ran |
+| `untested_rules` | ORACLE rules with `tp+fn == 0` — they never met attack-shaped events in the corpus, surfaced so they are never implied-passing (the stateful burst rules reliably land here, matching the event-description gap noted below) |
+
+The grown file is also published as a per-run `detection-accuracy-trend`
+artifact; the job does not push back to `main` (least-privilege
+`contents: read`, no-auto-commit convention), so local runs append in place.
+
 ## Real numbers observed (2026-08-19)
 
 First actual run of both harnesses on record for this project — both were

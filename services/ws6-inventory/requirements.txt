@@ -2,7 +2,10 @@
 # still true, unchanged. redis is opt-in: only installed/imported when
 # BUS_BACKEND is set (see bus_consumer.py), so the zero-infra dev/test path
 # stays dependency-free.
-redis==8.1.0       # bus backend (services/shared/bus.py::_RedisBus, lazy-imported), M7 Track Y follow-up: consumes assets.updates
+# bus backend (services/shared/bus.py::_RedisBus, lazy-imported), M7 Track Y follow-up: consumes assets.updates
+redis==8.1.0 \
+    --hash=sha256:a4fe1aac3d3b3cc791d4b3d5931c5a956045dc951ee74d1c913ee3ac4d2ee9fb \
+    --hash=sha256:6e1a19beef9225c83efd689c7e6b7da2d5215b1f42cd13b7fc3714d0a09c7b25
 # Production wrap of the same InventoryStore, still not needed:
 #   fastapi>=0.110
 #   uvicorn>=0.29

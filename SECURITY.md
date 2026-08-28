@@ -274,8 +274,34 @@ sections:**
   Production deployments are expected to terminate TLS at a reverse proxy (see
   `docs/deployment.md` for a working nginx example) and to keep the backend
   ports on the Compose/management network. Any `http://` (including webhook
-  URLs and OLLAMA_URL) sends its content in cleartext once it leaves that
+  `OLLAMA_URL`) sends its content in cleartext once it leaves that
   network boundary.
+
+### 11. Metrics endpoints (`/metrics`, `/metrics/prom`) are unauthenticated — accepted open surface
+
+v0.4+ services expose a health/metrics HTTP server (`services/shared/runner.py`,
+port `HEALTH_PORT`) with `/metrics` (JSON) and `/metrics/prom` (Prometheus text)
+routes. **They are intentionally unauthenticated** — this is a recorded, deliberate
+decision (WP-0.1-A, assertion #5, 2026-08-28), not an oversight. Why this is an
+accepted surface:
+
+- They expose **aggregate counters/gauges only** (per-service produced/dropped/shed
+  counts, rule-health series like `rule_last_fired_timestamp:<id>` /
+  `rule_never_fired:<id>`, flow/health metrics). No tenant data, no event/PII
+  content, no write surface — an unauthenticated reader can learn *that* traffic
+  exists and roughly *how much*, nothing about *what* it contains.
+- The health/metrics server binds **loopback only by default**; unless you
+  deliberately bind it beyond localhost/Compose-network, it is not reachable from
+  untrusted networks anyway.
+- Authenticating it would break the intended consumption pattern: Prometheus
+  scrapes `/metrics/prom` with plain HTTP, and the monitoring/rule-health
+  dashboards rely on that.
+
+The handler carries an inline `FENGARDE-OPEN-BY-DESIGN` marker, and
+`tools/check_lane_coverage.py` assertion #5 recognizes that marker so the surface
+counts as *covered-with-reason* (it cannot silently regress to an undocumented
+open listener). If you expose the metrics port beyond a trusted network, put it
+behind your reverse proxy's auth the same way as every other surface.
 
 ---
 
@@ -341,6 +367,106 @@ layers, not absent features — don't cite this section as saying otherwise.
 Reports about these documented, out-of-scope limitations are welcome as
 **feature requests**, but they are not treated as vulnerabilities against the
 current release.
+
+---
+
+## Verifying release artifacts
+
+Every tagged release (`v*`) is signed **keylessly** with [Sigstore](https://www.sigstore.dev/)
+cosign and carries **SLSA v1 provenance**, and the signatures are published
+with the release so you can actually check them. The signing workflow
+(`.github/workflows/release.yml`) uses **no private key and no secret**: its
+cosign signatures are bound to this repository's GitHub Actions OIDC identity
+(`https://token.actions.githubusercontent.com`, issuer of every cert below).
+A signature that could not be verified this way would be theatre — so here is
+exactly how to verify it.
+
+The commands below assume you have installed `cosign` (≥ v2, e.g. via
+[cosign-installer](https://github.com/sigstore/cosign-installer) or your
+package manager) and are using the latest release tag in place of `<VERSION>`
+(e.g. `v0.6.0`). A consumer verifies _before_ pulling the image or unpacking
+the tarball.
+
+### 1. Verify a signed container image (keyless)
+
+Each service image published to GHCR is signed with `cosign sign` keyless.
+Verify the image you pulled, binding the signature to this exact repository
+and release:
+
+```bash
+cosign verify \
+  ghcr.io/supermhel/fengarde-ws3-indexer:<VERSION> \
+  --certificate-identity-regexp \
+    '^https://github.com/supermhel/fengarde/\.github/workflows/release\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$' \
+  --certificate-oidc-issuer 'https://token.actions.githubusercontent.com'
+```
+
+The `--certificate-identity-regexp` pins the signing identity to this repo's
+`release.yml` running at the release tag — a signature minted by an attacker's
+fork of the workflow won't match it, even though both use the same public
+Sigstore root of trust.
+
+### 2. Verify the source-tarball release artifact (sign-blob)
+
+Each release also ships `fengarde-<VERSION>.tar.gz` (a deterministic `git
+archive` of the tag) plus its keyless signature and certificate, named
+`fengarde-<VERSION>.tar.gz.sig` and `fengarde-<VERSION>.tar.gz.pem`. Download
+all three from the release and verify:
+
+```bash
+cosign verify-blob \
+  --signature   fengarde-<VERSION>.tar.gz.sig \
+  --certificate fengarde-<VERSION>.tar.gz.pem \
+  --certificate-identity-regexp \
+    '^https://github.com/supermhel/fengarde/\.github/workflows/release\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$' \
+  --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
+  fengarde-<VERSION>.tar.gz
+```
+
+### 3. Verify the SLSA v1 provenance (attestation)
+
+Each release carries an `intoto.jsonl` SLSA v1 provenance attestation (plus its
+`.sig` and `.cert`), generated and keyless-signed by the official
+`slsa-framework/slsa-github-generator` reusable workflow. It attests that the
+release artifacts (the source tarball and every pushed service image) were
+built from this repository and this git ref.
+
+Verify the attestation of an image you pulled:
+
+```bash
+cosign verify-attestation --type slsaprovenance \
+  ghcr.io/supermhel/fengarde-ws3-indexer:<VERSION> \
+  --certificate-identity-regexp \
+    '^https://github.com/slsa-framework/slsa-github-generator/\.github/workflows/generator_generic_slsa3\.yml@refs/tags/v2\.1\.0$' \
+  --certificate-oidc-issuer 'https://token.actions.githubusercontent.com'
+```
+
+Or verify the provenance file attached to the release, against the tarball it
+subjects:
+
+```bash
+cosign verify-blob-attestation \
+  --certificate-identity-regexp \
+    '^https://github.com/slsa-framework/slsa-github-generator/\.github/workflows/generator_generic_slsa3\.yml@refs/tags/v2\.1\.0$' \
+  --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
+  --signature <provenance>.intoto.jsonl.sig \
+  --certificate <provenance>.intoto.jsonl.cert \
+  --type slsaprovenance \
+  fengarde-<VERSION>.tar.gz
+```
+
+where `<provenance>` is the attestation filename from the release (it is the
+tarball name with `.intoto.jsonl` appended, e.g.
+`fengarde-<VERSION>.tar.gz.intoto.jsonl`).
+
+**What verification proves and does not:** a green cosign check proves the
+artifact you downloaded is byte-for-byte the artifact this repository built
+and signed for that release (and, for image `verify`/`verify-blob-attestation`,
+that the digest you pulled matches the signed digest) — it does **not** certify
+that FENGARDE is free of vulnerabilities. That trust still rests on code
+review, the CI gate, and the threat boundary documented above. See
+`.github/workflows/release.yml` for how the signing is wired, and
+`tools/verify_action_pins.py` for how every action it runs stays SHA-pinned.
 
 ---
 
