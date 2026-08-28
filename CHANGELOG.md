@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (2026-08-28, MSSP distribution: partner list + quickstart went live)
+
+- **MSSP partner registration path live.** `docs/mssp-quickstart.md` linked from README; draft
+  flag cleared. New **Partner list** section (public trust page) with the Option-B terms, published
+  as a placeholder with a **manual-review inclusion rule** (F-10, decided 2026-08-28). Registration
+  had already existed since 2026-08-06 (`.github/ISSUE_TEMPLATE/mssp_partner_registration.md` +
+  the quickstart's link); what was missing — the partner-list doc section, the README link, and the
+  owner sign-off on the terms — is now in place.
+
 ### Fixed (2026-08-27, CI: Dependabot codeql-action version skew)
 
 Dependabot opened three separate PRs (#75 `init`, #76 `analyze`, #77 `upload-sarif`),

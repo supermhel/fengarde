@@ -439,6 +439,11 @@ are the obvious first PRs — or propose a new detection rule via the
 
 Monitoring AI agents/MCP servers? See **[docs/agent-monitoring.md](docs/agent-monitoring.md)**.
 
+Running FENGARDE for multiple customers as an MSSP / managed-security provider? See
+**[docs/mssp-quickstart.md](docs/mssp-quickstart.md)** — and the
+**[partner registration](https://github.com/supermhel/fengarde/issues/new?template=mssp_partner_registration.md)**
+if you'd like to be listed as a partner.
+
 ---
 
 ## Security
