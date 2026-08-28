@@ -86,10 +86,40 @@ def _index_alert_preserving_triage(store, index: str, doc_id: str, doc: dict) ->
     current doc's `triage`, carry it into the incoming payload, write with
     index_cas so a concurrent triage update racing this same write loses
     cleanly (retry) rather than silently.
+
+    Live-stack race fix (2026-08-28): reads by exact `(index, doc_id)` via
+    `get_versioned()`, not the cross-index `find_alert_versioned()` this
+    used to call. `find_alert_versioned`'s search is bounded by OpenSearch's
+    refresh_interval (default 1s); a stateful rule fires on every event once
+    past its threshold (`count >= threshold`, not `==`), so one burst can
+    emit several `alerts` messages sharing ONE deterministic alert_id
+    within milliseconds -- each one's search-based read saw stale (already-
+    superseded) state and lost every CAS retry to the write THIS SAME
+    process had just made. Live-caught via `fengarde_bench_live.py`: 4/10
+    latency bursts never produced a visible alert within 120s, 586
+    "exhausted 5 CAS retries" errors in one run. `get_versioned` is a direct
+    GET on OpenSearch (immediately consistent, no refresh lag) -- this
+    process's own prior write in this same loop is visible to the very next
+    iteration.
     """
     for attempt in range(_ALERT_CAS_MAX_RETRIES):
-        existing = store.find_alert_versioned(doc_id)
+        existing = store.get_versioned(index, doc_id)
         if existing is None:
+            # Not found at the KNOWN expected index -- but that alone doesn't
+            # rule out routing drift (the same alert_id landing under a
+            # DIFFERENT index on an earlier delivery, e.g. a day-boundary
+            # rollover). Only pay for the slower cross-index search on this
+            # (rare) miss path, never on the hot repeat-write path above,
+            # which get_versioned already resolves immediately-consistently.
+            drift = store.find_alert_versioned(doc_id)
+            if drift is not None and drift[0] != index:
+                from shared.log import get_logger  # noqa: E402
+                get_logger("ws3-indexer").warn(
+                    f"alert {doc_id} already indexed under {drift[0]}, not "
+                    f"{index} -- skipping write (routing drift, not a "
+                    f"transient conflict)"
+                )
+                return False
             # Brand-new alert_id: a CREATE. Route it through index_cas with
             # version=None -- BOTH backends treat that as an unconditional
             # write (byte-identical to the plain store.index() this used to
@@ -98,25 +128,11 @@ def _index_alert_preserving_triage(store, index: str, doc_id: str, doc: dict) ->
             # resolved deterministically instead of only the update path
             # being guarded. (Gap-hunt finding R2-#23.)
             return store.index_cas(index, doc_id, doc, None)
-        existing_index, existing_doc, version = existing
-        if existing_index != index:
-            # Nothing about a retry changes this: the same alert_id routes to
-            # two different indices, and find_alert_versioned() will keep
-            # returning the same existing_index every time. Retrying here
-            # used to burn all _ALERT_CAS_MAX_RETRIES silently; log once so
-            # routing drift (a real bug elsewhere) is visible instead of
-            # masquerading as a quiet no-write.
-            from shared.log import get_logger  # noqa: E402
-            get_logger("ws3-indexer").warn(
-                f"alert {doc_id} already indexed under {existing_index}, not "
-                f"{index} -- skipping write (routing drift, not a transient "
-                f"conflict)"
-            )
-            return False
+        existing_doc, version = existing
         # Carry any existing `triage` into the incoming payload. When the
         # stored doc has no triage yet there is nothing to preserve -- but we
         # STILL write conditionally on `version`: an analyst triage write that
-        # lands between our find_alert and this write bumps the version, our
+        # lands between our read and this write bumps the version, our
         # index_cas returns False, and the retry loop re-reads the fresh doc
         # and carries that triage. The plain store.index() this branch used
         # to call would silently destroy it. (Gap-hunt finding R2-#19.)

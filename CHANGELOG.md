@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed (2026-08-28, WS-3: live-stack CAS race under stateful-rule re-fire)
+
+Re-measuring the README's live-stack Performance table surfaced a real bug
+instead of clean numbers: 4/10 latency bursts against the live Docker stack
+never produced a visible alert within the 120s timeout, with 586 "exhausted
+5 CAS retries" errors in one `fengarde_bench_live.py` run.
+
+Root cause: `_index_alert_preserving_triage` (`services/ws3-indexer/main.py`)
+read the current alert state via `find_alert_versioned`, a cross-index
+**search** bounded by OpenSearch's default 1s `refresh_interval`. WS-4's
+stateful rules fire on `count >= threshold` (not `==`), so a single burst can
+emit several `alerts` messages sharing one deterministic `alert_id` within
+milliseconds. Each CAS retry's search-based read saw stale (already
+superseded) state and lost against a write the SAME process had just made
+moments earlier — a self-inflicted race, not concurrent-writer contention.
+
+Fixed by adding `StorageAdapter.get_versioned(index, doc_id)` — an exact
+`(index, doc_id)` read (direct `GET` on OpenSearch, immediately consistent,
+no refresh lag; dict lookup on `MemoryStore`) — implemented in
+`storage/adapter.py`, `storage/memory.py`, and `storage/opensearch.py`, and
+wired into the CAS retry loop as the primary read, falling back to the
+cross-index search only on a genuine miss (preserving the existing
+day-boundary routing-drift check). Regression test:
+`test_storage_cas.py::test_alert_rewrite_uses_get_not_stale_search_under_frozen_refresh`
+against a fake transport with permanently-stale search + correct GET/PUT
+semantics; mutation-verified (reverting the fix reproduces the exact failure
+signature). Re-ran `fengarde_bench_live.py` post-fix: 10/10 bursts succeeded,
+zero CAS-exhaustion errors, p50/p99 unchanged (~2,045/2,063 ms) — see
+README.md's Performance section.
+
 ### Fixed (2026-08-27, CI: Dependabot codeql-action version skew)
 
 Dependabot opened three separate PRs (#75 `init`, #76 `analyze`, #77 `upload-sarif`),

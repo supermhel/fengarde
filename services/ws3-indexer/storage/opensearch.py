@@ -509,6 +509,38 @@ class OpenSearchStore(StorageAdapter):
             if isinstance(seq_no, int) and isinstance(primary_term, int) else None
         return hit.get("_index"), hit["_source"], version
 
+    def get_versioned(self, index: str, doc_id: str):
+        """Exact-(index, doc_id) read via a direct GET -- the live-stack race
+        fix (2026-08-28, see StorageAdapter.get_versioned's docstring for the
+        full account). `find_alert_versioned`'s `_search_alert` goes through
+        `/alerts-*/_search`, which only sees documents OpenSearch has
+        REFRESHED (default refresh_interval=1s) -- a caller re-reading a doc
+        THIS SAME PROCESS just wrote milliseconds ago can get stale (or
+        empty) results and lose every CAS retry to state that already
+        landed. `GET /{index}/_doc/{id}` reads the live document directly
+        (bypasses the search/refresh layer entirely -- OpenSearch's doc GET
+        is real-time by default), closing the race whether the concurrent
+        writer is this process or another one.
+        """
+        try:
+            result = self._request(
+                "GET", f"/{index}/_doc/{urllib.parse.quote(doc_id, safe='')}")
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404:
+                return None
+            _log_rw_warn("opensearch get %s/%s failed (HTTP %s): %s",
+                        index, doc_id, exc.code, exc.reason)
+            raise
+        if not result.get("found"):
+            return None
+        source = result.get("_source")
+        if not isinstance(source, dict) or not source:
+            return None
+        seq_no, primary_term = result.get("_seq_no"), result.get("_primary_term")
+        version = (seq_no, primary_term) \
+            if isinstance(seq_no, int) and isinstance(primary_term, int) else None
+        return source, version
+
     def index_cas(self, index: str, doc_id: str, document: dict, version) -> bool:
         """Conditional write: only succeeds if the doc is still at `version`
         ((_seq_no, _primary_term) from find_alert_versioned). OpenSearch
