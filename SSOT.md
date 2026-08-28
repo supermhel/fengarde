@@ -394,6 +394,7 @@ table here, not a new file; cadence weekly for the first month, then monthly). E
 | 2026-07-30 | 8 | 0 | 0 | Launch day, 2 communities posted (r/selfhosted, r/blueteamsec — see correction above) |
 | 2026-08-06 | 10 | 0 | 0 | No inbound design-partner or MSSP contact yet |
 | 2026-08-21 | 11 | 0 | 0 | No inbound design-partner or MSSP contact yet; weekly cadence lapsed since 2026-08-06, this row catches it up |
+| 2026-08-28 | 11 | 0 | 0 | **WP-0.4 distribution restart started** (owner, 2026-08-28) — the roadmap's Phase 0.4 weekly cadence (r/netsec / Show HN / r/cybersecurity retry + German/EU + optional 5th) is in motion; post outcomes + URLs to be logged here as they land. Cadence restored. |
 
 Still a point-in-time signal, not a verdict — track the trend across check-ins, don't over-read
 any single row.
