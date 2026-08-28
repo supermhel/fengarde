@@ -53,6 +53,15 @@ def make_handler(bus, correlator: Correlator):
     def handle_alert(payload: dict) -> None:
         for incident in correlator.ingest_alert(payload):
             bus.produce("incidents", key=incident["incident_id"], payload=incident)
+            # WP-2-C / ADR-009: emit the incident's relationship graph on its
+            # own topic so consumers (WS-9, WS-3) can actually see it. The
+            # graph is computed and cached inside the correlator; this is the
+            # production wiring that makes it reachable (independent-review
+            # finding: the feature existed but was never produced on the bus).
+            graph = correlator.incident_graph(incident["incident_id"])
+            if graph is not None:
+                bus.produce("incident.graph",
+                            key=incident["incident_id"], payload=graph)
     return handle_alert
 
 

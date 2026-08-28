@@ -77,6 +77,20 @@ _MAX_CLOCK_SKEW_MS = 300_000  # 5 minutes of tolerated source clock drift
 # payload never changes shape as the cap binds.
 DEFAULT_MEMBER_CAP = 200
 
+# Reverse of ws8's entity_value cap (correlator.py:_ENTITY_VALUE_MAX_BYTES,
+# the OpenSearch 512-byte document-id ceiling): an attacker-controlled
+# username/hostname is embedded in entity_value and keyed by entity_id; bound
+# it so the stored/emitted value can never be an unbounded memory or id-size
+# vector. Same truncate+stable-sha256-suffix policy as ws8, so two distinct
+# long values keep DISTINCT ids (never-merge discipline survives) and a
+# redelivered alert re-derives the same bounded value.
+_ENTITY_VALUE_MAX_BYTES = 448
+
+# Full-scan sweep cadence for the entity table -- same amortized full-scan
+# tradeoff ws8's _SIDES_SWEEP_EVERY and shared/window.py's _SWEEP_EVERY
+# accept: a scan every N calls is cheap, an unbounded dict is not.
+_ENTITY_SWEEP_EVERY = 256
+
 
 class InvalidTenant(ValueError):
     """Raised when an alert's tenant_id isn't safe to key entity state on.
@@ -119,15 +133,38 @@ def _to_str(x) -> str:
     return x.decode() if isinstance(x, bytes) else str(x)
 
 
+def _bounded_entity_value(entity_value) -> str:
+    """Bound an attacker-controlled entity_value (mirror ws8 _bounded_entity_value).
+
+    Truncate + a stable sha256 suffix: two distinct long values keep DISTINCT
+    ids (never-merge survives the cap) and a redelivered alert re-derives the
+    same bounded value (idempotent). An unbounded username/hostname is a
+    memory + crafted-id-size vector the same way it is in ws8.
+    """
+    raw = str(entity_value)
+    encoded = raw.encode("utf-8", errors="replace")
+    if len(encoded) <= _ENTITY_VALUE_MAX_BYTES:
+        return raw
+    import hashlib  # local: only on the capped path
+    digest = hashlib.sha256(encoded).hexdigest()[:16]
+    head = encoded[: _ENTITY_VALUE_MAX_BYTES - 17].decode("utf-8", errors="replace")
+    return f"{head}:{digest}"
+
+
 class EntityResolver:
     """Resolves alert-named entities to deterministic ids and emits their state.
 
     ``now_fn`` is injectable for tests (same as ws8 Correlator's now_fn).
     """
 
-    def __init__(self, *, now_fn=time.time, member_cap: int = DEFAULT_MEMBER_CAP):
+    def __init__(self, *, now_fn=time.time, member_cap: int = DEFAULT_MEMBER_CAP,
+                 horizon_s: int = 86400):
         self._now_fn = now_fn
         self.member_cap = member_cap
+        self.horizon_s = horizon_s
+        self._update_calls = 0  # sweep cadence counter (mirror ws8 _update_calls)
+        # entity_id -> last processing-time touch, for the entity-table sweep.
+        self._last_touch: dict[str, int] = {}
         # entity_id -> {"entity_id","entity_type","tenant_id","entity_value",
         #               "first_seen_ms","last_seen_ms","attributes"} -- the
         # stable aggregate that survives member eviction (mirror ws8 _side_meta).
@@ -136,6 +173,13 @@ class EntityResolver:
         self._members: dict[str, dict] = {}
         # entity_id -> count of times the cap evicted an old member (observable).
         self._truncated: dict[str, bool] = {}
+        # entity_id -> bounded LRU of recently-EVICTED member ids, so a
+        # cap-evicted member re-added on redelivery is NOT counted as a fresh
+        # state change (independent review D3: cap+replay must not inflate
+        # resolved_updates). Capped at member_cap per entity via the same
+        # eviction discipline -- a distinct-id spray is bounded, never
+        # unbounded growth.
+        self._evicted_lru: dict[str, dict[str, int]] = {}
         # reason -> count of alerts that named NO resolvable entity (observable
         # no-op; mirror ws8 _skip_reasons correlator.py:614-626).
         self._skip_reasons: dict[str, int] = {}
@@ -145,6 +189,7 @@ class EntityResolver:
         # here -- this number tracks state changes, not bus emissions.
         self.resolved_updates = 0  # total entity.updates payloads emitted
         self.truncated_total = 0
+        self.swept_entities = 0  # entities dropped by _sweep_dead_entities
 
     def _now_ms(self) -> int:
         return int(self._now_fn() * 1000)
@@ -252,6 +297,15 @@ class EntityResolver:
                          entity_id, member, time_ms, tactics, alert_id) -> dict:
         """Record one sighting on one entity; return its entity.updates payload
         (post-merge state). Idempotent on (entity_id, member)."""
+        # Entity-table sweep cadence (mirror ws8 _update_track: full scan every
+        # N calls -- the entity COUNT is attacker-controlled, so it must be
+        # bounded even when no single entity's member set grows).
+        self._update_calls += 1
+        if self._update_calls % _ENTITY_SWEEP_EVERY == 0:
+            self._sweep_dead_entities(self._now_ms())
+        # Processing-time touch (mirror ws8 _last_touch): an entity seen now
+        # stays live for a full horizon from this point.
+        self._last_touch[entity_id] = self._now_ms()
         prev = self._meta.get(entity_id)
         if prev is None:
             meta = {
@@ -276,13 +330,26 @@ class EntityResolver:
             return dict(meta)
         meta = prev
         side = self._members.setdefault(entity_id, {})
+        evicted_lru = self._evicted_lru.setdefault(entity_id, {})
         is_new_member = member not in side
+        # Was this member already an established state of this entity (seen
+        # before, possibly cap-evicted)? A re-add after cap eviction is NOT a
+        # fresh state change -- decide BEFORE any mutation so the bookkeeping
+        # below cannot clobber the memory it needs (D3: cap+replay must not
+        # inflate resolved_updates).
+        previously_known = member in evicted_lru or member in side
         if is_new_member:
             side[member] = time_ms
             if len(side) > self.member_cap:
                 # Evict the OLDEST member (by time) -- mirror ws8:466-471.
                 oldest = min(side, key=side.get)
                 del side[oldest]
+                # Remember it in the bounded evicted-LRU so a redelivery of the
+                # evicted alert is NOT counted as a fresh state change (D3).
+                if oldest != member:  # never evict the member we just added
+                    evicted_lru[oldest] = time_ms
+                    if len(evicted_lru) > self.member_cap:
+                        evicted_lru.pop(next(iter(evicted_lru)), None)
                 meta["attributes"]["truncated"] = True
                 self._truncated[entity_id] = True
                 self.truncated_total += 1
@@ -296,11 +363,35 @@ class EntityResolver:
             seen.update(tactics)
             meta["attributes"]["mitre_tactics"] = sorted(seen)
         meta["attributes"]["last_alert_id"] = alert_id
-        if is_new_member:
+        if is_new_member and not previously_known:
             self.resolved_updates += 1
         return dict(meta)
 
     # -- entry point ----------------------------------------------------------
+
+    def _sweep_dead_entities(self, now_ms: int) -> None:
+        """Drop ``_meta``/``_members``/``_truncated``/``_last_touch`` entries
+        for entities not touched within the last ``horizon_s``.
+
+        Mirror of ws8's ``_sweep_dead_tracks`` (correlator.py:515-554), on the
+        same staleness basis (processing-time ``now_ms`` via ``_last_touch``)
+        and cadence (a full scan every 256 ``_upsert_sighting`` calls): an
+        entity that simply stops receiving alerts would otherwise live in the
+        entity table forever -- a distinct-attacker-id spray grows ``_meta`` /
+        ``_members`` without limit, exactly the vector that makes the entity
+        count attacker-controlled. A key is dropped only after a FULL horizon
+        of silence, so a still-live entity (and redelivery-stable state) is
+        never touched.
+        """
+        stale_before = now_ms - self.horizon_s * 1000
+        dead = [k for k, ts in self._last_touch.items() if ts < stale_before]
+        for k in dead:
+            self._meta.pop(k, None)
+            self._members.pop(k, None)
+            self._truncated.pop(k, None)
+            self._evicted_lru.pop(k, None)
+            self._last_touch.pop(k, None)
+            self.swept_entities += 1
 
     def resolve_alert(self, alert: dict, now_ms: int | None = None) -> list[dict]:
         """Resolve every trackable entity of one alert to an entity.updates
@@ -312,7 +403,19 @@ class EntityResolver:
         tenant = _validated_tenant(alert.get("tenant_id"))
         member = self._member_id(alert)
         # Same skew guard WS-8/WS-4 apply to attacker-controlled alert time.
-        time_ms = _valid_window_time(alert.get("time"), now_ms) or now_ms
+        # DETERMINISTIC time-less anchor (independent review D3): when the alert
+        # carries no usable time, anchor the member on a stable digest of the
+        # member id instead of wall-clock now_ms -- a redelivered time-less
+        # alert must re-derive the SAME member time, so last_seen_ms never
+        # moves and replay stays state-identical (raw wall-clock also let a
+        # replay of two time-less alerts silently swap their eviction order).
+        valid_time = _valid_window_time(alert.get("time"), now_ms)
+        if valid_time is not None:
+            time_ms = valid_time
+        else:
+            import hashlib  # local: only on the deterministic-fallback path
+            time_ms = int(hashlib.sha256(
+                member.encode("utf-8", errors="replace")).hexdigest()[:12], 16)
         alert_id = member if member.startswith("anon:") else _to_str(alert.get("alert_id"))
         tactic = (alert.get("mitre") or {}).get("tactic")
         tactics = [tactic] if tactic else []
@@ -324,6 +427,10 @@ class EntityResolver:
             if canonical is None:
                 skipped = True  # e.g. src_endpoint.ip that isn't a real IP
                 continue
+            # Bound the value BEFORE keying/emitting so the stored entity_value
+            # and any id embedding it can never be an unbounded attacker vector
+            # (independent review D2: mirror ws8's _bounded_entity_value).
+            canonical = _bounded_entity_value(canonical)
             entity_id = compute_entity_id(tenant, entity_type, canonical)
             updates.append(self._upsert_sighting(
                 tenant=tenant, entity_type=entity_type,
@@ -350,6 +457,7 @@ class EntityResolver:
             "ws9_resolved_entities": self.count(),
             "ws9_updates_total": self.resolved_updates,
             "ws9_truncated_total": self.truncated_total,
+            "ws9_swept_entities": self.swept_entities,
             "ws9_skipped_alerts_by_reason": dict(self._skip_reasons),
             "ws9_skipped_total": sum(self._skip_reasons.values()),
         }

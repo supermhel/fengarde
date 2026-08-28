@@ -494,7 +494,23 @@ class Correlator:
                     nodes.add(f_node)
                     nodes.add(t_node)
                     key = (f_node, t_node, kind)
-                    cand = (entry.get("time", 0), entry.get("event_id") or member_id)
+                    # Edge provenance, deterministic under redelivery. For a
+                    # member whose entry time was the wall-clock fallback
+                    # (time-less / skew-future alert -- entry time may differ
+                    # across redeliveries), pin ts_ms to a stable digest of the
+                    # member id instead, so the graph is identical no matter
+                    # when it is rebuilt (independent-review WP-2-C #2: the
+                    # "identical graph under redelivery" claim must hold for
+                    # time-less alerts too). event_id is already deterministic
+                    # via _provenance_event_id.
+                    if entry.get("time_fallback"):
+                        import hashlib  # local: fallback path only
+                        ts = int(hashlib.sha256(
+                            str(member_id).encode("utf-8", errors="replace")
+                        ).hexdigest()[:12], 16)
+                    else:
+                        ts = entry.get("time", 0)
+                    cand = (ts, entry.get("event_id") or member_id)
                     if key not in best or cand < best[key]:
                         best[key] = cand
         edges = [{"from": f, "to": t, "kind": k, "event_id": ev, "ts_ms": ts}
@@ -608,6 +624,17 @@ class Correlator:
             # fallback WHILE adding the _valid_window_time guard, and keeping
             # a data-anchored first_seen only for genuine nonzero past times.
             "time": valid_time or now_ms,
+            # Additive provenance flag (independent-review WP-2-C #2): records
+            # that this entry's time was the wall-clock FALLBACK, not the
+            # alert's own time -- so the incident graph can derive a stable
+            # edge ts for time-less alerts instead of re-observing a different
+            # wall clock on every redelivery. No consumer reads it; it exists
+            # only for the graph's deterministic-provenance path. NOTE: the
+            # falsy check `not valid_time` (not `valid_time is None`) covers
+            # the `time: 0` case too -- a zero timestamp is not a usable anchor
+            # (entry["time"] falls back to now_ms), so it must get the stable
+            # digest, not a wall-clock edge ts (adversarial-reverify finding).
+            "time_fallback": not valid_time,
         }
         side[member] = entry
         # WP-2-C (ADR-009): remember this single alert's other entity fields
@@ -618,8 +645,14 @@ class Correlator:
         # is unchanged, so the existing member-cap/window eviction discipline
         # still bounds this table exactly as before. NO cross-alert state is
         # accumulated here -- an edge is only ever evidenced by one alert.
+        # Each co-occurring value is bounded at STORE time (not just graph
+        # build) so an attacker-controlled >448-byte name cannot be retained
+        # verbatim in the side table -- independent-review WP-2-C #3.
         entry["event_id"] = _provenance_event_id(alert, member)
-        entry["cooccur"] = self._cooccurring_entities(alert, entity_type)
+        entry["cooccur"] = [
+            (t, self._bounded_entity_value(v))
+            for t, v in self._cooccurring_entities(alert, entity_type)
+        ]
         for stale_id in list(side):
             if stale_id not in live_ids:
                 del side[stale_id]

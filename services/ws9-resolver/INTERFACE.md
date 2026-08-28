@@ -31,9 +31,13 @@ stays with WS-4 / WS-8 / the analyst (see `main.py` module docstring).
   groups fan out independently, so WS-9 cannot block or slow the indexer or
   the correlator, and WS-9 never imports WS-3/WS-4 (bus-only coupling,
   ADR 004).
-- Topic `entity.updates`, group `cg-entity-self` — WS-6 Inventory's asset
-  sightings, plus our own redelivered emissions, merged under the ADR no-op
-  upsert (a non-newer `last_seen_ms` changes nothing).
+- Topic `entity.updates`, group `cg-entity-self` — merges our own redelivered
+  emissions under the ADR no-op upsert (a non-newer `last_seen_ms` changes
+  nothing). **Not yet a WS-6 producer**: WS-6's inventory worker does not
+  currently write `entity.updates` (it is a `raw.events` producer only); the
+  `assets.updates`→`entity.updates` bridge is a planned follow-up, NOT built
+  (see "Deliberately not built"). The `cg-entity-self` group exists so that
+  bridge (and any replay) is already wired when it lands.
 - Contracts: B (bus); the alert shape WS-4/WS-5 produce; ADR-009.
 
 **Source-topic choice — `alerts`, not `normalized.events` or `incidents`:**
@@ -53,7 +57,7 @@ same topic under the repo's bus-only coupling model.
   | Field | Meaning |
   |---|---|
   | `entity_id` | `sha256("{tenant}\|{entity_type}\|{canonical_value}")` hexdigest (64 chars). Deterministic, idempotent under redelivery — same discipline as WS-4 `Rule.alert_key()` (engine.py:585-647). |
-  | `entity_type` | `actor` \| `ip` \| `device` — mirrors WS-8's three track kinds exactly (correlator.py:579/591/610), so a later `incident.graph` node aligns with the same track WS-8 promoted. |
+  | `entity_type` | `actor` \| `ip` \| `device` — mirrors WS-8's three track kinds exactly (correlator.py:579/591/610), so a later `incident.graph` node is the SAME identity space WS-8 promotes (the graph's nodes are WS-8's raw `type:value` track refs; WS-9's `entity_id` is the canonical hash key for the entity plane — see "Canonicalization" for the identifier-space note). |
   | `tenant_id` | validated at the edge, `"default"` fallback; invalid → `InvalidTenant` raised (reject, never normalize — WS-8/WS-6 discipline). |
   | `entity_value` | the **canonical** value (see normalization below), not the raw alert value. |
   | `first_seen_ms` / `last_seen_ms` | min / max over all evidence ever seen on this still-live entity; never regress. An upsert with the same `entity_id` + non-newer `last_seen_ms` is a no-op (ADR-009 line 53-54). |
@@ -92,11 +96,14 @@ spellings of one real-world identity hash to ONE `entity_id`:
 Note the one deliberate textual divergence from WS-8: WS-8 stores actor/device
 **raw** into its track keys today (`correlator.py:581/610` and line 573) and
 relies on the parsers to have `valid_ip`'d IPs. WS-9 applies the ADR's
-canonicalization at its own edge for all three kinds. IP identities agree
-byte-for-byte (both go through shared `valid_ip`); for usernames/MACs WS-9 is
-stricter per the ratified ADR — WS-8 tightening its own edge later is purely
-additive (it could only ever SHRINK its track set, never conflict with a WS-9
-id).
+canonicalization at its own edge for all three kinds, so an identity seen in
+raw form by WS-8 (e.g. an un-normalized `::ffff:` mapped IPv6, or a
+mixed-case username) may key a different WS-8 track than the WS-9 canonical
+`entity_id` — the two identifier spaces are related but not byte-identical
+off the parser happy path. WS-9 additionally lowercases IPv6 (case-insensitive
+addresses must be one identity) and strips actor/device whitespace. WS-8
+tightening its own edge to the same canonical forms later is purely additive
+(it could only ever SHRINK its track set, never conflict with a WS-9 id).
 
 ## Idempotency under redelivery (ADR-009 lines 47-54)
 
@@ -115,15 +122,33 @@ id).
 
 Alert `time` is attacker-controlled, so it is run through the same
 skew-future/NaN guard WS-4 (`engine.py::_MAX_CLOCK_SKEW_MS`) and WS-8
-(`correlator.py:143-161`) apply: a non-numeric or >5-min-future timestamp
-falls back to honest processing time and never moves an entity's anchors.
-Past timestamps always pass — that is replay.
+(`correlator.py:143-161`) apply: a non-numeric or >5-min-future timestamp is
+rejected. **A rejected (time-less) alert is anchored on a DETERMINISTIC digest
+of its member id, not wall-clock** — so redelivering a time-less alert
+re-derives the same anchors and last_seen_ms never moves (the wall-clock
+fallback made replay non-identical). Past timestamps always pass — that is
+replay.
+
+## Boundedness (attacker-controlled keys)
+
+- `member_cap` bounds each entity's live member set (see Idempotency).
+- The **entity table itself is bounded** by `horizon_s` (default 86400s = 24h),
+  exactly like WS-8's `_sweep_dead_tracks`: an entity not touched for a full
+  horizon is swept (a full scan every 256 sightings). A distinct-attacker-id
+  spray thus cannot grow the entity count without limit.
+- `entity_value` is bounded to 448 bytes (truncate + stable sha256 suffix,
+  mirroring WS-8) so a crafted username/hostname cannot be an unbounded
+  memory/doc-id vector; distinct long values keep distinct ids.
+- `resolved_updates` counts genuine state changes: a member re-added after cap
+  eviction (redelivery) is not double-counted (a bounded evicted-member LRU
+  carries the memory).
 
 ## Environment
 
 - `PORT` (default `8009`) — health/metrics listener port (`shared.runner.serve`).
 - `BUS_BACKEND` (default `memory` for tests, `redis` in the Docker profile).
 - `ENTITY_MEMBER_CAP` (default `200`).
+- `ENTITY_HORIZON_S` (default `86400`) — entity-table sweep horizon.
 - `TENANT_ID` — via `shared.envelope.default_tenant`; the resolver reads
   `tenant_id` off each alert (fallback `"default"`), the same field every
   other service stamps.
@@ -144,9 +169,10 @@ Past timestamps always pass — that is replay.
 
 - `incident.graph` (ADR-009 Topic B) — that is WP-2-C (relationship edges /
   provenance); WS-9 is the resolver half only.
-- `assets.updates`→`entity.updates` bridging for WS-6 — WS-6 writes
-  `entity.updates` directly in its own workstream; WS-9's `cg-entity-self`
-  consumer merges them today.
+- `assets.updates`→`entity.updates` bridging for WS-6 — a **planned follow-up,
+  not built**. WS-6's inventory worker is a `raw.events` producer today; it
+  does NOT write `entity.updates`. The `cg-entity-self` consumer is already
+  wired so the bridge (and any replay) needs no new plumbing when it lands.
 - Shared-infrastructure allowlist suppression (WS-8's `ip:`/`device:` skip):
   the WS-8 allowlist prevents false incident *correlation* through NAT/proxy
   chokepoints. WS-9's job is identity resolution of everything an analyst may

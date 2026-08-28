@@ -268,6 +268,134 @@ def test_invalid_tenant_rejected_not_normalized():
         pass
 
 
+# --- independent-review regressions (D1/D3/D4) ------------------------------
+
+
+def test_time_less_replay_stable_under_advancing_clock():
+    """D3 regression: a time-less alert redelivered LATER (clock advanced) must
+    re-derive the SAME time anchor, so last_seen_ms never moves and the
+    entity stays state-identical. (Old code embedded wall-clock now_ms; the
+    frozen test clock masked it.)"""
+    clock = _Clock()
+    r = EntityResolver(now_fn=clock)
+    alerts = _alert("tl1", actor="eve", src_ip="203.0.113.9")  # time=0 -> time-less
+    r.resolve_alert(alerts)
+    before = {eid: s["last_seen_ms"] for eid, s in
+              [(e, r.entity_state(e)) for e in r.entity_ids()]}
+    clock.advance(60)  # a wall-clock hour later
+    r.resolve_alert(alerts)  # redeliver
+    after = {eid: s["last_seen_ms"] for eid, s in
+             [(e, r.entity_state(e)) for e in r.entity_ids()]}
+    check(before == after,
+          f"D3: time-less replay under an advancing clock must NOT move last_seen_ms "
+          f"(before {before}, after {after})")
+    check(r.resolved_updates == len(r.entity_ids()),
+          f"D3: time-less redelivery must not inflate resolved_updates "
+          f"(got {r.resolved_updates})")
+
+
+def test_entity_count_bounded_by_sweep():
+    """D1 regression: a distinct-attacker-id spray must not grow the entity
+    table without limit -- the AUTO-WIRED sweep (called from _upsert_sighting
+    on the _ENTITY_SWEEP_EVERY cadence, not a test-only manual call) must evict
+    entities silent for a full horizon.
+
+    The test deliberately does NOT call ``_sweep_dead_entities`` directly: it
+    shrinks the module cadence constant so a small spray crosses the boundary
+    and trips the REAL production wiring -- a regression that removes the
+    auto-wiring call goes RED (adversarial-reverify finding: a direct call
+    masked the wiring)."""
+    import resolver as resolver_mod
+    orig_cadence = resolver_mod._ENTITY_SWEEP_EVERY
+    resolver_mod._ENTITY_SWEEP_EVERY = 8  # shrink so a small spray crosses it
+    try:
+        clock = _Clock()
+        r = EntityResolver(now_fn=clock, horizon_s=60)
+        # 8 distinct actors (each its own actor entity) all from one shared
+        # source IP = 9 distinct entities. Each alert is 2 upsert calls
+        # (actor+ip), so 8 alerts = 16 calls, crossing the 8-cadence twice
+        # during the spray -- but the clock is frozen, so nothing is stale yet.
+        for i in range(8):
+            r.resolve_alert(_alert(f"spray-{i}", actor=f"a{i}", src_ip="203.0.113.9"))
+        check(r.count() == 9,
+              f"D1: spray must record 9 entities (8 actor + 1 shared ip), got {r.count()}")
+        # Advance past the horizon; the next sightings (crossing the next
+        # cadence boundary) must AUTO-SWEEP the 7 stale actors (a1..a7 were
+        # not touched for > horizon). a0 + the shared ip get re-touched.
+        clock.advance(61)
+        for j in range(4):  # 4 more alerts = 8 upsert calls -> crosses 8-cadence
+            r.resolve_alert(_alert(f"revive-{j}", actor="a0", src_ip="203.0.113.9"))
+        # a0 + shared ip live; the 7 stale actors are swept.
+        check(r.count() == 2,
+              f"D1: after a full horizon the silent spray must be auto-swept, got "
+              f"{r.count()} entities (expected 2: revived a0 + shared ip)")
+        check(r.swept_entities >= 7,
+              f"D1: auto-sweep must have dropped the stale spray (swept {r.swept_entities})")
+        # Every surviving entity was touched within the horizon (live, not stale).
+        stale_before = r._now_ms() - 60 * 1000
+        for eid in r.entity_ids():
+            check(r._last_touch.get(eid, 0) >= stale_before,
+                  f"D1: surviving entity {eid} must have been touched within the horizon")
+    finally:
+        resolver_mod._ENTITY_SWEEP_EVERY = orig_cadence
+
+
+def test_entity_value_bounded():
+    """D1/D2 regression: an attacker-controlled >max entity_value must be
+    truncated+stability-suffixed before storage/emission (never retained
+    verbatim, distinct values stay distinct ids)."""
+    r = _new()
+    long = "u" * 2000
+    updates = r.resolve_alert(_alert("long1", actor=long, src_ip="203.0.113.9"))
+    # the actor entity's stored entity_value must be bounded
+    for u in updates:
+        if u["entity_type"] == "actor":
+            check(len(u["entity_value"]) <= 448,
+                  f"D2: entity_value must be bounded, got len {len(u['entity_value'])}")
+    # two distinct long values must stay distinct ids (never-merge survives cap)
+    e1 = compute_entity_id("default", "actor", "x" * 2000)
+    e2 = compute_entity_id("default", "actor", "y" * 2000)
+    check(e1 != e2, "D2: two distinct long values must keep distinct entity_ids")
+
+
+def test_username_whitespace_normalized():
+    """D5 regression: 'ALICE ' and 'alice' must be ONE identity (parser stray
+    whitespace must not split one actor into two ids). Old code did not strip."""
+    a = canonical_entity_value("actor", "ALICE ")
+    b = canonical_entity_value("actor", "alice")
+    check(a == b, f"D5: 'ALICE ' and 'alice' must normalize to the same value "
+                  f"(got {a!r} vs {b!r})")
+    check(compute_entity_id("d", "actor", a) == compute_entity_id("d", "actor", b),
+          "D5: whitespace variants must hash to ONE entity_id")
+
+
+def test_ipv6_case_insensitive_one_identity():
+    """D4 regression: IPv6 is case-insensitive; two spellings of one address
+    must collapse to ONE entity_id. (valid_ip preserves case; the resolver must
+    lowercase.)"""
+    a = canonical_entity_value("ip", "2001:0DB8::1")
+    b = canonical_entity_value("ip", "2001:0db8::1")
+    check(a is not None and a == b,
+          f"D4: IPv6 case spellings must normalize to one value (got {a!r} vs {b!r})")
+    if a is not None:
+        check(compute_entity_id("d", "ip", a) == compute_entity_id("d", "ip", b),
+              "D4: IPv6 case spellings must hash to ONE entity_id")
+
+
+def test_cap_evicted_replay_not_double_counted():
+    """D3 regression: a member cap-evicted then redelivered must NOT inflate
+    resolved_updates (the bounded evicted-LRU must carry the memory)."""
+    r = _new(member_cap=2)
+    for i in range(4):  # 4 distinct members -> evicts oldest
+        r.resolve_alert(_alert(f"m{i}", actor="eve", src_ip="203.0.113.9"))
+    updates_after_spray = r.resolved_updates
+    # redeliver the FIRST (evicted) member -- must not be a fresh state change
+    r.resolve_alert(_alert("m0", actor="eve", src_ip="203.0.113.9"))
+    check(r.resolved_updates == updates_after_spray,
+          f"D3: redelivering a cap-evicted member must not inflate resolved_updates "
+          f"({updates_after_spray} -> {r.resolved_updates})")
+
+
 def run_all():
     test_same_input_same_entity_id()
     test_distinct_tenant_type_value_distinct_id()
@@ -278,6 +406,12 @@ def run_all():
     test_replay_same_alert_twice_is_one_logical_state()
     test_memory_bus_round_trip_deterministic_entity_id()
     test_invalid_tenant_rejected_not_normalized()
+    test_time_less_replay_stable_under_advancing_clock()
+    test_entity_count_bounded_by_sweep()
+    test_entity_value_bounded()
+    test_username_whitespace_normalized()
+    test_ipv6_case_insensitive_one_identity()
+    test_cap_evicted_replay_not_double_counted()
 
 
 if __name__ == "__main__":
@@ -290,4 +424,6 @@ if __name__ == "__main__":
     print("[OK] WS-9 entity resolver contract test PASS "
           "(a) deterministic id (b) distinct tenant/type/value "
           "(c) canonicalization IP/MAC/username (d) replay idempotency "
-          "(e) redelivery-safe memory-bus round trip + tenant reject-not-normalize)")
+          "(e) redelivery-safe memory-bus round trip + tenant reject-not-normalize; "
+          "plus D1/D3/D4/D5 regressions: entity-count sweep, entity_value bound, "
+          "time-less replay stability, whitespace + IPv6-case identity, cap+replay count)")

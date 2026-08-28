@@ -75,13 +75,23 @@ def canonical_entity_value(entity_type: str, raw) -> str | None:
     if entity_type == ENTITY_TYPE_IP:
         # shared.ocsf.valid_ip validates shape AND collapses the
         # IPv4-mapped-IPv6 form the parsers already normalize (ocsf.py:54-84).
-        return valid_ip(s)
+        # IPv6 is case-insensitive: valid_ip preserves the input's case, so
+        # two spellings of one address ("2001:0DB8::1" vs "2001:0db8::1")
+        # must collapse to ONE identity (the ADR's one-identity-across-
+        # spellings intent; independent review D4). Lowercase the returned
+        # address -- safe for IPv4 (digits/dots unaffected) and mapped forms.
+        v = valid_ip(s)
+        if v is None:
+            return None
+        return v.lower()
     if entity_type == ENTITY_TYPE_ACTOR:
         # ADR-009: "usernames case-folded" -- one identity across casing.
-        return s.casefold()
+        # Trailing/leading whitespace is also normalized (a parser that
+        # appends a stray space must not split one actor into two ids).
+        return s.strip().casefold()
     if entity_type == ENTITY_TYPE_DEVICE:
         # ADR-009: "MACs lowercased"; device mac-or-hostname both lowercase.
-        return s.lower()
+        return s.strip().lower()
     raise ValueError(f"unknown entity_type {entity_type!r} (known: {sorted(ENTITY_TYPES)})")
 
 
