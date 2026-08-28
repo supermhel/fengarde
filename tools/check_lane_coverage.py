@@ -472,7 +472,7 @@ def _assert_pin_consistency() -> list[str]:
                 "green; nothing checked for pin drift"]
     problems: list[str] = []
     for pkg in ("PyYAML", "redis"):
-        versions = {}
+        versions: dict[str, list[str]] = {}
         for svc, svcpins in pins.items():
             if pkg in svcpins:
                 versions.setdefault(svcpins[pkg], []).append(svc)
