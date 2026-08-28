@@ -69,6 +69,9 @@ echo
 echo "== ws3 optimistic concurrency (CAS) for multi-replica triage writes =="; LAST_HEADER="== ws3 optimistic concurrency (CAS) for multi-replica triage writes =="
 $PY services/ws3-indexer/test_storage_cas.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
+echo "== WP-2-I: triage_api.py make_handler decomposition (per-route testability) =="; LAST_HEADER="== WP-2-I: triage_api.py make_handler decomposition (per-route testability) =="
+$PY services/ws3-indexer/test_route_decomposition.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
 echo "== ws3 (P1.3): OpenSearch index transient-retry / permanent-surface =="; LAST_HEADER="== ws3 (P1.3): OpenSearch index transient-retry / permanent-surface =="
 $PY services/ws3-indexer/test_opensearch_retry.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
@@ -269,6 +272,9 @@ $PY services/ws4-detection/test_tenants.py || { fail=1; FAILED="${FAILED} ${LAST
 echo
 echo "== M7 follow-up: rule-health watchdog (last-fired timestamp per rule on /metrics/prom) =="; LAST_HEADER="== M7 follow-up: rule-health watchdog (last-fired timestamp per rule on /metrics/prom) =="
 $PY services/ws4-detection/test_rule_health.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
+echo "== WP-2-F: exposure-aware risk scoring extension (schema-additive, inert) =="; LAST_HEADER="== WP-2-F: exposure-aware risk scoring extension (schema-additive, inert) =="
+$PY services/ws4-detection/test_exposure_scoring.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
 echo "== ws4 FIX 1/2/13/14/22/L1 regression: Sentinel HA wiring, poison-pill rejection, clock-skew warn =="; LAST_HEADER="== ws4 FIX 1/2/13/14/22/L1 regression: Sentinel HA wiring, poison-pill rejection, clock-skew warn =="
 $PY services/ws4-detection/test_fix_detection_engine.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }

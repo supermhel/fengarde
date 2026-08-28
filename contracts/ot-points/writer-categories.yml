@@ -1,0 +1,48 @@
+# Writer (actor/source) categories for OT point config (WP-2-E)
+#
+# Controlled vocabulary for `points[].allowed_writers[].category` in
+# contracts/ot-points/<device-id>.yml. Categories describe the KIND of
+# actor/source a deployment expects to write a point — never a specific
+# credential or secret (SECURITY.md §4).
+#
+# Ordered roughly by increasing operational risk of the writer role.
+# Additive by design: a deployment-facing vocabulary a later wired package
+# will match against event actor/source attributes (e.g. an OPC UA
+# clientUserId role, a Modbus tap's sourceIp subnet allocation, an HMI
+# session type). No loader exists yet — see README.md for honest scope.
+categories:
+  - id: scada_host
+    description: >-
+      A SCADA/control-room host performing scheduled supervisory writes
+      (setpoints, mode changes) as part of normal operation.
+  - id: hmi
+    description: >-
+      A local operator HMI/panel used by the shift operator for live
+      control actions. Higher-touch than scada_host: every write is a
+      person acting on the machine.
+  - id: engineering_workstation
+    description: >-
+      An engineer's workstation with programming/commissioning access
+      (PLC vendor tooling). Writes here typically accompany change work
+      rather than routine operation.
+  - id: maintenance_tool
+    description: >-
+      A maintenance/support tool or field laptop used during planned
+      maintenance windows — the writer class in the 2026-08-28 FPR
+      scenario (approved maintenance-window coil write).
+  - id: automation_controller
+    description: >-
+      Machine-to-machine: another controller/PLC legitimately writing this
+      point (e.g. interlocking, cascade control). Only meaningful where the
+      deployment can attribute writes to a controller identity.
+  - id: unknown
+    description: >-
+      The deployment cannot yet attribute a writer class. Listing
+      `unknown` is an honest "not yet classified" — it grants nothing
+      until a wired package defines what it does.
+
+# Writer categories deliberately NOT present here (would be dishonest to
+# ship as legitimate writers): attacker-controlled/anonymous network
+# sources, unauthenticated devices, and any category a deployment has not
+# actually reviewed. Missing config never silently reduces detection
+# coverage — same convention as contracts/allowlists/.

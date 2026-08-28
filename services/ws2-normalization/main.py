@@ -53,6 +53,8 @@ def _int_env(name: str, default: int, log, *, crash_on_bad: bool = False) -> int
 _FREE_TEXT_PATHS = (
     ("message",),
     ("actor", "user", "name"),
+    ("actor", "user", "domain"),
+    ("actor", "user", "uid"),
     ("actor", "process", "name"),
     ("src_endpoint", "hostname"),
     ("dst_endpoint", "hostname"),
@@ -64,6 +66,12 @@ _FREE_TEXT_PATHS = (
     # api.request.data carries arbitrary request bodies parsers forward as
     # free text; sanitize it too (M1 gap fix).
     ("api", "request", "data"),
+    # api.operation carries a raw tool-name / event-type string parsers copy
+    # verbatim from attacker-controlled content (mcp_agent str(tool),
+    # n8n_audit str(event_type), opcua_audit event_type) -- a mapped, non-
+    # unmapped field it shares with api.request.data, so it needs an explicit
+    # path of its own (WP-2-G: was reaching downstream unsanitized).
+    ("api", "operation"),
 )
 
 

@@ -146,6 +146,88 @@ def test_explicit_path_with_nested_value_recurses_instead_of_passthrough():
           f"{event['api']['request']['data']!r}")
 
 
+def test_sanitizes_api_operation_and_actor_user_domain_uid():
+    """WP-2-G re-derived gap fix: api.operation (carries the raw tool name /
+    event_type copied verbatim from attacker-controlled content by mcp_agent
+    str(tool), n8n_audit str(event_type), opcua_audit event_type) and
+    actor.user.domain / actor.user.uid (raw Windows eventlog domain + SID set
+    by active_directory + windows_eventlog) were NOT in _FREE_TEXT_PATHS and
+    NOT under unmapped.*, so hostile strings in those mapped fields reached
+    downstream sinks unsanitized. Each must now be stripped."""
+    hostile = "\x1b[31m\x1b]52;c;ZXZpbA==\x07\x00\r\n"
+    event = {
+        "api": {"operation": f"read_{hostile}file", "request": {"data": "ok"}},
+        "actor": {"user": {
+            "name": "alice",
+            "domain": f"BANK{hostile}CORP",
+            "uid": f"S-1-5-21{hostile}",
+        }},
+    }
+    ws2._sanitize_free_text(event)
+    # unchanged fields must stay intact (surgical fix, no collateral churn)
+    check(event["actor"]["user"]["name"] == "alice",
+          f"already-covered actor.user.name got clobbered: {event['actor']['user']['name']!r}")
+    check(event["api"]["request"]["data"] == "ok",
+          f"already-covered api.request.data got clobbered: {event['api']['request']['data']!r}")
+    # new coverage must be stripped
+    check(event["api"]["operation"] == "read_file",
+          f"api.operation not stripped: {event['api']['operation']!r}")
+    check(event["actor"]["user"]["domain"] == "BANKCORP",
+          f"actor.user.domain not stripped: {event['actor']['user']['domain']!r}")
+    check(event["actor"]["user"]["uid"] == "S-1-5-21",
+          f"actor.user.uid not stripped: {event['actor']['user']['uid']!r}")
+
+
+def test_api_operation_stripped_end_to_end_through_real_parser():
+    """End-to-end through normalize_one: an MCP agent record with a hostile
+    (ANSI + control) tool name must NOT survive into api.operation -- proof the
+    new explicit path is wired into the real parse->sanitize pipeline, not just
+    a direct-call unit test."""
+    hostile = "\x1b]52;c;ZXZpbA==\x07read\x00"
+    raw = {
+        "source_type": "mcp_agent",
+        "raw": {"ts": 1700000000, "tool": hostile, "agent": "a",
+                "arguments": {"path": "/tmp/x"}, "outcome": "success"},
+        "meta": {"received_at": 1700000000, "ingest_id": "wp2g-mcp-1"},
+    }
+    event, errors = ws2.normalize_one(raw)
+    check(event is not None, "mcp_agent parser must still produce an event")
+    check(not errors, f"sanitized event must still validate: {errors}")
+    op = event.get("api", {}).get("operation", "")
+    check("\x1b" not in op and "\x07" not in op and "\x00" not in op,
+          f"hostile control bytes survived into api.operation: {op!r}")
+
+
+def test_unmapped_nested_list_of_dicts_stripped():
+    """The ("unmapped", "*") wildcard must recurse into a nested LIST OF DICTS
+    under unmapped.*, stripping string cells inside each dict -- not just the
+    top-level dict and a flat list-of-strings. A producer putting an array of
+    records under unmapped (e.g. unmapped.k8s.items: [{...raw...}]) must not
+    let control chars in a cell escape to downstream sinks."""
+    hostile = "\x1b[31m\x0b"
+    event = {"unmapped": {
+        "k8s": {
+            "items": [
+                {"name": f"pod{hostile}x", "ns": "prod"},
+                {"name": "clean", "ns": "n\x07s"},
+                {"labels": [f"a{hostile}b", "plain"]},   # list inside a dict cell
+            ],
+            "count": 3,                                   # non-string leaf survives
+        },
+    }}
+    ws2._sanitize_free_text(event)
+    items = event["unmapped"]["k8s"]["items"]
+    check(items[0]["name"] == "podx",
+          f"nested list-of-dicts cell not stripped: {items[0]['name']!r}")
+    check(items[1]["ns"] == "ns",
+          f"nested list-of-dicts cell (ns) not stripped: {items[1]['ns']!r}")
+    check(items[2]["labels"] == ["ab", "plain"],
+          f"list-inside-dict-cell not stripped: {items[2]['labels']!r}")
+    check(event["unmapped"]["k8s"]["count"] == 3,
+          f"non-string leaf under nested list got mutated: "
+          f"{event['unmapped']['k8s']['count']!r}")
+
+
 def main():
     test_strips_csi_ansi()
     test_strips_osc_ansi_terminated_by_bel()
@@ -157,6 +239,9 @@ def main():
     test_sanitizes_unmapped_wildcard_any_prefix_any_depth()
     test_unmapped_wildcard_missing_subtree_is_noop()
     test_explicit_path_with_nested_value_recurses_instead_of_passthrough()
+    test_sanitizes_api_operation_and_actor_user_domain_uid()
+    test_api_operation_stripped_end_to_end_through_real_parser()
+    test_unmapped_nested_list_of_dicts_stripped()
 
     if FAILS:
         print(f"\n[FAIL] sanitize: {len(FAILS)} problem(s)")

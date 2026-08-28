@@ -4,7 +4,10 @@ Proves enrichment is: additive (never overwrites, never removes), offline
 (reads local files only), correct (exact-IP > CIDR, longest-prefix, INTERNAL
 tagging), tolerant/fail-open (missing files, bad IPs, no src_endpoint all leave
 the event flowing), and that an enriched event still validates against
-Contract A -- i.e. downstream stays a tolerant reader.
+Contract A -- i.e. downstream stays a tolerant reader. WP-2-H: the bounded
+per-IP result cache populates on first sight, serves repeats without
+re-scanning, stays <= cap under an attacker IP spray, evicts LRU, and caches
+misses as exact live-scan equivalents.
 
 Run: python services/ws2-normalization/enrichment/test_enrichment.py
 """
@@ -45,12 +48,34 @@ entries:
 """
 
 
-def _enricher(tmp: Path, ioc=_IOC, geo=_GEO) -> Enricher:
+def _enricher(tmp: Path, ioc=_IOC, geo=_GEO, **kwargs) -> Enricher:
     ip = tmp / "ioc.yml"
     gp = tmp / "geoip.yml"
     ip.write_text(ioc, encoding="utf-8")
     gp.write_text(geo, encoding="utf-8")
-    return Enricher(ioc_path=ip, geoip_path=gp)
+    return Enricher(ioc_path=ip, geoip_path=gp, **kwargs)
+
+
+class _ScanCountingEnricher(Enricher):
+    """Enricher whose `_reputation_for`/`_location_for` count real scan calls.
+
+    Mutation-sound by construction: the counters wrap the REAL scan methods,
+    which still return live results via super(). If the per-IP cache is removed
+    and enrich() re-scans on every event, the counts inflate and the
+    hits-reduce-scans tests go RED.
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.scan_calls = 0
+
+    def _reputation_for(self, ip_str):
+        self.scan_calls += 1
+        return super()._reputation_for(ip_str)
+
+    def _location_for(self, ip_str):
+        self.scan_calls += 1
+        return super()._location_for(ip_str)
 
 
 class TestEnrichment(unittest.TestCase):
@@ -174,6 +199,102 @@ class TestEnrichment(unittest.TestCase):
         errors_after = validate(enriched)
         self.assertEqual(errors_after, [],
                          f"enriched event must still validate: {errors_after}")
+
+    # --- WP-2-H: bounded per-IP result cache --------------------------------
+
+    def test_ip_cache_first_lookup_populates_cache(self):
+        e = _enricher(self.tmp, cache_cap=8)
+        self.assertEqual(len(e._ip_cache), 0, "cache starts empty")
+        out = e.enrich({"src_endpoint": {"ip": "203.0.113.5"}})
+        self.assertIn("203.0.113.5", e._ip_cache,
+                      "first lookup for a NEW ip must populate the cache")
+        rep, loc = e._ip_cache["203.0.113.5"]
+        self.assertEqual(rep["score"], 90)
+        self.assertEqual(loc, {"country": "RU", "source": "local-geoip"})
+        self.assertEqual(out["src_endpoint"]["reputation"]["score"], 90)
+
+    def test_ip_cache_repeated_lookup_hits_cache_scans_decrease(self):
+        # A cache hit must return the identical memoized result WITHOUT
+        # re-running either scan: first lookup = 2 scan calls (rep + geo),
+        # second lookup of the SAME ip = 0 additional scans.
+        e = _ScanCountingEnricher(ioc_path=self.tmp / "ioc.yml",
+                                  geoip_path=self.tmp / "geoip.yml",
+                                  cache_cap=8)
+        ev1 = {"src_endpoint": {"ip": "198.51.100.200"}}
+        ev2 = {"src_endpoint": {"ip": "198.51.100.200"}}
+        out1 = e.enrich(ev1)
+        scans = e.scan_calls
+        self.assertEqual(scans, 2,
+                         "first lookup runs exactly one reputation + one geo scan")
+        out2 = e.enrich(ev2)
+        self.assertEqual(e.scan_calls, scans,
+                         "repeated lookup of the SAME ip must hit the cache: "
+                         "scan count must not grow")
+        self.assertEqual(out1, out2, "cache hit must reproduce the first result")
+
+    def test_ip_cache_bounded_under_attacker_spray(self):
+        # IPs are attacker-controlled: a spray of distinct IPs must not grow
+        # the cache without limit. cap=4, spray 20 -> size stays <= 4 AND holds
+        # exactly 4 entries (mutation-sound: RED if the cache is removed, when
+        # size would be 0 -- not 4).
+        e = _enricher(self.tmp, cache_cap=4)
+        for i in range(1, 21):  # 20 distinct valid IPs > cap 4
+            e.enrich({"src_endpoint": {"ip": f"203.0.113.{i}"}})
+        size = len(e._ip_cache)
+        self.assertLessEqual(size, 4,
+                             "cache must NEVER exceed its cap under a spray")
+        self.assertEqual(size, 4,
+                         "cache must actually be populated (bounded, not absent)")
+        self.assertEqual(set(e._ip_cache), {f"203.0.113.{i}" for i in range(17, 21)},
+                         "insertion-order eviction: the oldest entries go first")
+        self.assertNotIn("203.0.113.1", e._ip_cache, "oldest sprayed ip evicted")
+
+    def test_ip_cache_rehit_refreshes_recency_lru(self):
+        # LRU-ish eviction: re-hitting an entry refreshes its recency so it
+        # survives the eviction of the oldest UN-refreshed entry.
+        e = _enricher(self.tmp, cache_cap=3)
+        a, b, c, d = "203.0.113.10", "203.0.113.11", "203.0.113.12", "203.0.113.13"
+        for ip in (a, b, c):
+            e.enrich({"src_endpoint": {"ip": ip}})
+        e.enrich({"src_endpoint": {"ip": a}})   # re-hit a -> refresh recency
+        e.enrich({"src_endpoint": {"ip": d}})   # over cap -> evict OLDEST (b)
+        self.assertNotIn(b, e._ip_cache,
+                         "LRU: the un-refreshed oldest entry must be evicted")
+        for ip in (a, c, d):
+            self.assertIn(ip, e._ip_cache, "recently-used entries must survive")
+
+    def test_ip_cache_cached_miss_equals_live_miss(self):
+        # A valid IP matching nothing locally is cached as a (None, None) miss
+        # marker, and a repeated lookup returns the SAME untouched event a live
+        # scan would -- without re-scanning (determinism requirement).
+        e1 = _ScanCountingEnricher(ioc_path=self.tmp / "ioc.yml",
+                                   geoip_path=self.tmp / "geoip.yml",
+                                   cache_cap=8)
+        ev = {"src_endpoint": {"ip": "8.8.8.8"}}
+        out1 = e1.enrich(dict(ev))
+        self.assertEqual(out1["src_endpoint"], {"ip": "8.8.8.8"},
+                         "unknown ip gets no enrichment (live semantics)")
+        self.assertIn("8.8.8.8", e1._ip_cache, "miss marker must be cached")
+        self.assertEqual(e1._ip_cache["8.8.8.8"], (None, None))
+        scans = e1.scan_calls
+        self.assertEqual(scans, 2, "a fresh unknown ip scans both tables once")
+        out2 = e1.enrich(dict(ev))
+        self.assertEqual(e1.scan_calls, scans,
+                         "repeated unknown ip must NOT re-scan (cached miss)")
+        live = _enricher(self.tmp, cache_cap=8).enrich(dict(ev))
+        self.assertEqual(out2, live,
+                         "cached miss must equal a live scan (deterministic)")
+
+    def test_ip_cache_garbage_ip_never_cached(self):
+        # tenants.py discipline: invalid strings are cheap to re-validate and
+        # must not be allowed to fill the attacker-controlled cache for free --
+        # a spray of arbitrary garbage must leave the cache empty.
+        e = _enricher(self.tmp, cache_cap=4)
+        for junk in ("not-an-ip", "203.0.113", "dead::beef::", "1.2.3.4.5",
+                     "203.0.113.5 "):
+            e.enrich({"src_endpoint": {"ip": junk}})
+        self.assertEqual(len(e._ip_cache), 0,
+                         "invalid IP strings must never enter the cache")
 
 
 if __name__ == "__main__":
