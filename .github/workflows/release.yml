@@ -72,9 +72,13 @@ jobs:
       # generator's `base64-subjects` input: one `<sha256hex>  <name>` line
       # per subject, exactly the format generator_generic_slsa3.yml parses.
       - name: Create + keyless-sign the source tarball release artifact
+        env:
+          # Passed via env, not interpolated into the script -- a git tag
+          # name can contain shell metacharacters (;, `, $, |, ") and this
+          # job holds packages:write/contents:write/id-token:write.
+          REF: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          REF="${{ github.ref_name }}"
           mkdir -p dist
           git archive --format=tar.gz -o "dist/fengarde-${REF}.tar.gz" HEAD
           cosign sign-blob --yes "dist/fengarde-${REF}.tar.gz" \
@@ -84,10 +88,12 @@ jobs:
 
       - name: Build, push, and keyless-sign every service image
         id: subjects
+        env:
+          REF: ${{ github.ref_name }}
+          REPO_OWNER: ${{ github.repository_owner }}
         run: |
           set -euo pipefail
-          REF="${{ github.ref_name }}"
-          GHCR="ghcr.io/${{ github.repository_owner }}"
+          GHCR="ghcr.io/${REPO_OWNER}"
           # Every service that ships a Dockerfile (matches the compose-file
           # services in infra/docker-compose.yml).
           services="devkit-feeder ws1-collectors ws2-normalization ws3-indexer \

@@ -303,6 +303,36 @@ counts as *covered-with-reason* (it cannot silently regress to an undocumented
 open listener). If you expose the metrics port beyond a trusted network, put it
 behind your reverse proxy's auth the same way as every other surface.
 
+### 12. Modbus `changeTicketId` (`unmapped.ot.change_ticket_id`) is an unvalidated trust boundary
+
+`services/ws2-normalization/parsers/modbus_anomaly.py` accepts an optional
+`changeTicketId` field on an observed Modbus/TCP write frame, mapped to
+`unmapped.ot.change_ticket_id`. **This field is not validated against any
+real ticketing/change-management system — there is none in this repo to
+check it against.** Its presence changes which rule fires:
+
+- Without it: `contracts/rules/ot_modbus_unauthorized_write.yml` fires —
+  `level: high`, `score_weight: 75`.
+- With it (any non-blank string, no format check): `contracts/rules/
+  ot_modbus_unauthorized_write_ticketed.yml` fires INSTEAD — `level: low`,
+  `score_weight: 10`. The event still reaches the index and is still
+  huntable — it is a downgrade, not a suppression — but a `low` alert will
+  not trigger the same escalation, paging, or triage-queue behavior a
+  `high` one does.
+
+**Whoever can populate this field can move a Modbus write from HIGH to LOW
+severity with no cross-check.** This field must be populated by a source
+independent of the observed Modbus wire — e.g. a tap/proxy that has
+genuinely correlated the write against an open, approved change ticket in
+an external system — and must never be derived from anything an attacker
+with write access to the Modbus bus could also control. FENGARDE ships no
+such integration; `eval/twin/negative_controls.py::scenario_maintenance_window`
+exercises the downgrade mechanism against simulated data only, and that is
+not a claim this solves real-world OT change authorization. If you wire a
+real tap/proxy to populate this field, the trust of `ot_modbus_
+unauthorized_write`'s HIGH/LOW split is only as strong as that
+integration's own authentication and validation of the ticket it attaches.
+
 ---
 
 ## Out of scope
@@ -397,14 +427,17 @@ and release:
 cosign verify \
   ghcr.io/supermhel/fengarde-ws3-indexer:<VERSION> \
   --certificate-identity-regexp \
-    '^https://github.com/supermhel/fengarde/\.github/workflows/release\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$' \
+    '^https://github.com/supermhel/fengarde/\.github/workflows/release\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$' \
   --certificate-oidc-issuer 'https://token.actions.githubusercontent.com'
 ```
 
 The `--certificate-identity-regexp` pins the signing identity to this repo's
 `release.yml` running at the release tag — a signature minted by an attacker's
 fork of the workflow won't match it, even though both use the same public
-Sigstore root of trust.
+Sigstore root of trust. The pattern accepts an optional semver pre-release
+suffix (`-rc1`, `-alpha.1`, ...) because `release.yml` triggers and signs on
+any `v*` tag, not just stable releases — see its `:latest` image-tag gating
+(stable tags only) for the *separate* decision of which tag moves `:latest`.
 
 ### 2. Verify the source-tarball release artifact (sign-blob)
 
@@ -418,7 +451,7 @@ cosign verify-blob \
   --signature   fengarde-<VERSION>.tar.gz.sig \
   --certificate fengarde-<VERSION>.tar.gz.pem \
   --certificate-identity-regexp \
-    '^https://github.com/supermhel/fengarde/\.github/workflows/release\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$' \
+    '^https://github.com/supermhel/fengarde/\.github/workflows/release\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$' \
   --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
   fengarde-<VERSION>.tar.gz
 ```

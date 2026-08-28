@@ -16,15 +16,17 @@ fabricated one:
                                        there is no denominator to measure a
                                        fraction against; null, never a
                                        fabricated 0.0)
-  * fpr                        = 0.25 (measured: the approved-maintenance-window
-                                       negative control fires
-                                       ot_modbus_unauthorized_write on the
-                                       coil-space write — a documented coarse
-                                       rule tradeoff, NOT hidden here; the
-                                       parser has no signal to discriminate it
-                                       from the real attack chain, which uses
-                                       the identical coil address AND source
-                                       IP — see negative_controls.py)
+  * fpr                        = 0.0 (measured: an INCIDENT count, i.e.
+                                       medium+ alerts only — see
+                                       negative_controls.is_incident(). The
+                                       approved-maintenance-window write still
+                                       fires an alert (the parser has no
+                                       signal to discriminate it from the
+                                       real attack chain's identical coil
+                                       address + source IP), but at LOW
+                                       severity via the ticketed-write
+                                       companion rule, so it's not counted
+                                       as an incident. See negative_controls.py.)
   * mtti / mttr                = null (no incident is promoted today, so there
                                        is no incident to identify time-to or
                                        recover-from)
@@ -128,11 +130,17 @@ def _run_chain(seed: int) -> scenario.ChainResult:
 
 
 def _run_negatives(seed: int) -> dict:
-    """Run all four negative controls; return alerts-per-scenario."""
+    """Run all four negative controls; return INCIDENT count per scenario.
+
+    A low/informational-severity alert (e.g. the ticketed-write companion
+    rule firing instead of the HIGH one) is not an incident -- see
+    negative_controls.is_incident(). Counting it as a false positive would
+    misreport the fixed FPR as still nonzero.
+    """
     per_scenario: dict[str, int] = {}
     for fn in negative_controls._ALL_SCENARIOS:
         name, alerts = fn(seed)
-        per_scenario[name] = len(alerts)
+        per_scenario[name] = sum(1 for a in alerts if negative_controls.is_incident(a))
     return per_scenario
 
 
@@ -179,7 +187,9 @@ def _grade_chain(result: scenario.ChainResult, oracle: dict) -> dict:
         1 for ev in parsed if (oracle.get("detection_points") or {}).get(ev.step, {})
         .get("expected_rules")
     )
-    tpr = (tpr_numer / tpr_denom) if tpr_denom else 0.0
+    # No denominator (every parsed step is an oracle gap) -> null, not a
+    # fabricated 0.0 -- same discipline as chain_fidelity below.
+    tpr = (tpr_numer / tpr_denom) if tpr_denom else None
 
     # Evidence completeness: oracle per-step evidence fields present on the real
     # parsed OCSF event for that step; gapped steps count against honestly.
@@ -190,12 +200,15 @@ def _grade_chain(result: scenario.ChainResult, oracle: dict) -> dict:
     for step, meta in per_step.items():
         fields = meta.get("fields") or []
         total_fields += len(fields)
-        the_event = (ev_by_step.get(step).event or {}) if step in ev_by_step else None
-        if the_event is None:
-            continue  # gapped / no event -> field absent -> counts against
+        # Every CHAIN_STEPS label is always a key in ev_by_step (scenario.py
+        # emits exactly one ChainEvent per step, gapped or not) -- a gapped
+        # step's .event is None, so `.event or {}` is `{}` and every field
+        # lookup below correctly returns None -> counts against honestly,
+        # with no separate "missing step" branch needed.
+        the_event = ev_by_step[step].event or {} if step in ev_by_step else {}
         for f in fields:
             present_fields += 1 if _dot_get(the_event, f) is not None else 0
-    evidence_completeness = present_fields / total_fields if total_fields else 0.0
+    evidence_completeness = present_fields / total_fields if total_fields else None
 
     chain_start_ts = _event_ts(result.events[0]) if result.events else None
     mttd_seconds = (
@@ -206,7 +219,7 @@ def _grade_chain(result: scenario.ChainResult, oracle: dict) -> dict:
     )
 
     return {
-        "tpr": round(tpr, 4),
+        "tpr": round(tpr, 4) if tpr is not None else None,
         "tpr_numerator": tpr_numer,
         "tpr_denominator": tpr_denom,
         "sequence_present": bool(seq_ok),
@@ -215,7 +228,9 @@ def _grade_chain(result: scenario.ChainResult, oracle: dict) -> dict:
         "fired_alerts": len(fired),
         "fired": fired,  # the real fired-alert dicts, so run() need not re-detect
         "mttd_seconds": mttd_seconds,
-        "evidence_completeness": round(evidence_completeness, 4),
+        "evidence_completeness": (
+            round(evidence_completeness, 4) if evidence_completeness is not None else None
+        ),
         # WS-8 has no causal-edge graph today, so "fraction of causal edges
         # correctly reconstructed" has no denominator -- null, not a fabricated
         # zero (None is later surfaced verbatim in the report; a real 0.0 would
@@ -234,20 +249,31 @@ def _real_detection(raw_pairs: list[tuple[str, dict]]) -> list[dict]:
         return []
 
 
-def _attribution(parsed: list[scenario.ChainEvent]) -> float:
-    """Attribution accuracy on ACTOR-BEARING steps only (honest)."""
-    actor_steps = 0
-    correct = 0
+def _attribution(parsed: list[scenario.ChainEvent]) -> Optional[float]:
+    """Attribution accuracy on ACTOR-BEARING steps only: the fraction whose
+    actor identity MATCHES the first actor-bearing step's identity.
+
+    This is a real check, not a tautology: the chain is driven by a single
+    fixed identity end to end (see scenario._build_chain_payloads), so a
+    mismatch here means enrichment/parsing lost or corrupted the actor
+    between steps -- a genuine defect this metric can actually catch, unlike
+    "any actor present counts as correct" (which can only ever read 1.0).
+    """
+    identities: list[str] = []
     for ev in parsed:
         ocsf = ev.event or {}
         actor = ocsf.get("actor") or {}
-        if not actor.get("user") and not actor.get("process"):
+        user = actor.get("user") if isinstance(actor.get("user"), dict) else {}
+        process = actor.get("process") if isinstance(actor.get("process"), dict) else {}
+        ident = user.get("name") or process.get("name")
+        if not ident:
             continue  # no actor attached -> not attributable -> not credited
-        actor_steps += 1
-        # the chain's actor is a single, fixed identity; any real actor on a
-        # real-parsed step is a correct attribution
-        correct += 1
-    return round(correct / actor_steps, 4) if actor_steps else 0.0
+        identities.append(ident)
+    if not identities:
+        return None  # no actor-bearing steps at all -> no denominator, honest null
+    expected = identities[0]
+    correct = sum(1 for i in identities if i == expected)
+    return round(correct / len(identities), 4)
 
 
 def _dot_get(d: dict, dotted: str):
@@ -320,7 +346,11 @@ def run(seed: int = 7) -> dict:
     alerts_total = len(fired)
     incident_promotions = 0  # Correlator promotes nothing today (no causal edges)
 
-    fpr = sum(1 for n in negatives.values() if n) / len(negatives)  # 1/4 = 0.25
+    # No denominator for FPR only if there are no negative scenarios at all
+    # (there always are four, but guard rather than assume).
+    fpr = (sum(1 for n in negatives.values() if n) / len(negatives)) if negatives else None
+
+    severity = _severity_band_check(oracle, fired)
 
     report = {
         "report": {
@@ -331,15 +361,15 @@ def run(seed: int = 7) -> dict:
             "basis": "harness-measured",  # Phase 3.5 discipline: sim/replay, not field
         },
         "metrics": {
-            "tpr": round(tpr, 4),
-            "fpr": round(fpr, 4),
+            "tpr": tpr,          # already rounded (or None) by _grade_chain
+            "fpr": round(fpr, 4) if fpr is not None else None,
             "mttd_seconds": grade["mttd_seconds"],  # real: first-matched-step ts minus chain-start ts
             "mtti": None,                 # no incident promoted today (honest null)
             "mttr": None,                 # no incident resolved today (honest null)
             # WS-8 has no causal-edge graph today -- null, not a fabricated 0.0
             # (see _grade_chain's chain_fidelity comment for the same reasoning).
             "chain_fidelity": grade["chain_fidelity"],
-            "evidence_completeness": round(evidence, 4),
+            "evidence_completeness": evidence,  # already rounded (or None) by _grade_chain
             # No incident is ever promoted today (incident_promotions == 0
             # above), so "false correlation rate" and "alert reduction ratio"
             # have no incidents to be computed over -- null, not a fabricated
@@ -347,7 +377,9 @@ def run(seed: int = 7) -> dict:
             "false_correlation_rate": None,
             "alert_reduction_ratio": None,
             "incident_reconstruction_time_ms": None,
-            "severity_calibration_error": _severity_band_check(oracle, fired)["severity_calibration_error"],
+            "severity_calibration_error": severity["severity_calibration_error"],
+            "peak_alert_score": severity["peak_alert_score"],  # the real max score_weight observed, not discarded
+            "severity_in_band": severity["in_band"],
             "mutation_robustness": None,    # Phase 4 wires mutation; not measured yet
             "degradation_behavior": _degradation_behavior(),
             "attribution_accuracy": grade["attribution_accuracy"],
@@ -357,16 +389,20 @@ def run(seed: int = 7) -> dict:
             "parsed_count": chain.parsed_count(),
             "gap_count": chain.gap_count(),
             "gap_steps": [e.step for e in chain.events if e.gap],
-            "negative_controls": negatives,  # e.g. {"approved-maintenance-window": 1, ...}
+            "negative_controls": negatives,  # per-scenario INCIDENT count (see _run_negatives)
             "oracle_expected_sequence": oracle["expected_sequence"],
             "alert_count": alerts_total,
             "incident_promotions": incident_promotions,
         },
         "finding": (
-            f"FPR={round(fpr, 4)}: {sum(1 for n in negatives.values() if n)}/"
-            f"{len(negatives)} negative control(s) fired: "
+            f"FPR={round(fpr, 4) if fpr is not None else 'null'}: "
+            f"{sum(1 for n in negatives.values() if n)}/"
+            f"{len(negatives)} negative control(s) produced an INCIDENT-level "
+            f"(medium+) alert: "
             + (", ".join(name for name, n in negatives.items() if n) or "none")
-            + ". See eval/twin/negative_controls.py for the per-scenario cause."
+            + ". A low-severity ticketed alert doesn't count as an incident -- "
+              "see negative_controls.is_incident(). See eval/twin/"
+              "negative_controls.py for the per-scenario cause."
         ),
         "elapsed_seconds": round(time.time() - started, 3),
     }
@@ -396,12 +432,31 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
 
     report = run(seed=args.seed)
+
+    # Floor assertions -- this is a PR-gate step (run_all_tests.sh). A smoke
+    # run whose only failure mode is a Python exception isn't gate coverage:
+    # _real_detection() swallows every exception and returns [], which would
+    # otherwise silently produce TPR=0/alert_count=0 and still print [OK].
+    m, ctx = report["metrics"], report["context"]
+    floor_failures = []
+    if ctx["alert_count"] == 0:
+        floor_failures.append("alert_count == 0 -- the WS-2->WS-4 cascade produced no alerts at all")
+    if m["tpr"] != 1.0:
+        floor_failures.append(f"tpr == {m['tpr']!r}, expected 1.0 on this deterministic chain")
+    if m["fpr"] != 0.0:
+        floor_failures.append(f"fpr == {m['fpr']!r}, expected 0.0 (see negative_controls.is_incident())")
+    if floor_failures:
+        for f in floor_failures:
+            print(f"[FAIL] twin report floor assertion: {f}")
+        print(f"[FAIL] twin report (seed={args.seed}) is below its known-good floor -- "
+              f"treat as a regression, not a metric fluctuation.")
+        return 1
+
     with open(args.out, "w", encoding="utf-8") as fh:
         json.dump(report, fh, indent=2)
     if not args.no_trend:
         _append_trend(report)
     # print a human summary line for the gate
-    m = report["metrics"]
     print(f"[OK] twin report (seed={args.seed}): TPR={m['tpr']} FPR={m['fpr']} "
           f"chain_fidelity={m['chain_fidelity']} "
           f"evidence={m['evidence_completeness']} basis={report['report']['basis']}")

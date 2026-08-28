@@ -14,14 +14,24 @@ description: >
   `_EXPECTED_WRITE_ADDRESSES` per deployment, same tradeoff opcua_audit.py's
   `_CONFIG_NODE_MARKERS` heuristic already accepts.
 
-  Suppressed when the write carries a `changeTicketId` (mapped to
-  `unmapped.ot.change_ticket_id` by modbus_anomaly.py) -- an explicit,
-  out-of-band authorization signal a real tap/proxy could attach from an
-  integrated change-management system. Without it, an approved-maintenance
-  write to the same coil is indistinguishable from an attack write to the
-  same coil (same address, same source IP, both inside business hours) --
-  see eval/twin/negative_controls.py::scenario_maintenance_window, which is
-  what surfaced this as a real FPR before the field existed.
+  DOWNGRADED, never dropped, when the write carries a `changeTicketId`
+  (mapped to `unmapped.ot.change_ticket_id` by modbus_anomaly.py, an
+  explicit out-of-band authorization signal a real tap/proxy could attach
+  from an integrated change-management system): this rule steps aside and
+  `ot_modbus_unauthorized_write_ticketed.yml` fires instead, at `level: low`
+  -- the event stays indexed and huntable, it is just not scored as a full
+  incident. `unmapped.ot.change_ticket_id` is NOT validated against any real
+  ticketing system by this parser or this rule (there is none to check) --
+  anyone who can populate that field can move a write from HIGH to LOW here,
+  with no cross-check. Treat the field's trust boundary the same as any
+  other tap/proxy-reported field this parser accepts: it must come from a
+  source independent of the Modbus wire itself, never from frame bytes. See
+  modbus_anomaly.py's module docstring and SECURITY.md for the full trust
+  discussion. Without the field, an approved-maintenance write to the same
+  coil is indistinguishable from an attack write to the same coil (same
+  address, same source IP, both inside business hours) -- see
+  eval/twin/negative_controls.py::scenario_maintenance_window, which is what
+  surfaced this as a real FPR before the field existed.
 level: high
 logsource:
   category: network_activity

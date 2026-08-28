@@ -7,6 +7,70 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed (2026-08-28, second code-review pass on the two entries below)
+
+A fresh independent review (no shared context with the first fix pass) of the
+already-fixed PR verified the earlier claims empirically and found three of
+them incomplete, plus one new critical issue in the fix commit itself.
+
+- **`authorized_change` was a silent, unvalidated, forgeable full suppression
+  of a HIGH-severity OT rule.** Empirically confirmed: setting
+  `changeTicketId` to an arbitrary attacker-controlled string on the exact
+  same coil write dropped `ot_modbus_unauthorized_write` to zero matched
+  rules, with no audit trail and no disclosure in SECURITY.md. **Redesigned
+  from suppression to downgrade**: the rule now steps aside for a new
+  companion rule, `contracts/rules/ot_modbus_unauthorized_write_ticketed.yml`
+  (`level: low`, `score_weight: 10`), so a ticketed write is never a silent
+  non-event — it stays indexed and huntable, just not scored as an incident.
+  `negative_controls.py` gained `is_incident()` (level not in
+  low/informational) so the FPR claim now means "zero incident-level
+  alerts," not "zero alerts of any kind"; `report.py`'s `_run_negatives()`
+  filters the same way. Added `SECURITY.md` §12 stating the trust boundary
+  explicitly: whoever can populate `changeTicketId` can move a write from
+  HIGH to LOW with no cross-check, and that field must never originate from
+  anything an attacker with Modbus write access could also control.
+- **Two bugs in the FIRST fix pass's own new code**, both confirmed by
+  direct execution: `tokenize.TokenizeError` doesn't exist (the real
+  attribute is `TokenError`) — any unparseable file crashed the guard with
+  `AttributeError` instead of falling back gracefully. And `_code_only`
+  rejoined tokens with `" "`, turning `ThreadingHTTPServer(` into
+  `ThreadingHTTPServer (` — silently breaking 6 of 10 HTTP-server-detection
+  tokens, a new false-green hole in the exact guard being hardened. Rewrote
+  `_code_only` to blank comment/string character spans in place instead of
+  rebuilding from tokens, so code adjacency is never altered.
+- **The A4 basename-collision fix was incomplete.** The bare-basename CI
+  fallback (`fn in ci`) was left in place and could still conflate two
+  same-named live tests in different services. Now the fallback only
+  applies when that basename is unique across every discovered live test.
+- **`report.py`'s docstring and the committed `eval/trend.jsonl` still said
+  `fpr = 0.25`** after the metric itself was fixed to compute the real
+  value — the prose and a historical trend row weren't updated in the first
+  pass. Docstring corrected; a fresh, correct row appended to
+  `trend.jsonl` (append-only by convention — the stale row is left as
+  history, not rewritten).
+- **`report.py` smoke-run had no floor.** `_real_detection()` swallows every
+  exception and returns `[]`; a broken cascade would print `[OK]` and exit 0
+  regardless. Added floor assertions (`alert_count > 0`, `tpr == 1.0`,
+  `fpr == 0.0`) before the gate step can pass.
+- Also: `_attribution()`'s "any actor present counts as correct" was a
+  tautology that could only ever read 1.0 (no ground truth to compare
+  against) — rewrote it to check identity CONSISTENCY across chain steps, a
+  check that can actually fail. `tpr`/`evidence_completeness` now return
+  `None` instead of a fabricated `0.0` on a zero-denominator input, matching
+  `chain_fidelity`'s existing discipline. `peak_alert_score`/`severity_in_band`
+  were computed but discarded — now emitted in the report.
+- `.github/dependabot.yml`'s PyYAML/redis `ignore` rules now scope to
+  `update-types: [version-update:*]` only, so a real CVE on either package
+  still opens a security-update PR — the earlier blanket ignore would have
+  muted that channel too.
+- `.github/workflows/release.yml` interpolated `${{ github.ref_name }}`
+  (an attacker-influenceable git tag) directly into `run:` shell scripts in
+  a job holding `packages:write`/`contents:write`/`id-token:write` — moved
+  to `env:` + `"$REF"`, standard expression-injection hardening.
+- `SECURITY.md`'s cosign verification regex only matched strict stable
+  version tags, but `release.yml` signs every `v*` tag including
+  pre-releases — widened to accept an optional semver pre-release suffix.
+
 ### Added (2026-08-28, Phase 0 + Phase 1 packages: coverage guard, nightly eval, supply chain, AI-to-OT twin)
 
 - **Lane-coverage meta-guard (WP-0.1-A, never-cut).** `tools/check_lane_coverage.py` — 6
@@ -43,7 +107,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed (2026-08-28, code-review follow-up on the Phase 0 + Phase 1 package above)
 
-- **`negative_controls.py` FPR was real but undiscriminable: fixed, not hidden.** The
+- **`negative_controls.py` FPR was real but undiscriminable: fixed, not hidden.**
+  *(Superseded by the "second code-review pass" entry above: this first pass shipped the
+  fix as a silent full SUPPRESSION, which the second pass found and redesigned into a
+  DOWNGRADE via a companion low-severity rule — read that entry for the current
+  behavior. Left here for history.)* The
   approved-maintenance-window coil write and the attack chain's coil write shared the same
   address, same source IP, and both landed in business hours — no signal existed to tell
   them apart, so the original **FPR 0.25** was a real, structural gap, not something a

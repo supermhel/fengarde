@@ -2,7 +2,7 @@
   "report": {
     "schema_version": "1",
     "run_type": "twin",
-    "date": "2026-08-28T14:16:40+00:00",
+    "date": "2026-08-28T15:13:07+00:00",
     "seed": 7,
     "basis": "harness-measured"
   },
@@ -18,6 +18,8 @@
     "alert_reduction_ratio": null,
     "incident_reconstruction_time_ms": null,
     "severity_calibration_error": 0.0,
+    "peak_alert_score": 75,
+    "severity_in_band": true,
     "mutation_robustness": null,
     "degradation_behavior": {
       "delay": "deterministic",
@@ -62,6 +64,6 @@
     "alert_count": 7,
     "incident_promotions": 0
   },
-  "finding": "FPR=0.0: 0/4 negative control(s) fired: none. See eval/twin/negative_controls.py for the per-scenario cause.",
-  "elapsed_seconds": 0.732
+  "finding": "FPR=0.0: 0/4 negative control(s) produced an INCIDENT-level (medium+) alert: none. A low-severity ticketed alert doesn't count as an incident -- see negative_controls.is_incident(). See eval/twin/negative_controls.py for the per-scenario cause.",
+  "elapsed_seconds": 0.743
 }

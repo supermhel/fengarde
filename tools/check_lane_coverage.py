@@ -321,10 +321,19 @@ def _assert_live_tests() -> list[str]:
         return ["[FAIL] A4: zero test_*_live*.py files discovered -- vacuous "
                 "green over an empty lent set; nothing verified"]
     ci = _find_ci_live_tests()
+    # Basename-only CI matches (from a `cd`-relative workflow invocation) are
+    # only trusted when that basename is UNIQUE across every discovered live
+    # test -- otherwise a CI reference to one service's test_foo_live.py
+    # would also "cover" an unrelated, un-wired test_foo_live.py in a
+    # different service that merely shares the filename.
+    basename_counts: dict[str, int] = {}
+    for rel in live:
+        fn = rel.rsplit("/", 1)[-1]
+        basename_counts[fn] = basename_counts.get(fn, 0) + 1
     problems = []
     for rel in sorted(live):
         fn = rel.rsplit("/", 1)[-1]
-        if rel in ci or fn in ci:
+        if rel in ci or (basename_counts[fn] == 1 and fn in ci):
             continue
         if rel in LIVE_TEST_ALLOWLIST:
             continue
@@ -357,21 +366,45 @@ OPEN_BY_DESIGN_MARKER = "fengarde-open-by-design"  # token used in runner.py too
 
 
 def _code_only(text: str) -> str:
-    """Strip comments and string-literal contents, leaving only real code
-    tokens. A5 must not be satisfied by a docstring or a `# TODO: add auth`
-    comment mentioning the token -- only an actual call/identifier counts."""
+    """Blank out comments and string-literal contents IN PLACE (by character
+    span), leaving every other character exactly where it was. A5 must not
+    be satisfied by a docstring or a `# TODO: add auth` comment mentioning
+    the token -- only an actual call/identifier counts. Blanking spans
+    in-place (rather than dropping COMMENT/STRING tokens and rejoining the
+    rest with a separator) is deliberate: rejoining with a space turns
+    `HTTPServer(` into `HTTPServer (`, which can never match a literal
+    `"HTTPServer("` token again -- a false-green hole in the exact check
+    this function exists to harden."""
     import io
     import tokenize
 
-    out: list[str] = []
+    lines = text.splitlines(keepends=True)
     try:
-        for tok in tokenize.generate_tokens(io.StringIO(text).readline):
-            if tok.type in (tokenize.COMMENT, tokenize.STRING):
-                continue
-            out.append(tok.string)
-    except (tokenize.TokenizeError, SyntaxError, IndentationError):
+        tokens = list(tokenize.generate_tokens(io.StringIO(text).readline))
+    except (tokenize.TokenError, SyntaxError, IndentationError):
         return text  # unparseable -- fall back to raw text (fail toward scanning more, not less)
-    return " ".join(out)
+
+    for tok in tokens:
+        if tok.type not in (tokenize.COMMENT, tokenize.STRING):
+            continue
+        (srow, scol), (erow, ecol) = tok.start, tok.end
+        if srow == erow:
+            line = lines[srow - 1]
+            lines[srow - 1] = line[:scol] + (" " * (ecol - scol)) + line[ecol:]
+            continue
+        # Multi-line string: blank the tail of the first line, every full
+        # middle line, and the head of the last line, preserving newlines.
+        first = lines[srow - 1]
+        nl = "\n" if first.endswith("\n") else ""
+        lines[srow - 1] = first[:scol] + (" " * (len(first) - scol - len(nl))) + nl
+        for i in range(srow, erow - 1):
+            mid = lines[i]
+            mnl = "\n" if mid.endswith("\n") else ""
+            lines[i] = (" " * (len(mid) - len(mnl))) + mnl
+        last = lines[erow - 1]
+        lines[erow - 1] = (" " * ecol) + last[ecol:]
+
+    return "".join(lines)
 
 
 def _find_http_surfaces() -> dict[str, tuple[str, str]]:

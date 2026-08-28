@@ -48,17 +48,24 @@ THE FINDING THIS MODULE SURFACED, AND THE FIX (read before running)
     attach when it also has access to a change-management system. This
     scenario now attaches a change-ticket id to the approved write (see
     `_write_pump_enable`'s `change_ticket_id` param below), simulating that
-    integration, and the rule's `authorized_change` selection suppresses the
-    alert when it's present. The attack chain (`eval/twin/scenario.py`) never
-    sets this field, so it still fires -- see that module's `modbus_write`
-    step.
+    integration. `ot_modbus_unauthorized_write`'s `authorized_change`
+    selection steps aside when it's present, and
+    `ot_modbus_unauthorized_write_ticketed.yml` fires INSTEAD, at
+    `level: low` -- the event is downgraded, never dropped: it still
+    reaches the index, still shows up in search/hunting, and `is_incident()`
+    below is what makes this scenario's "zero incidents" claim mean "zero
+    HIGH+ alerts," not "zero alerts of any kind." The attack chain
+    (`eval/twin/scenario.py`) never sets this field, so the HIGH rule still
+    fires unchanged -- see that module's `modbus_write` step.
 
-    This proves the SUPPRESSION MECHANISM works correctly on the twin's
+    This proves the DOWNGRADE MECHANISM works correctly on the twin's
     simulated data. It is not a claim that FENGARDE solves real-world OT
     change authorization: nothing here validates a `changeTicketId` against
     an actual ticketing system (there is none to validate against), so a
     deployment wiring this field for real must trust its own tap/proxy
-    integration, not this twin.
+    integration, not this twin -- and must treat that trust boundary as
+    load-bearing, since anyone who can populate the field moves a write from
+    HIGH to LOW with no cross-check. See SECURITY.md.
 """
 from __future__ import annotations
 
@@ -157,9 +164,20 @@ def run_pipeline(raw_events: list[tuple[str, dict]], tenant: str) -> list[dict]:
         for rule in matched:
             alerts.append({"rule_id": rule.id, "rule_title": rule.title,
                            "score_weight": rule.score_weight,
+                           "level": rule.level,
                            "source_type": (event.get("siem") or {}).get(
                                "source_type")})
     return alerts
+
+
+def is_incident(alert: dict) -> bool:
+    """An alert counts as an incident (a false positive, in this module's
+    context) unless it's `low`/`informational` -- e.g. the ticketed-write
+    companion rule (`ot_modbus_unauthorized_write_ticketed.yml`), which
+    deliberately still fires and indexes a ticketed write instead of
+    silently dropping it (see that rule's description). A LOW alert on an
+    explained write is accurate telemetry, not a false positive."""
+    return alert.get("level") not in ("low", "informational")
 
 
 # --------------------------------------------------------------------------
@@ -248,10 +266,13 @@ def scenario_maintenance_window(seed: int) -> tuple[str, list[dict]]:
     0xxxx coil space) -- that classification is an honest protocol-level
     observation and doesn't change. What changes is that this write carries
     `_MAINTENANCE_CHANGE_TICKET`, the out-of-band authorization signal
-    `ot_modbus_unauthorized_write` now checks for, so the rule's
-    `authorized_change` selection suppresses the alert. See this module's
-    docstring for why this was a real FPR before the field existed, and why
-    the fix only proves the mechanism, not real-world authorization.
+    `ot_modbus_unauthorized_write`'s `authorized_change` selection checks
+    for, so `ot_modbus_unauthorized_write_ticketed.yml` fires INSTEAD of the
+    HIGH rule -- same protocol observation, LOW severity, still indexed (see
+    `is_incident()`: a LOW alert here is not counted as an incident). See
+    this module's docstring for why this was a real FPR before the field
+    existed, and why the fix only proves the downgrade mechanism, not
+    real-world authorization.
     """
     sim = PLCSim(seed=seed)
     raw = [
@@ -333,26 +354,32 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     results: list[tuple[str, list[dict]]] = []
-    total_alerts = 0
+    total_incidents = 0
     for scenario in _ALL_SCENARIOS:
         name, alerts = scenario(args.seed)
         results.append((name, alerts))
-        total_alerts += len(alerts)
-        if not alerts:
-            print(f"[OK]   {name} -- {0} incidents (zero alerts)")
+        incidents = [a for a in alerts if is_incident(a)]
+        explained = [a for a in alerts if not is_incident(a)]
+        total_incidents += len(incidents)
+        if not incidents:
+            note = (f" ({len(explained)} low-severity ticketed alert(s), "
+                     f"still indexed -- expected)" if explained else "")
+            print(f"[OK]   {name} -- 0 incidents{note}")
         else:
-            print(f"[FAIL] {name} -- {len(alerts)} incident(s):")
-            for a in alerts:
+            print(f"[FAIL] {name} -- {len(incidents)} incident(s):")
+            for a in incidents:
                 print(f"        - rule '{a['rule_title']}' fired "
                       f"on a {a['source_type']} event "
                       f"(id {a['rule_id']})")
 
     print("-" * 60)
-    if total_alerts == 0:
+    if total_incidents == 0:
         print(f"ZERO-INCIDENT SUMMARY: all {len(results)} negative scenarios "
-              "produced 0 incidents -- FPR clean for the tested benign set.")
+              "produced 0 incidents -- FPR clean for the tested benign set. "
+              "(A low-severity ticketed alert is not an incident -- see "
+              "is_incident().)")
         return 0
-    print(f"ZERO-INCIDENT SUMMARY: {total_alerts} incident(s) across "
+    print(f"ZERO-INCIDENT SUMMARY: {total_incidents} incident(s) across "
           f"{len(results)} negative scenario(s) -- FALSE-POSITIVE FINDING; "
           "the honest FPR claim is NOT met until these are resolved.")
     return 1

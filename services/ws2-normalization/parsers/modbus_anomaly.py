@@ -44,12 +44,19 @@ ticket). Present and non-blank, it maps straight through to
 ``unmapped.ot.change_ticket_id`` -- this parser does NOT validate the ticket
 against any real ticketing system (it has none to check), so it neither
 changes ``anomaly_type`` nor ``severity_id``: the write is still, honestly,
-an out-of-range write at the protocol level. It exists purely so
-`contracts/rules/ot_modbus_unauthorized_write.yml` can suppress the ALERT
-(not the observation) when a ticket is attached. See eval/twin/
-negative_controls.py::scenario_maintenance_window for how the twin proves
-the suppression mechanism works on simulated data -- that is not a claim
-this solves real-world OT change-authorization.
+an out-of-range write at the protocol level. It exists so
+`contracts/rules/ot_modbus_unauthorized_write.yml` DOWNGRADES rather than
+suppresses when a ticket is attached: `ot_modbus_unauthorized_write_ticketed
+.yml` fires instead, at LOW severity -- the event still reaches the index,
+it is never silently dropped. See eval/twin/negative_controls.py
+::scenario_maintenance_window for how the twin proves the downgrade
+mechanism works on simulated data -- that is not a claim this solves
+real-world OT change-authorization. **Trust boundary (load-bearing):**
+whoever can populate this field can move a write from HIGH to LOW with no
+cross-check this parser performs. It must come from a source independent
+of the observed Modbus frame -- never from frame bytes, never from
+anything an attacker with write access to the bus could also set. See
+SECURITY.md.
 """
 from __future__ import annotations
 
