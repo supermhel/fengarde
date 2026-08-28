@@ -1,23 +1,8 @@
 {
   "components": [
     {
-      "bom-ref": "requirements-L1",
-      "description": "requirements line 1: PyYAML==6.0.2",
-      "externalReferences": [
-        {
-          "comment": "implicit dist url",
-          "type": "distribution",
-          "url": "https://pypi.org/simple/PyYAML/"
-        }
-      ],
-      "name": "PyYAML",
-      "purl": "pkg:pypi/pyyaml@6.0.2",
-      "type": "library",
-      "version": "6.0.2"
-    },
-    {
-      "bom-ref": "requirements-L2",
-      "description": "requirements line 2: PyYAML==6.0.3",
+      "bom-ref": "requirements-L4",
+      "description": "requirements line 4: PyYAML==6.0.3",
       "externalReferences": [
         {
           "comment": "implicit dist url",
@@ -31,8 +16,23 @@
       "version": "6.0.3"
     },
     {
-      "bom-ref": "requirements-L3",
-      "description": "requirements line 3: redis==8.1.0",
+      "bom-ref": "requirements-L5",
+      "description": "requirements line 5: redis==8.1.0",
+      "externalReferences": [
+        {
+          "comment": "implicit dist url",
+          "type": "distribution",
+          "url": "https://pypi.org/simple/redis/"
+        }
+      ],
+      "name": "redis",
+      "purl": "pkg:pypi/redis@8.1.0",
+      "type": "library",
+      "version": "8.1.0"
+    },
+    {
+      "bom-ref": "requirements-L6",
+      "description": "requirements line 6: redis==8.1.0",
       "externalReferences": [
         {
           "comment": "implicit dist url",
@@ -48,17 +48,17 @@
   ],
   "dependencies": [
     {
-      "ref": "requirements-L1"
+      "ref": "requirements-L4"
     },
     {
-      "ref": "requirements-L2"
+      "ref": "requirements-L5"
     },
     {
-      "ref": "requirements-L3"
+      "ref": "requirements-L6"
     }
   ],
   "metadata": {
-    "timestamp": "2026-08-20T11:23:59.809198+00:00",
+    "timestamp": "2026-08-28T16:52:27.929397+00:00",
     "tools": {
       "components": [
         {
@@ -162,7 +162,7 @@
       ]
     }
   },
-  "serialNumber": "urn:uuid:56611b37-1e30-40a3-ab94-2e6bcee799ef",
+  "serialNumber": "urn:uuid:a822c2cc-2081-4a35-8a6f-6555d3635f47",
   "version": 1,
   "$schema": "http://cyclonedx.org/schema/bom-1.6.schema.json",
   "bomFormat": "CycloneDX",
