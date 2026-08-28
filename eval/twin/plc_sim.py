@@ -213,7 +213,11 @@ class ModbusServer:
             while True:
                 conn, _addr = sock.accept()
                 with conn:
-                    self._handle(conn)
+                    conn.settimeout(30.0)  # a stalled client must not wedge the single-conn loop forever
+                    try:
+                        self._handle(conn)
+                    except TimeoutError:
+                        pass
 
     # -- frame handling -----------------------------------------------------
     @staticmethod
@@ -243,11 +247,25 @@ class ModbusServer:
             mbap = struct.pack(">HHHB", _tx, 0, len(resp) + 1, _unit)
             conn.sendall(mbap + resp)
 
+    _ILLEGAL_DATA_ADDRESS = 0x02  # Modbus exception code 2
+
+    def _exception(self, fc: int, code: int) -> bytes:
+        return struct.pack(">B", fc | 0x80) + struct.pack(">B", code)
+
     def _dispatch(self, fc: int, data: bytes) -> bytes | None:
-        """Return the response PDU (after the function code) or None if unsupported."""
+        """Return the response PDU (after the function code) or None if
+        unsupported. Every address/count is bounds-checked against the sim's
+        actual register/coil map before indexing -- an out-of-range or
+        truncated request returns a proper Modbus exception 0x02 (illegal
+        data address) instead of raising IndexError/struct.error and killing
+        the connection loop in _handle()."""
+        if len(data) < 4:
+            return self._exception(fc, self._ILLEGAL_DATA_ADDRESS)
+        addr = struct.unpack(">H", data[0:2])[0]
         if fc == _FC_READ_COILS:
-            addr = struct.unpack(">H", data[0:2])[0]
             count = struct.unpack(">H", data[2:4])[0]
+            if not (1 <= count <= 2000) or addr + count > _NUM_COILS:
+                return self._exception(fc, self._ILLEGAL_DATA_ADDRESS)
             bytecount = (count + 7) // 8
             out = bytearray(bytecount)
             for i in range(count):
@@ -255,18 +273,21 @@ class ModbusServer:
                     out[i // 8] |= 1 << (i % 8)
             return struct.pack(">B", bytecount) + bytes(out)
         if fc == _FC_READ_HOLDING:
-            addr = struct.unpack(">H", data[0:2])[0]
             count = struct.unpack(">H", data[2:4])[0]
+            if not (1 <= count <= 125) or addr + count > _NUM_HOLDING:
+                return self._exception(fc, self._ILLEGAL_DATA_ADDRESS)
             regs = b"".join(struct.pack(">H", self.sim.read_holding(addr + i))
                             for i in range(count))
             return struct.pack(">B", len(regs)) + regs
         if fc == _FC_WRITE_SINGLE_COIL:
-            addr = struct.unpack(">H", data[0:2])[0]
+            if addr >= _NUM_COILS:
+                return self._exception(fc, self._ILLEGAL_DATA_ADDRESS)
             value = struct.unpack(">H", data[2:4])[0]
             self.sim.write_coil(addr, value == 0xFF00)
             return struct.pack(">HH", addr, value)
         if fc == _FC_WRITE_SINGLE_REGISTER:
-            addr = struct.unpack(">H", data[0:2])[0]
+            if addr >= _NUM_HOLDING:
+                return self._exception(fc, self._ILLEGAL_DATA_ADDRESS)
             value = struct.unpack(">H", data[2:4])[0]
             self.sim.write_holding(addr, value)
             return struct.pack(">HH", addr, value)

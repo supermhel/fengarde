@@ -12,17 +12,30 @@ replay numbers, never field numbers — Phase 3.5 discipline). Metrics the twin
 genuinely cannot measure today are emitted with their true value, never a
 fabricated one:
 
-  * chain_fidelity             = 0.0  (WS-8 has no causal edges yet; this is the
-                                       measurement working, not a bug)
+  * chain_fidelity             = null (WS-8 has no causal-edge graph today, so
+                                       there is no denominator to measure a
+                                       fraction against; null, never a
+                                       fabricated 0.0)
   * fpr                        = 0.25 (measured: the approved-maintenance-window
                                        negative control fires
                                        ot_modbus_unauthorized_write on the
                                        coil-space write — a documented coarse
-                                       rule tradeoff, NOT hidden here)
+                                       rule tradeoff, NOT hidden here; the
+                                       parser has no signal to discriminate it
+                                       from the real attack chain, which uses
+                                       the identical coil address AND source
+                                       IP — see negative_controls.py)
   * mtti / mttr                = null (no incident is promoted today, so there
                                        is no incident to identify time-to or
                                        recover-from)
-  * false_correlation_rate     = 0.0  (0 false incident promotions)
+  * false_correlation_rate /
+    alert_reduction_ratio      = null (both are defined over promoted
+                                       incidents; zero incidents means no
+                                       denominator, not a measured zero)
+  * mttd_seconds                = real: (first chain step whose oracle-expected
+                                       rule fired) minus (chain start), both
+                                       pulled from the actual raw-payload
+                                       timestamps of the real chain run
   * mutation_robustness        = null (Phase 4 wires mutation; not measured yet)
   * evidence_completeness      = fraction of oracle per-step evidence fields
                                  present on real-parsed steps; gapped steps
@@ -52,6 +65,7 @@ import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Optional
 
 ROOT = Path(__file__).resolve().parents[2]
 TWIN = ROOT / "eval" / "twin"
@@ -67,6 +81,7 @@ sys.path.insert(0, str(APPROOT_SERVICES))
 import importlib.util  # noqa: E402
 import yaml  # noqa: E402
 
+import degradation  # noqa: E402
 import scenario  # noqa: E402
 
 # ---------------------------------------------------------------------------
@@ -91,9 +106,14 @@ ORACLE_PATH = TWIN / "oracle.yaml"
 REPORT_PATH = TWIN / "report.json"
 TREND_PATH = ROOT / "eval" / "trend.jsonl"
 
-# Deterministic, seed-derived timeline base (ms) so graded times are byte-stable.
-_BASE_MS = 1_752_000_000_000  # fixed epoch for the twin's chain timeline
-_STEP_DELTA_MS = 60_000      # ~1 min between chain steps (matches scenario)
+
+def _event_ts(ev: "scenario.ChainEvent") -> Optional[int]:
+    """Epoch-ms this chain step's RAW payload was emitted at (works for gapped
+    steps too, since raw_payload is always recorded -- see scenario.ChainEvent).
+    """
+    raw = (ev.raw_payload or {}).get("raw") or {}
+    ts = raw.get("ts")
+    return ts if ts is not None else raw.get("time")
 
 
 def _load_oracle() -> dict:
@@ -137,7 +157,12 @@ def _grade_chain(result: scenario.ChainResult, oracle: dict) -> dict:
     fired = _real_detection(raw_pairs)
 
     # TPR: fraction of real-parsed chain steps whose oracle-expected rule fired.
+    # Also track the RAW timestamp of the first step whose expected rule fired
+    # (chain steps are emitted in strictly increasing time order -- see
+    # scenario._build_chain_payloads -- so the first match encountered here is
+    # the earliest), for an honest, sourced MTTD (see run()).
     matched_steps = 0
+    first_matched_ts: Optional[int] = None
     for ev in parsed:
         pt = (oracle.get("detection_points") or {}).get(ev.step) or {}
         expected_ids = {r.get("rule_id") for r in (pt.get("expected_rules") or [])}
@@ -147,6 +172,8 @@ def _grade_chain(result: scenario.ChainResult, oracle: dict) -> dict:
         step_fired = {a["rule_id"] for a in fired if a.get("source_type") == src}
         if step_fired & expected_ids:
             matched_steps += 1
+            if first_matched_ts is None:
+                first_matched_ts = _event_ts(ev)
     tpr_numer = matched_steps
     tpr_denom = sum(
         1 for ev in parsed if (oracle.get("detection_points") or {}).get(ev.step, {})
@@ -170,6 +197,14 @@ def _grade_chain(result: scenario.ChainResult, oracle: dict) -> dict:
             present_fields += 1 if _dot_get(the_event, f) is not None else 0
     evidence_completeness = present_fields / total_fields if total_fields else 0.0
 
+    chain_start_ts = _event_ts(result.events[0]) if result.events else None
+    mttd_seconds = (
+        round((first_matched_ts - chain_start_ts) / 1000.0, 3)
+        if first_matched_ts is not None and chain_start_ts is not None
+        else None  # nothing matched (or no timestamped events) -> honest null,
+                   # never a fabricated "detected instantly" 0
+    )
+
     return {
         "tpr": round(tpr, 4),
         "tpr_numerator": tpr_numer,
@@ -178,8 +213,14 @@ def _grade_chain(result: scenario.ChainResult, oracle: dict) -> dict:
         "parsed_steps": len(parsed),
         "gap_steps": len(gaps),
         "fired_alerts": len(fired),
+        "fired": fired,  # the real fired-alert dicts, so run() need not re-detect
+        "mttd_seconds": mttd_seconds,
         "evidence_completeness": round(evidence_completeness, 4),
-        "chain_fidelity": 0.0,  # WS-8 has no causal edges today (measured truth)
+        # WS-8 has no causal-edge graph today, so "fraction of causal edges
+        # correctly reconstructed" has no denominator -- null, not a fabricated
+        # zero (None is later surfaced verbatim in the report; a real 0.0 would
+        # read as "measured and found zero", which is not true).
+        "chain_fidelity": None,
         "attribution_accuracy": _attribution(parsed),
     }
 
@@ -218,15 +259,25 @@ def _dot_get(d: dict, dotted: str):
     return cur
 
 
-def _severity_band_check(oracle: dict) -> dict:
-    """Check alerts' scores sit inside the oracle severity band (harness-measured)."""
+def _severity_band_check(oracle: dict, fired: list[dict]) -> dict:
+    """Check the REAL fired alerts' score_weight sits inside the oracle band.
+
+    ``fired`` is the real fired-alert list from the chain's own detector run
+    (see _grade_chain / _real_detection) -- peak_score is the actual max
+    score_weight observed, never a hand-picked constant.
+    """
     band = (oracle.get("severity_band") or {}).get("score") or {}
     lo, hi = band.get("min"), band.get("max")
-    # verified measured peak: modbus_write score 75, chain spans 70-100
-    peak_score = 100  # highest alert score observed in the verified chain run
-    in_band = lo is not None and hi is not None and lo <= peak_score <= hi
+    scores = [a.get("score_weight") for a in fired if a.get("score_weight") is not None]
+    peak_score = max(scores) if scores else None
+    in_band = (
+        peak_score is not None and lo is not None and hi is not None
+        and lo <= peak_score <= hi
+    )
     return {
-        "severity_calibration_error": 0.0 if in_band else 1.0,
+        "severity_calibration_error": (
+            None if peak_score is None else (0.0 if in_band else 1.0)
+        ),
         "peak_alert_score": peak_score,
         "in_band": in_band,
         "band": {"min": lo, "max": hi},
@@ -234,12 +285,19 @@ def _severity_band_check(oracle: dict) -> dict:
 
 
 def _degradation_behavior() -> dict:
-    """Deterministic per-injector degradation report (WP-1-E is deterministic)."""
-    # degradation.py is pure and self-checked; this table encodes its determinism.
+    """Run degradation.py's own selfcheck and report its REAL pass/fail per
+    property, rather than asserting determinism/subset-ness without proof."""
+    import contextlib
+    import io
+
+    with contextlib.redirect_stdout(io.StringIO()):
+        ok = degradation.selfcheck() == 0
     return {
-        "delay": "deterministic", "duplicate": "deterministic",
-        "reorder": "deterministic", "loss": "deterministic",
-        "loss_is_strict_subset": True,  # verified by degradation.py --selfcheck
+        "delay": "deterministic" if ok else "unverified",
+        "duplicate": "deterministic" if ok else "unverified",
+        "reorder": "deterministic" if ok else "unverified",
+        "loss": "deterministic" if ok else "unverified",
+        "loss_is_strict_subset": ok,  # degradation.selfcheck() proves this on real output
         "basis": "harness-measured",
     }
 
@@ -251,14 +309,18 @@ def run(seed: int = 7) -> dict:
     chain = _run_chain(seed)
     negatives = _run_negatives(seed)
 
-    # TPR basis from the verified real run (7 alerts, 6 distinct rules; the
-    # chain itself produced the alerts through the real detector cascade).
-    alerts_total = 7  # measured by scenario's own integrity (verified run)
+    grade = _grade_chain(chain, oracle)  # single real detection run; every
+                                          # metric below is sliced from this
+    tpr = grade["tpr"]
+    evidence = grade["evidence_completeness"]
+    fired = grade["fired"]
+
+    # alerts_total/incident_promotions from the SAME real run graded above,
+    # never a separately-asserted constant.
+    alerts_total = len(fired)
     incident_promotions = 0  # Correlator promotes nothing today (no causal edges)
 
-    tpr = _grade_chain(chain, oracle)["tpr"]
     fpr = sum(1 for n in negatives.values() if n) / len(negatives)  # 1/4 = 0.25
-    evidence = _grade_chain(chain, oracle)["evidence_completeness"]
 
     report = {
         "report": {
@@ -271,18 +333,24 @@ def run(seed: int = 7) -> dict:
         "metrics": {
             "tpr": round(tpr, 4),
             "fpr": round(fpr, 4),
-            "mttd_seconds": 60,           # seed-derived fixed constant (byte-stable)
+            "mttd_seconds": grade["mttd_seconds"],  # real: first-matched-step ts minus chain-start ts
             "mtti": None,                 # no incident promoted today (honest null)
             "mttr": None,                 # no incident resolved today (honest null)
-            "chain_fidelity": 0.0,        # WS-8 has no causal edges yet
+            # WS-8 has no causal-edge graph today -- null, not a fabricated 0.0
+            # (see _grade_chain's chain_fidelity comment for the same reasoning).
+            "chain_fidelity": grade["chain_fidelity"],
             "evidence_completeness": round(evidence, 4),
-            "false_correlation_rate": 0.0,  # 0 false incident promotions
-            "alert_reduction_ratio": 0.0,   # no incident -> no reduction
+            # No incident is ever promoted today (incident_promotions == 0
+            # above), so "false correlation rate" and "alert reduction ratio"
+            # have no incidents to be computed over -- null, not a fabricated
+            # "measured zero".
+            "false_correlation_rate": None,
+            "alert_reduction_ratio": None,
             "incident_reconstruction_time_ms": None,
-            "severity_calibration_error": _severity_band_check(oracle)["severity_calibration_error"],
+            "severity_calibration_error": _severity_band_check(oracle, fired)["severity_calibration_error"],
             "mutation_robustness": None,    # Phase 4 wires mutation; not measured yet
             "degradation_behavior": _degradation_behavior(),
-            "attribution_accuracy": _grade_chain(chain, oracle)["attribution_accuracy"],
+            "attribution_accuracy": grade["attribution_accuracy"],
         },
         "context": {
             "chain_steps": [e.step for e in chain.events],
@@ -295,9 +363,10 @@ def run(seed: int = 7) -> dict:
             "incident_promotions": incident_promotions,
         },
         "finding": (
-            "FPR=0.25: approved-maintenance-window negative control fires "
-            "ot_modbus_unauthorized_write (9c1d2e3f) on the coil-space write; "
-            "documented coarse-rule tradeoff, not hidden."
+            f"FPR={round(fpr, 4)}: {sum(1 for n in negatives.values() if n)}/"
+            f"{len(negatives)} negative control(s) fired: "
+            + (", ".join(name for name, n in negatives.items() if n) or "none")
+            + ". See eval/twin/negative_controls.py for the per-scenario cause."
         ),
         "elapsed_seconds": round(time.time() - started, 3),
     }

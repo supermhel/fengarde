@@ -95,12 +95,23 @@ jobs:
           # Start the subject list with the source tarball.
           tarhex=$(sha256sum "dist/fengarde-${REF}.tar.gz"); tarhex=${tarhex%% *}
           subjects="${tarhex}  fengarde-${REF}.tar.gz"$'\n'
+          # Only a STABLE release (strict vMAJOR.MINOR.PATCH, no -rc/-alpha/-beta
+          # or build-metadata suffix) may move the :latest tag -- a pre-release
+          # tag must never overwrite it for every image.
+          if [[ "$REF" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "REF=$REF is a stable release -- tagging :latest too."
+          else
+            echo "REF=$REF is a pre-release -- NOT tagging :latest."
+          fi
           for svc in $services; do
             img="$GHCR/fengarde-$svc"
+            tag_args=(--tag "$img:$REF")
+            if [[ "$REF" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              tag_args+=(--tag "$img:latest")
+            fi
             docker buildx build \
               --file "services/$svc/Dockerfile" \
-              --tag "$img:$REF" \
-              --tag "$img:latest" \
+              "${tag_args[@]}" \
               --provenance=false \
               --push .
             digest=$(docker buildx imagetools inspect "$img:$REF" --format '{{.Manifest.Digest}}')

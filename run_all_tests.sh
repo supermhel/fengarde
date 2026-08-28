@@ -417,6 +417,20 @@ echo "== detection-quality: precision/recall/F1 canary over the labeled corpus (
 $PY tools/test_detection_quality.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 $PY tools/detection_quality_eval.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 
+# == AI-to-OT twin (WP-1-A..F): PLC sim, attack chain, degradation rig, FPR ==
+echo
+echo "== twin: telemetry-degradation rig self-check (delay/duplicate/reorder/loss determinism + loss-subset proof) =="; LAST_HEADER="== twin: telemetry-degradation rig self-check (delay/duplicate/reorder/loss determinism + loss-subset proof) =="
+$PY eval/twin/degradation.py --selfcheck || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
+echo "== twin: attack-chain scenario self-check (real-parser integrity + determinism + loud-failure negative control) =="; LAST_HEADER="== twin: attack-chain scenario self-check (real-parser integrity + determinism + loud-failure negative control) =="
+$PY eval/twin/scenario.py --selfcheck || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
+echo "== twin: negative controls (FPR source) -- four benign scenarios, all must yield zero incidents =="; LAST_HEADER="== twin: negative controls (FPR source) -- four benign scenarios, all must yield zero incidents =="
+$PY eval/twin/negative_controls.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
+echo "== twin: full scorecard smoke run (report.py must complete without error on the real cascade) =="; LAST_HEADER="== twin: full scorecard smoke run (report.py must complete without error on the real cascade) =="
+$PY eval/twin/report.py --no-trend || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+
 # == Phase 4 (2026-08-06) enhancement + fix regression tests ==
 echo
 echo "== ws3 FIX H6: OpenSearch multi-node writer failover (2026-08-06) =="; LAST_HEADER="== ws3 FIX H6: OpenSearch multi-node writer failover (2026-08-06) =="

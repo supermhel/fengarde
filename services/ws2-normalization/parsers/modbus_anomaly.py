@@ -34,6 +34,22 @@ Raw bus payload ``raw`` is one observed-frame record, e.g.::
 
     {"unitId": 1, "functionCode": 6, "address": 40001, "value": 500,
      "sourceIp": "10.20.0.50", "destIp": "10.20.0.5", "time": 1751500000000}
+
+**Authorization context (optional ``changeTicketId``).** The wire protocol
+itself carries no such concept -- this field is a deliberate, explicit,
+OUT-OF-BAND signal a real tap or protocol-aware proxy could attach when it
+also has access to a change-management/ticketing system (e.g. it correlates
+the write's source IP + time window against an open, approved change
+ticket). Present and non-blank, it maps straight through to
+``unmapped.ot.change_ticket_id`` -- this parser does NOT validate the ticket
+against any real ticketing system (it has none to check), so it neither
+changes ``anomaly_type`` nor ``severity_id``: the write is still, honestly,
+an out-of-range write at the protocol level. It exists purely so
+`contracts/rules/ot_modbus_unauthorized_write.yml` can suppress the ALERT
+(not the observation) when a ticket is attached. See eval/twin/
+negative_controls.py::scenario_maintenance_window for how the twin proves
+the suppression mechanism works on simulated data -- that is not a claim
+this solves real-world OT change-authorization.
 """
 from __future__ import annotations
 
@@ -103,6 +119,10 @@ class ModbusAnomalyParser(Parser):
         dst_ip = valid_ip(rec.get("destIp"))
         unit_id = rec.get("unitId")
 
+        change_ticket_id = rec.get("changeTicketId")
+        if not isinstance(change_ticket_id, str) or not change_ticket_id.strip():
+            change_ticket_id = None  # absent/blank/wrong-type -> no authorization claim
+
         severity_id = SEV_INFO if anomaly is None else {
             "unauthorized_write": SEV_HIGH,
             "exception_response": SEV_MEDIUM,
@@ -131,6 +151,7 @@ class ModbusAnomalyParser(Parser):
         event["unmapped"] = {"ot": {
             "protocol": "modbus_tcp", "function_code": function_code,
             "address": address, "unit_id": unit_id, "anomaly_type": anomaly,
+            "change_ticket_id": change_ticket_id,
         }}
         return event
 

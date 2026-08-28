@@ -73,10 +73,17 @@ jobs:
       - name: Detection-quality canary (macro-F1 floor, zero-infra)
         run: python tools/detection_quality_eval.py
 
+      # Both scripts also skip cleanly on a missing corpus dir (see their own
+      # module docstrings), so this `if:` isn't load-bearing for correctness --
+      # it just makes quality-only mode actually skip the STEP (matching what
+      # the fetch step's own message claims) instead of running it to print a
+      # skip message.
       - name: EVTX oracle replay (corpus lane)
+        if: vars.NIGHTLY_EVAL_MODE != 'quality-only'
         run: python eval/detection_accuracy/evtx_eval.py
 
       - name: Splunk attack_data oracle replay (corpus lane)
+        if: vars.NIGHTLY_EVAL_MODE != 'quality-only'
         run: python eval/detection_accuracy/splunk_eval.py
 
       # ---- append ONE trend row ------------------------------------------

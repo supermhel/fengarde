@@ -102,6 +102,33 @@ class TestModbusAnomalyParser(unittest.TestCase):
     def test_non_dict_raw_returns_none(self):
         self.assertIsNone(PARSER.parse(_raw("not a dict")))
 
+    def test_change_ticket_id_maps_through_without_changing_classification(self):
+        event = PARSER.parse(_raw({
+            "unitId": 1, "functionCode": 5, "address": 1,
+            "sourceIp": "10.20.0.50", "destIp": "10.20.0.5",
+            "changeTicketId": "CHG-2026-08-1042",
+        }))
+        self.assertEqual(event["unmapped"]["ot"]["change_ticket_id"], "CHG-2026-08-1042")
+        # An attached ticket is an authorization signal for the RULE, not a
+        # claim about protocol-level safety -- classification/severity must
+        # stay exactly what the coil write would get without one.
+        self.assertEqual(event["unmapped"]["ot"]["anomaly_type"], "unauthorized_write")
+        self.assertEqual(event["severity_id"], 4)  # SEV_HIGH
+        self.assertEqual(validate(event), [])
+
+    def test_missing_change_ticket_id_is_none(self):
+        event = PARSER.parse(_raw({"unitId": 1, "functionCode": 3, "address": 40001}))
+        self.assertIsNone(event["unmapped"]["ot"]["change_ticket_id"])
+
+    def test_blank_or_non_string_change_ticket_id_is_none(self):
+        for bogus in ("", "   ", 12345, ["CHG-1"]):
+            event = PARSER.parse(_raw({
+                "unitId": 1, "functionCode": 3, "address": 40001,
+                "changeTicketId": bogus,
+            }))
+            self.assertIsNone(event["unmapped"]["ot"]["change_ticket_id"],
+                              f"changeTicketId={bogus!r} must not be treated as a real ticket")
+
     def test_content_sniff_routes_to_modbus_parser(self):
         payload = {"raw": {"unitId": 1, "functionCode": 6, "address": 41999}}
         parser = resolve(payload)

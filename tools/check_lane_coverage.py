@@ -40,8 +40,11 @@ It enforces SIX lane-coverage assertions:
                       /metrics route.
   #6 PIN CONSISTENCY -- all services/*/requirements.txt must agree on the same
                       PyYAML pin and the same redis pin. (Folded from WP-0.3-A2;
-                      the unification is a sibling agent's job -- this guard is
-                      RED until it lands, by design.)
+                      all services/*/requirements.txt now agree, and both
+                      packages are Dependabot-ignored -- see .github/
+                      dependabot.yml -- so a future bump must realign every
+                      service by hand in one PR, not drift one service at a
+                      time and red this gate.)
 
 A [FAIL] line makes run_all_tests.sh exit non-zero (HARD FAIL). Every
 assertion has a proven negative -- including the guard itself:
@@ -242,8 +245,10 @@ def _assert_rules() -> list[str]:
         return ["[FAIL] A3: ZERO rule files in contracts/rules -- vacuous "
                 "green; the ATT&CK scorecard covered nothing"]
     scorecard = _find_scorecard_sources()
-    if ondisk == {"__SCORECARD_LOAD_ERROR__:"}:
-        pass
+    error = next((s for s in scorecard if s.startswith("__SCORECARD_LOAD_ERROR__:")), None)
+    if error is not None:
+        return [f"[FAIL] A3: eval/attack/coverage_layer.load_rules() crashed, "
+                 f"so rule-file coverage cannot be verified: {error!r}"]
     missing = sorted(ondisk - scorecard)
     if missing:
         return (["[FAIL] A3: rule file(s) present in contracts/rules but NOT "
@@ -289,6 +294,11 @@ def _find_live_tests() -> set[str]:
 
 
 def _find_ci_live_tests() -> set[str]:
+    """Full repo-relative paths (and, as a fallback for `cd`-relative
+    invocations, bare basenames) of live tests actually referenced by a CI
+    job. Keeping the full captured path -- not just its basename -- is what
+    lets _assert_live_tests match on full path first, so two same-named live
+    tests in different services (only one CI-wired) are not conflated."""
     if not WORKFLOWS_DIR.exists():
         return set()
     out: set[str] = set()
@@ -300,7 +310,8 @@ def _find_ci_live_tests() -> set[str]:
             if ("python " in line or "docker exec" in line) and ".py" in line:
                 m = re.search(r"([\w/.\-]+test_\w*_live\w*\.py)", line)
                 if m:
-                    out.add(Path(m.group(1)).name)
+                    out.add(m.group(1))          # full captured path/expression
+                    out.add(Path(m.group(1)).name)  # basename fallback (cd-relative invocations)
     return out
 
 
@@ -313,7 +324,7 @@ def _assert_live_tests() -> list[str]:
     problems = []
     for rel in sorted(live):
         fn = rel.rsplit("/", 1)[-1]
-        if fn in ci or rel in ci or any(rel.endswith(c) for c in ci):
+        if rel in ci or fn in ci:
             continue
         if rel in LIVE_TEST_ALLOWLIST:
             continue
@@ -345,15 +356,39 @@ HTTP_AUTH_TOKENS = (
 OPEN_BY_DESIGN_MARKER = "fengarde-open-by-design"  # token used in runner.py too
 
 
-def _find_http_surfaces() -> dict[str, str]:
-    """non-test service .py files that host an HTTP listener -> file text."""
-    out: dict[str, str] = {}
+def _code_only(text: str) -> str:
+    """Strip comments and string-literal contents, leaving only real code
+    tokens. A5 must not be satisfied by a docstring or a `# TODO: add auth`
+    comment mentioning the token -- only an actual call/identifier counts."""
+    import io
+    import tokenize
+
+    out: list[str] = []
+    try:
+        for tok in tokenize.generate_tokens(io.StringIO(text).readline):
+            if tok.type in (tokenize.COMMENT, tokenize.STRING):
+                continue
+            out.append(tok.string)
+    except (tokenize.TokenizeError, SyntaxError, IndentationError):
+        return text  # unparseable -- fall back to raw text (fail toward scanning more, not less)
+    return " ".join(out)
+
+
+def _find_http_surfaces() -> dict[str, tuple[str, str]]:
+    """non-test service .py files that host an HTTP listener -> (raw text,
+    CODE-ONLY text). Server-detection and auth-detection run against the
+    CODE-ONLY text (comments/docstrings stripped, see _code_only) so a
+    comment can't fake an auth call; the OPEN_BY_DESIGN_MARKER exemption is
+    intentionally a comment marker (see its module-level definition) and is
+    checked against the RAW text instead."""
+    out: dict[str, tuple[str, str]] = {}
     for p in SERVICES.rglob("*.py"):
         if "__pycache__" in str(p) or "test" in p.name.lower():
             continue
-        text = p.read_text(encoding="utf-8", errors="ignore")
-        if any(tok in text for tok in HTTP_SERVER_TOKENS):
-            out[str(p.relative_to(ROOT)).replace("\\", "/")] = text
+        raw = p.read_text(encoding="utf-8", errors="ignore")
+        code = _code_only(raw)
+        if any(tok in code for tok in HTTP_SERVER_TOKENS):
+            out[str(p.relative_to(ROOT)).replace("\\", "/")] = (raw, code)
     return out
 
 
@@ -363,10 +398,10 @@ def _assert_http_surfaces() -> list[str]:
         return ["[FAIL] A5: zero HTTP listener surfaces discovered -- vacuous "
                 "green; nothing verified"]
     problems = []
-    for rel, text in sorted(surfaces.items()):
-        if any(tok in text for tok in HTTP_AUTH_TOKENS):
+    for rel, (raw, code) in sorted(surfaces.items()):
+        if any(tok in code for tok in HTTP_AUTH_TOKENS):
             continue
-        if OPEN_BY_DESIGN_MARKER.lower() in text.lower():
+        if OPEN_BY_DESIGN_MARKER.lower() in raw.lower():
             continue
         problems.append(
             f"[FAIL] A5: HTTP listener in {rel!r} calls no "
@@ -512,16 +547,21 @@ def run_self_test() -> int:
         fails.append("A1 injection did not produce a [FAIL] -- assertion #1 "
                      "is dormant/unwired")
 
-    # A2: fake a registered parser with no harness/matrix/fixture.
+    # A2: fake a registered parser with no harness/matrix/fixture, proving all
+    # three sub-checks (a/b/c) can independently turn red.
     def fake_registry(): return set(_REGISTRY) | {"ghost_parser"}
     def fake_fixture(): return set(_REGISTRY)
-    def fake_harness(): return _find_harness_sources()
-    def fake_matrix(): return _find_matrix_sources()
     p = _check_injected("A2", [("_registry_sources", fake_registry),
                                ("_find_fixture_sources", fake_fixture)])
-    if not any("[FAIL] A2(b):" in x or "[FAIL] A2(c):" in x for x in p):
-        fails.append("A2 injection did not produce a [FAIL] -- assertion #2 "
-                     "is dormant/unwired")
+    if not any("[FAIL] A2(a):" in x for x in p):
+        fails.append("A2(a) injection did not produce a [FAIL] -- the fixture "
+                     "sub-check is dormant/unwired")
+    if not any("[FAIL] A2(b):" in x for x in p):
+        fails.append("A2(b) injection did not produce a [FAIL] -- the fuzz-"
+                     "harness sub-check is dormant/unwired")
+    if not any("[FAIL] A2(c):" in x for x in p):
+        fails.append("A2(c) injection did not produce a [FAIL] -- the fuzz.yml "
+                     "matrix sub-check is dormant/unwired")
 
     # A3: fake a committed rule the scorecard does not consume.
     def fake_rules_disk(_orig=_find_rules_on_disk): return _orig() | {"ghost_rule.yml"}
@@ -542,16 +582,17 @@ def run_self_test() -> int:
                      "is dormant/unwired")
 
     # A5: fake a bare HTTP listener with no auth call and no marker.
-    def fake_surfaces(): return {"services/ws1-collectors/_ghost_http.py":
-                                 "from http.server import HTTPServer\n"
-                                 "HTTPServer(('127.0.0.1',0), BaseHTTPRequestHandler)\n"}
+    def fake_surfaces():
+        code = ("from http.server import HTTPServer\n"
+                "HTTPServer(('127.0.0.1',0), BaseHTTPRequestHandler)\n")
+        return {"services/ws1-collectors/_ghost_http.py": (code, code)}
     p = _check_injected("A5", [("_find_http_surfaces", fake_surfaces)])
     if not any("[FAIL] A5:" in x for x in p):
         fails.append("A5 injection did not produce a [FAIL] -- assertion #5 "
                      "is dormant/unwired")
 
-    # A6: fake divergent pins. Because the REAL tree already has PyYAML drift,
-    # inject a fresh divergence that cannot be masked by the real state.
+    # A6: fake divergent pins (the real tree's pins are now consistent, so
+    # this injection is the only way to prove the assertion can go red).
     def fake_pins():
         return {"svc_a": {"PyYAML": "6.0.2", "redis": "8.1.0"},
                 "svc_b": {"PyYAML": "6.0.2", "redis": "7.9.0"}}

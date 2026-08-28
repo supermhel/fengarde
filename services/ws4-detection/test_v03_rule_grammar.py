@@ -177,6 +177,32 @@ def run():
     check(r.evaluate({"x": "abc"}) is False, "glob: non-string pattern fails closed")
     r = make_rule({"sel": {"x": {"glob": ""}}, "condition": "sel"})
     check(r.evaluate({"x": "abc"}) is False, "glob: empty pattern fails closed, not a match-all")
+    # --- v0.6 (OT auth context): `exists` (field presence/absence) ---
+    r = make_rule({"sel": {"unmapped.ot.change_ticket_id": {"exists": True}},
+                  "condition": "sel"})
+    check(r.evaluate({"unmapped": {"ot": {"change_ticket_id": "CHG-1"}}}) is True,
+          "exists: true matches when the field is populated")
+    check(r.evaluate({"unmapped": {"ot": {"change_ticket_id": None}}}) is False,
+          "exists: true must NOT match a None value")
+    check(r.evaluate({"unmapped": {"ot": {}}}) is False,
+          "exists: true must NOT match a missing field")
+    check(r.evaluate({}) is False,
+          "exists: true must NOT match a wholly absent path")
+
+    r = make_rule({"sel": {"unmapped.ot.change_ticket_id": {"exists": False}},
+                  "condition": "sel"})
+    check(r.evaluate({"unmapped": {"ot": {"change_ticket_id": "CHG-1"}}}) is False,
+          "exists: false must NOT match when the field is populated")
+    check(r.evaluate({}) is True,
+          "exists: false matches when the field is wholly absent")
+
+    r = make_rule({"sel": {"x": {"exists": "true"}}, "condition": "sel"})
+    check(r.evaluate({"x": 1}) is False,
+          "exists: a non-bool (truthy string) arg must fail closed, not raise")
+    r = make_rule({"sel": {"x": {"exists": 1}}, "condition": "sel"})
+    check(r.evaluate({"x": 1}) is False,
+          "exists: a non-bool (truthy int) arg must fail closed -- bool excluded on purpose")
+
     r = make_rule({"sel": {"x": {"glob": "a" * 201}}, "condition": "sel"})
     check(r.evaluate({"x": "a" * 201}) is False,
           "glob: an oversized (>200 char) pattern fails closed, same bound as contains")

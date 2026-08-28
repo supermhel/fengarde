@@ -416,6 +416,10 @@ def _build_chain_payloads(seed: int):
 
     # (e) modbus_write -> attacker ACTUALLY writes the PLC pump-enable coil
     #     (unauthorized actuation) then emits the observed FC5 write frame.
+    #     Deliberately carries NO changeTicketId -- unlike
+    #     eval/twin/negative_controls.py::scenario_maintenance_window's
+    #     approved write to this SAME coil, this is an unauthorized write and
+    #     must still fire ot_modbus_unauthorized_write.
     mw_ts = _ts(4)
     sim.write_coil(COIL_PUMP_ENABLE, True)  # real sim state change
     pump_state_after_write = sim.read_coil(COIL_PUMP_ENABLE)
@@ -532,6 +536,7 @@ def run_chain(seed: int = 7, *, disable_parser: Optional[str] = None, strict: bo
     # None (registered but silent-drop), restore the real one in finally.
     saved_parser = None
     registry = None
+    had_parser = False  # whether disable_parser had a REAL entry before the swap
     if disable_parser is not None:
         import parsers  # noqa: PLC0415  (ws2 registry, already on sys.path)
         from parsers.base import Parser  # noqa: PLC0415
@@ -546,6 +551,7 @@ def run_chain(seed: int = 7, *, disable_parser: Optional[str] = None, strict: bo
                 return None
 
         registry = parsers._REGISTRY  # noqa: SLF001
+        had_parser = disable_parser in registry
         saved_parser = registry.get(disable_parser)
         registry[disable_parser] = _SilentDrop()
 
@@ -625,8 +631,15 @@ def run_chain(seed: int = 7, *, disable_parser: Optional[str] = None, strict: bo
             raise ScenarioChainError("scenario integrity check FAILED:\n  - " + "\n  - ".join(failures))
         return result
     finally:
-        if registry is not None and saved_parser is not None:
-            registry[disable_parser] = saved_parser  # restore (never leave broken)
+        # Restore exactly what was there before the swap -- including "nothing"
+        # (had_parser=False): `saved_parser is not None` alone would leave the
+        # _SilentDrop stub permanently registered for any disable_parser name
+        # that had no real parser to begin with.
+        if registry is not None:
+            if had_parser:
+                registry[disable_parser] = saved_parser
+            else:
+                registry.pop(disable_parser, None)
 
 
 def assert_chain_integrity(result: ChainResult) -> None:
@@ -721,6 +734,8 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument("--seed", type=int, default=7, help="determinism seed")
     parser.add_argument("--selfcheck", action="store_true", help="run the built-in acceptance proof")
     args = parser.parse_args(argv)
+    if not args.selfcheck:
+        parser.error("--selfcheck is required (the only CLI mode this module exposes)")
     return selfcheck(seed=args.seed)
 
 

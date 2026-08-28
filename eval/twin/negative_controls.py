@@ -27,17 +27,38 @@ SCOPE / CONTRACT
     * Four negatives, each asserting zero incidents. Exit 0 only when all
       four produced zero alerts.
 
-THE EXPECTED FINDING (read before running)
+THE FINDING THIS MODULE SURFACED, AND THE FIX (read before running)
     Scenario 1 (approved maintenance window) deliberately reuses the exact
     pump-enable write that produces the incident in the attack chain: writing
-    the pump-enable COIL. Modbus single-coil writes live in the 0xxxx coil
-    address space, which `modbus_anomaly._EXPECTED_WRITE_ADDRESSES`
-    (40001-40010, holding registers only) does not include -- so the parser
-    classifies EVERY coil write as `unauthorized_write`, and
-    `ot_modbus_unauthorized_write` fires on it regardless of the maintenance
-    window, the authorizer, or the hour. That is the honest FPR this module
-    exists to surface: the rule/parser is context-blind to coil writes. It is
-    reported as a real finding, not hidden.
+    the pump-enable COIL, from the SAME source IP, inside business hours.
+    Modbus single-coil writes live in the 0xxxx coil address space, which
+    `modbus_anomaly._EXPECTED_WRITE_ADDRESSES` (40001-40010, holding
+    registers only) does not include -- so the parser classified EVERY coil
+    write as `unauthorized_write`, and `ot_modbus_unauthorized_write` fired
+    on it regardless of the maintenance window, the authorizer, or the hour.
+    That was a real, honestly-reported FPR (0.25): address, source IP, and
+    time-of-day are exactly the same between the attack write and this
+    approved write, so no rule keyed on any of those three fields can tell
+    them apart -- the gap was that the pipeline had NO authorization signal
+    at all to key on.
+
+    The fix (`unmapped.ot.change_ticket_id`, see modbus_anomaly.py's module
+    docstring and `contracts/rules/ot_modbus_unauthorized_write.yml`) adds
+    exactly that: an explicit, out-of-band field a real tap/proxy could
+    attach when it also has access to a change-management system. This
+    scenario now attaches a change-ticket id to the approved write (see
+    `_write_pump_enable`'s `change_ticket_id` param below), simulating that
+    integration, and the rule's `authorized_change` selection suppresses the
+    alert when it's present. The attack chain (`eval/twin/scenario.py`) never
+    sets this field, so it still fires -- see that module's `modbus_write`
+    step.
+
+    This proves the SUPPRESSION MECHANISM works correctly on the twin's
+    simulated data. It is not a claim that FENGARDE solves real-world OT
+    change authorization: nothing here validates a `changeTicketId` against
+    an actual ticketing system (there is none to validate against), so a
+    deployment wiring this field for real must trust its own tap/proxy
+    integration, not this twin.
 """
 from __future__ import annotations
 
@@ -135,6 +156,7 @@ def run_pipeline(raw_events: list[tuple[str, dict]], tenant: str) -> list[dict]:
         _ev, matched, _action = detector.process(event)
         for rule in matched:
             alerts.append({"rule_id": rule.id, "rule_title": rule.title,
+                           "score_weight": rule.score_weight,
                            "source_type": (event.get("siem") or {}).get(
                                "source_type")})
     return alerts
@@ -152,12 +174,19 @@ def _write_setpoint(sim: PLCSim, value: int, ts: int, src: str) -> dict:
             "unitId": 1, "sourceIp": src, "destIp": _DST_PLC, "time": ts}
 
 
-def _write_pump_enable(sim: PLCSim, enabled: bool, ts: int, src: str) -> dict:
+def _write_pump_enable(sim: PLCSim, enabled: bool, ts: int, src: str,
+                       change_ticket_id: str | None = None) -> dict:
     sim.write_coil(COIL_PUMP_ENABLE, enabled)
     sim.tick()
-    return {"functionCode": 5, "address": COIL_PUMP_ENABLE,
-            "value": 0xFF00 if enabled else 0x0000,
-            "unitId": 1, "sourceIp": src, "destIp": _DST_PLC, "time": ts}
+    frame = {"functionCode": 5, "address": COIL_PUMP_ENABLE,
+             "value": 0xFF00 if enabled else 0x0000,
+             "unitId": 1, "sourceIp": src, "destIp": _DST_PLC, "time": ts}
+    if change_ticket_id is not None:
+        # The out-of-band authorization signal a real tap/proxy integrated
+        # with a change-management system could attach -- see
+        # modbus_anomaly.py's module docstring.
+        frame["changeTicketId"] = change_ticket_id
+    return frame
 
 
 def _write_level_adjust(sim: PLCSim, value: int, ts: int, src: str) -> dict:
@@ -203,21 +232,32 @@ def _n8n_workflow_activate(user: str, ip: str, ts: int) -> dict:
 # --------------------------------------------------------------------------
 # The four negative scenarios. Each returns (name, alerts).
 # --------------------------------------------------------------------------
+_MAINTENANCE_CHANGE_TICKET = "CHG-2026-08-1042"
+
+
 def scenario_maintenance_window(seed: int) -> tuple[str, list[dict]]:
-    """S1: the attack's exact PLC write, inside an APPROVED maintenance window.
+    """S1: the attack's exact PLC write, inside an APPROVED maintenance window,
+    carrying an approved change ticket.
 
     An approved work order changes the setpoint AND re-enables the pump coil
     at Tue 10:30 UTC -- squarely inside the approved 08:00-18:00 Mon-Fri
     window. The setpoint write (40001) is in the expected write range and is
-    (correctly) never flagged. The pump-enable COIL write is classified
-    `unauthorized_write` by the modbus_anomaly parser (the expected-write set
-    only covers holding registers 40001-40010, not the 0xxxx coil space), and
-    `ot_modbus_unauthorized_write` fires -- a context-blind false positive.
+    (correctly) never flagged regardless. The pump-enable COIL write is still
+    classified `unauthorized_write` by the modbus_anomaly parser (the
+    expected-write set only covers holding registers 40001-40010, not the
+    0xxxx coil space) -- that classification is an honest protocol-level
+    observation and doesn't change. What changes is that this write carries
+    `_MAINTENANCE_CHANGE_TICKET`, the out-of-band authorization signal
+    `ot_modbus_unauthorized_write` now checks for, so the rule's
+    `authorized_change` selection suppresses the alert. See this module's
+    docstring for why this was a real FPR before the field existed, and why
+    the fix only proves the mechanism, not real-world authorization.
     """
     sim = PLCSim(seed=seed)
     raw = [
         (_FRAME, _write_setpoint(sim, 520, T_TUE_1030, _SRC_ENG)),
-        (_FRAME, _write_pump_enable(sim, True, T_TUE_1030, _SRC_ENG)),
+        (_FRAME, _write_pump_enable(sim, True, T_TUE_1030, _SRC_ENG,
+                                    change_ticket_id=_MAINTENANCE_CHANGE_TICKET)),
     ]
     return "approved-maintenance-window", run_pipeline(raw, "neg-maintenance")
 

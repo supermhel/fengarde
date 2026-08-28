@@ -1,37 +1,67 @@
 version: 2
 updates:
+  # PyYAML and redis must carry the SAME pin across every services/*/requirements.txt
+  # (enforced by tools/check_lane_coverage.py assertion #6 in run_all_tests.sh).
+  # Dependabot bumps directories independently, so an un-ignored automated bump
+  # of either package in just one service would immediately red the gate for
+  # everyone else. Both are ignored here; bump them by hand across all pip
+  # directories in one PR when a real upgrade is needed.
   - package-ecosystem: "pip"
     directory: "/services/ws1-collectors"
     schedule:
       interval: "weekly"
+    ignore:
+      - dependency-name: "PyYAML"
+      - dependency-name: "redis"
   - package-ecosystem: "pip"
     directory: "/services/ws2-normalization"
     schedule:
       interval: "weekly"
+    ignore:
+      - dependency-name: "PyYAML"
+      - dependency-name: "redis"
   - package-ecosystem: "pip"
     directory: "/services/ws3-indexer"
     schedule:
       interval: "weekly"
+    ignore:
+      - dependency-name: "PyYAML"
+      - dependency-name: "redis"
   - package-ecosystem: "pip"
     directory: "/services/ws4-detection"
     schedule:
       interval: "weekly"
+    ignore:
+      - dependency-name: "PyYAML"
+      - dependency-name: "redis"
   - package-ecosystem: "pip"
     directory: "/services/ws5-ai"
     schedule:
       interval: "weekly"
+    ignore:
+      - dependency-name: "PyYAML"
+      - dependency-name: "redis"
   - package-ecosystem: "pip"
     directory: "/services/ws6-inventory"
     schedule:
       interval: "weekly"
+    ignore:
+      - dependency-name: "PyYAML"
+      - dependency-name: "redis"
   - package-ecosystem: "pip"
     directory: "/services/devkit-feeder"
     schedule:
       interval: "weekly"
+    ignore:
+      - dependency-name: "PyYAML"
+      - dependency-name: "redis"
   - package-ecosystem: "pip"
     directory: "/services/ws8-correlation"
     schedule:
       interval: "weekly"
+    ignore:
+      - dependency-name: "PyYAML"
+      - dependency-name: "redis"
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
