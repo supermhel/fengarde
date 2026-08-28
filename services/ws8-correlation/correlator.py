@@ -38,9 +38,23 @@ Core rules (see INTERFACE.md for the full account):
   - `incident_id` is deterministic (T7-style fixed-epoch bucket), so a
     growing incident re-emits under the SAME id and WS-3's existing OCC/CAS
     path updates one document instead of accumulating duplicates.
+  - Every incident promotion/update ALSO emits the ADR-009 `incident.graph`
+    payload (2026-08-28, WP-2-C) -- purely ADDITIVE, the incident dict
+    above is untouched. Nodes are the incident's member entities
+    (actor/user, ip, device -- the SAME track identity the incident already
+    captures, as `{entity_type}:{entity_value}`); edges are ONLY the
+    relationships a SINGLE alert's own fields provide (actor+src_ip,
+    src_ip+device mac/hostname, actor+device), each carrying `event_id` +
+    `ts_ms` provenance from the alert that evidenced it. NO transitive
+    inference: two alerts that merely share an entity never yield an edge
+    between their other entities. The payload is rebuilt from the track's
+    LIVE members on every promotion (deterministic + idempotent under
+    redelivery) and is bounded by them; see `_build_incident_graph` and
+    `incident_graph()`.
 """
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import math
@@ -169,6 +183,56 @@ def _file_mtime_ns(path: Path) -> "int | None":
         return None
 
 
+# ADR-009 `incident.graph` edge kinds (version 1, flat field-pair
+# semantics; Phase 3 upgrades to the typed causal DAG -- caused_by /
+# invoked / authenticated_as / wrote_to / changed -- via version: 2).
+# Each kind names the relationship a SINGLE alert's own fields evidence:
+#   used_ip       actor  -> src_endpoint.ip            (actor.user.name + ip)
+#   used_device   actor  -> src_endpoint.mac|hostname  (actor.user.name + device)
+#   seen_at_ip    device -> src_endpoint.ip            (mac|hostname + ip)
+# Direction is fixed by the pair semantics (never by which track promoted),
+# so the same co-occurring pair renders the same directed edge in every
+# incident. There is no same-type kind: one alert carries at most one value
+# per entity type, so an alert can never evidence an actor-actor (or ip-ip)
+# edge -- inventing one would be transitive inference, which is prohibited.
+_EDGE_KINDS = {
+    ("actor", "ip"): ("used_ip", "actor", "ip"),
+    ("actor", "device"): ("used_device", "actor", "device"),
+    ("device", "ip"): ("seen_at_ip", "device", "ip"),
+}
+_ENTITY_TYPE_ORDER = ("actor", "device", "ip")  # canonical unordered-pair keying
+
+
+def _edge_spec(type_a: str, type_b: str) -> "tuple[str, str, str] | None":
+    """Canonical ``(kind, from_type, to_type)`` for a co-occurring entity
+    type pair (see _EDGE_KINDS), or None for a same-type pair (unreachable
+    from one alert, and prohibited -- same-type linkage would be
+    cross-alert inference). The unordered pair maps to exactly ONE directed
+    edge; a pair is never reversed into a second edge and never dropped for
+    ordering reasons."""
+    if type_a == type_b:
+        return None
+    key = tuple(sorted((type_a, type_b), key=_ENTITY_TYPE_ORDER.index))
+    return _EDGE_KINDS[key]
+
+
+def _provenance_event_id(alert: dict, member_id: str) -> str:
+    """The ``event_id`` provenance recorded on a graph edge.
+
+    The alert's own underlying event handle: the first ``event_ids``
+    element when present (WS-4's make_alert carries the event(s) that
+    fired the rule), else the alert-level member id (``alert_id``, or the
+    deterministic synthetic id for id-less alerts). Deterministic under
+    redelivery -- a re-delivered alert re-derives the same provenance on
+    every edge it evidences."""
+    event_ids = alert.get("event_ids")
+    if event_ids:
+        ev = event_ids if isinstance(event_ids, (list, tuple)) else [event_ids]
+        if ev and _to_str(ev[0]):
+            return _to_str(ev[0])
+    return member_id
+
+
 class Correlator:
     """Tracks per-(tenant, entity_type, entity_value) alert activity and
     promotes a track to an incident on multi-tactic evidence.
@@ -214,6 +278,14 @@ class Correlator:
         # once grew both dicts forever). Actually bounded now by
         # `_sweep_dead_tracks()`, called periodically from `_update_track`.
         self._last_incident: dict[str, dict] = {}
+        # incident_id -> ADR-009 `incident.graph` payload emitted alongside
+        # the SAME incident promotion/update (2026-08-28, WP-2-C). Mirrors
+        # `_last_incident` exactly: same key set (written together in the
+        # promotion branch, pruned together by `_sweep_dead_tracks`), so it
+        # inherits the same boundedness -- never more than one entry per
+        # live promoted track, evicted when the track's window membership
+        # dies. No separate unbounded side table.
+        self._incident_graphs: dict[str, dict] = {}
         # track_key -> {alert_id: {tactic, score, time}}. The window_counter
         # only knows MEMBERSHIP (alert_id + time); tactic/score need a side
         # table keyed the same way, pruned to the same live-member set on
@@ -344,6 +416,102 @@ class Correlator:
         digest = hashlib.sha256(blob.encode("utf-8", "replace")).hexdigest()[:16]
         return f"anon:{digest}"
 
+    def _cooccurring_entities(self, alert: dict, own_type: str) -> list[tuple[str, str]]:
+        """The OTHER entity fields this single alert carries, as
+        ``(entity_type, entity_value)`` pairs -- the provenance-backed
+        relationship sources of the incident graph (WP-2-C, ADR-009).
+
+        Mirrors ingest_alert's per-leg extraction EXACTLY (same
+        degrade-don't-crash handling for a non-dict ``actor.user``, same
+        mac-or-hostname device fallback, same raw values the tracks key
+        on), minus the leg that IS this track: ``own_type`` excludes the
+        track's own entity, because a track's member can never co-occur
+        with itself. An allowlisted shared-infra ip/hostname still appears
+        here -- it is a fact evidenced by the recording alert's own fields
+        (never a cross-alert merge; the allowlist's job, not opening an
+        ``ip:``/``device:`` TRACK, is untouched)."""
+        out: list[tuple[str, str]] = []
+        actor = alert.get("actor") or {}
+        user = actor.get("user") or {}
+        if not isinstance(user, dict):
+            user = {}
+        if user.get("name") and own_type != "actor":
+            out.append(("actor", str(user["name"])))
+        src = alert.get("src_endpoint") or {}
+        if src.get("ip") and own_type != "ip":
+            out.append(("ip", str(src["ip"])))
+        device = src.get("mac") or src.get("hostname")
+        if device and own_type != "device":
+            out.append(("device", str(device)))
+        return out
+
+    def _build_incident_graph(self, tenant: str, entity_type: str, entity_value: str,
+                              incident: dict, side: dict) -> dict:
+        """Build the ADR-009 ``incident.graph`` payload for a promoted
+        track from its live member side-table entries.
+
+        - ``nodes``: the incident's member entities -- the track's own
+          anchor plus every co-occurring entity its member alerts carry --
+          as ``{entity_type}:{entity_value}`` (the SAME track identity the
+          incident itself captures). Values pass through
+          ``_bounded_entity_value`` so an attacker-controlled >448-byte
+          name cannot blow the payload (same doc-id-budget discipline as
+          the incident's own entity_value).
+        - ``edges``: ONLY pairs co-occurring within a SINGLE member alert's
+          own fields, deduped with the EARLIEST (ts_ms, event_id)
+          provenance kept. **No transitive inference**: two alerts that
+          merely share an entity never produce an edge between their other
+          entities -- an edge exists iff one member alert carries both
+          endpoints itself.
+        - ``tactic_sources``: tactic -> member alert ids (live members)
+          carrying it, mirroring the incident's own member_alert_ids
+          attribution (a tactic whose only member was cap-evicted lists no
+          live source; the tactic still appears, exactly as it does in the
+          incident's ``tactics``).
+        Deterministic under redelivery (same members -> same nodes, edges,
+        provenance) and bounded by the member set: <=3 co-occurring pairs
+        per member, so <=3*len(live) edges; nodes = 1 anchor + distinct
+        co-occurring values across live members."""
+        anchor = f"{entity_type}:{entity_value}"
+        nodes = {anchor}
+        # (from,to,kind) -> (ts_ms, event_id); the EARLIEST provenance wins,
+        # so an edge evidenced by several members cites the first evidence.
+        best: dict[tuple, tuple] = {}
+        for member_id, entry in side.items():
+            refs = [(entity_type, entity_value)]
+            for other_type, other_value in entry.get("cooccur") or []:
+                refs.append((other_type, self._bounded_entity_value(other_value)))
+            for i in range(len(refs)):
+                for j in range(i + 1, len(refs)):
+                    spec = _edge_spec(refs[i][0], refs[j][0])
+                    if spec is None:
+                        continue
+                    kind, from_type, to_type = spec
+                    a, b = refs[i], refs[j]
+                    fv = a[1] if a[0] == from_type else b[1]
+                    tv = b[1] if b[0] == to_type else a[1]
+                    f_node, t_node = f"{from_type}:{fv}", f"{to_type}:{tv}"
+                    nodes.add(f_node)
+                    nodes.add(t_node)
+                    key = (f_node, t_node, kind)
+                    cand = (entry.get("time", 0), entry.get("event_id") or member_id)
+                    if key not in best or cand < best[key]:
+                        best[key] = cand
+        edges = [{"from": f, "to": t, "kind": k, "event_id": ev, "ts_ms": ts}
+                 for (f, t, k), (ts, ev) in sorted(best.items())]
+        tactic_sources = {
+            tactic: sorted(mid for mid, e in side.items() if e.get("tactic") == tactic)
+            for tactic in incident["tactics"]
+        }
+        return {
+            "version": 1,
+            "incident_id": incident["incident_id"],
+            "tenant_id": incident["tenant_id"],
+            "nodes": sorted(nodes),
+            "edges": edges,
+            "tactic_sources": tactic_sources,
+        }
+
     def _sweep_dead_tracks(self, now_ms: int) -> None:
         """Drop `_sides`/`_side_meta`/`_last_incident`/`_last_touch` entries
         for tracks not touched within the last `horizon_s` (2026-08-19
@@ -380,6 +548,10 @@ class Correlator:
                 incident["tenant_id"], incident["entity_type"], incident["entity_value"])
             if track_key in dead_keys_set:
                 del self._last_incident[incident_id]
+                # WP-2-C: the incident.graph payload dies WITH its incident
+                # (same key set, written together in the same promotion
+                # branch, pruned together here) -- never an orphaned entry.
+                self._incident_graphs.pop(incident_id, None)
 
     def _update_track(self, tenant: str, entity_type: str, entity_value: str,
                        alert: dict, now_ms: int) -> dict | None:
@@ -438,6 +610,16 @@ class Correlator:
             "time": valid_time or now_ms,
         }
         side[member] = entry
+        # WP-2-C (ADR-009): remember this single alert's other entity fields
+        # (the provenance-backed relationship sources) and its underlying
+        # event handle, so the incident graph -- built on promotion below --
+        # can emit edges with event_id + ts_ms provenance. Additive entry
+        # fields only: the member-keyed entry set (and _sides[key]'s length)
+        # is unchanged, so the existing member-cap/window eviction discipline
+        # still bounds this table exactly as before. NO cross-alert state is
+        # accumulated here -- an edge is only ever evidenced by one alert.
+        entry["event_id"] = _provenance_event_id(alert, member)
+        entry["cooccur"] = self._cooccurring_entities(alert, entity_type)
         for stale_id in list(side):
             if stale_id not in live_ids:
                 del side[stale_id]
@@ -512,6 +694,17 @@ class Correlator:
             incident["entity_value_full"] = entity_value_full
         is_new = incident_id not in self._last_incident
         self._last_incident[incident_id] = incident
+        # WP-2-C (ADR-009): emit the incident.graph payload alongside EVERY
+        # promotion/update -- purely ADDITIVE; the incident dict above keeps
+        # its exact shape, the tactic-accumulation path is untouched (the
+        # contract tests exercise that path unchanged). Rebuilt from the
+        # track's LIVE members each call, so it is deterministic and
+        # idempotent under redelivery (same members -> identical payload
+        # under the same incident_id) and bounded by the member set
+        # (<=3 edges per live member; one cache entry per incident_id,
+        # pruned by _sweep_dead_tracks with _last_incident).
+        self._incident_graphs[incident_id] = self._build_incident_graph(
+            tenant, entity_type, entity_value, incident, side)
         if is_new:
             self.promotions_count += 1
         return incident
@@ -626,6 +819,22 @@ class Correlator:
             self._skip_reasons[reason] = self._skip_reasons.get(reason, 0) + 1
 
         return incidents
+
+    def incident_graph(self, incident_id: str) -> dict | None:
+        """The ADR-009 ``incident.graph`` payload last emitted for
+        ``incident_id`` (stored alongside every incident promotion/update,
+        same promotion path as the incident itself), or None when that
+        incident is not live (never promoted, or already swept with its
+        dead track).
+
+        This is the produce source for the ``incident.graph`` bus topic
+        (partition key ``incident_id``, same as ``incidents``): a bus
+        wiring (main.py) pairs each incident it publishes with this payload.
+        The ``incidents`` emission itself is completely unchanged -- the
+        graph is purely additive. Returns a deep copy so callers can never
+        mutate the correlator's cached payload."""
+        graph = self._incident_graphs.get(incident_id)
+        return copy.deepcopy(graph) if graph is not None else None
 
     def metrics(self) -> dict:
         # ws8_active_tracks: was cumulative ever-seen (2026-08-19 review

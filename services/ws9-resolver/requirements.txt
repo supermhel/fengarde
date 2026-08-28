@@ -1,0 +1,8 @@
+# WS-9 Entity Resolver. Core is stdlib + the shared bus/envelope/ocsf
+# primitives; redis is the only third-party dependency at runtime (the bus
+# backend under BUS_BACKEND=redis in the Docker profile), pinned to the same
+# version every Redis-talking workstream pins. PyYAML is deliberately NOT
+# listed: unlike ws8, WS-9 never touches shared/allowlist.py (no
+# shared-infrastructure suppression -- see INTERFACE.md "Deliberately not
+# built"), and shared/ocsf.py only imports the stdlib validator in tools/.
+redis==8.1.0       # matching the pin every other Redis-talking workstream uses

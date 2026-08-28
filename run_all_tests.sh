@@ -37,7 +37,7 @@ echo "== Sigma import: regex->glob translation + rule sanitization =="; LAST_HEA
 $PY tools/test_fix_m18_sigma_glob.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 $PY tools/test_import_sigma_rules.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 
-for ws in ws1-collectors ws2-normalization ws3-indexer ws4-detection ws5-ai ws6-inventory ws7-dashboard ws8-correlation; do
+for ws in ws1-collectors ws2-normalization ws3-indexer ws4-detection ws5-ai ws6-inventory ws7-dashboard ws8-correlation ws9-resolver; do
   echo
   echo "== $ws =="; LAST_HEADER="== $ws =="
   ( cd "services/$ws" && $PY test_contract.py ) || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
@@ -46,6 +46,9 @@ done
 echo
 echo "== ws8 sensitivity: promotion trigger + no-transitive-merge guarantees actually break under mutation =="; LAST_HEADER="== ws8 sensitivity: promotion trigger + no-transitive-merge guarantees actually break under mutation =="
 $PY services/ws8-correlation/test_correlator_sensitivity.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
+echo "== WP-2-C: incident.graph provenance edges (no transitive inference) =="; LAST_HEADER="== WP-2-C: incident.graph provenance edges (no transitive inference) =="
+$PY services/ws8-correlation/test_incident_graph.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
 echo "== ws8 NEW-hunt regression: flat prometheus skip keys + skew-future/NaN time rejected + fully-anonymous deterministic member id + oldest-by-time member-cap eviction =="; LAST_HEADER="== ws8 NEW-hunt regression: flat prometheus skip keys + skew-future/NaN time rejected + fully-anonymous deterministic member id + oldest-by-time member-cap eviction =="
 $PY services/ws8-correlation/test_correlator_new_hunt.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
@@ -275,6 +278,9 @@ $PY services/ws4-detection/test_rule_health.py || { fail=1; FAILED="${FAILED} ${
 echo
 echo "== WP-2-F: exposure-aware risk scoring extension (schema-additive, inert) =="; LAST_HEADER="== WP-2-F: exposure-aware risk scoring extension (schema-additive, inert) =="
 $PY services/ws4-detection/test_exposure_scoring.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
+echo "== WP-2-D: behavioral baselines (learn/detect, bounded, DequeWindowCounter reuse) =="; LAST_HEADER="== WP-2-D: behavioral baselines (learn/detect, bounded, DequeWindowCounter reuse) =="
+$PY services/ws4-detection/test_behavioral_baseline.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
 echo "== ws4 FIX 1/2/13/14/22/L1 regression: Sentinel HA wiring, poison-pill rejection, clock-skew warn =="; LAST_HEADER="== ws4 FIX 1/2/13/14/22/L1 regression: Sentinel HA wiring, poison-pill rejection, clock-skew warn =="
 $PY services/ws4-detection/test_fix_detection_engine.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }

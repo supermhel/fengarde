@@ -1,7 +1,8 @@
 # WS-8 Correlation — Interface Declaration
 
 **Status (2026-08-19): zero-infra proven, one live smoke test (2026-08-18) +
-pivot-correlation (device: track) added 2026-08-19, zero-infra proven.**
+pivot-correlation (device: track) added 2026-08-19, zero-infra proven.
+2026-08-28: incident.graph (ADR-009/WP-2-C) added, zero-infra proven.**
 Implements `docs/superpowers/specs/2026-08-18-ws8-correlation-build-plan.md`
 and the approved design in `fengarde-sec`'s
 `docs/2026-08-11-cross-alert-correlation-design.md` (private repo — read
@@ -46,6 +47,81 @@ MITRE tactics), not just repeated single-tactic noise.
   growing incident under the SAME id so WS-3's existing OCC/CAS path updates
   one document instead of accumulating duplicates under at-least-once
   redelivery.
+- Topic `incident.graph` (ADR-009, WP-2-C, 2026-08-28) — emitted alongside
+  EVERY `incidents` promotion/update via
+  `correlator.incident_graph(incident["incident_id"])` (the produce source;
+  partition key `incident_id`, same as `incidents`). Purely ADDITIVE: the
+  `incidents` payload above is unchanged. See "Incident graph" below for the
+  full contract.
+
+## Incident graph (ADR-009, WP-2-C, 2026-08-28)
+
+Every incident promotion/update ALSO produces an `incident.graph` payload:
+
+`{version: 1, incident_id, tenant_id, nodes: [entity_id…], edges: [{from, to,
+kind, event_id, ts_ms}], tactic_sources}`
+
+- **Nodes** are the incident's member entities — the actor/user, ip, and
+  device values its member alerts reference — identified by the SAME track
+  identity the incident already captures, `{entity_type}:{entity_value}`
+  (e.g. `actor:alice`, `ip:10.0.0.5`, `device:AA:BB:CC:DD:EE:FF`). Values
+  pass through the same 448-byte `_bounded_entity_value` doc-id cap as the
+  incident's own `entity_value`. The WP-2-B canonical sha256 `entity_id`
+  (WS-9 resolver's computation) is NOT recomputed here — WS-8 emits its own
+  proven track identity, and Phase 3's `version: 2` typed-DAG upgrade is the
+  seam that carries the canonical form.
+- **Edges** are ONLY relationships a SINGLE alert's own fields provide —
+  never inferred across alerts. Version-1 kinds (field-pair semantics, in
+  the ADR-009 `kind` field):
+
+  | kind          | from → to      | evidenced by one alert carrying                          |
+  |---------------|----------------|----------------------------------------------------------|
+  | `used_ip`     | actor → ip     | `actor.user.name` AND `src_endpoint.ip`                  |
+  | `used_device` | actor → device | `actor.user.name` AND `src_endpoint.mac` (or hostname)   |
+  | `seen_at_ip`  | device → ip    | `src_endpoint.mac`/`hostname` AND `src_endpoint.ip`      |
+
+  Direction is fixed by the pair semantics, never by which track promoted —
+  the same pair renders the same directed edge in every incident. One alert
+  carrying actor + ip + mac yields all three edges. (An allowlisted shared-
+  infra ip/hostname still appears as a node/edge endpoint from the recording
+  alert's own evidence — a fact, never a cross-alert merge; it still never
+  opens its own track.)
+- **No transitive inference** (WP-2-C encodes, on the graph, the exact
+  refusal the track model already makes): an edge `(u,v,k)` exists iff at
+  least one MEMBER alert of the incident's track carries BOTH `u` and `v` in
+  its own fields. Two alerts that merely share an entity (two actors on one
+  NAT'd source IP; two IPs on one MAC) never produce an edge between their
+  other entities — the shared node appears, the inferred relationship does
+  not. Same-type pairs (actor-actor, ip-ip, device-device) have no kind and
+  are never emitted.
+- **Provenance on every edge**: `event_id` = the evidencing alert's first
+  `event_ids` element when present, else the alert-level member id
+  (`alert_id`, or the deterministic synthetic id for id-less alerts);
+  `ts_ms` = the alert's sanitized `time` (same `_valid_window_time` basis as
+  `first_seen`/`last_seen`). When several members evidence the same pair,
+  the edge cites the EARLIEST `(ts_ms, event_id)`.
+- **`tactic_sources`**: tactic → member alert ids (live members) carrying
+  it, mirroring the incident's own `member_alert_ids` attribution; a tactic
+  whose only member was member-cap-evicted still appears (exactly as it
+  does in the incident's `tactics`) with an empty source list.
+- **Deterministic + idempotent under redelivery**: the payload is REBUILT
+  from the track's live members on every promotion call, so the same
+  incident promoted twice emits the SAME `incident_id`, nodes, edges, and
+  provenance (even across a fresh process — no per-instance state).
+- **Bounded** (mirrors `_sides`/`_last_incident`'s sweep discipline): edges
+  ≤ 3 × live members (three possible pairs per alert), nodes = the anchor +
+  distinct co-occurring values across live members; the in-memory cache is
+  exactly one entry per incident_id, written and pruned TOGETHER with
+  `_last_incident` by the same `_sweep_dead_tracks` sweep — never an
+  orphaned or growing side table.
+
+### Accessor
+
+`correlator.incident_graph(incident_id) -> dict | None` returns the last
+emitted graph payload for a live incident (a deep copy; None for unpromoted
+or already-swept incidents). The bus wiring (main.py) pairs each incident it
+publishes with this payload on the `incident.graph` topic; the `incidents`
+emission itself is byte-for-byte unchanged.
 
 ## Correlation model
 
@@ -159,6 +235,15 @@ MITRE tactics), not just repeated single-tactic noise.
   the promotion trigger, the no-merge guarantee, and the device pivot-link
   (same "a negative assertion that cannot fail is not a test" bar
   `eval/attack/test_fire_check.py` established).
+- `python test_incident_graph.py` — WP-2-C (2026-08-28): single-alert
+  co-occurrence → provenance-bearing edges (all three kinds), the
+  no-transitive-inference proof (shared-ip leg AND device-pivot leg: two
+  alerts sharing an entity never yield an edge between their other
+  entities), redelivery emits an IDENTICAL graph (same id/nodes/edges/
+  provenance, also deterministically re-derived by a fresh instance),
+  member-set boundedness (edges ≤ 3 × live members; count stabilizes once
+  member_cap binds) + the cached graph is pruned WITH its incident by the
+  dead-track sweep, and the accessor surface (None for unknown/unpromoted).
 
 ## Deliberately not built (this pass)
 
