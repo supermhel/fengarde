@@ -106,6 +106,10 @@ import negative_controls  # noqa: E402
 
 ORACLE_PATH = TWIN / "oracle.yaml"
 REPORT_PATH = TWIN / "report.json"
+# WP-1-G frozen baseline: the delta contract in baseline.json's header says
+# new runs must emit the SAME metric keys and report a documented delta vs it.
+# `run()` loads it (if present) and emits `report["delta_vs_baseline"]`.
+BASELINE_PATH = TWIN / "baseline.json"
 TREND_PATH = ROOT / "eval" / "trend.jsonl"
 
 
@@ -328,6 +332,53 @@ def _degradation_behavior() -> dict:
     }
 
 
+def _baseline_delta(metrics: dict, path: Path = BASELINE_PATH) -> Optional[dict]:
+    """Compare this run's metrics against the frozen baseline (WP-1-G delta
+    contract: baseline.json's header requires new runs to emit the SAME metric
+    keys and report a documented delta vs it -- previously UNIMPLEMENTED).
+
+    Honest null-vs-0.0 handling: only keys present in BOTH are compared; a
+    null on either side means "no denominator / not measured", reported as
+    ``"n/a"``, never coerced into a numeric 0.0 that would read as
+    "measured and zero" (same discipline as the metrics themselves -- e.g.
+    chain_fidelity is null on both sides today: WS-8 has no causal-edge
+    graph, so 0.0 would be fabricated). Non-numeric values (bools, the
+    degradation_behavior dict) that are byte-equal get delta 0.0 ("no change");
+    if they ever differ they are reported as ``"n/a"`` rather than given a
+    made-up numeric. Returns None when no baseline file exists.
+    """
+    if not path.exists():
+        return None
+    with open(path, "r", encoding="utf-8") as fh:
+        baseline = json.load(fh)
+    base_metrics = baseline.get("metrics") or {}
+
+    def _is_num(v) -> bool:
+        return isinstance(v, (int, float)) and not isinstance(v, bool)
+
+    key_comparison: dict = {}
+    for key, cur in metrics.items():
+        if key not in base_metrics:
+            continue  # schema drift: only keys present in both are compared
+        prev = base_metrics[key]
+        if cur is None or prev is None:
+            delta: object = "n/a"  # null on either side: not compared, not coerced
+        elif _is_num(cur) and _is_num(prev):
+            delta = round(float(cur) - float(prev), 4)
+        elif cur == prev:
+            delta = 0.0  # byte-equal non-numeric (e.g. degradation_behavior)
+        else:
+            delta = "n/a"  # unequal non-numeric: no honest numeric delta exists
+        key_comparison[key] = {"baseline": prev, "current": cur, "delta": delta}
+    return {
+        "baseline": path.relative_to(ROOT).as_posix(),  # repo-relative, e.g. eval/twin/baseline.json
+        "frozen_at": baseline.get("frozen_at"),
+        "seed": baseline.get("seed"),
+        "basis": baseline.get("basis"),
+        "key_comparison": key_comparison,
+    }
+
+
 def run(seed: int = 7) -> dict:
     """Run the full twin and return the complete metric dict (the report)."""
     started = time.time()
@@ -406,11 +457,22 @@ def run(seed: int = 7) -> dict:
         ),
         "elapsed_seconds": round(time.time() - started, 3),
     }
+    # WP-1-G delta contract: compare this run against the frozen baseline
+    # (only when the baseline file exists; emit the section into the report).
+    delta = _baseline_delta(report["metrics"])
+    if delta is not None:
+        report["delta_vs_baseline"] = delta
     return report
 
 
 def _append_trend(report: dict, path: Path = TREND_PATH) -> None:
-    """Append one twin row to eval/trend.jsonl (JSON Lines, schema-stable)."""
+    """Append one twin row to eval/trend.jsonl (JSON Lines, schema-stable).
+
+    The file's first line is a `#` header comment and later `#` NOTE lines
+    annotate history (e.g. the pre-fix fabricated pilot row) -- append-only
+    discipline: rows are never rewritten or deleted, and any reader MUST skip
+    lines starting with ``#`` before json.loads per line.
+    """
     row = {
         "_schema": report["report"]["schema_version"],
         "run_type": report["report"]["run_type"],
@@ -457,9 +519,21 @@ def main(argv: list[str] | None = None) -> int:
     if not args.no_trend:
         _append_trend(report)
     # print a human summary line for the gate
-    print(f"[OK] twin report (seed={args.seed}): TPR={m['tpr']} FPR={m['fpr']} "
-          f"chain_fidelity={m['chain_fidelity']} "
-          f"evidence={m['evidence_completeness']} basis={report['report']['basis']}")
+    summary = (f"[OK] twin report (seed={args.seed}): TPR={m['tpr']} FPR={m['fpr']} "
+               f"chain_fidelity={m['chain_fidelity']} "
+               f"evidence={m['evidence_completeness']} basis={report['report']['basis']}")
+    db = report.get("delta_vs_baseline")
+    if db is not None:
+        parts = []
+        for k, cmp in db["key_comparison"].items():
+            if isinstance(cmp.get("current"), dict) or isinstance(cmp.get("baseline"), dict):
+                continue  # dict values live in the report's delta section, not the terse line
+            if cmp["delta"] == "n/a":
+                parts.append(f"{k} n/a")
+            else:
+                parts.append(f"{k} {cmp['baseline']}->{cmp['current']} ({cmp['delta']})")
+        summary += f" | delta: {', '.join(parts)}"
+    print(summary)
     return 0
 
 

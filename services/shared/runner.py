@@ -242,9 +242,11 @@ def _make_health_handler(service_name: str, state: "HealthState | None" = None,
                 # FENGARDE-OPEN-BY-DESIGN (WP-0.1-A, assertion #5): /metrics and
                 # /metrics/prom are intentionally unauthenticated -- they expose
                 # aggregate counters/gauges only (no tenant data, no PII, no write
-                # surface) and this health/metrics server binds loopback by
-                # default. ACCEPTED OPEN SURFACE, recorded in SECURITY.md by the
-                # orchestrator; check_lane_coverage.py recognizes this marker.
+                # surface); the server binds all interfaces (0.0.0.0) so the metrics
+                # are scrapeable from other containers on the Compose network, whose
+                # internal network confines the listener. ACCEPTED OPEN SURFACE,
+                # recorded in SECURITY.md by the orchestrator;
+                # check_lane_coverage.py recognizes this marker.
                 payload = {"service": service_name,
                           "topics": metrics.snapshot() if metrics is not None else {}}
                 if extra_metrics_fn is not None:

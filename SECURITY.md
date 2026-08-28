@@ -274,8 +274,8 @@ sections:**
   Production deployments are expected to terminate TLS at a reverse proxy (see
   `docs/deployment.md` for a working nginx example) and to keep the backend
   ports on the Compose/management network. Any `http://` (including webhook
-  `OLLAMA_URL`) sends its content in cleartext once it leaves that
-  network boundary.
+  URLs and the `OLLAMA_URL` for the AI triage backend) sends its content in
+  cleartext once it leaves that network boundary.
 
 ### 11. Metrics endpoints (`/metrics`, `/metrics/prom`) are unauthenticated — accepted open surface
 
@@ -290,9 +290,13 @@ accepted surface:
   `rule_never_fired:<id>`, flow/health metrics). No tenant data, no event/PII
   content, no write surface — an unauthenticated reader can learn *that* traffic
   exists and roughly *how much*, nothing about *what* it contains.
-- The health/metrics server binds **loopback only by default**; unless you
-  deliberately bind it beyond localhost/Compose-network, it is not reachable from
-  untrusted networks anyway.
+- The health/metrics server binds **all interfaces (`0.0.0.0`)** so `/metrics`
+  and `/metrics/prom` are scrapeable from other containers on the Compose
+  network (Prometheus, monitoring dashboards) — the real protection is the
+  deployment topology, not the bind: keep the port reachable only on the
+  Compose/internal network where Prometheus lives, and never publish it to
+  untrusted networks. The payload itself is aggregate counters/gauges only —
+  no tenant data and no write surface.
 - Authenticating it would break the intended consumption pattern: Prometheus
   scrapes `/metrics/prom` with plain HTTP, and the monitoring/rule-health
   dashboards rely on that.

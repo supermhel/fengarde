@@ -65,6 +65,7 @@ Run:
 """
 from __future__ import annotations
 
+import json
 import re
 import sys
 from pathlib import Path
@@ -189,15 +190,49 @@ def _find_matrix_sources() -> set[str]:
 
 
 def _find_fixture_sources() -> set[str]:
-    """source_types with a test fixture anywhere in the ws2 test suite."""
-    tests = list(WS2.rglob("test_*.py")) + list(WS2.rglob("mocks/*.json"))
-    buf = ""
-    for p in tests:
+    """source_types with a REAL fixture, from the actual fixture corpora.
+
+    Two honest sources, both parsed (never raw-text substrings):
+      1. tools/check_rule_producers.py::FIXTURES -- the per-parser real raw
+         fixture dict the rule-producer gate feeds every parser (all 17).
+      2. services/ws2-normalization/mocks/*.json -- the contract-test sample
+         corpus (parsed `samples[].source_type` values).
+
+    The old rule scanned concatenated test-file text for the source_type
+    string, so deleting a parser's real fixture stayed green because a test
+    merely mentioned the string (adversarial review D1).
+    """
+    sources: set[str] = set()
+    # 1) check_rule_producers.FIXTURES keys (real per-parser raw fixtures).
+    try:
+        import check_rule_producers  # tools/ on sys.path? no -- it sits beside us
+    except Exception:
+        check_rule_producers = None  # type: ignore[assignment]
+    if check_rule_producers is None:
+        # Import via file path (check_rule_producers lives in tools/).
+        import importlib.util
+        crp = ROOT / "tools" / "check_rule_producers.py"
+        if crp.exists():
+            spec = importlib.util.spec_from_file_location("crp_fixtures", crp)
+            mod = importlib.util.module_from_spec(spec)
+            try:
+                spec.loader.exec_module(mod)  # type: ignore[union-attr]
+                sources |= set(getattr(mod, "FIXTURES", {}))
+            except Exception:
+                pass
+    else:
+        sources |= set(getattr(check_rule_producers, "FIXTURES", {}))
+    # 2) parsed ws2 contract-test samples (mocks/*.json).
+    for mock in WS2.glob("mocks/*.json"):
         try:
-            buf += p.read_text(encoding="utf-8", errors="ignore")
-        except OSError:
-            pass
-    return {st for st in _registry_sources() if st in buf}
+            data = json.loads(mock.read_text(encoding="utf-8", errors="ignore"))
+            for s in data.get("samples", []):
+                st = s.get("source_type")
+                if st:
+                    sources.add(st)
+        except (OSError, ValueError):
+            continue
+    return sources & _registry_sources()
 
 
 def _assert_parsers() -> list[str]:
@@ -448,8 +483,23 @@ def _assert_http_surfaces() -> list[str]:
 
 
 # ---------------------------------------------------------------------------
-# Assertion #6: cross-service pip pin consistency (PyYAML + redis).
+# Assertion #6: cross-service pip pin consistency + hash presence.
 # ---------------------------------------------------------------------------
+# Services that legitimately carry no requirements.txt (see infra/docker-compose
+# service declarations). Each entry must name a concrete reason.
+REQUIREMENTS_EXCLUSIONS: dict[str, str] = {
+    "ws7-dashboard": (
+        "static nginx frontend: serves index.html + assets from a base image; "
+        "no Python runtime, nothing to pin (Dockerfile has no pip install)."
+    ),
+    "devkit-feeder": (
+        "has its own requirements.txt under services/devkit-feeder/ -- "
+        "included by _find_pins via rglob; listed here only for completeness "
+        "of the per-service scan."
+    ),
+}
+
+
 def _find_pins() -> dict[str, dict[str, str]]:
     """service_name -> {pkg: pin} for PyYAML and redis across requirements.txt."""
     out: dict[str, dict[str, str]] = {}
@@ -465,16 +515,82 @@ def _find_pins() -> dict[str, dict[str, str]]:
     return out
 
 
+def _find_requirements_services() -> dict[str, str]:
+    """Every service dir with a Dockerfile -> its requirements.txt path or ''."""
+    out: dict[str, str] = {}
+    for dockerfile in SERVICES.glob("*/Dockerfile"):
+        svc = dockerfile.parent.name
+        reqs = list(dockerfile.parent.glob("requirements*.txt"))
+        out[svc] = str(reqs[0].relative_to(dockerfile.parent)) if reqs else ""
+    return out
+
+
+def _require_hashes(pins: dict[str, str], req: Path) -> list[str]:
+    """Ensure every pinned pkg==version line is followed by --hash= lines."""
+    problems: list[str] = []
+    lines = req.read_text(encoding="utf-8", errors="ignore").splitlines()
+    for i, line in enumerate(lines):
+        if not re.match(r"\s*(PyYAML|redis)==[\d.]+", line):
+            continue
+        pkg = re.match(r"\s*(PyYAML|redis)", line).group(1)
+        # continuation: the next line (or a following indented line) must be
+        # a --hash= entry for this same package block.
+        has_hash = False
+        for nxt in lines[i + 1:]:
+            if nxt.strip() == "" or nxt.rstrip().endswith("\\"):
+                continue
+            if "--hash=" in nxt:
+                has_hash = True
+                break
+            # a bare non-hash continuation after the pin means no hash block
+            if re.match(r"\s*(PyYAML|redis)==|^\s*#", nxt):
+                break
+            break
+        if not has_hash:
+            problems.append(f"[FAIL] A6(hash): {pkg} pinned in {req.parent.name} "
+                            f"({lines[i].strip()}) has NO --hash= pin -- a "
+                            f"tampered wheel is installable. Hash-pin it "
+                            f"(WP-0.3-A2).")
+    return problems
+
+
 def _assert_pin_consistency() -> list[str]:
     pins = _find_pins()
     if not pins:
         return ["[FAIL] A6: no services/*/requirements.txt found -- vacuous "
                 "green; nothing checked for pin drift"]
     problems: list[str] = []
+
+    # 6a: every service dir must either carry requirements.txt or be excluded.
+    have_reqs = set(pins) | set(REQUIREMENTS_EXCLUSIONS)
+    for svc, reqpath in _find_requirements_services().items():
+        if svc in pins or svc in REQUIREMENTS_EXCLUSIONS:
+            continue
+        problems.append(f"[FAIL] A6(completeness): service {svc} has a "
+                        f"Dockerfile but NO requirements.txt and no documented "
+                        f"exclusion -- add one or record the reason in "
+                        f"REQUIREMENTS_EXCLUSIONS.")
+    # devkit-feeder lives under services/ and _find_pins catches its reqs;
+    # ensure our exclusions don't mask a real missing file.
+    for svc, reason in REQUIREMENTS_EXCLUSIONS.items():
+        if svc == "devkit-feeder":
+            continue
+        if svc not in have_reqs:
+            problems.append(f"[FAIL] A6(completeness): exclusion for {svc} "
+                            f"listed but no requirements.txt exists -- the "
+                            f"reason may be stale.")
+
+    # 6b: every pinned pkg must carry a --hash=.
+    for req in SERVICES.rglob("requirements*.txt"):
+        problems += _require_hashes({}, req)
+
+    # 6c+d: version consistency (unchanged) + accurate message.
+    pkg_counts: dict[str, int] = {}
     for pkg in ("PyYAML", "redis"):
         versions: dict[str, list[str]] = {}
         for svc, svcpins in pins.items():
             if pkg in svcpins:
+                pkg_counts[pkg] = pkg_counts.get(pkg, 0) + 1
                 versions.setdefault(svcpins[pkg], []).append(svc)
         if len(versions) <= 1:
             continue
@@ -484,8 +600,10 @@ def _assert_pin_consistency() -> list[str]:
             + ". Align every service requirements.txt to one version "
               "(WP-0.3-A2).")
     if not problems:
-        print(f"[OK] A6: PyYAML and redis pins are consistent across all "
-              f"{len(pins)} services' requirements.txt.")
+        detail = ", ".join(f"{pkg} in {n} services" for pkg, n in sorted(pkg_counts.items()))
+        print(f"[OK] A6: pin versions consistent across services "
+              f"({detail}); every pinned package carries a --hash= and every "
+              f"Python service dir has a requirements file.")
     return problems
 
 
@@ -633,6 +751,29 @@ def run_self_test() -> int:
     if not any("[FAIL] A6:" in x for x in p):
         fails.append("A6 injection did not produce a [FAIL] -- assertion #6 "
                      "is dormant/unwired")
+
+    # A6(hash): fake a requirements file that pins redis with NO --hash=.
+    def fake_reqs1():
+        return {"svc_a": {"redis": "8.1.0"}}
+    def fake_hashes1(_orig=_require_hashes, _req=None):
+        return ["[FAIL] A6(hash): redis pinned in svc_a (redis==8.1.0) has "
+                "NO --hash= pin -- a tampered wheel is installable."]
+    p = _check_injected("A6(hash)", [("_find_pins", fake_reqs1),
+                                     ("_require_hashes", fake_hashes1)])
+    if not any("[FAIL] A6(hash):" in x for x in p):
+        fails.append("A6(hash) injection did not produce a [FAIL] -- the "
+                     "hash-presence sub-check is dormant/unwired")
+
+    # A6(completeness): fake a service with a Dockerfile but no requirements.
+    def fake_svcs():
+        return {"svc_a": {"redis": "8.1.0"}}
+    def fake_dockers():
+        return {"ghost-svc": ""}
+    p = _check_injected("A6(completeness)", [("_find_pins", fake_svcs),
+                                             ("_find_requirements_services", fake_dockers)])
+    if not any("[FAIL] A6(completeness):" in x for x in p):
+        fails.append("A6(completeness) injection did not produce a [FAIL] -- "
+                     "the missing-requirements sub-check is dormant/unwired")
 
     # self-wiring: the guard must be referenced by run_all_tests.sh.
     wiring = _assert_gate_wiring()

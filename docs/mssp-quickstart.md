@@ -103,6 +103,11 @@ registration issue](../../../issues/new?template=mssp_partner_registration.md).
 
 ## Partners
 
+> **Provenance:** this Partners section (and the partner-registration template it
+> links) landed via PR #80 along with the Phase 0/1 execution — WP-0.4-A, F-10
+> decided 2026-08-28. The PR's description predates this MSSP work and does not
+> list it; this note is the record of where it actually landed.
+
 **FENGARDE partners** — MSSPs and managed-security providers running FENGARDE for their
 customers. This list is the public face of the registration path.
 

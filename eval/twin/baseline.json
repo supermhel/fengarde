@@ -1,27 +1,41 @@
 {
   "_comment": [
     "FROZEN BASELINE (WP-1-G) -- do NOT regenerate, do NOT modify.",
-    "Captured 2026-08-28 from the first full twin run (seed 7), BEFORE Phase 2",
-    "(entity plane) ships. After the entity plane exists there is no",
-    "un-instrumented baseline left to measure; Phase 3.5 before/after honesty",
-    "depends on this file staying byte-identical forever. New runs must emit",
-    "the SAME metric keys and report a documented delta vs this baseline."
+    "CAPTURED from a REAL seed-7 run of eval/twin/report.py on the POST-FIX",
+    "code (2026-08-28): TPR=1.0 FPR=0.0 chain_fidelity=null evidence=0.9375.",
+    "Every metric below is harness-measured by the actual WS-2->WS-4 cascade",
+    "(simulation/replay numbers, never field numbers -- Phase 3.5 discipline);",
+    "metric keys exactly match what report.py emits today, including the",
+    "real peak_alert_score (75, the observed max score_weight) and the",
+    "honest nulls (chain_fidelity, false_correlation_rate, alert_reduction_ratio,",
+    "mtti, mttr: no denominator exists today -- null, never a fabricated 0.0).",
+    "This replaces an earlier capture that enshrined hand-picked constants",
+    "(fpr 0.25, chain_fidelity 0.0, false_correlation_rate 0.0,",
+    "alert_reduction_ratio 0.0) mislabeled harness-measured -- see SSOT.md",
+    "Section 2 (proven vs. claim). After Phase 2 (entity plane) ships there is",
+    "no un-instrumented baseline left to measure; Phase 3.5 before/after",
+    "honesty depends on this file staying byte-identical forever. New runs",
+    "must emit the SAME metric keys and report a documented delta vs this",
+    "baseline (report.py emits a delta_vs_baseline section -- the WP-1-G delta",
+    "contract)."
   ],
-  "frozen_at": "2026-08-28T12:08:44+00:00",
+  "frozen_at": "2026-08-28T22:22:00+00:00",
   "seed": 7,
   "basis": "harness-measured",
   "metrics": {
     "tpr": 1.0,
-    "fpr": 0.25,
-    "mttd_seconds": 60,
+    "fpr": 0.0,
+    "mttd_seconds": 60.0,
     "mtti": null,
     "mttr": null,
-    "chain_fidelity": 0.0,
+    "chain_fidelity": null,
     "evidence_completeness": 0.9375,
-    "false_correlation_rate": 0.0,
-    "alert_reduction_ratio": 0.0,
+    "false_correlation_rate": null,
+    "alert_reduction_ratio": null,
     "incident_reconstruction_time_ms": null,
     "severity_calibration_error": 0.0,
+    "peak_alert_score": 75,
+    "severity_in_band": true,
     "mutation_robustness": null,
     "degradation_behavior": {
       "delay": "deterministic",
@@ -49,7 +63,7 @@
       "external_content"
     ],
     "negative_controls": {
-      "approved-maintenance-window": 1,
+      "approved-maintenance-window": 0,
       "authorized-operator": 0,
       "unrelated-writes": 0,
       "benign-n8n-edits": 0
@@ -66,5 +80,5 @@
     "alert_count": 7,
     "incident_promotions": 0
   },
-  "finding": "FPR=0.25: approved-maintenance-window negative control fires ot_modbus_unauthorized_write (9c1d2e3f) on the coil-space write; documented coarse-rule tradeoff, not hidden."
+  "finding": "FPR=0.0: 0/4 negative control(s) produced an INCIDENT-level (medium+) alert: none. A low-severity ticketed alert doesn't count as an incident -- see negative_controls.is_incident(). See eval/twin/negative_controls.py for the per-scenario cause."
 }

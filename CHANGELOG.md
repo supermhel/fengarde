@@ -7,6 +7,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed (2026-08-28, third review-fix round — adversarial PR review of #80)
+
+A three-reviewer adversarial pass (guard + twin + supply-chain + docs) found
+committed data-integrity issues and two guard blind spots. All confirmed
+against code and fixed:
+
+- **The frozen baseline (`eval/twin/baseline.json`) enshrined the pre-fix
+  fabricated constants** (fpr 0.25, chain_fidelity/false_correlation_rate/
+  alert_reduction_ratio = 0.0 — the exact values SSOT §2 labels "hand-picked
+  constants labeled harness-measured"). **Regenerated from a REAL seed-7 run**
+  on the post-fix code (TPR=1.0, FPR=0.0, chain_fidelity=null, evidence=0.9375,
+  basis=harness-measured); the header now honestly records that it replaces an
+  earlier capture that enshrined hand-picked constants. The frozen / never-
+  regenerate discipline is kept.
+- **The WP-1-G baseline-delta contract was unimplemented** — no code read
+  `baseline.json`, so the promised "emit the SAME metric keys and report a
+  documented delta vs this baseline" had no mechanism. `report.py` now loads
+  the baseline and emits `report["delta_vs_baseline"]` with honest null-vs-0.0
+  handling (null on either side → "n/a", never coerced). Verified live:
+  `delta: tpr 1.0->1.0 (0.0)... chain_fidelity n/a`.
+- **`eval/trend.jsonl` row 1 (12:07:10) is the pre-fix fabricated pilot row in
+  a file whose header says "Rows are real measurements, never fabricated."**
+  Left in place (append-only history) but now annotated **in-file** with a
+  `# NOTE (2026-08-28)` block marking it as the pre-fix fabricated row
+  (cross-ref SSOT §2); the reader skips `#` lines.
+- **Guard A2(a) fixture check was a loose substring scan** — a parser "had a
+  fixture" if its source_type string appeared anywhere in test code text, so
+  deleting a parser's real fixture stayed green. Now requires the source_type
+  in the **real fixture corpora**: `tools/check_rule_producers.py::FIXTURES`
+  keys + the parsed `ws2-normalization/mocks/*.json` samples. Mutation-proven:
+  removing a parser's FIXTURES entry turns A2(a) RED (exit 1).
+- **Guard A6 silently skipped services with no requirements.txt** (ws7-
+  dashboard) and never checked hash presence — only version consistency, with
+  an [OK] message overstating "all 8 services". Now: (a) every service dir with
+  a Dockerfile must have requirements.txt or a documented exclusion
+  (`REQUIREMENTS_EXCLUSIONS`, ws7 = static nginx/no Python runtime);
+  (b) every `pkg==version` pin must carry `--hash=` lines, else
+  `[FAIL] A6(hash)`; (c) the [OK] message reports per-package counts
+  ("PyYAML in 4 services, redis in 8"). Self-test extended to prove the new
+  sub-checks turn RED.
+- **SECURITY.md §11 claimed the metrics server "binds loopback only by
+  default"** — false: `runner.py` binds `0.0.0.0` unconditionally so
+  Prometheus/other containers can scrape. §11 and the runner's inline
+  `FENGARDE-OPEN-BY-DESIGN` marker now state the truth (all interfaces,
+  aggregate-only payload, Compose-network confinement). Also fixed a garbled
+  edit from the earlier pass ("webhook `OLLAMA_URL`" → "webhook URLs and the
+  `OLLAMA_URL` for the AI triage backend").
+- **PR scope disclosure**: the diff carries WP-0.4-A MSSP work (partners
+  section, README link) and the modbus change-ticket redesign that were not
+  mentioned in the PR description. The quickstart doc now carries a
+  provenance note (landed via PR #80 / WP-0.4-A, F-10 decided 2026-08-28) and
+  the PR description is updated with a Scope Disclosure section.
+
 ### Fixed (2026-08-28, second code-review pass on the two entries below)
 
 A fresh independent review (no shared context with the first fix pass) of the
