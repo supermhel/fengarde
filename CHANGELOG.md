@@ -36,11 +36,71 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (deterministic, loopback-only simulated PLC), `scenario.py` (7-step AI-to-OT chain in RAW
   source formats through the real parsers; the un-parserable `external_content` step is
   reported as a gap, never faked), `oracle.yaml` (machine-readable grading target, all
-  referenced rule IDs real), `negative_controls.py` (4 benign scenarios — measured
-  **FPR 1/4 = 0.25**, a real finding not hidden), `degradation.py` (delay/duplicate/
-  reorder/loss, deterministic, loss is strict-subset), `report.py` + `make twin` + nightly
-  lane (full scorecard: TPR 1.0, FPR 0.25, chain_fidelity 0.0 honestly, all metrics
-  harness-measured), and **`baseline.json` frozen (WP-1-G)** before Phase 2's entity plane.
+  referenced rule IDs real), `negative_controls.py` (4 benign scenarios), `degradation.py`
+  (delay/duplicate/reorder/loss, deterministic, loss is strict-subset), `report.py` +
+  `make twin` + nightly lane (full scorecard, every metric harness-measured), and
+  **`baseline.json` frozen (WP-1-G)** before Phase 2's entity plane.
+
+### Fixed (2026-08-28, code-review follow-up on the Phase 0 + Phase 1 package above)
+
+- **`negative_controls.py` FPR was real but undiscriminable: fixed, not hidden.** The
+  approved-maintenance-window coil write and the attack chain's coil write shared the same
+  address, same source IP, and both landed in business hours — no signal existed to tell
+  them apart, so the original **FPR 0.25** was a real, structural gap, not something a
+  parser-level tune could fix. Added an out-of-band `changeTicketId` field
+  (`modbus_anomaly.py` → `unmapped.ot.change_ticket_id`), a new `exists` rule operator
+  (`services/ws4-detection/engine.py`), and an `authorized_change` suppression predicate on
+  `contracts/rules/ot_modbus_unauthorized_write.yml`. The twin does **not** validate the
+  ticket against a real ticketing system — it proves the suppression mechanism works, not
+  that FENGARDE solves real-world OT change authorization. **FPR is now 0/4 = 0.0**; the
+  attack chain (which never sets the field) still fires `ot_modbus_unauthorized_write`.
+- **`report.py` scorecard: several metrics were fabricated constants, not measurements.**
+  `chain_fidelity`, `mttd_seconds`, `alerts_total`, `degradation_behavior`, and
+  `peak_alert_score` were hand-picked literals labeled `"basis": "harness-measured"` without
+  ever being measured — the exact anti-pattern the WP-0.1-A guard exists to catch. Now:
+  `mttd_seconds`/`alerts_total`/`peak_alert_score` are computed from the real detector run's
+  timestamps and fired alerts; `degradation_behavior` actually invokes
+  `degradation.py::selfcheck()`; `chain_fidelity`/`false_correlation_rate`/
+  `alert_reduction_ratio` are honest `null` (WS-8 has no causal-edge graph or incident
+  promotion to measure a fraction over — a fabricated `0.0` would misread as "measured and
+  found zero"). Current real run (seed 7): **TPR=1.0, FPR=0.0, chain_fidelity=null,
+  mttd_seconds=60.0, evidence_completeness=0.9375**.
+- **The twin had zero PR-gate coverage.** 1,500+ lines under `eval/twin/` were reachable only
+  via `make twin` / the nightly workflow. `run_all_tests.sh` now runs
+  `scenario.py --selfcheck`, `degradation.py --selfcheck`, `negative_controls.py`, and
+  `report.py --no-trend` as hard-fail gate steps.
+- **`check_lane_coverage.py`**: assertion #5 (HTTP-surface auth) matched on raw substring
+  scan, so a comment or docstring mentioning `api_key` could fake an auth call on a route
+  with none — now runs against tokenized code with comments/strings stripped. Assertion #3's
+  dead error-detection branch (comparing the wrong set) fixed. Assertion #4's basename-only
+  matching could conflate two same-named live tests in different services — now matches on
+  full relative path first.
+- **`.github/dependabot.yml`**: PyYAML/redis ignored per pip directory. Assertion #6 (pin
+  consistency) was aligned by downgrading ws8-correlation's PyYAML 6.0.3 → 6.0.2 to match the
+  other 7 services, but nothing stopped the *next* Dependabot bump from drifting one service
+  again and re-redding the gate — future bumps to either package now require a manual,
+  all-services-at-once PR.
+- **`eval/twin/plc_sim.py`**: the Modbus/TCP server had no bounds checking — an out-of-range
+  register/coil read or a truncated request raised `IndexError`/`struct.error` and killed the
+  connection loop instead of returning the proper Modbus exception 0x02. Fixed, plus a
+  30s per-connection timeout so a stalled client can't wedge the single-connection loop.
+- **`eval/twin/scenario.py`**: `run_chain(disable_parser=...)`'s restore-on-exit logic left
+  the negative-control stub parser permanently registered when `disable_parser` named a
+  source with no real parser to begin with (`saved_parser is None` was indistinguishable from
+  "nothing to restore"). Fixed to track presence, not just the saved value.
+- **`.github/workflows/release.yml`**: every `v*` tag (including pre-releases like
+  `v0.7.0-rc1`) moved the `:latest` image tag for all 9 services. Now gated to strict
+  `vMAJOR.MINOR.PATCH` tags only.
+- **`.github/workflows/nightly-eval.yml`**: the EVTX/Splunk corpus-replay steps had no `if:`
+  guard for `NIGHTLY_EVAL_MODE=quality-only` — they still ran and printed a skip message
+  instead of being skipped as steps (functionally harmless, since both scripts skip cleanly
+  on a missing corpus dir, but wasted CI time and didn't match the documented intent).
+- **Dockerfiles**: `--require-hashes` added to all 8 services' `pip install` — hash
+  enforcement previously rested on pip's implicit hash-checking mode rather than being
+  stated explicitly. Verified with a real `docker build` (ws2-normalization) after the change.
+- **`contracts/detection-coverage.md`**: `common_password_spray` was documented as
+  ATT&CK T1110.003; the shipped rule (and its own file's comment explaining the rename) is
+  T1110.004.
 
 ### Added (2026-08-28, MSSP distribution: partner list + quickstart went live)
 
