@@ -56,6 +56,7 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import ipaddress
 import json
 import math
 import sys
@@ -231,6 +232,26 @@ def _provenance_event_id(alert: dict, member_id: str) -> str:
         if ev and _to_str(ev[0]):
             return _to_str(ev[0])
     return member_id
+
+
+def _canonical_ip(value) -> str:
+    """Canonical spelling of an IP for track identity (IPv6 identity gap,
+    2026-08-29 review): IPv6 is case- AND compression-insensitive --
+    ``2001:DB8::1``, ``2001:db8:0:0:0:0:0:1`` and
+    ``2001:0db8:0000:0000:0000:0000:0000:0001`` are ONE address. Keying
+    ``ip:`` tracks on the raw parser spelling would split one address into
+    several tracks (identity-evasion: a two-tactic spray across spellings
+    never promotes). stdlib-only on purpose: this container cannot import
+    ``shared.ocsf`` (its tools/ dependency is not shipped in the ws8 image),
+    so mirror ``valid_ip``'s canonical output here. Non-IP values pass
+    through unchanged.
+    """
+    try:
+        addr = ipaddress.ip_address(str(value))
+    except ValueError:
+        return str(value)
+    mapped = getattr(addr, "ipv4_mapped", None)
+    return str(mapped) if mapped is not None else str(addr)
 
 
 class Correlator:
@@ -439,7 +460,10 @@ class Correlator:
             out.append(("actor", str(user["name"])))
         src = alert.get("src_endpoint") or {}
         if src.get("ip") and own_type != "ip":
-            out.append(("ip", str(src["ip"])))
+            # Canonical spelling, same IPv6 identity discipline as the ip:
+            # track leg (an expanded/case-variant co-occurring address must
+            # reference the SAME node the track would key).
+            out.append(("ip", _canonical_ip(src["ip"])))
         device = src.get("mac") or src.get("hostname")
         if device and own_type != "device":
             out.append(("device", str(device)))
@@ -453,10 +477,11 @@ class Correlator:
         - ``nodes``: the incident's member entities -- the track's own
           anchor plus every co-occurring entity its member alerts carry --
           as ``{entity_type}:{entity_value}`` (the SAME track identity the
-          incident itself captures). Values pass through
-          ``_bounded_entity_value`` so an attacker-controlled >448-byte
-          name cannot blow the payload (same doc-id-budget discipline as
-          the incident's own entity_value).
+          incident itself captures). Every value was bounded at STORE time
+          by ``_update_track`` (``entry["cooccur"]`` goes through
+          ``_bounded_entity_value``), so an attacker-controlled >448-byte
+          name cannot blow the payload here (same doc-id-budget discipline
+          as the incident's own entity_value).
         - ``edges``: ONLY pairs co-occurring within a SINGLE member alert's
           own fields, deduped with the EARLIEST (ts_ms, event_id)
           provenance kept. **No transitive inference**: two alerts that
@@ -480,7 +505,10 @@ class Correlator:
         for member_id, entry in side.items():
             refs = [(entity_type, entity_value)]
             for other_type, other_value in entry.get("cooccur") or []:
-                refs.append((other_type, self._bounded_entity_value(other_value)))
+                # Already bounded at STORE time -- `_update_track` writes
+                # `entry["cooccur"]` through `_bounded_entity_value` (the
+                # single writer of this table), so no re-bound here.
+                refs.append((other_type, other_value))
             for i in range(len(refs)):
                 for j in range(i + 1, len(refs)):
                     spec = _edge_spec(refs[i][0], refs[j][0])
@@ -810,11 +838,17 @@ class Correlator:
 
         ip_suppressed = False
         if src_ip:
-            if self._allowlist.matches(src_ip):
+            # Canonical spelling for BOTH the allowlist check and the track
+            # key (IPv6 identity gap, 2026-08-29 review): one address spelled
+            # in case/compression variants must be ONE identity -- a spelling
+            # split would both evade multi-tactic promotion and duplicate
+            # allowlist lookups.
+            ip_value = _canonical_ip(src_ip)
+            if self._allowlist.matches(ip_value):
                 ip_suppressed = True  # shared infra: no ip: track, by design
             else:
                 opened = True
-                inc = self._update_track(tenant, "ip", str(src_ip), alert, now_ms)
+                inc = self._update_track(tenant, "ip", ip_value, alert, now_ms)
                 if inc is not None:
                     incidents.append(inc)
 

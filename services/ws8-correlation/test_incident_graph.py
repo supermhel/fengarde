@@ -319,6 +319,25 @@ def test_incident_graph_returns_none_for_unknown_or_unpromoted():
           "accessor: a single-tactic (unpromoted) track must have no graph")
 
 
+def test_cooccurring_ipv6_spelling_collapses_to_one_node():
+    """IPv6 identity gap, WS-8 graph side (2026-08-29 review): an ip that
+    co-occurs with the promoted actor must appear as ONE node in the
+    canonical spelling, even when member alerts spell the same address
+    differently (case/compression variants)."""
+    c = _new_correlator()
+    c.ingest_alert(_alert("g1", tactic="TA0001", actor="ivy",
+                          ip="2001:0db8:0000:0000:0000:0000:0000:0001",
+                          time_ms=1000, event_ids=["ev-1"]))
+    incs = c.ingest_alert(_alert("g2", tactic="TA0002", actor="ivy",
+                                 ip="2001:DB8::1",
+                                 time_ms=2000, event_ids=["ev-2"]))
+    iid = next(i["incident_id"] for i in incs if i["entity_type"] == "actor")
+    graph = c.incident_graph(iid)
+    check(graph is not None and set(graph["nodes"]) == {"actor:ivy", "ip:2001:db8::1"},
+          f"ipv6: co-occurring ip spellings must collapse to ONE canonical "
+          f"node, got {graph and graph['nodes']}")
+
+
 def run_all():
     test_single_alert_cooccurrence_yields_edge_with_provenance()
     test_all_three_edge_kinds_from_one_alert()
@@ -326,6 +345,7 @@ def run_all():
     test_device_incident_graph_spans_ip_change_with_no_ip_ip_edge()
     test_redelivery_emits_identical_graph()
     test_graph_bounded_by_member_set_and_swept_with_its_incident()
+    test_cooccurring_ipv6_spelling_collapses_to_one_node()
     test_incident_graph_returns_none_for_unknown_or_unpromoted()
 
 
