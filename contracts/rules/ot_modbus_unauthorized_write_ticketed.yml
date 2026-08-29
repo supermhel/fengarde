@@ -4,14 +4,17 @@ status: stable
 description: >
   The LOW-SEVERITY companion to `ot_modbus_unauthorized_write.yml`. Fires on
   the exact same condition (an out-of-range Modbus write) when the write
-  carries a `changeTicketId` (`unmapped.ot.change_ticket_id`) -- the
-  out-of-band authorization signal a real tap/proxy could attach from an
-  integrated change-management system. This rule exists so a ticketed write
+  carries a `changeTicketId` on the envelope's META channel
+  (`unmapped.ot.change_ticket_id`) -- the out-of-band authorization signal a
+  real tap/proxy could attach from an integrated change-management system
+  (taken ONLY from meta, never from frame bytes, and shape-checked by
+  modbus_anomaly.py -- PR #80 review). This rule exists so a ticketed write
   is NEVER a silent, unindexed non-event: it still produces an alert, still
   appears in search/hunting, still has a stable rule_id and MITRE tag -- it
   is just scored `low` instead of `high`, because the write itself is
   identical to the unauthorized case and the parser does not (and cannot)
-  validate the ticket against a real ticketing system.
+  validate the ticket against a real ticketing system (every accepted value
+  is surfaced as `change_ticket_unvalidated: true`).
 
   If `unmapped.ot.change_ticket_id` is ever populated from an untrusted
   source (see the sibling rule's description and modbus_anomaly.py's module

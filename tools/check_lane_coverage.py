@@ -124,10 +124,15 @@ def _find_bus_services() -> set[str]:
     out: set[str] = set()
     for name, svc in (data or {}).get("services", {}).items():
         env = svc.get("environment", [])
-        blob = str(env)
-        # environment may be a list of "KEY=val" strings or a dict
+        # Compose `environment` may be a list of "KEY=val" strings or a dict.
+        # PR #80 review (finding 9): the old dict branch did `str(dict)`,
+        # which yields "{'KEY': 'val'}" -- a blob that can NEVER contain the
+        # literal "KEY=val" substring, so dict-form env services were
+        # invisible to A1. Flatten dict entries into "KEY=val" lines.
         if isinstance(env, dict):
-            blob = str({k: v for k, v in env.items()})
+            blob = "\n".join(f"{k}={v}" for k, v in env.items())
+        else:
+            blob = str(env)
         if "BUS_BACKEND=redis" in blob or "REDIS_URL" in blob:
             out.add(name)
     return out
@@ -275,28 +280,93 @@ def _find_scorecard_sources() -> set[str]:
         return {"__SCORECARD_LOAD_ERROR__:" + str(exc)}
 
 
+# PR #80 review (finding 7): the engine check above (ondisk - load_rules) is
+# structurally unable to fail for an uncovered rule -- load_rules() globs the
+# SAME contracts/rules/ directory, so any on-disk rule that parses into a dict
+# is definitionally "in the scorecard". The two operands derive from one
+# source, so the only thing it can catch is a file that YAML-parses to a
+# non-dict. The human-readable scorecard -- contracts/detection-coverage.md's
+# rule-by-rule table -- is INDEPENDENT of the directory glob, so checking each
+# shipped rule appears there is what makes A3 genuinely fail for an uncovered
+# rule.
+COVERAGE_DOC = ROOT / "contracts" / "detection-coverage.md"
+
+
+def _find_coverage_doc_sources() -> set[str]:
+    """Rule base-names listed in contracts/detection-coverage.md's
+    rule-by-rule table (the human-readable ATT&CK scorecard document). Parsed
+    from the table, never a substring scan. ``__COVERAGE_DOC_MISSING__`` when
+    the file is absent (the gate must fail rather than silently skip)."""
+    if not COVERAGE_DOC.exists():
+        return {"__COVERAGE_DOC_MISSING__"}
+    out: set[str] = set()
+    in_table = False
+    for line in COVERAGE_DOC.read_text(encoding="utf-8").splitlines():
+        if line.startswith("| Rule |"):
+            in_table = True
+            continue
+        if not in_table:
+            continue
+        if line.startswith("|---"):
+            continue
+        if not line.startswith("|"):
+            if line.strip():
+                in_table = False  # left the table
+            continue
+        m = re.match(r"\|\s*([A-Za-z0-9_]+)\s*\|", line)
+        if m:
+            out.add(m.group(1))
+    return out
+
+
 def _assert_rules() -> list[str]:
     ondisk = _find_rules_on_disk()
     if not ondisk:
         return ["[FAIL] A3: ZERO rule files in contracts/rules -- vacuous "
                 "green; the ATT&CK scorecard covered nothing"]
+    problems: list[str] = []
     scorecard = _find_scorecard_sources()
     error = next((s for s in scorecard if s.startswith("__SCORECARD_LOAD_ERROR__:")), None)
     if error is not None:
-        return [f"[FAIL] A3: eval/attack/coverage_layer.load_rules() crashed, "
-                 f"so rule-file coverage cannot be verified: {error!r}"]
-    missing = sorted(ondisk - scorecard)
-    if missing:
-        return (["[FAIL] A3: rule file(s) present in contracts/rules but NOT "
-                 "consumed by the ATT&CK scorecard "
-                 "(eval/attack/coverage_layer.load_rules, which silently drops "
-                 "any rule that fails to YAML-parse into a dict):"] +
+        problems.append(f"[FAIL] A3: eval/attack/coverage_layer.load_rules() crashed, "
+                        f"so rule-file coverage cannot be verified: {error!r}")
+    else:
+        missing = sorted(ondisk - scorecard)
+        if missing:
+            problems.extend([
+                "[FAIL] A3: rule file(s) present in contracts/rules but NOT "
+                "consumed by the ATT&CK scorecard "
+                "(eval/attack/coverage_layer.load_rules, which silently drops "
+                "any rule that fails to YAML-parse into a dict):"] +
                 [f"    {r}" for r in missing] +
                 ["    A committed rule outside the declared-coverage input is "
                  "a rule the scorecard claims nothing about."])
-    print(f"[OK] A3: all {len(ondisk)} rule files appear in the ATT&CK "
-          f"scorecard input (coverage_layer.load_rules).")
-    return []
+
+    # PR #80 review (finding 7): the scorecard DOCUMENT check -- every shipped
+    # rule must have a row in contracts/detection-coverage.md.
+    doc = _find_coverage_doc_sources()
+    if "__COVERAGE_DOC_MISSING__" in doc:
+        problems.append("[FAIL] A3: contracts/detection-coverage.md is missing "
+                        "-- the rule-by-rule scorecard document that every "
+                        "contracts/rules/*.yml must be listed in.")
+    else:
+        base_names = {f[:-4] if f.endswith(".yml") else f for f in ondisk}
+        missing_doc = sorted(base_names - doc)
+        if missing_doc:
+            problems.extend([
+                "[FAIL] A3: rule(s) present in contracts/rules but NOT listed "
+                "in contracts/detection-coverage.md's rule-by-rule table (the "
+                "human-readable ATT&CK scorecard):"] +
+                [f"    {r}" for r in missing_doc] +
+                ["    Update the matrix in the same PR that adds the rule "
+                 "(see its header: 'Update this file in the same PR as any "
+                 "rule change')."])
+
+    if not problems:
+        print(f"[OK] A3: all {len(ondisk)} rule files appear in the ATT&CK "
+              f"scorecard input (coverage_layer.load_rules) AND in the "
+              f"contracts/detection-coverage.md rule-by-rule matrix.")
+    return problems
 
 
 # ---------------------------------------------------------------------------
@@ -400,6 +470,26 @@ HTTP_AUTH_TOKENS = (
 )
 OPEN_BY_DESIGN_MARKER = "fengarde-open-by-design"  # token used in runner.py too
 
+# PR #80 review (finding 4): server-CREATION tokens -- statements that open a
+# listener/bind. Deliberately excludes the no-parenthesis base-class markers
+# (`BaseHTTPRequestHandler`) and the `serve_forever(`/threading calls that are
+# PART of one listener, so a single-listener file isn't over-counted. Used to
+# scope the OPEN_BY_DESIGN marker exemption PER LISTENER instead of letting one
+# marker comment exempt a whole file.
+HTTP_LISTENER_CREATION_TOKENS = (
+    "ThreadingHTTPServer(", "HTTPServer(", "make_server(",
+    "app.run(", "FastAPI(", "Flask(", "Tornado(",
+)
+
+
+def _listener_creations(code: str) -> int:
+    """Count distinct listener-creation statements (per line, deduped) in
+    CODE-ONLY text. `ThreadingHTTPServer(` contains `HTTPServer(` as a
+    substring, so the `any(...)` per line is what keeps that one statement
+    from being counted twice."""
+    return sum(1 for line in code.splitlines()
+               if any(tok in line for tok in HTTP_LISTENER_CREATION_TOKENS))
+
 
 def _code_only(text: str) -> str:
     """Blank out comments and string-literal contents IN PLACE (by character
@@ -470,16 +560,34 @@ def _assert_http_surfaces() -> list[str]:
     for rel, (raw, code) in sorted(surfaces.items()):
         if any(tok in code for tok in HTTP_AUTH_TOKENS):
             continue
-        if OPEN_BY_DESIGN_MARKER.lower() in raw.lower():
+        marker_count = raw.lower().count(OPEN_BY_DESIGN_MARKER)
+        listeners = _listener_creations(code)
+        # PR #80 review (finding 4): the OPEN_BY_DESIGN marker must be PRESENT
+        # PER LISTENER -- one marker no longer exempts the whole file. A file
+        # with no detectable listener-creation statement (e.g. only a handler
+        # class) keeps the single-marker exemption; a file with N listeners
+        # needs N markers.
+        exempt = marker_count >= 1 if listeners == 0 else marker_count >= listeners
+        if exempt:
             continue
-        problems.append(
-            f"[FAIL] A5: HTTP listener in {rel!r} calls no "
-            f"require_auth_or_die/_check_auth/check_api_key variant and carries "
-            f"no FENGARDE-OPEN-BY-DESIGN marker. Gate the surface or record it "
-            f"as an accepted open surface (marker comment).")
+        if marker_count == 0:
+            problems.append(
+                f"[FAIL] A5: HTTP listener in {rel!r} calls no "
+                f"require_auth_or_die/_check_auth/check_api_key variant and "
+                f"carries no FENGARDE-OPEN-BY-DESIGN marker. Gate the surface "
+                f"or record it as an accepted open surface (marker comment).")
+        else:
+            problems.append(
+                f"[FAIL] A5: HTTP listeners in {rel!r}: the "
+                f"FENGARDE-OPEN-BY-DESIGN marker is FILE-scoped and covers "
+                f"only {marker_count} of {listeners} listener(s) (PR #80 "
+                f"finding 4) -- a single marker must not exempt every listener "
+                f"in the file. Add a marker for each listener or gate the "
+                f"surface.")
     if not problems:
         print(f"[OK] A5: all {len(surfaces)} HTTP-surface files are "
-              f"authenticated or carry a documented open-by-design marker.")
+              f"authenticated or carry a documented open-by-design marker "
+              f"per listener.")
     return problems
 
 
@@ -501,18 +609,49 @@ REQUIREMENTS_EXCLUSIONS: dict[str, str] = {
 }
 
 
+# PR #80 review (finding 8): package pins are matched case-INSENSITIVELY
+# (pip's distribution names are case-insensitive, so `pyyaml==` or `Redis==`
+# are legitimate spellings a case-sensitive regex silently skipped, escaping
+# BOTH the version-consistency and the hash-presence checks).
+_PIN_RE = re.compile(r"\s*(pyyaml|redis)==([\d.]+)", re.IGNORECASE)
+_CANON_PKG = {"pyyaml": "PyYAML", "redis": "redis"}
+# Intra-service multi-file pin conflicts found by the last _find_pins() run
+# (a service with two requirements files pinning the same pkg differently).
+_PIN_CONFLICTS: list[str] = []
+
+
 def _find_pins() -> dict[str, dict[str, str]]:
-    """service_name -> {pkg: pin} for PyYAML and redis across requirements.txt."""
+    """service_name -> {pkg: pin} for PyYAML and redis across requirements.txt.
+
+    PR #80 review (finding 8): reads case-INSENSITIVELY so a lowercase pin
+    can't silently escape the checks, and records INTRA-SERVICE conflicts -- a
+    service carrying multiple requirements files that pin the same package to
+    different versions -- which the old last-write-wins dict merge silently
+    masked (a future drift could hide inside one service's own files).
+    """
+    global _PIN_CONFLICTS
+    _PIN_CONFLICTS = []
     out: dict[str, dict[str, str]] = {}
+    versions_seen: dict[tuple[str, str], set[str]] = {}
     for req in SERVICES.rglob("requirements*.txt"):
         name = req.parent.name
         pins: dict[str, str] = {}
         for line in req.read_text(encoding="utf-8", errors="ignore").splitlines():
-            m = re.match(r"\s*(PyYAML|redis)==([\d.]+)", line)
-            if m:
-                pins[m.group(1)] = m.group(2)
+            m = _PIN_RE.match(line)
+            if m is None or m.group(1) is None or m.group(2) is None:
+                continue
+            key = _CANON_PKG[m.group(1).lower()]
+            pins[key] = m.group(2)
+            versions_seen.setdefault((name, key), set()).add(m.group(2))
         if pins:
             out[name] = pins
+    for (svc, key), versions in sorted(versions_seen.items()):
+        if len(versions) > 1:
+            _PIN_CONFLICTS.append(
+                f"[FAIL] A6(collision): {key} pinned to different versions "
+                f"({', '.join(sorted(versions))}) across multiple "
+                f"requirements files in service {svc!r} -- the intra-service "
+                f"drift is masked; pick one version per service.")
     return out
 
 
@@ -521,22 +660,26 @@ def _find_requirements_services() -> dict[str, str]:
     out: dict[str, str] = {}
     for dockerfile in SERVICES.glob("*/Dockerfile"):
         svc = dockerfile.parent.name
-        reqs = list(dockerfile.parent.glob("requirements*.txt"))
+        reqs = sorted(dockerfile.parent.glob("requirements*.txt"))  # deterministic
         out[svc] = str(reqs[0].relative_to(dockerfile.parent)) if reqs else ""
     return out
 
 
 def _require_hashes(pins: dict[str, str], req: Path) -> list[str]:
-    """Ensure every pinned pkg==version line is followed by --hash= lines."""
+    """Ensure every pinned pkg==version line is followed by --hash= lines.
+
+    Pin matching is case-insensitive (``pyyaml==`` is a legitimate spellings --
+    PR #80 finding 8) so a lowercased pin cannot silently skip the hash check.
+    """
     problems: list[str] = []
     lines = req.read_text(encoding="utf-8", errors="ignore").splitlines()
     for i, line in enumerate(lines):
-        if not re.match(r"\s*(PyYAML|redis)==[\d.]+", line):
+        if _PIN_RE.match(line) is None:
             continue
-        m = re.match(r"\s*(PyYAML|redis)", line)
-        if m is None:
+        m = _PIN_RE.match(line)
+        if m is None or m.group(1) is None:
             continue
-        pkg = m.group(1)
+        pkg = _CANON_PKG[m.group(1).lower()]
         # continuation: the next line (or a following indented line) must be
         # a --hash= entry for this same package block.
         has_hash = False
@@ -547,7 +690,7 @@ def _require_hashes(pins: dict[str, str], req: Path) -> list[str]:
                 has_hash = True
                 break
             # a bare non-hash continuation after the pin means no hash block
-            if re.match(r"\s*(PyYAML|redis)==|^\s*#", nxt):
+            if re.match(r"\s*(pyyaml|redis)==|^\s*#", nxt, re.IGNORECASE):
                 break
             break
         if not has_hash:
@@ -587,6 +730,10 @@ def _assert_pin_consistency() -> list[str]:
     # 6b: every pinned pkg must carry a --hash=.
     for req in SERVICES.rglob("requirements*.txt"):
         problems += _require_hashes({}, req)
+
+    # 6b2: intra-service pin collisions (PR #80 finding 8) -- two requirements
+    # files inside ONE service pinning the same pkg to different versions.
+    problems += list(_PIN_CONFLICTS)
 
     # 6c+d: version consistency (unchanged) + accurate message.
     pkg_counts: dict[str, int] = {}
@@ -727,6 +874,20 @@ def run_self_test() -> int:
         fails.append("A3 injection did not produce a [FAIL] -- assertion #3 "
                      "is dormant/unwired")
 
+    # A3(doc) (PR #80 finding 7): the coverage DOCUMENT check must go red when
+    # a committed rule is missing from contracts/detection-coverage.md --
+    # this is the only A3 operand INDEPENDENT of the directory glob, so it is
+    # the failure mode that can actually catch an uncovered real rule.
+    def fake_doc_drops_one(_orig=_find_coverage_doc_sources):
+        doc = _orig()
+        # drop one genuinely-listed rule from the doc -> a committed rule is
+        # now "uncovered" by the scorecard document.
+        return (doc - {"ot_modbus_unauthorized_write"}) if "ot_modbus_unauthorized_write" in doc else doc
+    p = _check_injected("A3(doc)", [("_find_coverage_doc_sources", fake_doc_drops_one)])
+    if not any("[FAIL] A3:" in x for x in p):
+        fails.append("A3(doc) injection did not produce a [FAIL] -- the "
+                     "detection-coverage.md matrix check is dormant/unwired")
+
     # A4: fake a live test that is neither CI-wired nor allowlisted.
     def fake_live(_orig=_find_live_tests): return _orig() | {"services/ws1-collectors/test_ghost_live.py"}
     def fake_ci(_orig=_find_ci_live_tests): return _orig()
@@ -745,6 +906,21 @@ def run_self_test() -> int:
     if not any("[FAIL] A5:" in x for x in p):
         fails.append("A5 injection did not produce a [FAIL] -- assertion #5 "
                      "is dormant/unwired")
+
+    # A5(per-listener) (PR #80 finding 4): a SINGLE open-by-design marker must
+    # not exempt a file with multiple listeners -- each listener needs its own
+    # marker. This is the exact hole the file-scoped exemption used to leave.
+    def fake_surfaces_multi():
+        code = ("from http.server import HTTPServer\n"
+                "HTTPServer(('0.0.0.0',1), H)\n"
+                "HTTPServer(('0.0.0.0',2), H2)\n")
+        raw = "x FENGARDE-OPEN-BY-DESIGN (covers /metrics) x\n" + code
+        return {"services/ws1-collectors/_ghost_http2.py": (raw, code)}
+    p = _check_injected("A5(per-listener)",
+                        [("_find_http_surfaces", fake_surfaces_multi)])
+    if not any("[FAIL] A5:" in x for x in p):
+        fails.append("A5(per-listener) injection did not produce a [FAIL] -- "
+                     "one marker is exempting multiple listeners in a file")
 
     # A6: fake divergent pins (the real tree's pins are now consistent, so
     # this injection is the only way to prove the assertion can go red).

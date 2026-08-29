@@ -133,19 +133,25 @@ def _run_chain(seed: int) -> scenario.ChainResult:
     return scenario.run_chain(seed=seed, strict=True)
 
 
-def _run_negatives(seed: int) -> dict:
-    """Run all four negative controls; return INCIDENT count per scenario.
+def _run_negatives(seed: int) -> tuple[dict, dict]:
+    """Run all four negative controls; return (INCIDENT count per scenario,
+    LOW-explained-alert count per scenario).
 
     A low/informational-severity alert (e.g. the ticketed-write companion
     rule firing instead of the HIGH one) is not an incident -- see
     negative_controls.is_incident(). Counting it as a false positive would
-    misreport the fixed FPR as still nonzero.
+    misreport the fixed FPR as still nonzero. The explained dict is surfaced
+    so the gate's floor can assert scenario 1 still emits the LOW ticketed
+    alert (PR #80 finding 2: zero incidents alone cannot distinguish a clean
+    FPR from a regression back to silent suppression).
     """
     per_scenario: dict[str, int] = {}
+    explained: dict[str, int] = {}
     for fn in negative_controls._ALL_SCENARIOS:
         name, alerts = fn(seed)
         per_scenario[name] = sum(1 for a in alerts if negative_controls.is_incident(a))
-    return per_scenario
+        explained[name] = sum(1 for a in alerts if not negative_controls.is_incident(a))
+    return per_scenario, explained
 
 
 def _grade_chain(result: scenario.ChainResult, oracle: dict) -> dict:
@@ -164,8 +170,14 @@ def _grade_chain(result: scenario.ChainResult, oracle: dict) -> dict:
     gaps = [e for e in result.events if e.gap]
 
     # Real detection run over the chain's own raw payloads (same shape the
-    # negative controls use). Returns fired {rule_id, rule_title, source_type}.
-    raw_pairs = [(e.source_type, (e.raw_payload or {}).get("raw", {})) for e in parsed]
+    # negative controls use). Returns fired {rule_id, rule_title,
+    # source_type, step}. Step labels are threaded through so a fired rule is
+    # attributed to the EXACT chain step that triggered it -- not pooled by
+    # source_type (plausible-A of the PR #80 review: two chain steps share
+    # source_type `mcp_agent`, so source_type-pooling could credit a rule to
+    # the wrong step).
+    raw_pairs = [(e.source_type, (e.raw_payload or {}).get("raw", {}),
+                  (e.raw_payload or {}).get("meta"), e.step) for e in parsed]
     fired = _real_detection(raw_pairs)
 
     # TPR: fraction of real-parsed chain steps whose oracle-expected rule fired.
@@ -180,8 +192,11 @@ def _grade_chain(result: scenario.ChainResult, oracle: dict) -> dict:
         expected_ids = {r.get("rule_id") for r in (pt.get("expected_rules") or [])}
         if not expected_ids:
             continue  # no expected rule (oracle gap) -> not counted against TPR
-        src = ev.source_type
-        step_fired = {a["rule_id"] for a in fired if a.get("source_type") == src}
+        # PR #80 review (plausible-A): attribute fired rules by STEP, not by
+        # source_type -- two chain steps can share a source_type (mcp_agent),
+        # and source_type-pooling would let a rule fired on one step credit
+        # another step sharing the same source.
+        step_fired = {a["rule_id"] for a in fired if a.get("step") == ev.step}
         if step_fired & expected_ids:
             matched_steps += 1
             if first_matched_ts is None:
@@ -244,8 +259,8 @@ def _grade_chain(result: scenario.ChainResult, oracle: dict) -> dict:
     }
 
 
-def _real_detection(raw_pairs: list[tuple[str, dict]]) -> list[dict]:
-    """Run raw (source_type, record) pairs through the REAL detector cascade."""
+def _real_detection(raw_pairs: list[tuple]) -> list[dict]:
+    """Run raw (source_type, record, meta, step) pairs through the REAL detector cascade."""
     try:
         return negative_controls.run_pipeline(raw_pairs, tenant="twin-chain")
     except Exception as exc:  # pragma: no cover - defensive
@@ -253,31 +268,49 @@ def _real_detection(raw_pairs: list[tuple[str, dict]]) -> list[dict]:
         return []
 
 
+def _raw_identity(ev: "scenario.ChainEvent") -> Optional[str]:
+    """The actor identity the RAW payload declares for this step (the only
+    ground truth INDEPENDENT of parser output -- the oracle for attribution)."""
+    raw = (ev.raw_payload or {}).get("raw")
+    if not isinstance(raw, dict):
+        return None
+    return raw.get("agent") or raw.get("user")
+
+
 def _attribution(parsed: list[scenario.ChainEvent]) -> Optional[float]:
     """Attribution accuracy on ACTOR-BEARING steps only: the fraction whose
-    actor identity MATCHES the first actor-bearing step's identity.
+    parsed actor identity MATCHES the identity the step's RAW input declared.
 
-    This is a real check, not a tautology: the chain is driven by a single
-    fixed identity end to end (see scenario._build_chain_payloads), so a
-    mismatch here means enrichment/parsing lost or corrupted the actor
-    between steps -- a genuine defect this metric can actually catch, unlike
-    "any actor present counts as correct" (which can only ever read 1.0).
+    PR #80 review (finding 6): the old check compared every parsed identity
+    against ``identities[0]`` -- the FIRST identity *of the same run's parser
+    output*. That is a self-comparison: if parsing/enrichment mangled the
+    actor name uniformly on every step, it reads 1.0 even when nothing
+    matches the true actor. The honest oracle is the RAW payload's own
+    identity field (`agent` for mcp steps, `user` for n8n steps) -- what the
+    pipeline SHOULD have preserved. A mismatch here means enrichment/parsing
+    lost or corrupted the actor between the input and the OCSF event.
+
+    Steps whose raw input declares no identity (e.g. OT modbus frames, which
+    carry no actor) are not attributable and are not credited.
     """
-    identities: list[str] = []
+    correct = 0
+    total = 0
     for ev in parsed:
+        expected = _raw_identity(ev)
+        if not expected:
+            continue  # raw input declares no actor -> not attributable
         ocsf = ev.event or {}
         actor = ocsf.get("actor") or {}
         user = actor.get("user") if isinstance(actor.get("user"), dict) else {}
         process = actor.get("process") if isinstance(actor.get("process"), dict) else {}
         ident = user.get("name") or process.get("name")
         if not ident:
-            continue  # no actor attached -> not attributable -> not credited
-        identities.append(ident)
-    if not identities:
+            continue  # actor dropped entirely -> not credited
+        total += 1
+        correct += 1 if ident == expected else 0
+    if not total:
         return None  # no actor-bearing steps at all -> no denominator, honest null
-    expected = identities[0]
-    correct = sum(1 for i in identities if i == expected)
-    return round(correct / len(identities), 4)
+    return round(correct / total, 4)
 
 
 def _dot_get(d: dict, dotted: str):
@@ -384,7 +417,7 @@ def run(seed: int = 7) -> dict:
     started = time.time()
     oracle = _load_oracle()
     chain = _run_chain(seed)
-    negatives = _run_negatives(seed)
+    negatives, negatives_explained = _run_negatives(seed)
 
     grade = _grade_chain(chain, oracle)  # single real detection run; every
                                           # metric below is sliced from this
@@ -441,6 +474,11 @@ def run(seed: int = 7) -> dict:
             "gap_count": chain.gap_count(),
             "gap_steps": [e.step for e in chain.events if e.gap],
             "negative_controls": negatives,  # per-scenario INCIDENT count (see _run_negatives)
+            # PR #80 finding 2: per-scenario LOW-explained alert count, so the
+            # FPR floor can prove scenario 1 still emits the ticketed downgrade
+            # alert (zero incidents alone cannot distinguish clean FPR from a
+            # regression to silent suppression).
+            "negative_explained_low": negatives_explained,
             "oracle_expected_sequence": oracle["expected_sequence"],
             "alert_count": alerts_total,
             "incident_promotions": incident_promotions,
@@ -507,6 +545,16 @@ def main(argv: list[str] | None = None) -> int:
         floor_failures.append(f"tpr == {m['tpr']!r}, expected 1.0 on this deterministic chain")
     if m["fpr"] != 0.0:
         floor_failures.append(f"fpr == {m['fpr']!r}, expected 0.0 (see negative_controls.is_incident())")
+    # PR #80 finding 2: FPR 0.0 alone cannot distinguish a clean run from a
+    # regression to silent suppression. Scenario 1 must STILL emit the LOW
+    # ticketed downgrade alert -- prove the downgrade mechanism is alive.
+    neg_explained = (ctx.get("negative_explained_low") or {}).get(
+        negative_controls._MAINTENANCE_NAME, 0)
+    if neg_explained == 0:
+        floor_failures.append(
+            f"{negative_controls._MAINTENANCE_NAME} produced 0 LOW explained "
+            "alerts -- the ticketed downgrade mechanism has silently regressed "
+            "to suppression (see negative_controls.py / SECURITY.md 12)")
     if floor_failures:
         for f in floor_failures:
             print(f"[FAIL] twin report floor assertion: {f}")

@@ -785,6 +785,54 @@ def test_canary_is_not_mistaken_for_a_real_tagged_rule():
           "canary id collides with a real rule loaded from contracts/rules/")
 
 
+MODBUS_MAIN = "9c1d2e3f-4a5b-4c6d-8e7f-1a2b3c4d5e6f"    # `unauthorized_write and not authorized_change`
+MODBUS_TICKETED = "bc313d43-588a-47e5-9f79-a4984ae1922c"  # `... and authorized_change` with an {exists:true}
+
+
+def test_near_miss_probe_verifies_an_exists_predicate():
+    """PR #80 finding 5: a `{exists: true}` selection must be near-miss-probed
+    (removing the field must silence the rule) instead of silently skipped."""
+    rules = fresh_rules()
+    rule = rules.get(MODBUS_TICKETED)
+    check(rule is not None, "ot_modbus_unauthorized_write_ticketed not loaded")
+    if rule is None:
+        return
+    fixture = _fixture_for(rule)
+    check(fixture is not None, "ticketed Modbus rule has no firing fixture")
+    if fixture is None:
+        return
+    near = fc._near_miss_probe(rule, fixture)
+    check(near.get("applicable") is True, f"{MODBUS_TICKETED}: near-miss probe inapplicable")
+    check(near.get("fully_held") is True,
+          f"{MODBUS_TICKETED}: exists predicate not fully held ({near.get('probes')})")
+    check(any("exists" in k for k in near.get("probes", {})),
+          f"{MODBUS_TICKETED}: no probe exercised the exists operator")
+
+
+def test_near_miss_probe_verifies_a_negated_conjunct():
+    """PR #80 finding 5: `unauthorized_write and not authorized_change` must be
+    probeable -- satisfying the negated `authorized_change` selection (adding
+    the ticket) must silence the rule. Before this fix the rule was reported
+    inapplicable and the Modbus downgrade guard was never negatively verified."""
+    rules = fresh_rules()
+    rule = rules.get(MODBUS_MAIN)
+    check(rule is not None, "ot_modbus_unauthorized_write not loaded")
+    if rule is None:
+        return
+    fixture = _fixture_for(rule)
+    check(fixture is not None, "main Modbus rule has no firing fixture")
+    if fixture is None:
+        return
+    near = fc._near_miss_probe(rule, fixture)
+    check(near.get("applicable") is True, f"{MODBUS_MAIN}: near-miss probe inapplicable")
+    check(near.get("fully_held") is True,
+          f"{MODBUS_MAIN}: not-conjunct guard not fully held ({near.get('probes')})")
+    not_probes = {k: v for k, v in near.get("probes", {}).items() if k.startswith("not ")}
+    check(bool(not_probes), f"{MODBUS_MAIN}: no negated-conjunct probe ran")
+    check(all(v.get("status") == "held" for v in not_probes.values()),
+          f"{MODBUS_MAIN}: satisfying the negated selection did not silence the rule")
+
+
 def main():
     rules = fresh_rules()
     for rid in (RULE_BRUTE, RULE_MASS_CARD, RULE_ROOT_LOGIN, RULE_N8N_AFTER_HOURS):
@@ -813,6 +861,8 @@ def main():
     test_gate_fails_when_zero_rules_are_checked()
     test_gate_fails_when_every_rule_loses_its_mitre_block()
     test_unverified_and_untagged_rules_are_warned_not_claimed_passing()
+    test_near_miss_probe_verifies_an_exists_predicate()
+    test_near_miss_probe_verifies_a_negated_conjunct()
     test_canary_is_green_while_zero_rules_are_checked()
     test_canary_does_not_mutate_the_shared_template()
     test_canary_fires_on_the_real_fixture_set()

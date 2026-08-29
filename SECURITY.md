@@ -310,14 +310,19 @@ behind your reverse proxy's auth the same way as every other surface.
 ### 12. Modbus `changeTicketId` (`unmapped.ot.change_ticket_id`) is an unvalidated trust boundary
 
 `services/ws2-normalization/parsers/modbus_anomaly.py` accepts an optional
-`changeTicketId` field on an observed Modbus/TCP write frame, mapped to
+`changeTicketId` on the transport ENVELOPE's `meta` channel (never from the
+frame record — an attacker able to set frame bytes must never be able to forge
+the downgrade; PR #80 review), mapped to
 `unmapped.ot.change_ticket_id`. **This field is not validated against any
 real ticketing/change-management system — there is none in this repo to
 check it against.** Its presence changes which rule fires:
 
 - Without it: `contracts/rules/ot_modbus_unauthorized_write.yml` fires —
   `level: high`, `score_weight: 75`.
-- With it (any non-blank string, no format check): `contracts/rules/
+- With it (a non-blank, ticket-shaped string accepted via the meta channel
+  after a conservative shape check — no real-ticketing-system validation;
+  every accepted value is also marked `change_ticket_unvalidated: true`):
+  `contracts/rules/
   ot_modbus_unauthorized_write_ticketed.yml` fires INSTEAD — `level: low`,
   `score_weight: 10`. The event still reaches the index and is still
   huntable — it is a downgrade, not a suppression — but a `low` alert will

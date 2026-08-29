@@ -103,31 +103,52 @@ class TestModbusAnomalyParser(unittest.TestCase):
         self.assertIsNone(PARSER.parse(_raw("not a dict")))
 
     def test_change_ticket_id_maps_through_without_changing_classification(self):
-        event = PARSER.parse(_raw({
-            "unitId": 1, "functionCode": 5, "address": 1,
-            "sourceIp": "10.20.0.50", "destIp": "10.20.0.5",
-            "changeTicketId": "CHG-2026-08-1042",
-        }))
+        # PR #80 review: the ticket is honored from the envelope's META
+        # channel only (transport metadata), never from frame bytes.
+        event = PARSER.parse(_raw(
+            {"unitId": 1, "functionCode": 5, "address": 1,
+             "sourceIp": "10.20.0.50", "destIp": "10.20.0.5"},
+            meta={"changeTicketId": "CHG-2026-08-1042"}))
         self.assertEqual(event["unmapped"]["ot"]["change_ticket_id"], "CHG-2026-08-1042")
         # An attached ticket is an authorization signal for the RULE, not a
         # claim about protocol-level safety -- classification/severity must
-        # stay exactly what the coil write would get without one.
+        # stay exactly what the coil write would get without one, and the
+        # accepted-but-unvalidated nature is surfaced on the event.
         self.assertEqual(event["unmapped"]["ot"]["anomaly_type"], "unauthorized_write")
         self.assertEqual(event["severity_id"], 4)  # SEV_HIGH
+        self.assertIs(event["unmapped"]["ot"].get("change_ticket_unvalidated"), True)
         self.assertEqual(validate(event), [])
+
+    def test_frame_carried_change_ticket_id_is_ignored(self):
+        # PR #80 review (trust boundary): a changeTicketId INSIDE the frame
+        # record is attacker-controlled wire data and must NOT map through --
+        # otherwise anyone able to set frame bytes forges the HIGH->LOW
+        # downgrade. It must be carried on the envelope meta channel instead.
+        event = PARSER.parse(_raw({
+            "unitId": 1, "functionCode": 5, "address": 1,
+            "sourceIp": "10.20.0.50", "destIp": "10.20.0.5",
+            "changeTicketId": "CHG-EVIL-1",
+        }))
+        self.assertIsNone(event["unmapped"]["ot"].get("change_ticket_id"),
+                          "frame-carried changeTicketId must not populate "
+                          "unmapped.ot.change_ticket_id (downgrade forgery)")
+        self.assertEqual(event["unmapped"]["ot"]["anomaly_type"], "unauthorized_write")
+        self.assertEqual(event["severity_id"], 4)  # SEV_HIGH -- NOT downgraded
 
     def test_missing_change_ticket_id_is_none(self):
         event = PARSER.parse(_raw({"unitId": 1, "functionCode": 3, "address": 40001}))
         self.assertIsNone(event["unmapped"]["ot"]["change_ticket_id"])
 
-    def test_blank_or_non_string_change_ticket_id_is_none(self):
-        for bogus in ("", "   ", 12345, ["CHG-1"]):
-            event = PARSER.parse(_raw({
-                "unitId": 1, "functionCode": 3, "address": 40001,
-                "changeTicketId": bogus,
-            }))
+    def test_blank_or_non_string_or_junk_change_ticket_id_is_none(self):
+        # PR #80 review: shape check on the META channel -- blank, non-string,
+        # and non-ticket-shaped (no digits / too short) values never downgrade.
+        for bogus in ("", "   ", 12345, ["CHG-1"], "AAAA", "x", "noticket"):
+            event = PARSER.parse(_raw(
+                {"unitId": 1, "functionCode": 3, "address": 40001},
+                meta={"changeTicketId": bogus}))
             self.assertIsNone(event["unmapped"]["ot"]["change_ticket_id"],
-                              f"changeTicketId={bogus!r} must not be treated as a real ticket")
+                              f"meta changeTicketId={bogus!r} must not be "
+                              "treated as a real ticket")
 
     def test_content_sniff_routes_to_modbus_parser(self):
         payload = {"raw": {"unitId": 1, "functionCode": 6, "address": 41999}}

@@ -202,6 +202,8 @@ $PY services/ws2-normalization/test_sanitize.py || { fail=1; FAILED="${FAILED} $
 echo
 echo "== ws2 chaos-ws8 gap-hunt findings (#4 _int_env degrade-not-crash, #5 unmapped top-level LIST wildcard) =="; LAST_HEADER="== ws2 chaos-ws8 gap-hunt findings (#4 _int_env degrade-not-crash, #5 unmapped top-level LIST wildcard) =="
 $PY services/ws2-normalization/test_fix_chaos_gap_hunt.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo "== ws2 modbus changeTicketId trust boundary (PR #80 finding 1: meta-only ticket, shape check) =="; LAST_HEADER="== ws2 modbus changeTicketId trust boundary (PR #80 finding 1: meta-only ticket, shape check) =="
+$PY services/ws2-normalization/test_fix_modbus_ticket_boundary.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
 echo "== ws4 window counters (T6) =="; LAST_HEADER="== ws4 window counters (T6) =="
 $PY services/ws4-detection/test_window.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
@@ -429,7 +431,9 @@ echo "== twin: negative controls (FPR source) -- four benign scenarios, all must
 $PY eval/twin/negative_controls.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
 echo "== twin: full scorecard smoke run (report.py must complete without error on the real cascade) =="; LAST_HEADER="== twin: full scorecard smoke run (report.py must complete without error on the real cascade) =="
-$PY eval/twin/report.py --no-trend || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+# PR #80 finding 10: write to a GITIGNORED last-run path, NOT the committed
+# eval/twin/report.json -- a gate run must not dirty a tracked artifact.
+$PY eval/twin/report.py --no-trend --out eval/twin/report.latest.json || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 
 # == Phase 4 (2026-08-06) enhancement + fix regression tests ==
 echo

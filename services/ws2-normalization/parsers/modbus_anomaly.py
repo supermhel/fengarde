@@ -40,26 +40,33 @@ itself carries no such concept -- this field is a deliberate, explicit,
 OUT-OF-BAND signal a real tap or protocol-aware proxy could attach when it
 also has access to a change-management/ticketing system (e.g. it correlates
 the write's source IP + time window against an open, approved change
-ticket). Present and non-blank, it maps straight through to
-``unmapped.ot.change_ticket_id`` -- this parser does NOT validate the ticket
-against any real ticketing system (it has none to check), so it neither
-changes ``anomaly_type`` nor ``severity_id``: the write is still, honestly,
-an out-of-range write at the protocol level. It exists so
-`contracts/rules/ot_modbus_unauthorized_write.yml` DOWNGRADES rather than
-suppresses when a ticket is attached: `ot_modbus_unauthorized_write_ticketed
-.yml` fires instead, at LOW severity -- the event still reaches the index,
-it is never silently dropped. See eval/twin/negative_controls.py
-::scenario_maintenance_window for how the twin proves the downgrade
-mechanism works on simulated data -- that is not a claim this solves
-real-world OT change-authorization. **Trust boundary (load-bearing):**
-whoever can populate this field can move a write from HIGH to LOW with no
-cross-check this parser performs. It must come from a source independent
-of the observed Modbus frame -- never from frame bytes, never from
-anything an attacker with write access to the bus could also set. See
-SECURITY.md.
+ticket). Present and non-blank on the **envelope's ``meta`` channel**, it
+maps straight through to ``unmapped.ot.change_ticket_id`` -- this parser
+does NOT validate the ticket against any real ticketing system (it has none
+to check), so it neither changes ``anomaly_type`` nor ``severity_id``: the
+write is still, honestly, an out-of-range write at the protocol level. It
+exists so `contracts/rules/ot_modbus_unauthorized_write.yml` DOWNGRADES
+rather than suppresses when a ticket is attached:
+`ot_modbus_unauthorized_write_ticketed.yml` fires instead, at LOW severity
+-- the event still reaches the index, it is never silently dropped. See
+eval/twin/negative_controls.py ::scenario_maintenance_window for how the
+twin proves the downgrade mechanism works on simulated data -- that is not
+a claim this solves real-world OT change-authorization. **Trust boundary
+(load-bearing, PR #80 review):** the ticket is read ONLY from the transport
+envelope's ``meta`` channel, NEVER from the frame record (``raw.raw``) --
+the frame is the wire/tap channel, and anything an attacker with write
+access to the bus could also set must never move a write from HIGH to LOW.
+A ``changeTicketId`` inside the frame bytes is ignored by this parser. A
+conservative shape check (``_valid_ticket_id``) rejects blank/junk values,
+and every accepted ticket is surfaced with
+``unmapped.ot.change_ticket_unvalidated: true`` so consumers can see it is
+an unauthenticated claim. It must come from a source independent of the
+observed Modbus frame -- never from frame bytes, never from anything an
+attacker with write access to the bus could also set. See SECURITY.md.
 """
 from __future__ import annotations
 
+import re
 import time
 from typing import Optional
 
@@ -87,6 +94,40 @@ _VENDOR_SPECIFIC_RANGE = range(65, 73)  # 65-72, and 100-110 below
 # one from, so the default is deliberately narrow (fails toward flagging,
 # not toward silence).
 _EXPECTED_WRITE_ADDRESSES = range(40001, 40010)
+
+# PR #80 review (2026-08-28): the change-ticket authorization signal is a
+# TRUST-BOUNDARY-enforced field. It is read ONLY from the transport envelope's
+# ``meta`` channel -- never from the frame record (``raw.raw``). The frame
+# record is what the Modbus wire/tap bytes produce, and anything an attacker
+# with write access to the wire could also control must never be able to move
+# a HIGH alert to LOW (the rules' and SECURITY.md 12's own documented
+# requirement: the ticket must come from a source independent of the observed
+# wire). A ``changeTicketId`` inside the frame bytes is attacker data and is
+# deliberately ignored.
+#
+# A conservative SHAPE check still applies (a ticket id looks like
+# "<PREFIX>-<reference>", e.g. CHG-2026-08-1042): accidental junk or a blank
+# value never downgrades. This is a shape check only -- NOT authentication
+# against any real ticketing system (there is none in this repo to check) --
+# so a value that passes here is still an unauthenticated claim, surfaced as
+# ``unmapped.ot.change_ticket_unvalidated: true`` on the event.
+_TICKET_ID_RE = re.compile(r"[A-Za-z][A-Za-z0-9_.-]{2,63}")
+
+
+def _valid_ticket_id(value) -> Optional[str]:
+    """Return the ticket id if ``value`` is a non-blank, ticket-shaped string,
+    else None (no authorization claim). Independent of the frame record --
+    callers decide the channel (meta only)."""
+    if not isinstance(value, str):
+        return None
+    ticket = value.strip()
+    if not (4 <= len(ticket) <= 64):
+        return None
+    if _TICKET_ID_RE.fullmatch(ticket) is None:
+        return None
+    if not any(ch.isdigit() for ch in ticket):
+        return None
+    return ticket
 
 
 def _classify(function_code: int, address: Optional[int]) -> Optional[str]:
@@ -126,9 +167,14 @@ class ModbusAnomalyParser(Parser):
         dst_ip = valid_ip(rec.get("destIp"))
         unit_id = rec.get("unitId")
 
-        change_ticket_id = rec.get("changeTicketId")
-        if not isinstance(change_ticket_id, str) or not change_ticket_id.strip():
-            change_ticket_id = None  # absent/blank/wrong-type -> no authorization claim
+        change_ticket_id = None
+        # Trust boundary (PR #80 review): read the authorization claim ONLY
+        # from the envelope's meta channel. The frame record (``rec``) is the
+        # wire/tap channel -- a changeTicketId placed there is attacker data
+        # and must never downgrade this event (see module docstring above).
+        if isinstance(meta, dict):
+            change_ticket_id = _valid_ticket_id(
+                meta.get("changeTicketId") or meta.get("change_ticket_id"))
 
         severity_id = SEV_INFO if anomaly is None else {
             "unauthorized_write": SEV_HIGH,
@@ -160,6 +206,13 @@ class ModbusAnomalyParser(Parser):
             "address": address, "unit_id": unit_id, "anomaly_type": anomaly,
             "change_ticket_id": change_ticket_id,
         }}
+        if change_ticket_id is not None:
+            # PR #80 review: surface that the downgrade rests on an
+            # UNAUTHENTICATED claim (no ticketing system validates it) so no
+            # consumer mistakes a ticket-shaped string for verified
+            # authorization. Rules key on change_ticket_id only; this marker
+            # is informational honesty, never a selection input.
+            event["unmapped"]["ot"]["change_ticket_unvalidated"] = True
         return event
 
     @staticmethod

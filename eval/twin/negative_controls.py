@@ -46,9 +46,11 @@ THE FINDING THIS MODULE SURFACED, AND THE FIX (read before running)
     docstring and `contracts/rules/ot_modbus_unauthorized_write.yml`) adds
     exactly that: an explicit, out-of-band field a real tap/proxy could
     attach when it also has access to a change-management system. This
-    scenario now attaches a change-ticket id to the approved write (see
-    `_write_pump_enable`'s `change_ticket_id` param below), simulating that
-    integration. `ot_modbus_unauthorized_write`'s `authorized_change`
+    scenario now attaches a change-ticket id to the approved write -- carried
+    on the ENVELOPE's meta channel, never inside the frame bytes (see
+    scenario_maintenance_window / modbus_anomaly.py's trust boundary, per
+    the PR #80 review), simulating that integration.
+    `ot_modbus_unauthorized_write`'s `authorized_change`
     selection steps aside when it's present, and
     `ot_modbus_unauthorized_write_ticketed.yml` fires INSTEAD, at
     `level: low` -- the event is downgraded, never dropped: it still
@@ -64,12 +66,21 @@ THE FINDING THIS MODULE SURFACED, AND THE FIX (read before running)
     an actual ticketing system (there is none to validate against), so a
     deployment wiring this field for real must trust its own tap/proxy
     integration, not this twin -- and must treat that trust boundary as
-    load-bearing, since anyone who can populate the field moves a write from
-    HIGH to LOW with no cross-check. See SECURITY.md.
+    load-bearing, since anyone who can populate the field on the transport
+    meta channel moves a write from HIGH to LOW with no cross-check. See
+    SECURITY.md.
+
+    THE GATE (this module's exit code) enforces more than "zero incidents":
+    scenario 1 (approved-maintenance-window) MUST also produce the
+    LOW-severity ticketed alert (`ot_modbus_unauthorized_write_ticketed`,
+    id bc313d43-...). Zero alerts there would be indistinguishable from a
+    regression to silent suppression (the thing the downgrade design
+    replaced), so the gate fails on that too.
 """
 from __future__ import annotations
 
 import argparse
+import importlib
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -82,8 +93,6 @@ for _p in (ROOT, SERVICES / "ws2-normalization", SERVICES / "ws4-detection",
         sys.path.insert(0, str(_p))
 
 from shared.bus import Bus  # noqa: E402
-from parsers import _REGISTRY  # noqa: E402
-from enrichment import enrich  # noqa: E402
 from main import Detector  # noqa: E402 -- ws4-detection's real Detector
 from eval.twin.plc_sim import (  # noqa: E402
     COIL_PUMP_ENABLE, REG_LEVEL, REG_SETPOINT, PLCSim,
@@ -125,34 +134,90 @@ _FRAME = "modbus_anomaly"    # SOURCE_TYPE in the parsers registry
 
 
 # --------------------------------------------------------------------------
-# Shared pipeline: memory bus -> real parser -> enrich -> real Detector.
+# Lazy import of the REAL WS-2 normalization pipeline (mirrors
+# scenario._get_ws2, which manages the `main` module-name collision: this
+# module binds ws4's Detector at import time, so popping/importing ws2's own
+# `main` later does not disturb the already-bound Detector class).
 # --------------------------------------------------------------------------
-def run_pipeline(raw_events: list[tuple[str, dict]], tenant: str) -> list[dict]:
-    """Run raw envelopes through the real pipeline; return every fired alert.
+_ws2 = None
 
-    ``raw_events`` is a list of ``(source_type, raw_record)`` pairs. Each is
-    produced onto the in-memory bus, consumed, parsed by the REAL registered
-    parser, enriched, normalized onto the bus, and finally run through a
-    FRESH real `Detector`. A fresh detector per scenario isolates the
-    stateful sliding-window counters so no negative can contaminate another.
-    The returned list holds one dict per fired rule: ``{rule_id, rule_title,
-    source_type}``. Zero-length return == zero incidents for the scenario.
+
+def _get_ws2():
+    """Return ws2-normalization's ``main`` module (the REAL normalize path):
+    resolve -> parse -> _sanitize_free_text (M1) -> enrich (A5) -> validate
+    (Contract A). Findings 3 of PR #80 review: the twin's headline metrics
+    (TPR/FPR) MUST measure THIS pipeline -- not a hand-rolled parse+enrich
+    that skipped the M1 sanitizer and Contract-A validation.
+
+    Loaded by explicit file path under a UNIQUE module name (mirroring
+    report.py's load of ws4) rather than `import main`: both ws2 and ws4 ship
+    a top-level ``main.py``, and bare ``import main`` after the path juggling
+    deterministically resolves to ws4's here (whereas scenario.py runs first
+    and wins the name). A unique name also leaves ``sys.modules["main"]``
+    bound to ws4's Detector, which this module already imported."""
+    global _ws2
+    if _ws2 is not None:
+        return _ws2
+    for p in (str(SERVICES / "ws2-normalization"), str(SERVICES)):
+        if p not in sys.path:
+            sys.path.insert(0, p)
+    spec = importlib.util.spec_from_file_location(
+        "ws2_normalization_main", str(SERVICES / "ws2-normalization" / "main.py"))
+    if spec is None or spec.loader is None:
+        raise RuntimeError("cannot locate ws2-normalization/main.py")
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["ws2_normalization_main"] = mod
+    spec.loader.exec_module(mod)
+    _ws2 = mod
+    return _ws2
+
+
+# --------------------------------------------------------------------------
+# Shared pipeline: memory bus -> REAL WS-2 normalize_one -> real Detector.
+# --------------------------------------------------------------------------
+def run_pipeline(raw_events: list[tuple], tenant: str) -> list[dict]:
+    """Run raw envelopes through the REAL WS-2 -> WS-4 pipeline; return fired alerts.
+
+    ``raw_events`` is a list of tuples, each ``(source_type, raw_record)``
+    optionally followed by ``(source_type, raw_record, meta)`` and optionally
+    a 4th element ``step`` (a chain-step label used for per-step attribution
+    by report.py's TPR -- see plausible-A of the PR #80 review; the negatives
+    pass no step). Each envelope is produced onto the in-memory bus, then run
+    through ``ws2.normalize_one`` -- the SAME real WS-2 code path the attack
+    chain uses: resolve -> parse -> sanitize free text (M1) -> enrich (A5) ->
+    validate against Contract A (finding 3: the old path hand-rolled
+    parse+enrich and skipped both the sanitizer and validation). Events that
+    fail to normalize (no parser / validation errors / parser raised) are
+    dropped exactly as the real pipeline dead-letters them -- never counted
+    as an alert. The surviving events run through a FRESH real `Detector`; a
+    fresh detector per scenario isolates the stateful sliding-window counters
+    so no negative can contaminate another.
+
+    The returned list holds one dict per fired rule:
+    ``{rule_id, rule_title, score_weight, level, source_type, step}`` (step
+    only when provided). Zero-length return == zero incidents/zero alerts.
     """
+    ws2 = _get_ws2()
     bus = Bus()  # BUS_BACKEND unset -> in-memory (zero-infra dev loop)
     events: list[dict] = []
-    for source_type, rec in raw_events:
-        envelope = {"source_type": source_type, "raw": rec}
+    for entry in raw_events:
+        source_type = entry[0]
+        rec = entry[1]
+        meta = entry[2] if len(entry) > 2 and isinstance(entry[2], dict) else {}
+        step = entry[3] if len(entry) > 3 else None
+        envelope = {"source_type": source_type, "raw": rec, "meta": meta}
         bus.produce("raw.events", key=_DST_PLC, payload=envelope)
-    for msg in list(bus.consume("raw.events", group="cg-normalize")):
-        envelope = msg.payload
-        source_type = envelope.get("source_type")
-        parser = _REGISTRY.get(source_type)
-        event = parser.parse(envelope) if parser is not None else None
-        if event is None:
-            continue
-        event = enrich(event)
+        event, errors = ws2.normalize_one(envelope)
+        if event is None or errors:
+            continue  # dead-lettered by the real pipeline -> never an alert
         (event.setdefault("siem", {})).update(
             {"tenant": tenant, "ingest_id": f"neg:{tenant}:{len(events)}"})
+        # Per-step attribution for report.py's TPR (PR #80 review plausible-A):
+        # tag which chain step this event belongs to, so a fired rule is
+        # credited to the exact step that triggered it, not pooled by
+        # source_type (two steps can share a source_type, e.g. mcp_agent).
+        if step is not None:
+            event.setdefault("siem", {})["twin_step"] = step
         bus.produce("normalized.events", key=_DST_PLC, payload=event)
         events.append(event)
 
@@ -166,7 +231,8 @@ def run_pipeline(raw_events: list[tuple[str, dict]], tenant: str) -> list[dict]:
                            "score_weight": rule.score_weight,
                            "level": rule.level,
                            "source_type": (event.get("siem") or {}).get(
-                               "source_type")})
+                               "source_type"),
+                           "step": (event.get("siem") or {}).get("twin_step")})
     return alerts
 
 
@@ -192,19 +258,17 @@ def _write_setpoint(sim: PLCSim, value: int, ts: int, src: str) -> dict:
             "unitId": 1, "sourceIp": src, "destIp": _DST_PLC, "time": ts}
 
 
-def _write_pump_enable(sim: PLCSim, enabled: bool, ts: int, src: str,
-                       change_ticket_id: str | None = None) -> dict:
+def _write_pump_enable(sim: PLCSim, enabled: bool, ts: int, src: str) -> dict:
     sim.write_coil(COIL_PUMP_ENABLE, enabled)
     sim.tick()
-    frame = {"functionCode": 5, "address": COIL_PUMP_ENABLE,
-             "value": 0xFF00 if enabled else 0x0000,
-             "unitId": 1, "sourceIp": src, "destIp": _DST_PLC, "time": ts}
-    if change_ticket_id is not None:
-        # The out-of-band authorization signal a real tap/proxy integrated
-        # with a change-management system could attach -- see
-        # modbus_anomaly.py's module docstring.
-        frame["changeTicketId"] = change_ticket_id
-    return frame
+    # PR #80 trust-boundary review: the frame record is the WIRE channel -- a
+    # changeTicketId must NEVER ride inside it (an attacker on the wire could
+    # forge the HIGH->LOW downgrade). The ticket belongs on the envelope's
+    # META channel, which the caller attaches when it wraps this frame (see
+    # scenario_maintenance_window). We do not write it into the frame.
+    return {"functionCode": 5, "address": COIL_PUMP_ENABLE,
+            "value": 0xFF00 if enabled else 0x0000,
+            "unitId": 1, "sourceIp": src, "destIp": _DST_PLC, "time": ts}
 
 
 def _write_level_adjust(sim: PLCSim, value: int, ts: int, src: str) -> dict:
@@ -275,10 +339,14 @@ def scenario_maintenance_window(seed: int) -> tuple[str, list[dict]]:
     real-world authorization.
     """
     sim = PLCSim(seed=seed)
+    pump_frame = _write_pump_enable(sim, True, T_TUE_1030, _SRC_ENG)
     raw = [
         (_FRAME, _write_setpoint(sim, 520, T_TUE_1030, _SRC_ENG)),
-        (_FRAME, _write_pump_enable(sim, True, T_TUE_1030, _SRC_ENG,
-                                    change_ticket_id=_MAINTENANCE_CHANGE_TICKET)),
+        # The approved write's authorization ticket rides the envelope META
+        # channel (never the frame bytes -- modbus_anomaly.py's trust
+        # boundary, PR #80 review). run_pipeline (real WS-2 normalize_one)
+        # forwards meta so the parser maps it to unmapped.ot.change_ticket_id.
+        (_FRAME, pump_frame, {"changeTicketId": _MAINTENANCE_CHANGE_TICKET}),
     ]
     return "approved-maintenance-window", run_pipeline(raw, "neg-maintenance")
 
@@ -340,6 +408,12 @@ _ALL_SCENARIOS = (
     scenario_benign_n8n_edits,
 )
 
+# F2 (PR #80 review): the approved-maintenance-window write MUST still produce
+# this LOW-severity alert -- it is the proof the downgrade mechanism is alive
+# rather than a silent suppression. The gate fails if it is absent.
+_TICKETED_RULE_ID = "bc313d43-588a-47e5-9f79-a4984ae1922c"
+_MAINTENANCE_NAME = "approved-maintenance-window"
+
 
 # --------------------------------------------------------------------------
 # CLI
@@ -348,16 +422,20 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="negative_controls",
         description="WP-1-D: FPR source for the AI-to-OT twin (four negatives, "
-                    "all must yield ZERO incidents).")
+                    "all must yield ZERO incidents AND scenario 1 must still "
+                    "produce the LOW ticketed-downgrade alert).")
     parser.add_argument("--seed", type=int, default=1,
                         help="PLCSim RNG seed (same seed => same verdicts)")
     args = parser.parse_args(argv)
 
     results: list[tuple[str, list[dict]]] = []
     total_incidents = 0
+    s1_alerts: list[dict] = []
     for scenario in _ALL_SCENARIOS:
         name, alerts = scenario(args.seed)
         results.append((name, alerts))
+        if name == _MAINTENANCE_NAME:
+            s1_alerts = alerts
         incidents = [a for a in alerts if is_incident(a)]
         explained = [a for a in alerts if not is_incident(a)]
         total_incidents += len(incidents)
@@ -372,12 +450,30 @@ def main(argv: list[str] | None = None) -> int:
                       f"on a {a['source_type']} event "
                       f"(id {a['rule_id']})")
 
-    print("-" * 60)
+    # F2 (PR #80 review): prove the downgrade mechanism is ALIVE, not silently
+    # regressed to suppression. Scenario 1 must produce the LOW ticketed alert
+    # (ot_modbus_unauthorized_write_ticketed). Zero alerts here passes the
+    # incident count trivially -- exactly the regression a future silent-
+    # suppression redesign would introduce -- so the gate FAILS on it.
+    gate_failures = total_incidents
     if total_incidents == 0:
+        s1_ticketed = [a for a in s1_alerts if a["rule_id"] == _TICKETED_RULE_ID]
+        if not s1_ticketed:
+            print("[FAIL] approved-maintenance-window produced no "
+                  f"{_TICKETED_RULE_ID} (ot_modbus_unauthorized_write_ticketed) "
+                  "alert -- the downgrade mechanism has silently regressed to "
+                  "suppression. An approved ticketed write MUST still index a "
+                  "LOW alert (see is_incident / SECURITY.md 12); zero alerts "
+                  "is indistinguishable from a reverted design.")
+            gate_failures += 1
+
+    print("-" * 60)
+    if gate_failures == 0:
         print(f"ZERO-INCIDENT SUMMARY: all {len(results)} negative scenarios "
               "produced 0 incidents -- FPR clean for the tested benign set. "
               "(A low-severity ticketed alert is not an incident -- see "
-              "is_incident().)")
+              "is_incident().) Scenario 1 also still emits the LOW ticketed "
+              "downgrade alert, so the downgrade mechanism is proven alive.")
         return 0
     print(f"ZERO-INCIDENT SUMMARY: {total_incidents} incident(s) across "
           f"{len(results)} negative scenario(s) -- FALSE-POSITIVE FINDING; "
