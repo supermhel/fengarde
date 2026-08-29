@@ -1,0 +1,164 @@
+# Release  (cosign keyless signing + SLSA v1 provenance)
+#
+# Runs when a release tag (`v*`) is pushed. Job 1 builds and pushes every
+# containerised service image to GHCR and signs each one KEYLESS with cosign
+# (OIDC from GitHub — no private key is ever stored, and this workflow uses
+# no Secrets at all); it also creates a source-tarball release artifact and
+# signs that blob keyless. Job 2 calls the SLSA generator's generic
+# generate-provenance reusable workflow to produce SLSA v1 provenance for
+# those artifacts (the images + the tarball), signed keyless by the
+# generator itself and uploaded to the same GitHub Release.
+#
+# A consumer verifies all of it with the copy-pasteable cosign commands in
+# SECURITY.md ("## Verifying release artifacts"); a signature nobody can
+# check would be theatre.
+#
+# All `uses:` are pinned to 40-char commit SHAs to match the rest of this
+# repo (see tools/verify_action_pins.py — that CI gate re-checks this file
+# on every PR). See that tool's docstring for the "resolves, not behaves"
+# caveat.
+
+name: Release (cosign signing + SLSA provenance)
+
+on:
+  push:
+    # Release = a version tag pushed. github.ref_name == the tag (e.g. v0.6.0).
+    tags: ["v*"]
+
+# Least-privilege default (Scorecard TokenPermissionsID). Individual jobs
+# re-grant only what they need, mirroring scorecard.yml's pattern.
+permissions:
+  contents: read
+
+jobs:
+  # ---------------------------------------------------------------------
+  # Build + push + keyless-sign every service image; produce and keyless-
+  # sign the source-tarball release artifact; emit the subject digests the
+  # SLSA generator needs. All cosign use is KEYLESS (OIDC).
+  # ---------------------------------------------------------------------
+  build-and-sign:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # attach release artifacts + source tarball to the release
+      packages: write   # push images to GHCR with the automatic GITHUB_TOKEN
+      id-token: write   # cosign keyless signing (OIDC)
+    outputs:
+      digests: ${{ steps.subjects.outputs.digests }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+        with:
+          fetch-depth: 0  # so `git archive` and tag resolution see the tag
+
+      - name: Set up buildx (container driver for multi-platform + push)
+        uses: docker/setup-buildx-action@f7ce87c1d6bead3e36075b2ce75da1f6cc28aaca  # v3.9.0
+
+      - name: Log in to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f  # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          # Automatic token, not a stored secret: grants exactly the
+          # `packages: write` this job declared and nothing else.
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install cosign (keyless)
+        uses: sigstore/cosign-installer@d58896d6a1865668819e1d91763c7751a165e159  # v3.9.2
+
+      # The release artifact set = every containerised service image plus a
+      # deterministic source tarball. Each image is signed KEYLESS with
+      # `cosign sign`; the tarball is signed keyless with `cosign sign-blob`
+      # (its .sig / .pem are uploaded alongside it below). Subject digests
+      # (tarball + every image) are collected and base64-encoded for the SLSA
+      # generator's `base64-subjects` input: one `<sha256hex>  <name>` line
+      # per subject, exactly the format generator_generic_slsa3.yml parses.
+      - name: Create + keyless-sign the source tarball release artifact
+        env:
+          # Passed via env, not interpolated into the script -- a git tag
+          # name can contain shell metacharacters (;, `, $, |, ") and this
+          # job holds packages:write/contents:write/id-token:write.
+          REF: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          git archive --format=tar.gz -o "dist/fengarde-${REF}.tar.gz" HEAD
+          cosign sign-blob --yes "dist/fengarde-${REF}.tar.gz" \
+            --output-signature  "dist/fengarde-${REF}.tar.gz.sig" \
+            --output-certificate "dist/fengarde-${REF}.tar.gz.pem"
+          sha256sum "dist/fengarde-${REF}.tar.gz"
+
+      - name: Build, push, and keyless-sign every service image
+        id: subjects
+        env:
+          REF: ${{ github.ref_name }}
+          REPO_OWNER: ${{ github.repository_owner }}
+        run: |
+          set -euo pipefail
+          GHCR="ghcr.io/${REPO_OWNER}"
+          # Every service that ships a Dockerfile (matches the compose-file
+          # services in infra/docker-compose.yml).
+          services="devkit-feeder ws1-collectors ws2-normalization ws3-indexer \
+                    ws4-detection ws5-ai ws6-inventory ws7-dashboard ws8-correlation"
+          # Start the subject list with the source tarball.
+          tarhex=$(sha256sum "dist/fengarde-${REF}.tar.gz"); tarhex=${tarhex%% *}
+          subjects="${tarhex}  fengarde-${REF}.tar.gz"$'\n'
+          # Only a STABLE release (strict vMAJOR.MINOR.PATCH, no -rc/-alpha/-beta
+          # or build-metadata suffix) may move the :latest tag -- a pre-release
+          # tag must never overwrite it for every image.
+          if [[ "$REF" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "REF=$REF is a stable release -- tagging :latest too."
+          else
+            echo "REF=$REF is a pre-release -- NOT tagging :latest."
+          fi
+          for svc in $services; do
+            img="$GHCR/fengarde-$svc"
+            tag_args=(--tag "$img:$REF")
+            if [[ "$REF" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              tag_args+=(--tag "$img:latest")
+            fi
+            docker buildx build \
+              --file "services/$svc/Dockerfile" \
+              "${tag_args[@]}" \
+              --provenance=false \
+              --push .
+            digest=$(docker buildx imagetools inspect "$img:$REF" --format '{{.Manifest.Digest}}')
+            # KEYLESS: OIDC + GHCR. No key, no secret.
+            cosign sign --yes "$img@$digest"
+            subjects="$subjects${digest#sha256:}  $img@$digest"$'\n'
+          done
+          # SLSA generator's base64-subjects input (base64 of the above lines).
+          b64=$(printf '%s' "$subjects" | base64 -w0)
+          echo "digests=$b64" >> "$GITHUB_OUTPUT"
+
+      - name: Attach artifacts to the GitHub Release
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65  # v2.6.2
+        with:
+          # The source tarball + its keyless signature + certificate.
+          # SLSA provenance (.intoto.jsonl + .sig + .cert) is attached by the
+          # provenance job via the generator's own upload-assets.
+          files: |
+            dist/fengarde-${{ github.ref_name }}.tar.gz
+            dist/fengarde-${{ github.ref_name }}.tar.gz.sig
+            dist/fengarde-${{ github.ref_name }}.tar.gz.pem
+          fail_on_unmatched_files: true
+
+  # ---------------------------------------------------------------------
+  # SLSA v1 provenance for the release artifacts, via the SLSA generator's
+  # generic generate-provenance reusable workflow. The generator signs the
+  # provenance keyless with its own OIDC identity and (upload-assets: true)
+  # attaches the .intoto.jsonl + .sig + .cert to the matching release.
+  # ---------------------------------------------------------------------
+  provenance:
+    needs: [build-and-sign]
+    permissions:
+      actions: read      # generator reads the calling workflow to build provenance
+      id-token: write    # generator signs the provenance (its own OIDC)
+      contents: write    # upload-assets: attach the provenance to the release
+    # NOTE on the path: the generic generate-provenance workflow in
+    # slsa-github-generator v2.x is named generator_generic_slsa3.yml (the
+    # older generate_build_provenance.yml name exists only in pre-2.x tags);
+    # this is the same reusable workflow the task refers to as the
+    # "generate-build-provenance" generator.
+    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@f7dd8c54c2067bafc12ca7a55595d5ee9b75204a  # v2.1.0
+    with:
+      base64-subjects: "${{ needs.build-and-sign.outputs.digests }}"
+      upload-assets: true

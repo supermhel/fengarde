@@ -1,0 +1,293 @@
+# =============================================================================
+# FENGARDE eval/twin/oracle.yaml -- WP-1-C
+# Machine-readable GRADING TARGET for the AI-to-OT attack-chain twin.
+# Consumed by eval/twin/report.py (WP-1-F, next wave) as the ground truth that
+# the twin's emitted event stream is scored against. This is NOT documentation;
+# every key below is a check report.py performs.
+#
+# Chain definition (stable labels, shared with eval/twin/scenario.py, WP-1-B):
+#   external_content -> n8n_execution -> agent_mcp_tool_call -> credential_use
+#     -> modbus_write -> plc_state_change -> process_anomaly
+#
+# Only rule ids that actually exist in contracts/rules/*.yml are referenced.
+# A chain step with no matching shipped rule is recorded as an explicit
+# "no_rule_exists" gap -- that is HONEST grading input, not an error: report.py
+# must DOWNGRADE the twin's score for un-detected chain steps, and the gaps
+# below are precisely where detection coverage is still missing.
+# =============================================================================
+
+schema_version: 1
+oracle_id: "ai-to-ot-attack-chain-v1"
+kind: "attack-chain-grading-oracle"
+scope: "ai-to-ot"
+description: >
+  Grading ground truth for the FENGARDE AI-to-OT attack-chain twin: the ordered
+  chain-step sequence, allowed causal relationships, expected per-step detection
+  points (referencing only real contracts/rules/*.yml ids), the severity band the
+  incident's alerts must fall in, the event fields that must be traceable as
+  evidence, and the incident membership of the steps.
+
+# ---------------------------------------------------------------------------
+# (i) EXPECTED ORDERED EVENT SEQUENCE -- the ordered list report.py checks the
+# twin's timeline against. Steps may be EXPECTED in this order; the exact clock
+# deltas are not graded, only the relative ordering of the step labels.
+# ---------------------------------------------------------------------------
+expected_sequence:
+  - external_content
+  - n8n_execution
+  - agent_mcp_tool_call
+  - credential_use
+  - modbus_write
+  - plc_state_change
+  - process_anomaly
+
+sequence_constraints:
+  # Every label in expected_sequence must appear exactly once in the twin's
+  # stepped incident timeline. Tolerances are machine-checkable:
+  strict_order: true            # a later step's first evidence must not predate an earlier step's last evidence
+  allow_extra_steps: false      # chain steps outside this list are an oracle violation
+  max_clock_span_seconds: 3600  # the whole chain should resolve within 1h of process time (soft bound, informational)
+
+# ---------------------------------------------------------------------------
+# (ii) ALLOWED RELATIONSHIPS -- which chain steps may be causally linked.
+# `allowed: true` edges are the ones report.py treats as a valid causal link;
+# any edge absent here (or explicitly allowed: false) is a relationship the
+# twin must NOT claim. Canonical path is linear (consecutive); one cross-edge
+# (external_content -> agent_mcp_tool_call) is lawful because the injected
+# content manifests causally at tool-call time even though n8n orchestration
+# sits between them in the labeled sequence.
+# ---------------------------------------------------------------------------
+allowed_relationships:
+  - from: external_content
+    to: n8n_execution
+    allowed: true
+    causal_kind: orchestration      # the workflow ingests the external content
+  - from: n8n_execution
+    to: agent_mcp_tool_call
+    allowed: true
+    causal_kind: execution          # the n8n workflow drives agent MCP tool calls
+  - from: external_content
+    to: agent_mcp_tool_call
+    allowed: true
+    causal_kind: content_flow       # injected content surfaces verbatim in tool-call args (not adjacent in sequence, but causally valid)
+  - from: agent_mcp_tool_call
+    to: credential_use
+    allowed: true
+    causal_kind: access             # agent reaches credential material during tool use
+  - from: credential_use
+    to: modbus_write
+    allowed: true
+    causal_kind: execution          # yielded credential enables the Modbus/TCP write
+  - from: modbus_write
+    to: plc_state_change
+    allowed: true
+    causal_kind: cause_effect       # the write mutates a register/coil
+  - from: plc_state_change
+    to: process_anomaly
+    allowed: true
+    causal_kind: cause_effect       # the mutated control state drives a process divergence
+  # Explicit NON-edges the twin must never claim (defense / anti-ordering):
+  - from: process_anomaly
+    to: modbus_write
+    allowed: false
+    causal_kind: none               # the physical anomaly never precedes the write that caused it
+  - from: credential_use
+    to: agent_mcp_tool_call
+    allowed: false
+    causal_kind: none               # backward edge; tool call precedes credential use
+
+# ---------------------------------------------------------------------------
+# (iii) EXPECTED DETECTION POINTS -- keyed by chain step. Each entry lists the
+# contracts/rules/*.yml rule ids that SHOULD fire at that step (all verified to
+# exist), with their shipped level for cross-checking. A step with no rule has
+# an explicit no_rule_exists gap.
+# ---------------------------------------------------------------------------
+detection_points:
+  external_content:
+    step: external_content
+    role: "adversary-influenced external content the agent later consumes"
+    expected_event_source: "none (content is pre-log; surfaces only when a tool call quotes it)"
+    expected_rules: []
+    gap:
+      no_rule_exists: true
+      reason: >
+        No parser or rule observes external content before it is ingested by the
+        agent. The prompt-injection indicator only fires later, at
+        agent_mcp_tool_call (agent_prompt_injection_indicator) when the injected
+        string appears in a tool call's arguments. This step has no independent
+        detection today -- a real coverage gap.
+
+  n8n_execution:
+    step: n8n_execution
+    role: "n8n automation-platform activity (workflow change / webhook exposure) that launches the chain"
+    expected_event_source: "n8n_audit (class 6003)"
+    expected_rules:
+      - rule_id: "92a3b4c5-d627-4f05-ad6f-7a8b9c0d1e24"   # n8n_workflow_modified_after_hours
+        title: "n8n automation-platform activity outside business hours"
+        level: medium
+        role: off-hours n8n changes
+      - rule_id: "8192a3b4-c516-4ef4-9c5f-6a7b8c9d0e13"     # n8n_new_webhook_exposed
+        title: "n8n new webhook exposed"
+        level: medium
+        role: new unauthenticated entry point
+    gap:
+      no_rule_exists: false
+
+  agent_mcp_tool_call:
+    step: agent_mcp_tool_call
+    role: "the MCP/agent performs tool calls (injection indicator, egress, destructive call, burst)"
+    expected_event_source: "mcp_agent (class 6003)"
+    expected_rules:
+      - rule_id: "3c4d5e6f-7081-48a9-9b1c-3d4e5f6a7b8d"     # agent_prompt_injection_indicator
+        title: "AI agent tool call carries a prompt-injection indicator"
+        level: medium
+        role: injection content reaches a tool call
+      - rule_id: "6f708192-a3b4-4cd5-be3f-5a6b7c8d9e0f"     # agent_egress_non_allowlisted_domain
+        title: "AI agent tool call reached a non-allowlisted domain"
+        level: high
+        role: egress to unallowlisted endpoint
+      - rule_id: "5e6f7081-92a3-4bc4-ad2e-4f5a6b7c8d9e"     # agent_destructive_command
+        title: "AI agent tool call carries a destructive command pattern"
+        level: critical
+        role: destructive command/query in tool call
+      - rule_id: "2b3c4d5e-6f70-4899-8a1b-2c3d4e5f6a7c"     # agent_tool_call_burst
+        title: "AI agent tool-call burst (runaway/abused agent session)"
+        level: medium
+        role: rapid repetitive tool-use pattern
+    gap:
+      no_rule_exists: false
+
+  credential_use:
+    step: credential_use
+    role: "the agent reaches/uses credential material"
+    expected_event_source: "mcp_agent (class 6003)"
+    expected_rules:
+      - rule_id: "1a2b3c4d-5e6f-4788-9a0b-1c2d3e4f5a6b"     # agent_credential_file_access
+        title: "AI agent tool call accessed credential material"
+        level: high
+        role: credential path touched by a tool call
+    gap:
+      no_rule_exists: false
+
+  modbus_write:
+    step: modbus_write
+    role: "anomalous Modbus/TCP write to the PLC (outside expected address range)"
+    expected_event_source: "modbus_anomaly (class 4001)"
+    expected_rules:
+      - rule_id: "9c1d2e3f-4a5b-4c6d-8e7f-1a2b3c4d5e6f"     # ot_modbus_unauthorized_write
+        title: "Modbus/TCP write outside the expected address range (unauthorized write)"
+        level: high
+        role: the core OT write-detection signal
+    gap:
+      no_rule_exists: false
+
+  plc_state_change:
+    step: plc_state_change
+    role: "the PLC register/coil actually changes as a result of the write"
+    expected_event_source: "none (state change is a process-side consequence, not itself a network log line)"
+    expected_rules: []
+    gap:
+      no_rule_exists: true
+      reason: >
+        No shipped rule detects the post-write register/coil state change for a
+        Modbus-driven chain. ot_config_change
+        (6f708192-a314-4cd2-ad4e-5f6a7b8c9d01) exists but keys on
+        opcua_audit (class 6003, unmapped.ot.is_config_node) and does NOT fire
+        on the Modbus (class 4001) write path this chain uses -- so it is NOT a
+        valid detection point here. Recording plc_state_change as a gap; a
+        future rule (e.g. state-delta on unmapped.ot.address after a write)
+        would close it.
+
+  process_anomaly:
+    step: process_anomaly
+    role: "the controlled process diverges (tank level driven out of band / unsafe state)"
+    expected_event_source: "none (recomputed from the plc_sim trace; no log line)"
+    expected_rules: []
+    gap:
+      no_rule_exists: true
+      reason: >
+        No rule in contracts/rules/*.yml evaluates process-state anomaly (e.g.
+        tank level outside a safe band). The twin must still EMIT this step's
+        evidence (the diverged process state) so report.py can grade the chain
+        end-to-end, but its detection coverage is zero today -- an honest gap
+        that lowers the attainable detection score for this chain.
+
+# ---------------------------------------------------------------------------
+# (iv) EXPECTED SEVERITY BAND -- numeric bounds the incident's alerts must fall
+# in. Backed by contracts/scoring.yaml severity_floor (medium=40, high=70,
+# critical=80) and clamp max 100 (contracts/scoring.yaml). severity_id is the
+# OCSF 1-6 field; score is the WS-4 clamped score 0-100. report.py should check
+# BOTH the min/max score and that severity_id stays within the OCSF band.
+# ---------------------------------------------------------------------------
+severity_band:
+  score:
+    min: 40          # lowest floor of any expected rule in the chain (n8n / mcp medium rules)
+    max: 100         # clamp ceiling; agent_destructive_command (critical, 80) + score_weight sums can exceed 80
+  severity_id:
+    # OCSF severity_id is 0-6; the rules that SHOULD fire span medium..critical.
+    # Map empirically in report.py from level -> severity_id; the band below is
+    # the expected OCSF range a correct incident occupies.
+    min: 3           # medium
+    max: 6           # critical
+  dominant_band: "high-to-critical"
+  rationale: >
+    Expected rules in the chain span medium (n8n rules, injection, tool-call
+    burst) through high (egress, credential access, unauthorized modbus write)
+    to critical (destructive command if it fires). A correct-grade incident
+    should see at least one high (>=70) alert from ot_modbus_unauthorized_write;
+    the overall incident score should sit in [40,100].
+
+# ---------------------------------------------------------------------------
+# (v) EVIDENCE REFERENCES -- the event fields/ids that must be traceable as
+# evidence, per chain step, plus the shared correlation key(s) that tie the
+# steps together. report.py checks each step's evidence carries its required
+# fields with non-null values.
+# ---------------------------------------------------------------------------
+evidence:
+  correlation_key:            # every step's evidence MUST share one value here
+    - actor.user.name         # the AI-service / compromised account driving the whole chain
+    - session_id              # elevator key: unmapped.mcp.session_id where present (resolved per source at runtime)
+  per_step:
+    external_content:
+      fields: []
+      note: "pre-log; no event carries it directly -- graded at agent_mcp_tool_call via the injection indicator"
+    n8n_execution:
+      fields: [unmapped.n8n.workflow_id, actor.user.name, api.operation]
+    agent_mcp_tool_call:
+      fields: [unmapped.mcp.session_id, actor.user.name, api.operation]
+    credential_use:
+      fields: [unmapped.mcp.session_id, unmapped.mcp.credential_path_access]
+    modbus_write:
+      fields: [src_endpoint.ip, dst_endpoint.ip, unmapped.ot.function_code, unmapped.ot.address, unmapped.ot.anomaly_type]
+    plc_state_change:
+      fields: [unmapped.ot.address, unmapped.ot.function_code]
+      note: "state-delta evidence; expected on the same Modbus session/device as modbus_write"
+    process_anomaly:
+      fields: [sensor_reading]  # recomputed from plc_sim trace (tick, setpoint, level, pump_enable)
+      note: "no OCSF log; report.py recomputes the diverged process state from eval/twin/plc_sim.py"
+
+# ---------------------------------------------------------------------------
+# (vi) INCIDENT MEMBERSHIP -- which chain steps belong to ONE incident.
+# The AI-to-OT attack chain is a single campaign-level incident: all seven steps
+# must resolve to one incident id in WS-8 correlation.
+# ---------------------------------------------------------------------------
+incident_membership:
+  incident_count: 1
+  incident_key: "ai-to-ot-attack-chain"
+  include:
+    - external_content
+    - n8n_execution
+    - agent_mcp_tool_call
+    - credential_use
+    - modbus_write
+    - plc_state_change
+    - process_anomaly
+  cross_step_rule_ids:          # the rule ids whose alerts must all land in the same incident
+    - "92a3b4c5-d627-4f05-ad6f-7a8b9c0d1e24"
+    - "8192a3b4-c516-4ef4-9c5f-6a7b8c9d0e13"
+    - "3c4d5e6f-7081-48a9-9b1c-3d4e5f6a7b8d"
+    - "6f708192-a3b4-4cd5-be3f-5a6b7c8d9e0f"
+    - "5e6f7081-92a3-4bc4-ad2e-4f5a6b7c8d9e"
+    - "2b3c4d5e-6f70-4899-8a1b-2c3d4e5f6a7c"
+    - "1a2b3c4d-5e6f-4788-9a0b-1c2d3e4f5a6b"
+    - "9c1d2e3f-4a5b-4c6d-8e7f-1a2b3c4d5e6f"

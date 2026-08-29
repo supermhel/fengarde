@@ -7,6 +7,231 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed (2026-08-28, third review-fix round — adversarial PR review of #80)
+
+A three-reviewer adversarial pass (guard + twin + supply-chain + docs) found
+committed data-integrity issues and two guard blind spots. All confirmed
+against code and fixed:
+
+- **The frozen baseline (`eval/twin/baseline.json`) enshrined the pre-fix
+  fabricated constants** (fpr 0.25, chain_fidelity/false_correlation_rate/
+  alert_reduction_ratio = 0.0 — the exact values SSOT §2 labels "hand-picked
+  constants labeled harness-measured"). **Regenerated from a REAL seed-7 run**
+  on the post-fix code (TPR=1.0, FPR=0.0, chain_fidelity=null, evidence=0.9375,
+  basis=harness-measured); the header now honestly records that it replaces an
+  earlier capture that enshrined hand-picked constants. The frozen / never-
+  regenerate discipline is kept.
+- **The WP-1-G baseline-delta contract was unimplemented** — no code read
+  `baseline.json`, so the promised "emit the SAME metric keys and report a
+  documented delta vs this baseline" had no mechanism. `report.py` now loads
+  the baseline and emits `report["delta_vs_baseline"]` with honest null-vs-0.0
+  handling (null on either side → "n/a", never coerced). Verified live:
+  `delta: tpr 1.0->1.0 (0.0)... chain_fidelity n/a`.
+- **`eval/trend.jsonl` row 1 (12:07:10) is the pre-fix fabricated pilot row in
+  a file whose header says "Rows are real measurements, never fabricated."**
+  Left in place (append-only history) but now annotated **in-file** with a
+  `# NOTE (2026-08-28)` block marking it as the pre-fix fabricated row
+  (cross-ref SSOT §2); the reader skips `#` lines.
+- **Guard A2(a) fixture check was a loose substring scan** — a parser "had a
+  fixture" if its source_type string appeared anywhere in test code text, so
+  deleting a parser's real fixture stayed green. Now requires the source_type
+  in the **real fixture corpora**: `tools/check_rule_producers.py::FIXTURES`
+  keys + the parsed `ws2-normalization/mocks/*.json` samples. Mutation-proven:
+  removing a parser's FIXTURES entry turns A2(a) RED (exit 1).
+- **Guard A6 silently skipped services with no requirements.txt** (ws7-
+  dashboard) and never checked hash presence — only version consistency, with
+  an [OK] message overstating "all 8 services". Now: (a) every service dir with
+  a Dockerfile must have requirements.txt or a documented exclusion
+  (`REQUIREMENTS_EXCLUSIONS`, ws7 = static nginx/no Python runtime);
+  (b) every `pkg==version` pin must carry `--hash=` lines, else
+  `[FAIL] A6(hash)`; (c) the [OK] message reports per-package counts
+  ("PyYAML in 4 services, redis in 8"). Self-test extended to prove the new
+  sub-checks turn RED.
+- **SECURITY.md §11 claimed the metrics server "binds loopback only by
+  default"** — false: `runner.py` binds `0.0.0.0` unconditionally so
+  Prometheus/other containers can scrape. §11 and the runner's inline
+  `FENGARDE-OPEN-BY-DESIGN` marker now state the truth (all interfaces,
+  aggregate-only payload, Compose-network confinement). Also fixed a garbled
+  edit from the earlier pass ("webhook `OLLAMA_URL`" → "webhook URLs and the
+  `OLLAMA_URL` for the AI triage backend").
+- **PR scope disclosure**: the diff carries WP-0.4-A MSSP work (partners
+  section, README link) and the modbus change-ticket redesign that were not
+  mentioned in the PR description. The quickstart doc now carries a
+  provenance note (landed via PR #80 / WP-0.4-A, F-10 decided 2026-08-28) and
+  the PR description is updated with a Scope Disclosure section.
+
+### Fixed (2026-08-28, second code-review pass on the two entries below)
+
+A fresh independent review (no shared context with the first fix pass) of the
+already-fixed PR verified the earlier claims empirically and found three of
+them incomplete, plus one new critical issue in the fix commit itself.
+
+- **`authorized_change` was a silent, unvalidated, forgeable full suppression
+  of a HIGH-severity OT rule.** Empirically confirmed: setting
+  `changeTicketId` to an arbitrary attacker-controlled string on the exact
+  same coil write dropped `ot_modbus_unauthorized_write` to zero matched
+  rules, with no audit trail and no disclosure in SECURITY.md. **Redesigned
+  from suppression to downgrade**: the rule now steps aside for a new
+  companion rule, `contracts/rules/ot_modbus_unauthorized_write_ticketed.yml`
+  (`level: low`, `score_weight: 10`), so a ticketed write is never a silent
+  non-event — it stays indexed and huntable, just not scored as an incident.
+  `negative_controls.py` gained `is_incident()` (level not in
+  low/informational) so the FPR claim now means "zero incident-level
+  alerts," not "zero alerts of any kind"; `report.py`'s `_run_negatives()`
+  filters the same way. Added `SECURITY.md` §12 stating the trust boundary
+  explicitly: whoever can populate `changeTicketId` can move a write from
+  HIGH to LOW with no cross-check, and that field must never originate from
+  anything an attacker with Modbus write access could also control.
+- **Two bugs in the FIRST fix pass's own new code**, both confirmed by
+  direct execution: `tokenize.TokenizeError` doesn't exist (the real
+  attribute is `TokenError`) — any unparseable file crashed the guard with
+  `AttributeError` instead of falling back gracefully. And `_code_only`
+  rejoined tokens with `" "`, turning `ThreadingHTTPServer(` into
+  `ThreadingHTTPServer (` — silently breaking 6 of 10 HTTP-server-detection
+  tokens, a new false-green hole in the exact guard being hardened. Rewrote
+  `_code_only` to blank comment/string character spans in place instead of
+  rebuilding from tokens, so code adjacency is never altered.
+- **The A4 basename-collision fix was incomplete.** The bare-basename CI
+  fallback (`fn in ci`) was left in place and could still conflate two
+  same-named live tests in different services. Now the fallback only
+  applies when that basename is unique across every discovered live test.
+- **`report.py`'s docstring and the committed `eval/trend.jsonl` still said
+  `fpr = 0.25`** after the metric itself was fixed to compute the real
+  value — the prose and a historical trend row weren't updated in the first
+  pass. Docstring corrected; a fresh, correct row appended to
+  `trend.jsonl` (append-only by convention — the stale row is left as
+  history, not rewritten).
+- **`report.py` smoke-run had no floor.** `_real_detection()` swallows every
+  exception and returns `[]`; a broken cascade would print `[OK]` and exit 0
+  regardless. Added floor assertions (`alert_count > 0`, `tpr == 1.0`,
+  `fpr == 0.0`) before the gate step can pass.
+- Also: `_attribution()`'s "any actor present counts as correct" was a
+  tautology that could only ever read 1.0 (no ground truth to compare
+  against) — rewrote it to check identity CONSISTENCY across chain steps, a
+  check that can actually fail. `tpr`/`evidence_completeness` now return
+  `None` instead of a fabricated `0.0` on a zero-denominator input, matching
+  `chain_fidelity`'s existing discipline. `peak_alert_score`/`severity_in_band`
+  were computed but discarded — now emitted in the report.
+- `.github/dependabot.yml`'s PyYAML/redis `ignore` rules now scope to
+  `update-types: [version-update:*]` only, so a real CVE on either package
+  still opens a security-update PR — the earlier blanket ignore would have
+  muted that channel too.
+- `.github/workflows/release.yml` interpolated `${{ github.ref_name }}`
+  (an attacker-influenceable git tag) directly into `run:` shell scripts in
+  a job holding `packages:write`/`contents:write`/`id-token:write` — moved
+  to `env:` + `"$REF"`, standard expression-injection hardening.
+- `SECURITY.md`'s cosign verification regex only matched strict stable
+  version tags, but `release.yml` signs every `v*` tag including
+  pre-releases — widened to accept an optional semver pre-release suffix.
+
+### Added (2026-08-28, Phase 0 + Phase 1 packages: coverage guard, nightly eval, supply chain, AI-to-OT twin)
+
+- **Lane-coverage meta-guard (WP-0.1-A, never-cut).** `tools/check_lane_coverage.py` — 6
+  coverage assertions (bus-dependent compose services ↔ `tools/chaos_test.py::KILL_TARGETS`;
+  registered parsers ↔ fixture + fuzz harness + `fuzz.yml`; `contracts/rules/*.yml` ↔ ATT&CK
+  scorecard input; `test_*_live*.py` ↔ CI or an explicit allowlist; HTTP-surface auth ↔ an
+  auth call or `FENGARDE-OPEN-BY-DESIGN` marker; cross-service pip-pin consistency) plus a
+  `--self-test` anti-dormancy guard proving each assertion can turn RED. Wired into
+  `run_all_tests.sh` as a hard FAIL in both modes. WP-0.1-B (HTTP-surface auth) folds in as
+  assertion #5: `/metrics` + `/metrics/prom` are now a **recorded** accepted open surface
+  (inline marker in `services/shared/runner.py`, documented in `SECURITY.md` §11).
+- **Nightly evaluation workflow (WP-0.2-A + 0.2-B).** `.github/workflows/nightly-eval.yml`
+  (cron 03:00 UTC, SHA-pinned, opt-in live lane) runs the detection-quality canary, EVTX and
+  Splunk corpus replays, and appends one row per run to the committed `eval/trend.jsonl`
+  (real first row: macro-F1 0.875, with `untested_rules` explicit). The lane also asserts the
+  WS-4 rule-health Prometheus series on a live scrape when configured.
+- **Cosign + SLSA release signing (WP-0.3-A1).** `.github/workflows/release.yml` — keyless
+  cosign signing of release artifacts + images, SLSA v1 provenance via
+  `slsa-github-generator`, all SHA-pinned; `SECURITY.md` gains a "Verifying release artifacts"
+  section with copy-pasteable verification commands. (OpenSSF Best Practices badge = owner
+  follow-up.)
+- **pip hash-pinning (WP-0.3-A2 + A3).** Every service `requirements.txt` now carries real
+  `sha256 --hash` entries for its entire third-party surface (redis 8.1.0 + PyYAML), so
+  `pip install --require-hashes` is enforceable; PyYAML pin drift unified to **6.0.2**
+  across all 8 services (ws8 was on 6.0.3).
+- **AI-to-OT attack-chain twin (WP-1-A..G, Phase 1).** `eval/twin/` — `plc_sim.py`
+  (deterministic, loopback-only simulated PLC), `scenario.py` (7-step AI-to-OT chain in RAW
+  source formats through the real parsers; the un-parserable `external_content` step is
+  reported as a gap, never faked), `oracle.yaml` (machine-readable grading target, all
+  referenced rule IDs real), `negative_controls.py` (4 benign scenarios), `degradation.py`
+  (delay/duplicate/reorder/loss, deterministic, loss is strict-subset), `report.py` +
+  `make twin` + nightly lane (full scorecard, every metric harness-measured), and
+  **`baseline.json` frozen (WP-1-G)** before Phase 2's entity plane.
+
+### Fixed (2026-08-28, code-review follow-up on the Phase 0 + Phase 1 package above)
+
+- **`negative_controls.py` FPR was real but undiscriminable: fixed, not hidden.**
+  *(Superseded by the "second code-review pass" entry above: this first pass shipped the
+  fix as a silent full SUPPRESSION, which the second pass found and redesigned into a
+  DOWNGRADE via a companion low-severity rule — read that entry for the current
+  behavior. Left here for history.)* The
+  approved-maintenance-window coil write and the attack chain's coil write shared the same
+  address, same source IP, and both landed in business hours — no signal existed to tell
+  them apart, so the original **FPR 0.25** was a real, structural gap, not something a
+  parser-level tune could fix. Added an out-of-band `changeTicketId` field
+  (`modbus_anomaly.py` → `unmapped.ot.change_ticket_id`), a new `exists` rule operator
+  (`services/ws4-detection/engine.py`), and an `authorized_change` suppression predicate on
+  `contracts/rules/ot_modbus_unauthorized_write.yml`. The twin does **not** validate the
+  ticket against a real ticketing system — it proves the suppression mechanism works, not
+  that FENGARDE solves real-world OT change authorization. **FPR is now 0/4 = 0.0**; the
+  attack chain (which never sets the field) still fires `ot_modbus_unauthorized_write`.
+- **`report.py` scorecard: several metrics were fabricated constants, not measurements.**
+  `chain_fidelity`, `mttd_seconds`, `alerts_total`, `degradation_behavior`, and
+  `peak_alert_score` were hand-picked literals labeled `"basis": "harness-measured"` without
+  ever being measured — the exact anti-pattern the WP-0.1-A guard exists to catch. Now:
+  `mttd_seconds`/`alerts_total`/`peak_alert_score` are computed from the real detector run's
+  timestamps and fired alerts; `degradation_behavior` actually invokes
+  `degradation.py::selfcheck()`; `chain_fidelity`/`false_correlation_rate`/
+  `alert_reduction_ratio` are honest `null` (WS-8 has no causal-edge graph or incident
+  promotion to measure a fraction over — a fabricated `0.0` would misread as "measured and
+  found zero"). Current real run (seed 7): **TPR=1.0, FPR=0.0, chain_fidelity=null,
+  mttd_seconds=60.0, evidence_completeness=0.9375**.
+- **The twin had zero PR-gate coverage.** 1,500+ lines under `eval/twin/` were reachable only
+  via `make twin` / the nightly workflow. `run_all_tests.sh` now runs
+  `scenario.py --selfcheck`, `degradation.py --selfcheck`, `negative_controls.py`, and
+  `report.py --no-trend` as hard-fail gate steps.
+- **`check_lane_coverage.py`**: assertion #5 (HTTP-surface auth) matched on raw substring
+  scan, so a comment or docstring mentioning `api_key` could fake an auth call on a route
+  with none — now runs against tokenized code with comments/strings stripped. Assertion #3's
+  dead error-detection branch (comparing the wrong set) fixed. Assertion #4's basename-only
+  matching could conflate two same-named live tests in different services — now matches on
+  full relative path first.
+- **`.github/dependabot.yml`**: PyYAML/redis ignored per pip directory. Assertion #6 (pin
+  consistency) was aligned by downgrading ws8-correlation's PyYAML 6.0.3 → 6.0.2 to match the
+  other 7 services, but nothing stopped the *next* Dependabot bump from drifting one service
+  again and re-redding the gate — future bumps to either package now require a manual,
+  all-services-at-once PR.
+- **`eval/twin/plc_sim.py`**: the Modbus/TCP server had no bounds checking — an out-of-range
+  register/coil read or a truncated request raised `IndexError`/`struct.error` and killed the
+  connection loop instead of returning the proper Modbus exception 0x02. Fixed, plus a
+  30s per-connection timeout so a stalled client can't wedge the single-connection loop.
+- **`eval/twin/scenario.py`**: `run_chain(disable_parser=...)`'s restore-on-exit logic left
+  the negative-control stub parser permanently registered when `disable_parser` named a
+  source with no real parser to begin with (`saved_parser is None` was indistinguishable from
+  "nothing to restore"). Fixed to track presence, not just the saved value.
+- **`.github/workflows/release.yml`**: every `v*` tag (including pre-releases like
+  `v0.7.0-rc1`) moved the `:latest` image tag for all 9 services. Now gated to strict
+  `vMAJOR.MINOR.PATCH` tags only.
+- **`.github/workflows/nightly-eval.yml`**: the EVTX/Splunk corpus-replay steps had no `if:`
+  guard for `NIGHTLY_EVAL_MODE=quality-only` — they still ran and printed a skip message
+  instead of being skipped as steps (functionally harmless, since both scripts skip cleanly
+  on a missing corpus dir, but wasted CI time and didn't match the documented intent).
+- **Dockerfiles**: `--require-hashes` added to all 8 services' `pip install` — hash
+  enforcement previously rested on pip's implicit hash-checking mode rather than being
+  stated explicitly. Verified with a real `docker build` (ws2-normalization) after the change.
+- **`contracts/detection-coverage.md`**: `common_password_spray` was documented as
+  ATT&CK T1110.003; the shipped rule (and its own file's comment explaining the rename) is
+  T1110.004.
+
+### Added (2026-08-28, MSSP distribution: partner list + quickstart went live)
+
+- **MSSP partner registration path live.** `docs/mssp-quickstart.md` linked from README; draft
+  flag cleared. New **Partner list** section (public trust page) with the Option-B terms, published
+  as a placeholder with a **manual-review inclusion rule** (F-10, decided 2026-08-28). Registration
+  had already existed since 2026-08-06 (`.github/ISSUE_TEMPLATE/mssp_partner_registration.md` +
+  the quickstart's link); what was missing — the partner-list doc section, the README link, and the
+  owner sign-off on the terms — is now in place.
+
 ### Fixed (2026-08-28, WS-3: live-stack CAS race under stateful-rule re-fire)
 
 Re-measuring the README's live-stack Performance table surfaced a real bug

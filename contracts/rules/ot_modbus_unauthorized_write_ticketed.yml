@@ -1,0 +1,46 @@
+title: Modbus/TCP write outside the expected address range, ticketed (authorized change)
+id: bc313d43-588a-47e5-9f79-a4984ae1922c
+status: stable
+description: >
+  The LOW-SEVERITY companion to `ot_modbus_unauthorized_write.yml`. Fires on
+  the exact same condition (an out-of-range Modbus write) when the write
+  carries a `changeTicketId` on the envelope's META channel
+  (`unmapped.ot.change_ticket_id`) -- the out-of-band authorization signal a
+  real tap/proxy could attach from an integrated change-management system
+  (taken ONLY from meta, never from frame bytes, and shape-checked by
+  modbus_anomaly.py -- PR #80 review). This rule exists so a ticketed write
+  is NEVER a silent, unindexed non-event: it still produces an alert, still
+  appears in search/hunting, still has a stable rule_id and MITRE tag -- it
+  is just scored `low` instead of `high`, because the write itself is
+  identical to the unauthorized case and the parser does not (and cannot)
+  validate the ticket against a real ticketing system (every accepted value
+  is surfaced as `change_ticket_unvalidated: true`).
+
+  If `unmapped.ot.change_ticket_id` is ever populated from an untrusted
+  source (see the sibling rule's description and modbus_anomaly.py's module
+  docstring for the required trust boundary), this rule -- not the sibling
+  -- is what an attacker's forged ticket routes to: LOW severity, indexed,
+  not silence.
+level: low
+logsource:
+  category: network_activity
+detection:
+  unauthorized_write:
+    class_uid: 4001
+    unmapped.ot.anomaly_type: unauthorized_write
+  authorized_change:
+    unmapped.ot.change_ticket_id: {exists: true}
+  condition: unauthorized_write and authorized_change
+fields:
+  - src_endpoint.ip
+  - dst_endpoint.ip
+  - unmapped.ot.function_code
+  - unmapped.ot.address
+  - unmapped.ot.change_ticket_id
+siem:
+  sector: datacenter
+  score_weight: 10
+mitre:
+  framework: attack-ics
+  tactic: TA0106      # Impair Process Control
+  technique: T0855    # Unauthorized Command Message

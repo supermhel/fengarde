@@ -3,7 +3,7 @@ WORKDIR /app
 # shared lib + this service
 COPY services/shared /app/shared
 COPY services/ws1-collectors /app/ws1-collectors
-RUN pip install --no-cache-dir -r /app/ws1-collectors/requirements.txt
+RUN pip install --no-cache-dir --require-hashes -r /app/ws1-collectors/requirements.txt
 ENV PYTHONPATH=/app
 ENV BUS_BACKEND=redis
 # Security-adversarial #2 (2026-07-29 audit): no service ran as a non-root

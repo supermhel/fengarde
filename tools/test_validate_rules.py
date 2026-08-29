@@ -145,6 +145,16 @@ class TestValidateRule(unittest.TestCase):
         self.assertEqual(errs, [], f"legit mon/tue window must pass, got {errs}")
         self.assertFalse(any("EVERY timestamp" in e for e in errs))
 
+    def test_exists_valid(self):
+        errs = self._errs(lambda r: r["detection"].__setitem__(
+            "sel", {"unmapped.ot.change_ticket_id": {"exists": True}}))
+        self.assertEqual(errs, [])
+
+    def test_exists_needs_boolean(self):
+        errs = self._errs(lambda r: r["detection"].__setitem__(
+            "sel", {"unmapped.ot.change_ticket_id": {"exists": "true"}}))
+        self.assertTrue(any("exists" in e and "boolean" in e for e in errs))
+
     def test_score_weight_out_of_range(self):
         self.assertTrue(any("score_weight" in e for e in self._errs(
             lambda r: r["siem"].update(score_weight=150))))

@@ -42,11 +42,34 @@ REQUIREMENTS_FILES = sorted(
 )
 
 
+def _requirement_blocks(text: str) -> list[list[str]]:
+    """Split one requirements.txt's lines into logical BLOCKS: a requirement
+    line plus every backslash-continued ``--hash=...`` line that follows it,
+    in order. Comments are stripped first; a block is whatever remains
+    joined by a trailing ``\\``. A hash-pinned requirement is meaningless
+    (and unparseable by pip/cyclonedx-py) with its hash lines separated
+    from the requirement line they authenticate -- sorting/deduping by
+    INDIVIDUAL LINE (the previous approach) breaks exactly this."""
+    blocks: list[list[str]] = []
+    current: list[str] = []
+    for raw_line in text.splitlines():
+        line = raw_line.split("#", 1)[0].rstrip()
+        if not line.strip():
+            continue
+        current.append(line)
+        if not line.endswith("\\"):
+            blocks.append(current)
+            current = []
+    if current:  # a dangling continuation with no closing line -- keep as-is
+        blocks.append(current)
+    return blocks
+
+
 def merged_requirements():
     """Combine every service's requirements.txt into one deduplicated,
-    sorted list -- comments stripped (they're per-file context that doesn't
-    survive merging meaningfully; the SBOM's provenance is this repo, not
-    the comment).
+    sorted set of requirement BLOCKS (see _requirement_blocks) -- comments
+    stripped (they're per-file context that doesn't survive merging
+    meaningfully; the SBOM's provenance is this repo, not the comment).
 
     Returns ``(text, missing)`` where ``missing`` names any EXPECTED
     requirements file that is absent from disk. Gap-hunt (2026-08-26)
@@ -54,18 +77,23 @@ def merged_requirements():
     and ``--check`` compared two sides that BOTH omitted it, so a real repo
     drift passed as green. The caller treats a non-empty ``missing`` as an
     error (always in ``--check``)."""
-    packages: set[str] = set()
+    blocks_by_key: dict[str, list[str]] = {}
     missing: list[str] = []
     for rel in REQUIREMENTS_FILES:
         path = ROOT / rel
         if not path.exists():
             missing.append(rel)
             continue
-        for line in path.read_text().splitlines():
-            line = line.split("#", 1)[0].strip()
-            if line:
-                packages.add(line)
-    return "\n".join(sorted(packages)) + "\n", missing
+        for block in _requirement_blocks(path.read_text()):
+            # Dedup key ignores line-ending backslashes/whitespace so the
+            # SAME requirement+hash-set pinned identically across multiple
+            # services collapses to one block, same as the old per-line set.
+            key = "\n".join(ln.rstrip("\\").strip() for ln in block)
+            blocks_by_key[key] = block
+    out_lines: list[str] = []
+    for key in sorted(blocks_by_key):
+        out_lines.extend(blocks_by_key[key])
+    return "\n".join(out_lines) + "\n", missing
 
 
 def _components(path: Path) -> list:

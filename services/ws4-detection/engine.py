@@ -12,6 +12,7 @@ Supported rule shape (subset of Sigma, per sigma-convention.md):
         <ocsf.dotted.path>: {gt|gte|lt|lte|ne: <number>}   # comparison (fail closed)
         <ocsf.dotted.path>: {not_in: <allowlist-name>}     # suppression via contracts/allowlists/
         <ocsf.dotted.path>: {glob: "svchost*.exe"}         # Sigma-style *?[seq] wildcard, NOT regex
+        <ocsf.dotted.path>: {exists: true|false}           # field presence/absence
         time: {outside_hours: {start: "08:00", end: "18:00",   # time-of-day / day-of-week
                days: [mon,tue,wed,thu,fri], tz_offset_minutes: 0}}
       condition: "<sel> [and|or|not] <sel> ..."  # boolean over selection names
@@ -545,6 +546,18 @@ class Rule:
                 # regex (see _glob_match's docstring for why this doesn't reopen
                 # ADR-005's no-regex/ReDoS-safety constraint).
                 if not _glob_match(actual, arg):
+                    return False
+            elif op == "exists":
+                # Presence predicate: {exists: true} matches when the field is
+                # populated (not None); {exists: false} matches when it's
+                # missing/None. Lets a rule discriminate on an out-of-band
+                # context field a parser only sometimes sets (e.g.
+                # unmapped.ot.change_ticket_id) without hard-coding every
+                # possible value via equality. arg must be a real bool (not a
+                # truthy int/string) -> fail closed on a typo'd non-bool value.
+                if not isinstance(arg, bool):
+                    return False
+                if (actual is not None) != arg:
                     return False
             else:
                 return False  # unknown operator -> fail closed
