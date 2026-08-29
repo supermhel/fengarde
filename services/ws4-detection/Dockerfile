@@ -3,7 +3,7 @@ WORKDIR /app
 COPY services/shared /app/shared
 COPY contracts /app/contracts
 COPY services/ws4-detection /app/ws4-detection
-RUN pip install --no-cache-dir -r /app/ws4-detection/requirements.txt
+RUN pip install --no-cache-dir --require-hashes -r /app/ws4-detection/requirements.txt
 ENV PYTHONPATH=/app
 ENV BUS_BACKEND=redis
 # Security-adversarial #2 (2026-07-29 audit): drop root before running.

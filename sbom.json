@@ -1,41 +1,90 @@
 {
   "components": [
     {
-      "bom-ref": "requirements-L4",
-      "description": "requirements line 4: PyYAML==6.0.3",
+      "bom-ref": "requirements-L1",
+      "description": "requirements line 1: PyYAML==6.0.2     --hash=sha256:01179a4a8559ab5de078078f37e5c1a30d76bb88519906844fd7bdea1b7729ff     --hash=sha256:39693e1f8320ae4f43943590b49779ffb98acb81f788220ea932a6b6c51004d8     --hash=sha256:8388ee1976c416731879ac16da0aff3f63b286ffdd57cdeb95f3f2e085687563     --hash=sha256:7e7401d0de89a9a855c839bc697c079a4af81cf878373abd7dc625847d25cbd8     --hash=sha256:a4d3091415f010369ae4ed1fc6b79def9416358877534caf6a0fdd2146c87a3e     --hash=sha256:e10ce637b18caea04431ce14fabcf5c64a1c61ec9c56b071a4b7ca131ca52d44     --hash=sha256:80bab7bfc629882493af4aa31a4cfa43a4c57c83813253626916b8c7ada83476     --hash=sha256:3ad2a3decf9aaba3d29c8f537ac4b243e36bef957511b4766cb0057d32b0be85     --hash=sha256:70b189594dbe54f75ab3a1acec5f1e3faa7e8cf2f1e08d9b561cb41b845f69d5     --hash=sha256:ec031d5d2feb36d1d1a24380e4db6d43695f3748343d99434e6f5f9156aaa2ed     --hash=sha256:9056c1ecd25795207ad294bcf39f2db3d845767be0ea6e6a34d856f006006083     --hash=sha256:3b1fdb9dc17f5a7677423d508ab4f243a726dea51fa5e70992e59a7411c89d19     --hash=sha256:d584d9ec91ad65861cc08d42e834324ef890a082e591037abe114850ff7bbc3e",
       "externalReferences": [
         {
           "comment": "implicit dist url",
+          "hashes": [
+            {
+              "alg": "SHA-256",
+              "content": "01179a4a8559ab5de078078f37e5c1a30d76bb88519906844fd7bdea1b7729ff"
+            },
+            {
+              "alg": "SHA-256",
+              "content": "39693e1f8320ae4f43943590b49779ffb98acb81f788220ea932a6b6c51004d8"
+            },
+            {
+              "alg": "SHA-256",
+              "content": "3ad2a3decf9aaba3d29c8f537ac4b243e36bef957511b4766cb0057d32b0be85"
+            },
+            {
+              "alg": "SHA-256",
+              "content": "3b1fdb9dc17f5a7677423d508ab4f243a726dea51fa5e70992e59a7411c89d19"
+            },
+            {
+              "alg": "SHA-256",
+              "content": "70b189594dbe54f75ab3a1acec5f1e3faa7e8cf2f1e08d9b561cb41b845f69d5"
+            },
+            {
+              "alg": "SHA-256",
+              "content": "7e7401d0de89a9a855c839bc697c079a4af81cf878373abd7dc625847d25cbd8"
+            },
+            {
+              "alg": "SHA-256",
+              "content": "80bab7bfc629882493af4aa31a4cfa43a4c57c83813253626916b8c7ada83476"
+            },
+            {
+              "alg": "SHA-256",
+              "content": "8388ee1976c416731879ac16da0aff3f63b286ffdd57cdeb95f3f2e085687563"
+            },
+            {
+              "alg": "SHA-256",
+              "content": "9056c1ecd25795207ad294bcf39f2db3d845767be0ea6e6a34d856f006006083"
+            },
+            {
+              "alg": "SHA-256",
+              "content": "a4d3091415f010369ae4ed1fc6b79def9416358877534caf6a0fdd2146c87a3e"
+            },
+            {
+              "alg": "SHA-256",
+              "content": "d584d9ec91ad65861cc08d42e834324ef890a082e591037abe114850ff7bbc3e"
+            },
+            {
+              "alg": "SHA-256",
+              "content": "e10ce637b18caea04431ce14fabcf5c64a1c61ec9c56b071a4b7ca131ca52d44"
+            },
+            {
+              "alg": "SHA-256",
+              "content": "ec031d5d2feb36d1d1a24380e4db6d43695f3748343d99434e6f5f9156aaa2ed"
+            }
+          ],
           "type": "distribution",
           "url": "https://pypi.org/simple/PyYAML/"
         }
       ],
       "name": "PyYAML",
-      "purl": "pkg:pypi/pyyaml@6.0.3",
+      "purl": "pkg:pypi/pyyaml@6.0.2",
       "type": "library",
-      "version": "6.0.3"
+      "version": "6.0.2"
     },
     {
-      "bom-ref": "requirements-L5",
-      "description": "requirements line 5: redis==8.1.0",
+      "bom-ref": "requirements-L15",
+      "description": "requirements line 15: redis==8.1.0     --hash=sha256:a4fe1aac3d3b3cc791d4b3d5931c5a956045dc951ee74d1c913ee3ac4d2ee9fb     --hash=sha256:6e1a19beef9225c83efd689c7e6b7da2d5215b1f42cd13b7fc3714d0a09c7b25",
       "externalReferences": [
         {
           "comment": "implicit dist url",
-          "type": "distribution",
-          "url": "https://pypi.org/simple/redis/"
-        }
-      ],
-      "name": "redis",
-      "purl": "pkg:pypi/redis@8.1.0",
-      "type": "library",
-      "version": "8.1.0"
-    },
-    {
-      "bom-ref": "requirements-L6",
-      "description": "requirements line 6: redis==8.1.0",
-      "externalReferences": [
-        {
-          "comment": "implicit dist url",
+          "hashes": [
+            {
+              "alg": "SHA-256",
+              "content": "6e1a19beef9225c83efd689c7e6b7da2d5215b1f42cd13b7fc3714d0a09c7b25"
+            },
+            {
+              "alg": "SHA-256",
+              "content": "a4fe1aac3d3b3cc791d4b3d5931c5a956045dc951ee74d1c913ee3ac4d2ee9fb"
+            }
+          ],
           "type": "distribution",
           "url": "https://pypi.org/simple/redis/"
         }
@@ -48,17 +97,14 @@
   ],
   "dependencies": [
     {
-      "ref": "requirements-L4"
+      "ref": "requirements-L1"
     },
     {
-      "ref": "requirements-L5"
-    },
-    {
-      "ref": "requirements-L6"
+      "ref": "requirements-L15"
     }
   ],
   "metadata": {
-    "timestamp": "2026-08-28T16:52:27.929397+00:00",
+    "timestamp": "2026-08-29T12:02:32.379542+00:00",
     "tools": {
       "components": [
         {
@@ -162,7 +208,7 @@
       ]
     }
   },
-  "serialNumber": "urn:uuid:a822c2cc-2081-4a35-8a6f-6555d3635f47",
+  "serialNumber": "urn:uuid:af919fd3-54b8-4d1b-844c-c30d979dc648",
   "version": 1,
   "$schema": "http://cyclonedx.org/schema/bom-1.6.schema.json",
   "bomFormat": "CycloneDX",

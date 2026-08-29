@@ -5,7 +5,7 @@ FROM python:3.13-slim@sha256:6771159cd4fa5d9bba1258caf0b82e6b73458c694d178ad97c5
 # pip-audit / SBOM can see it -- the old inline `pip install redis==5.0.8` escaped
 # both (and was version-skewed vs the 8.1.0 used elsewhere).
 COPY services/devkit-feeder/requirements.txt /tmp/requirements.txt
-RUN pip install --no-cache-dir -r /tmp/requirements.txt
+RUN pip install --no-cache-dir --require-hashes -r /tmp/requirements.txt
 WORKDIR /app
 COPY services/devkit-feeder/feed.py /app/feed.py
 # Security-adversarial #2 (2026-07-29 audit): drop root before running.

@@ -1,7 +1,7 @@
 # FENGARDE for MSSPs — quickstart
 
-**Draft — not yet linked from README or announced.** Written to be reviewed before it's
-public; see the open question at the bottom before treating this as final.
+**Live (linked from README, F-10 decided 2026-08-28).** [Partner registration](https://github.com/supermhel/fengarde/issues/new?template=mssp_partner_registration.md)
+is open — see the [Partner list](#partners) below.
 
 ## Who this is for
 
@@ -101,9 +101,31 @@ If you'd like a relationship channel (a name on a partner list, MSSP-specific do
 updates, optional co-marketing — no legal weight, no fee), open an [MSSP partner
 registration issue](../../../issues/new?template=mssp_partner_registration.md).
 
+## Partners
+
+> **Provenance:** this Partners section (and the partner-registration template it
+> links) landed via PR #80 along with the Phase 0/1 execution — WP-0.4-A, F-10
+> decided 2026-08-28. The PR's description predates this MSSP work and does not
+> list it; this note is the record of where it actually landed.
+
+**FENGARDE partners** — MSSPs and managed-security providers running FENGARDE for their
+customers. This list is the public face of the registration path.
+
+> **How to get on this list:** file an [MSSP / white-label partner registration
+> issue](../../../issues/new?template=mssp_partner_registration.md). It is *not* a legal step and
+> creates no obligation on either side — FENGARDE stays Apache-2.0, free forever, no fee, no
+> restriction on your rights under that license. It just puts a name on this list, gets you
+> MSSP-specific docs/updates, and opens optional co-marketing. Skipping it changes nothing about
+> what you're allowed to do.
+
+**Listings are added after a manual review, not automatically** (F-10, decided 2026-08-28). This
+is a trust-signal page, so it only ever shows confirmed partners — never aspirational names.
+
+_No partners listed yet — partners are added here as they register._
+
 ## Status
 
 Per-tenant fair consume ordering (the must-fix-before-outreach item) landed
-2026-08-07 — see the gap list above for its real, bounded scope. This doc is still
-unlinked from README pending your own review of its content, not any remaining
-engineering blocker.
+2026-08-07 — see the gap list above for its real, bounded scope. F-10 (partner terms)
+decided 2026-08-28: Option-B terms ratified as-is, partner list published with a
+placeholder (manual-review inclusion rule), this doc linked from README.

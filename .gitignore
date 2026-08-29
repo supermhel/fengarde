@@ -57,6 +57,11 @@ eval/detection_accuracy/evtx-samples/
 eval/detection_accuracy/splunk-attack-data/
 eval/detection_accuracy/*_eval_results.json
 
+# twin scorecard LAST-RUN output (PR #80 finding 10): the gate writes here so
+# it never dirties the committed eval/twin/report.json checkpoint; that file
+# is updated only deliberately (e.g. the nightly-eval workflow).
+eval/twin/report.latest.json
+
 # Claude Code local/editor files (not project artifacts)
 .claude/settings.local.json
 .claude/launch.json

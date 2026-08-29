@@ -11,7 +11,7 @@ WORKDIR /app
 # imported, not only under this image's PYTHONPATH=/app.
 COPY services/shared /app/shared
 COPY services/ws6-inventory /app/ws6-inventory
-RUN pip install --no-cache-dir -r /app/ws6-inventory/requirements.txt
+RUN pip install --no-cache-dir --require-hashes -r /app/ws6-inventory/requirements.txt
 ENV PYTHONPATH=/app
 ENV INVENTORY_DB=/data/inventory.db
 ENV PORT=8000

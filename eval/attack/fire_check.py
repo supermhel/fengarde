@@ -159,6 +159,20 @@ def _set_path(event: dict, dotted: str, value: object) -> None:
     node[parts[-1]] = value
 
 
+def _del_path(event: dict, dotted: str) -> None:
+    """Delete a dotted path (the write-removal counterpart to _set_path),
+    used by the `exists` near-miss (`{exists: true}` violated by REMOVING the
+    field -- PR #80 review finding 5). No-op if an intermediate dict is absent."""
+    node = event
+    parts = dotted.split(".")
+    for part in parts[:-1]:
+        nxt = node.get(part)
+        if not isinstance(nxt, dict):
+            return
+        node = nxt
+    node.pop(parts[-1], None)
+
+
 def _real_events() -> list[dict]:
     """One real (post-parse, post-enrich) event per fixture, same source as
     check_rule_producers.py's own ground truth -- not a separate, drifting
@@ -663,6 +677,73 @@ def _is_pure_conjunction(rule) -> bool:
         t == "and" or (t not in keywords and t in rule.selections) for t in tokens)
 
 
+def _conjuncts(rule):
+    """Parse the condition into conjuncts ``[(sel_name, negated), ...]``, or
+    None when the condition is not a probeable conjunction.
+
+    Extends ``_is_pure_conjunction`` (PR #80 review finding 5): a probeable
+    conjunction is selections joined ONLY by ``and``, where each conjunct is a
+    single selection, optionally negated (``<sel>`` or ``not <sel>``). A rule
+    like ``unauthorized_write and not authorized_change`` is probeable: the
+    `not`-term's load-bearing requirement is that SATISFYING the negated
+    selection must silence the rule. ``or``, parentheses, or multi-token
+    conjuncts are NOT probeable (violating one predicate need not silence,
+    and asserting silence would assert a defect) -- those are reported
+    inapplicable, exactly as ``_is_pure_conjunction`` always did.
+    """
+    keywords = {"and", "or", "not"}
+    tokens = rule._condition_tokens
+    if not tokens:
+        return None
+    conjuncts: list[list[str]] = []
+    cur: list[str] = []
+    for t in tokens:
+        if t == "and":
+            if cur:
+                conjuncts.append(cur)
+                cur = []
+        elif t in ("or", "(", ")"):
+            return None
+        else:
+            cur.append(t)
+    if cur:
+        conjuncts.append(cur)
+    out: list[tuple[str, bool]] = []
+    for c in conjuncts:
+        if len(c) == 1 and c[0] in rule.selections:
+            out.append((c[0], False))
+        elif len(c) == 2 and c[0] == "not" and c[1] in rule.selections:
+            out.append((c[1], True))
+        else:
+            return None
+    return out
+
+
+def _satisfy_selection(rule, fire_ev: dict, sel_name: str) -> dict | None:
+    """Return a copy of ``fire_ev`` in which selection ``sel_name`` is
+    guaranteed to MATCH (True) -- the near-miss construction for a
+    ``not <sel_name>`` conjunct: satisfying the negated selection must silence
+    the rule. Returns None (honest skip) when no satisfying event is
+    constructible."""
+    sel = rule.selections.get(sel_name)
+    if not isinstance(sel, dict) or not sel:
+        return None
+    ev = copy.deepcopy(fire_ev)
+    for field, expected in sel.items():
+        if isinstance(expected, dict):
+            # Only a single {exists: bool} operator is constructible here.
+            if len(expected) == 1 and "exists" in expected:
+                if expected["exists"] is True:
+                    _set_path(ev, field, _NEAR_MISS_SENTINEL)
+                else:
+                    _del_path(ev, field)
+            else:
+                return None
+        else:
+            _set_path(ev, field, expected)
+    return ev
+
+
 def _inside_hours_ts(spec) -> int | None:
     """An epoch-ms that is INSIDE ``spec``'s business-hours window -- the exact
     mirror of `_oh_anchors`, and the near-miss for an ``outside_hours``
@@ -731,6 +812,17 @@ def _operator_near_miss(op, arg, actual) -> dict:
         if _glob_match(_NEAR_MISS_SENTINEL, arg):
             return {"kind": "skip", "reason": "the sentinel itself matches the declared pattern"}
         return {"kind": "value", "value": _NEAR_MISS_SENTINEL, "label": "value outside the declared glob"}
+    if op == "exists":
+        # PR #80 review (finding 5): field-presence predicate. `exists: true`
+        # is violated by REMOVING the field; `exists: false` by ADDING it. A
+        # field already absent under `exists: true` is the rule's own firing
+        # state, so no near-miss exists there (honest skip, not a guessed one).
+        if arg is True:
+            if actual is None:
+                return {"kind": "skip", "reason": "field is absent on the firing fixture -- exists:true is already the firing state; no near-miss"}
+            return {"kind": "remove", "label": "field removed (exists:true violated)"}
+        return {"kind": "value", "value": _NEAR_MISS_SENTINEL,
+                "label": "field populated (exists:false violated)"}
     return {"kind": "skip", "reason": f"no near-miss constructor for operator {op!r}"}
 
 
@@ -810,11 +902,13 @@ def _near_miss_probe(rule, base_event: dict | None, blocked: bool = False) -> di
                 "reason": ("harness could not construct a replay for this rule -- "
                            "no evidence about the rule either way" if blocked else
                            "rule never fired -- no fixture to build a near-miss from")}
-    if not _is_pure_conjunction(rule):
+    conjuncts = _conjuncts(rule)
+    if conjuncts is None:
         return {"applicable": False,
-                "reason": f"condition {rule.condition!r} is not a pure conjunction -- "
-                          f"violating one predicate need not silence the rule, so "
-                          f"asserting silence would assert a defect"}
+                "reason": f"condition {rule.condition!r} is not a probeable "
+                          f"and/not-conjunction -- violating one predicate need "
+                          f"not silence the rule, so asserting silence would "
+                          f"assert a defect (see _conjuncts / _is_pure_conjunction)"}
 
     anchors = _oh_anchors(rule, 0)
     if anchors is None:
@@ -830,7 +924,26 @@ def _near_miss_probe(rule, base_event: dict | None, blocked: bool = False) -> di
                           "fixture -- every near-miss below would be vacuously silent"}
 
     probes: dict[str, dict] = {}
-    for sel_name, selection in rule.selections.items():
+    # PR #80 review (finding 5): iterate the CONJUNCTS, not raw selections, so
+    # a `not <sel>` term is probed by SATISFYING the negated selection (making
+    # it match must silence the rule) instead of wrongly trying to violate it.
+    for sel_name, negated in conjuncts:
+        selection = rule.selections.get(sel_name)
+        if negated:
+            ev = _satisfy_selection(rule, fire_ev, sel_name)
+            if ev is None:
+                probes[f"not {sel_name}"] = {
+                    "status": "skipped",
+                    "detail": "no constructor to satisfy the negated selection"}
+                continue
+            ev.setdefault("siem", {})["ingest_id"] = (
+                f"firecheck:{rule.id}:nearmiss:not-{sel_name}")
+            fired = rule.evaluate(ev)
+            probes[f"not {sel_name}"] = {
+                "status": "fired" if fired else "held",
+                "detail": (f"negated selection {sel_name} SATISFIED -- the "
+                           "rule must silence when the 'not' guard matches")}
+            continue
         if not isinstance(selection, dict):
             continue
         for field, expected in selection.items():
@@ -854,6 +967,13 @@ def _near_miss_probe(rule, base_event: dict | None, blocked: bool = False) -> di
                         rule, fire_ev, case["name"], case["value"])
                     detail = (f"{field}={case['value']!r} placed IN allowlist "
                               f"{case['name']!r} -- suppression must apply")
+                elif case["kind"] == "remove":
+                    ev = copy.deepcopy(fire_ev)
+                    _del_path(ev, field)
+                    ev.setdefault("siem", {})["ingest_id"] = (
+                        f"firecheck:{rule.id}:nearmiss:{key}:rm")
+                    fired = rule.evaluate(ev)
+                    detail = f"{field}: {case['label']}"
                 else:
                     ev = copy.deepcopy(fire_ev)
                     _set_path(ev, field, case["value"])

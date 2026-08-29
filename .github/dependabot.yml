@@ -1,37 +1,89 @@
 version: 2
 updates:
+  # PyYAML and redis must carry the SAME pin across every services/*/requirements.txt
+  # (enforced by tools/check_lane_coverage.py assertion #6 in run_all_tests.sh).
+  # Dependabot bumps directories independently, so an un-ignored automated bump
+  # of either package in just one service would immediately red the gate for
+  # everyone else. Both are ignored here; bump them by hand across all pip
+  # directories in one PR when a real upgrade is needed.
+  #
+  # `update-types` scopes the ignore to regular version-update PRs only --
+  # per GitHub's documented Dependabot behavior, a security-advisory update
+  # is NOT a `version-update:*` type and is therefore NOT covered by this
+  # ignore rule, so a real CVE on either package still opens a PR. Ignoring
+  # convenience bumps must not also mute the security channel.
   - package-ecosystem: "pip"
     directory: "/services/ws1-collectors"
     schedule:
       interval: "weekly"
+    ignore:
+      - dependency-name: "PyYAML"
+        update-types: ["version-update:semver-major", "version-update:semver-minor", "version-update:semver-patch"]
+      - dependency-name: "redis"
+        update-types: ["version-update:semver-major", "version-update:semver-minor", "version-update:semver-patch"]
   - package-ecosystem: "pip"
     directory: "/services/ws2-normalization"
     schedule:
       interval: "weekly"
+    ignore:
+      - dependency-name: "PyYAML"
+        update-types: ["version-update:semver-major", "version-update:semver-minor", "version-update:semver-patch"]
+      - dependency-name: "redis"
+        update-types: ["version-update:semver-major", "version-update:semver-minor", "version-update:semver-patch"]
   - package-ecosystem: "pip"
     directory: "/services/ws3-indexer"
     schedule:
       interval: "weekly"
+    ignore:
+      - dependency-name: "PyYAML"
+        update-types: ["version-update:semver-major", "version-update:semver-minor", "version-update:semver-patch"]
+      - dependency-name: "redis"
+        update-types: ["version-update:semver-major", "version-update:semver-minor", "version-update:semver-patch"]
   - package-ecosystem: "pip"
     directory: "/services/ws4-detection"
     schedule:
       interval: "weekly"
+    ignore:
+      - dependency-name: "PyYAML"
+        update-types: ["version-update:semver-major", "version-update:semver-minor", "version-update:semver-patch"]
+      - dependency-name: "redis"
+        update-types: ["version-update:semver-major", "version-update:semver-minor", "version-update:semver-patch"]
   - package-ecosystem: "pip"
     directory: "/services/ws5-ai"
     schedule:
       interval: "weekly"
+    ignore:
+      - dependency-name: "PyYAML"
+        update-types: ["version-update:semver-major", "version-update:semver-minor", "version-update:semver-patch"]
+      - dependency-name: "redis"
+        update-types: ["version-update:semver-major", "version-update:semver-minor", "version-update:semver-patch"]
   - package-ecosystem: "pip"
     directory: "/services/ws6-inventory"
     schedule:
       interval: "weekly"
+    ignore:
+      - dependency-name: "PyYAML"
+        update-types: ["version-update:semver-major", "version-update:semver-minor", "version-update:semver-patch"]
+      - dependency-name: "redis"
+        update-types: ["version-update:semver-major", "version-update:semver-minor", "version-update:semver-patch"]
   - package-ecosystem: "pip"
     directory: "/services/devkit-feeder"
     schedule:
       interval: "weekly"
+    ignore:
+      - dependency-name: "PyYAML"
+        update-types: ["version-update:semver-major", "version-update:semver-minor", "version-update:semver-patch"]
+      - dependency-name: "redis"
+        update-types: ["version-update:semver-major", "version-update:semver-minor", "version-update:semver-patch"]
   - package-ecosystem: "pip"
     directory: "/services/ws8-correlation"
     schedule:
       interval: "weekly"
+    ignore:
+      - dependency-name: "PyYAML"
+        update-types: ["version-update:semver-major", "version-update:semver-minor", "version-update:semver-patch"]
+      - dependency-name: "redis"
+        update-types: ["version-update:semver-major", "version-update:semver-minor", "version-update:semver-patch"]
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:

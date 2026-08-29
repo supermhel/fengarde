@@ -148,6 +148,15 @@ FIXTURES: dict[str, list[dict]] = {
                  "sourceIp": "10.20.0.50", "destIp": "10.20.0.5"}, "meta": {}},
         {"raw": {"unitId": 1, "functionCode": 6, "address": 41999,
                  "sourceIp": "10.20.0.99", "destIp": "10.20.0.5"}, "meta": {}},
+        # Same out-of-range write, WITH a changeTicketId -- the producer
+        # fixture for ot_modbus_unauthorized_write_ticketed.yml (the LOW
+        # rule the write downgrades to instead of the HIGH one above).
+        # Trust boundary (PR #80 review): the ticket rides the envelope's
+        # META channel, never the frame record -- a changeTicketId in the
+        # frame bytes is attacker data and must not downgrade.
+        {"raw": {"unitId": 1, "functionCode": 6, "address": 41999,
+                 "sourceIp": "10.20.0.99", "destIp": "10.20.0.5"},
+         "meta": {"changeTicketId": "CHG-FIXTURE-0001"}},
     ],
     "inventory_diff": [
         {"raw": {"mac": "AA:BB:CC:DD:EE:FF", "ip": "10.20.0.77",

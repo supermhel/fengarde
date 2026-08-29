@@ -3,7 +3,7 @@ WORKDIR /app
 COPY services/shared /app/shared
 COPY contracts /app/contracts
 COPY services/ws8-correlation /app/ws8-correlation
-RUN pip install --no-cache-dir -r /app/ws8-correlation/requirements.txt
+RUN pip install --no-cache-dir --require-hashes -r /app/ws8-correlation/requirements.txt
 ENV PYTHONPATH=/app
 ENV BUS_BACKEND=redis
 # Security-adversarial #2 (2026-07-29 audit) convention: drop root before running.

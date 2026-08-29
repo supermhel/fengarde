@@ -47,6 +47,12 @@ demo: preflight
 test:
 	@bash run_all_tests.sh
 
+# Phase 1 twin (WP-1-F): full AI-to-OT attack-chain scorecard, zero infra.
+# Runs eval/twin/report.py (PLC sim -> real parsers -> real detector -> oracle
+# grading), writes eval/twin/report.json, appends one row to eval/trend.jsonl.
+twin:
+	@$(PYTHON) eval/twin/report.py
+
 # v0.1 acceptance test — proves SSH brute-force -> real alert in the index,
 # idempotent under replay, with no Docker/Redis/OpenSearch.
 e2e:

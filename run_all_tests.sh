@@ -23,6 +23,10 @@ echo
 echo "== A6: anti-dormancy check (rules must be satisfiable by a real parser) =="; LAST_HEADER="== A6: anti-dormancy check (rules must be satisfiable by a real parser) =="
 $PY tools/check_rule_producers.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
+echo "== WP-0.1-A: lane-coverage meta-guard (services/parsers/rules/live-tests/HTTP-surface/pin-consistency) =="; LAST_HEADER="== WP-0.1-A: lane-coverage meta-guard (services/parsers/rules/live-tests/HTTP-surface/pin-consistency) =="
+$PY tools/check_lane_coverage.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+$PY tools/check_lane_coverage.py --self-test || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
 echo "== B4: rule validation gate (schema, condition parse, operator safety) =="; LAST_HEADER="== B4: rule validation gate (schema, condition parse, operator safety) =="
 $PY tools/validate_rules.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 $PY tools/test_validate_rules.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
@@ -204,6 +208,8 @@ $PY services/ws2-normalization/test_sanitize.py || { fail=1; FAILED="${FAILED} $
 echo
 echo "== ws2 chaos-ws8 gap-hunt findings (#4 _int_env degrade-not-crash, #5 unmapped top-level LIST wildcard) =="; LAST_HEADER="== ws2 chaos-ws8 gap-hunt findings (#4 _int_env degrade-not-crash, #5 unmapped top-level LIST wildcard) =="
 $PY services/ws2-normalization/test_fix_chaos_gap_hunt.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo "== ws2 modbus changeTicketId trust boundary (PR #80 finding 1: meta-only ticket, shape check) =="; LAST_HEADER="== ws2 modbus changeTicketId trust boundary (PR #80 finding 1: meta-only ticket, shape check) =="
+$PY services/ws2-normalization/test_fix_modbus_ticket_boundary.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
 echo "== ws4 window counters (T6) =="; LAST_HEADER="== ws4 window counters (T6) =="
 $PY services/ws4-detection/test_window.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
@@ -424,6 +430,22 @@ echo
 echo "== detection-quality: precision/recall/F1 canary over the labeled corpus (real engine + real rules) =="; LAST_HEADER="== detection-quality: precision/recall/F1 canary over the labeled corpus (real engine + real rules) =="
 $PY tools/test_detection_quality.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 $PY tools/detection_quality_eval.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+
+# == AI-to-OT twin (WP-1-A..F): PLC sim, attack chain, degradation rig, FPR ==
+echo
+echo "== twin: telemetry-degradation rig self-check (delay/duplicate/reorder/loss determinism + loss-subset proof) =="; LAST_HEADER="== twin: telemetry-degradation rig self-check (delay/duplicate/reorder/loss determinism + loss-subset proof) =="
+$PY eval/twin/degradation.py --selfcheck || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
+echo "== twin: attack-chain scenario self-check (real-parser integrity + determinism + loud-failure negative control) =="; LAST_HEADER="== twin: attack-chain scenario self-check (real-parser integrity + determinism + loud-failure negative control) =="
+$PY eval/twin/scenario.py --selfcheck || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
+echo "== twin: negative controls (FPR source) -- four benign scenarios, all must yield zero incidents =="; LAST_HEADER="== twin: negative controls (FPR source) -- four benign scenarios, all must yield zero incidents =="
+$PY eval/twin/negative_controls.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
+echo "== twin: full scorecard smoke run (report.py must complete without error on the real cascade) =="; LAST_HEADER="== twin: full scorecard smoke run (report.py must complete without error on the real cascade) =="
+# PR #80 finding 10: write to a GITIGNORED last-run path, NOT the committed
+# eval/twin/report.json -- a gate run must not dirty a tracked artifact.
+$PY eval/twin/report.py --no-trend --out eval/twin/report.latest.json || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 
 # == Phase 4 (2026-08-06) enhancement + fix regression tests ==
 echo
