@@ -370,16 +370,19 @@ def test_username_whitespace_normalized():
 
 
 def test_ipv6_case_insensitive_one_identity():
-    """D4 regression: IPv6 is case-insensitive; two spellings of one address
-    must collapse to ONE entity_id. (valid_ip preserves case; the resolver must
-    lowercase.)"""
+    """D4 regression: IPv6 is case-insensitive AND compression-insensitive;
+    every spelling of one address (2001:DB8::1, 2001:db8:0:0:0:0:0:1,
+    2001:0db8:0000:0000:0000:0000:0000:0001) must collapse to ONE entity_id
+    (valid_ip canonicalizes since 2026-08-29)."""
     a = canonical_entity_value("ip", "2001:0DB8::1")
     b = canonical_entity_value("ip", "2001:0db8::1")
-    check(a is not None and a == b,
-          f"D4: IPv6 case spellings must normalize to one value (got {a!r} vs {b!r})")
-    if a is not None:
-        check(compute_entity_id("d", "ip", a) == compute_entity_id("d", "ip", b),
-              "D4: IPv6 case spellings must hash to ONE entity_id")
+    c = canonical_entity_value("ip", "2001:0db8:0000:0000:0000:0000:0000:0001")
+    check(a is not None and a == b == c,
+          f"D4: IPv6 spellings must normalize to ONE canonical value "
+          f"(got {a!r}, {b!r}, {c!r})")
+    if a is not None and c is not None:
+        check(compute_entity_id("d", "ip", a) == compute_entity_id("d", "ip", c),
+              "D4: every IPv6 spelling must hash to ONE entity_id")
 
 
 def test_cap_evicted_replay_not_double_counted():

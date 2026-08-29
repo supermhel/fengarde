@@ -73,7 +73,13 @@ def valid_ip(value) -> Optional[str]:
     every one of those auth-failure events, so the brute-force/password-spray
     rules never saw them. Collapse it to the plain IPv4 form here (the two
     are the same address; nothing is lost) so validate() and the detection
-    engine both see it."""
+    engine both see it. (2026-08-29 review): IPv6 is case- and
+    compression-insensitive -- ``2001:DB8::1`` and
+    ``2001:0db8:0000:0000:0000:0000:0000:0001`` are the SAME address, so the
+    canonical return is ``ipaddress``'s ``str()`` (lowercased + de-compressed),
+    collapsing every spelling of one address to ONE identity for parsers,
+    WS-8's tracks, and WS-9's entity plane alike.
+    """
     if not isinstance(value, str):
         return None
     try:
@@ -81,7 +87,14 @@ def valid_ip(value) -> Optional[str]:
     except ValueError:
         return None
     mapped = getattr(addr, "ipv4_mapped", None)
-    return str(mapped) if mapped is not None else value
+    if mapped is not None:
+        return str(mapped)
+    # Canonical form for every valid address: ipaddress's str() lowercases
+    # AND de-compresses IPv6 (2001:0DB8::1, 2001:db8:0:0:0:0:0:1 and
+    # 2001:0db8:0000:0000:0000:0000:0000:0001 all -> "2001:db8::1"), so one
+    # address is one identity, not one-per-spelling. IPv4 is already
+    # dotted-quad canonical.
+    return str(addr)
 
 
 _MAC_PATTERN = re.compile(r"^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$")

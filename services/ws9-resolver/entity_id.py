@@ -75,11 +75,11 @@ def canonical_entity_value(entity_type: str, raw) -> str | None:
     if entity_type == ENTITY_TYPE_IP:
         # shared.ocsf.valid_ip validates shape AND collapses the
         # IPv4-mapped-IPv6 form the parsers already normalize (ocsf.py:54-84).
-        # IPv6 is case-insensitive: valid_ip preserves the input's case, so
-        # two spellings of one address ("2001:0DB8::1" vs "2001:0db8::1")
-        # must collapse to ONE identity (the ADR's one-identity-across-
-        # spellings intent; independent review D4). Lowercase the returned
-        # address -- safe for IPv4 (digits/dots unaffected) and mapped forms.
+        # Since 2026-08-29 valid_ip ALSO canonicalizes IPv6 spelling (case +
+        # compression: "2001:DB8::1", "2001:db8:0:0:0:0:0:1" and
+        # "2001:0db8:0000:0000:0000:0000:0000:0001" are ONE address) -- the
+        # ADR's one-identity-across-spellings intent (independent review D4).
+        # .lower() below is belt-and-suspenders.
         v = valid_ip(s)
         if v is None:
             return None
