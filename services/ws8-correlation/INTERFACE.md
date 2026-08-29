@@ -58,7 +58,7 @@ MITRE tactics), not just repeated single-tactic noise.
 
 Every incident promotion/update ALSO produces an `incident.graph` payload:
 
-`{version: 1, incident_id, tenant_id, nodes: [entity_id…], edges: [{from, to,
+`{version: 1, incident_id, tenant_id, nodes: [type:value…], edges: [{from, to,
 kind, event_id, ts_ms}], tactic_sources}`
 
 - **Nodes** are the incident's member entities — the actor/user, ip, and

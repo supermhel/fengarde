@@ -61,8 +61,17 @@ service** that owns entity resolution, per the owner's Option-2 ratification.
 |---|---|
 | Producer | WS-8 Correlation (when it promotes/updates an incident), WS-9 |
 | Consumers | WS-9 (entity resolver), WS-3 indexer (persist) |
-| Payload | `{version: 1, incident_id, tenant_id, nodes: [entity_id…], edges: [{from, to, kind, event_id, ts_ms}], tactic_sources}` |
+| Payload | `{version: 1, incident_id, tenant_id, nodes: [type:value…], edges: [{from, to, kind, event_id, ts_ms}], tactic_sources}` |
 | Partition key | `incident_id` |
+
+- **`nodes` are the incident's member tracks as `{entity_type}:{entity_value}`**
+  (the SAME track identity the incident itself captures — e.g. `actor:alice`,
+  `ip:10.0.0.5`) — NOT WS-9's canonical sha256 `entity_id` digests. WS-8
+  keys tracks on its edge-normalized raw values by design (its proven
+  identity space), so the graph references the tracks directly; the entity
+  plane maps each node to its canonical `entity_id` on consumption, and
+  Phase 3's `version: 2` typed-DAG upgrade is the seam that carries the
+  canonical form (mirrors `ws8-correlation/INTERFACE.md` "Nodes" bullet).
 
 - **`version: 1` is present now** so Phase 3's upgrade of the flat edges into a
   typed causal DAG (`caused_by`, `invoked`, `authenticated_as`, `wrote_to`,
