@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed (2026-08-29, PR #81 review round: ADR-009 node identity docs + IPv6 identity gap)
+
+- **ADR-009 `incident.graph` node identity corrected in docs.** The ADR, `contracts/bus-topics.md`,
+  and ws8 `INTERFACE.md` payload sketches said `nodes: [entity_id…]`; the implementation emits
+  `type:value` track refs (`actor:alice`, `ip:10.0.0.5`) — the same identity space WS-8 promotes —
+  so the specs now say `nodes: [type:value…]` and the ADR documents the design rationale (WS-9's
+  canonical sha256 `entity_id` is NOT recomputed in WS-8; `version: 2` is the seam that carries it).
+- **IPv6 identity gap (WS-8 + WS-9): case/compression spellings split one address into many
+  identities.** `shared/ocsf.valid_ip` now returns `ipaddress`'s canonical `str()` (lowercased +
+  de-compressed), collapsing `2001:DB8::1` / `2001:db8:0:0:0:0:0:1` /
+  `2001:0db8:0000:0000:0000:0000:0000:0001` into one form; WS-8 keys `ip:` tracks and graph
+  co-occurrences through a stdlib-only `_canonical_ip` mirror (its container cannot import
+  `shared.ocsf`). A two-tactic spray across spellings used to evade promotion entirely — now a
+  tracked incident. Regression tests in `test_ocsf`, ws8 `test_contract` + `test_incident_graph`,
+  and ws9 D4 (extended to compression variants).
+- **WS-8 `_build_incident_graph` redundant re-bounding removed.** `cooccur` values are already
+  bounded at store time (the side-table's single writer), so the graph-build re-bound was dead
+  weight; the invariant is now documented at both sites.
+
 ### Fixed (2026-08-28, WS-3: live-stack CAS race under stateful-rule re-fire)
 ### Added (2026-08-28, Phase 2 — entity/context plane: ADR-009 + WS-9 resolver + incident graph + baselines)
 
