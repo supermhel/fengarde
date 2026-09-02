@@ -217,6 +217,41 @@ see SSOT.md §2's Phase 2 row for the full verification account.
   `ws6-inventory` recreated a second time back to its default 3600s
   baseline afterward so the standing dev stack isn't left non-default.
 
+### Fixed (2026-09-02, PR #81 merged; dependabot PR #82-#87 reviewed/merged, one real CI bug caught)
+
+**PR #81 (Phase 2 entity-plane, all 20 defects above) MERGED to `main`**
+(`0198134`) after owner approval — branch protection required 1 approving
+review (0 present) and up-to-date required status checks; both satisfied
+before merge, not bypassed.
+
+- **6 open dependabot PRs reviewed and merged** (#82-#86: single-line
+  SHA-pinned GitHub Actions version bumps — `softprops/action-gh-release`,
+  `docker/setup-buildx-action`, `github/codeql-action/init`,
+  `github/codeql-action/upload-sarif`, `sigstore/cosign-installer`).
+- **PR #84 broke its own CI**: `github/codeql-action`'s `init` and
+  `analyze` steps in the same workflow (`.github/workflows/codeql.yml`)
+  must be pinned to the same release — CodeQL hard-errors otherwise. The
+  dependabot bump touched only `init` (each pinned SHA is a separate
+  dependency reference to it), leaving `analyze` on the old version; its
+  own `analyze` job failed live with `Loaded a configuration file for
+  version '4.37.9', but running version '4.37.8'`. Fixed by hand on the
+  PR's branch (bumped `analyze` to match), re-verified all checks green,
+  merged.
+- **Root cause closed, not just patched**: added a `groups:` entry to
+  `.github/dependabot.yml` for `github/codeql-action/*` (PR #87) so every
+  bump to that action lands as one PR, consistent by construction instead
+  of by review vigilance. Verified this couldn't have masked anything on
+  the other 3 non-codeql-action PRs (independent files/actions, no
+  init/analyze-style coupling).
+- **Repo-wide branch/worktree cleanup** (owner: "still a lot of branches,
+  delete and keep main only"): every local branch except `main` deleted
+  (all already merged, or their remote counterpart already gone); the 2
+  remaining merged-but-undeleted remote branches (`fix/ws3-cas-refresh-race`,
+  `phase2-entity-plane` — this repo has `delete_branch_on_merge: false`)
+  deleted on origin; 5 orphaned local git worktrees from prior sessions
+  removed (each confirmed clean via `git status` first — no uncommitted
+  work lost). `git branch -r` now lists only `origin/main`.
+
 ### Fixed (2026-08-29, PR #81 review round: ADR-009 node identity docs + IPv6 identity gap)
 
 - **ADR-009 `incident.graph` node identity corrected in docs.** The ADR, `contracts/bus-topics.md`,
