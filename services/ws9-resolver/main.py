@@ -44,12 +44,17 @@ sys.path.insert(0, str(SERVICES))
 from shared.bus import Bus  # noqa: E402
 from shared.runner import serve  # noqa: E402
 
-from resolver import DEFAULT_MEMBER_CAP, EntityResolver  # noqa: E402
+from resolver import DEFAULT_HORIZON_S, DEFAULT_MEMBER_CAP, EntityResolver  # noqa: E402
 
 
 def make_resolver() -> EntityResolver:
     member_cap = int(os.getenv("ENTITY_MEMBER_CAP", str(DEFAULT_MEMBER_CAP)))
-    return EntityResolver(member_cap=member_cap)
+    # 2026-09-02 review: this used to be undocumented-dead -- INTERFACE.md
+    # documented ENTITY_HORIZON_S as a real operational knob, but this
+    # function never read it, so the resolver silently always ran with the
+    # hardcoded 86400s default no matter what an operator set.
+    horizon_s = int(os.getenv("ENTITY_HORIZON_S", str(DEFAULT_HORIZON_S)))
+    return EntityResolver(member_cap=member_cap, horizon_s=horizon_s)
 
 
 def make_handler(bus, resolver: EntityResolver):

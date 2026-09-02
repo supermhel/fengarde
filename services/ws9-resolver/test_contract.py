@@ -399,6 +399,200 @@ def test_cap_evicted_replay_not_double_counted():
           f"({updates_after_spray} -> {r.resolved_updates})")
 
 
+def test_self_evicted_member_still_recorded_in_evicted_lru():
+    """2026-09-02 regression: a NEW member whose own alert time is the
+    side table's minimum used to be evicted in the SAME call it was added
+    (eviction was decided AFTER insertion), and the `oldest != member` guard
+    then skipped recording it into evicted_lru -- so its redelivery was
+    treated as fresh again, inflating resolved_updates on every replay.
+
+    Uses explicit ascending real `time` values (not the all-zero ties
+    test_cap_evicted_replay_not_double_counted uses) specifically so the
+    NEWLY-added member is the side table's chronological minimum -- the
+    exact condition that used to trigger the bug.
+    """
+    r = _new(member_cap=2)
+    r.resolve_alert(_alert("m0", actor="eve", src_ip="203.0.113.9", time_ms=100))
+    r.resolve_alert(_alert("m1", actor="eve", src_ip="203.0.113.9", time_ms=200))
+    updates_before = r.resolved_updates
+    # m2's own time (1) is EARLIER than both existing members -- under the
+    # old (buggy) code this alert would evict itself instead of an existing
+    # member.
+    r.resolve_alert(_alert("m2", actor="eve", src_ip="203.0.113.9", time_ms=1))
+    updates_after_m2 = r.resolved_updates
+    check(updates_after_m2 == updates_before + 2,  # +1 actor, +1 ip entity
+          f"m2 must count as one fresh state change per entity "
+          f"({updates_before} -> {updates_after_m2})")
+    # Redeliver m2 -- it must NOT be treated as fresh again.
+    r.resolve_alert(_alert("m2", actor="eve", src_ip="203.0.113.9", time_ms=1))
+    check(r.resolved_updates == updates_after_m2,
+          f"2026-09-02: redelivering the self-evicted member m2 must not "
+          f"inflate resolved_updates ({updates_after_m2} -> {r.resolved_updates})")
+
+
+def test_time_less_sighting_does_not_corrupt_last_seen_with_real_sightings():
+    """2026-09-02 regression: the deterministic time-fallback digest for a
+    time-less alert used to be folded directly into first_seen_ms/
+    last_seen_ms via plain min()/max() alongside genuine alert times. That
+    digest can be (and usually is) far larger than any real epoch-ms value,
+    so mixing it in permanently pinned last_seen_ms to a nonsensical
+    far-future value that no later, genuinely-later real timestamp could
+    ever exceed again."""
+    r = _new()
+    real_t1 = 1_700_000_000_000
+    real_t2 = 1_700_000_010_000  # 10s later
+    r.resolve_alert(_alert("real1", actor="mallory", src_ip="203.0.113.9", time_ms=real_t1))
+    time_less = _alert("timeless1", actor="mallory", src_ip="203.0.113.9")
+    del time_less["time"]  # no `time` key at all -> hits the digest-fallback path
+    r.resolve_alert(time_less)
+    eid = compute_entity_id("default", "actor", "mallory")
+    after_timeless = r.entity_state(eid)["last_seen_ms"]
+    check(after_timeless < 10**15,
+          f"2026-09-02: a time-less sighting must never pin last_seen_ms to a "
+          f"digest-magnitude value (got {after_timeless})")
+    r.resolve_alert(_alert("real2", actor="mallory", src_ip="203.0.113.9", time_ms=real_t2))
+    after_real2 = r.entity_state(eid)["last_seen_ms"]
+    check(after_real2 == real_t2,
+          f"2026-09-02: a genuinely later real timestamp must be able to advance "
+          f"last_seen_ms past whatever a prior time-less sighting recorded "
+          f"(expected {real_t2}, got {after_real2})")
+
+
+def test_src_dst_ip_collision_emits_one_update():
+    """2026-09-02 regression: src_endpoint.ip == dst_endpoint.ip (loopback/
+    reflected traffic) used to resolve to two entity tuples that canonicalize
+    to the SAME entity_id, and resolve_alert emitted one entity.updates
+    payload per tuple with no dedup -- doubling bus traffic for one logical
+    sighting."""
+    r = _new()
+    updates = r.resolve_alert(_alert("loop1", src_ip="203.0.113.9", dst_ip="203.0.113.9"))
+    ip_updates = [u for u in updates if u["entity_type"] == "ip"]
+    check(len(ip_updates) == 1,
+          f"2026-09-02: src==dst ip must emit exactly ONE entity.updates payload, "
+          f"got {len(ip_updates)}")
+
+
+def test_non_string_actor_value_never_collides_with_matching_string():
+    """2026-09-02 regression: canonical_entity_value used to str()-coerce a
+    non-string raw value (e.g. JSON bool `true`) before casefolding, so
+    `str(True).casefold() == "true"` collided with a genuine username
+    literally "true" -- silently merging two unrelated identities."""
+    from_bool = canonical_entity_value("actor", True)
+    from_string = canonical_entity_value("actor", "true")
+    check(from_bool is None,
+          f"2026-09-02: a non-string actor value must resolve to None, not a "
+          f"coerced string (got {from_bool!r})")
+    check(from_string == "true",
+          f"sanity: a genuine string actor value must still normalize normally "
+          f"(got {from_string!r})")
+
+
+def test_apply_update_new_entity_is_swept_after_horizon():
+    """2026-09-02 regression: apply_update() never touched _last_touch, so an
+    entity created ONLY via apply_update (e.g. a WS-6 inventory sighting that
+    never went through resolve_alert) was invisible to _sweep_dead_entities
+    (which only iterates _last_touch) and lived in _meta forever."""
+    clock = _Clock()
+    r = _new(clock=clock, horizon_s=60)
+    entity_id = compute_entity_id("default", "ip", "203.0.113.50")
+    r.apply_update({
+        "entity_id": entity_id, "entity_type": "ip", "tenant_id": "default",
+        "entity_value": "203.0.113.50", "first_seen_ms": 0, "last_seen_ms": 0,
+        "attributes": {},
+    })
+    check(entity_id in r._last_touch,
+          "2026-09-02: apply_update must touch _last_touch the same way "
+          "_upsert_sighting does")
+    clock.advance(120)  # past the 60s horizon
+    r._sweep_dead_entities(r._now_ms())
+    check(r.entity_state(entity_id) is None,
+          "2026-09-02: an entity created only via apply_update must be swept "
+          "after a full horizon of silence, same as an alert-sighted one")
+
+
+def test_apply_update_merges_attributes_not_just_timestamp():
+    """2026-09-02 regression: apply_update's already-known-entity branch used
+    to advance ONLY last_seen_ms, silently discarding entity_value/attributes
+    carried by a genuinely newer update."""
+    r = _new()
+    entity_id = compute_entity_id("default", "ip", "203.0.113.60")
+    r.apply_update({
+        "entity_id": entity_id, "entity_type": "ip", "tenant_id": "default",
+        "entity_value": "203.0.113.60", "first_seen_ms": 0, "last_seen_ms": 0,
+        "attributes": {"asset_type": "workstation"},
+    })
+    r.apply_update({
+        "entity_id": entity_id, "entity_type": "ip", "tenant_id": "default",
+        "entity_value": "203.0.113.60", "first_seen_ms": 0, "last_seen_ms": 1000,
+        "attributes": {"owner": "alice"},
+    })
+    attrs = r.entity_state(entity_id)["attributes"]
+    check(attrs.get("asset_type") == "workstation",
+          f"2026-09-02: a newer update must not silently drop an earlier "
+          f"attribute the new payload didn't mention (got {attrs!r})")
+    check(attrs.get("owner") == "alice",
+          f"2026-09-02: a newer update's own attributes must be applied "
+          f"(got {attrs!r})")
+
+
+def test_dockerfile_copy_set_imports_without_tools_dir():
+    """2026-09-02 regression: the ws9-resolver Dockerfile copies ONLY
+    services/shared, contracts, and services/ws9-resolver into the image
+    (never tools/) -- entity_id.py used to import shared.ocsf for valid_ip,
+    and shared/ocsf.py raises RuntimeError at import time if it can't find
+    tools/validate_contract.py, so the container crashed on every startup.
+
+    Reproduces the container's exact file layout in a temp dir (the SAME
+    three COPY sources the Dockerfile lists, nothing else -- no tools/) and
+    imports main.py the way `python main.py` would, in a subprocess so a
+    regression fails loudly here instead of only at `docker run` time.
+    """
+    import shutil
+    import subprocess
+    import tempfile
+
+    repo_root = SERVICES.parent
+    with tempfile.TemporaryDirectory() as td:
+        app = Path(td) / "app"
+        shutil.copytree(repo_root / "services" / "shared", app / "shared")
+        shutil.copytree(repo_root / "contracts", app / "contracts")
+        shutil.copytree(repo_root / "services" / "ws9-resolver", app / "ws9-resolver")
+        proc = subprocess.run(
+            [sys.executable, "-c", "import main"],
+            cwd=str(app / "ws9-resolver"),
+            env={**__import__("os").environ, "PYTHONPATH": str(app)},
+            capture_output=True, text=True,
+        )
+        check(proc.returncode == 0,
+              f"2026-09-02: importing main.py from the Dockerfile's exact COPY "
+              f"set (no tools/) must succeed, got exit {proc.returncode}:\n"
+              f"{proc.stderr}")
+
+
+def test_apply_update_then_alert_sighting_does_not_crash():
+    """2026-09-02 regression: an entity first created via apply_update (a
+    producer-supplied attributes shape with no "mitre_tactics" key, e.g.
+    WS-6's asset-only sightings) used to make a LATER alert-driven sighting
+    on the same entity_id crash with KeyError in _upsert_sighting's merge
+    branch, which read meta["attributes"]["mitre_tactics"] unguarded."""
+    r = _new()
+    entity_id = compute_entity_id("default", "ip", "203.0.113.70")
+    r.apply_update({
+        "entity_id": entity_id, "entity_type": "ip", "tenant_id": "default",
+        "entity_value": "203.0.113.70", "first_seen_ms": 0, "last_seen_ms": 0,
+        "attributes": {"asset_type": "workstation"},  # no mitre_tactics key
+    })
+    try:
+        r.resolve_alert(_alert("a1", src_ip="203.0.113.70", tactic="TA0006"))
+    except KeyError as exc:
+        check(False, f"2026-09-02: alert-driven sighting on an apply_update-"
+                      f"created entity must not raise KeyError({exc})")
+        return
+    tactics = r.entity_state(entity_id)["attributes"]["mitre_tactics"]
+    check(tactics == ["TA0006"],
+          f"the alert's tactic must be recorded (got {tactics!r})")
+
+
 def run_all():
     test_same_input_same_entity_id()
     test_distinct_tenant_type_value_distinct_id()
@@ -415,6 +609,14 @@ def run_all():
     test_username_whitespace_normalized()
     test_ipv6_case_insensitive_one_identity()
     test_cap_evicted_replay_not_double_counted()
+    test_self_evicted_member_still_recorded_in_evicted_lru()
+    test_time_less_sighting_does_not_corrupt_last_seen_with_real_sightings()
+    test_src_dst_ip_collision_emits_one_update()
+    test_non_string_actor_value_never_collides_with_matching_string()
+    test_apply_update_new_entity_is_swept_after_horizon()
+    test_apply_update_merges_attributes_not_just_timestamp()
+    test_apply_update_then_alert_sighting_does_not_crash()
+    test_dockerfile_copy_set_imports_without_tools_dir()
 
 
 if __name__ == "__main__":
@@ -429,4 +631,7 @@ if __name__ == "__main__":
           "(c) canonicalization IP/MAC/username (d) replay idempotency "
           "(e) redelivery-safe memory-bus round trip + tenant reject-not-normalize; "
           "plus D1/D3/D4/D5 regressions: entity-count sweep, entity_value bound, "
-          "time-less replay stability, whitespace + IPv6-case identity, cap+replay count)")
+          "time-less replay stability, whitespace + IPv6-case identity, cap+replay count; "
+          "plus 2026-09-02 regressions: self-evicted-member bookkeeping, time-less/real "
+          "timestamp isolation, src==dst ip dedup, non-string actor never collides, "
+          "apply_update sweep/merge/cross-path-shape safety)")

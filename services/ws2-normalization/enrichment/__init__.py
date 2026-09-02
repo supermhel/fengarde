@@ -44,6 +44,8 @@ from typing import Optional
 
 import yaml
 
+from shared.ip_utils import valid_ip as _canonical_ip
+
 # Fail-open by design, but NEVER silent (2026-08-26 gap-hunt finding: both
 # except paths swallowed every exception with no log line, so a malformed
 # IOC file or an enrich() bug made the whole A5 stage a silent no-op in
@@ -154,12 +156,17 @@ class Enricher:
         record = {"score": score, "categories": cats, "source": "local-ioc"}
         ip = entry.get("ip")
         if isinstance(ip, str):
-            try:
-                ipaddress.ip_address(ip)
-                self._ioc_exact[ip] = record
+            # Key on the SAME canonical spelling every parser now normalizes
+            # to (shared.ip_utils.valid_ip, since shared/ocsf.py's 2026-08-29
+            # IPv6 canonicalization change) -- keying on the IOC file's raw,
+            # arbitrarily-cased/compressed literal used to silently break the
+            # exact-match lookup for any IOC entry whose spelling differed
+            # from the canonical form (2026-09-02 review): a real log event
+            # for a flagged IPv6 address stopped matching its own IOC entry.
+            canonical = _canonical_ip(ip)
+            if canonical is not None:
+                self._ioc_exact[canonical] = record
                 return
-            except ValueError:
-                pass
         cidr = entry.get("cidr")
         if isinstance(cidr, str):
             try:
@@ -284,7 +291,16 @@ class Enricher:
                     if need_rep and rep is not None:
                         src["reputation"] = rep
                     if need_loc and loc is not None:
-                        src["location"] = loc
+                        # Copy, don't alias (2026-09-02 review): `loc` is the
+                        # SAME dict object cached for every event sharing this
+                        # source IP (`_cached_result` computes it once and
+                        # stores the literal object). Before the WP-2-H cache
+                        # existed, `_location_for` built a fresh dict per
+                        # event, so nothing was ever shared; assigning the
+                        # cached object by reference would let any future
+                        # in-place mutation of one event's location silently
+                        # corrupt every other event that shares the IP.
+                        src["location"] = dict(loc)
         except Exception as exc:  # noqa: BLE001
             # fail-open: enrichment must never drop or corrupt an event -- but
             # the exception MUST be visible (gap-hunt finding 4), or a bug in

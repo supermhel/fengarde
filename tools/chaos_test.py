@@ -111,10 +111,20 @@ BASE_S = int(os.getenv("CHAOS_BASE_S", str(int(time.time()))))
 # under kill. That needs its own multi-tactic-per-entity scenario + an
 # incidents-* verify() query; tracked as a separate gap, not solved by this
 # one-line addition.
+#
+# ws9-resolver (entity resolver, added to infra/docker-compose.yml 2026-09-02,
+# ADR-009) consumes the same `alerts` topic verify() reads to build the
+# entity graph (entity.updates) -- bus-connected on a path this gate cares
+# about, same reasoning as ws8-correlation above. Added 2026-09-02. Same
+# caveat as ws8: this proves ws9 dies/restarts cleanly under kill without
+# wedging its `alerts` consumer group, not entity-state correctness under
+# kill (e.g. a merge landing mid-restart) -- that needs its own
+# entity_state()-diffing assertion, tracked as a separate gap.
 COMPOSE_FILE = os.getenv("CHAOS_COMPOSE_FILE", "infra/docker-compose.yml")
 KILL_TARGETS = [
     "ws1-collectors", "ws2-normalization",
     "ws4-detection", "ws3-indexer", "ws5-ai", "ws8-correlation",
+    "ws9-resolver",
 ]
 KILL_INTERVAL_S = float(os.getenv("CHAOS_KILL_INTERVAL_S", "3.0"))
 # Pause between replay pulses (see replay()); each full pulse of the scenario

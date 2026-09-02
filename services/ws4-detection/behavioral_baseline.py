@@ -125,15 +125,28 @@ def _type_uid_of(event: dict) -> Optional[int]:
     tid = event.get("type_uid")
     if tid is None:  # class_uid is the coarser but still-available fallback
         tid = event.get("class_uid")
+    if isinstance(tid, bool) or not isinstance(tid, int):
+        # Degrade, don't crash (2026-09-02 review): an unvalidated value here
+        # used to reach DequeWindowCounter.hit()'s set membership test
+        # unfiltered -- a malformed event with type_uid/class_uid as a list
+        # or dict raised an uncaught TypeError: unhashable type, crashing
+        # observe(). Only a real int (never bool, which subclasses int) is a
+        # meaningful type/class uid.
+        return None
     return tid
 
 
 def _src_ip_of(event: dict) -> Optional[str]:
-    return (event.get("src_endpoint") or {}).get("ip")
+    ip = (event.get("src_endpoint") or {}).get("ip")
+    # Same degrade-don't-crash guard as _type_uid_of: hit_distinct() builds a
+    # set over these values, so a non-string (list/dict) ip would raise an
+    # uncaught TypeError instead of just being skipped.
+    return ip if isinstance(ip, str) else None
 
 
 def _dst_ip_of(event: dict) -> Optional[str]:
-    return (event.get("dst_endpoint") or {}).get("ip")
+    ip = (event.get("dst_endpoint") or {}).get("ip")
+    return ip if isinstance(ip, str) else None
 
 
 def _hour_of(event: dict, now_ms: int) -> int:
@@ -144,7 +157,13 @@ def _hour_of(event: dict, now_ms: int) -> int:
     learned hour-set naturally bounded (at most 24 members ever).
     """
     t = event.get("time")
-    if not isinstance(t, (int, float)):
+    if isinstance(t, bool) or not isinstance(t, (int, float)):
+        # bool is an int subclass in Python (isinstance(True, int) is True),
+        # so a bare `not isinstance(t, (int, float))` silently accepted
+        # time=True/False as epoch ms 1/0 instead of falling back to now_ms
+        # -- inconsistent with every other time-validator in this codebase
+        # (resolver.py/correlator.py/engine.py's _valid_window_time), which
+        # all explicitly exclude bool (2026-09-02 review).
         t = now_ms
     return int(t) // 3_600_000 % 24
 

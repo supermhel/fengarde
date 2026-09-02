@@ -14,7 +14,7 @@ replay-safe under at-least-once delivery.
 
 Canonical value (normalized at the EDGE, per ADR-009 lines 49-52):
 
-* ``ip``      -> ``shared.ocsf.valid_ip`` -- the EXACT normalization every
+* ``ip``      -> ``shared.ip_utils.valid_ip`` -- the EXACT normalization every
                  parser applies at parse time (services/ws2-normalization/
                  parsers/cef.py:98-106, cloudtrail.py:96-98, ...), which is
                  therefore the value WS-8's ``ip:`` track keys on raw
@@ -35,14 +35,16 @@ Canonical value (normalized at the EDGE, per ADR-009 lines 49-52):
                  RFC 1035 for hostnames), so the whole device edge is
                  lowercased on one path.
 
-An un-normalizable value (valid_ip returns None, non-str after cast fallback)
-resolves to None and the caller skips the entity -- degrade, never fabricate.
+An un-normalizable value (valid_ip returns None, or ``raw`` isn't a string at
+all) resolves to None and the caller skips the entity -- degrade, never
+fabricate, and never coerce a non-string into a string that could collide
+with a genuine one (2026-09-02 review).
 """
 from __future__ import annotations
 
 import hashlib
 
-from shared.ocsf import valid_ip  # the ADR-named canonicalization source
+from shared.ip_utils import valid_ip  # the ADR-named canonicalization source; no tools/ dependency
 
 # Entity_type strings mirror WS-8's track kinds EXACTLY (correlator.py:579,
 # 591, 610 -- actor/ip/device), so a later incident.graph node derived from a
@@ -66,14 +68,19 @@ def canonical_entity_value(entity_type: str, raw) -> str | None:
     if raw is None:
         return None
     if not isinstance(raw, str):
-        # Degrade, don't crash: mirrors ws8's str()-defensive reads of the
-        # same fields (correlator.py:581/591/610). A non-string actor/IP/MAC
-        # is not an entity we can identify deterministically.
-        s = str(raw)
-    else:
-        s = raw
+        # Degrade, don't crash -- but degrade to "unidentifiable", never to a
+        # coerced string (2026-09-02 review): str()-casting a bool/int/float
+        # before casefold/lower used to collapse it onto whatever STRING
+        # value normalizes to the identical spelling -- e.g. the JSON boolean
+        # `true` (`str(True)` -> "True" -> casefold() -> "true") merged with
+        # a genuine username literally "true" into ONE entity_id, silently
+        # combining two unrelated identities' timelines/tactics/member-sets.
+        # A non-string actor/IP/MAC is not an entity we can identify
+        # deterministically, so it is skipped, not hashed.
+        return None
+    s = raw
     if entity_type == ENTITY_TYPE_IP:
-        # shared.ocsf.valid_ip validates shape AND collapses the
+        # shared.ip_utils.valid_ip validates shape AND collapses the
         # IPv4-mapped-IPv6 form the parsers already normalize (ocsf.py:54-84).
         # Since 2026-08-29 valid_ip ALSO canonicalizes IPv6 spelling (case +
         # compression: "2001:DB8::1", "2001:db8:0:0:0:0:0:1" and

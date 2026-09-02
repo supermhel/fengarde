@@ -114,7 +114,13 @@ def main():
         mult = levels.get("internet_facing", 1.0)
         base = 40
         adjusted = base + add + round(base * (mult - 1))
-        check(adjust(adjusted) <= EXPECTED_CLAMP["max"] and adjusted >= EXPECTED_CLAMP["min"],
+        # Compare the RAW (unclamped) formula output to the band -- NOT
+        # adjust(adjusted) (2026-09-02 review): adjust() unconditionally
+        # clamps its input into [min, max], so wrapping `adjusted` in it
+        # before this comparison made the check tautologically true for any
+        # tier/multiplier values, silently defeating its purpose of catching
+        # a documented-formula regression that overflows the clamp band.
+        check(EXPECTED_CLAMP["min"] <= adjusted <= EXPECTED_CLAMP["max"],
               f"documented exposure formula over base {base} gives {adjusted}, "
               f"outside clamp band {EXPECTED_CLAMP}")
 
@@ -127,12 +133,6 @@ def main():
           "alongside the unchanged version/thresholds/severity_floor/clamp, Scorer still "
           "constructs and routes identically, and the section defaults to enabled:false "
           "with a self-consistent cap inside the existing clamp band")
-
-
-def adjust(score: int) -> int:
-    """Mirror of the clamp Scorer applies; used only for the cap smoke-check above,
-    NOT a claim that `exposure` is wired into scoring.py (it is not)."""
-    return max(EXPECTED_CLAMP["min"], min(EXPECTED_CLAMP["max"], score))
 
 
 if __name__ == "__main__":

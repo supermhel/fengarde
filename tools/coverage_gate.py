@@ -152,6 +152,18 @@ TARGETS: dict[str, tuple[str, list[str], float]] = {
                # not by these zero-infra suites); 9pt buffer, same convention
                # as every other first-time entry in this table
     ),
+    "ws9-resolver": (
+        "services/ws9-resolver",
+        [
+            "test_contract.py",
+        ],
+        68.0,  # measured 77% (2026-09-02 first-time baseline; resolver.py 92%,
+               # entity_id.py 89%, main.py 67%, demo_round_trip.py 0% -- the
+               # last two are bus-wiring glue / a manual demo script, exercised
+               # only live via `make up`, not by this zero-infra suite, same
+               # shape as ws8-correlation's main.py above); 9pt buffer, same
+               # convention as every other first-time entry in this table
+    ),
 }
 
 

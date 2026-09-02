@@ -227,6 +227,28 @@ services:
       retries: 3
       start_period: 20s
 
+  # WP-2-B (ADR-009): entity resolver, consumes `alerts` (group cg-entity)
+  # + `entity.updates` self-consumer (group cg-entity-self, e.g. WS-6
+  # inventory sightings), emits deterministic per-entity `entity.updates`.
+  # Added 2026-09-02: was zero-infra-proven since 2026-08-28 but not wired
+  # into this stack -- the ADR's Consequences (deployability) named this gap
+  # explicitly, and a real deployability blocker (this service's Dockerfile
+  # never copies tools/, which shared/ocsf.py needed at import time and
+  # crashed on) is now fixed (entity_id.py imports the dependency-free
+  # shared/ip_utils.py instead). Manually build+run live-verified against
+  # this same compose network's Redis before wiring in permanently.
+  ws9-resolver:
+    build: { context: .., dockerfile: services/ws9-resolver/Dockerfile }
+    restart: unless-stopped
+    environment: ["BUS_BACKEND=redis", "REDIS_PASSWORD=${REDIS_PASSWORD:-}", "REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0"]
+    depends_on: { redis: { condition: service_healthy } }
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8009/health', timeout=3)"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
   ws6-inventory:
     build: { context: .., dockerfile: services/ws6-inventory/Dockerfile }
     restart: unless-stopped
@@ -335,7 +357,7 @@ services:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus-data:/prometheus
     ports: ["127.0.0.1:9090:9090"]
-    depends_on: [ws1-collectors, ws2-normalization, ws3-indexer, ws4-detection, ws5-ai, ws8-correlation]
+    depends_on: [ws1-collectors, ws2-normalization, ws3-indexer, ws4-detection, ws5-ai, ws8-correlation, ws9-resolver]
 
   grafana:
     image: grafana/grafana:11.1.0

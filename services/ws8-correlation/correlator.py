@@ -55,10 +55,6 @@ Core rules (see INTERFACE.md for the full account):
 from __future__ import annotations
 
 import copy
-import hashlib
-import ipaddress
-import json
-import math
 import sys
 import time
 from pathlib import Path
@@ -69,7 +65,15 @@ sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(SERVICES))
 
 from shared.allowlist import Allowlist, load_allowlist, invalidate_dir  # noqa: E402
-from shared.envelope import valid_tenant_id  # noqa: E402
+from shared.entity_helpers import (  # noqa: E402
+    InvalidTenant,  # noqa: F401 -- re-exported: test_contract.py imports it from here
+    bounded_entity_value as _bounded_entity_value_fn,
+    deterministic_member_id,
+    to_str as _to_str,
+    valid_window_time as _valid_window_time,
+    validated_tenant as _validated_tenant,
+)
+from shared.ip_utils import valid_ip as _canonical_ip_or_none  # noqa: E402
 from shared.log import get_logger  # noqa: E402
 from shared.window import DequeWindowCounter  # noqa: E402
 
@@ -78,23 +82,6 @@ _log = get_logger("ws8-correlation")
 DEFAULT_TENANT = "default"
 DEFAULT_HORIZON_S = 86400  # 24h -- a starting default, not a measured one (see INTERFACE.md)
 DEFAULT_MEMBER_CAP = 200
-
-# OpenSearch rejects document ids longer than 512 bytes, and the incident
-# doc id embeds entity_value (`{tenant}:{etype}:{value}:{horizon_bucket}`).
-# 448 leaves headroom for the tenant/etype/bucket suffix on top of the
-# value. Attacker-controlled usernames/hostnames are the classic way a
-# 513-byte id would silently dead-letter an incident (gap-hunt finding,
-# 2026-08-26) -- see `_bounded_entity_value`.
-_ENTITY_VALUE_MAX_BYTES = 448
-
-# Tolerated source clock drift for alert `time` values that drive the
-# correlator's per-track anchors (first_seen -> incident_id bucket, and the
-# member-cap eviction ordering). Same ceiling WS-4's
-# engine.py::_MAX_CLOCK_SKEW_MS applies to a stateful rule's event time:
-# an attacker who stamps an alert implausibly far ahead of wall-clock
-# must not be able to shift a track's first_seen (and thereby the whole
-# incident_id horizon bucket) or its eviction ordering.
-_MAX_CLOCK_SKEW_MS = 300_000  # 5 minutes of tolerated source clock drift
 
 _ALLOWLIST_NAME = "shared_infrastructure"
 
@@ -108,16 +95,6 @@ _ALLOWLIST_NAME = "shared_infrastructure"
 # distinct identities once and never repeats one (see `_sweep_dead_tracks`'s
 # own docstring and the 2026-08-19 independent-review finding this closes).
 _SIDES_SWEEP_EVERY = 256
-
-
-def _to_str(x) -> str:
-    """Decode a possibly-bytes value to str. NOT the same as ``str(x)`` --
-    ``str(b"bz1")`` produces the literal ``"b'bz1'"``, not ``"bz1"``; found
-    this exact mistake in this file's own first attempt at the live
-    2026-08-18 bytes-vs-str fix (see main.py's decode_responses note), so
-    the wrong fix is preserved here as the reason this helper exists at
-    all rather than a plain ``str()`` call at each use site."""
-    return x.decode() if isinstance(x, bytes) else str(x)
 
 
 def _contracts_dir() -> Path:
@@ -138,42 +115,6 @@ def _contracts_dir() -> Path:
         if (base / "contracts" / "allowlists").exists():
             return base / "contracts"
     return SERVICES.parent / "contracts"
-
-
-class InvalidTenant(ValueError):
-    """Raised when an alert's tenant_id isn't safe to embed in a track key
-    or incident_id (reject-at-edge, same discipline as WS-3's router.py
-    ``_validated_tenant`` -- never normalize a bad tenant_id, since
-    normalizing two different bad ids to the same value would silently
-    merge two customers' correlation state)."""
-
-
-def _validated_tenant(tenant) -> str:
-    tenant = tenant or DEFAULT_TENANT
-    if tenant != DEFAULT_TENANT and not valid_tenant_id(tenant):
-        raise InvalidTenant(f"invalid tenant_id {tenant!r}")
-    return tenant
-
-
-def _valid_window_time(value, now_ms: int) -> int | None:
-    """Return alert ``time`` as epoch-ms int if it can safely drive the
-    track's anchors (first_seen -> incident_id bucket, member-cap eviction
-    ordering), else None (fail closed). Rejects bool, non-numeric, NaN/inf,
-    and timestamps implausibly far ahead of the correlator's wall clock
-    (see _MAX_CLOCK_SKEW_MS). Past timestamps always pass -- that is
-    legitimate historical replay. Same guard WS-4's
-    engine.py::_valid_window_time applies to ITS stateful windows; WS-8's
-    alert ``time`` is equally attacker-controlled, so a skew-future
-    timestamp must not drive first_seen/incident_id/eviction ordering
-    (gap-hunt finding, 2026-08-27)."""
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        return None
-    if isinstance(value, float) and not math.isfinite(value):
-        return None
-    now = int(value)
-    if now > now_ms + _MAX_CLOCK_SKEW_MS:
-        return None
-    return now
 
 
 def _file_mtime_ns(path: Path) -> "int | None":
@@ -241,17 +182,15 @@ def _canonical_ip(value) -> str:
     ``2001:0db8:0000:0000:0000:0000:0000:0001`` are ONE address. Keying
     ``ip:`` tracks on the raw parser spelling would split one address into
     several tracks (identity-evasion: a two-tactic spray across spellings
-    never promotes). stdlib-only on purpose: this container cannot import
-    ``shared.ocsf`` (its tools/ dependency is not shipped in the ws8 image),
-    so mirror ``valid_ip``'s canonical output here. Non-IP values pass
-    through unchanged.
+    never promotes). Delegates to ``shared.ip_utils.valid_ip`` -- the SAME
+    canonicalization WS-9's entity plane uses -- instead of a second
+    hand-rolled copy (2026-09-02 review: the old copy here predated
+    ip_utils.py, which now carries the dependency-free canonicalization out
+    of shared/ocsf.py specifically so ws8 doesn't need to duplicate it).
+    Non-IP values pass through unchanged.
     """
-    try:
-        addr = ipaddress.ip_address(str(value))
-    except ValueError:
-        return str(value)
-    mapped = getattr(addr, "ipv4_mapped", None)
-    return str(mapped) if mapped is not None else str(addr)
+    canonical = _canonical_ip_or_none(str(value))
+    return canonical if canonical is not None else str(value)
 
 
 class Correlator:
@@ -369,73 +308,17 @@ class Correlator:
 
     def _bounded_entity_value(self, entity_value) -> str:
         """Bound entity_value so the incident doc id -- which embeds it --
-        can never exceed OpenSearch's 512-byte document-id limit. An
-        attacker-controlled username/hostname past that limit used to make
-        the whole incident an OpenSearch rejection, treated as permanent /
-        dead-lettered: an attacker-suppressible incident (2026-08-26
-        gap-hunt finding). Truncate + a stable sha256 suffix, rather than
-        skip: two distinct long values keep DISTINCT keys (no false merge --
-        this module's never-merge discipline must survive the cap), and a
-        redelivered alert re-derives the same key (idempotent)."""
-        raw = str(entity_value)
-        encoded = raw.encode("utf-8", errors="replace")
-        if len(encoded) <= _ENTITY_VALUE_MAX_BYTES:
-            return raw
-        digest = hashlib.sha256(encoded).hexdigest()[:16]
-        head = encoded[: _ENTITY_VALUE_MAX_BYTES - 17].decode("utf-8", errors="replace")
-        return f"{head}:{digest}"
+        can never exceed OpenSearch's 512-byte document-id limit. See
+        shared.entity_helpers.bounded_entity_value for the algorithm (shared
+        with WS-9's resolver.py, which needs the identical bound)."""
+        return _bounded_entity_value_fn(entity_value)
 
     def _member_id(self, alert: dict) -> str:
-        """The window/side-table member id for ``alert``.
-
-        ``alert_id`` when present. A missing (or empty) ``alert_id`` used to
-        stringify to the literal ``'None'``, so every id-less alert collapsed
-        onto ONE member -- unrelated alerts deduplicated against each other
-        and a two-tactic pair of id-less alerts could never promote
-        (2026-08-26 gap-hunt finding). Fall back to a synthetic id built
-        from the fields that DO identify the alert (time/rule_id/event_ids):
-        deterministic, so redelivery of the same id-less alert re-derives
-        the same member (idempotency preserved), and distinct for different
-        alerts (no false dedup). A fully anonymous alert (none of those
-        fields either) gets a deterministic hash of its own payload -- it
-        can't be deduplicated on a field, but it must never MERGE with a
-        different alert, and redelivery of the SAME anon alert must re-derive
-        the same member (2026-08-27 finding: the old per-instance anon-seq
-        counter made the same anon alert redelivered 3x inflate to 3 members).
-        """
-        alert_id = alert.get("alert_id")
-        if alert_id not in (None, ""):
-            return _to_str(alert_id)
-        parts: list[str] = []
-        t = alert.get("time")
-        if t is not None:
-            parts.append(str(t))
-        rule_id = alert.get("rule_id")
-        if rule_id is not None:
-            parts.append(str(rule_id))
-        event_ids = alert.get("event_ids")
-        if event_ids:
-            ev = event_ids if isinstance(event_ids, (list, tuple)) else [event_ids]
-            parts.append("|".join(_to_str(e) for e in ev))
-        if parts:
-            return "anon:" + ":".join(parts)
-        # A fully anonymous alert (none of alert_id/time/rule_id/event_ids
-        # either) can't be deduplicated on any of those fields. Used to mint
-        # a per-instance sequence id (anon-seq:{n}) -- the ONE
-        # non-deterministic member id in the correlator: the same anon alert
-        # redelivered 3x (at-least-once bus) inflated into 3 members, and a
-        # multi-replica deployment couldn't agree on a member id at all.
-        # Now hash the payload instead: deterministic across processes, so
-        # redelivery re-derives the same member (idempotency preserved) and
-        # distinct anon alerts stay distinct (a 64-bit digest collision is
-        # negligible for a member id). Mirrors WS-4
-        # engine.py::_event_fingerprint's sorted-key JSON approach.
-        try:
-            blob = json.dumps(alert, sort_keys=True, default=str)
-        except (TypeError, ValueError):
-            blob = repr(alert)
-        digest = hashlib.sha256(blob.encode("utf-8", "replace")).hexdigest()[:16]
-        return f"anon:{digest}"
+        """The window/side-table member id for ``alert``. See
+        shared.entity_helpers.deterministic_member_id for the algorithm
+        (shared with WS-9's resolver.py, which needs the identical id for
+        the same alert shape)."""
+        return deterministic_member_id(alert)
 
     def _cooccurring_entities(self, alert: dict, own_type: str) -> list[tuple[str, str]]:
         """The OTHER entity fields this single alert carries, as

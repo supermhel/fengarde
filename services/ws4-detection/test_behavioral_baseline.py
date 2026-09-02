@@ -346,6 +346,43 @@ def test_feature_gating():
           "(g) hour feature enabled -> new hour must still deviate")
 
 
+def test_bool_time_does_not_masquerade_as_epoch_ms():
+    """2026-09-02 regression: `isinstance(True, int)` is True in Python, so
+    `_hour_of` used to accept event["time"]=True/False as a valid epoch-ms
+    value (hour 0) instead of falling back to now_ms -- silently corrupting
+    the learned hour-of-day baseline."""
+    from behavioral_baseline import _hour_of
+    now_ms = BASE  # UTC hour 15 per this file's own BASE comment
+    hour_from_bool = _hour_of({"time": True}, now_ms)
+    hour_from_missing = _hour_of({}, now_ms)
+    check(hour_from_bool == hour_from_missing,
+          f"2026-09-02: a bool time value must fall back to now_ms's hour, "
+          f"same as a missing one (got {hour_from_bool}, expected {hour_from_missing})")
+
+
+def test_malformed_type_uid_and_ip_degrade_instead_of_crashing():
+    """2026-09-02 regression: _type_uid_of/_src_ip_of/_dst_ip_of returned
+    whatever raw JSON type an event carried with no hashability check;
+    DequeWindowCounter.hit()/hit_distinct() use these values as set
+    members, so a list/dict value raised an uncaught TypeError and crashed
+    observe()."""
+    b = _new_baseline()
+    malformed = {
+        "time": BASE,
+        "type_uid": ["not", "hashable"],
+        "src_endpoint": {"ip": {"nested": "dict"}},
+        "dst_endpoint": {"ip": ["also", "not", "hashable"]},
+        "siem": {"ingest_id": "ig-malformed", "tenant": "default"},
+    }
+    try:
+        v = b.observe("ent-malformed", malformed, now_ms=BASE)
+    except TypeError as exc:
+        check(False, f"2026-09-02: a malformed event must degrade, not crash "
+                      f"observe() with {exc!r}")
+        return
+    check(isinstance(v, dict), "observe() must still return a result dict")
+
+
 def main():
     test_learn_then_detect()
     test_bounded()
@@ -353,13 +390,16 @@ def main():
     test_replay_safe()
     test_reuse_proof()
     test_feature_gating()
+    test_bool_time_does_not_masquerade_as_epoch_ms()
+    test_malformed_type_uid_and_ip_degrade_instead_of_crashing()
     if FAILS:
         print(f"[FAIL] behavioral baselines: {len(FAILS)} problem(s)")
         for f in FAILS:
             print("   -", f)
         sys.exit(1)
     print("[OK] behavioral baselines (learn/detect, bounded, deterministic, "
-          "replay-safe, DequeWindowCounter reuse) PASS")
+          "replay-safe, DequeWindowCounter reuse, bool-time + malformed-type "
+          "degrade-not-crash) PASS")
 
 
 if __name__ == "__main__":

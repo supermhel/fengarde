@@ -276,8 +276,8 @@ jobs:
   # M2 code-quality floor (PLAN_C Tier 2.3). Lint blocks; coverage blocks at the
   # MEASURED baseline (see tools/coverage_gate.py) not the unmet-for-WS-3 85%
   # target -- see that file's docstring for why. mypy is BLOCKING as of
-  # 2026-07-22 (0 findings across all 8 workstreams): see pyproject.toml's
-  # [tool.mypy] comment.
+  # 2026-07-22 (0 findings across all 8 workstreams; ws9-resolver added
+  # 2026-09-02, also 0 findings): see pyproject.toml's [tool.mypy] comment.
   quality:
     runs-on: ubuntu-latest
     steps:
@@ -296,10 +296,10 @@ jobs:
         run: |
           for ws in services/ws1-collectors services/ws2-normalization services/ws3-indexer \
                     services/ws4-detection services/ws5-ai services/ws6-inventory \
-                    services/ws8-correlation services/shared tools; do
+                    services/ws8-correlation services/ws9-resolver services/shared tools; do
             mypy "$ws" --explicit-package-bases --ignore-missing-imports
           done
-      - name: coverage gate (ws2/ws3/shared/ws4/ws6, blocking at measured baseline)
+      - name: coverage gate (ws2/ws3/shared/ws4/ws6/ws8/ws9, blocking at measured baseline)
         run: python tools/coverage_gate.py
       # FIX M10 (2026-08-06, reverted same day): a version of this step made
       # mutmut BLOCKING on the theory that pyproject.toml's [tool.mutmut]

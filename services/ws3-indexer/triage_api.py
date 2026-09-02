@@ -103,6 +103,7 @@ for _p in (str(_HERE), str(_HERE.parent)):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 from shared.authz import check_api_key, warn_if_disabled  # noqa: E402
+from shared.ip_utils import valid_ip  # noqa: E402
 from shared.log import get_logger  # noqa: E402
 from shared.rbac import role_at_least, can_access_tenant, LoginRateLimiter  # noqa: E402
 from shared.sessions import SessionStore, make_session_store  # noqa: E402
@@ -364,6 +365,16 @@ def route_list_incidents(self):
     if entity_type is not None and entity_type not in ("actor", "ip", "device"):
         raise _BadRequest("entity_type must be one of ['actor', 'ip', 'device']")
     entity_value = q.get("entity_value", [None])[0]
+    if entity_type == "ip" and entity_value is not None:
+        # WS-8 stores `ip:` incidents' entity_value in canonical (lowercased,
+        # de-compressed) IPv6 form (correlator.py's `_canonical_ip`); the
+        # storage layer does an exact-match term/`==` lookup, so a query in
+        # any other casing/compression used to silently return zero results
+        # for a real matching incident (2026-09-02 review). Canonicalize the
+        # query param the same way before filtering; non-IP-parseable input
+        # passes through unchanged so a garbage filter still just matches
+        # nothing, same as before.
+        entity_value = valid_ip(entity_value) or entity_value
     limit = _parse_limit(q.get("limit"))
     tenant_id = self._list_tenant_filter(session, requested_tenant)
     incidents = self.deps.store.list_incidents(tenant_id=tenant_id,
