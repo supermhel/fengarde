@@ -642,6 +642,26 @@ def test_main_redis_window_counter_uses_own_namespace():
           "OWN namespace (ws8:corr), not WS-4's ws4:win default")
 
 
+def test_ipv6_spelling_variants_promote_one_incident():
+    """IPv6 identity gap (2026-08-29 review): case- and compression-variant
+    spellings of ONE address must key the SAME ip: track and promote ONE
+    incident. Old behavior keyed the raw spelling -- a two-tactic spray
+    across spellings of one address never promoted (identity-evasion)."""
+    c = _new_correlator()
+    incs1 = c.ingest_alert(_alert("v1", tactic="TA0001",
+                                  ip="2001:0db8:0000:0000:0000:0000:0000:0001"))
+    incs2 = c.ingest_alert(_alert("v2", tactic="TA0002", ip="2001:DB8::1"))
+    ip_incs = [i for i in incs1 + incs2 if i["entity_type"] == "ip"]
+    check(len(ip_incs) == 1,
+          f"ipv6: two spellings of one address must promote ONE ip: incident "
+          f"(spelling split is identity-evasion), got {len(ip_incs)} "
+          f"ip-track incidents")
+    if ip_incs:
+        check(ip_incs[0]["entity_value"] == "2001:db8::1",
+              f"ipv6: the incident must carry the canonical spelling, got "
+              f"{ip_incs[0]['entity_value']!r}")
+
+
 def run_all():
     test_positive_low_and_slow()
     test_single_tactic_never_promotes()
@@ -665,6 +685,7 @@ def run_all():
     test_missing_alert_id_never_dedups_unrelated_alerts()
     test_entity_value_bounded_under_opensearch_doc_id_limit()
     test_device_track_respects_allowlist()
+    test_ipv6_spelling_variants_promote_one_incident()
     test_actor_user_as_plain_string_degrades_not_crashes()
     test_main_redis_window_counter_uses_own_namespace()
 

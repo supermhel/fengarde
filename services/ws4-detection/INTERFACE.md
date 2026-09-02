@@ -71,10 +71,30 @@
   — closes the gap between "a rule can fire" (CI-proven) and "a rule IS firing in
   production" (previously zero live signal).
 
+## Behavioral baselines (WP-2-D, additive module -- NOT wired into the engine)
+
+- `behavioral_baseline.py` ships a self-contained `BehavioralBaseline`: per-entity
+  NORMAL behavior (active hours, expected source-IP set, expected event-type set,
+  expected destinations) learned over a sliding warm-up window. It **reuses
+  `services/shared/window.py`'s `DequeWindowCounter`** (`RedisWindowCounter`
+  injectable for multi-replica) as its only store -- no new store is added
+  (ADR-009/WP-2-D rule). Keys by the entity plane's ADR-009 `entity_id`, with a
+  length-prefixed `(tenant, entity_type, entity_value)` composite fallback.
+- Bounded (attacker-controlled entity_ids): entity table hard-capped
+  (`max_entities`, deterministic LRU) + the window counter's own trim/idle-sweep
+  bounds the per-key windows. Replay-safe: member dedup by OCSF `ingest_id`.
+  Deterministic: caller-supplied `now_ms`, no wall clock.
+- **Deliberately NOT wired into `engine.py` / rules** (roadmap: baselines first,
+  wiring later). `observe(entity_key, event, now_ms) -> verdict dict` (learned /
+  deviation / reasons / observations / span_ms) is the additive signal a future
+  integration turns into an event flag or a `baseline_deviation` bus signal; it
+  never mutates the input event.
+- Test: `python test_behavioral_baseline.py` (standalone, zero-infra, injected clock).
+
 ## Contract tests
 - `python test_contract.py`  (memory bus; rule firing + stateful thresholds + funnel)
 
-## Environment (read by `main.py` / `engine.py` / `window.py`)
+## Environment (read by `main.py` / `engine.py`)
 - `PORT` (default `8010`) — health/metrics listener port.
 - `BUS_BACKEND` / `REDIS_URL` / `REDIS_PASSWORD` / `REDIS_SENTINEL_HOSTS` /
   `REDIS_SENTINEL_MASTER` — bus backend (memory / redis / redis-sentinel).

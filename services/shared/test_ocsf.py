@@ -46,11 +46,26 @@ def test_plain_ipv4_unaffected():
           "valid_ip must pass through a plain IPv4 address unchanged")
 
 
-def test_real_ipv6_unaffected():
+def test_real_ipv6_canonical_form():
+    # Already-canonical spellings must return unchanged.
     check(valid_ip("fe80::1") == "fe80::1",
-          "valid_ip must not touch a genuine (non-IPv4-mapped) IPv6 address")
+          "valid_ip must return the canonical form of a link-local IPv6")
     check(valid_ip("2001:db8::1") == "2001:db8::1",
-          "valid_ip must not touch a genuine IPv6 address with no v4-mapped form")
+          "valid_ip must return the canonical form of a compressed IPv6")
+
+
+def test_ipv6_spelling_variants_collapse_to_one_form():
+    """IPv6 identity gap (2026-08-29 review): case- and compression-variant
+    spellings of ONE address must collapse to a single canonical form, or
+    WS-9 hashes and WS-8 tracks split one address into several identities
+    (an attacker can evade a 2-tactic promotion by spraying spellings)."""
+    canonical = "2001:db8::1"
+    for variant in ("2001:0DB8::1", "2001:0db8::1",
+                    "2001:db8:0:0:0:0:0:1",
+                    "2001:0db8:0000:0000:0000:0000:0000:0001"):
+        check(valid_ip(variant) == canonical,
+              f"valid_ip({variant!r}) must collapse to {canonical!r}, "
+              f"got {valid_ip(variant)!r}")
 
 
 def test_invalid_input_still_rejected():
@@ -79,7 +94,8 @@ def test_normalized_output_matches_contract_a_pattern():
 def main():
     test_ipv4_mapped_ipv6_normalizes_to_plain_ipv4()
     test_plain_ipv4_unaffected()
-    test_real_ipv6_unaffected()
+    test_real_ipv6_canonical_form()
+    test_ipv6_spelling_variants_collapse_to_one_form()
     test_invalid_input_still_rejected()
     test_normalized_output_matches_contract_a_pattern()
 

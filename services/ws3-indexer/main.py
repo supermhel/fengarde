@@ -254,9 +254,17 @@ def run(bus, store) -> dict:
 # ONE service to run the reaper, not one per producer/consumer. WS-3 is the
 # most terminal/always-running service, so it owns this. `.deadletter`
 # siblings are excluded by start_stream_reaper itself.
+#
+# entity.updates/incident.graph (2026-09-02 review): added after WP-2's
+# entity-plane work (WS-8/WS-9) started producing onto these two topics
+# without this list being updated -- the reaper never trimmed either stream,
+# an unbounded-growth vector in the live Redis stack identical to the one
+# this whole list exists to prevent. Note WS-3 does NOT yet consume/index
+# either topic into a queryable document (see contracts/bus-topics.md); this
+# entry only stops them growing unbounded, it does not add persistence.
 _ALL_BUS_TOPICS = ["raw.events", "normalized.events", "scored.events",
                    "ai.requests", "ai.results", "alerts", "assets.updates",
-                   "incidents"]
+                   "incidents", "entity.updates", "incident.graph"]
 
 
 def main():

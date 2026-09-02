@@ -9,9 +9,9 @@ compose stack, verifies EVERY app service end to end:
   - the container is Running and healthy (docker compose ps state + health)
   - its HTTP health endpoint returns 200 (bus-runner /health, dashboard /)
 
-App services covered (the 8 workstream containers + dashboard):
+App services covered (the 9 workstream containers + dashboard):
   ws1-collectors, ws2-normalization, ws3-indexer, ws4-detection, ws5-ai,
-  ws6-inventory, ws8-correlation  ->  /health on their bus runner port
+  ws6-inventory, ws8-correlation, ws9-resolver  ->  /health on their bus runner port
   ws7-dashboard                   ->  nginx root page (wget/curl -f)
 
 Live-only by design (needs the Docker compose stack up); self-contained and
@@ -39,6 +39,7 @@ HEALTH_PROBES: dict[str, str] = {
     "ws5-ai": "http://127.0.0.1:8005/health",
     "ws6-inventory": "http://127.0.0.1:8006/health",
     "ws8-correlation": "http://127.0.0.1:8008/health",
+    "ws9-resolver": "http://127.0.0.1:8009/health",
     "ws7-dashboard": "http://127.0.0.1/",
 }
 

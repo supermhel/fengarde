@@ -7,6 +7,235 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed (2026-09-02, fourth review-fix round: 20 confirmed defects across two independent multi-agent reviews, live Docker-verified)
+
+Two independent code reviews (high effort: 10 findings; max effort, fresh
+angles + gap sweep: 15 findings, largely disjoint from the first) surfaced 20
+unique confirmed/plausible defects across the entity-plane work (PR #81). All
+20 fixed, zero-infra suite green (`run_all_tests.sh` ALL TESTS PASS,
+`tools/integration_e2e.py`, `tools/demo_e2e.py`), and the ws9-resolver /
+ws8-correlation / ws2-normalization / ws3-indexer / ws4-detection fixes
+additionally exercised **live against a real Docker stack** (Redis 7 +
+OpenSearch 2.13 + all 9 workstream containers, `docker compose up --build`) —
+see SSOT.md §2's Phase 2 row for the full verification account.
+
+- **New `services/shared/ip_utils.py`** — `valid_ip`/`valid_mac`/`safe_str`
+  extracted out of `shared/ocsf.py`, which requires `tools/validate_contract.py`
+  at import time and raises `RuntimeError` if it's missing. **WS-9's
+  `entity_id.py` imported `shared.ocsf` for `valid_ip` alone, and WS-9's
+  Dockerfile never copies `tools/`** (unlike ws2-normalization's, which does) —
+  the container crashed on every startup once deployed. `entity_id.py` now
+  imports the dependency-free `shared.ip_utils` instead; `shared/ocsf.py`
+  re-exports the three names for the existing ws2-normalization parser
+  callers, unchanged. Live-verified: built the REAL (unmodified) Dockerfile,
+  ran it standalone against the live compose-network Redis — starts clean,
+  resolved a real SSH brute-force burst end-to-end, `/health` and `/metrics`
+  both green. Regression: `test_dockerfile_copy_set_imports_without_tools_dir`
+  reproduces the Dockerfile's exact `COPY` set in a temp dir and imports
+  `main.py` in a subprocess (confirmed it fails the same way on the pre-fix
+  code, via a scripted revert-and-rerun).
+- **`services/ws8-correlation/correlator.py`'s `_canonical_ip` and
+  `services/ws9-resolver/resolver.py`'s `_bounded_entity_value`/`_member_id`/
+  `_valid_window_time`/`_to_str` were near-verbatim duplicates of each
+  other** (same magic constants, same algorithms) instead of one shared
+  implementation. New `services/shared/entity_helpers.py` +
+  `shared/ip_utils.py` hold the canonical versions; both services now
+  delegate. `_canonical_ip`'s old "can't import shared.ocsf" justification
+  no longer applies (`ip_utils` has no `tools/` dependency).
+- **`resolver.py`: a member evicted in the same call it was added skipped
+  `evicted_lru` bookkeeping**, so its redelivery was treated as fresh again,
+  inflating `resolved_updates` on every redelivery — broke the documented
+  replay-idempotency guarantee. Fixed by deciding the eviction candidate
+  BEFORE inserting the new member, so the just-added member can never be its
+  own eviction victim.
+- **`resolver.py`: the deterministic time-fallback digest for a time-less
+  alert (up to ~2.8e14, routinely larger than real epoch-ms) was folded
+  directly into `first_seen_ms`/`last_seen_ms` via plain `min()`/`max()`**,
+  permanently pinning an entity's `last_seen_ms` to a nonsensical far-future
+  value no later real timestamp could ever exceed. Fixed by tracking the
+  member's eviction-ordering key (`time_ms`) and the timeline aggregate
+  (`agg_time_ms`, always a real timestamp — the alert's own, or
+  processing-time `now_ms` for a time-less one) separately.
+- **`resolver.py`: `extract_entities` didn't dedupe when `src_endpoint.ip`
+  equals `dst_endpoint.ip`** (loopback/reflected traffic), so `resolve_alert`
+  emitted two `entity.updates` payloads for one logical sighting. Fixed with
+  an entity_id dedup set in `resolve_alert`'s loop.
+- **`entity_id.py`: `canonical_entity_value` coerced a non-string
+  actor/device value via `str(raw)` before casefolding**, so a JSON boolean
+  `true` collided with the genuine string `"true"` into ONE entity_id,
+  silently merging two unrelated identities. Non-string values now resolve to
+  `None` (skipped) instead of being coerced.
+- **`resolver.py`'s `apply_update` (the `entity.updates` self-consumer path,
+  e.g. WS-6 inventory sightings) had three bugs**: (1) never touched
+  `_last_touch`, so an entity created only via this path was invisible to
+  `_sweep_dead_entities` and never expired; (2) its already-known-entity
+  branch advanced only `last_seen_ms`, silently discarding
+  `entity_value`/`attributes` a genuinely newer update carried; (3) its
+  new-entity branch accepted an arbitrary `attributes` shape, so a later
+  alert-driven sighting on the same `entity_id` crashed with `KeyError` in
+  `_upsert_sighting`'s merge branch (`meta["attributes"]["mitre_tactics"]`
+  unguarded) — a deterministic poison-pill that dead-lettered after
+  `max_redeliveries`. All three fixed: `apply_update` now touches
+  `_last_touch`, merges (not replaces) attributes, and defaults the same
+  attribute shape `_upsert_sighting` always populates; the merge-branch read
+  is now `.get()`-guarded too, defense in depth.
+- **`resolver.py`'s `_upsert_sighting`/`entity_state` returned only a
+  shallow `dict(meta)` copy**, aliasing the nested `attributes` dict to the
+  same live object backing `self._meta` (unlike `correlator.py`'s
+  `incident_graph()`, which explicitly `copy.deepcopy()`s for this exact
+  reason). Both now deep-copy.
+- **`services/ws2-normalization/enrichment/__init__.py`: the IOC exact-match
+  index keyed on the IOC file's raw, arbitrarily-cased/compressed literal**,
+  while `shared/ocsf.py`'s 2026-08-29 IPv6 canonicalization means every
+  parser now hands `enrich()` the canonical spelling — a real IPv6 IOC
+  silently stopped matching its own indicator. Now keyed on the same
+  canonical form. Live-verified inside the running ws2-normalization
+  container with a mixed-case IOC entry.
+- **Same file: the new per-IP result cache (WP-2-H) shared one `location`
+  dict object across every event from the same source IP** (before the
+  cache, each event got a fresh dict); assigning it by reference risked one
+  event's in-place mutation silently corrupting every other event sharing
+  that IP. Now copied (`dict(loc)`) before assignment. Live-verified inside
+  the running container.
+- **`services/ws3-indexer/main.py`: `_ALL_BUS_TOPICS` (the stream reaper's
+  topic list) never gained `entity.updates`/`incident.graph`** after WS-8/
+  WS-9 started producing onto them — an unbounded Redis stream growth vector
+  in the live stack, confirmed by reading the constant live inside the
+  running ws3-indexer container after the fix.
+- **`services/ws3-indexer/triage_api.py`: `GET /incidents?entity_value=`
+  did an exact-match against WS-8's now-canonicalized (lowercased) IP
+  entity_value**, so a differently-cased query silently returned zero
+  results for a real matching incident. The `ip`-type query param is now
+  canonicalized the same way before filtering. Live-verified: `/api/incidents`
+  through the real nginx→ws3 HTTP path returns 200, not a crash.
+- **`contracts/bus-topics.md` falsely listed WS-9 as an `incident.graph`
+  producer AND consumer, and WS-3 as a consumer of both new topics** — none
+  of that is true in the shipped code (WS-9's own `INTERFACE.md` already
+  says `incident.graph` is "Deliberately not built (this pass)"). Corrected
+  to name the real producer/consumer set, with the gaps explicitly marked
+  instead of silently claimed.
+- **`services/ws4-detection/behavioral_baseline.py`: `_hour_of` accepted
+  `bool` as a valid numeric time** (Python: `isinstance(True, int)` is
+  `True`), inconsistent with every other time-validator this PR touches,
+  which explicitly excludes `bool`. Fixed; live-verified inside the running
+  ws4-detection container.
+- **Same file: `_type_uid_of`/`_src_ip_of`/`_dst_ip_of` returned raw event
+  values with no type check**, and `DequeWindowCounter` uses them as set
+  members/dict keys — a malformed `list`/`dict` value raised an uncaught
+  `TypeError: unhashable type`, crashing `observe()`. Now degrade to `None`
+  (skipped) instead. Currently latent in production (WP-2-D is not yet wired
+  into the live rule engine) but fixed at the source; live-verified inside
+  the running container.
+- **`services/ws4-detection/test_exposure_scoring.py`: the clamp-overflow
+  regression check wrapped only the upper-bound comparand in `adjust()`** —
+  the same clamp function under test — making that check tautologically true
+  for any tier/multiplier values and unable to catch the regression it
+  claimed to guard against. Compares the raw (unclamped) value now; `adjust()`
+  removed as dead code.
+- **`services/ws9-resolver/main.py`: `ENTITY_HORIZON_S` was documented in
+  `INTERFACE.md` as a configurable env var but `make_resolver()` never read
+  it** — the resolver always ran with the hardcoded 86400s default. Promoted
+  `86400` to a named `resolver.DEFAULT_HORIZON_S` constant and wired the env
+  var through.
+- **10 new regression tests** in `services/ws9-resolver/test_contract.py`
+  (self-evicted-member bookkeeping, time-less/real timestamp isolation,
+  src==dst dedup, non-string-actor-never-collides, apply_update sweep/merge/
+  cross-path-shape safety, and the Docker-layout import test) + **2** in
+  `services/ws4-detection/test_behavioral_baseline.py` (bool-time,
+  malformed-type degrade-not-crash).
+- **`ws9-resolver` added to `infra/docker-compose.yml`** as a 9th standing
+  workstream container (mirrors `ws8-correlation`'s block), plus
+  `infra/prometheus.yml`'s scrape targets and `tools/container_smoke.py`'s
+  probed-service map. With the Dockerfile crash fixed above, this closes the
+  deployability gap ADR-009's Consequences section named ("WS-9 is NOT yet
+  in `infra/docker-compose.yml`") — live-verified as a real managed
+  container (`docker compose up -d --build ws9-resolver` → healthy;
+  `container_smoke.py` → 9/9). `tools/chaos_test.py`'s `KILL_TARGETS` (for
+  `make chaos`) and CI's `mypy`/`coverage_gate.py` per-workstream loops still
+  don't cover WS-9 — left open, not silently claimed done.
+- **CI gates actually run locally, not assumed**: `ruff check services/
+  tools/` (blocking in CI) found 2 real issues this round's own edits
+  introduced — unused `hashlib`/`json` imports in `correlator.py` left over
+  from the helper-delegation refactor, and `InvalidTenant` flagged unused in
+  both `correlator.py`/`resolver.py` even though `test_contract.py` in each
+  service imports it from there (a real re-export, now `# noqa: F401`-
+  annotated instead of silently relying on lint never running) — both fixed.
+  `mypy` (at the time, 8 CI-covered workstreams + `shared`; `ws9-resolver`
+  added below), `tools/coverage_gate.py`, and `tools/generate_sbom.py
+  --check` all pass clean. The CI job bodies not yet reproduced locally
+  at the time: `ws3-mfa-live-e2e`, `ot-new-device-live-e2e`,
+  `attack-scorecard`, `pip-audit`, `actionlint`, `gitleaks` — none touch a
+  file this round changed. (`ot-new-device-live-e2e` reproduced further
+  down this same entry; the rest still stand.)
+- **`run_all_tests.sh`'s own `tools/check_lane_coverage.py` assertion #1
+  caught a real gap this round's own WS-9 compose addition introduced**:
+  `ws9-resolver` now has a `BUS_BACKEND=redis` dependency (it consumes
+  `alerts` to build the entity graph, same path `tools/chaos_test.py`'s
+  scenarios replay through) but was absent from `chaos_test.py`'s
+  `KILL_TARGETS` with no exclusion comment — the gate correctly failed
+  loudly instead of passing vacuously. Added `ws9-resolver` to
+  `KILL_TARGETS`, mirroring the `ws8-correlation` precedent (same caveat:
+  proves clean die/restart under kill, not entity-state correctness
+  mid-restart — tracked separately). All 20 bugs' fixes plus this gate fix
+  confirmed together: full `bash run_all_tests.sh` → `ALL TESTS PASS`,
+  `ruff check services/ tools/` → clean, `python tools/validate_contract.py`
+  → PASS, and `python tools/container_smoke.py` against the still-running
+  live stack → 9/9 healthy. Test-count claim above also verified by name
+  against the actual files, not assumed: `services/ws9-resolver/
+  test_contract.py` and `services/ws4-detection/test_behavioral_baseline.py`
+  both grepped for the specific `def test_*` names this entry claims.
+- **Live chaos run, WS-9 actually in the kill rotation**: `python
+  tools/chaos_test.py` against the still-running stack —
+  `scenarios=40 lost=0 duplicated=0 distinct_alert_ids=0`, 7 services
+  SIGKILLed mid-replay including `ws9-resolver` (previously 6), PASS.
+  Proves WS-9 dies/restarts cleanly under kill without losing or
+  duplicating alerts or wedging its `alerts` consumer; does not prove
+  entity-state correctness mid-restart (tracked separately, same as
+  ws8-correlation's existing caveat).
+- **CI's `mypy`/`coverage_gate.py` per-workstream loops now cover
+  `ws9-resolver`** (were the last two gates that skipped it). Added
+  `services/ws9-resolver` to `.github/workflows/ci.yml`'s mypy loop —
+  `mypy services/ws9-resolver --explicit-package-bases
+  --ignore-missing-imports` → 0 findings, same bar as the other 8. Added a
+  `"ws9-resolver"` entry to `tools/coverage_gate.py`'s `TARGETS` dict
+  (`test_contract.py`; measured 77%, floor 68.0%, 9pt buffer — same
+  first-time-entry convention as every other service in that table).
+  `python tools/coverage_gate.py` re-run locally: **PASS**, all 7 tracked
+  services green.
+- **`tools/ot_new_device_e2e.py` reproduced locally — the earlier
+  "unexpected skip" was confirmed as an env-var/container-lifecycle
+  mismatch, not a code defect.** `INVENTORY_BASELINE_SECONDS=0` set in the
+  shell never reached the already-running `ws6-inventory` container (env
+  vars are fixed at container creation, not read live). Recreated the
+  container correctly (`INVENTORY_BASELINE_SECONDS=0 docker compose -f
+  infra/docker-compose.yml up -d --no-deps ws6-inventory`, verified via
+  `docker exec` that the env var actually landed), then ran
+  `FENGARDE_E2E_STRICT=1 python tools/ot_new_device_e2e.py`: **PASS** — a
+  real `assets.updates` observation traversed WS-6's bus consumer →
+  `raw.events` → WS-2 → WS-4's `ot_new_device_on_segment` rule → an indexed
+  alert, matching the CI job (`ot-new-device-live-e2e`) exactly.
+  `ws6-inventory` recreated a second time back to its default 3600s
+  baseline afterward so the standing dev stack isn't left non-default.
+
+### Fixed (2026-08-29, PR #81 review round: ADR-009 node identity docs + IPv6 identity gap)
+
+- **ADR-009 `incident.graph` node identity corrected in docs.** The ADR, `contracts/bus-topics.md`,
+  and ws8 `INTERFACE.md` payload sketches said `nodes: [entity_id…]`; the implementation emits
+  `type:value` track refs (`actor:alice`, `ip:10.0.0.5`) — the same identity space WS-8 promotes —
+  so the specs now say `nodes: [type:value…]` and the ADR documents the design rationale (WS-9's
+  canonical sha256 `entity_id` is NOT recomputed in WS-8; `version: 2` is the seam that carries it).
+- **IPv6 identity gap (WS-8 + WS-9): case/compression spellings split one address into many
+  identities.** `shared/ocsf.valid_ip` now returns `ipaddress`'s canonical `str()` (lowercased +
+  de-compressed), collapsing `2001:DB8::1` / `2001:db8:0:0:0:0:0:1` /
+  `2001:0db8:0000:0000:0000:0000:0000:0001` into one form; WS-8 keys `ip:` tracks and graph
+  co-occurrences through a stdlib-only `_canonical_ip` mirror (its container cannot import
+  `shared.ocsf`). A two-tactic spray across spellings used to evade promotion entirely — now a
+  tracked incident. Regression tests in `test_ocsf`, ws8 `test_contract` + `test_incident_graph`,
+  and ws9 D4 (extended to compression variants).
+- **WS-8 `_build_incident_graph` redundant re-bounding removed.** `cooccur` values are already
+  bounded at store time (the side-table's single writer), so the graph-build re-bound was dead
+  weight; the invariant is now documented at both sites.
+
 ### Fixed (2026-08-28, third review-fix round — adversarial PR review of #80)
 
 A three-reviewer adversarial pass (guard + twin + supply-chain + docs) found
@@ -233,6 +462,37 @@ them incomplete, plus one new critical issue in the fix commit itself.
   owner sign-off on the terms — is now in place.
 
 ### Fixed (2026-08-28, WS-3: live-stack CAS race under stateful-rule re-fire)
+### Added (2026-08-28, Phase 2 — entity/context plane: ADR-009 + WS-9 resolver + incident graph + baselines)
+
+- **ADR-009 (owner-ratified): entity-plane bus topics.** `docs/adr/009-entity-plane-bus-topics.md`
+  + `contracts/bus-topics.md` amended with two additive topics: `entity.updates` (deterministic
+  entity_id, idempotent under redelivery) and `incident.graph` (version 1, provenance-carrying
+  edges, no transitive inference), plus a **new WS-9 resolver service**.
+- **WS-9 entity resolver (WP-2-B).** `services/ws9-resolver/` — sha256(tenant|type|canonical)
+  entity_id; edge canonicalization mirroring ws8 (IP via `shared.ocsf.valid_ip`, MAC lowercased,
+  usernames case-folded); replay-safe; emits `entity.updates` on the memory bus; INTERFACE.md.
+- **Incident relationship edges (WP-2-C).** WS-8 correlator now emits `incident.graph` with
+  provenance edges — only same-alert co-occurrences (no transitive inference, proven by test),
+  redelivery-identical, member-set-bounded, pruned by the existing `_sweep_dead_tracks`.
+- **Behavioral baselines (WP-2-D).** `services/ws4-detection/behavioral_baseline.py` —
+  learn-then-detect baselines reusing `shared.window.DequeWindowCounter` (no new store),
+  bounded/deterministic/replay-safe. Not wired into the rule engine yet (honest scope).
+- **OT point config (WP-2-E).** `contracts/ot-points/` — machine-readable OT point map
+  (meaning/criticality/allowed-writers/maintenance-window), twin-derived sample; documents the
+  FPR relationship honestly.
+- **Exposure-aware scoring schema (WP-2-F).** `contracts/scoring.yaml` gains an inert
+  (enabled:false) `exposure` extension; schema-additive; wired `test_exposure_scoring.py`.
+- **Sanitizer gap fix (WP-2-G).** `ws2-normalization/main.py` `_FREE_TEXT_PATHS` extended to
+  cover real mapped free-text gaps (`api.operation`, `actor.user.domain`, `actor.user.uid`);
+  `unmapped.*` wildcard confirmed mutation-sound. (Roadmap's "_FREE_TEXT_PATHS gone" claim was
+  stale — it lives in `main.py`.)
+- **Bounded per-IP enrichment cache (WP-2-H).** `Enricher` gains an OrderedDict per-IP result
+  cache (cap 10_000, LRU, miss-marker; junk IPs never cached); additive, thread-safe.
+- **triage_api decomposition (WP-2-I).** `services/ws3-indexer/triage_api.py` decomposed:
+  ~788-line closure → ~30-line assembler + 16 per-route `Handler` functions + `ROUTE_INVENTORY`;
+  behavior-preserving (ws3 suite incl. MFA live-e2e green).
+
+### Added (2026-08-28, MSSP distribution: partner list + quickstart went live)
 
 Re-measuring the README's live-stack Performance table surfaced a real bug
 instead of clean numbers: 4/10 latency bursts against the live Docker stack

@@ -37,3 +37,57 @@ severity_floor:
 clamp:
   min: 0
   max: 100
+
+# ============================================================================
+# Exposure-aware risk adjustment (WP-2-F / roadmap finding S5).  INERT TODAY.
+# ============================================================================
+# THIS SECTION IS READ BY NOTHING.  Do not treat it as load-bearing.
+#
+# Scorer (services/ws4-detection/scoring.py) constructs from exactly three
+# top-level blocks -- `thresholds`, `severity_floor`, `clamp` -- plus the
+# document `version` key (validated at construction, warn-only).  Nothing in
+# any workstream or tool opens `exposure`.  Per this file's own honest-status
+# rule (see the `store_only_below` and `combine` notes above), a knob that
+# looks authoritative but reads nothing is worse than no knob -- so this
+# section ships DEFAULT-OFF (`enabled: false`) and the ONLY reader it has is
+# this comment.  Until a package wires it into the scorer, it has no effect on
+# any score, floor, or funnel decision, and `version: 1` above is intentionally
+# NOT bumped: the v1 layout this scorer is written against is unchanged by an
+# inert additive section.
+#
+# Why it is here at all: roadmap finding S5 scopes exposure-aware risk as an
+# EXTENSION of this file, not a new subsystem.  It is published now as the
+# agreed JSON-safe schema so a future reader can wire it into Scorer without
+# a contract rewrite -- on the same principle as the ot-points-style asset
+# config: deploy the schema first, wire it later, and stay explicit that it
+# is not yet wired.
+#
+# Adjustment semantics agreed for that future reader (a single pass applied to
+# the already-clamped max(severity_floor, sum(score_weight)) from the blocks
+# above, then re-clamped to clamp.min..clamp.max):
+#     score' = clamp(clamp_min, clamp_max,
+#                    score + sum(absolute_tier_adds)
+#                          + round(score * (prod(exposure_multipliers) - 1)))
+# `asset_criticality.tiers` and `tenant_tier.tiers` contribute ABSOLUTE points
+# (a crown-jewel asset is worth +15 regardless of base score); `cap.ceiling`
+# guarantees the adjusted score can never exceed what the clamp already
+# allows, so the exposure pass can only ever raise a score into a higher
+# funnel tier, never past clamp_max.  A multiplier of 1.0 == neutral.
+exposure:
+  enabled: false            # MUST stay false until a reader exists; the off-switch
+  factors:
+    asset_criticality:      # from the ot-points-style WS-6 asset config (tier -> +pts)
+      tiers:
+        default: 0
+        crown_jewel: 15
+    internet_exposure:      # where the asset/segment sits on the network (multiplier)
+      levels:
+        internal_only: 1.0
+        dmz: 1.1
+        internet_facing: 1.25
+    tenant_tier:            # commercial tier of the consuming tenant (tier -> +pts)
+      tiers:
+        default: 0
+        premium: 10
+  cap:
+    ceiling: 100            # adjusted score is still bounded by clamp.max above

@@ -1,0 +1,129 @@
+# Sample OT point map: plc-line3 (WP-2-E)
+#
+# SAMPLE configuration derived from the repo's PLC simulator twin
+# (eval/twin/plc_sim.py — a loopback-only tank/pump process sim).
+# Honest provenance: the twin's .py sources are ABSENT from this checkout
+# (only __pycache__/ remains); the index values below are per the WP-2-E
+# task brief, with constant names and function codes cross-checked against
+# the compiled plc_sim code object and the derived wire addresses verified
+# against the parser's declared range — see README.md "Ground truth".
+# A deployment MUST replace this sample with its own device/vendor point
+# map and confirm every window, criticality, and writer before use.
+#
+# This file is NOT read by any parser or rule yet (no loader exists);
+# it exists so the richer point knowledge — coil-space points, writers,
+# maintenance windows — has a config surface to live on. See README.md.
+
+version: 1
+
+device:
+  id: plc-line3
+  protocol: modbus_tcp
+  unit_id: 1
+  provenance: >-
+    Derives from eval/twin/plc_sim.py register/coil map (REG_SETPOINT=0,
+    REG_LEVEL=1, REG_PUMP_STATE=2, COIL_PUMP_ENABLE=0) per the WP-2-E brief.
+    Twin .py source absent from this checkout; names/FCs verified from
+    eval/twin/__pycache__/plc_sim.cpython-312.pyc. SAMPLE — confirm on the
+    real device before treating as ground truth.
+
+# The parser's coarse hardcoded default, documented for contrast, NOT a
+# point declaration: services/ws2-normalization/parsers/modbus_anomaly.py
+# classifies any write outside 40001-40009 as unauthorized_write. This
+# config is where a deployment expresses the richer knowledge that default
+# lacks (per-point semantics, coil space, writers, windows).
+parser_default:
+  holding_register_range:
+    start: 40001               # Python range(40001, 40010) start
+    end_exclusive: 40010       # Python range(40001, 40010) stop (exclusive)
+    source: "modbus_anomaly.py::_EXPECTED_WRITE_ADDRESSES"
+
+points:
+  - id: setpoint
+    space: holding_register
+    index: 0
+    wire_address: 40001        # holding register offset 0 -> 40001 + 0 (Modbus 5-digit convention)
+    function_codes: [3, 6]     # read holding / write single register
+    meaning: "Cooling setpoint temperature for the tank process"
+    meaning_known: true
+    criticality: high          # SAMPLE assignment — deployment judgment required
+    allowed_writers:
+      - category: scada_host
+      - category: engineering_workstation
+      - category: maintenance_tool
+        detail: "field laptop during maintenance windows only"
+    maintenance_window:
+      days: [mon, tue, wed, thu, fri]
+      start: "08:00:00"
+      end: "18:00:00"
+      timezone: "Europe/Berlin"
+      write_expectation: "routine setpoint changes by SCADA/HMI during shift; engineering writes within window"
+    notes: "SAMPLE — the sim twin models a temperature setpoint; window is an assumption."
+
+  - id: level
+    space: holding_register
+    index: 1
+    wire_address: 40002        # holding register offset 1 -> 40001 + 1
+    function_codes: [3]        # read holding only — level is a measured value, not normally written
+    meaning: "Current tank level (measured value)"
+    meaning_known: true
+    criticality: low           # measurement, not a control actuator
+    allowed_writers:
+      - category: maintenance_tool
+        detail: "level sensor calibration/zeroing during maintenance"
+    maintenance_window:
+      days: [sat, sun]
+      start: "02:00:00"
+      end: "04:00:00"
+      timezone: "Europe/Berlin"
+      write_expectation: "calibration writes only; no routine writer for this point"
+    notes: "SAMPLE — writes to a measured value are rare; window reflects a calibration slot."
+
+  - id: pump_state
+    space: holding_register
+    index: 2
+    wire_address: 40003        # holding register offset 2 -> 40001 + 2
+    function_codes: [3, 6]
+    meaning: "Pump run-state mirror (status register exposing pump on/off)"
+    meaning_known: true
+    criticality: medium
+    allowed_writers:
+      - category: automation_controller
+        detail: "cascade/interlock writes between controllers"
+      - category: maintenance_tool
+    maintenance_window:
+      days: [mon, tue, wed, thu, fri, sat, sun]
+      start: "00:00:00"
+      end: "23:59:59"
+      timezone: "Europe/Berlin"
+      write_expectation: "controller-driven writes any time; maintenance writes inside engineering hours"
+    notes: "SAMPLE — status mirrors are typically read-mostly; writers listed defensively."
+
+  - id: pump_enable
+    space: coil                    # 0xxxx coil space, not a holding register
+    index: 0
+    wire_address: 00001            # coil offset 0 -> 00001 in the 0xxxx data-address space
+    function_codes: [1, 5]         # read coils / write single coil
+    meaning: "Pump enable/disable command (discrete actuator)"
+    meaning_known: true
+    criticality: critical          # direct actuator command — highest consequence point in the map
+    allowed_writers:
+      - category: scada_host
+      - category: hmi
+      - category: maintenance_tool
+        detail: "the writer class in the 2026-08-28 FPR scenario (approved maintenance-window coil write)"
+    maintenance_window:
+      days: [sat, sun]
+      start: "00:00:00"
+      end: "06:00:00"
+      timezone: "Europe/Berlin"
+      write_expectation: "pump enable/disable expected during the approved weekend maintenance window"
+    notes: >-
+      This entry is the FPR vehicle: a legitimate maintenance-window write
+      to THIS coil (wire 00001) currently fires ot_modbus_unauthorized_write
+      (id 9c1d2e3f-4a5b-4c6d-8e7f-1a2b3c4d5e6f) because the parser's
+      _EXPECTED_WRITE_ADDRESSES only covers holding registers 40001-40009.
+      Declaring the coil point, its allowed writers, and its window here is
+      the config that CAN express that nuance — but no loader reads this
+      file yet, so behavior is unchanged until a later package wires it.
+      SAMPLE values; window/writers must be confirmed by the deployment.
