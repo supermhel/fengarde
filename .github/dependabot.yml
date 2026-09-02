@@ -88,3 +88,17 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    groups:
+      # github/codeql-action ships init/analyze/upload-sarif as separate
+      # dependency references but init and analyze in the SAME workflow MUST
+      # be pinned to the same release -- CodeQL hard-errors otherwise
+      # ("Loaded a configuration file for version X, but running version Y").
+      # Ungrouped, dependabot opened one PR per reference (#84 bumped only
+      # codeql.yml's init, breaking its own analyze step; #85 bumped
+      # scorecard.yml's standalone upload-sarif, which has no init to match
+      # and stayed safe on its own) -- found and fixed 2026-09-02. Grouping
+      # them means future bumps land as one PR that's internally consistent
+      # by construction, not by whoever reviews remembering this constraint.
+      codeql-action:
+        patterns:
+          - "github/codeql-action/*"
