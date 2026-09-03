@@ -124,6 +124,7 @@ from __future__ import annotations
 import argparse
 import copy
 import json
+import statistics
 import sys
 import time
 from datetime import datetime, timezone
@@ -316,6 +317,26 @@ def _ensure_evidence():
     return mod
 
 
+def _pick_full_coverage_incident(alerts_by_step: list[dict], by_id: dict) -> Optional[str]:
+    """The incident id whose member_alert_ids covers every chain alert, else
+    the lexicographically-first promoted incident id. None when no incident
+    was promoted at all.
+
+    Shared by every WP-3.5-A metric that needs to name ONE incident to
+    describe (reconstruction, investigation) so they can never silently
+    disagree about which incident that is -- a single tie-break policy
+    edited in one place instead of two independently-maintained copies.
+    """
+    if not by_id:
+        return None
+    chain_ids = {a["alert"]["alert_id"] for a in alerts_by_step}
+    pick = next(
+        (iid for iid, inc in by_id.items()
+         if chain_ids <= set(inc.get("member_alert_ids") or [])),
+        None)
+    return pick if pick is not None else sorted(by_id)[0]
+
+
 def _evidence_reconstruction(alerts_by_step: list[dict], by_id: dict,
                              graph_fn, now_ms: int) -> Optional[dict]:
     """WP-3.5-A incident reconstruction time: build the REAL WS-3 evidence
@@ -330,32 +351,22 @@ def _evidence_reconstruction(alerts_by_step: list[dict], by_id: dict,
     (see the module docstring's determinism note). Returns None when no
     incident promoted (no artifact to reconstruct -- never fabricated).
     """
-    if not by_id:
-        return None
-    chain_ids = {a["alert"]["alert_id"] for a in alerts_by_step}
-    pick = next(
-        (iid for iid, inc in by_id.items()
-         if chain_ids <= set(inc.get("member_alert_ids") or [])),
-        None)
+    pick = _pick_full_coverage_incident(alerts_by_step, by_id)
     if pick is None:
-        pick = sorted(by_id)[0]
+        return None
     incident = by_id[pick]
     member_ids = set(incident.get("member_alert_ids") or [])
     alerts = [a["alert"] for a in alerts_by_step
               if a["alert"].get("alert_id") in member_ids]
-    # Underlying normalized events: the chain's real parsed OCSF events,
-    # carrying the same siem.ingest_id stamp the detection path gave them so
-    # the provenance join has a handle to resolve (unresolved ids are listed
-    # honestly by _build_provenance, never dropped).
-    events = []
-    for a in alerts_by_step:
-        ev = a.get("event")
-        if not ev:
-            continue
-        ev_copy = copy.deepcopy(ev)
-        siem = ev_copy.setdefault("siem", {})
-        siem.setdefault("ingest_id", f"twin:{a['step']}")
-        events.append(ev_copy)
+    # Underlying normalized events: the chain's real parsed OCSF events for
+    # THIS incident's own member alerts only (same member_ids filter as
+    # `alerts` above) -- a package for a partial incident must never bundle
+    # in events belonging to a different incident's alerts. Passed straight
+    # through (no defensive copy needed: build_evidence_package deep-copies
+    # every event itself, and siem.ingest_id is already stamped correctly by
+    # _build_chain_alerts before this function ever sees the event).
+    events = [a["event"] for a in alerts_by_step
+              if a["alert"].get("alert_id") in member_ids and a.get("event")]
     graph = graph_fn(pick)
 
     evpkg = _ensure_evidence()
@@ -367,8 +378,7 @@ def _evidence_reconstruction(alerts_by_step: list[dict], by_id: dict,
             incident, alerts, events, graph,
             now_ms=now_ms, package_id_prefix="twin-recon")
         samples.append(round((time.perf_counter() - t0) * 1000.0, 4))
-    samples_sorted = sorted(samples)
-    median_ms = samples_sorted[len(samples_sorted) // 2] if samples_sorted else None
+    median_ms = round(statistics.median(samples), 4) if samples else None
     failures = evpkg.verify_evidence_package(pkg) if pkg is not None else ["no package"]
     provenance = (pkg or {}).get("provenance") or []
     unresolved = sum(len(p.get("unresolved_event_ids") or []) for p in provenance)
@@ -393,10 +403,10 @@ _LEVEL_RANK = {"informational": 0, "low": 1, "medium": 2, "high": 3, "critical":
 
 
 def _investigation_walk(alerts_by_step: list[dict], by_id: dict,
-                        edges: list[dict]) -> Optional[dict]:
-    """WP-3.5-A analyst investigation time: a SCRIPTED walk over the REAL
-    incident graph, counting the steps + API round-trips a scripted analyst
-    needs to reach the causal answer.
+                        graph_fn) -> Optional[dict]:
+    """WP-3.5-A analyst investigation time: a SCRIPTED walk over the ONE
+    incident's own REAL incident graph, counting the steps + API round-trips
+    a scripted analyst needs to reach the causal answer.
 
     Walk model (documented, deterministic, all counts from real data):
       1  open the incident (1 API round-trip: list member alerts)
@@ -406,25 +416,22 @@ def _investigation_walk(alerts_by_step: list[dict], by_id: dict,
       + 1  assemble the causal answer (the graph)
     `investigation_steps` is the REAL counted quantity; `mtti_seconds`
     converts it with the documented per-step analyst latency model
-    (_ANALYST_STEP_SECONDS). Returns None when no incident promoted (no
-    graph to investigate -- never fabricated).
+    (_ANALYST_STEP_SECONDS). ``graph_fn`` must return THIS incident's own
+    ``incident.graph`` payload (never a union across other promoted
+    incidents -- an analyst investigating incident X never has to traverse
+    incident Y's entities/edges). Entities are counted from the graph's own
+    ``nodes`` list, not derived from edge endpoints, so an entity with no
+    edge (e.g. a lone co-occurring device) is still counted. Returns None
+    when no incident promoted (no graph to investigate -- never fabricated).
     """
-    if not by_id:
-        return None
-    full = next(
-        (iid for iid, inc in by_id.items()
-         if {a["alert"]["alert_id"] for a in alerts_by_step}
-         <= set(inc.get("member_alert_ids") or [])), None)
+    full = _pick_full_coverage_incident(alerts_by_step, by_id)
     if full is None:
-        full = sorted(by_id)[0]
+        return None
     incident = by_id[full]
     members = incident.get("member_alert_ids") or []
-    node_ids: set = set()
-    for ed in edges:
-        if ed.get("from"):
-            node_ids.add(ed["from"])
-        if ed.get("to"):
-            node_ids.add(ed["to"])
+    graph = graph_fn(full) or {}
+    edges = graph.get("edges") or []
+    node_ids = {n["entity_id"] for n in (graph.get("nodes") or []) if n.get("entity_id")}
     steps = 1 + len(members) + len(node_ids) + len(edges) + 1
     return {
         "basis": "harness-measured (step count real; seconds = documented "
@@ -451,7 +458,11 @@ def _severity_confusion(oracle: dict, alerts_by_step: list[dict]) -> dict:
     correct / over-alerting / under-alerting in rank space, plus a
     per-rule row. A rule the oracle does not declare at its step is counted
     as ``unexpected`` (an alert the oracle never expected -- a signal, not
-    silently folded into correct). Real data both sides.
+    silently folded into correct). A level string outside ``_LEVEL_RANK``'s
+    known vocabulary (a typo, or an unmapped future level) is counted as
+    ``unrecognized-level`` rather than silently defaulting to rank 0
+    (informational) -- a data-quality problem must never be indistinguishable
+    from a genuine informational-level match. Real data both sides.
     """
     dp = oracle.get("detection_points") or {}
     expected_by_step_rule: dict[str, dict] = {}
@@ -459,7 +470,7 @@ def _severity_confusion(oracle: dict, alerts_by_step: list[dict]) -> dict:
         for r in (spec.get("expected_rules") or []):
             expected_by_step_rule.setdefault(step, {})[r.get("rule_id")] = r.get("level")
     matrix: dict[str, dict] = {}
-    over = under = correct = unexpected = 0
+    over = under = correct = unexpected = unrecognized = 0
     rows = []
     for item in alerts_by_step:
         step = item["step"]
@@ -472,9 +483,15 @@ def _severity_confusion(oracle: dict, alerts_by_step: list[dict]) -> dict:
                          "expected_level": None, "actual_level": actual,
                          "verdict": "unexpected"})
             continue
+        a_rank = _LEVEL_RANK.get(actual)
+        e_rank = _LEVEL_RANK.get(exp)
+        if a_rank is None or e_rank is None:
+            unrecognized += 1
+            rows.append({"step": step, "rule_id": alert.get("rule_id"),
+                         "expected_level": exp, "actual_level": actual,
+                         "verdict": "unrecognized-level"})
+            continue
         matrix.setdefault(str(exp), {})
-        a_rank = _LEVEL_RANK.get(actual, 0)
-        e_rank = _LEVEL_RANK.get(exp, 0)
         if a_rank == e_rank:
             verdict = "correct"
             correct += 1
@@ -488,13 +505,14 @@ def _severity_confusion(oracle: dict, alerts_by_step: list[dict]) -> dict:
         rows.append({"step": step, "rule_id": alert.get("rule_id"),
                      "expected_level": exp, "actual_level": actual,
                      "verdict": verdict})
-    total = correct + over + under + unexpected
+    total = correct + over + under + unexpected + unrecognized
     return {
         "basis": "harness-measured",
         "correct": correct,
         "over_alerting": over,
         "under_alerting": under,
         "unexpected": unexpected,
+        "unrecognized_level": unrecognized,
         "total_alerts": total,
         "matrix": matrix,
         "per_alert": rows,
@@ -631,7 +649,7 @@ def _grade_chain(result: scenario.ChainResult, oracle: dict) -> dict:
     # lazily loads the WS-8 module (whose sys.path inserts would otherwise
     # hijack a later bare `import main`). None when nothing promotes -- never
     # a fabricated number.
-    ws8_grade = _grade_ws8(result, oracle)
+    ws8_grade = _grade_ws8(result, oracle, len(fired))
 
     return {
         "tpr": round(tpr, 4) if tpr is not None else None,
@@ -714,8 +732,10 @@ def _build_chain_alerts(parsed: list["scenario.ChainEvent"]) -> list[dict]:
     actor/src_endpoint/mitre/event_ids on the alert for its tracks + typed
     signals, which run_pipeline's reduced dicts don't carry.
 
-    Returns [{step, alert}] in detection (== chain) order. Deterministic: a
-    fresh detector per call + all chain timestamps fixed in the past.
+    Returns [{step, alert, event}] in detection (== chain) order -- `event`
+    is the alert's underlying OCSF event, consumed by
+    _evidence_reconstruction's provenance join. Deterministic: a fresh
+    detector per call + all chain timestamps fixed in the past.
     """
     detector = _WS4_MOD.Detector(plugin_rule_dirs=[])
     out: list[dict] = []
@@ -842,13 +862,15 @@ def _grade_chain_fidelity(edges: list[dict], step_entities: dict,
     per_forbidden: list[dict] = []
     for rel in forbidden_rels:
         f, t = rel.get("from"), rel.get("to")
+        from_set = set(step_entities.get(f, ()))
         to_set = set(step_entities.get(t, ()))
-        if not to_set:
-            # a forbidden pair whose to-step has no parsed event / no entity
-            # can never be falsely joined -- excluded from the denominator
-            # honestly (same both-steps-entity-bearing rule as allowed joins)
+        if not from_set or not to_set:
+            # a forbidden pair whose from- or to-step has no parsed event /
+            # no entity can never be falsely joined -- excluded from the
+            # denominator honestly (same both-steps-entity-bearing rule as
+            # allowed joins, above)
             per_forbidden.append({"from": f, "to": t, "graded": False,
-                                  "reason": "to-step-not-entity-bearing"})
+                                  "reason": "step-not-entity-bearing"})
             continue
         forbidden_denominator += 1
         joined = _fidelity_join(edges, _earlier_side(f), to_set)
@@ -929,9 +951,16 @@ def _incident_membership_grade(alerts_by_step: list[dict], incidents: list[dict]
     }
 
 
-def _grade_ws8(result: "scenario.ChainResult", oracle: dict) -> dict:
+def _grade_ws8(result: "scenario.ChainResult", oracle: dict, alerts_total: int) -> dict:
     """Run the chain's real alerts through the REAL WS-8 Correlator and grade
     chain_fidelity + incident membership against the REAL v2 incident graphs.
+
+    ``alerts_total`` is the SAME canonical alert count ``run()`` exposes as
+    ``context.alert_count`` (from the report's one real ``_real_detection``
+    pass) -- used as alert_reduction_ratio's denominator instead of a second
+    count re-derived from this function's own correlator-shaped detector
+    re-run (``_build_chain_alerts``), so the two never risk silently
+    diverging into two different "total alerts" numbers.
 
     Determinism: Correlator is constructed with a FIXED now_fn -- a constant
     1h after the chain's last alert (all chain timestamps are fixed past
@@ -952,11 +981,19 @@ def _grade_ws8(result: "scenario.ChainResult", oracle: dict) -> dict:
     by_id: dict[str, dict] = {inc["incident_id"]: inc for inc in incidents}
 
     # Union of the REAL v2 graphs across every promoted incident: every edge
-    # any chain alert's incident evidence carries.
+    # any chain alert's incident evidence carries (used only for
+    # chain_fidelity's cross-step joins, which are legitimately about the
+    # whole chain). Each incident's own graph is cached in graphs_by_id so
+    # the per-INCIDENT WP-3.5-A metrics below (reconstruction, investigation)
+    # can look up exactly one incident's own graph -- never this union --
+    # without a second corr.incident_graph() fetch+deepcopy for an incident
+    # this loop already fetched.
     edges: list[dict] = []
     seen: set = set()
+    graphs_by_id: dict[str, Optional[dict]] = {}
     for iid in sorted(by_id):
         graph = corr.incident_graph(iid)
+        graphs_by_id[iid] = graph
         for ed in (graph or {}).get("edges") or []:
             key = (ed.get("from"), ed.get("to"), ed.get("kind"))
             if key not in seen:
@@ -1001,26 +1038,26 @@ def _grade_ws8(result: "scenario.ChainResult", oracle: dict) -> dict:
     )
     # 2) Alert reduction ratio: raw WS-4 alerts in vs WS-8 incidents out
     #    over the same window -- 1 - (incidents/alerts) is the fraction of
-    #    alert volume correlation absorbed. None when no alerts or no
-    #    incidents.
-    alert_count = len(chain_alerts)
+    #    alert volume correlation absorbed. `incident_promotions == 0` is a
+    #    perfectly well-defined ratio of 1.0 (100% of alert volume failed to
+    #    consolidate), NOT a missing denominator -- only `alerts_total == 0`
+    #    means there is no denominator to measure a fraction over.
     incident_promotions = len(by_id)
-    if alert_count and incident_promotions:
-        alert_reduction_ratio = round(
-            1 - (incident_promotions / alert_count), 4)
-    else:
-        alert_reduction_ratio = None
+    alert_reduction_ratio = (
+        round(1 - (incident_promotions / alerts_total), 4) if alerts_total else None
+    )
     # 3) Incident reconstruction time: build the REAL WS-3 evidence package
     #    from the chain's real incident/alerts/events/graph and measure REAL
     #    assembly wall-clock (median of a few builds). Wall-clock is
     #    informational (date carve-out); package_id/block_count are
     #    deterministic. None when no incident promoted.
     reconstruction = _evidence_reconstruction(
-        alerts_by_step, by_id, corr.incident_graph, now_ms)
-    # 4) Analyst investigation time (MTTI): scripted walk over the REAL
-    #    graph, counting steps + API round-trips; seconds = steps x the
+        alerts_by_step, by_id, graphs_by_id.get, now_ms)
+    # 4) Analyst investigation time (MTTI): scripted walk over the picked
+    #    incident's OWN graph (graphs_by_id.get, never the cross-incident
+    #    union), counting steps + API round-trips; seconds = steps x the
     #    documented analyst latency model.
-    investigation = _investigation_walk(alerts_by_step, by_id, edges)
+    investigation = _investigation_walk(alerts_by_step, by_id, graphs_by_id.get)
     # 5) Severity calibration: confusion matrix (expected level from the
     #    oracle detection_points vs actual fired-alert level).
     severity_confusion = _severity_confusion(oracle, alerts_by_step)
@@ -1320,9 +1357,13 @@ def run(seed: int = 7) -> dict:
                 "forbidden_denominator": grade["forbidden_denominator"],
                 "per_forbidden_pair": grade["per_forbidden_pair"],
             },
+            # raw_alert_count/incident_count are the SAME canonical counts
+            # context.alert_count/incident_promotions expose above -- never
+            # a second, independently-sourced count that could silently
+            # drift from them.
             "alert_reduction": {
                 "ratio": grade["alert_reduction_ratio"],
-                "raw_alert_count": grade["chain_alert_count"],
+                "raw_alert_count": alerts_total,
                 "incident_count": incident_promotions,
             },
             "incident_reconstruction": grade["incident_reconstruction"],
@@ -1331,8 +1372,8 @@ def run(seed: int = 7) -> dict:
             # WP-3.5-A: MTTR is honestly null because the twin harness has no
             # remediation/closure event -- no triage-API status transition is
             # replayed and incidents never close in the simulation. The
-            # roadmap's Phase 3.5 MTTR cell says \"triage-API status
-            # transitions on real replays\", which is a live-replay measure,
+            # roadmap's Phase 3.5 MTTR cell says "triage-API status
+            # transitions on real replays", which is a live-replay measure,
             # not a twin measure; fabricating a remediation time here would
             # lie about what the twin measures.
             "mttr_null_reason": (

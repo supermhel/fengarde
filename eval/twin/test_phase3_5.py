@@ -10,12 +10,14 @@ guard, ``[OK]``/``[FAIL]`` lines, exit 0 only when every check passes.
 Run:  python eval/twin/test_phase3_5.py
 
 Checks (all against REAL pipeline numbers, never hand-picked):
-  (a) alert_reduction_ratio == 1 - (incidents/alerts) recomputed from the
-      report's OWN real counts; a real number (not None) for seed 7.
+  (a) alert_reduction_ratio == 1 - (incidents/alerts) cross-checked against
+      the report's canonical top-level context.alert_count/
+      incident_promotions (not the alert_reduction sub-block being tested);
+      also checks that sub-block never silently diverges from those counts.
   (b) false_correlation_rate == an INDEPENDENT reference recomputation of
       oracle-DECLARED forbidden relationships joined by the real graph edges
-      (same denominator rule: to-step must be entity-bearing); mutation-
-      soundness: neutering the forbidden-denominator count in
+      (same denominator rule: both from- and to-step must be entity-bearing);
+      mutation-soundness: neutering the forbidden-denominator count in
       _grade_chain_fidelity must flip the report to None / disagree.
   (c) incident reconstruction: the report built the REAL WS-3 evidence
       package (package_id prefix, block_count >= incident+2, verified True),
@@ -24,9 +26,13 @@ Checks (all against REAL pipeline numbers, never hand-picked):
       the real hash-chain verifier, never hardcodes True).
   (d) analyst investigation (MTTI): investigation_steps == the reference walk
       count (1 open + members + entities + edges + 1) over the real incident;
-      mtti_seconds == steps x the documented _ANALYST_STEP_SECONDS.
-  (e) severity confusion: totals equal the real fired-alert count, and the
-      correct+over+under+unexpected tally matches the per-alert rows.
+      mtti_seconds == steps x the documented _ANALYST_STEP_SECONDS;
+      api_round_trips == 1 + members + entities; member_alert_count/
+      incident_id cross-checked against incident_summary and reconstruction.
+  (e) severity confusion: totals equal the real fired-alert count, the
+      correct+over+under+unexpected+unrecognized tally matches the per-alert
+      rows, and the per-expected-level matrix breakdown matches an
+      independent rebuild from those same rows.
   (f) mttr stays an HONEST null with the documented reason present.
 
 Like report.py / test_chain_fidelity.py, this module must be imported with
@@ -75,12 +81,15 @@ def _load_oracle():
 def _reference_false_correlation(edges, step_entities, oracle, step_order):
     """From-scratch reimplementation (independent of report.py): fraction of
     oracle-DECLARED forbidden relationships (allowed: false) that a real
-    graph edge joins, with the SAME denominator rule report.py uses (the
-    to-step must be entity-bearing). Returns (rate, joined, denominator)."""
+    graph edge joins, with the SAME denominator rule report.py uses (BOTH the
+    from-step and the to-step must be entity-bearing -- the same rule the
+    allowed-pair loop applies). Returns (rate, joined, denominator)."""
     idx = {label: i for i, label in enumerate(step_order)}
 
     def earlier(f: str) -> set:
         side: set = set()
+        if f not in idx:
+            return side
         for i in range(idx[f] + 1):
             side |= set(step_entities.get(step_order[i], ()))
         return side
@@ -90,8 +99,9 @@ def _reference_false_correlation(edges, step_entities, oracle, step_order):
     denom = joined = 0
     for rel in forbidden_rels:
         f, t = rel.get("from"), rel.get("to")
+        from_set = set(step_entities.get(f, ()))
         to_set = set(step_entities.get(t, ()))
-        if not to_set:
+        if not from_set or not to_set:
             continue
         denom += 1
         if any(ed.get("from") in earlier(f) and ed.get("to") in to_set
@@ -116,17 +126,29 @@ def _reference_investigation_steps(inv_ctx: dict) -> int:
 def _test_alert_reduction(result: dict) -> None:
     ctx = result["context"]
     m = result["metrics"]
-    raw_alerts = ctx["alert_reduction"]["raw_alert_count"]
-    incidents = ctx["alert_reduction"]["incident_count"]
-    ref = round(1 - (incidents / raw_alerts), 4)
+    # Independent of context.alert_reduction (the sub-block under test):
+    # context.alert_count / incident_promotions are built by a different
+    # code path in run() (the report's canonical top-level counts), not
+    # copied from the same alert_reduction dict this check verifies.
+    raw_alerts = ctx["alert_count"]
+    incidents = ctx["incident_promotions"]
+    ref = round(1 - (incidents / raw_alerts), 4) if raw_alerts else None
     ok = (m["alert_reduction_ratio"] == ref
-          and isinstance(m["alert_reduction_ratio"], (int, float))
           and isinstance(m["alert_reduction_ratio"], float))
-    _check("(a) alert_reduction_ratio == 1 - incidents/alerts from real "
-           "counts (7 raw alerts, 2 incidents -> 0.7143)",
-           ok and m["alert_reduction_ratio"] == 0.7143,
+    _check("(a) alert_reduction_ratio == 1 - incidents/alerts, cross-checked "
+           "against the canonical context.alert_count/incident_promotions",
+           ok,
            f"report={m['alert_reduction_ratio']} reference={ref} "
            f"({raw_alerts} alerts / {incidents} incidents)")
+
+    # context.alert_reduction must not silently diverge from those same
+    # canonical counts -- this is exactly the failure mode of two
+    # independently-sourced "total alerts" numbers drifting apart.
+    _check("(a) context.alert_reduction mirrors the canonical "
+           "alert_count/incident_promotions, not a second independent count",
+           ctx["alert_reduction"]["raw_alert_count"] == raw_alerts
+           and ctx["alert_reduction"]["incident_count"] == incidents,
+           f"alert_reduction={ctx['alert_reduction']}")
 
 
 # ---------------------------------------------------------------------------
@@ -214,7 +236,8 @@ def _test_reconstruction(result: dict) -> None:
 # (d) analyst investigation time (MTTI) -- scripted walk
 # ---------------------------------------------------------------------------
 def _test_investigation(result: dict) -> None:
-    inv = result["context"]["analyst_investigation"]
+    ctx = result["context"]
+    inv = ctx["analyst_investigation"]
     m = result["metrics"]
     ref_steps = _reference_investigation_steps(inv)
     ok = (inv is not None
@@ -227,6 +250,31 @@ def _test_investigation(result: dict) -> None:
            ok,
            f"steps={inv['investigation_steps']} reference={ref_steps} "
            f"mtti={m['mtti']} model={inv['analyst_step_seconds_model']}s")
+
+    _check("(d) api_round_trips == 1 (open) + member alerts + entities",
+           inv["api_round_trips"] == 1 + inv["member_alert_count"] + inv["entity_count"],
+           f"api_round_trips={inv['api_round_trips']} "
+           f"members={inv['member_alert_count']} entities={inv['entity_count']}")
+
+    # Independent cross-check: member_alert_count must agree with the SAME
+    # incident's member_count in incident_summary -- a value computed by a
+    # different code path (_grade_ws8's incident_summary list, straight off
+    # the promoted incident dict) than _investigation_walk's own
+    # len(members). Also ties investigation and reconstruction to the SAME
+    # picked incident, proving _pick_full_coverage_incident is genuinely
+    # shared rather than two copies that could silently diverge.
+    summary_row = next((s for s in ctx["incident_summary"]
+                        if s["incident_id"] == inv["incident_id"]), None)
+    recon_incident_id = (ctx["incident_reconstruction"] or {}).get("incident_id")
+    _check("(d) investigation's incident_id/member_alert_count agree with "
+           "the independently-built incident_summary and reconstruction",
+           summary_row is not None
+           and summary_row["member_count"] == inv["member_alert_count"]
+           and recon_incident_id == inv["incident_id"],
+           f"incident_id={inv['incident_id']} summary_member_count="
+           f"{summary_row['member_count'] if summary_row else None} "
+           f"inv_member_count={inv['member_alert_count']} "
+           f"recon_incident_id={recon_incident_id}")
 
 
 # ---------------------------------------------------------------------------
@@ -241,7 +289,9 @@ def _test_severity_confusion(result: dict) -> None:
     tally_ok = (by_verdict.get("correct", 0) == sev["correct"]
                 and by_verdict.get("over-alert", 0) == sev["over_alerting"]
                 and by_verdict.get("under-alert", 0) == sev["under_alerting"]
-                and by_verdict.get("unexpected", 0) == sev["unexpected"])
+                and by_verdict.get("unexpected", 0) == sev["unexpected"]
+                and by_verdict.get("unrecognized-level", 0)
+                    == sev.get("unrecognized_level", 0))
     # every fired alert must appear exactly once; total equals the real
     # fired-alert count reported by the chain context
     fired_total = result["context"]["alert_count"]
@@ -250,7 +300,25 @@ def _test_severity_confusion(result: dict) -> None:
            tally_ok and len(rows) == sev["total_alerts"] == fired_total,
            f"correct={sev['correct']} over={sev['over_alerting']} "
            f"under={sev['under_alerting']} unexpected={sev['unexpected']} "
+           f"unrecognized={sev.get('unrecognized_level', 0)} "
            f"total={sev['total_alerts']} fired={fired_total}")
+
+    # Independent cross-check of the per-expected-level `matrix` breakdown
+    # (previously untested): rebuild it from per_alert rows and compare
+    # cell-by-cell -- a bucketing bug in the matrix specifically would now
+    # fail this check even though the flat correct/over/under counters above
+    # stayed right.
+    ref_matrix: dict = {}
+    for row in rows:
+        if row["verdict"] in ("unexpected", "unrecognized-level"):
+            continue
+        level = str(row["expected_level"])
+        ref_matrix.setdefault(level, {})
+        ref_matrix[level][row["verdict"]] = ref_matrix[level].get(row["verdict"], 0) + 1
+    _check("(e) severity confusion matrix matches an independent rebuild "
+           "from per_alert rows",
+           sev["matrix"] == ref_matrix,
+           f"matrix={sev['matrix']} reference={ref_matrix}")
 
 
 # ---------------------------------------------------------------------------

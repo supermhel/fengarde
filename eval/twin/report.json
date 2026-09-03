@@ -2,7 +2,7 @@
   "report": {
     "schema_version": "1",
     "run_type": "twin",
-    "date": "2026-09-03T08:21:18+00:00",
+    "date": "2026-09-03T21:58:31+00:00",
     "seed": 7,
     "basis": "harness-measured"
   },
@@ -16,7 +16,7 @@
     "evidence_completeness": 0.9375,
     "false_correlation_rate": 1.0,
     "alert_reduction_ratio": 0.7143,
-    "incident_reconstruction_time_ms": 5.9224,
+    "incident_reconstruction_time_ms": 0.7687,
     "severity_calibration_error": 0.0,
     "peak_alert_score": 75,
     "severity_in_band": true,
@@ -217,11 +217,11 @@
       "block_count": 14,
       "verified": true,
       "verification_failures": [],
-      "assembly_median_ms": 5.9224,
+      "assembly_median_ms": 0.7687,
       "assembly_samples_ms": [
-        5.7039,
-        6.3096,
-        5.9224
+        0.8361,
+        0.7687,
+        0.703
       ],
       "provenance_unresolved_event_ids": 0
     },
@@ -242,6 +242,7 @@
       "over_alerting": 0,
       "under_alerting": 0,
       "unexpected": 1,
+      "unrecognized_level": 0,
       "total_alerts": 7,
       "matrix": {
         "medium": {
@@ -306,7 +307,7 @@
     "mttr_null_reason": "no remediation/closure event exists in the twin harness (no triage-API status transition is replayed; incidents never close in the simulation) -- MTTR requires a live-replay or design-partner measure per the roadmap's own Phase 3.5 cell; an honest null, never a fabricated 0"
   },
   "finding": "FPR=0.0: 0/4 negative control(s) produced an INCIDENT-level (medium+) alert: none. A low-severity ticketed alert doesn't count as an incident -- see negative_controls.is_incident(). See eval/twin/negative_controls.py for the per-scenario cause. chain_fidelity=0.6 measured against the REAL WS-8 v2 incident graph: 5 correct allowed join(s), 2 forbidden-pair join(s), denominator 5; incident_membership_ok=True with 2 real incident(s) promoted (actor:ot-engineer = 5 alerts, ip:10.20.0.50 = 7 alerts).",
-  "elapsed_seconds": 3.361,
+  "elapsed_seconds": 0.809,
   "delta_vs_baseline": {
     "baseline": "eval/twin/baseline.json",
     "frozen_at": "2026-08-28T22:22:00+00:00",
@@ -360,7 +361,7 @@
       },
       "incident_reconstruction_time_ms": {
         "baseline": null,
-        "current": 5.9224,
+        "current": 0.7687,
         "delta": "n/a"
       },
       "severity_calibration_error": {
