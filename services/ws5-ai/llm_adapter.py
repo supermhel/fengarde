@@ -323,6 +323,41 @@ class OllamaLLM:
         verdict["model"] = self.model
         return verdict
 
+    def complete(self, prompt: str, *, max_chars: int = _MAX_EVENT_CHARS) -> str:
+        """Raw free-text completion via /api/generate for callers that need a
+        custom prompt outside the fixed triage PROMPT_TEMPLATE/JSON-verdict
+        shape `analyze()` enforces (e.g. eval/adversarial/adversary_c.py's
+        Layer C adaptive-composition prompt). Same transport discipline as
+        analyze(): no-redirect urlopen, bounded response read, wall-clock
+        deadline. Raises on transport error -- the caller (FallbackLLM.complete,
+        or the caller's own try/except) is responsible for degrading. Never
+        called from the production triage path (main.py only calls analyze())."""
+        if len(prompt) > max_chars:
+            prompt = prompt[:max_chars]
+        body = json.dumps({
+            "model": self.model,
+            "prompt": prompt,
+            "stream": False,
+        }).encode()
+        req = urllib.request.Request(
+            f"{self.url}/api/generate", data=body,
+            headers={"Content-Type": "application/json"}, method="POST")
+        deadline = time.monotonic() + self.timeout
+        chunks: list[bytes] = []
+        remaining = _MAX_RESPONSE_BYTES
+        with _urlopen(req, timeout=self.timeout) as resp:  # noqa: S310
+            while remaining > 0:
+                if time.monotonic() >= deadline:
+                    raise TimeoutError(
+                        f"ollama total timeout ({self.timeout}s) exceeded")
+                chunk = resp.read(min(4096, remaining))
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                remaining -= len(chunk)
+        data = json.loads(b"".join(chunks).decode())
+        return data.get("response", "") if isinstance(data, dict) else ""
+
 
 class FallbackLLM:
     """Try the primary LLM; on ANY failure, log and fall back to the backup.
@@ -395,6 +430,35 @@ class FallbackLLM:
             _log.error("llm primary raised unexpected error; degrading",
                        error=str(exc))
             return self.backup.analyze(event, reasons)
+
+    def complete(self, prompt: str) -> str:
+        """Mirrors analyze()'s primary/backup degrade discipline for raw
+        completion. The backup (StubLLM) has no complete() -- when degraded
+        or on failure, return "" (empty completion); callers already treat
+        an unparseable/empty reply as 'no valid output produced' and fall
+        back to their own deterministic path (see adversary_c.py)."""
+        if not self._use_primary():
+            self.fallbacks += 1
+            _log.warn("llm primary unavailable; using backup instead",
+                      backup=type(self.backup).__name__)
+            return ""
+        try:
+            out = self.primary.complete(prompt)
+            self._available = True
+            return out
+        except (urllib.error.URLError, OSError, TimeoutError,
+                json.JSONDecodeError, ValueError) as exc:
+            self._available = False
+            self.fallbacks += 1
+            _log.warn("llm primary failed; degrading to backup",
+                      error=str(exc), backup=type(self.backup).__name__)
+            return ""
+        except Exception as exc:  # pragma: no cover - defensive catch-all
+            self._available = False
+            self.fallbacks += 1
+            _log.error("llm primary raised unexpected error; degrading",
+                       error=str(exc))
+            return ""
 
 
 def make_llm():

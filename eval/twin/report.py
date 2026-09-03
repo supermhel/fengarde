@@ -187,7 +187,7 @@ TREND_PATH = ROOT / "eval" / "trend.jsonl"
 MATRIX_PATH = (ROOT / "eval" / "adversarial" / "out" / "matrix.latest.json")
 
 
-def _load_mutation_robustness() -> tuple[Optional[float], dict]:
+def _load_mutation_robustness(seed: int) -> tuple[Optional[float], dict]:
     """Read the Layer A matrix (if present) -> (overall, per-axis) robustness.
 
     Deterministic: the matrix file is a pure function of its seed and is
@@ -195,6 +195,12 @@ def _load_mutation_robustness() -> tuple[Optional[float], dict]:
     disturb the twin's own byte-determinism (two same-seed report runs read
     the same unchanged file). Returns (None, {}) when the artifact is absent
     -- the honest "not measured by this run" encoding.
+
+    ``seed`` is THIS report run's seed. A matrix generated under a different
+    seed describes a different chain and must not be silently attributed to
+    this run -- the honest-null contract applies here too: mismatched seeds
+    return (None, context-with-stale-flag) rather than a number that looks
+    like it measures the current run.
     """
     path = MATRIX_PATH
     if not path.exists():
@@ -202,17 +208,30 @@ def _load_mutation_robustness() -> tuple[Optional[float], dict]:
     try:
         with open(path, "r", encoding="utf-8") as fh:
             mx = json.load(fh)
+        matrix_seed = mx.get("seed")
         overall = mx.get("overall") or {}
         per_axis = mx.get("per_axis") or {}
-        robust = overall.get("mutation_robustness")
-        robust = float(robust) if robust is not None else None
-        return robust, {
+        context = {
             "total_variants": overall.get("total_variants"),
             "passed": overall.get("passed"),
             "per_axis": {ax: s.get("robustness") for ax, s in sorted(per_axis.items())},
-            "matrix_seed": mx.get("seed"),
+            "matrix_seed": matrix_seed,
+            "report_seed": seed,
             "source": str(path.relative_to(ROOT) if path.is_relative_to(ROOT) else path),
         }
+        if matrix_seed != seed:
+            context["stale"] = True
+            context["stale_reason"] = (
+                f"matrix.latest.json was generated for seed={matrix_seed!r}, "
+                f"this report run is seed={seed!r} -- mutation_robustness kept "
+                "an honest null rather than attributing a different seed's "
+                "number to this run; regenerate via "
+                "`python eval/adversarial/layer_a.py --seed "
+                f"{seed}` to populate it for this seed")
+            return None, context
+        robust = overall.get("mutation_robustness")
+        robust = float(robust) if robust is not None else None
+        return robust, context
     except (OSError, ValueError, TypeError):
         return None, {}
 
@@ -667,6 +686,21 @@ def _real_detection(raw_pairs: list[tuple]) -> list[dict]:
 # ---------------------------------------------------------------------------
 # WP-3-C: grade the chain against the REAL WS-8 v2 incident graph.
 # ---------------------------------------------------------------------------
+def _fire_alerts(detector, event: dict) -> tuple[dict, list[dict]]:
+    """Run one parsed OCSF event through a real Detector and build the full
+    production alert shape (make_alert) for every matched rule.
+
+    Shared by _build_chain_alerts (the twin chain, below) and
+    eval/adversarial/corpus_b.py (the external curated corpus) so alert
+    construction has one implementation instead of two independently
+    maintained copies of the same detect -> make_alert sequence.
+    """
+    event, matched, _action = detector.process(event)
+    score = (event.get("siem") or {}).get("score")
+    alerts = [_WS4_MOD.make_alert(event, rule, score) for rule in matched]
+    return event, alerts
+
+
 def _build_chain_alerts(parsed: list["scenario.ChainEvent"]) -> list[dict]:
     """Re-run the chain's REAL parsed OCSF events through a fresh real Detector
     and build the FULL production alert shape (ws4-detection/main.py::make_alert)
@@ -690,10 +724,8 @@ def _build_chain_alerts(parsed: list["scenario.ChainEvent"]) -> list[dict]:
         siem = event.setdefault("siem", {})
         siem.update({"tenant": _CHAIN_TENANT, "ingest_id": f"twin:{ev.step}"})
         siem["twin_step"] = ev.step
-        event, matched, _action = detector.process(event)
-        score = (event.get("siem") or {}).get("score")
-        for rule in matched:
-            alert = _WS4_MOD.make_alert(event, rule, score)
+        event, alerts = _fire_alerts(detector, event)
+        for alert in alerts:
             # WP-3.5-A: the alert carries its underlying OCSF event so the
             # evidence-package reconstruction can join provenance to a REAL
             # normalized event (the report's other grading paths re-derive
@@ -1166,8 +1198,9 @@ def run(seed: int = 7) -> dict:
     """Run the full twin and return the complete metric dict (the report)."""
     started = time.time()
     # Phase 4: mutation_robustness comes from the Layer A matrix artifact --
-    # read once here, consumed by the metrics + context dicts below.
-    mutation_robustness, mutation_matrix = _load_mutation_robustness()
+    # read once here, consumed by the metrics + context dicts below. Guarded
+    # against a stale seed (see _load_mutation_robustness's seed check).
+    mutation_robustness, mutation_matrix = _load_mutation_robustness(seed)
     oracle = _load_oracle()
     chain = _run_chain(seed)
     negatives, negatives_explained = _run_negatives(seed)
@@ -1312,6 +1345,8 @@ def run(seed: int = 7) -> dict:
             # numbers when the lane has run; honest null note otherwise).
             "mutation_robustness_matrix": mutation_matrix,
             "mutation_robustness_note": (
+                mutation_matrix.get("stale_reason")
+                if mutation_matrix.get("stale") else
                 "measured by the deterministic Layer A lane "
                 "(eval/adversarial/layer_a.py): each mutation of the base "
                 "chain replayed through the REAL WS-2->WS-4->WS-8 path and "

@@ -94,8 +94,11 @@ def _test_coverage(matrix: dict) -> None:
            not bad, f"bad_rows={[r['variant'] for r in bad]}")
 
 
-def _test_determinism() -> None:
-    m1 = layer_a.run_matrix(SEED)
+def _test_determinism(m1: dict) -> None:
+    """Compare ``m1`` (the caller's already-computed matrix) against ONE
+    fresh run_matrix(SEED) call -- two independent computations total (the
+    determinism license), not three: main() no longer discards its own
+    matrix just to recompute two more from scratch."""
     m2 = layer_a.run_matrix(SEED)
     d1 = json.dumps(m1, sort_keys=True)
     d2 = json.dumps(m2, sort_keys=True)
@@ -184,7 +187,7 @@ def main() -> int:
     print(f"== Phase 4 Layer A acceptance test (seed={SEED}) ==")
     matrix = layer_a.run_matrix(SEED)  # one full real-pipeline matrix
     _test_coverage(matrix)
-    _test_determinism()  # TWO full runs (the determinism license)
+    _test_determinism(matrix)  # + one more fresh run = two independent runs
     _test_sensitivity()
     _test_causal_join_break()
     _test_weakened_rule_drop()

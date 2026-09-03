@@ -86,8 +86,55 @@ _PROMPT_TMPL = (
 )
 
 
+def _balanced_bracket_spans(text: str):
+    """Yield each top-level balanced `[...]` substring of text, in order."""
+    start = text.find("[")
+    while start != -1:
+        depth = 0
+        end = None
+        for i in range(start, len(text)):
+            ch = text[i]
+            if ch == "[":
+                depth += 1
+            elif ch == "]":
+                depth -= 1
+                if depth == 0:
+                    end = i
+                    break
+        if end is None:
+            return
+        yield text[start:end + 1]
+        start = text.find("[", end + 1)
+
+
 def _parse_pairs(text: str) -> list[tuple[str, str]]:
-    """Parse `[["axis","variant"], ...]` fragments from an LLM reply."""
+    """Parse (axis, variant) pairs from an LLM reply.
+
+    Prefers REAL JSON: the prompt explicitly asks for a JSON list of
+    [axis, variant] pairs, so this first tries json.loads on each top-level
+    balanced `[...]` span in the reply (tolerating leading/trailing prose or
+    markdown fences a model adds despite "No prose") and uses the first span
+    that parses as a list of 2-element string pairs. This avoids harvesting
+    bracket-shaped fragments mentioned in explanatory prose (e.g. an
+    alternative the model explicitly says it did NOT choose) -- only a span
+    that is actually valid JSON is trusted.
+
+    Falls back to a permissive regex scan of the whole text only when no
+    span parses as valid JSON, so a reply that isn't well-formed JSON at all
+    still has a chance of being recovered.
+    """
+    for span in _balanced_bracket_spans(text):
+        try:
+            parsed = json.loads(span)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(parsed, list):
+            continue
+        pairs = [(item[0].lower(), item[1].lower()) for item in parsed
+                 if isinstance(item, (list, tuple)) and len(item) == 2
+                 and isinstance(item[0], str) and isinstance(item[1], str)]
+        if pairs:
+            return pairs
     found = re.findall(
         r"\[\s*[\"']([a-z_]+)[\"']\s*,\s*[\"']([a-z_]+)[\"']\s*\]",
         text, re.IGNORECASE)

@@ -64,8 +64,10 @@ DEFAULT_OUT = OUT_DIR / "corpus.latest.json"
 # real Correlator's per-tenant keys never collide with a concurrent twin run.
 CORPUS_TENANT = "twin-corpus"
 
-# Fixed deterministic epoch base (mirrors scenario._BASE_MS).
-_BASE_TS = 1751500000000
+# Fixed deterministic epoch base -- reuses scenario._BASE_MS directly (via
+# the already-imported `report` module) rather than a hand-copied literal,
+# so the two can never drift.
+_BASE_TS = report.scenario._BASE_MS
 
 # ---------------------------------------------------------------------------
 # The curated corpus. Each case: id, description, source_type, raw (the RAW
@@ -224,18 +226,14 @@ def _detect_case(case: dict) -> tuple[dict, list[dict]]:
     envelope = {"source_type": case["source_type"], "raw": case["raw"],
                 "meta": case.get("meta") or {}}
     event, errors = ws2.normalize_one(envelope)
-    alerts: list[dict] = []
     if event is None or errors:
-        return {"matched": [], "missed": list(case["expect_rules"]),
-                "parsed": False}, []
+        return {"id": case["id"], "parsed": False, "fired_rules": [],
+                "expected_rules": list(case["expect_rules"]),
+                "matched": [], "missed": list(case["expect_rules"])}, []
     siem = event.setdefault("siem", {})
     siem.update({"tenant": CORPUS_TENANT, "ingest_id": f"corpus:{case['id']}"})
     detector = report._WS4_MOD.Detector(plugin_rule_dirs=[])
-    _ev, matched, _action = detector.process(event)
-    score = (event.get("siem") or {}).get("score")
-    for rule in matched:
-        alert = report._WS4_MOD.make_alert(event, rule, score)
-        alerts.append(alert)
+    _event, alerts = report._fire_alerts(detector, event)
     fired_ids = {a.get("rule_id") for a in alerts}
     return {
         "id": case["id"],

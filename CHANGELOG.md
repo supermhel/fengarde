@@ -101,7 +101,7 @@ Layer C stochastic+NON-blocking (its output never enters the gate).
   drop" probe (a never-matching copy of `agent_prompt_injection_indicator`
   stops firing while the stock rule fires).
 - **`eval/adversarial/corpus_b.py` — Layer B curated corpus.** 8 external
-  adversarial cases replayed through the real path: all 7 hard positives
+  adversarial cases replayed through the real path: all 6 hard positives
   fired their expected rules (plain + delimited injection, destructive
   command, credential scan, egress, unauthorized Modbus write), 1 homoglyph
   evasion documented as an honest finding, 1 no-URL negative control stayed

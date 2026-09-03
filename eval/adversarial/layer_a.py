@@ -89,10 +89,18 @@ DEFAULT_OUT = OUT_DIR / "matrix.latest.json"
 # ---------------------------------------------------------------------------
 # Grading
 # ---------------------------------------------------------------------------
-def _grade_variant(mutated: list, seed: int, oracle: dict) -> dict:
+def _grade_variant(mutated: list, seed: int, oracle: dict,
+                    base_build: tuple | None = None) -> dict:
     """Run ONE mutated payload list through the REAL WS-2->WS-4->WS-8 path
-    and grade it exactly like the twin scorecard does."""
-    base_build = scenario._build_chain_payloads(seed)
+    and grade it exactly like the twin scorecard does.
+
+    ``base_build`` lets a caller iterating many variants (run_matrix) pass in
+    its own already-computed scenario._build_chain_payloads(seed) result so
+    this isn't rebuilt from scratch on every call -- it defaults to None
+    (rebuild) so standalone callers (test_layer_a.py, adversary_c.py) keep
+    working unchanged."""
+    if base_build is None:
+        base_build = scenario._build_chain_payloads(seed)
 
     def _source(seed_ignored: int):
         return mutated, base_build[1], base_build[2], base_build[3]
@@ -119,7 +127,8 @@ def _cmp(axis: str, variant: str, base: dict, mut: dict) -> dict:
     b_fired_steps = {(a.get("step"), a.get("rule_id")) for a in base.get("fired", [])}
     m_fired_steps = {(a.get("step"), a.get("rule_id")) for a in mut.get("fired", [])}
     detection_retained = (
-        b_tpr == m_tpr
+        b_tpr is not None
+        and b_tpr == m_tpr
         and b_fired_steps == m_fired_steps
         and len(base.get("fired", [])) == len(mut.get("fired", []))
     )
@@ -171,7 +180,7 @@ def run_matrix(seed: int = 7, out: Path = DEFAULT_OUT) -> dict:
         mutated = mutate.apply_mutation(
             base_payloads, spec["axis"], spec["variant"], seed,
             composition=spec.get("composition"))
-        m_grade = _grade_variant(mutated, seed, oracle)
+        m_grade = _grade_variant(mutated, seed, oracle, base_build=base_build)
         rows.append(_cmp(spec["axis"], spec["variant"], base, m_grade))
 
     # per-axis summary (composition is its own bucket)
