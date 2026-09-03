@@ -27,6 +27,25 @@ device:
     eval/twin/__pycache__/plc_sim.cpython-312.pyc. SAMPLE — confirm on the
     real device before treating as ground truth.
 
+# OPTIONAL business_context (WP-3-E): business/operational-impact attributes
+# this device belongs to. Top-level, alongside device:. Every field optional;
+# absent = no claim (ship safe by default). SAMPLE values: plant/line/service
+# names would come from the deployment's own asset register and service
+# catalogue; owner is a TEAM name, never a person's account, never
+# credentials. No parser or rule reads this block today (no loader exists) —
+# schema-only, same as the rest of this file. See README.md "business_context".
+business_context:
+  plant: line-3-hall-b           # SAMPLE — asset-register name, not a claim about a real plant hall
+  production_line: line-3        # SAMPLE
+  business_service: cooling-subsystem  # SAMPLE — this device belongs to the cooling process service
+  owner: ops-team-cooling        # SAMPLE — owning TEAM, not an individual account
+  operational_state: production  # SAMPLE — enum: production | maintenance | decommissioned
+  safety_relevance: advisory     # SAMPLE judgment: this device hosts the critical actuator point
+                                 # pump_enable (coil 00001), so it is safety-consequential — but the
+                                 # twin map has no safety-instrumented function, so not
+                                 # safety-instrumented. A deployment confirms SIF membership from
+                                 # its own safety case, or omits the field (absent = no claim).
+
 # The parser's coarse hardcoded default, documented for contrast, NOT a
 # point declaration: services/ws2-normalization/parsers/modbus_anomaly.py
 # classifies any write outside 40001-40009 as unauthorized_write. This

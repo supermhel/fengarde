@@ -7,6 +7,77 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (2026-09-02, Phase 3 — WP-3-A/B/C/D/E shipped)
+
+Owner-ratified Phase 3 wave (roadmap §5.2 sign-off granted for the
+`incident.graph` v1→v2 bus-contract amendment, 2026-09-02). Five packages
+landed, each with its own contract test wired into `run_all_tests.sh`:
+
+- **WP-3-A — `incident.graph` v2 typed causal DAG (ADR-010, owner-ratified).**
+  `services/ws8-correlation/correlator.py` now emits `version: 2` payloads:
+  nodes are **WS-9-canonical sha256 `entity_id` digests** (with
+  `entity_type`/`entity_value`/`label` preserved so the graph stays
+  analyst-readable — the Phase-2 seam ADR-009 left for exactly this),
+  edges gain **typed kinds** `caused_by`/`invoked`/`authenticated_as`/
+  `wrote_to`/`changed` **alongside** v1's `used_ip`/`used_device`/
+  `seen_at_ip` — a typed kind is a **label on a single-alert-evidenced edge**
+  derived deterministically from the evidencing alert's own `mitre`/
+  `unmapped.ot` signal (documented derivation table in INTERFACE.md), never a
+  transitive join. The v1 builder stays in code **byte-for-byte**
+  (source-hash-pinned by `test_incident_graph_v2.py::test_v1_builder_byte_for_byte_unchanged`);
+  the `incidents` topic payload is untouched. Determinism/idempotency/
+  boundedness mirror v1 exactly (same member-cap, same dead-track sweep
+  pruning, byte-identical rebuild under redelivery). `contracts/bus-topics.md`
+  amended (`version: 2` supersedes), `docs/adr/010-incident-graph-v2-typed-causal-dag.md`
+  new.
+- **WP-3-B — Evidence package (`services/ws3-indexer/evidence_package.py`).**
+  Immutable, hash-chained (Merkle: incident genesis → alerts → events →
+  optional graph block, each `prev_hash`-linked), tamper-evident
+  (`verify_evidence_package()` fails on any mutation/reorder/swap),
+  deterministic `package_id` per incident content (idempotent under
+  redelivery). `to_reporting_payload()` speaks the **existing
+  `contracts/reporting.md` request schema** — the package is the
+  provenance-linked source multiple views render from; no new cross-repo
+  contract. Delivered standalone (no WS-3 route consumes it yet — honest
+  scope).
+- **WP-3-D — WS-5 bounded LLM concurrency (`services/ws5-ai/main.py`).**
+  `AiWorker` owns a `ThreadPoolExecutor` (`AI_MAX_WORKERS`, default 4) plus a
+  semaphore admission bound (`AI_QUEUE_CAP`, default 4) so the executor's
+  unbounded queue gets **hard backpressure**; `_TriageCache` is thread-safe;
+  per-event-id locks serialize same-event redelivery under concurrency (one
+  LLM call, both threads get the identical verdict); additive `in_flight`
+  gauge on `/metrics`. Ordering guarantee documented honestly: per-request
+  results are independent and deterministic, ordering across requests is not
+  guaranteed under concurrency. Light-classifier tier stays inline.
+- **WP-3-E — `business_context` on `contracts/ot-points/` (owner-ratified).**
+  Additive optional per-device block (`plant`, `production_line`,
+  `business_service`, `owner`, `operational_state`, `safety_relevance`),
+  schema-only — **config, not inference**, absent = no claim
+  (ship-safe-by-default); documented in the README field-obligations table +
+  sample block on `plc-line3.yml` with honest SAMPLE labelling. No loader
+  reads it yet (same sequencing `ot-points` itself used).
+- **WP-3-C — twin `chain_fidelity` graded against the REAL v2 graph
+  (`eval/twin/report.py`).** The metric moves from hardcoded `null` to an
+  honest harness-measured number: the chain's fired alerts are built via the
+  real `make_alert`, fed through a REAL WS-8 `Correlator` (fixed seed-derived
+  clock for determinism), and the resulting v2 graph is graded against the
+  oracle's `allowed_relationships` (directed causal joins between steps) +
+  `incident_membership` (all 7 steps in one incident). **Measured (seed 7):
+  `chain_fidelity=0.6`, `incident_membership_ok=True`**; `eval/twin/baseline.json`
+  stays FROZEN (the delta `null`→0.6 is traceable to the committed
+  `eval/trend.jsonl` row appended by the post-Phase-3 comparison run, WP-1-G
+  discipline); negative controls still zero incidents (`fpr=0.0`).
+  `test_chain_fidelity.py` wired into the gate (real-number, membership,
+  direction-mutation red, determinism, negatives-untouched).**
+- **ADR-010** — the ratified `incident.graph` v2 contract (`docs/adr/010-incident-graph-v2-typed-causal-dag.md`).
+- **Verification**: `run_all_tests.sh` **ALL TESTS PASS** exit 0 (new
+  stanzas: `test_incident_graph_v2.py`, `test_evidence_package.py`,
+  `test_concurrency.py`, `test_ot_points_business_context.py`,
+  `test_chain_fidelity.py`), `ruff clean`, `mypy` clean on the touched
+  services, adversarial mutation probes (typed-kind neutering → v2 kind test
+  red; pool-bypass → concurrency overlap test red; direction-reversal → chain
+  fidelity drops) — RED under mutation, GREEN restored.
+
 ### Fixed (2026-09-02, fourth review-fix round: 20 confirmed defects across two independent multi-agent reviews, live Docker-verified)
 
 Two independent code reviews (high effort: 10 findings; max effort, fresh

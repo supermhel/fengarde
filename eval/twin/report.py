@@ -12,11 +12,31 @@ replay numbers, never field numbers — Phase 3.5 discipline). Metrics the twin
 genuinely cannot measure today are emitted with their true value, never a
 fabricated one:
 
-  * chain_fidelity             = null (WS-8 has no causal-edge graph today, so
-                                       there is no denominator to measure a
-                                       fraction against; null, never a
-                                       fabricated 0.0)
-  * fpr                        = 0.0 (measured: an INCIDENT count, i.e.
+  * chain_fidelity             = 0.6 for seed 7 (WP-3-C, 2026-09-02): measured
+                                       against the REAL WS-8 v2 incident graph.
+                                       The chain's real alerts are run through
+                                       the real Correlator (fixed now_fn); the
+                                       v2 graph's typed edges are graded against
+                                       every oracle allowed_relationship that
+                                       has both steps detected and entity-
+                                       bearing. Explicit non-edges (allowed:
+                                       false) that a graph edge joins count
+                                       AGAINST the fraction (a false
+                                       correlation, never hidden). Stays None
+                                       when no incident promotes or no
+                                       denominator exists -- never fabricated.
+                                       The seed-7 graph carries ONE typed edge
+                                       (actor:ot-engineer -> ip:10.20.0.50,
+                                       kind invoked, evidenced by the
+                                       agent_mcp_tool_call egress alert), which
+                                       satisfies all 5 graded allowed joins AND
+                                       2 of the 2 forbidden pairs (the actor+ip
+                                       pair is present on both sides of every
+                                       step cut, so entity-presence joins cannot
+                                       discriminate direction): fidelity =
+                                       (5 correct - 2 forbidden) / 5 = 0.6,
+                                       with the breakdown reported in context.
+  * fpr                        = 0.0 (measured: an INCIDENT count, i.e.,
                                        medium+ alerts only — see
                                        negative_controls.is_incident(). The
                                        approved-maintenance-window write still
@@ -27,13 +47,16 @@ fabricated one:
                                        severity via the ticketed-write
                                        companion rule, so it's not counted
                                        as an incident. See negative_controls.py.)
-  * mtti / mttr                = null (no incident is promoted today, so there
-                                       is no incident to identify time-to or
-                                       recover-from)
+  * mtti / mttr                = null (time-to-identify / time-to-recover are
+                                       Phase 3.5 operational metrics not graded
+                                       by this package; leaving them null is
+                                       honest -- never a fabricated number)
   * false_correlation_rate /
-    alert_reduction_ratio      = null (both are defined over promoted
-                                       incidents; zero incidents means no
-                                       denominator, not a measured zero)
+    alert_reduction_ratio      = null (WP-3-C grades chain_fidelity and
+                                       incident membership; these ratio
+                                       definitions over promoted incidents are
+                                       not implemented and stay null -- not a
+                                       measured zero)
   * mttd_seconds                = real: (first chain step whose oracle-expected
                                        rule fired) minus (chain start), both
                                        pulled from the actual raw-payload
@@ -49,7 +72,9 @@ fabricated one:
 
 Determinism: same seed -> byte-identical report. All graded times are
 seed-derived fixed constants, never wall-clock; the correlator is given a fixed
-``now_fn``. (The ``date`` field is informational and may differ between runs.)
+``now_fn`` (a constant 1h after the chain's last alert, so every chain alert is
+in-window and no entry falls back to a wall-clock processing time). (The
+``date`` field is informational and may differ between runs.)
 
 Safety: this is a SIMULATION harness. No real control action is ever issued;
 everything runs in-process on the memory bus against the loopback twin.
@@ -62,6 +87,7 @@ evaluation workflow (.github/workflows/nightly-eval.yml).
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import sys
 import time
@@ -111,6 +137,43 @@ REPORT_PATH = TWIN / "report.json"
 # `run()` loads it (if present) and emits `report["delta_vs_baseline"]`.
 BASELINE_PATH = TWIN / "baseline.json"
 TREND_PATH = ROOT / "eval" / "trend.jsonl"
+
+# The tenant the twin stamps on the chain's normalized events before detection
+# (negative_controls.run_pipeline) -- the correlator's track/incident/canonical
+# ids all key off it, so the WS-8 grading MUST use the identical tenant or the
+# canonical entity ids would not match the graph nodes.
+_CHAIN_TENANT = "twin-chain"
+
+# ---------------------------------------------------------------------------
+# WS-8 Correlator loading (WP-3-C). CRITICAL MODULE-COLLISION TRAP: loading
+# the correlator file executes ITS OWN `sys.path.insert(0, str(HERE))` (HERE =
+# services/ws8-correlation, which contains a top-level `main.py`), so loading
+# it BEFORE scenario.run_chain would hijack scenario's bare `import main`
+# (ws2 resolution) and crash with "module 'main' has no attribute
+# 'normalize_one'". It is therefore loaded LAZILY, under a UNIQUE module name
+# ("ws8_correlator_mod"), only after the chain has already been run in-process:
+# scenario._get_ws2() caches ws2's module on first use, so later path
+# pollution cannot re-resolve `main` to the wrong module. The unique name also
+# means the correlator is never cached under a bare name another workstream
+# might collide with.
+_WS8_PATH = APPROOT_SERVICES / "ws8-correlation" / "correlator.py"
+_WS8_MOD_NAME = "ws8_correlator_mod"
+
+
+def _ensure_ws8():
+    """Load the REAL WS-8 Correlator (spec_from_file_location, unique module
+    name) once; return the module. See the trap note above for why this is
+    lazy and why the name is unique."""
+    mod = sys.modules.get(_WS8_MOD_NAME)
+    if mod is not None:
+        return mod
+    spec = importlib.util.spec_from_file_location(_WS8_MOD_NAME, _WS8_PATH)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot locate {_WS8_PATH}")
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[_WS8_MOD_NAME] = mod
+    spec.loader.exec_module(mod)
+    return mod
 
 
 def _event_ts(ev: "scenario.ChainEvent") -> Optional[int]:
@@ -237,6 +300,14 @@ def _grade_chain(result: scenario.ChainResult, oracle: dict) -> dict:
                    # never a fabricated "detected instantly" 0
     )
 
+    # WP-3-C: grade the chain against the REAL WS-8 v2 incident graph (real
+    # make_alert-shaped alerts -> real Correlator -> real v2 graph). Runs AFTER
+    # the chain (so scenario's ws2 main resolution is already cached) and
+    # lazily loads the WS-8 module (whose sys.path inserts would otherwise
+    # hijack a later bare `import main`). None when nothing promotes -- never
+    # a fabricated number.
+    ws8_grade = _grade_ws8(result, oracle)
+
     return {
         "tpr": round(tpr, 4) if tpr is not None else None,
         "tpr_numerator": tpr_numer,
@@ -250,11 +321,23 @@ def _grade_chain(result: scenario.ChainResult, oracle: dict) -> dict:
         "evidence_completeness": (
             round(evidence_completeness, 4) if evidence_completeness is not None else None
         ),
-        # WS-8 has no causal-edge graph today, so "fraction of causal edges
-        # correctly reconstructed" has no denominator -- null, not a fabricated
-        # zero (None is later surfaced verbatim in the report; a real 0.0 would
-        # read as "measured and found zero", which is not true).
-        "chain_fidelity": None,
+        # WP-3-C: now measured against the REAL WS-8 v2 incident graph (see
+        # _grade_ws8 / _grade_chain_fidelity). A real fraction with the
+        # numerator / forbidden-join breakdown reported in context; None only
+        # when no incident promoted (no graph evidence) or no denominator.
+        "chain_fidelity": ws8_grade["chain_fidelity"],
+        "fidelity_numerator": ws8_grade["fidelity_numerator"],
+        "forbidden_joins": ws8_grade["forbidden_joins"],
+        "fidelity_denominator": ws8_grade["fidelity_denominator"],
+        "per_allowed_pair": ws8_grade["per_allowed_pair"],
+        "incident_promotions": ws8_grade["incident_promotions"],
+        "incident_count": ws8_grade["incident_count"],
+        "incident_membership_ok": ws8_grade["incident_membership_ok"],
+        "full_coverage_incident_ids": ws8_grade["full_coverage_incident_ids"],
+        "cross_step_rule_co_location": ws8_grade["cross_step_rule_co_location"],
+        "incident_summary": ws8_grade["incident_summary"],
+        "graph_edges": ws8_grade["graph_edges"],
+        "chain_alert_count": ws8_grade["chain_alert_count"],
         "attribution_accuracy": _attribution(parsed),
     }
 
@@ -262,10 +345,293 @@ def _grade_chain(result: scenario.ChainResult, oracle: dict) -> dict:
 def _real_detection(raw_pairs: list[tuple]) -> list[dict]:
     """Run raw (source_type, record, meta, step) pairs through the REAL detector cascade."""
     try:
-        return negative_controls.run_pipeline(raw_pairs, tenant="twin-chain")
+        return negative_controls.run_pipeline(raw_pairs, tenant=_CHAIN_TENANT)
     except Exception as exc:  # pragma: no cover - defensive
         sys.stderr.write(f"[warn] detection run failed: {exc!r}\n")
         return []
+
+
+# ---------------------------------------------------------------------------
+# WP-3-C: grade the chain against the REAL WS-8 v2 incident graph.
+# ---------------------------------------------------------------------------
+def _build_chain_alerts(parsed: list["scenario.ChainEvent"]) -> list[dict]:
+    """Re-run the chain's REAL parsed OCSF events through a fresh real Detector
+    and build the FULL production alert shape (ws4-detection/main.py::make_alert)
+    for every fired rule -- the exact alerts a production WS-4 would emit.
+
+    This mirrors negative_controls.run_pipeline's detection leg byte-for-byte
+    (fresh Detector(plugin_rule_dirs=[]), the same siem.tenant / ingest_id /
+    twin_step stamping, events processed in chain order so stateful windows see
+    the same hits) but keeps the (event, rule) pairs so make_alert -- NOT a
+    hand-rolled reduced alert -- can be called. The Correlator needs
+    actor/src_endpoint/mitre/event_ids on the alert for its tracks + typed
+    signals, which run_pipeline's reduced dicts don't carry.
+
+    Returns [{step, alert}] in detection (== chain) order. Deterministic: a
+    fresh detector per call + all chain timestamps fixed in the past.
+    """
+    detector = _WS4_MOD.Detector(plugin_rule_dirs=[])
+    out: list[dict] = []
+    for ev in parsed:
+        event = copy.deepcopy(ev.event or {})
+        siem = event.setdefault("siem", {})
+        siem.update({"tenant": _CHAIN_TENANT, "ingest_id": f"twin:{ev.step}"})
+        siem["twin_step"] = ev.step
+        event, matched, _action = detector.process(event)
+        score = (event.get("siem") or {}).get("score")
+        for rule in matched:
+            alert = _WS4_MOD.make_alert(event, rule, score)
+            out.append({"step": ev.step, "alert": alert})
+    return out
+
+
+def _step_entity_ids(result: "scenario.ChainResult", tenant: str) -> dict:
+    """Map each chain step to the canonical entity_ids its OCSF event evidences,
+    using the SAME canonical identity the v2 graph nodes use
+    (services/ws8-correlation/correlator.py::canonical_entity_id -- sha256 of
+    the pipe-joined tenant/entity_type/canonical_value).
+
+    Entities per step: actor.user.name, canonical src_endpoint.ip, and device
+    (src_endpoint.mac falling back to hostname). A gapped/unparsed step (no
+    event) contributes no entities -- it can never be graded, honestly.
+    """
+    ws8 = _ensure_ws8()
+    out: dict[str, set] = {}
+    for ev in result.events:
+        event = ev.event or {}
+        ids: set = set()
+        actor = event.get("actor") or {}
+        user = actor.get("user") if isinstance(actor.get("user"), dict) else {}
+        if user.get("name"):
+            eid = ws8.canonical_entity_id(tenant, "actor", str(user["name"]))
+            if eid:
+                ids.add(eid)
+        src = event.get("src_endpoint") or {}
+        if src.get("ip"):
+            eid = ws8.canonical_entity_id(tenant, "ip", str(src["ip"]))
+            if eid:
+                ids.add(eid)
+        device = src.get("mac") or src.get("hostname")
+        if device:
+            eid = ws8.canonical_entity_id(tenant, "device", str(device))
+            if eid:
+                ids.add(eid)
+        out[ev.step] = ids
+    return out
+
+
+def _fidelity_join(edges: list[dict], from_side: set, to_side: set) -> bool:
+    """True iff some typed v2 graph edge joins the earlier-step side to the
+    to-step: the edge's ``from`` entity must belong to the earlier side and its
+    ``to`` entity to the to-step -- the DIRECTION check (from-entity belongs to
+    the earlier step side). Kept tiny + pure so test_chain_fidelity.py can
+    mutate it and prove the check is load-bearing."""
+    for ed in edges:
+        f = ed.get("from")
+        t = ed.get("to")
+        if f in from_side and t in to_side:
+            return True
+    return False
+
+
+def _grade_chain_fidelity(edges: list[dict], step_entities: dict,
+                          allowed_rels: list[dict], step_order: list[str]) -> dict:
+    """PURE grader: score the oracle's allowed_relationships against the REAL v2
+    graph edges.
+
+    For each oracle relationship (from-step -> to-step, allowed: true): the
+    graph must contain at least one typed edge from an entity evidenced at the
+    from-step OR AN EARLIER step (the union of the from-step's entity set and
+    every earlier step's, per the chain's causal order) to an entity evidenced
+    AT the to-step, in the right direction (from-entity on the earlier side).
+    Explicit non-edges (allowed: false) MUST NOT be joined: a graph edge
+    satisfying the same predicate for a forbidden pair is a FALSE CORRELATION
+    and counts AGAINST the fraction -- never hidden.
+
+    chain_fidelity = (correct allowed joins - forbidden joins) / denominator,
+    where the denominator is the number of allowed relationships whose BOTH
+    steps are detected (parsed) and entity-bearing. Unclamped: if
+    ``forbidden`` exceeds ``correct`` (more false correlations than genuine
+    joins) the score goes NEGATIVE -- intentional, not a bug, per "counts
+    AGAINST the fraction, never hidden" above; a floor at 0 would silently
+    launder a graph that is mostly false correlations into a merely-mediocre
+    score. No denominator, or no incident evidence at all (empty ``edges``
+    from an unpromoted chain) -> fidelity None, never a fabricated number."""
+    idx = {label: i for i, label in enumerate(step_order)}
+    allowed = [r for r in allowed_rels if r.get("allowed")]
+    forbidden_rels = [r for r in allowed_rels if not r.get("allowed")]
+
+    def _earlier_side(f: str) -> set:
+        side: set = set()
+        if f not in idx:
+            return side
+        for i in range(idx[f] + 1):
+            side |= set(step_entities.get(step_order[i], ()))
+        return side
+
+    denominator = 0
+    correct = 0
+    per_pair: list[dict] = []
+    for rel in allowed:
+        f, t = rel.get("from"), rel.get("to")
+        from_set = set(step_entities.get(f, ()))
+        to_set = set(step_entities.get(t, ()))
+        if not from_set or not to_set:
+            # a step with no parsed event / no entity can never be joined --
+            # excluded from the denominator honestly (spec: both steps
+            # detected and entity-bearing)
+            per_pair.append({"from": f, "to": t, "graded": False,
+                             "reason": "step-not-entity-bearing"})
+            continue
+        denominator += 1
+        joined = _fidelity_join(edges, _earlier_side(f), to_set)
+        correct += 1 if joined else 0
+        per_pair.append({"from": f, "to": t, "graded": True, "joined": bool(joined)})
+
+    forbidden = 0
+    for rel in forbidden_rels:
+        f, t = rel.get("from"), rel.get("to")
+        to_set = set(step_entities.get(t, ()))
+        if not to_set:
+            continue
+        if _fidelity_join(edges, _earlier_side(f), to_set):
+            forbidden += 1
+
+    if not edges or denominator == 0:
+        fidelity = None  # nothing promoted / no graded joins -> honest null
+    else:
+        fidelity = (correct - forbidden) / denominator
+    return {
+        "chain_fidelity": round(fidelity, 4) if fidelity is not None else None,
+        "fidelity_numerator": correct,
+        "forbidden_joins": forbidden,
+        "fidelity_denominator": denominator,
+        "per_allowed_pair": per_pair,
+    }
+
+
+def _incident_membership_grade(alerts_by_step: list[dict], incidents: list[dict],
+                               membership: dict) -> dict:
+    """Grade the oracle's incident_membership against the REAL promoted
+    incidents:
+
+      * incident_count        -- real number of DISTINCT incidents the chain's
+                                 alerts promoted (the ip + actor tracks both
+                                 promote for this chain: each track is an
+                                 independent real incident).
+      * incident_membership_ok -- exactly ``incident_count`` (oracle) incidents
+                                 carry the FULL chain (every chain alert is a
+                                 member), and every fired cross_step_rule_ids
+                                 rule has all its alerts co-located in ONE
+                                 incident (a rule whose alerts were split
+                                 across incidents would violate "all in the
+                                 same incident").
+    """
+    chain_ids = [item["alert"]["alert_id"] for item in alerts_by_step]
+    chain_set = set(chain_ids)
+    by_id: dict[str, dict] = {inc["incident_id"]: inc for inc in incidents}
+
+    if not by_id or not chain_set:
+        return {"incident_count": 0, "incident_membership_ok": False,
+                "full_coverage_incident_ids": [],
+                "reason": "no chain alerts promoted an incident"}
+
+    full_coverage = [iid for iid, inc in by_id.items()
+                     if chain_set <= set(inc["member_alert_ids"])]
+
+    cross_ok = True
+    cross_details: dict[str, object] = {}
+    for rule_id in membership.get("cross_step_rule_ids") or []:
+        rule_alerts = {a["alert"]["alert_id"] for a in alerts_by_step
+                       if a["alert"]["rule_id"] == rule_id}
+        if not rule_alerts:
+            cross_details[rule_id] = "not-fired"  # a listed rule that never fired has no alerts to co-locate
+            continue
+        co_located = any(set(inc["member_alert_ids"]) >= rule_alerts
+                         for inc in by_id.values())
+        cross_details[rule_id] = bool(co_located)
+        cross_ok = cross_ok and co_located
+
+    _expected_raw = membership.get("incident_count", 1)
+    expected = int(_expected_raw) if _expected_raw is not None else 1
+    ok = len(full_coverage) == expected and cross_ok
+    return {
+        "incident_count": len(by_id),
+        "incident_membership_ok": bool(ok),
+        "full_coverage_incident_ids": sorted(full_coverage),
+        "cross_step_rule_co_location": cross_details,
+    }
+
+
+def _grade_ws8(result: "scenario.ChainResult", oracle: dict) -> dict:
+    """Run the chain's real alerts through the REAL WS-8 Correlator and grade
+    chain_fidelity + incident membership against the REAL v2 incident graphs.
+
+    Determinism: Correlator is constructed with a FIXED now_fn -- a constant
+    1h after the chain's last alert (all chain timestamps are fixed past
+    values, so every member stays in-window and no entry falls back to a
+    wall-clock processing time). Everything else is a pure function of the
+    same deterministic inputs as the rest of the report.
+    """
+    ws8 = _ensure_ws8()
+    parsed = [e for e in result.events if e.parsed]
+    alerts_by_step = _build_chain_alerts(parsed)
+    last_ts = max((a["alert"].get("time") or 0) for a in alerts_by_step) if alerts_by_step else 0
+    now_ms = last_ts + 3_600_000  # fixed seed-derived "now" (see above)
+    corr = ws8.Correlator(now_fn=lambda: now_ms / 1000.0)
+
+    incidents: list[dict] = []
+    for item in alerts_by_step:
+        incidents.extend(corr.ingest_alert(item["alert"]))
+    by_id: dict[str, dict] = {inc["incident_id"]: inc for inc in incidents}
+
+    # Union of the REAL v2 graphs across every promoted incident: every edge
+    # any chain alert's incident evidence carries.
+    edges: list[dict] = []
+    seen: set = set()
+    for iid in sorted(by_id):
+        graph = corr.incident_graph(iid)
+        for ed in (graph or {}).get("edges") or []:
+            key = (ed.get("from"), ed.get("to"), ed.get("kind"))
+            if key not in seen:
+                seen.add(key)
+                edges.append(ed)
+
+    step_entities = _step_entity_ids(result, _CHAIN_TENANT)
+    fidelity = _grade_chain_fidelity(
+        edges, step_entities, oracle.get("allowed_relationships") or [],
+        oracle.get("expected_sequence") or list(step_entities))
+    membership = _incident_membership_grade(
+        alerts_by_step, list(by_id.values()),
+        oracle.get("incident_membership") or {})
+
+    chain_alerts = [a["alert"]["alert_id"] for a in alerts_by_step]
+    chain_set = set(chain_alerts)
+    incident_summary = [
+        {
+            "incident_id": iid,
+            "entity": f"{inc['entity_type']}:{inc['entity_value']}",
+            "tactics": inc["tactics"],
+            "member_count": inc["member_count"],
+            "covers_full_chain": bool(chain_set <= set(inc["member_alert_ids"])),
+        }
+        for iid, inc in sorted(by_id.items())
+    ]
+    return {
+        "chain_fidelity": fidelity["chain_fidelity"],
+        "fidelity_numerator": fidelity["fidelity_numerator"],
+        "forbidden_joins": fidelity["forbidden_joins"],
+        "fidelity_denominator": fidelity["fidelity_denominator"],
+        "per_allowed_pair": fidelity["per_allowed_pair"],
+        "incident_promotions": len(by_id),
+        "incident_count": membership["incident_count"],
+        "incident_membership_ok": membership["incident_membership_ok"],
+        "full_coverage_incident_ids": membership["full_coverage_incident_ids"],
+        "cross_step_rule_co_location": membership["cross_step_rule_co_location"],
+        "incident_summary": incident_summary,
+        "graph_edges": edges,
+        "chain_alert_count": len(chain_alerts),
+    }
 
 
 def _raw_identity(ev: "scenario.ChainEvent") -> Optional[str]:
@@ -426,9 +792,13 @@ def run(seed: int = 7) -> dict:
     fired = grade["fired"]
 
     # alerts_total/incident_promotions from the SAME real run graded above,
-    # never a separately-asserted constant.
+    # never a separately-asserted constant. incident_promotions is the REAL
+    # count of distinct incidents the chain's alerts promoted through the REAL
+    # WS-8 Correlator (WP-3-C: the actor + ip tracks both promote for this
+    # chain -- each track is an independent, real incident).
     alerts_total = len(fired)
-    incident_promotions = 0  # Correlator promotes nothing today (no causal edges)
+    incident_promotions = grade["incident_promotions"]
+    incident_count = grade["incident_count"]
 
     # No denominator for FPR only if there are no negative scenarios at all
     # (there always are four, but guard rather than assume).
@@ -448,16 +818,16 @@ def run(seed: int = 7) -> dict:
             "tpr": tpr,          # already rounded (or None) by _grade_chain
             "fpr": round(fpr, 4) if fpr is not None else None,
             "mttd_seconds": grade["mttd_seconds"],  # real: first-matched-step ts minus chain-start ts
-            "mtti": None,                 # no incident promoted today (honest null)
-            "mttr": None,                 # no incident resolved today (honest null)
-            # WS-8 has no causal-edge graph today -- null, not a fabricated 0.0
-            # (see _grade_chain's chain_fidelity comment for the same reasoning).
+            "mtti": None,                 # Phase 3.5 operational metric not graded by this package (honest null)
+            "mttr": None,                 # Phase 3.5 operational metric not graded by this package (honest null)
+            # WP-3-C: a REAL fraction measured against the REAL WS-8 v2 incident
+            # graph (see _grade_chain_fidelity); None only when no incident
+            # promoted or no denominator exists -- never a fabricated number.
             "chain_fidelity": grade["chain_fidelity"],
             "evidence_completeness": evidence,  # already rounded (or None) by _grade_chain
-            # No incident is ever promoted today (incident_promotions == 0
-            # above), so "false correlation rate" and "alert reduction ratio"
-            # have no incidents to be computed over -- null, not a fabricated
-            # "measured zero".
+            # WP-3-C grades chain_fidelity + incident membership; these ratio
+            # definitions over promoted incidents are not implemented in this
+            # package and stay null -- not a fabricated "measured zero".
             "false_correlation_rate": None,
             "alert_reduction_ratio": None,
             "incident_reconstruction_time_ms": None,
@@ -481,7 +851,25 @@ def run(seed: int = 7) -> dict:
             "negative_explained_low": negatives_explained,
             "oracle_expected_sequence": oracle["expected_sequence"],
             "alert_count": alerts_total,
+            # WP-3-C: real numbers from the REAL WS-8 Correlator run on the
+            # chain's real alerts -- nothing hand-picked.
             "incident_promotions": incident_promotions,
+            "incident_count": incident_count,
+            "incident_membership_ok": grade["incident_membership_ok"],
+            "full_coverage_incident_ids": grade["full_coverage_incident_ids"],
+            "cross_step_rule_co_location": grade["cross_step_rule_co_location"],
+            "incident_summary": grade["incident_summary"],
+            "chain_fidelity_details": {
+                "correct_allowed_joins": grade["fidelity_numerator"],
+                "forbidden_joins": grade["forbidden_joins"],
+                "denominator": grade["fidelity_denominator"],
+                "per_allowed_pair": grade["per_allowed_pair"],
+            },
+            "chain_graph_edges": [
+                {"from": e["from"], "to": e["to"], "kind": e["kind"],
+                 "event_id": e["event_id"], "ts_ms": e["ts_ms"]}
+                for e in grade["graph_edges"]
+            ],
         },
         "finding": (
             f"FPR={round(fpr, 4) if fpr is not None else 'null'}: "
@@ -492,6 +880,19 @@ def run(seed: int = 7) -> dict:
             + ". A low-severity ticketed alert doesn't count as an incident -- "
               "see negative_controls.is_incident(). See eval/twin/"
               "negative_controls.py for the per-scenario cause."
+            + (  # WP-3-C: the chain_fidelity finding is now measured (never fabricated)
+                " chain_fidelity=" + str(grade["chain_fidelity"])
+                + " measured against the REAL WS-8 v2 incident graph: "
+                + str(grade["fidelity_numerator"]) + " correct allowed join(s), "
+                + str(grade["forbidden_joins"]) + " forbidden-pair join(s), "
+                + "denominator " + str(grade["fidelity_denominator"])
+                + "; incident_membership_ok=" + str(grade["incident_membership_ok"])
+                + " with " + str(incident_count) + " real incident(s) promoted ("
+                + (", ".join(f"{s['entity']} = {s['member_count']} alerts"
+                             for s in grade["incident_summary"])
+                   if grade["incident_summary"] else "no incident")
+                + ")."
+            )
         ),
         "elapsed_seconds": round(time.time() - started, 3),
     }

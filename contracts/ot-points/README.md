@@ -34,6 +34,18 @@ device:
   unit_id: 1                    # Modbus unit id, when the protocol has one
   provenance: "..."             # honest origin of this point map (see Ground truth)
 
+# OPTIONAL (WP-3-E): business/operational-impact attributes this device
+# belongs to. Top-level, alongside `device:`. Every field optional; absent =
+# no claim (ship safe by default). Values are the deployment's own facts
+# (asset register, service catalogue), config not inference.
+business_context:
+  plant: line-3-hall-b              # SAMPLE — deployment asset register name
+  production_line: line-3           # SAMPLE
+  business_service: cooling-subsystem   # SAMPLE — deployment service catalogue
+  owner: ops-team-cooling           # SAMPLE — team name, never a person's account
+  operational_state: production     # enum: production | maintenance | decommissioned
+  safety_relevance: advisory        # enum: none | advisory | safety-instrumented
+
 # OPTIONAL: documents the parser's coarse default that this config would
 # (in a later package) refine. Not a point declaration itself.
 parser_default:
@@ -81,6 +93,18 @@ Field obligations:
 | `points[].allowed_writers` | yes | non-empty list; categories from `writer-categories.yml` |
 | `points[].maintenance_window` | yes | `days` (ISO weekday abbreviations), `start`/`end` (HH:MM:SS), `timezone` (IANA), `write_expectation` |
 | `points[].notes` | no | anything else, honestly |
+| `business_context.plant` | no | plant name from the deployment's own asset register — omit unless confirmed; a sample value must never read as a claim about a real plant |
+| `business_context.production_line` | no | production line identifier, per the deployment's own naming — omit if not confirmed |
+| `business_context.business_service` | no | business service this device belongs to, from the deployment's service catalogue |
+| `business_context.owner` | no | owning team name — a team, never a person's account, never credentials |
+| `business_context.operational_state` | no | `production` \| `maintenance` \| `decommissioned` — the deployment's own declared state, never inferred |
+| `business_context.safety_relevance` | no | `none` \| `advisory` \| `safety-instrumented` — SIF membership per the deployment's safety case, never assumed |
+
+**Honest scope (WP-3-E): `business_context` is schema-only.** No parser,
+rule, or loader reads this block today — the same status this README states
+for the whole directory. It exists so the business/operational-impact
+attributes have a config surface to live on before any later package wires
+them in; adding or omitting it changes **zero** behavior.
 
 Wire-address numbering follows the Modbus Application Protocol V1.1b3
 5-digit data-address table, the same convention the holding-register block

@@ -14,9 +14,30 @@ Scorer.route(), contracts/scoring.yaml):
 Both tiers publish `ai.results` and an enriched `alerts` entry; the classifier
 tier's alert carries no `ai` (LLM verdict) block, only `classification`, and its
 `level` is the classifier's own priority (low/medium/high), not an LLM verdict.
+
+Concurrency (WP-3-D): the LLM tier's ``analyze`` call is dispatched to a bounded
+``ThreadPoolExecutor`` owned by ``AiWorker``. The light-classifier tier stays
+inline (cheap and deterministic). Per-request results are independent and
+deterministic (same input -> same verdict), but **ordering across requests is
+not guaranteed under concurrency**: with a pool, two in-flight LLM calls may
+complete in either order, and ``handle()`` returns each request's result as soon
+as *that* request's LLM call finishes. The bus ``produce`` order in the handler
+is whatever ``handle()`` returns per call. This matches the per-request
+independence of the underlying triage and is safe because ``ai.results`` and
+``alerts`` are keyed by a stable event id, not by sequence position.
+
+The pool only does concurrent work if more than one request can be in
+``handle()`` at once -- ``handle()`` itself blocks on ``future.result()``, so
+that requires more than one caller thread. ``main()`` wires this via
+``shared.runner.serve``'s ``topic_workers={"ai.requests": worker.max_workers}``:
+that many consumer threads share the ``cg-ai`` group (Redis consumer groups
+load-balance a group's deliveries across named consumers), so up to
+``max_workers`` requests are genuinely in flight through the pool at once in
+production, not just under this module's own multi-threaded tests.
 """
 from __future__ import annotations
 
+import concurrent.futures
 import hashlib
 import json
 import os
@@ -42,6 +63,14 @@ from llm_adapter import make_llm  # noqa: E402
 # triaged again -- harmless, and keeps memory flat on high-throughput bursts.
 _SEEN_CAP = 10000
 
+# WS-5 AI pool defaults. ``AI_MAX_WORKERS`` caps the number of concurrent LLM
+# calls; ``AI_QUEUE_CAP`` caps the number of additional requests that can be
+# admitted past ``max_workers`` (the executor's own queue is unbounded, so we
+# layer a semaphore on top to give the caller backpressure instead of OOMing
+# under a burst). Total hard bound = max_workers + queue_cap.
+_AI_MAX_WORKERS_DEFAULT = 4
+_AI_QUEUE_CAP_DEFAULT = 4
+
 
 class _TriageCache:
     """Bounded in-process dedup for the LLM triage call.
@@ -65,22 +94,27 @@ class _TriageCache:
         self._cap = cap
         self._order: deque = deque()
         self._m: dict = {}  # event_id -> triage result
+        self._lock = threading.Lock()
 
     def get(self, key: str):
-        return self._m.get(key)
+        with self._lock:
+            return self._m.get(key)
 
     def put(self, key: str, result) -> None:
-        if key in self._m:
-            return
-        self._m[key] = result
-        self._order.append(key)
-        if len(self._order) > self._cap:
-            oldest = self._order.popleft()
-            self._m.pop(oldest, None)
+        with self._lock:
+            if key in self._m:
+                return
+            self._m[key] = result
+            self._order.append(key)
+            if len(self._order) > self._cap:
+                oldest = self._order.popleft()
+                self._m.pop(oldest, None)
 
 
 class AiWorker:
-    def __init__(self, seen_cap: int = _SEEN_CAP):
+    def __init__(self, seen_cap: int = _SEEN_CAP,
+                 max_workers: int | None = None,
+                 queue_cap: int | None = None):
         self.llm = make_llm()
         self.classifier = LightClassifier()
         self._triage = _TriageCache(cap=seen_cap)
@@ -92,6 +126,72 @@ class AiWorker:
         # see "we've silently been running on the stub" at a glance.
         self._engine_lock = threading.Lock()
         self._engine_counts: dict[str, int] = {}
+        self._in_flight = 0
+
+        max_workers = max(1, int(os.getenv("AI_MAX_WORKERS", max_workers or _AI_MAX_WORKERS_DEFAULT)))
+        if queue_cap is None:
+            queue_cap = int(os.getenv("AI_QUEUE_CAP", _AI_QUEUE_CAP_DEFAULT))
+        # Hard bound = workers that can run concurrently + extra queued admissions.
+        # The executor's own queue is unbounded; this semaphore gives the caller
+        # backpressure so memory cannot grow without limit under a burst.
+        total_cap = max_workers + max(0, queue_cap)
+        self.max_workers = max_workers
+        self._admit = threading.Semaphore(total_cap)
+        self._pool = concurrent.futures.ThreadPoolExecutor(
+            max_workers=max_workers,
+            thread_name_prefix="ws5-ai-llm",
+        )
+        # Per-event-id lock map so two threads triaging the SAME event do not
+        # trigger two LLM calls, while threads triaging DIFFERENT events can
+        # run concurrently. Bounded the same way as _TriageCache (oldest
+        # evicted past _SEEN_CAP) -- an unbounded map here would leak one
+        # Lock per distinct event id for the life of the process.
+        self._key_locks: dict[str, threading.Lock] = {}
+        self._key_locks_order: deque = deque()
+        self._key_locks_lock = threading.Lock()
+
+    def _key_lock(self, eid: str) -> threading.Lock | None:
+        with self._key_locks_lock:
+            lock = self._key_locks.get(eid)
+            if lock is None:
+                lock = threading.Lock()
+                self._key_locks[eid] = lock
+                self._key_locks_order.append(eid)
+                if len(self._key_locks_order) > _SEEN_CAP:
+                    oldest = self._key_locks_order.popleft()
+                    self._key_locks.pop(oldest, None)
+            return lock
+
+    def _llm_task(self, request: dict, event: dict, reasons: list, eid: str | None):
+        """Run inside the pool worker. Releases the admission semaphore on
+        completion (success or failure) so backpressure is maintained."""
+        with self._engine_lock:
+            self._in_flight += 1
+        try:
+            verdict = self.llm.analyze(event, reasons)
+            engine = verdict.get("engine")
+            if engine:  # a genuine LLM call, not a classifier-tier/cache-hit skip
+                with self._engine_lock:
+                    self._engine_counts[engine] = self._engine_counts.get(engine, 0) + 1
+            result = {
+                "event_id": request.get("event_id"),
+                "tier": request.get("tier", "llm"),
+                "verdict": verdict.get("verdict"),
+                "summary": verdict.get("summary"),
+                "level": verdict.get("level"),
+                "classification": self.classifier.predict(event),
+                "engine": verdict.get("engine"),
+                "model": verdict.get("model"),
+            }
+            if eid is not None:
+                # Cache a copy too, for the same reason -- the freshly-built
+                # `result` is also handed to bus.produce() by the caller (R4-#36).
+                self._triage.put(eid, dict(result))
+            return result
+        finally:
+            self._admit.release()
+            with self._engine_lock:
+                self._in_flight -= 1
 
     @staticmethod
     def _dedup_key(request: dict):
@@ -107,8 +207,8 @@ class AiWorker:
     def handle(self, request: dict) -> dict:
         event = request.get("event", {})
         tier = request.get("tier", "llm")
-        classification = self.classifier.predict(event)
         if tier == "classifier":
+            classification = self.classifier.predict(event)
             return {
                 "event_id": request.get("event_id"),
                 "tier": tier,
@@ -121,48 +221,64 @@ class AiWorker:
             }
         reasons = request.get("reason", [])
         eid = self._dedup_key(request)
-        if eid is not None:
-            cached = self._triage.get(eid)
-            if cached is not None:
-                # Already triaged on a prior delivery -- do NOT pay for the LLM
-                # again; hand back the exact verdict we already computed. A
-                # COPY, not the cache's own dict: the caller (_make_handler)
-                # hands this straight to bus.produce(), and on
-                # BUS_BACKEND=memory a produced payload is stored by reference
-                # (no serialization) -- a later mutation of that message would
-                # otherwise corrupt this cache entry for every future
-                # redelivery of the same event (R4-#36).
-                return dict(cached)
-        verdict = self.llm.analyze(event, reasons)
-        engine = verdict.get("engine")
-        if engine:  # a genuine LLM call, not a classifier-tier/cache-hit skip
-            with self._engine_lock:
-                self._engine_counts[engine] = self._engine_counts.get(engine, 0) + 1
-        result = {
-            "event_id": request.get("event_id"),
-            "tier": tier,
-            "verdict": verdict.get("verdict"),
-            "summary": verdict.get("summary"),
-            "level": verdict.get("level"),
-            "classification": classification,
-            "engine": verdict.get("engine"),
-            "model": verdict.get("model"),
-        }
-        if eid is not None:
-            # Cache a copy too, for the same reason -- the freshly-built
-            # `result` is also handed to bus.produce() by the caller (R4-#36).
-            self._triage.put(eid, dict(result))
-        return result
+        key_lock = self._key_lock(eid) if eid is not None else None
+
+        if key_lock is not None:
+            key_lock.acquire()
+        try:
+            if eid is not None:
+                cached = self._triage.get(eid)
+                if cached is not None:
+                    # Already triaged on a prior delivery -- do NOT pay for the LLM
+                    # again; hand back the exact verdict we already computed. A
+                    # COPY, not the cache's own dict: the caller (_make_handler)
+                    # hands this straight to bus.produce(), and on
+                    # BUS_BACKEND=memory a produced payload is stored by reference
+                    # (no serialization) -- a later mutation of that message would
+                    # otherwise corrupt this cache entry for every future
+                    # redelivery of the same event (R4-#36).
+                    return dict(cached)
+
+            # Admission control: acquire before submit so the executor's
+            # unbounded internal queue is bounded by backpressure instead of
+            # growing without limit. Once submitted, `_llm_task` owns the
+            # release (its own `finally`, on both success and failure) --
+            # release here ONLY if submit() itself raises before the task
+            # ever runs, or the semaphore would be released twice for one
+            # acquire (its own analyze()/predict() exception already comes
+            # back through future.result() after `_llm_task` released once).
+            self._admit.acquire()
+            try:
+                future = self._pool.submit(self._llm_task, request, event, reasons, eid)
+            except Exception:
+                self._admit.release()
+                raise
+            return future.result()
+        finally:
+            if key_lock is not None:
+                key_lock.release()
 
     def metrics(self) -> dict:
         """Aggregate LLM-engine mix for /metrics -- e.g. {"by_engine":
         {"stub": 12, "ollama": 3}, "total": 15}. Counts only genuine LLM
         invocations: classifier-tier requests never call the LLM at all, and a
         cache hit (redelivery of an already-triaged event) returns the prior
-        verdict without a new call, so neither increments this."""
+        verdict without a new call, so neither increments this.
+
+        Includes ``in_flight`` (current concurrent LLM calls) as a gauge.
+        """
         with self._engine_lock:
             by_engine = dict(self._engine_counts)
-        return {"by_engine": by_engine, "total": sum(by_engine.values())}
+            in_flight = self._in_flight
+        return {
+            "by_engine": by_engine,
+            "total": sum(by_engine.values()),
+            "in_flight": in_flight,
+        }
+
+    def shutdown(self, wait: bool = True) -> None:
+        """Shut down the worker's thread pool cleanly."""
+        self._pool.shutdown(wait=wait)
 
 
 def _metrics_provider(worker: "AiWorker") -> dict:
@@ -175,6 +291,7 @@ def _metrics_provider(worker: "AiWorker") -> dict:
     return {
         "ai_llm_total": m["total"],
         **{f"ai_llm_{k}": v for k, v in m["by_engine"].items()},
+        "ai_llm_in_flight": m["in_flight"],
     }
 
 
@@ -273,10 +390,30 @@ def main(worker: "AiWorker | None" = None):
         def bus_factory():
             return FairConsumeBus(Bus(), tenant_key_fn=event_tenant_key)
 
-    serve({"ai.requests": ("cg-ai", handler)},
-          health_port=int(os.getenv("PORT", "8005")), service_name="ws5-ai",
-          bus_factory=bus_factory,
-          metrics_provider=lambda: _metrics_provider(worker))
+    # The pool inside `worker` only has real concurrent work to do if more
+    # than one consumer thread can hand it requests at once -- with a single
+    # runner thread per topic, handle() blocking on future.result() means the
+    # ThreadPoolExecutor/semaphore/in_flight gauge above are never actually
+    # exercised concurrently in production. `topic_workers` gives ai.requests
+    # as many consumer threads as the pool has workers, so up to
+    # AI_MAX_WORKERS requests really are in flight at once (each still
+    # admission-controlled by `worker._admit`); Redis consumer groups are
+    # built for exactly this (multiple named consumers load-balancing one
+    # group's deliveries).
+    # serve() blocks until shutdown (SIGTERM/SIGINT), then joins its consumer
+    # threads and returns -- at that point nothing can submit new work to
+    # `worker`'s pool, so this is the right place to close it down. Without
+    # this, the ThreadPoolExecutor was only ever cleaned up by Python's
+    # implicit atexit join, which can add unbounded shutdown latency under a
+    # slow container stop. `finally` so a `serve()` exception still closes it.
+    try:
+        serve({"ai.requests": ("cg-ai", handler)},
+              health_port=int(os.getenv("PORT", "8005")), service_name="ws5-ai",
+              bus_factory=bus_factory,
+              metrics_provider=lambda: _metrics_provider(worker),
+              topic_workers={"ai.requests": worker.max_workers})
+    finally:
+        worker.shutdown(wait=True)
 
 
 if __name__ == "__main__":

@@ -57,7 +57,7 @@ same topic under the repo's bus-only coupling model.
   | Field | Meaning |
   |---|---|
   | `entity_id` | `sha256("{tenant}\|{entity_type}\|{canonical_value}")` hexdigest (64 chars). Deterministic, idempotent under redelivery — same discipline as WS-4 `Rule.alert_key()` (engine.py:585-647). |
-  | `entity_type` | `actor` \| `ip` \| `device` — mirrors WS-8's three track kinds exactly (correlator.py:579/591/610), so a later `incident.graph` node is the SAME identity space WS-8 promotes (the graph's nodes are WS-8's raw `type:value` track refs; WS-9's `entity_id` is the canonical hash key for the entity plane — see "Canonicalization" for the identifier-space note). |
+  | `entity_type` | `actor` \| `ip` \| `device` — mirrors WS-8's three track kinds exactly (correlator.py:579/591/610), so a later `incident.graph` node is the SAME identity space WS-8 promotes. As of WP-3-A (2026-09-02, `incident.graph` v2) the graph's nodes ARE WS-9's canonical `entity_id` digests (`sha256(tenant|type|canonical_value)`), with `entity_type`/`entity_value` preserved on the node — see `docs/adr/010-incident-graph-v2-typed-causal-dag.md`. |
   | `tenant_id` | validated at the edge, `"default"` fallback; invalid → `InvalidTenant` raised (reject, never normalize — WS-8/WS-6 discipline). |
   | `entity_value` | the **canonical** value (see normalization below), not the raw alert value. |
   | `first_seen_ms` / `last_seen_ms` | min / max over all evidence ever seen on this still-live entity; never regress. An upsert with the same `entity_id` + non-newer `last_seen_ms` is a no-op (ADR-009 line 53-54). |

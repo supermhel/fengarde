@@ -51,10 +51,32 @@ Core rules (see INTERFACE.md for the full account):
     LIVE members on every promotion (deterministic + idempotent under
     redelivery) and is bounded by them; see `_build_incident_graph` and
     `incident_graph()`.
+
+  - WP-3-A (2026-09-02): the incident.graph topic now emits VERSION 2 --
+    a typed causal DAG that SUPERSEDES the v1 payload (the `version` field
+    distinguishes the shape; the `incidents` topic payload is byte-for-byte
+    untouched). Nodes become objects carrying the ADR-009 canonical
+    `entity_id` (sha256 of the pipe-joined tenant/entity_type/canonical
+    value, mirrored exactly from ws9-resolver/entity_id.py -- WS-8 does NOT
+    import ws9; see `canonical_entity_id`), the incident's own track
+    spelling (`entity_value`), and the v1-style `label` (`type:value`).
+    Edges reference nodes by `entity_id` and carry exactly ONE `kind`: the
+    v1 field-pair kinds (used_ip/used_device/seen_at_ip) for the same
+    pairs, REPLACED by the typed kinds (caused_by/invoked/authenticated_as/
+    wrote_to/changed) when the evidencing alert's OWN fields carry the
+    documented semantic signal (a pure function of the alert dict, captured
+    on the member entry at STORE time -- `_typed_kind_signal` + `_typed_kind`;
+    single-alert-only, redelivery-stable, NEVER a transitive inference, and
+    NEVER a fabricated causal label when no signal exists). The v1 builder
+    `_build_incident_graph` remains in this file byte-for-byte (pinned by a
+    source-hash test) so v1 consumers and the byte-compat test keep passing;
+    the accessor `incident_graph()` and the cached payload are v2. See
+    INTERFACE.md for the full typed-kind derivation table.
 """
 from __future__ import annotations
 
 import copy
+import hashlib
 import sys
 import time
 from pathlib import Path
@@ -68,6 +90,8 @@ from shared.allowlist import Allowlist, load_allowlist, invalidate_dir  # noqa: 
 from shared.entity_helpers import (  # noqa: E402
     InvalidTenant,  # noqa: F401 -- re-exported: test_contract.py imports it from here
     bounded_entity_value as _bounded_entity_value_fn,
+    canonical_entity_value as _canonical_entity_value,
+    compute_entity_id as _compute_entity_id,
     deterministic_member_id,
     to_str as _to_str,
     valid_window_time as _valid_window_time,
@@ -193,6 +217,148 @@ def _canonical_ip(value) -> str:
     return canonical if canonical is not None else str(value)
 
 
+# --- WP-3-A (2026-09-02): incident.graph version 2 -- typed causal DAG ------
+# v2 SUPERSEDES v1 on the incident.graph topic; the `version` field (integer
+# 2) distinguishes the shape. v1's `_build_incident_graph` stays in this file
+# byte-for-byte (the source text is pinned by a hash check in
+# test_incident_graph_v2.py) so a v1 consumer/byte-compat test keeps passing;
+# the accessor `incident_graph()` and the cached payload are v2. The v1
+# field-pair kinds (used_ip/used_device/seen_at_ip) are retained for the same
+# pairs; the typed kinds below REPLACE them when the evidencing alert's OWN
+# fields carry the documented semantic signal -- a pure function of the alert
+# dict, captured on the member entry at STORE time (same additive pattern as
+# `cooccur`/`event_id`), so the derivation is redelivery-stable and
+# single-alert-only: an edge exists iff ONE member alert carries both
+# endpoints in its own fields, and its kind is that alert's signal -- never a
+# transitive inference, never a fabricated causal label when no signal exists.
+
+
+def canonical_entity_id(tenant: str, entity_type: str, entity_value) -> "str | None":
+    """ADR-009 canonical entity identity: ``sha256("{tenant}|{entity_type}|
+    {canonical_value}")``, where ``canonical_value`` is ``entity_value``
+    normalized per :func:`shared.entity_helpers.canonical_entity_value` (ip ->
+    ``shared.ip_utils.valid_ip`` + lowercased; actor -> ``strip().casefold()``;
+    device -> ``strip().lower()``).
+
+    An un-normalizable value (non-string, or an ip ``valid_ip`` rejects)
+    returns None and the caller SKIPS that node -- degrade, never fabricate.
+    WS-9's ``entity_id.py`` computes the identical id via the same shared
+    helper (2026-09-03: WS-8 and WS-9 used to each hand-copy this scheme,
+    kept in sync only by test_incident_graph_v2.py's identifier-agreement
+    test, which still pins the two call sites' agreement). Unknown
+    entity_types raise ValueError, exactly like
+    ``shared.entity_helpers.canonical_entity_value``.
+    """
+    canonical = _canonical_entity_value(entity_type, entity_value)
+    if canonical is None:
+        return None
+    return _compute_entity_id(tenant, entity_type, canonical)
+
+
+def _typed_kind_signal(alert: dict) -> tuple:
+    """The minimal, BOUNDED semantic signal the typed-kind derivation reads
+    off the evidencing alert's OWN fields: ``(mitre.tactic, mitre.technique,
+    unmapped.ot.anomaly_type)``. Redelivery-stable (a re-delivered alert
+    re-derives the same tuple from the same payload fields) and captured on
+    the member entry at STORE time (``entry["typed_signal"]`` -- the same
+    additive pattern as ``cooccur``/``event_id``), so the graph build never
+    re-reads a live alert and the derivation is a pure function of the alert
+    dict. The ``unmapped`` component is pre-reduced to ONE documented scalar
+    at store time so an attacker-controlled ``unmapped`` block can never grow
+    the side table. Honest evidence note: no SHIPPED rule's alert carries
+    ``unmapped`` today (WS-4's ``make_alert`` forwards a fixed field list --
+    the modbus rules read the field off the raw EVENT, not the alert), so
+    ``caused_by`` is not evidenced by any shipped alert; the signal ships so
+    the wire-in is a one-line make_alert passthrough, and the fixture in
+    test_incident_graph_v2.py proves derivation when it IS present.
+    """
+    tactic = technique = anomaly = None
+    mitre = alert.get("mitre")
+    if isinstance(mitre, dict):
+        if mitre.get("tactic"):
+            tactic = str(mitre["tactic"])
+        if mitre.get("technique"):
+            technique = str(mitre["technique"])
+    unmapped = alert.get("unmapped")
+    if isinstance(unmapped, dict):
+        ot = unmapped.get("ot")
+        if isinstance(ot, dict) and ot.get("anomaly_type"):
+            anomaly = str(ot["anomaly_type"])
+    return (tactic, technique, anomaly)
+
+
+#: Documented precedence among typed kinds (story order); used only to break
+#: ties when several members evidence ONE pair with different kinds.
+_TYPED_KIND_ORDER = ("caused_by", "invoked", "authenticated_as", "wrote_to", "changed")
+
+
+def _typed_kind(from_type: str, to_type: str, signal: tuple) -> "str | None":
+    """The typed edge kind for one co-occurring pair, or None to keep the v1
+    field-pair kind (used_ip/used_device/seen_at_ip -- never fabricate a
+    causal label the alert doesn't evidence). PURE function of the
+    evidencing alert's own ``mitre``/``unmapped`` signal -- deterministic,
+    single-alert-only.
+
+    Derivation table (also in INTERFACE.md; predicates checked top-down,
+    first match wins; an alert yields at most one typed kind per pair):
+
+      pair          typed kind       derived when the alert's OWN fields carry
+      ------------  ---------------  ----------------------------------------
+      actor->ip     authenticated_as mitre.tactic == TA0001 (Initial Access)
+                                     OR mitre.technique startswith T1078
+                                     (Valid Accounts): the actor acted under
+                                     an authenticated identity at/from this ip
+      actor->ip     invoked          mitre.tactic == TA0011 (Command &
+                                     Control) OR mitre.technique startswith
+                                     T1071 (Application Layer Protocol): the
+                                     actor initiated/commanded the exchange
+      actor->device caused_by        unmapped.ot.anomaly_type ==
+                                     "unauthorized_write" AND technique
+                                     startswith T0855: the device-side
+                                     unauthorized state this alert evidences
+                                     was CAUSED by the actor's command message
+      actor->device wrote_to         mitre.tactic == TA0106 AND technique ==
+                                     T0836: the actor wrote a value/parameter
+                                     to the device
+      actor->device changed          mitre.tactic == TA0003 (Persistence):
+                                     the actor changed account/identity state
+      device->ip    changed          mitre.tactic == TA0108 (attack-ics
+                                     Initial Access): the device's presence at
+                                     this ip changed (new/transient device)
+    """
+    tactic, technique, anomaly = signal
+    if from_type == "actor" and to_type == "ip":
+        if tactic == "TA0001" or (technique or "").startswith("T1078"):
+            return "authenticated_as"
+        if tactic == "TA0011" or (technique or "").startswith("T1071"):
+            return "invoked"
+        return None
+    if from_type == "actor" and to_type == "device":
+        if anomaly == "unauthorized_write" and (technique or "").startswith("T0855"):
+            return "caused_by"
+        if tactic == "TA0106" and technique == "T0836":
+            return "wrote_to"
+        if tactic == "TA0003":
+            return "changed"
+        return None
+    if from_type == "device" and to_type == "ip":
+        if tactic == "TA0108":
+            return "changed"
+        return None
+    return None
+
+
+#: Kind precedence when several members evidence ONE pair with different
+#: kinds (deterministic under redelivery): typed kinds outrank the field-pair
+#: fallback (semantic > structural), the documented `_TYPED_KIND_ORDER`
+#: breaks ties among typed kinds, and the EARLIEST (ts_ms, event_id)
+#: provenance wins -- the same earliest-wins dedup semantics as v1.
+_KIND_RANK = {kind: i for i, kind in enumerate(_TYPED_KIND_ORDER)}
+_KIND_RANK["used_ip"] = 100
+_KIND_RANK["used_device"] = 101
+_KIND_RANK["seen_at_ip"] = 102
+
+
 class Correlator:
     """Tracks per-(tenant, entity_type, entity_value) alert activity and
     promotes a track to an incident on multi-tactic evidence.
@@ -239,13 +405,25 @@ class Correlator:
         # `_sweep_dead_tracks()`, called periodically from `_update_track`.
         self._last_incident: dict[str, dict] = {}
         # incident_id -> ADR-009 `incident.graph` payload emitted alongside
-        # the SAME incident promotion/update (2026-08-28, WP-2-C). Mirrors
+        # the SAME incident promotion/update (2026-08-28, WP-2-C; since
+        # 2026-09-02, WP-3-A, the payload is VERSION 2 -- the typed causal
+        # DAG, which supersedes v1 on the topic). Mirrors
         # `_last_incident` exactly: same key set (written together in the
         # promotion branch, pruned together by `_sweep_dead_tracks`), so it
         # inherits the same boundedness -- never more than one entry per
         # live promoted track, evicted when the track's window membership
         # dies. No separate unbounded side table.
         self._incident_graphs: dict[str, dict] = {}
+        # incident_id -> the `side` fingerprint the cached `_incident_graphs`
+        # entry was built from (efficiency finding, 2026-09-03): every
+        # promoted-track alert used to rebuild the WHOLE typed-DAG graph from
+        # ALL live members, even a redelivery that adds nothing new -- O(cap)
+        # work repeated on up to `member_cap` alerts per incident, O(cap^2)
+        # over its lifetime. A cheap per-member fingerprint (no sha256, no
+        # edge-pair loop) lets `_update_track` skip the rebuild and reuse the
+        # cached graph when the live member set's relevant fields are
+        # unchanged since the last build. Pruned alongside `_incident_graphs`.
+        self._graph_sigs: dict[str, tuple] = {}
         # track_key -> {alert_id: {tactic, score, time}}. The window_counter
         # only knows MEMBERSHIP (alert_id + time); tactic/score need a side
         # table keyed the same way, pruned to the same live-member set on
@@ -439,6 +617,136 @@ class Correlator:
             "tactic_sources": tactic_sources,
         }
 
+    @staticmethod
+    def _graph_signature(side: dict) -> tuple:
+        """Fingerprint of every field `_build_incident_graph_v2` reads off
+        `side`'s member entries: ``(mid, time, tactic, event_id,
+        time_fallback, cooccur, typed_signal)`` per member, sorted for a
+        deterministic tuple regardless of dict iteration order. Two calls
+        with the SAME fingerprint are guaranteed to build the SAME v2 graph
+        (see `_update_track`'s cache-skip); this is a fingerprint of the
+        INPUT, not a hash of the built graph, so it stays O(members) with no
+        sha256/edge-derivation work -- the cost the cache exists to avoid."""
+        return tuple(sorted(
+            (mid, entry["time"], entry.get("tactic"), entry.get("event_id"),
+             entry.get("time_fallback"), tuple(entry.get("cooccur") or ()),
+             entry.get("typed_signal"))
+            for mid, entry in side.items()
+        ))
+
+    def _build_incident_graph_v2(self, tenant: str, entity_type: str, entity_value: str,
+                                 incident: dict, side: dict) -> dict:
+        """Build the ADR-009 ``incident.graph`` VERSION-2 payload -- the typed
+        causal DAG (WP-3-A, 2026-09-02). SUPERSEDES v1 on the bus topic; the
+        ``version`` field (integer 2) distinguishes the shape.
+
+        Shape:
+          ``nodes`` -- one object per incident entity:
+            ``{"entity_id", "entity_type", "entity_value", "label"}`` where
+            ``entity_id`` is the WS-9 canonical identity
+            (``canonical_entity_id(tenant, entity_type, entity_value)``:
+            sha256 of the pipe-joined tenant/entity_type/CANONICAL value,
+            collapsing e.g. IPv6 spelling variants to ONE digest),
+            ``entity_value`` is the incident's OWN track spelling (what WS-8
+            stored, already 448-byte-bounded at store time), and ``label`` is
+            the v1-style track ref (``actor:Alice``). An un-normalizable
+            value (non-str, or an ip ``valid_ip`` rejects) yields NO node --
+            degrade, never fabricate (the WS-9 skip discipline).
+          ``edges`` -- one object per co-occurring pair:
+            ``{"from", "to", "kind", "event_id", "ts_ms"}`` where ``from``/
+            ``to`` are the endpoints' ``entity_id`` strings and ``kind`` is
+            EXACTLY one of: the v1 field-pair kinds (used_ip/used_device/
+            seen_at_ip) for the same pairs, OR a typed kind (caused_by/
+            invoked/authenticated_as/wrote_to/changed) when the evidencing
+            alert's OWN fields carry the documented semantic signal captured
+            on its member entry at store time (``typed_signal`` ->
+            ``_typed_kind``). When several members evidence one pair with
+            different kinds, the highest-ranked kind wins (typed before
+            field-pair; ``_TYPED_KIND_ORDER`` among typed), then the EARLIEST
+            (ts_ms, event_id) provenance -- same earliest-wins dedup as v1.
+          ``tactic_sources`` -- identical to v1.
+
+        Same guarantees as v1, inherited verbatim: rebuilt from the track's
+        LIVE members on every promotion -> deterministic + idempotent under
+        redelivery (the same incident promoted twice, even from fresh
+        instances, emits byte-identical nodes/edges/provenance); bounded by
+        the member set (<=3 pairs per live member; one edge per pair; nodes
+        = anchor + distinct co-occurring values); the cached payload is
+        stored under the same incident_id in ``_incident_graphs`` and dies
+        WITH its incident in the same ``_sweep_dead_tracks`` sweep. **No
+        transitive inference**: an edge exists iff ONE member alert carries
+        both endpoints in its own fields -- two alerts that merely share an
+        entity never yield an edge between their other entities.
+        """
+        nodes: dict[str, dict] = {}  # entity_id -> node object
+        best: dict[tuple, tuple] = {}  # (from_id, to_id) -> (rank, ts_ms, event_id)
+        best_kind: dict[tuple, str] = {}  # (from_id, to_id) -> winning kind
+        for member_id, entry in side.items():
+            refs = [(entity_type, entity_value)]
+            for other_type, other_value in entry.get("cooccur") or []:
+                # Already bounded at STORE time -- `_update_track` writes
+                # `entry["cooccur"]` through `_bounded_entity_value`, so no
+                # re-bound here (same discipline as v1).
+                refs.append((other_type, other_value))
+            signal = entry.get("typed_signal") or (None, None, None)
+            for rtype, rvalue in refs:
+                eid = canonical_entity_id(tenant, rtype, rvalue)
+                if eid is None:
+                    continue  # un-normalizable value: skip the node (never fabricate)
+                existing = nodes.get(eid)
+                # Same canonical id from different raw spellings (e.g. actor
+                # "Alice" vs "alice" on one ip-track incident, or IPv6 case/
+                # compression variants): ONE node, deterministic raw value
+                # (lexicographically smallest) so redelivery is byte-identical.
+                if existing is None or rvalue < existing["entity_value"]:
+                    nodes[eid] = {"entity_id": eid, "entity_type": rtype,
+                                  "entity_value": rvalue, "label": f"{rtype}:{rvalue}"}
+            for i in range(len(refs)):
+                for j in range(i + 1, len(refs)):
+                    spec = _edge_spec(refs[i][0], refs[j][0])
+                    if spec is None:
+                        continue  # same-type pair: no kind exists (prohibited)
+                    kind, from_type, to_type = spec
+                    a, b = refs[i], refs[j]
+                    fv = a[1] if a[0] == from_type else b[1]
+                    tv = b[1] if b[0] == to_type else a[1]
+                    f_id = canonical_entity_id(tenant, from_type, fv)
+                    t_id = canonical_entity_id(tenant, to_type, tv)
+                    if f_id is None or t_id is None:
+                        continue  # un-normalizable endpoint: no edge (never fabricate)
+                    typed = _typed_kind(from_type, to_type, signal)
+                    eff_kind = typed or kind  # typed kind REPLACES the field-pair kind
+                    key = (f_id, t_id)
+                    if entry.get("time_fallback"):
+                        # Same deterministic ts as v1's fallback path: pin
+                        # ts_ms to a stable digest of the member id so the
+                        # graph is identical no matter when it is rebuilt.
+                        ts = int(hashlib.sha256(
+                            str(member_id).encode("utf-8", errors="replace")
+                        ).hexdigest()[:12], 16)
+                    else:
+                        ts = entry.get("time", 0)
+                    cand = (_KIND_RANK.get(eff_kind, 99), ts,
+                            entry.get("event_id") or member_id)
+                    if key not in best or cand < best[key]:
+                        best[key] = cand
+                        best_kind[key] = eff_kind
+        edges = [{"from": f, "to": t, "kind": best_kind[(f, t)],
+                  "event_id": ev, "ts_ms": ts}
+                 for (f, t), (_, ts, ev) in sorted(best.items())]
+        tactic_sources = {
+            tactic: sorted(mid for mid, e in side.items() if e.get("tactic") == tactic)
+            for tactic in incident["tactics"]
+        }
+        return {
+            "version": 2,
+            "incident_id": incident["incident_id"],
+            "tenant_id": incident["tenant_id"],
+            "nodes": [nodes[eid] for eid in sorted(nodes)],
+            "edges": edges,
+            "tactic_sources": tactic_sources,
+        }
+
     def _sweep_dead_tracks(self, now_ms: int) -> None:
         """Drop `_sides`/`_side_meta`/`_last_incident`/`_last_touch` entries
         for tracks not touched within the last `horizon_s` (2026-08-19
@@ -479,6 +787,7 @@ class Correlator:
                 # (same key set, written together in the same promotion
                 # branch, pruned together here) -- never an orphaned entry.
                 self._incident_graphs.pop(incident_id, None)
+                self._graph_sigs.pop(incident_id, None)
 
     def _update_track(self, tenant: str, entity_type: str, entity_value: str,
                        alert: dict, now_ms: int) -> dict | None:
@@ -564,6 +873,13 @@ class Correlator:
             (t, self._bounded_entity_value(v))
             for t, v in self._cooccurring_entities(alert, entity_type)
         ]
+        # WP-3-A (2026-09-02): the typed-kind derivation signal, captured at
+        # STORE time from the alert's OWN fields (a pure, redelivery-stable
+        # function of the alert dict -- see `_typed_kind_signal`/`_typed_kind`).
+        # Additive entry field; BOUNDED by construction (three scalars; the
+        # `unmapped` component is pre-reduced to one documented scalar), so
+        # the member-cap/window-eviction discipline is untouched.
+        entry["typed_signal"] = _typed_kind_signal(alert)
         for stale_id in list(side):
             if stale_id not in live_ids:
                 del side[stale_id]
@@ -641,14 +957,32 @@ class Correlator:
         # WP-2-C (ADR-009): emit the incident.graph payload alongside EVERY
         # promotion/update -- purely ADDITIVE; the incident dict above keeps
         # its exact shape, the tactic-accumulation path is untouched (the
-        # contract tests exercise that path unchanged). Rebuilt from the
-        # track's LIVE members each call, so it is deterministic and
+        # contract tests exercise that path unchanged). WP-3-A (2026-09-02):
+        # the emitted payload is now VERSION 2 -- the typed causal DAG --
+        # which SUPERSEDES v1 on the topic (v1's `_build_incident_graph`
+        # stays in the file byte-for-byte for byte-compat consumers; the
+        # incidents payload itself is byte-for-byte unchanged). Rebuilt from
+        # the track's LIVE members each call, so it is deterministic and
         # idempotent under redelivery (same members -> identical payload
         # under the same incident_id) and bounded by the member set
         # (<=3 edges per live member; one cache entry per incident_id,
         # pruned by _sweep_dead_tracks with _last_incident).
-        self._incident_graphs[incident_id] = self._build_incident_graph(
-            tenant, entity_type, entity_value, incident, side)
+        # Fingerprint the live member set's graph-relevant fields -- NOT a
+        # sha256/edge-derivation pass, just a tuple built from what's already
+        # in `side`. A redelivery (or any alert that touched a DIFFERENT
+        # track this call) re-derives the SAME fingerprint for THIS track's
+        # unchanged members, so the expensive rebuild below only runs when
+        # the member set genuinely changed (a new member, an eviction, or a
+        # stale member dropping out). Factored into its own method (not
+        # inlined) so a test can call it directly on two hand-built `side`
+        # states to prove it actually distinguishes them (mutation-soundness:
+        # a fingerprint that omitted a field `_build_incident_graph_v2` reads
+        # could produce a FALSE cache hit and silently serve a stale graph).
+        graph_sig = self._graph_signature(side)
+        if graph_sig != self._graph_sigs.get(incident_id):
+            self._incident_graphs[incident_id] = self._build_incident_graph_v2(
+                tenant, entity_type, entity_value, incident, side)
+            self._graph_sigs[incident_id] = graph_sig
         if is_new:
             self.promotions_count += 1
         return incident
@@ -776,6 +1110,13 @@ class Correlator:
         same promotion path as the incident itself), or None when that
         incident is not live (never promoted, or already swept with its
         dead track).
+
+        WP-3-A (2026-09-02): the returned/cached payload is VERSION 2 --
+        the typed causal DAG (nodes carry canonical ``entity_id`` objects,
+        edges carry typed kinds; see ``_build_incident_graph_v2``). The
+        v1 builder ``_build_incident_graph`` remains callable (byte-for-byte)
+        for the byte-compat test, but the bus topic is produced from HERE,
+        so the emitted payload is v2.
 
         This is the produce source for the ``incident.graph`` bus topic
         (partition key ``incident_id``, same as ``incidents``): a bus

@@ -56,6 +56,11 @@
 - `FENGARDE_TENANT_FAIR_CONSUME` — per-tenant fair consume. **Default on**;
   opt out with `=0`/`=false` (this said "opt-in" until 2026-08-13, contradicting
   this file's own Consumes section above, which correctly says default on).
+- `AI_MAX_WORKERS` (default `4`) — max concurrent LLM triage calls in the
+  worker's bounded thread pool.
+- `AI_QUEUE_CAP` (default `4`) — extra admissions beyond `AI_MAX_WORKERS`
+  allowed to queue before backpressure kicks in; total hard bound =
+  `AI_MAX_WORKERS + AI_QUEUE_CAP`.
 
 ## Run locally
 - `python main.py`  (StubLLM unless OLLAMA_URL is set)

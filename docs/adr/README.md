@@ -24,5 +24,7 @@ of blast radius — the ADR is where that conversation gets recorded once made).
 | [006](006-local-first-llm-triage.md) | Local-first LLM triage (Ollama, optional) | Accepted, live |
 | [007](007-cross-alert-correlation-separate-service.md) | Cross-alert correlation as a separate service (WS-8) | Accepted, live |
 | [008](008-no-pydantic-shared-schema-package.md) | No shared pydantic schema package (JSON Schema + tolerant-reader stays) | Accepted (declined), live |
+| [009](009-entity-plane-bus-topics.md) | Entity/context plane — `entity.updates` + `incident.graph` v1 topics, WS-9 resolver | Accepted, live (Topic B payload superseded by 010) |
+| [010](010-incident-graph-v2-typed-causal-dag.md) | `incident.graph` v2 typed causal DAG (WS-9-canonical node identity, typed edge kinds) | Accepted (owner-ratified 2026-09-02, roadmap §5.2), live |
 
 Format: lightweight [Michael Nygard-style](https://cognitect.com/blog/2011/11/15/documenting-architecture-decisions) ADRs — Context / Decision / Consequences.
