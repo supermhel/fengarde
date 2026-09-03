@@ -361,7 +361,12 @@ class _RedisBus:
             pass  # group exists
 
     def _consumer_name(self, group):
-        return f"{group}-{os.getpid()}"
+        # Thread id included (not just pid): ``serve()`` can run more than one
+        # consumer thread against the SAME topic+group (runner.py's
+        # ``topic_workers``) so each thread needs its own Redis consumer
+        # identity -- otherwise concurrent XREADGROUP calls under one shared
+        # name blur PEL/XCLAIM attribution between threads.
+        return f"{group}-{os.getpid()}-{threading.get_ident()}"
 
     def _decode_entry(self, topic, group, eid, fields):
         """Parse one stream entry into a Message, or quarantine it and return None.

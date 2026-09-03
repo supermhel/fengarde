@@ -465,7 +465,8 @@ def serve(handlers: Handlers, *, health_port: int | None = None,
           idle_sleep_s: float = 0.5, consume_block_ms: int = 1000,
           install_signal_handlers: bool = True,
           bus_factory: Callable | None = None,
-          metrics_provider: "Callable[[], dict] | None" = None) -> None:
+          metrics_provider: "Callable[[], dict] | None" = None,
+          topic_workers: "dict[str, int] | None" = None) -> None:
     """Run the bus consume loop for every topic in ``handlers`` until shutdown.
 
     Args:
@@ -488,6 +489,18 @@ def serve(handlers: Handlers, *, health_port: int | None = None,
             merged into ``/metrics`` under ``"extra"`` (e.g. an ingest-edge
             server's produced/dropped/shed counters) alongside the per-topic
             acked/failed/deadlettered counts this runner tracks itself.
+        topic_workers: optional topic -> thread count, default 1 for any topic
+            not listed (unchanged behavior for every existing caller). A count
+            > 1 spins up that many consumer threads sharing the topic's
+            consumer group, each with its own bus instance -- the standard way
+            to let a slow/CPU-light-but-IO-bound handler (e.g. one that
+            dispatches into its own internal thread pool, like ws5-ai's LLM
+            triage) actually process more than one message at a time. Redis
+            consumer groups are built for this (multiple named consumers per
+            group load-balance deliveries); on ``BUS_BACKEND=memory`` only the
+            single shared instance a caller's own ``bus_factory`` returns
+            observes the same stream, matching how every other multi-topic
+            service already relies on ``bus_factory`` for that backend.
     """
     if shutdown is None:
         shutdown = threading.Event()
@@ -529,19 +542,23 @@ def serve(handlers: Handlers, *, health_port: int | None = None,
             target=health_srv.serve_forever, name="health", daemon=True)
         health_thread.start()
 
-    # One worker thread per topic.
+    # One or more worker threads per topic (topic_workers, default 1).
+    topic_workers = topic_workers or {}
     workers: list[threading.Thread] = []
     for topic, (group, handler) in handlers.items():
-        t = threading.Thread(
-            target=_topic_worker,
-            args=(bus_factory, topic, group, handler),
-            kwargs=dict(max_redeliveries=max_redeliveries, shutdown=shutdown,
-                        claim_idle_ms=claim_idle_ms, idle_sleep_s=idle_sleep_s,
-                        consume_block_ms=consume_block_ms,
-                        service_name=service_name, state=state, metrics=metrics),
-            name=f"consume:{topic}", daemon=True)
-        t.start()
-        workers.append(t)
+        count = max(1, int(topic_workers.get(topic, 1)))
+        for i in range(count):
+            name = f"consume:{topic}" if count == 1 else f"consume:{topic}#{i}"
+            t = threading.Thread(
+                target=_topic_worker,
+                args=(bus_factory, topic, group, handler),
+                kwargs=dict(max_redeliveries=max_redeliveries, shutdown=shutdown,
+                            claim_idle_ms=claim_idle_ms, idle_sleep_s=idle_sleep_s,
+                            consume_block_ms=consume_block_ms,
+                            service_name=service_name, state=state, metrics=metrics),
+                name=name, daemon=True)
+            t.start()
+            workers.append(t)
 
     from shared.log import get_logger  # noqa: E402
     log = get_logger(service_name)

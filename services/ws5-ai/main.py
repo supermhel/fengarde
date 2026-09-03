@@ -25,6 +25,15 @@ as *that* request's LLM call finishes. The bus ``produce`` order in the handler
 is whatever ``handle()`` returns per call. This matches the per-request
 independence of the underlying triage and is safe because ``ai.results`` and
 ``alerts`` are keyed by a stable event id, not by sequence position.
+
+The pool only does concurrent work if more than one request can be in
+``handle()`` at once -- ``handle()`` itself blocks on ``future.result()``, so
+that requires more than one caller thread. ``main()`` wires this via
+``shared.runner.serve``'s ``topic_workers={"ai.requests": worker.max_workers}``:
+that many consumer threads share the ``cg-ai`` group (Redis consumer groups
+load-balance a group's deliveries across named consumers), so up to
+``max_workers`` requests are genuinely in flight through the pool at once in
+production, not just under this module's own multi-threaded tests.
 """
 from __future__ import annotations
 
@@ -126,6 +135,7 @@ class AiWorker:
         # The executor's own queue is unbounded; this semaphore gives the caller
         # backpressure so memory cannot grow without limit under a burst.
         total_cap = max_workers + max(0, queue_cap)
+        self.max_workers = max_workers
         self._admit = threading.Semaphore(total_cap)
         self._pool = concurrent.futures.ThreadPoolExecutor(
             max_workers=max_workers,
@@ -133,29 +143,36 @@ class AiWorker:
         )
         # Per-event-id lock map so two threads triaging the SAME event do not
         # trigger two LLM calls, while threads triaging DIFFERENT events can
-        # run concurrently.
+        # run concurrently. Bounded the same way as _TriageCache (oldest
+        # evicted past _SEEN_CAP) -- an unbounded map here would leak one
+        # Lock per distinct event id for the life of the process.
         self._key_locks: dict[str, threading.Lock] = {}
+        self._key_locks_order: deque = deque()
         self._key_locks_lock = threading.Lock()
 
     def _key_lock(self, eid: str) -> threading.Lock | None:
         with self._key_locks_lock:
-            if eid not in self._key_locks:
-                self._key_locks[eid] = threading.Lock()
-            return self._key_locks[eid]
+            lock = self._key_locks.get(eid)
+            if lock is None:
+                lock = threading.Lock()
+                self._key_locks[eid] = lock
+                self._key_locks_order.append(eid)
+                if len(self._key_locks_order) > _SEEN_CAP:
+                    oldest = self._key_locks_order.popleft()
+                    self._key_locks.pop(oldest, None)
+            return lock
 
     def _llm_task(self, request: dict, event: dict, reasons: list, eid: str | None):
         """Run inside the pool worker. Releases the admission semaphore on
         completion (success or failure) so backpressure is maintained."""
-        engine = None
-        inflighted = False
+        with self._engine_lock:
+            self._in_flight += 1
         try:
             verdict = self.llm.analyze(event, reasons)
             engine = verdict.get("engine")
             if engine:  # a genuine LLM call, not a classifier-tier/cache-hit skip
                 with self._engine_lock:
                     self._engine_counts[engine] = self._engine_counts.get(engine, 0) + 1
-                    self._in_flight += 1
-                    inflighted = True
             result = {
                 "event_id": request.get("event_id"),
                 "tier": request.get("tier", "llm"),
@@ -173,9 +190,8 @@ class AiWorker:
             return result
         finally:
             self._admit.release()
-            if inflighted:
-                with self._engine_lock:
-                    self._in_flight -= 1
+            with self._engine_lock:
+                self._in_flight -= 1
 
     @staticmethod
     def _dedup_key(request: dict):
@@ -191,8 +207,8 @@ class AiWorker:
     def handle(self, request: dict) -> dict:
         event = request.get("event", {})
         tier = request.get("tier", "llm")
-        classification = self.classifier.predict(event)
         if tier == "classifier":
+            classification = self.classifier.predict(event)
             return {
                 "event_id": request.get("event_id"),
                 "tier": tier,
@@ -225,14 +241,19 @@ class AiWorker:
 
             # Admission control: acquire before submit so the executor's
             # unbounded internal queue is bounded by backpressure instead of
-            # growing without limit.
+            # growing without limit. Once submitted, `_llm_task` owns the
+            # release (its own `finally`, on both success and failure) --
+            # release here ONLY if submit() itself raises before the task
+            # ever runs, or the semaphore would be released twice for one
+            # acquire (its own analyze()/predict() exception already comes
+            # back through future.result() after `_llm_task` released once).
             self._admit.acquire()
             try:
                 future = self._pool.submit(self._llm_task, request, event, reasons, eid)
-                return future.result()
             except Exception:
                 self._admit.release()
                 raise
+            return future.result()
         finally:
             if key_lock is not None:
                 key_lock.release()
@@ -369,10 +390,21 @@ def main(worker: "AiWorker | None" = None):
         def bus_factory():
             return FairConsumeBus(Bus(), tenant_key_fn=event_tenant_key)
 
+    # The pool inside `worker` only has real concurrent work to do if more
+    # than one consumer thread can hand it requests at once -- with a single
+    # runner thread per topic, handle() blocking on future.result() means the
+    # ThreadPoolExecutor/semaphore/in_flight gauge above are never actually
+    # exercised concurrently in production. `topic_workers` gives ai.requests
+    # as many consumer threads as the pool has workers, so up to
+    # AI_MAX_WORKERS requests really are in flight at once (each still
+    # admission-controlled by `worker._admit`); Redis consumer groups are
+    # built for exactly this (multiple named consumers load-balancing one
+    # group's deliveries).
     serve({"ai.requests": ("cg-ai", handler)},
           health_port=int(os.getenv("PORT", "8005")), service_name="ws5-ai",
           bus_factory=bus_factory,
-          metrics_provider=lambda: _metrics_provider(worker))
+          metrics_provider=lambda: _metrics_provider(worker),
+          topic_workers={"ai.requests": worker.max_workers})
 
 
 if __name__ == "__main__":

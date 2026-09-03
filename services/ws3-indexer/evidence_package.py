@@ -220,8 +220,9 @@ def build_evidence_package(incident: dict, alerts: list, events: list, graph,
     if not isinstance(incident, dict) or not incident.get("incident_id"):
         raise ValueError("incident must be an incidents-topic doc with an incident_id")
     incident_id = str(incident["incident_id"])
+    alerts_sorted = sorted(alerts, key=lambda a: (_sort_time(a.get("time")), str(a.get("alert_id", ""))))
     blocks = [_make_block("incident", "incident", 0, copy.deepcopy(incident), ZERO_HASH)]
-    for alert in sorted(alerts, key=lambda a: (_sort_time(a.get("time")), str(a.get("alert_id", "")))):
+    for alert in alerts_sorted:
         blocks.append(_make_block("alert", f"alert:{alert.get('alert_id')}", len(blocks),
                                   copy.deepcopy(alert), _header_hash(blocks[-1])))
     for event in _dedupe_events(events):
@@ -234,7 +235,6 @@ def build_evidence_package(incident: dict, alerts: list, events: list, graph,
                                   copy.deepcopy(graph), _header_hash(blocks[-1])))
 
     digest = _package_digest(blocks)
-    alerts_sorted = sorted(alerts, key=lambda a: (_sort_time(a.get("time")), str(a.get("alert_id", ""))))
     return {
         "schema": SCHEMA,
         "package_id": f"{package_id_prefix}:{incident_id}:{digest}",
@@ -398,7 +398,10 @@ def to_reporting_payload(pkg: dict) -> dict:
         ev = blk.get("content") or {}
         siem_value = ev.get("siem")
         siem: dict = siem_value if isinstance(siem_value, dict) else {}
-        if ev.get("event_id") in wanted or siem.get("ingest_id") in wanted:
+        ev_id = ev.get("event_id")
+        ingest_id = siem.get("ingest_id")
+        if (ev_id is not None and str(ev_id) in wanted) \
+                or (ingest_id is not None and str(ingest_id) in wanted):
             events.append(dict(ev))
     triage = {"status": "new", "note": "", "updated_at": None}
     return {

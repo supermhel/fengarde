@@ -548,7 +548,8 @@ def _incident_membership_grade(alerts_by_step: list[dict], incidents: list[dict]
         cross_details[rule_id] = bool(co_located)
         cross_ok = cross_ok and co_located
 
-    expected = int(membership.get("incident_count", 1) or 1)
+    _expected_raw = membership.get("incident_count", 1)
+    expected = int(_expected_raw) if _expected_raw is not None else 1
     ok = len(full_coverage) == expected and cross_ok
     return {
         "incident_count": len(by_id),

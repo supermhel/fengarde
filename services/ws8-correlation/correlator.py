@@ -90,6 +90,8 @@ from shared.allowlist import Allowlist, load_allowlist, invalidate_dir  # noqa: 
 from shared.entity_helpers import (  # noqa: E402
     InvalidTenant,  # noqa: F401 -- re-exported: test_contract.py imports it from here
     bounded_entity_value as _bounded_entity_value_fn,
+    canonical_entity_value as _canonical_entity_value,
+    compute_entity_id as _compute_entity_id,
     deterministic_member_id,
     to_str as _to_str,
     valid_window_time as _valid_window_time,
@@ -232,46 +234,25 @@ def _canonical_ip(value) -> str:
 
 
 def canonical_entity_id(tenant: str, entity_type: str, entity_value) -> "str | None":
-    """ADR-009 canonical entity identity, mirroring
-    ``services/ws9-resolver/entity_id.py`` EXACTLY (WP-3-A):
-
-        entity_id = sha256("{tenant}|{entity_type}|{canonical_value}")
-
-    where canonical_value is, per WS-9's ``canonical_entity_value``:
-
-      * ``ip``     -> ``shared.ip_utils.valid_ip`` (rejects non-IPs) then
-                      lowercased  (so an IPv6 address collapses to ONE id
-                      across case/compression spellings)
-      * ``actor``  -> ``strip().casefold()`` (``Alice``/``ALICE``/``alice``
-                      are ONE identity)
-      * ``device`` -> ``strip().lower()`` (MACs and hostnames lowercased)
+    """ADR-009 canonical entity identity: ``sha256("{tenant}|{entity_type}|
+    {canonical_value}")``, where ``canonical_value`` is ``entity_value``
+    normalized per :func:`shared.entity_helpers.canonical_entity_value` (ip ->
+    ``shared.ip_utils.valid_ip`` + lowercased; actor -> ``strip().casefold()``;
+    device -> ``strip().lower()``).
 
     An un-normalizable value (non-string, or an ip ``valid_ip`` rejects)
-    returns None and the caller SKIPS that node -- degrade, never fabricate,
-    and never coerce a non-string into a string (identical refusal to ws9's
-    own 2026-09-02 review note). WS-8 deliberately does NOT import ws9 (its
-    container ships only shared/ + contracts/): this helper is the
-    dependency-free mirror, pinned by the identifier-agreement test in
-    test_incident_graph_v2.py (which imports ws9's entity_id.py in the test
-    process and asserts identical digests for ip/actor/device, including the
-    IPv6 node digest in a real graph). Unknown entity_types raise ValueError,
-    exactly like ws9's ``canonical_entity_value``.
+    returns None and the caller SKIPS that node -- degrade, never fabricate.
+    WS-9's ``entity_id.py`` computes the identical id via the same shared
+    helper (2026-09-03: WS-8 and WS-9 used to each hand-copy this scheme,
+    kept in sync only by test_incident_graph_v2.py's identifier-agreement
+    test, which still pins the two call sites' agreement). Unknown
+    entity_types raise ValueError, exactly like
+    ``shared.entity_helpers.canonical_entity_value``.
     """
-    if entity_value is None or not isinstance(entity_value, str):
+    canonical = _canonical_entity_value(entity_type, entity_value)
+    if canonical is None:
         return None
-    if entity_type == "ip":
-        canonical = _canonical_ip_or_none(entity_value)
-        if canonical is None:
-            return None
-        canonical = canonical.lower()
-    elif entity_type == "actor":
-        canonical = entity_value.strip().casefold()
-    elif entity_type == "device":
-        canonical = entity_value.strip().lower()
-    else:
-        raise ValueError(f"unknown entity_type {entity_type!r} (known: actor/ip/device)")
-    preimage = "|".join((tenant, entity_type, canonical))
-    return hashlib.sha256(preimage.encode("utf-8", errors="replace")).hexdigest()
+    return _compute_entity_id(tenant, entity_type, canonical)
 
 
 def _typed_kind_signal(alert: dict) -> tuple:
@@ -433,6 +414,16 @@ class Correlator:
         # live promoted track, evicted when the track's window membership
         # dies. No separate unbounded side table.
         self._incident_graphs: dict[str, dict] = {}
+        # incident_id -> the `side` fingerprint the cached `_incident_graphs`
+        # entry was built from (efficiency finding, 2026-09-03): every
+        # promoted-track alert used to rebuild the WHOLE typed-DAG graph from
+        # ALL live members, even a redelivery that adds nothing new -- O(cap)
+        # work repeated on up to `member_cap` alerts per incident, O(cap^2)
+        # over its lifetime. A cheap per-member fingerprint (no sha256, no
+        # edge-pair loop) lets `_update_track` skip the rebuild and reuse the
+        # cached graph when the live member set's relevant fields are
+        # unchanged since the last build. Pruned alongside `_incident_graphs`.
+        self._graph_sigs: dict[str, tuple] = {}
         # track_key -> {alert_id: {tactic, score, time}}. The window_counter
         # only knows MEMBERSHIP (alert_id + time); tactic/score need a side
         # table keyed the same way, pruned to the same live-member set on
@@ -779,6 +770,7 @@ class Correlator:
                 # (same key set, written together in the same promotion
                 # branch, pruned together here) -- never an orphaned entry.
                 self._incident_graphs.pop(incident_id, None)
+                self._graph_sigs.pop(incident_id, None)
 
     def _update_track(self, tenant: str, entity_type: str, entity_value: str,
                        alert: dict, now_ms: int) -> dict | None:
@@ -958,8 +950,23 @@ class Correlator:
         # under the same incident_id) and bounded by the member set
         # (<=3 edges per live member; one cache entry per incident_id,
         # pruned by _sweep_dead_tracks with _last_incident).
-        self._incident_graphs[incident_id] = self._build_incident_graph_v2(
-            tenant, entity_type, entity_value, incident, side)
+        # Fingerprint the live member set's graph-relevant fields -- NOT a
+        # sha256/edge-derivation pass, just a tuple built from what's already
+        # in `side`. A redelivery (or any alert that touched a DIFFERENT
+        # track this call) re-derives the SAME fingerprint for THIS track's
+        # unchanged members, so the expensive rebuild below only runs when
+        # the member set genuinely changed (a new member, an eviction, or a
+        # stale member dropping out).
+        graph_sig = tuple(sorted(
+            (mid, entry["time"], entry.get("tactic"), entry.get("event_id"),
+             entry.get("time_fallback"), tuple(entry.get("cooccur") or ()),
+             entry.get("typed_signal"))
+            for mid, entry in side.items()
+        ))
+        if graph_sig != self._graph_sigs.get(incident_id):
+            self._incident_graphs[incident_id] = self._build_incident_graph_v2(
+                tenant, entity_type, entity_value, incident, side)
+            self._graph_sigs[incident_id] = graph_sig
         if is_new:
             self.promotions_count += 1
         return incident
