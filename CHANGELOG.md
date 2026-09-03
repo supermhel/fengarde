@@ -31,7 +31,8 @@ encoding of "null before, real now").
 - **Incident reconstruction time** — builds the REAL WS-3 evidence package
   (`services/ws3-indexer/evidence_package.py`) from the chain's real
   incident/alerts/events/graph, verifies the hash chain, and reports the real
-  wall-clock assembly latency (median of 3 samples, ~0.8–1.0 ms; 14 blocks,
+  wall-clock assembly latency (median of 3 samples, ~0.8–5.9 ms machine-load
+  dependent — the committed run records 5.9224 ms; 14 blocks,
   `verified: true`, deterministic `package_id`). Wall-clock is informational
   — the same carve-out `date` enjoys — so it is excluded from the report's
   byte-determinism assertion, with `package_id`/`block_count` asserted

@@ -211,6 +211,22 @@ detection_points:
         evidence (the diverged process state) so report.py can grade the chain
         end-to-end, but its detection coverage is zero today -- an honest gap
         that lowers the attainable detection score for this chain.
+    known_inconsistency: >
+      DOCUMENTED 2026-09-03 (surfaced by the WP-3.5-A severity-confusion
+      metric, not a code change): scenario.py DOES emit a real raw Modbus FC6
+      write for this step (to _ANOMALY_ADDR, outside the parser's whitelisted
+      holding-register range), which the real modbus_anomaly parser classifies
+      as unauthorized_write and fires ot_modbus_unauthorized_write (high).
+      The oracle declares the step a no_rule_exists gap (\"no log line\") -- so
+      the fired alert is correctly graded as the severity-confusion metric's
+      ONE 'unexpected' alert (6 correct / 0 over / 0 under / 1 unexpected on
+      seed 7). This is a pre-existing oracle-vs-scenario contradiction, kept
+      honest and visible rather than silently reconciled. Resolution deferred:
+      either declare the rule at this step (which would change the expected
+      detection-point set and the severity score) or align the scenario's
+      process_anomaly emission. Treating it as either would alter the frozen
+      baseline delta contract's current numbers, so it needs its own decision,
+      not a drive-by edit.
 
 # ---------------------------------------------------------------------------
 # (iv) EXPECTED SEVERITY BAND -- numeric bounds the incident's alerts must fall
