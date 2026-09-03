@@ -60,6 +60,92 @@ encoding of "null before, real now").
   `fengarde-sec/docs/STATUS.md` §0; roadmap Part 4 Phase 3.5 strike + the
   execution-breakdown's Phase 3.5 promotion-and-close pass.
 
+### Fixed (2026-09-03, WP-3.5-A review-fix round: 14 confirmed defects from a fresh-session code review)
+
+A fresh-session, multi-angle review of the WP-3.5-A package above (no shared
+context with the shipping work) found and fixed 14 defects, all in
+`eval/twin/report.py` / `eval/twin/test_phase3_5.py` / `eval/twin/oracle.yaml`.
+None changed any of seed 7's harness-measured numbers — `chain_fidelity`,
+`false_correlation_rate`, `alert_reduction_ratio`, `mtti`, and the severity
+confusion tally are all byte-identical to the original WP-3.5-A run; only the
+informational wall-clock reconstruction-time field differs, as it always does
+run-to-run. The defects were latent scoping/edge-case bugs this seed's
+specific data shape happened not to trigger, not incorrect prior output.
+
+- **`_investigation_walk` was scoped to the wrong graph** — it picked one
+  incident to describe but computed entity/edge counts from the UNION of
+  every promoted incident's graph edges, not that incident's own graph (the
+  sibling `_evidence_reconstruction` already fetched the right, single
+  incident's graph). Fixed: both functions now share one
+  `_pick_full_coverage_incident` helper (closing a duplicated-logic gap too)
+  and `_investigation_walk` takes a `graph_fn` and reads the picked
+  incident's own `nodes`/`edges`, so `entity_count` also now reflects the
+  graph's real node list instead of only nodes touched by an edge.
+- **`_evidence_reconstruction`'s `events` list wasn't scoped to the picked
+  incident** — unlike its `alerts` list (correctly filtered to
+  `member_alert_ids`), `events` pulled in every chain alert's event
+  regardless of incident membership; a partial-coverage incident's evidence
+  package could silently bundle in a different incident's events. Fixed: the
+  same `member_alert_ids` filter now applies to both.
+- **`alert_reduction_ratio` had a falsy-zero bug** — `if alert_count and
+  incident_promotions:` nulled the ratio whenever zero incidents were
+  promoted, even though `1 - 0/alerts == 1.0` is a fully well-defined,
+  alarming-if-true number (the exact "correlation absorbed nothing" signal
+  this metric exists to catch) — the same bug class this file's history
+  already lists once (`incident_count: 0 or 1`). Fixed: guarded only on the
+  real denominator (`alerts_total`). Its denominator is now also the SAME
+  canonical alert count `context.alert_count` uses (`alerts_total`, from the
+  one real `_real_detection` pass), not a second count re-derived from this
+  function's own correlator-shaped detector re-run, closing a silent-drift
+  risk between two independently-sourced "total alerts" numbers.
+- **`_LEVEL_RANK.get(x, 0)` silently ranked an unrecognized severity string
+  as informational** instead of flagging it, unlike the two stricter
+  existing copies of the same vocabulary (`ws4-detection/scoring.py`,
+  `tools/validate_rules.py`). Fixed: an unrecognized level now surfaces as
+  its own `unrecognized-level` verdict (new `unrecognized_level` count on
+  `severity_confusion`) instead of silently matching rank 0.
+- **The forbidden-relationship denominator in `_grade_chain_fidelity`
+  checked only the to-step**, while its own comment claimed the same
+  both-steps-entity-bearing rule the allowed-relationship loop actually
+  applies. Fixed: now checks both steps, matching the comment (no change to
+  seed 7's numbers — both current forbidden pairs' from-steps were already
+  entity-bearing).
+- **Two of `test_phase3_5.py`'s six checks weren't independent** — (a) and
+  (d) rebuilt their "reference" from the very sub-fields the function under
+  test had already produced, so neither could have caught the scoping bugs
+  above. (a) now cross-checks against the canonical top-level
+  `context.alert_count`/`incident_promotions` instead of
+  `context.alert_reduction`'s own copy of those counts; (d) now
+  cross-checks `member_alert_count`/`incident_id` against the independently
+  built `incident_summary` and `incident_reconstruction`. (a)'s pass/fail
+  also no longer ANDs a hardcoded `0.7143` alongside the real reference
+  check — that constant would have broken the test on any legitimate future
+  change to the real alert/incident counts even when the formula stayed
+  correct.
+- **`api_round_trips` and the severity `matrix` breakdown shipped with zero
+  test coverage.** Fixed: both are now asserted in `test_phase3_5.py`.
+- Redundant `corr.incident_graph()` refetch+deepcopy for the picked
+  incident (already fetched moments earlier while building the edge union) —
+  replaced with a `graphs_by_id` cache built in that same loop; the
+  reconstruction event-loop's `deepcopy` + always-a-no-op
+  `setdefault("ingest_id", ...)` (the value was already stamped identically
+  upstream) is gone.
+- Hand-rolled median (`samples_sorted[len//2]`, silently wrong for an even
+  sample count) replaced with `statistics.median`.
+- `_build_chain_alerts`'s docstring updated to name its third `event` key
+  (added by this same PR, load-bearing for reconstruction, previously
+  undocumented).
+- `eval/twin/oracle.yaml`'s `known_inconsistency` text had literal
+  backslash-escaped quotes inside a YAML folded block scalar (block scalars
+  don't interpret backslash escapes) — fixed to plain quotes.
+- `eval/twin/report.json` regenerated from a real post-fix seed-7 run
+  (`assembly_median_ms` now the fresh wall-clock, informational as always;
+  every harness-measured number unchanged); `eval/trend.jsonl` got one
+  appended row, the prior row left untouched per its append-only discipline.
+- **Verified**: `run_all_tests.sh` **ALL TESTS PASS** exit 0, both
+  `test_phase3_5.py` and `test_chain_fidelity.py` green with the extended
+  checks above.
+
 ### Added (2026-09-02, Phase 3 — WP-3-A/B/C/D/E shipped)
 
 Owner-ratified Phase 3 wave (roadmap §5.2 sign-off granted for the

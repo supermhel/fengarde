@@ -217,7 +217,7 @@ detection_points:
       write for this step (to _ANOMALY_ADDR, outside the parser's whitelisted
       holding-register range), which the real modbus_anomaly parser classifies
       as unauthorized_write and fires ot_modbus_unauthorized_write (high).
-      The oracle declares the step a no_rule_exists gap (\"no log line\") -- so
+      The oracle declares the step a no_rule_exists gap ("no log line") -- so
       the fired alert is correctly graded as the severity-confusion metric's
       ONE 'unexpected' alert (6 correct / 0 over / 0 under / 1 unexpected on
       seed 7). This is a pre-existing oracle-vs-scenario contradiction, kept
