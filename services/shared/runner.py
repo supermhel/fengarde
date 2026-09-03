@@ -496,11 +496,23 @@ def serve(handlers: Handlers, *, health_port: int | None = None,
             to let a slow/CPU-light-but-IO-bound handler (e.g. one that
             dispatches into its own internal thread pool, like ws5-ai's LLM
             triage) actually process more than one message at a time. Redis
-            consumer groups are built for this (multiple named consumers per
-            group load-balance deliveries); on ``BUS_BACKEND=memory`` only the
-            single shared instance a caller's own ``bus_factory`` returns
-            observes the same stream, matching how every other multi-topic
-            service already relies on ``bus_factory`` for that backend.
+            consumer groups are built for exactly this (multiple named
+            consumers per group load-balance deliveries), so this is safe and
+            effective under ``BUS_BACKEND=redis`` (the real deployment).
+            ``BUS_BACKEND=memory`` is a DIFFERENT story, independent of this
+            parameter: the default ``bus_factory`` (``shared.bus.Bus``)
+            constructs a brand-new, isolated ``_MemoryBus()`` on every call,
+            so under the memory backend two threads calling ``bus_factory()``
+            already do not observe each other's stream -- true for two
+            threads on the SAME topic (``topic_workers > 1``) exactly as it
+            is already true for two threads on DIFFERENT topics with today's
+            single-thread-per-topic default (every existing multi-topic
+            caller, e.g. ws4-detection's ``bus_factory``, hits this too, just
+            never needed multiple threads to expose it). A caller that wants
+            real multi-thread delivery under the memory backend must pass a
+            ``bus_factory`` that returns ONE shared instance across calls;
+            production callers never need to, since ``BUS_BACKEND=redis``
+            shares state via the server, not via Python object identity.
     """
     if shutdown is None:
         shutdown = threading.Event()

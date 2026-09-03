@@ -400,11 +400,20 @@ def main(worker: "AiWorker | None" = None):
     # admission-controlled by `worker._admit`); Redis consumer groups are
     # built for exactly this (multiple named consumers load-balancing one
     # group's deliveries).
-    serve({"ai.requests": ("cg-ai", handler)},
-          health_port=int(os.getenv("PORT", "8005")), service_name="ws5-ai",
-          bus_factory=bus_factory,
-          metrics_provider=lambda: _metrics_provider(worker),
-          topic_workers={"ai.requests": worker.max_workers})
+    # serve() blocks until shutdown (SIGTERM/SIGINT), then joins its consumer
+    # threads and returns -- at that point nothing can submit new work to
+    # `worker`'s pool, so this is the right place to close it down. Without
+    # this, the ThreadPoolExecutor was only ever cleaned up by Python's
+    # implicit atexit join, which can add unbounded shutdown latency under a
+    # slow container stop. `finally` so a `serve()` exception still closes it.
+    try:
+        serve({"ai.requests": ("cg-ai", handler)},
+              health_port=int(os.getenv("PORT", "8005")), service_name="ws5-ai",
+              bus_factory=bus_factory,
+              metrics_provider=lambda: _metrics_provider(worker),
+              topic_workers={"ai.requests": worker.max_workers})
+    finally:
+        worker.shutdown(wait=True)
 
 
 if __name__ == "__main__":

@@ -617,6 +617,23 @@ class Correlator:
             "tactic_sources": tactic_sources,
         }
 
+    @staticmethod
+    def _graph_signature(side: dict) -> tuple:
+        """Fingerprint of every field `_build_incident_graph_v2` reads off
+        `side`'s member entries: ``(mid, time, tactic, event_id,
+        time_fallback, cooccur, typed_signal)`` per member, sorted for a
+        deterministic tuple regardless of dict iteration order. Two calls
+        with the SAME fingerprint are guaranteed to build the SAME v2 graph
+        (see `_update_track`'s cache-skip); this is a fingerprint of the
+        INPUT, not a hash of the built graph, so it stays O(members) with no
+        sha256/edge-derivation work -- the cost the cache exists to avoid."""
+        return tuple(sorted(
+            (mid, entry["time"], entry.get("tactic"), entry.get("event_id"),
+             entry.get("time_fallback"), tuple(entry.get("cooccur") or ()),
+             entry.get("typed_signal"))
+            for mid, entry in side.items()
+        ))
+
     def _build_incident_graph_v2(self, tenant: str, entity_type: str, entity_value: str,
                                  incident: dict, side: dict) -> dict:
         """Build the ADR-009 ``incident.graph`` VERSION-2 payload -- the typed
@@ -956,13 +973,12 @@ class Correlator:
         # track this call) re-derives the SAME fingerprint for THIS track's
         # unchanged members, so the expensive rebuild below only runs when
         # the member set genuinely changed (a new member, an eviction, or a
-        # stale member dropping out).
-        graph_sig = tuple(sorted(
-            (mid, entry["time"], entry.get("tactic"), entry.get("event_id"),
-             entry.get("time_fallback"), tuple(entry.get("cooccur") or ()),
-             entry.get("typed_signal"))
-            for mid, entry in side.items()
-        ))
+        # stale member dropping out). Factored into its own method (not
+        # inlined) so a test can call it directly on two hand-built `side`
+        # states to prove it actually distinguishes them (mutation-soundness:
+        # a fingerprint that omitted a field `_build_incident_graph_v2` reads
+        # could produce a FALSE cache hit and silently serve a stale graph).
+        graph_sig = self._graph_signature(side)
         if graph_sig != self._graph_sigs.get(incident_id):
             self._incident_graphs[incident_id] = self._build_incident_graph_v2(
                 tenant, entity_type, entity_value, incident, side)

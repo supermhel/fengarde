@@ -450,9 +450,13 @@ def _grade_chain_fidelity(edges: list[dict], step_entities: dict,
 
     chain_fidelity = (correct allowed joins - forbidden joins) / denominator,
     where the denominator is the number of allowed relationships whose BOTH
-    steps are detected (parsed) and entity-bearing. No denominator, or no
-    incident evidence at all (empty ``edges`` from an unpromoted chain) ->
-    fidelity None, never a fabricated number."""
+    steps are detected (parsed) and entity-bearing. Unclamped: if
+    ``forbidden`` exceeds ``correct`` (more false correlations than genuine
+    joins) the score goes NEGATIVE -- intentional, not a bug, per "counts
+    AGAINST the fraction, never hidden" above; a floor at 0 would silently
+    launder a graph that is mostly false correlations into a merely-mediocre
+    score. No denominator, or no incident evidence at all (empty ``edges``
+    from an unpromoted chain) -> fidelity None, never a fabricated number."""
     idx = {label: i for i, label in enumerate(step_order)}
     allowed = [r for r in allowed_rels if r.get("allowed")]
     forbidden_rels = [r for r in allowed_rels if not r.get("allowed")]

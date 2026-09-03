@@ -58,6 +58,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+from collections import Counter
 
 SCHEMA = "fengarde.evidence-package.v1"
 ZERO_HASH = "0" * 64
@@ -301,11 +302,10 @@ def _verify_envelope(pkg: dict, failures: list[str]) -> None:
     for b in blocks:
         if isinstance(b, dict) and isinstance(b.get("block_id"), str):
             ids.append(b["block_id"])
-    seen_ids: list[str] = []
-    for x in ids:
-        if ids.count(x) > 1:
-            seen_ids.append(x)
-    dups = sorted(seen_ids)
+    # Counter, not `ids.count(x)` inside a loop (O(n) instead of O(n^2) in
+    # block count, and each duplicated id is named ONCE instead of once per
+    # occurrence).
+    dups = sorted(x for x, n in Counter(ids).items() if n > 1)
     if dups:
         failures.append(f"block_ids not unique: {dups}")
     chain = pkg.get("chain")

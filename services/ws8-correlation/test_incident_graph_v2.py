@@ -669,6 +669,106 @@ def test_typed_kind_signal_is_pure_and_bounded():
           "signal: _typed_kind must be the documented pure mapping")
 
 
+# --- (9) graph_sig cache: skips rebuild on a no-op redelivery, rebuilds on
+#         a real change, and its fingerprint is mutation-sound --------------
+def test_graph_cache_skips_rebuild_on_unchanged_member_set():
+    """The `_graph_sigs` fingerprint cache (2026-09-03, efficiency finding)
+    must skip `_build_incident_graph_v2` when a promoted track's live member
+    set is unchanged since the last build -- proven here with a call-count
+    spy, not just by checking the OUTPUT is correct (which a naive
+    always-rebuild implementation would also pass)."""
+    c = _new_correlator()
+    a1 = _alert("cache1", tactic="TA0001", technique="T1078.004", actor="cache-user",
+               ip="10.30.0.1", time_ms=1000, event_ids=["ev-cache1"])
+    a2 = _alert("cache2", tactic="TA0004", actor="cache-user",
+               time_ms=1500, event_ids=["ev-cache2"])
+    c.ingest_alert(a1)
+    incs = c.ingest_alert(a2)
+    check(len(incs) == 1 and incs[0]["entity_type"] == "actor",
+          "cache: setup must promote exactly one incident (actor:cache-user)")
+    incident_id = incs[0]["incident_id"]
+    g_before = c.incident_graph(incident_id)
+
+    calls: list = []
+    real_build = c._build_incident_graph_v2
+
+    def _spy(*args, **kwargs):
+        calls.append(1)
+        return real_build(*args, **kwargs)
+
+    c._build_incident_graph_v2 = _spy
+    try:
+        # Redeliver the SAME alerts (identical content, same alert_ids): the
+        # live member set and every graph-relevant field are unchanged, so
+        # the rebuild must be SKIPPED and the cached graph object reused.
+        c.ingest_alert(dict(a1))
+        c.ingest_alert(dict(a2))
+        check(len(calls) == 0,
+              f"cache: redelivering unchanged members must skip "
+              f"_build_incident_graph_v2, got {len(calls)} rebuild(s)")
+        check(c.incident_graph(incident_id) == g_before,
+              "cache: the served graph after a no-op redelivery must be "
+              "byte-identical to before")
+
+        # A genuinely NEW member for the SAME track changes the fingerprint
+        # -- the rebuild must happen exactly once.
+        a3 = _alert("cache3", tactic="TA0004", actor="cache-user",
+                   ip="10.30.0.9", time_ms=2000, event_ids=["ev-cache3"])
+        c.ingest_alert(a3)
+        check(len(calls) == 1,
+              f"cache: a new member must trigger exactly one rebuild, got "
+              f"{len(calls)}")
+    finally:
+        del c._build_incident_graph_v2  # drop the instance override
+
+
+def test_graph_signature_is_mutation_sound():
+    """Mutation-soundness for the cache's fingerprint (2026-09-03): a
+    fingerprint that omitted a field `_build_incident_graph_v2` reads off a
+    member's entry could produce a FALSE cache hit -- two different member
+    states hashing to the SAME fingerprint would silently serve a stale
+    graph. Proven directly against `Correlator._graph_signature` (not
+    reimplemented here) by building pairs of `side` states that differ in
+    exactly ONE field each and asserting the fingerprint changes for every
+    one of them."""
+    base_entry = {
+        "alert_id": "m1", "tactic": "TA0001", "score": 10, "time": 1000,
+        "time_fallback": False, "event_id": "ev-1",
+        "cooccur": [("ip", "10.0.0.1")], "typed_signal": ("TA0001", "T1078.004", None),
+    }
+    base_side = {"m1": dict(base_entry)}
+    base_sig = Correlator._graph_signature(base_side)
+
+    mutations = {
+        "time": 2000,
+        "tactic": "TA0004",
+        "event_id": "ev-2",
+        "time_fallback": True,
+        "cooccur": [("ip", "10.0.0.2")],
+        "typed_signal": ("TA0004", None, None),
+    }
+    for field, new_value in mutations.items():
+        mutated_entry = dict(base_entry)
+        mutated_entry[field] = new_value
+        mutated_side = {"m1": mutated_entry}
+        mutated_sig = Correlator._graph_signature(mutated_side)
+        check(mutated_sig != base_sig,
+              f"sig: changing entry field {field!r} alone must change the "
+              f"fingerprint (else a change to it could be served from a "
+              f"stale cached graph)")
+
+    # A membership change (new member id) must also change the fingerprint.
+    added_member_side = {"m1": dict(base_entry), "m2": dict(base_entry, alert_id="m2")}
+    check(Correlator._graph_signature(added_member_side) != base_sig,
+          "sig: adding a member must change the fingerprint")
+
+    # Identical content, freshly-copied dicts (simulating a real redelivery's
+    # freshly-built entry) -- the fingerprint must be identical.
+    check(Correlator._graph_signature({"m1": dict(base_entry)}) == base_sig,
+          "sig: two structurally-identical side states must fingerprint "
+          "identically (else a harmless redelivery would never hit cache)")
+
+
 def run_all():
     test_v2_emitted_shape_and_incidents_topic_untouched()
     test_redelivery_and_fresh_instance_emit_byte_identical_v2()
@@ -679,6 +779,8 @@ def run_all():
     test_identifier_agreement_with_ws9()
     test_v1_builder_byte_for_byte_unchanged()
     test_typed_kind_signal_is_pure_and_bounded()
+    test_graph_cache_skips_rebuild_on_unchanged_member_set()
+    test_graph_signature_is_mutation_sound()
 
 
 if __name__ == "__main__":
