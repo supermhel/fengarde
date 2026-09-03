@@ -461,6 +461,9 @@ $PY eval/twin/report.py --no-trend --out eval/twin/report.latest.json || { fail=
 echo
 echo "== WP-3-C: twin chain-fidelity graded against the real v2 incident graph (determinism + mutation-soundness) =="; LAST_HEADER="== WP-3-C: twin chain-fidelity graded against the real v2 incident graph (determinism + mutation-soundness) =="
 $PY eval/twin/test_chain_fidelity.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
+echo "== WP-3.5-A: twin Phase 3.5 operational outcome metrics (alert reduction, false correlation, reconstruction, investigation, severity confusion -- determinism + mutation-soundness) =="; LAST_HEADER="== WP-3.5-A: twin Phase 3.5 operational outcome metrics (alert reduction, false correlation, reconstruction, investigation, severity confusion -- determinism + mutation-soundness) =="
+$PY eval/twin/test_phase3_5.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 
 # == Phase 4 (2026-08-06) enhancement + fix regression tests ==
 echo

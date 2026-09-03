@@ -231,17 +231,33 @@ def _test_mutation_soundness(result: dict, step_entities: dict, chain: object) -
 
 def _test_determinism() -> None:
     """(d) two fresh run() calls grade identically (byte-identical metrics and
-    WS-8 context)."""
+    WS-8 context) EXCEPT the informational wall-clock metric that the docstring
+    carves out: incident_reconstruction_time_ms is a real assembly-wall-clock
+    measurement (median of a few builds) and may differ run-to-run -- the same
+    carve-out `date`/`elapsed_seconds` already enjoy. Everything else is a
+    pure function of the seed and must be byte-identical; the reconstruction
+    package_id/block_count (deterministic) are asserted separately."""
     r1 = report.run(seed=SEED)
     r2 = report.run(seed=SEED)
     ctx_keys = ("incident_promotions", "incident_count", "incident_membership_ok",
                 "full_coverage_incident_ids", "chain_fidelity_details",
-                "chain_graph_edges", "incident_summary")
-    same = r1["metrics"] == r2["metrics"] and all(
+                "chain_graph_edges", "incident_summary",
+                "false_correlation_details", "alert_reduction",
+                "analyst_investigation", "severity_confusion")
+    _INFO = {"incident_reconstruction_time_ms"}  # wall-clock informational carve-out
+    m1 = {k: v for k, v in r1["metrics"].items() if k not in _INFO}
+    m2 = {k: v for k, v in r2["metrics"].items() if k not in _INFO}
+    same = m1 == m2 and all(
         r1["context"][k] == r2["context"][k] for k in ctx_keys)
-    _check("(d) grade is identical across two fresh run() calls", same,
+    recon = r1["context"]["incident_reconstruction"]
+    _check("(d) grade is identical across two fresh run() calls (wall-clock "
+           "reconstruction-time carved out as informational)",
+           same and recon is not None and recon.get("verified") is True
+           and r1["context"]["incident_reconstruction"]["package_id"]
+           == r2["context"]["incident_reconstruction"]["package_id"],
            f"cf={r1['metrics']['chain_fidelity']}/{r2['metrics']['chain_fidelity']} "
-           f"membership={r1['context']['incident_membership_ok']}")
+           f"membership={r1['context']['incident_membership_ok']} "
+           f"recon_verified={recon.get('verified')}")
 
 
 def _test_negatives_untouched(result: dict) -> None:

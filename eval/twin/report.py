@@ -47,16 +47,41 @@ fabricated one:
                                        severity via the ticketed-write
                                        companion rule, so it's not counted
                                        as an incident. See negative_controls.py.)
-  * mtti / mttr                = null (time-to-identify / time-to-recover are
-                                       Phase 3.5 operational metrics not graded
-                                       by this package; leaving them null is
-                                       honest -- never a fabricated number)
+  * mtti / mttr                = mtti is now REAL (WP-3.5-A, 2026-09-03): a
+                                       scripted investigation walk over the
+                                       REAL incident graph (member alerts +
+                                       entities + causal edges counted), at
+                                       the documented _ANALYST_STEP_SECONDS
+                                       per step. mttr stays honest null: the
+                                       twin harness has no remediation/closure
+                                       event (no triage-API replay; incidents
+                                       never close in the sim) -- fabricating
+                                       a remediation time would lie about what
+                                       the twin measures (see
+                                       context.mttr_null_reason)
   * false_correlation_rate /
-    alert_reduction_ratio      = null (WP-3-C grades chain_fidelity and
-                                       incident membership; these ratio
-                                       definitions over promoted incidents are
-                                       not implemented and stay null -- not a
-                                       measured zero)
+    alert_reduction_ratio      = NOW REAL (WP-3.5-A, 2026-09-03), computed
+                                       from the SAME real WS-8 artifacts
+                                       chain_fidelity grades: FCR is the
+                                       fraction of oracle-DECLARED forbidden
+                                       (allowed: false) relationships that a
+                                       real graph edge joined (the negative-
+                                       control half of chain fidelity); ARR
+                                       is 1 - (incidents/alerts) over the
+                                       same window. Both None only when no
+                                       denominator exists -- not a fabricated
+                                       zero. (Before this, null: not
+                                       implemented.)
+  * incident_reconstruction_time_ms = NOW REAL (WP-3.5-A, 2026-09-03): the
+                                       assembly wall-clock (median of N
+                                       samples) of building the REAL WS-3
+                                       evidence package from the chain's real
+                                       incident/alerts/events/graph, verified
+                                       (hash chain intact). Wall-clock is
+                                       informational (date carve-out --
+                                       excluded from the byte-determinism
+                                       assertion); package_id/block_count are
+                                       deterministic. None when no incident.
   * mttd_seconds                = real: (first chain step whose oracle-expected
                                        rule fired) minus (chain start), both
                                        pulled from the actual raw-payload
@@ -70,11 +95,14 @@ fabricated one:
                                  (OT alerts carry `actor={}` today — crediting
                                  them would fabricate attribution)
 
-Determinism: same seed -> byte-identical report. All graded times are
-seed-derived fixed constants, never wall-clock; the correlator is given a fixed
-``now_fn`` (a constant 1h after the chain's last alert, so every chain alert is
-in-window and no entry falls back to a wall-clock processing time). (The
-``date`` field is informational and may differ between runs.)
+Determinism: same seed -> byte-identical report *except* the informational
+wall-clock fields: ``date``, ``elapsed_seconds``, and WP-3.5-A's
+``incident_reconstruction_time_ms`` (a real assembly-latency measurement --
+reported as measured; excluded from the byte-determinism assertion by the
+same carve-out ``date`` enjoys). All graded times are seed-derived fixed
+constants, never wall-clock; the correlator is given a fixed ``now_fn``
+(a constant 1h after the chain's last alert, so every chain alert is
+in-window and no entry falls back to a wall-clock processing time).
 
 Safety: this is a SIMULATION harness. No real control action is ever issued;
 everything runs in-process on the memory bus against the loopback twin.
@@ -138,6 +166,24 @@ REPORT_PATH = TWIN / "report.json"
 BASELINE_PATH = TWIN / "baseline.json"
 TREND_PATH = ROOT / "eval" / "trend.jsonl"
 
+# ---------------------------------------------------------------------------
+# Phase 3.5 constants (WP-3.5-A). Every number below is either a REAL
+# measurement of the harness or a DOCUMENTED SIMULATION constant. Nothing is
+# fabricated: the step latency below is the harness's declared analyst model
+# (the roadmap's own Phase 3.5 cell: "wall-clock on a human run once a design
+# partner exists" -- until then the twin reports a stated per-step model).
+# ---------------------------------------------------------------------------
+# Scripted analyst walk latency model: each investigation step (a graph edge
+# traversed, an entity resolved, a member alert fetched) is modeled at this
+# many seconds. Real step COUNTS are the measured quantity; seconds is the
+# conversion the twin must use until a design partner supplies wall-clock
+# data (roadmap Phase 3.5 "analyst investigation time").
+_ANALYST_STEP_SECONDS = 30.0
+# Informational wall-clock: how many times the REAL evidence package is
+# rebuilt to measure assembly latency (median). Not part of the determinism
+# contract -- same reason `date`/`elapsed_seconds` are exempt.
+_RECONSTRUCTION_SAMPLES = 3
+
 # The tenant the twin stamps on the chain's normalized events before detection
 # (negative_controls.run_pipeline) -- the correlator's track/incident/canonical
 # ids all key off it, so the WS-8 grading MUST use the identical tenant or the
@@ -174,6 +220,216 @@ def _ensure_ws8():
     sys.modules[_WS8_MOD_NAME] = mod
     spec.loader.exec_module(mod)
     return mod
+
+
+# ---------------------------------------------------------------------------
+# WP-3.5-A: the REAL WS-3 evidence package as the incident-reconstruction
+# artifact. Loaded the same way as WS-8 (spec_from_file_location, unique
+# module name) -- evidence_package.py is stdlib-only (copy/hashlib/json/
+# Counter), so it cannot hijack any bare module name, but the unique-name +
+# lazy discipline is kept for consistency with the correlator.
+# ---------------------------------------------------------------------------
+_EVIDENCE_PATH = APPROOT_SERVICES / "ws3-indexer" / "evidence_package.py"
+_EVIDENCE_MOD_NAME = "ws3_evidence_mod"
+
+
+def _ensure_evidence():
+    """Load the REAL WS-3 evidence_package module once; return the module."""
+    mod = sys.modules.get(_EVIDENCE_MOD_NAME)
+    if mod is not None:
+        return mod
+    spec = importlib.util.spec_from_file_location(_EVIDENCE_MOD_NAME, _EVIDENCE_PATH)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot locate {_EVIDENCE_PATH}")
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[_EVIDENCE_MOD_NAME] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _evidence_reconstruction(alerts_by_step: list[dict], by_id: dict,
+                             graph_fn, now_ms: int) -> Optional[dict]:
+    """WP-3.5-A incident reconstruction time: build the REAL WS-3 evidence
+    package for the chain's full-coverage incident from the REAL chain
+    artifacts the Correlator already produced, verify its hash chain, and
+    measure REAL wall-clock assembly latency (median of a few builds).
+
+    Determinism: ``now_ms`` is injected (the same fixed ``now`` the
+    correlator used), so the package CONTENT and package_id are
+    byte-identical across rebuilds; the measured assembly ms is wall-clock
+    and is *informational* -- the exact carve-out ``date`` already enjoys
+    (see the module docstring's determinism note). Returns None when no
+    incident promoted (no artifact to reconstruct -- never fabricated).
+    """
+    if not by_id:
+        return None
+    chain_ids = {a["alert"]["alert_id"] for a in alerts_by_step}
+    pick = next(
+        (iid for iid, inc in by_id.items()
+         if chain_ids <= set(inc.get("member_alert_ids") or [])),
+        None)
+    if pick is None:
+        pick = sorted(by_id)[0]
+    incident = by_id[pick]
+    member_ids = set(incident.get("member_alert_ids") or [])
+    alerts = [a["alert"] for a in alerts_by_step
+              if a["alert"].get("alert_id") in member_ids]
+    # Underlying normalized events: the chain's real parsed OCSF events,
+    # carrying the same siem.ingest_id stamp the detection path gave them so
+    # the provenance join has a handle to resolve (unresolved ids are listed
+    # honestly by _build_provenance, never dropped).
+    events = []
+    for a in alerts_by_step:
+        ev = a.get("event")
+        if not ev:
+            continue
+        ev_copy = copy.deepcopy(ev)
+        siem = ev_copy.setdefault("siem", {})
+        siem.setdefault("ingest_id", f"twin:{a['step']}")
+        events.append(ev_copy)
+    graph = graph_fn(pick)
+
+    evpkg = _ensure_evidence()
+    samples = []
+    pkg = None
+    for _ in range(_RECONSTRUCTION_SAMPLES):
+        t0 = time.perf_counter()
+        pkg = evpkg.build_evidence_package(
+            incident, alerts, events, graph,
+            now_ms=now_ms, package_id_prefix="twin-recon")
+        samples.append(round((time.perf_counter() - t0) * 1000.0, 4))
+    samples_sorted = sorted(samples)
+    median_ms = samples_sorted[len(samples_sorted) // 2] if samples_sorted else None
+    failures = evpkg.verify_evidence_package(pkg) if pkg is not None else ["no package"]
+    provenance = (pkg or {}).get("provenance") or []
+    unresolved = sum(len(p.get("unresolved_event_ids") or []) for p in provenance)
+    return {
+        "basis": "harness-measured (wall-clock, informational like date)",
+        "package_id": (pkg or {}).get("package_id"),
+        "incident_id": pick,
+        "block_count": ((pkg or {}).get("chain") or {}).get("block_count"),
+        "verified": not failures,
+        "verification_failures": failures,
+        "assembly_median_ms": median_ms,
+        "assembly_samples_ms": samples,
+        "provenance_unresolved_event_ids": unresolved,
+    }
+
+
+# Level ranks for the severity confusion matrix (OCSF-ish ordering used by
+# the rules: informational < low < medium < high < critical). Over/under are
+# counted in rank space -- a HIGH firing where the oracle expected MEDIUM is
+# an over-alert; a LOW where the oracle expected HIGH is an under-alert.
+_LEVEL_RANK = {"informational": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
+
+
+def _investigation_walk(alerts_by_step: list[dict], by_id: dict,
+                        edges: list[dict]) -> Optional[dict]:
+    """WP-3.5-A analyst investigation time: a SCRIPTED walk over the REAL
+    incident graph, counting the steps + API round-trips a scripted analyst
+    needs to reach the causal answer.
+
+    Walk model (documented, deterministic, all counts from real data):
+      1  open the incident (1 API round-trip: list member alerts)
+      + member alerts fetched (one per incident member)
+      + distinct entities resolved (each graph node = 1 entity lookup)
+      + causal edges traversed (each graph edge = 1 step)
+      + 1  assemble the causal answer (the graph)
+    `investigation_steps` is the REAL counted quantity; `mtti_seconds`
+    converts it with the documented per-step analyst latency model
+    (_ANALYST_STEP_SECONDS). Returns None when no incident promoted (no
+    graph to investigate -- never fabricated).
+    """
+    if not by_id:
+        return None
+    full = next(
+        (iid for iid, inc in by_id.items()
+         if {a["alert"]["alert_id"] for a in alerts_by_step}
+         <= set(inc.get("member_alert_ids") or [])), None)
+    if full is None:
+        full = sorted(by_id)[0]
+    incident = by_id[full]
+    members = incident.get("member_alert_ids") or []
+    node_ids: set = set()
+    for ed in edges:
+        if ed.get("from"):
+            node_ids.add(ed["from"])
+        if ed.get("to"):
+            node_ids.add(ed["to"])
+    steps = 1 + len(members) + len(node_ids) + len(edges) + 1
+    return {
+        "basis": "harness-measured (step count real; seconds = documented "
+                 "analyst latency model until a design partner supplies "
+                 "wall-clock)",
+        "incident_id": full,
+        "member_alert_count": len(members),
+        "entity_count": len(node_ids),
+        "edge_count": len(edges),
+        "investigation_steps": steps,
+        "api_round_trips": 1 + len(members) + len(node_ids),
+        "analyst_step_seconds_model": _ANALYST_STEP_SECONDS,
+        "mtti_seconds": round(steps * _ANALYST_STEP_SECONDS, 3),
+    }
+
+
+def _severity_confusion(oracle: dict, alerts_by_step: list[dict]) -> dict:
+    """WP-3.5-A severity calibration: confusion matrix of EXPECTED level
+    (oracle detection_points, per step) vs ACTUAL fired-alert level.
+
+    Each fired alert's rule_id is looked up in the oracle's
+    detection_points[step].expected_rules to find its declared level; the
+    actual level is the real fired alert's level. The matrix counts
+    correct / over-alerting / under-alerting in rank space, plus a
+    per-rule row. A rule the oracle does not declare at its step is counted
+    as ``unexpected`` (an alert the oracle never expected -- a signal, not
+    silently folded into correct). Real data both sides.
+    """
+    dp = oracle.get("detection_points") or {}
+    expected_by_step_rule: dict[str, dict] = {}
+    for step, spec in dp.items():
+        for r in (spec.get("expected_rules") or []):
+            expected_by_step_rule.setdefault(step, {})[r.get("rule_id")] = r.get("level")
+    matrix: dict[str, dict] = {}
+    over = under = correct = unexpected = 0
+    rows = []
+    for item in alerts_by_step:
+        step = item["step"]
+        alert = item["alert"]
+        actual = alert.get("level")
+        exp = (expected_by_step_rule.get(step) or {}).get(alert.get("rule_id"))
+        if exp is None:
+            unexpected += 1
+            rows.append({"step": step, "rule_id": alert.get("rule_id"),
+                         "expected_level": None, "actual_level": actual,
+                         "verdict": "unexpected"})
+            continue
+        matrix.setdefault(str(exp), {})
+        a_rank = _LEVEL_RANK.get(actual, 0)
+        e_rank = _LEVEL_RANK.get(exp, 0)
+        if a_rank == e_rank:
+            verdict = "correct"
+            correct += 1
+        elif a_rank > e_rank:
+            verdict = "over-alert"
+            over += 1
+        else:
+            verdict = "under-alert"
+            under += 1
+        matrix[str(exp)][verdict] = matrix[str(exp)].get(verdict, 0) + 1
+        rows.append({"step": step, "rule_id": alert.get("rule_id"),
+                     "expected_level": exp, "actual_level": actual,
+                     "verdict": verdict})
+    total = correct + over + under + unexpected
+    return {
+        "basis": "harness-measured",
+        "correct": correct,
+        "over_alerting": over,
+        "under_alerting": under,
+        "unexpected": unexpected,
+        "total_alerts": total,
+        "matrix": matrix,
+        "per_alert": rows,
+    }
 
 
 def _event_ts(ev: "scenario.ChainEvent") -> Optional[int]:
@@ -328,8 +584,10 @@ def _grade_chain(result: scenario.ChainResult, oracle: dict) -> dict:
         "chain_fidelity": ws8_grade["chain_fidelity"],
         "fidelity_numerator": ws8_grade["fidelity_numerator"],
         "forbidden_joins": ws8_grade["forbidden_joins"],
+        "forbidden_denominator": ws8_grade["forbidden_denominator"],
         "fidelity_denominator": ws8_grade["fidelity_denominator"],
         "per_allowed_pair": ws8_grade["per_allowed_pair"],
+        "per_forbidden_pair": ws8_grade["per_forbidden_pair"],
         "incident_promotions": ws8_grade["incident_promotions"],
         "incident_count": ws8_grade["incident_count"],
         "incident_membership_ok": ws8_grade["incident_membership_ok"],
@@ -338,6 +596,12 @@ def _grade_chain(result: scenario.ChainResult, oracle: dict) -> dict:
         "incident_summary": ws8_grade["incident_summary"],
         "graph_edges": ws8_grade["graph_edges"],
         "chain_alert_count": ws8_grade["chain_alert_count"],
+        # WP-3.5-A operational outcomes (real data, see _grade_ws8)
+        "false_correlation_rate": ws8_grade["false_correlation_rate"],
+        "alert_reduction_ratio": ws8_grade["alert_reduction_ratio"],
+        "incident_reconstruction": ws8_grade["incident_reconstruction"],
+        "investigation": ws8_grade["investigation"],
+        "severity_confusion": ws8_grade["severity_confusion"],
         "attribution_accuracy": _attribution(parsed),
     }
 
@@ -381,7 +645,11 @@ def _build_chain_alerts(parsed: list["scenario.ChainEvent"]) -> list[dict]:
         score = (event.get("siem") or {}).get("score")
         for rule in matched:
             alert = _WS4_MOD.make_alert(event, rule, score)
-            out.append({"step": ev.step, "alert": alert})
+            # WP-3.5-A: the alert carries its underlying OCSF event so the
+            # evidence-package reconstruction can join provenance to a REAL
+            # normalized event (the report's other grading paths re-derive
+            # events from chain.events themselves).
+            out.append({"step": ev.step, "alert": alert, "event": event})
     return out
 
 
@@ -489,13 +757,22 @@ def _grade_chain_fidelity(edges: list[dict], step_entities: dict,
         per_pair.append({"from": f, "to": t, "graded": True, "joined": bool(joined)})
 
     forbidden = 0
+    forbidden_denominator = 0
+    per_forbidden: list[dict] = []
     for rel in forbidden_rels:
         f, t = rel.get("from"), rel.get("to")
         to_set = set(step_entities.get(t, ()))
         if not to_set:
+            # a forbidden pair whose to-step has no parsed event / no entity
+            # can never be falsely joined -- excluded from the denominator
+            # honestly (same both-steps-entity-bearing rule as allowed joins)
+            per_forbidden.append({"from": f, "to": t, "graded": False,
+                                  "reason": "to-step-not-entity-bearing"})
             continue
-        if _fidelity_join(edges, _earlier_side(f), to_set):
-            forbidden += 1
+        forbidden_denominator += 1
+        joined = _fidelity_join(edges, _earlier_side(f), to_set)
+        forbidden += 1 if joined else 0
+        per_forbidden.append({"from": f, "to": t, "graded": True, "joined": bool(joined)})
 
     if not edges or denominator == 0:
         fidelity = None  # nothing promoted / no graded joins -> honest null
@@ -505,8 +782,10 @@ def _grade_chain_fidelity(edges: list[dict], step_entities: dict,
         "chain_fidelity": round(fidelity, 4) if fidelity is not None else None,
         "fidelity_numerator": correct,
         "forbidden_joins": forbidden,
+        "forbidden_denominator": forbidden_denominator,
         "fidelity_denominator": denominator,
         "per_allowed_pair": per_pair,
+        "per_forbidden_pair": per_forbidden,
     }
 
 
@@ -617,12 +896,56 @@ def _grade_ws8(result: "scenario.ChainResult", oracle: dict) -> dict:
         }
         for iid, inc in sorted(by_id.items())
     ]
+
+    # ------------------------------------------------------------------
+    # WP-3.5-A: the operational-outcome metric set, all computed from the
+    # SAME real WS-8 artifacts graded above (nothing hand-picked).
+    # ------------------------------------------------------------------
+    # 1) False correlation rate: fraction of oracle-DECLARED forbidden
+    #    relationships (allowed: false) that a real graph edge joined. The
+    #    negative-control half of chain fidelity -- the metric that keeps
+    #    the causal graph honest. Denominator = forbidden relationships
+    #    whose to-step is entity-bearing (a forbidden pair whose to-step has
+    #    no parsed event can never be falsely joined). None when no
+    #    denominator exists.
+    fcr_denom = fidelity["forbidden_denominator"]
+    false_correlation_rate = (
+        round(fidelity["forbidden_joins"] / fcr_denom, 4) if fcr_denom else None
+    )
+    # 2) Alert reduction ratio: raw WS-4 alerts in vs WS-8 incidents out
+    #    over the same window -- 1 - (incidents/alerts) is the fraction of
+    #    alert volume correlation absorbed. None when no alerts or no
+    #    incidents.
+    alert_count = len(chain_alerts)
+    incident_promotions = len(by_id)
+    if alert_count and incident_promotions:
+        alert_reduction_ratio = round(
+            1 - (incident_promotions / alert_count), 4)
+    else:
+        alert_reduction_ratio = None
+    # 3) Incident reconstruction time: build the REAL WS-3 evidence package
+    #    from the chain's real incident/alerts/events/graph and measure REAL
+    #    assembly wall-clock (median of a few builds). Wall-clock is
+    #    informational (date carve-out); package_id/block_count are
+    #    deterministic. None when no incident promoted.
+    reconstruction = _evidence_reconstruction(
+        alerts_by_step, by_id, corr.incident_graph, now_ms)
+    # 4) Analyst investigation time (MTTI): scripted walk over the REAL
+    #    graph, counting steps + API round-trips; seconds = steps x the
+    #    documented analyst latency model.
+    investigation = _investigation_walk(alerts_by_step, by_id, edges)
+    # 5) Severity calibration: confusion matrix (expected level from the
+    #    oracle detection_points vs actual fired-alert level).
+    severity_confusion = _severity_confusion(oracle, alerts_by_step)
+
     return {
         "chain_fidelity": fidelity["chain_fidelity"],
         "fidelity_numerator": fidelity["fidelity_numerator"],
         "forbidden_joins": fidelity["forbidden_joins"],
+        "forbidden_denominator": fidelity["forbidden_denominator"],
         "fidelity_denominator": fidelity["fidelity_denominator"],
         "per_allowed_pair": fidelity["per_allowed_pair"],
+        "per_forbidden_pair": fidelity["per_forbidden_pair"],
         "incident_promotions": len(by_id),
         "incident_count": membership["incident_count"],
         "incident_membership_ok": membership["incident_membership_ok"],
@@ -631,6 +954,12 @@ def _grade_ws8(result: "scenario.ChainResult", oracle: dict) -> dict:
         "incident_summary": incident_summary,
         "graph_edges": edges,
         "chain_alert_count": len(chain_alerts),
+        # WP-3.5-A operational outcomes
+        "false_correlation_rate": false_correlation_rate,
+        "alert_reduction_ratio": alert_reduction_ratio,
+        "incident_reconstruction": reconstruction,
+        "investigation": investigation,
+        "severity_confusion": severity_confusion,
     }
 
 
@@ -818,19 +1147,35 @@ def run(seed: int = 7) -> dict:
             "tpr": tpr,          # already rounded (or None) by _grade_chain
             "fpr": round(fpr, 4) if fpr is not None else None,
             "mttd_seconds": grade["mttd_seconds"],  # real: first-matched-step ts minus chain-start ts
-            "mtti": None,                 # Phase 3.5 operational metric not graded by this package (honest null)
-            "mttr": None,                 # Phase 3.5 operational metric not graded by this package (honest null)
+            # WP-3.5-A: analyst investigation time (MTTI) -- a REAL scripted
+            # walk count over the real incident graph x the documented analyst
+            # latency model; None only when no incident promoted.
+            "mtti": (grade["investigation"] or {}).get("mtti_seconds"),
+            # WP-3.5-A: MTTR stays an honest null -- the twin harness has no
+            # remediation/closure event (no triage-API status transition is
+            # replayed; incidents never close in the sim). Fabricating a
+            # remediation time would be a lie about what the twin measures.
+            # See context.mttr_null_reason.
+            "mttr": None,
             # WP-3-C: a REAL fraction measured against the REAL WS-8 v2 incident
             # graph (see _grade_chain_fidelity); None only when no incident
             # promoted or no denominator exists -- never a fabricated number.
             "chain_fidelity": grade["chain_fidelity"],
             "evidence_completeness": evidence,  # already rounded (or None) by _grade_chain
-            # WP-3-C grades chain_fidelity + incident membership; these ratio
-            # definitions over promoted incidents are not implemented in this
-            # package and stay null -- not a fabricated "measured zero".
-            "false_correlation_rate": None,
-            "alert_reduction_ratio": None,
-            "incident_reconstruction_time_ms": None,
+            # WP-3.5-A: real ratio of oracle-forbidden relationships that a
+            # real graph edge joined (the negative-control half of chain
+            # fidelity). None only when no forbidden pair is gradeable.
+            "false_correlation_rate": grade["false_correlation_rate"],
+            # WP-3.5-A: 1 - (incidents/alerts) over the same window -- the
+            # fraction of raw alert volume correlation absorbed. None when no
+            # alerts or no incidents.
+            "alert_reduction_ratio": grade["alert_reduction_ratio"],
+            # WP-3.5-A: REAL wall-clock assembly of the REAL WS-3 evidence
+            # package (median of a few builds). Wall-clock is informational
+            # (date carve-out), so it is excluded from the byte-determinism
+            # assertion -- package_id/block_count ARE deterministic.
+            "incident_reconstruction_time_ms": (
+                (grade["incident_reconstruction"] or {}).get("assembly_median_ms")),
             "severity_calibration_error": severity["severity_calibration_error"],
             "peak_alert_score": severity["peak_alert_score"],  # the real max score_weight observed, not discarded
             "severity_in_band": severity["in_band"],
@@ -862,14 +1207,45 @@ def run(seed: int = 7) -> dict:
             "chain_fidelity_details": {
                 "correct_allowed_joins": grade["fidelity_numerator"],
                 "forbidden_joins": grade["forbidden_joins"],
+                "forbidden_denominator": grade["forbidden_denominator"],
                 "denominator": grade["fidelity_denominator"],
                 "per_allowed_pair": grade["per_allowed_pair"],
+                "per_forbidden_pair": grade["per_forbidden_pair"],
             },
             "chain_graph_edges": [
                 {"from": e["from"], "to": e["to"], "kind": e["kind"],
                  "event_id": e["event_id"], "ts_ms": e["ts_ms"]}
                 for e in grade["graph_edges"]
             ],
+            # WP-3.5-A operational-outcome context (all real data from the
+            # SAME WS-8 run graded above; see each block's own basis field).
+            "false_correlation_details": {
+                "rate": grade["false_correlation_rate"],
+                "forbidden_joins": grade["forbidden_joins"],
+                "forbidden_denominator": grade["forbidden_denominator"],
+                "per_forbidden_pair": grade["per_forbidden_pair"],
+            },
+            "alert_reduction": {
+                "ratio": grade["alert_reduction_ratio"],
+                "raw_alert_count": grade["chain_alert_count"],
+                "incident_count": incident_promotions,
+            },
+            "incident_reconstruction": grade["incident_reconstruction"],
+            "analyst_investigation": grade["investigation"],
+            "severity_confusion": grade["severity_confusion"],
+            # WP-3.5-A: MTTR is honestly null because the twin harness has no
+            # remediation/closure event -- no triage-API status transition is
+            # replayed and incidents never close in the simulation. The
+            # roadmap's Phase 3.5 MTTR cell says \"triage-API status
+            # transitions on real replays\", which is a live-replay measure,
+            # not a twin measure; fabricating a remediation time here would
+            # lie about what the twin measures.
+            "mttr_null_reason": (
+                "no remediation/closure event exists in the twin harness "
+                "(no triage-API status transition is replayed; incidents "
+                "never close in the simulation) -- MTTR requires a "
+                "live-replay or design-partner measure per the roadmap's "
+                "own Phase 3.5 cell; an honest null, never a fabricated 0"),
         },
         "finding": (
             f"FPR={round(fpr, 4) if fpr is not None else 'null'}: "
@@ -970,7 +1346,12 @@ def main(argv: list[str] | None = None) -> int:
     # print a human summary line for the gate
     summary = (f"[OK] twin report (seed={args.seed}): TPR={m['tpr']} FPR={m['fpr']} "
                f"chain_fidelity={m['chain_fidelity']} "
-               f"evidence={m['evidence_completeness']} basis={report['report']['basis']}")
+               f"evidence={m['evidence_completeness']} "
+               f"fcr={m['false_correlation_rate']} "
+               f"arr={m['alert_reduction_ratio']} "
+               f"mtti={m['mtti']} mttr={m['mttr']} "
+               f"recon_ms={m['incident_reconstruction_time_ms']} "
+               f"basis={report['report']['basis']}")
     db = report.get("delta_vs_baseline")
     if db is not None:
         parts = []

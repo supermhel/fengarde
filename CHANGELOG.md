@@ -7,6 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (2026-09-03, Phase 3.5 — WP-3.5-A operational outcome metrics)
+
+Phase 3.5 (roadmap "weeks 14–16" — operational outcome metrics) ships as one
+package, `WP-3.5-A`, on top of Phase 3 (PR #89 merged `c0d7c2e`). Distribution:
+`eval/twin/report.py` measures the Phase 3.5 metric set against the REAL WS-8
+artifacts; `eval/twin/test_phase3_5.py` (mutation-sound, wired into
+`run_all_tests.sh`) is the acceptance test. All numbers harness-measured
+(Phase 3.5 discipline); `eval/twin/baseline.json` (WP-1-G) stays frozen —
+`delta_vs_baseline` reports `n/a` for the previously-null keys (the honest
+encoding of "null before, real now").
+
+- **False correlation rate** — fraction of oracle-DECLARED forbidden
+  relationships (`allowed: false` in `eval/twin/oracle.yaml`) that a real v2
+  graph edge joined, computed from the same real edges chain_fidelity grades,
+  with `forbidden_denominator` + per-pair breakdown in context. Seed 7:
+  **2/2 = 1.0** — the honest signal that the entity-presence join cannot
+  discriminate direction (the actor+ip pair sits on both sides of every step
+  cut). Reported raw, never hidden.
+- **Alert reduction ratio** — `1 − (incidents/alerts)` over the same real
+  window: 7 raw WS-4 alerts → 2 WS-8 incidents = **0.7143** (71% of raw alert
+  volume absorbed by correlation).
+- **Incident reconstruction time** — builds the REAL WS-3 evidence package
+  (`services/ws3-indexer/evidence_package.py`) from the chain's real
+  incident/alerts/events/graph, verifies the hash chain, and reports the real
+  wall-clock assembly latency (median of 3 samples, ~0.8–1.0 ms; 14 blocks,
+  `verified: true`, deterministic `package_id`). Wall-clock is informational
+  — the same carve-out `date` enjoys — so it is excluded from the report's
+  byte-determinism assertion, with `package_id`/`block_count` asserted
+  deterministically instead.
+- **Analyst investigation time (MTTI)** — a scripted walk over the REAL
+  incident graph: open incident + member alerts + distinct entities + causal
+  edges + assemble = **12 steps** for seed 7, × the documented 30 s/step
+  analyst-latency model = **360.0 s**. Step counts are the measured quantity;
+  the seconds conversion is the documented model until a design partner
+  supplies wall-clock.
+- **Severity calibration confusion matrix** — oracle-expected level vs real
+  fired-alert level per alert: seed 7 = **6 correct / 0 over / 0 under /
+  1 unexpected** (a fired rule the oracle does not declare at its step,
+  surfaced not folded).
+- **MTTR stays an honest null** with a documented `context.mttr_null_reason`:
+  the twin harness has no remediation/closure event (no triage-API status
+  transition is replayed; incidents never close in the sim), and the
+  roadmap's own MTTR cell requires "triage-API status transitions on real
+  replays" — a live-replay measure a twin cannot fabricate.
+- `test_chain_fidelity.py`'s WP-3-C grade is untouched except its (d)
+  determinism check now carves out the informational wall-clock
+  reconstruction key (same carve-out `date` enjoys), documented in the test's
+  docstring.
+- Route/branch: `feat/phase-3.5` → PR #90. Cross-repo note in
+  `fengarde-sec/docs/STATUS.md` §0; roadmap Part 4 Phase 3.5 strike + the
+  execution-breakdown's Phase 3.5 promotion-and-close pass.
+
 ### Added (2026-09-02, Phase 3 — WP-3-A/B/C/D/E shipped)
 
 Owner-ratified Phase 3 wave (roadmap §5.2 sign-off granted for the
