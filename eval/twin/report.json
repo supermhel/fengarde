@@ -2,7 +2,7 @@
   "report": {
     "schema_version": "1",
     "run_type": "twin",
-    "date": "2026-08-28T22:45:10+00:00",
+    "date": "2026-09-03T21:58:31+00:00",
     "seed": 7,
     "basis": "harness-measured"
   },
@@ -10,13 +10,13 @@
     "tpr": 1.0,
     "fpr": 0.0,
     "mttd_seconds": 60.0,
-    "mtti": null,
+    "mtti": 360.0,
     "mttr": null,
-    "chain_fidelity": null,
+    "chain_fidelity": 0.6,
     "evidence_completeness": 0.9375,
-    "false_correlation_rate": null,
-    "alert_reduction_ratio": null,
-    "incident_reconstruction_time_ms": null,
+    "false_correlation_rate": 1.0,
+    "alert_reduction_ratio": 0.7143,
+    "incident_reconstruction_time_ms": 0.7687,
     "severity_calibration_error": 0.0,
     "peak_alert_score": 75,
     "severity_in_band": true,
@@ -52,6 +52,12 @@
       "unrelated-writes": 0,
       "benign-n8n-edits": 0
     },
+    "negative_explained_low": {
+      "approved-maintenance-window": 1,
+      "authorized-operator": 0,
+      "unrelated-writes": 0,
+      "benign-n8n-edits": 0
+    },
     "oracle_expected_sequence": [
       "external_content",
       "n8n_execution",
@@ -62,10 +68,246 @@
       "process_anomaly"
     ],
     "alert_count": 7,
-    "incident_promotions": 0
+    "incident_promotions": 2,
+    "incident_count": 2,
+    "incident_membership_ok": true,
+    "full_coverage_incident_ids": [
+      "twin-chain:ip:10.20.0.50:20271"
+    ],
+    "cross_step_rule_co_location": {
+      "92a3b4c5-d627-4f05-ad6f-7a8b9c0d1e24": true,
+      "8192a3b4-c516-4ef4-9c5f-6a7b8c9d0e13": true,
+      "3c4d5e6f-7081-48a9-9b1c-3d4e5f6a7b8d": true,
+      "6f708192-a3b4-4cd5-be3f-5a6b7c8d9e0f": true,
+      "5e6f7081-92a3-4bc4-ad2e-4f5a6b7c8d9e": "not-fired",
+      "2b3c4d5e-6f70-4899-8a1b-2c3d4e5f6a7c": "not-fired",
+      "1a2b3c4d-5e6f-4788-9a0b-1c2d3e4f5a6b": true,
+      "9c1d2e3f-4a5b-4c6d-8e7f-1a2b3c4d5e6f": true
+    },
+    "incident_summary": [
+      {
+        "incident_id": "twin-chain:actor:ot-engineer:20271",
+        "entity": "actor:ot-engineer",
+        "tactics": [
+          "AML.TA0004",
+          "TA0003",
+          "TA0004",
+          "TA0006",
+          "TA0011"
+        ],
+        "member_count": 5,
+        "covers_full_chain": false
+      },
+      {
+        "incident_id": "twin-chain:ip:10.20.0.50:20271",
+        "entity": "ip:10.20.0.50",
+        "tactics": [
+          "AML.TA0004",
+          "TA0003",
+          "TA0004",
+          "TA0006",
+          "TA0011",
+          "TA0106"
+        ],
+        "member_count": 7,
+        "covers_full_chain": true
+      }
+    ],
+    "chain_fidelity_details": {
+      "correct_allowed_joins": 5,
+      "forbidden_joins": 2,
+      "forbidden_denominator": 2,
+      "denominator": 5,
+      "per_allowed_pair": [
+        {
+          "from": "external_content",
+          "to": "n8n_execution",
+          "graded": false,
+          "reason": "step-not-entity-bearing"
+        },
+        {
+          "from": "n8n_execution",
+          "to": "agent_mcp_tool_call",
+          "graded": true,
+          "joined": true
+        },
+        {
+          "from": "external_content",
+          "to": "agent_mcp_tool_call",
+          "graded": false,
+          "reason": "step-not-entity-bearing"
+        },
+        {
+          "from": "agent_mcp_tool_call",
+          "to": "credential_use",
+          "graded": true,
+          "joined": true
+        },
+        {
+          "from": "credential_use",
+          "to": "modbus_write",
+          "graded": true,
+          "joined": true
+        },
+        {
+          "from": "modbus_write",
+          "to": "plc_state_change",
+          "graded": true,
+          "joined": true
+        },
+        {
+          "from": "plc_state_change",
+          "to": "process_anomaly",
+          "graded": true,
+          "joined": true
+        }
+      ],
+      "per_forbidden_pair": [
+        {
+          "from": "process_anomaly",
+          "to": "modbus_write",
+          "graded": true,
+          "joined": true
+        },
+        {
+          "from": "credential_use",
+          "to": "agent_mcp_tool_call",
+          "graded": true,
+          "joined": true
+        }
+      ]
+    },
+    "chain_graph_edges": [
+      {
+        "from": "e8e006421e43e566726c4131ed5f52b3f5413a11ecd4490f8c55ce5dc0790d82",
+        "to": "0af4742cea7204f2ead4743db13177a1158ffd27f1683472978a7c2924a07798",
+        "kind": "invoked",
+        "event_id": "twin:agent_mcp_tool_call",
+        "ts_ms": 1751500120000
+      }
+    ],
+    "false_correlation_details": {
+      "rate": 1.0,
+      "forbidden_joins": 2,
+      "forbidden_denominator": 2,
+      "per_forbidden_pair": [
+        {
+          "from": "process_anomaly",
+          "to": "modbus_write",
+          "graded": true,
+          "joined": true
+        },
+        {
+          "from": "credential_use",
+          "to": "agent_mcp_tool_call",
+          "graded": true,
+          "joined": true
+        }
+      ]
+    },
+    "alert_reduction": {
+      "ratio": 0.7143,
+      "raw_alert_count": 7,
+      "incident_count": 2
+    },
+    "incident_reconstruction": {
+      "basis": "harness-measured (wall-clock, informational like date)",
+      "package_id": "twin-recon:twin-chain:ip:10.20.0.50:20271:ea4e5a474f34e38095d94b806ab34892a1b0999a7c1cdc81d984a9acb15f4a0b",
+      "incident_id": "twin-chain:ip:10.20.0.50:20271",
+      "block_count": 14,
+      "verified": true,
+      "verification_failures": [],
+      "assembly_median_ms": 0.7687,
+      "assembly_samples_ms": [
+        0.8361,
+        0.7687,
+        0.703
+      ],
+      "provenance_unresolved_event_ids": 0
+    },
+    "analyst_investigation": {
+      "basis": "harness-measured (step count real; seconds = documented analyst latency model until a design partner supplies wall-clock)",
+      "incident_id": "twin-chain:ip:10.20.0.50:20271",
+      "member_alert_count": 7,
+      "entity_count": 2,
+      "edge_count": 1,
+      "investigation_steps": 12,
+      "api_round_trips": 10,
+      "analyst_step_seconds_model": 30.0,
+      "mtti_seconds": 360.0
+    },
+    "severity_confusion": {
+      "basis": "harness-measured",
+      "correct": 6,
+      "over_alerting": 0,
+      "under_alerting": 0,
+      "unexpected": 1,
+      "unrecognized_level": 0,
+      "total_alerts": 7,
+      "matrix": {
+        "medium": {
+          "correct": 3
+        },
+        "high": {
+          "correct": 3
+        }
+      },
+      "per_alert": [
+        {
+          "step": "n8n_execution",
+          "rule_id": "8192a3b4-c516-4ef4-9c5f-6a7b8c9d0e13",
+          "expected_level": "medium",
+          "actual_level": "medium",
+          "verdict": "correct"
+        },
+        {
+          "step": "n8n_execution",
+          "rule_id": "92a3b4c5-d627-4f05-ad6f-7a8b9c0d1e24",
+          "expected_level": "medium",
+          "actual_level": "medium",
+          "verdict": "correct"
+        },
+        {
+          "step": "agent_mcp_tool_call",
+          "rule_id": "6f708192-a3b4-4cd5-be3f-5a6b7c8d9e0f",
+          "expected_level": "high",
+          "actual_level": "high",
+          "verdict": "correct"
+        },
+        {
+          "step": "agent_mcp_tool_call",
+          "rule_id": "3c4d5e6f-7081-48a9-9b1c-3d4e5f6a7b8d",
+          "expected_level": "medium",
+          "actual_level": "medium",
+          "verdict": "correct"
+        },
+        {
+          "step": "credential_use",
+          "rule_id": "1a2b3c4d-5e6f-4788-9a0b-1c2d3e4f5a6b",
+          "expected_level": "high",
+          "actual_level": "high",
+          "verdict": "correct"
+        },
+        {
+          "step": "modbus_write",
+          "rule_id": "9c1d2e3f-4a5b-4c6d-8e7f-1a2b3c4d5e6f",
+          "expected_level": "high",
+          "actual_level": "high",
+          "verdict": "correct"
+        },
+        {
+          "step": "process_anomaly",
+          "rule_id": "9c1d2e3f-4a5b-4c6d-8e7f-1a2b3c4d5e6f",
+          "expected_level": null,
+          "actual_level": "high",
+          "verdict": "unexpected"
+        }
+      ]
+    },
+    "mttr_null_reason": "no remediation/closure event exists in the twin harness (no triage-API status transition is replayed; incidents never close in the simulation) -- MTTR requires a live-replay or design-partner measure per the roadmap's own Phase 3.5 cell; an honest null, never a fabricated 0"
   },
-  "finding": "FPR=0.0: 0/4 negative control(s) produced an INCIDENT-level (medium+) alert: none. A low-severity ticketed alert doesn't count as an incident -- see negative_controls.is_incident(). See eval/twin/negative_controls.py for the per-scenario cause.",
-  "elapsed_seconds": 0.596,
+  "finding": "FPR=0.0: 0/4 negative control(s) produced an INCIDENT-level (medium+) alert: none. A low-severity ticketed alert doesn't count as an incident -- see negative_controls.is_incident(). See eval/twin/negative_controls.py for the per-scenario cause. chain_fidelity=0.6 measured against the REAL WS-8 v2 incident graph: 5 correct allowed join(s), 2 forbidden-pair join(s), denominator 5; incident_membership_ok=True with 2 real incident(s) promoted (actor:ot-engineer = 5 alerts, ip:10.20.0.50 = 7 alerts).",
+  "elapsed_seconds": 0.809,
   "delta_vs_baseline": {
     "baseline": "eval/twin/baseline.json",
     "frozen_at": "2026-08-28T22:22:00+00:00",
@@ -89,7 +331,7 @@
       },
       "mtti": {
         "baseline": null,
-        "current": null,
+        "current": 360.0,
         "delta": "n/a"
       },
       "mttr": {
@@ -99,7 +341,7 @@
       },
       "chain_fidelity": {
         "baseline": null,
-        "current": null,
+        "current": 0.6,
         "delta": "n/a"
       },
       "evidence_completeness": {
@@ -109,17 +351,17 @@
       },
       "false_correlation_rate": {
         "baseline": null,
-        "current": null,
+        "current": 1.0,
         "delta": "n/a"
       },
       "alert_reduction_ratio": {
         "baseline": null,
-        "current": null,
+        "current": 0.7143,
         "delta": "n/a"
       },
       "incident_reconstruction_time_ms": {
         "baseline": null,
-        "current": null,
+        "current": 0.7687,
         "delta": "n/a"
       },
       "severity_calibration_error": {
