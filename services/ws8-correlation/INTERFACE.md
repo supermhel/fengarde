@@ -2,7 +2,9 @@
 
 **Status (2026-08-19): zero-infra proven, one live smoke test (2026-08-18) +
 pivot-correlation (device: track) added 2026-08-19, zero-infra proven.
-2026-08-28: incident.graph (ADR-009/WP-2-C) added, zero-infra proven.**
+2026-08-28: incident.graph (ADR-009/WP-2-C) added, zero-infra proven.
+2026-09-02 (WP-3-A): incident.graph upgraded to VERSION 2 — the typed causal
+DAG — zero-infra proven; v2 SUPERSEDES v1 on the topic.**
 Implements `docs/superpowers/specs/2026-08-18-ws8-correlation-build-plan.md`
 and the approved design in `fengarde-sec`'s
 `docs/2026-08-11-cross-alert-correlation-design.md` (private repo — read
@@ -54,74 +56,130 @@ MITRE tactics), not just repeated single-tactic noise.
   `incidents` payload above is unchanged. See "Incident graph" below for the
   full contract.
 
-## Incident graph (ADR-009, WP-2-C, 2026-08-28)
+## Incident graph (ADR-009, WP-2-C; VERSION 2 — typed causal DAG, WP-3-A 2026-09-02)
 
-Every incident promotion/update ALSO produces an `incident.graph` payload:
+Every incident promotion/update ALSO produces an `incident.graph` payload.
+**Version 2 SUPERSEDES version 1 on the `incident.graph` topic** (owner-
+ratified 2026-09-02): the `version` field (integer 2) distinguishes the
+shape, and the `incidents` topic payload is byte-for-byte untouched. The v1
+builder `correlator._build_incident_graph` remains in the codebase
+byte-for-byte (same name, same output — pinned by a source-hash test in
+`test_incident_graph_v2.py`), so a v1 consumer/byte-compat test keeps
+passing, but the ACCESSOR `incident_graph()` — the produce source for the
+bus topic — returns the v2 payload.
 
-`{version: 1, incident_id, tenant_id, nodes: [type:value…], edges: [{from, to,
-kind, event_id, ts_ms}], tactic_sources}`
+```
+{version: 2, incident_id, tenant_id,
+ nodes: [{entity_id, entity_type, entity_value, label}, …],
+ edges: [{from, to, kind, event_id, ts_ms}, …],
+ tactic_sources}
+```
 
-- **Nodes** are the incident's member entities — the actor/user, ip, and
-  device values its member alerts reference — identified by the SAME track
-  identity the incident already captures, `{entity_type}:{entity_value}`
-  (e.g. `actor:alice`, `ip:10.0.0.5`, `device:AA:BB:CC:DD:EE:FF`). Values
-  pass through the same 448-byte `_bounded_entity_value` doc-id cap as the
-  incident's own `entity_value`. The WP-2-B canonical sha256 `entity_id`
-  (WS-9 resolver's computation) is NOT recomputed here — WS-8 emits its own
-  proven track identity, and Phase 3's `version: 2` typed-DAG upgrade is the
-  seam that carries the canonical form.
-- **Edges** are ONLY relationships a SINGLE alert's own fields provide —
-  never inferred across alerts. Version-1 kinds (field-pair semantics, in
-  the ADR-009 `kind` field):
+- **Nodes** are the incident's member entities as OBJECTS:
+  - `entity_id` — the ADR-009 canonical identity: sha256 hexdigest of the
+    pipe-joined `tenant|entity_type|canonical_value`, computed by the
+    module-level `canonical_entity_id(tenant, entity_type, entity_value)`,
+    which mirrors `services/ws9-resolver/entity_id.py` EXACTLY without
+    importing it (WS-8's container ships only `shared/` + `contracts/`;
+    `shared.ip_utils` IS available and is the shared canonicalization
+    source). Canonical value: `ip` → `valid_ip` then lowercased (one digest
+    across IPv6 case/compression spellings), `actor` → `strip().casefold()`
+    (`Alice`/`ALICE`/`alice` are ONE identity), `device` → `strip().lower()`
+    (macs/hostnames). An un-normalizable value returns None and the caller
+    SKIPS that node — degrade, never fabricate, never str()-coerce (the
+    WS-9 skip discipline). Identifier agreement with ws9 is pinned by
+    `test_incident_graph_v2.py::test_identifier_agreement_with_ws9`.
+  - `entity_type` — one of `actor`, `ip`, `device`.
+  - `entity_value` — the incident's OWN track spelling (what WS-8 stored,
+    e.g. `Alice` as captured; already 448-byte-bounded at store time).
+  - `label` — the v1-style track ref, `{entity_type}:{entity_value}`
+    (e.g. `actor:Alice`).
+- **Edges** reference nodes by their `entity_id` strings as `from`/`to`,
+  and carry EXACTLY ONE `kind`. Kinds are ONLY relationships a SINGLE
+  alert's own fields provide — never inferred across alerts (the v1
+  no-transitive rule is inherited verbatim: an edge exists iff ONE member
+  alert carries both endpoints in its own fields; two alerts that merely
+  share an entity never yield an edge between their other entities;
+  same-type pairs never emit). The v1 field-pair kinds are retained for the
+  same pairs and REFLECTED-REPLACED by the typed kinds when the evidencing
+  alert carries the documented semantic signal:
 
-  | kind          | from → to      | evidenced by one alert carrying                          |
-  |---------------|----------------|----------------------------------------------------------|
-  | `used_ip`     | actor → ip     | `actor.user.name` AND `src_endpoint.ip`                  |
-  | `used_device` | actor → device | `actor.user.name` AND `src_endpoint.mac` (or hostname)   |
-  | `seen_at_ip`  | device → ip    | `src_endpoint.mac`/`hostname` AND `src_endpoint.ip`      |
+  | kind               | from → to      | v1 pair semantics (kept)            |
+  |--------------------|----------------|-------------------------------------|
+  | `used_ip`          | actor → ip     | actor.user.name AND src_endpoint.ip |
+  | `used_device`      | actor → device | actor.user.name AND src_endpoint.mac (or hostname) |
+  | `seen_at_ip`       | device → ip    | src_endpoint.mac/hostname AND src_endpoint.ip |
 
-  Direction is fixed by the pair semantics, never by which track promoted —
-  the same pair renders the same directed edge in every incident. One alert
-  carrying actor + ip + mac yields all three edges. (An allowlisted shared-
-  infra ip/hostname still appears as a node/edge endpoint from the recording
-  alert's own evidence — a fact, never a cross-alert merge; it still never
-  opens its own track.)
-- **No transitive inference** (WP-2-C encodes, on the graph, the exact
-  refusal the track model already makes): an edge `(u,v,k)` exists iff at
-  least one MEMBER alert of the incident's track carries BOTH `u` and `v` in
-  its own fields. Two alerts that merely share an entity (two actors on one
-  NAT'd source IP; two IPs on one MAC) never produce an edge between their
-  other entities — the shared node appears, the inferred relationship does
-  not. Same-type pairs (actor-actor, ip-ip, device-device) have no kind and
-  are never emitted.
-- **Provenance on every edge**: `event_id` = the evidencing alert's first
-  `event_ids` element when present, else the alert-level member id
-  (`alert_id`, or the deterministic synthetic id for id-less alerts);
-  `ts_ms` = the alert's sanitized `time` (same `_valid_window_time` basis as
-  `first_seen`/`last_seen`). When several members evidence the same pair,
-  the edge cites the EARLIEST `(ts_ms, event_id)`.
-- **`tactic_sources`**: tactic → member alert ids (live members) carrying
-  it, mirroring the incident's own `member_alert_ids` attribution; a tactic
-  whose only member was member-cap-evicted still appears (exactly as it
-  does in the incident's `tactics`) with an empty source list.
-- **Deterministic + idempotent under redelivery**: the payload is REBUILT
-  from the track's live members on every promotion call, so the same
-  incident promoted twice emits the SAME `incident_id`, nodes, edges, and
-  provenance (even across a fresh process — no per-instance state).
-- **Bounded** (mirrors `_sides`/`_last_incident`'s sweep discipline): edges
-  ≤ 3 × live members (three possible pairs per alert), nodes = the anchor +
-  distinct co-occurring values across live members; the in-memory cache is
-  exactly one entry per incident_id, written and pruned TOGETHER with
-  `_last_incident` by the same `_sweep_dead_tracks` sweep — never an
-  orphaned or growing side table.
+  **Typed kinds (WP-3-A)** — the STORY: an analyst wants the graph to name
+  WHAT the relationship is (caused, invoked, authenticated as, wrote to,
+  changed), not just that two entities co-occurred. Derivation is a PURE
+  FUNCTION of the evidencing alert's OWN fields — the minimal, bounded
+  signal `(mitre.tactic, mitre.technique, unmapped.ot.anomaly_type)` is
+  captured on the member entry at STORE time (`entry["typed_signal"]`, the
+  same additive pattern as `cooccur`/`event_id`), so it is redelivery-
+  stable, single-alert-only, and never a transitive inference. When several
+  members evidence one pair with different kinds, the highest-ranked kind
+  wins (typed kinds outrank the field-pair fallback; the documented order
+  `caused_by, invoked, authenticated_as, wrote_to, changed` breaks ties
+  among typed kinds), then the EARLIEST `(ts_ms, event_id)` provenance —
+  matching v1's earliest-wins dedup. If no member carries a signal, the v1
+  field-pair kind is kept — never fabricate a causal label.
+
+  | typed kind         | from → to      | derived when the alert's OWN fields carry            | shipped-rule evidence (mitre/unmapped shapes) |
+  |--------------------|----------------|-----------------------------------------------------|-----------------------------------------------|
+  | `authenticated_as` | actor → ip     | `mitre.tactic == TA0001` (Initial Access) OR `mitre.technique` startswith `T1078` (Valid Accounts): the actor acted under an authenticated identity at/from this ip | `cloud_root_console_login` (TA0001/T1078.004), `common_impossible_travel` (TA0001/T1078), `common_after_hours_admin` (TA0004/T1078), `n8n_workflow_modified_after_hours` (TA0004/T1078) |
+  | `invoked`          | actor → ip     | `mitre.tactic == TA0011` (Command & Control) OR `mitre.technique` startswith `T1071` (Application Layer Protocol): the actor initiated/commanded the exchange | `agent_egress_non_allowlisted_domain` (TA0011/T1071), `common_beaconing` (TA0011/T1071), `common_dns_exfil` (TA0011/T1071.004) |
+  | `caused_by`        | actor → device | `unmapped.ot.anomaly_type == "unauthorized_write"` AND `mitre.technique` startswith `T0855`: the device-side unauthorized state this alert evidences was CAUSED by the actor's command message | **No shipped alert today** — `make_alert` forwards a fixed field list and does not copy `unmapped`; the modbus rules read the field off the raw event. The derivation ships (one-line `make_alert` passthrough wires it) and `test_incident_graph_v2.py` proves it with a concrete fixture. Honest gap, not a bug. |
+  | `wrote_to`         | actor → device | `mitre.tactic == TA0106` AND `mitre.technique == T0836` (ICS Modify Parameter): the actor wrote a value/parameter to the device | `ot_write_outside_maintenance` (TA0106/T0836), `ot_config_change` (TA0106/T0836) — both carry `actor.user.name` in their fields |
+  | `changed`          | actor → device | `mitre.tactic == TA0003` (Persistence): the actor changed account/identity state on the device | `common_priv_grant` (TA0003/T1098), `common_rapid_account_lifecycle` (TA0003/T1136), `n8n_new_webhook_exposed` (TA0003/T1133) |
+  | `changed`          | device → ip    | `mitre.tactic == TA0108` (attack-ics Initial Access): the device's presence at this ip changed (new/transient device) | `ot_new_device_on_segment` (TA0108/T0864), `ot_new_engineering_connection` (TA0108/T0864) |
+
+  Honesty notes: `caused_by` is the one typed kind NO shipped rule's alert
+  evidences today (see the table — the `unmapped` passthrough does not
+  exist in `make_alert`); every other typed kind is evidenced by at least
+  one shipped rule's mitre block, subject to the graph's standing rule that
+  an edge only exists when ONE alert carries both endpoints in its own
+  fields (e.g. an OT write whose alert has no `src_endpoint.mac`/hostname
+  still forms no device edge — the signal is real but the pair isn't).
+  An alert with no relevant signal (e.g. `agent_tool_call_burst`, which has
+  no mitre block) keeps the v1 field-pair kind.
+
+- **Direction** stays fixed by the pair semantics, never by which track
+  promoted — the same pair renders the same directed edge in every
+  incident. (An allowlisted shared-infra ip/hostname still appears as a
+  node/edge endpoint from the recording alert's own evidence — a fact,
+  never a cross-alert merge; it still never opens its own track.)
+- **Provenance on every edge** (unchanged from v1): `event_id` = the
+  evidencing alert's first `event_ids` element when present, else the
+  alert-level member id; `ts_ms` = the alert's sanitized `time` (same
+  `_valid_window_time` basis); the wall-clock-fallback digest path for
+  time-less alerts is inherited verbatim.
+- **`tactic_sources`** — identical to v1: tactic → live member alert ids
+  carrying it, mirroring the incident's `member_alert_ids` attribution.
+- **Deterministic + idempotent under redelivery**: rebuilt from the track's
+  live members on every promotion — the same incident promoted twice, even
+  from a FRESH process, emits the SAME v2 nodes/edges/provenance
+  (byte-identical, json-pinned by `test_incident_graph_v2.py`). Same
+  IPv6/actor/device canonicalization means spelling variants collapse to
+  ONE node digest.
+- **Bounded** (mirrors `_sides`/`_last_incident`'s sweep discipline,
+  unchanged from v1): edges ≤ 3 × live members (three possible pairs per
+  alert, one edge per pair), nodes = the anchor + distinct co-occurring
+  values across live members; the in-memory cache is exactly one entry per
+  incident_id, written and pruned TOGETHER with `_last_incident` by the
+  same `_sweep_dead_tracks` sweep — the v2 cached payload dies with its
+  incident in the same sweep, never an orphaned side table.
 
 ### Accessor
 
 `correlator.incident_graph(incident_id) -> dict | None` returns the last
 emitted graph payload for a live incident (a deep copy; None for unpromoted
-or already-swept incidents). The bus wiring (main.py) pairs each incident it
-publishes with this payload on the `incident.graph` topic; the `incidents`
-emission itself is byte-for-byte unchanged.
+or already-swept incidents). Since WP-3-A the returned/cached payload is
+VERSION 2 (the typed DAG above); v1's `_build_incident_graph` stays
+callable byte-for-byte for the byte-compat test only. The bus wiring
+(main.py) pairs each incident it publishes with this payload on the
+`incident.graph` topic (unchanged — it emits whatever the accessor
+returns); the `incidents` emission itself is byte-for-byte unchanged.
 
 ## Correlation model
 
@@ -235,15 +293,30 @@ emission itself is byte-for-byte unchanged.
   the promotion trigger, the no-merge guarantee, and the device pivot-link
   (same "a negative assertion that cannot fail is not a test" bar
   `eval/attack/test_fire_check.py` established).
-- `python test_incident_graph.py` — WP-2-C (2026-08-28): single-alert
-  co-occurrence → provenance-bearing edges (all three kinds), the
-  no-transitive-inference proof (shared-ip leg AND device-pivot leg: two
+- `python test_incident_graph.py` — WP-2-C (2026-08-28), accessor shape
+  updated to VERSION 2 (WP-3-A): single-alert co-occurrence →
+  provenance-bearing edges (all three pair kinds, with typed-kind
+  replacement — e.g. `authenticated_as` on TA0001/Valid-Accounts evidence),
+  the no-transitive-inference proof (shared-ip leg AND device-pivot leg: two
   alerts sharing an entity never yield an edge between their other
   entities), redelivery emits an IDENTICAL graph (same id/nodes/edges/
   provenance, also deterministically re-derived by a fresh instance),
   member-set boundedness (edges ≤ 3 × live members; count stabilizes once
   member_cap binds) + the cached graph is pruned WITH its incident by the
   dead-track sweep, and the accessor surface (None for unknown/unpromoted).
+- `python test_incident_graph_v2.py` — WP-3-A (2026-09-02) typed-DAG suite:
+  v2 emitted shape pinned exactly (version 2, node objects, entity_id
+  edges, exactly-one-kind) + the incidents payload byte-for-byte untouched;
+  redelivery byte-identity (same instance AND fresh instance, json-pinned);
+  IPv6 spelling variants collapse to ONE canonical node digest; per-kind
+  typed-derivation fixtures (authenticated_as / invoked / wrote_to /
+  changed — both rows / caused_by) each with its honest no-signal fallback
+  to the v1 field-pair kind; the no-transitive proof carried into v2;
+  membership-bounded + sweep-pruned-with-incident (v1 recipe); identifier
+  agreement with ws9's `entity_id.py` (imported in the test process: a
+  lowercase ip, `2001:DB8::1`, `Alice` vs `alice`, an uppercase device mac,
+  un-normalizable → None on both sides) including the v2 node digest for an
+  IPv6 address; and the v1 BUILDER byte-for-byte source-hash pin.
 
 ## Deliberately not built (this pass)
 

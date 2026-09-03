@@ -37,6 +37,9 @@ echo
 echo "== R4-#123: every test_*.py must be wired (or a documented live-only orphan) =="; LAST_HEADER="== R4-#123: every test_*.py must be wired (or a documented live-only orphan) =="
 $PY tools/check_test_wiring.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
+echo "== WP-3-E: ot-points business_context schema (additive optional block, yaml.safe_load-validated) =="; LAST_HEADER="== WP-3-E: ot-points business_context schema (additive optional block, yaml.safe_load-validated) =="
+$PY tools/test_ot_points_business_context.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
 echo "== Sigma import: regex->glob translation + rule sanitization =="; LAST_HEADER="== Sigma import: regex->glob translation + rule sanitization =="
 $PY tools/test_fix_m18_sigma_glob.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 $PY tools/test_import_sigma_rules.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
@@ -53,6 +56,9 @@ $PY services/ws8-correlation/test_correlator_sensitivity.py || { fail=1; FAILED=
 echo
 echo "== WP-2-C: incident.graph provenance edges (no transitive inference) =="; LAST_HEADER="== WP-2-C: incident.graph provenance edges (no transitive inference) =="
 $PY services/ws8-correlation/test_incident_graph.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
+echo "== WP-3-A: incident.graph v2 typed causal DAG (canonical entity_id nodes, typed kinds, v1 builder byte-for-byte) =="; LAST_HEADER="== WP-3-A: incident.graph v2 typed causal DAG (canonical entity_id nodes, typed kinds, v1 builder byte-for-byte) =="
+$PY services/ws8-correlation/test_incident_graph_v2.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
 echo "== ws8 NEW-hunt regression: flat prometheus skip keys + skew-future/NaN time rejected + fully-anonymous deterministic member id + oldest-by-time member-cap eviction =="; LAST_HEADER="== ws8 NEW-hunt regression: flat prometheus skip keys + skew-future/NaN time rejected + fully-anonymous deterministic member id + oldest-by-time member-cap eviction =="
 $PY services/ws8-correlation/test_correlator_new_hunt.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
@@ -78,6 +84,9 @@ $PY services/ws3-indexer/test_storage_cas.py || { fail=1; FAILED="${FAILED} ${LA
 echo
 echo "== WP-2-I: triage_api.py make_handler decomposition (per-route testability) =="; LAST_HEADER="== WP-2-I: triage_api.py make_handler decomposition (per-route testability) =="
 $PY services/ws3-indexer/test_route_decomposition.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
+echo "== WP-3-B: evidence package (hash-chained, tamper-evident, reporting.md seam) =="; LAST_HEADER="== WP-3-B: evidence package (hash-chained, tamper-evident, reporting.md seam) =="
+$PY services/ws3-indexer/test_evidence_package.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
 echo "== ws3 (P1.3): OpenSearch index transient-retry / permanent-surface =="; LAST_HEADER="== ws3 (P1.3): OpenSearch index transient-retry / permanent-surface =="
 $PY services/ws3-indexer/test_opensearch_retry.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
@@ -367,6 +376,9 @@ echo
 echo "== ws5 gap-hunt fixes (siem:null poison-pill + id-less event ids) =="; LAST_HEADER="== ws5 gap-hunt fixes (siem:null poison-pill + id-less event ids) =="
 $PY services/ws5-ai/test_fix_ws5_gap_hunt.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
+echo "== WP-3-D: ws5 bounded-LLM concurrency (pool overlap, admission bound, dedup under concurrency) =="; LAST_HEADER="== WP-3-D: ws5 bounded-LLM concurrency (pool overlap, admission bound, dedup under concurrency) =="
+$PY services/ws5-ai/test_concurrency.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
 echo "== ws1 syslog UDP listener (v0.2) =="; LAST_HEADER="== ws1 syslog UDP listener (v0.2) =="
 $PY services/ws1-collectors/test_syslog_udp.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
@@ -446,6 +458,9 @@ echo "== twin: full scorecard smoke run (report.py must complete without error o
 # PR #80 finding 10: write to a GITIGNORED last-run path, NOT the committed
 # eval/twin/report.json -- a gate run must not dirty a tracked artifact.
 $PY eval/twin/report.py --no-trend --out eval/twin/report.latest.json || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
+echo "== WP-3-C: twin chain-fidelity graded against the real v2 incident graph (determinism + mutation-soundness) =="; LAST_HEADER="== WP-3-C: twin chain-fidelity graded against the real v2 incident graph (determinism + mutation-soundness) =="
+$PY eval/twin/test_chain_fidelity.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 
 # == Phase 4 (2026-08-06) enhancement + fix regression tests ==
 echo

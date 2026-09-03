@@ -100,8 +100,11 @@ MAC store, not an actor/IP/session resolver).
   satisfy every assertion of `tools/check_lane_coverage.py`; the 0.1-A guard
   will correctly flag it until it does.
 - **Phase 3**: `incident.graph` is the schema Phase 3 upgrades to a typed DAG
-  via `version: 2`. No new contract is invented.
+  via `version: 2`. No new contract is invented. **Upgraded 2026-09-02 by
+  ADR-010 (owner-ratified, roadmap §5.2)** — see `docs/adr/010-incident-graph-v2-typed-causal-dag.md`.
 
 ## Status
 Accepted 2026-08-28 (owner Option-2 ratification). Implemented alongside
 WP-2-B/C/D (entity resolver, relationship edges, behavioral baselines).
+Topic A + the WS-9 service decision stand unchanged; Topic B's payload is
+superseded at `version: 2` by ADR-010 (2026-09-02).

@@ -132,6 +132,25 @@ Reports are indexed as `reports-YYYY.MM.DD` via the existing storage adapter
 (`f"{alert_id}:report"`) so re-generation is idempotent under retry — same
 discipline as the alert's own `alert_id` (Contract, T7).
 
+## Evidence packages feed this seam (WP-3-B, 2026-09-02)
+
+`services/ws3-indexer/evidence_package.py` builds an **immutable,
+hash-chained evidence package** per incident (Merkle-style: incident genesis
+block → per-alert blocks → per-event blocks → optional graph block, each
+committing to the prior chain via `prev_hash`; `package_id` deterministic per
+incident content, so redelivery/building twice yields the same id). Its
+`to_reporting_payload()` returns exactly the **request payload** schema above
+(keys `alert`, `triage`, `events`, `requested_at`), with `events` populated
+from the package's event blocks — this is the mechanism that turns the
+forward-looking, currently-empty `events` field into a real, provenance-linked
+payload. The package is the single provenance-linked source multiple views
+render from (analyst timeline, incident report, regulatory draft, customer
+communication, management summary, postmortem); only the *rendering* is
+plural, the hash-chained core stays one artifact. No existing WS-3 route calls
+it yet — delivered standalone; a later package wires a consumer. Tampering any
+block fails `verify_evidence_package()`. This note is additive; the frozen
+response schema above is unchanged.
+
 ## What this is not
 
 Not a bus topic — no `contracts/bus-topics.md` change. Not a new workstream —

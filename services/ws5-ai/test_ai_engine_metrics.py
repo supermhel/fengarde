@@ -71,27 +71,27 @@ def ai_request(ingest_id, tier="llm"):
 
 def run():
     worker = ws5.AiWorker()
-    check(worker.metrics() == {"by_engine": {}, "total": 0},
+    check(worker.metrics() == {"by_engine": {}, "total": 0, "in_flight": 0},
           "a fresh worker must report empty metrics, not fabricate a baseline")
 
     worker.llm = TaggedLLM("stub")
     worker.handle(ai_request("evt-1"))
     worker.handle(ai_request("evt-2"))
     m = worker.metrics()
-    check(m == {"by_engine": {"stub": 2}, "total": 2},
+    check(m == {"by_engine": {"stub": 2}, "total": 2, "in_flight": 0},
           f"2 genuine stub calls should show as such, got {m}")
 
     # Redelivery of an already-triaged event must NOT inflate the count --
     # it's a cache hit, not a new LLM call.
     worker.handle(ai_request("evt-1"))
     m = worker.metrics()
-    check(m == {"by_engine": {"stub": 2}, "total": 2},
+    check(m == {"by_engine": {"stub": 2}, "total": 2, "in_flight": 0},
           f"a cache-hit redelivery must not double-count, got {m}")
 
     # Classifier tier never touches the LLM at all -- must not count either.
     worker.handle(ai_request("evt-classifier-only", tier="classifier"))
     m = worker.metrics()
-    check(m == {"by_engine": {"stub": 2}, "total": 2},
+    check(m == {"by_engine": {"stub": 2}, "total": 2, "in_flight": 0},
           f"classifier-tier requests never call the LLM, must not count, got {m}")
 
     # A different engine tallies separately -- e.g. real Ollama alongside a
@@ -99,7 +99,7 @@ def run():
     worker.llm = TaggedLLM("ollama")
     worker.handle(ai_request("evt-3"))
     m = worker.metrics()
-    check(m == {"by_engine": {"stub": 2, "ollama": 1}, "total": 3},
+    check(m == {"by_engine": {"stub": 2, "ollama": 1}, "total": 3, "in_flight": 0},
           f"a second engine must tally under its own key, got {m}")
 
     # R2-#18: exercise main()'s REAL metrics_provider wiring, not a
@@ -124,7 +124,7 @@ def run():
 
     provider = captured["metrics_provider"]
     flat = provider()
-    check(flat == {"ai_llm_total": 3, "ai_llm_stub": 2, "ai_llm_ollama": 1},
+    check(flat == {"ai_llm_total": 3, "ai_llm_stub": 2, "ai_llm_ollama": 1, "ai_llm_in_flight": 0},
           f"main()'s real provider must emit the flat #16 shape, got {flat}")
     check("ai_triage" not in flat,
           "metrics must NOT be nested under 'ai_triage' -- main.py uses flat "
