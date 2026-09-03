@@ -60,6 +60,75 @@ encoding of "null before, real now").
   `fengarde-sec/docs/STATUS.md` §0; roadmap Part 4 Phase 3.5 strike + the
   execution-breakdown's Phase 3.5 promotion-and-close pass.
 
+### Added (2026-09-03, Phase 4 — WP-4-A adversarial system-level validation)
+
+The roadmap's Phase 4 ships as `eval/adversarial/`, built on Phase 3.5
+(`feat/phase-4` branch off the phase-3.5 head). The question it answers: does
+an adaptive attacker who mutates identity, timing, protocol, and telemetry —
+not just the prompt — still get caught AS ONE INCIDENT? Three layers, with
+Layer A deterministic+blocking (determinism is the license to block) and
+Layer C stochastic+NON-blocking (its output never enters the gate).
+
+- **`eval/adversarial/mutate.py` — the mutation engine.** Eight composable
+  axes (prompt / tool / identity / credential / timing / network / protocol /
+  telemetry), 36-entry deterministic catalogue (33 axis variants + 3 cross-
+  axis compositions incl. the roadmap's worked example). Same seed →
+  byte-identical variant set (proven in `--selfcheck`); pure operators (never
+  mutate the caller's payloads). Telemetry reuses `eval/twin/degradation.py`
+  verbatim — one implementation, two consumers.
+- **`eval/adversarial/layer_a.py` — the BLOCKING lane.** Every catalogue
+  variant is replayed through the REAL WS-2→WS-4→WS-8 path (new
+  `scenario.run_chain(payload_source=...)` seam) and graded on the roadmap's
+  three criteria: detection retained **and** chain fidelity retained **and**
+  false-correlation rate unchanged. A row that keeps the alert but breaks
+  the causal join is `causal_join_broken=True` and `pass=False` by
+  construction — the roadmap verify's "keeps the alert, breaks the join →
+  failure" is machine-enforced, never folded.
+- **Measured (seed 7, harness-measured): mutation_robustness = 0.6111**
+  (22/36 pass). Per axis: identity/timing 1.0, network 0.75, protocol/tool
+  0.667, credential/telemetry 0.5, composition 0.333, **prompt 0.4** — six of
+  ten content mutations (whitespace, Cyrillic homoglyphs, equivalent
+  phrasing, language switch, URL-encoding, base64 wrap) defeat the bounded
+  ASCII `_INJECTION_PATTERNS` regex. A real, measured coverage gap, reported
+  raw with per-row detail (the whole point of Phase 4). `causal_join_broken`
+  is live: `segment_ips` (and comp-3 `actor_split+segment_ips`) retains every
+  alert while chain_fidelity drops 0.6→0.2 and FCR 1.0→0.5 — graded FAILURE.
+- **`eval/adversarial/test_layer_a.py` — the acceptance test (wired).**
+  Matrix graded over the FULL catalogue (no silent skip); byte-determinism
+  across two full runs (the license to block); sensitivity both ways (an
+  evasion goes red, a survivor stays green); the causal-join-break-not-pass
+  rule; and the roadmap's "deliberately weakened rule shows a measurable
+  drop" probe (a never-matching copy of `agent_prompt_injection_indicator`
+  stops firing while the stock rule fires).
+- **`eval/adversarial/corpus_b.py` — Layer B curated corpus.** 8 external
+  adversarial cases replayed through the real path: all 7 hard positives
+  fired their expected rules (plain + delimited injection, destructive
+  command, credential scan, egress, unauthorized Modbus write), 1 homoglyph
+  evasion documented as an honest finding, 1 no-URL negative control stayed
+  silent; the WS-8 leg feeds all alerts into ONE real Correlator and asserts
+  the deliberate shared-attacker merge (c06+c07) happens while no incident
+  spans two corpus groups.
+- **`eval/adversarial/adversary_c.py` + `.github/workflows/nightly-adversary.yml`
+  — Layer C, nightly, NEVER blocking.** Composes cross-axis mutations through
+  the real local LLM (`llm_adapter`), grades each via Layer A's real grader,
+  records seed+producer+cases for reproducibility; deterministic `--dry-run`
+  stub when no Ollama. Stochastic output is kept out of the blocking gate by
+  construction — the workflow never fails on grades (a finding is a review
+  item, not a CI failure).
+- **Scorecard wiring** — `eval/twin/report.py`'s `mutation_robustness` (was
+  an honest null "Phase 4 wires mutation") now reads the deterministic,
+  gitignored `out/matrix.latest.json` with per-axis `context` + a documented
+  null-reason when the lane hasn't run. Also fixed the latent
+  `_incident_membership_grade` early-return that omitted
+  `cross_step_rule_co_location` — a mutation that killed all detection (the
+  exact interesting case) previously KeyError'd the whole grading path.
+- Gate: `run_all_tests.sh` stanzas (mutate selfcheck → Layer A matrix →
+  Layer B corpus → Layer A acceptance), ordered before the twin scorecard
+  smoke so `mutation_robustness` populates; `make adversarial` target;
+  `.gitignore` covers `eval/adversarial/out/` (same convention as
+  `report.latest.json`). Route: branch `feat/phase-4` (off the phase-3.5
+  head) → PR #91.
+
 ### Added (2026-09-02, Phase 3 — WP-3-A/B/C/D/E shipped)
 
 Owner-ratified Phase 3 wave (roadmap §5.2 sign-off granted for the

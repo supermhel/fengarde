@@ -4,7 +4,7 @@
 
 COMPOSE := docker compose -f infra/docker-compose.yml
 
-.PHONY: help preflight demo test e2e nis2-demo up down ha-up ha-down chaos test-live ha-verify attack-scorecard eval-detection mutation-test bench
+.PHONY: help preflight demo test adversarial e2e nis2-demo up down ha-up ha-down chaos test-live ha-verify attack-scorecard eval-detection mutation-test bench
 
 PYTHON ?= python3
 
@@ -52,6 +52,17 @@ test:
 # grading), writes eval/twin/report.json, appends one row to eval/trend.jsonl.
 twin:
 	@$(PYTHON) eval/twin/report.py
+
+# Phase 4 (WP-4-A): adversarial system-level validation lane, zero infra.
+# Deterministic + BLOCKING: mutation matrix via Layer A (real
+# WS-2->WS-4->WS-8), curated corpus via Layer B, mutation-robustness landing
+# in the twin scorecard. Layer C (adaptive LLM adversary) NEVER runs here --
+# it is the nightly workflow's alone (.github/workflows/nightly-adversary.yml).
+adversarial:
+	@$(PYTHON) eval/adversarial/mutate.py --selfcheck
+	@$(PYTHON) eval/adversarial/layer_a.py --seed 7
+	@$(PYTHON) eval/adversarial/corpus_b.py
+	@$(PYTHON) eval/adversarial/test_layer_a.py
 
 # v0.1 acceptance test — proves SSH brute-force -> real alert in the index,
 # idempotent under replay, with no Docker/Redis/OpenSearch.

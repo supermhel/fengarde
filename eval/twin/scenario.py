@@ -95,7 +95,7 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from random import Random
-from typing import Optional
+from typing import Callable, Optional
 
 # ---------------------------------------------------------------------------
 # Path wiring: repo layout is <root>/eval/twin/scenario.py, <root>/services
@@ -510,7 +510,8 @@ def _build_chain_payloads(seed: int):
 # ---------------------------------------------------------------------------
 # Public entry point
 # ---------------------------------------------------------------------------
-def run_chain(seed: int = 7, *, disable_parser: Optional[str] = None, strict: bool = True) -> ChainResult:
+def run_chain(seed: int = 7, *, disable_parser: Optional[str] = None, strict: bool = True,
+              payload_source: Optional[Callable[[int], tuple]] = None) -> ChainResult:
     """Emit + parse the full AI-to-OT chain and return the normalized OCSF
     timeline (see module docstring / ChainResult for the interface).
 
@@ -524,10 +525,22 @@ def run_chain(seed: int = 7, *, disable_parser: Optional[str] = None, strict: bo
     unhandled crash, not a controlled loud failure. Swapping in a silent-dropper
     exercises the exact "a registered real parser dropped the event" verdict
     the integrity check was built to catch.)
+
+    ``payload_source`` is the PHASE-4 mutation seam: a callable of the same
+    shape as _build_chain_payloads (returns the (payloads, sensor_readings,
+    notes, baseline) 4-tuple) whose payload list is used INSTEAD of the
+    stock seed-derived chain -- eval/adversarial/mutate.py feeds its mutated
+    payload lists through this hook, so the mutated RAW source records run
+    through the SAME real parse path this chain always uses (type_uid derived
+    by the real parser, dead-letter behavior identical). Determinism holds:
+    the mutation engine is itself seeded, so a mutated run is still a pure
+    function of (seed, mutation).
     """
     ws2 = _get_ws2()
 
-    payloads, sensor_readings, notes, _baseline = _build_chain_payloads(seed)
+    if payload_source is None:
+        payload_source = _build_chain_payloads
+    payloads, sensor_readings, notes, _baseline = payload_source(seed)
 
     events: list[ChainEvent] = []
     failures: list[str] = []

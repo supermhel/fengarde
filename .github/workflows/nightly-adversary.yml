@@ -1,0 +1,66 @@
+# Nightly adaptive-adversary evaluation (Phase 4, Layer C, WP-4-A).
+#
+# Layer C is the STOCHASTIC, NON-BLOCKING layer: a local-LLM adversary that
+# composes cross-axis mutations (identity/timing/protocol/telemetry/...) of
+# the AI-to-OT attack chain and grades each through the real pipeline.
+#
+# THE ONE CONSTRAINT THAT MATTERS (roadmap Phase 4, repeated in
+# eval/adversarial/adversary_c.py's docstring): Layer C NEVER blocks.
+# Stochastic output never enters the deterministic gate (run_all_tests.sh /
+# ci.yml). This workflow runs nightly, records seeds + the produced cases
+# for reproducibility, and uploads the advisory artifact -- a failed grade is
+# a finding to review, never a CI failure. When no local Ollama is available
+# the lane falls back to its deterministic seeded stub (same harness, no
+# LLM), so the nightly still exercises the full compose + grade plumbing.
+#
+# Actions are SHA-pinned to 40-char commit SHAs (repo convention: all 35+
+# uses across every workflow are pinned; see tools/verify_action_pins.py).
+name: Nightly Adversary (Layer C)
+
+on:
+  schedule:
+    # 02:00 UTC daily -- deliberately staggered off nightly-eval's 03:00.
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  nightly-adversary:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Install deps
+        # PyYAML: the twin scorecard + oracle.yaml loader need it. The
+        # harness itself is stdlib-only.
+        run: pip install pyyaml
+
+      # Deterministic Layer A matrix first -- mutation_robustness in the twin
+      # scorecard reads it, and the adversary's grader reuses the same real
+      # pipeline path. This is the BLOCKING lane; it runs here so the
+      # advisory layer sits on the same real numbers.
+      - name: Layer A deterministic matrix (blocking lane)
+        run: python eval/adversarial/layer_a.py --seed 7
+
+      # Layer C -- ADVISORY ONLY. OLLAMA_URL unset = deterministic stub
+      # compositions (producer=stub); set OLLAMA_URL + OLLAMA_MODEL in the
+      # repo's Actions secrets/variables for the adaptive mode. Either way
+      # the workflow never FAILS on grades -- findings are the artifact.
+      - name: Layer C adaptive adversary (never blocking)
+        env:
+          OLLAMA_URL: ${{ secrets.OLLAMA_URL }}
+          OLLAMA_MODEL: ${{ vars.OLLAMA_MODEL }}
+        run: python eval/adversarial/adversary_c.py --seed 7 --llm --out eval/adversarial/out/adversary_c.latest.json
+
+      - name: Upload Layer C artifact (advisory)
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: layer-c-adversary-cases
+          path: |
+            eval/adversarial/out/adversary_c.latest.json
+          if-no-files-found: error
+          retention-days: 14
