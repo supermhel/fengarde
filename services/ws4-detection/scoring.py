@@ -2,6 +2,15 @@
 
 score = clamp( max(severity_floor of matched rules, capped_sum of score_weights) )
 Funnel decision uses the thresholds defined once in scoring.yaml.
+
+Phase 5 (2026-09-04): the `exposure` block wires ONE of its documented
+factors -- `asset_criticality`, fed by `contracts/ot-points/*.yml`'s
+`points[].criticality` (WP-2-E, schema-only until now: "No parser, rule, or
+loader reads this block today"). `internet_exposure`/`tenant_tier` stay
+unwired -- no signal exists yet to feed either (no network-topology config,
+no tenant-tier config) -- flipping `enabled: true` only activates the factor
+that has a real reader; the other two evaluate to their neutral default
+(1.0 multiplier / 0 points) because no matching config ever sets them.
 """
 from __future__ import annotations
 
@@ -31,6 +40,52 @@ except Exception:  # pragma: no cover - fallback when shared not importable
 _SCORING_VERSION_WARNED = False
 
 
+def load_ot_criticality(ot_points_dir: Path) -> dict[int, str]:
+    """Phase 5 (2026-09-04): {wire_address: criticality} across every
+    ``contracts/ot-points/<device-id>.yml`` device file. `README.md` and
+    `writer-categories.yml` are the two non-device files in that directory
+    (per README.md's own "Directory layout") -- distinguished by shape, not
+    filename, so a future non-device file added there degrades safely: any
+    YAML doc lacking a `points` list is silently skipped, matching this
+    module's fail-open convention for optional config (same posture as
+    `not_in`'s missing-allowlist handling in engine.py).
+
+    v1 scoping: keyed by wire_address ALONE, not (device, wire_address) --
+    two distinct devices sharing an address collide (last file wins, files
+    read in sorted-filename order for determinism) is a known, documented
+    simplification, not an oversight; the modbus_anomaly event this feeds
+    (``unmapped.ot.address``) carries no device identifier the parser
+    exposes today for a tighter join. A real fix needs that first.
+
+    Never raises: a missing directory, or one containing a malformed YAML
+    file, returns whatever WAS loadable rather than crashing detection --
+    same "config, not inference" ship-safety this whole contract already
+    committed to (ot-points/README.md's own framing).
+    """
+    result: dict[int, str] = {}
+    if not ot_points_dir.is_dir():
+        return result
+    for path in sorted(ot_points_dir.glob("*.yml")):
+        try:
+            doc = yaml.safe_load(path.read_text(encoding="utf-8"))
+        except Exception as exc:  # noqa: BLE001 - a broken device file must not blind the scorer
+            _log.warn(f"ot-points {path.name}: failed to parse, skipping ({exc})")
+            continue
+        if not isinstance(doc, dict):
+            continue
+        points = doc.get("points")
+        if not isinstance(points, list):
+            continue  # not a device file (e.g. writer-categories.yml) -- silently not applicable
+        for point in points:
+            if not isinstance(point, dict):
+                continue
+            addr = point.get("wire_address")
+            crit = point.get("criticality")
+            if isinstance(addr, int) and not isinstance(addr, bool) and isinstance(crit, str):
+                result[addr] = crit
+    return result
+
+
 class Scorer:
     # Gap-hunt (2026-08-26): severity_floor's keys must EXACTLY match the set
     # of scoring levels this pipeline defines. A missing/typo'd key (e.g.
@@ -43,10 +98,15 @@ class Scorer:
     # boot/CI time instead of silent.
     FLOOR_LEVELS = frozenset({"informational", "low", "medium", "high", "critical"})
 
-    def __init__(self, scoring_yaml: Path):
+    def __init__(self, scoring_yaml: Path, ot_points_dir: Path | None = None):
         cfg = yaml.safe_load(Path(scoring_yaml).read_text(encoding="utf-8"))
         self.t = cfg["thresholds"]
         self.floor = cfg["severity_floor"]
+        # Phase 5 (2026-09-04): see module docstring -- only asset_criticality
+        # has a real reader; internet_exposure/tenant_tier stay inert even
+        # with enabled: true (no config feeds either yet).
+        self._exposure = cfg.get("exposure") or {}
+        self._ot_criticality = load_ot_criticality(ot_points_dir) if ot_points_dir else {}
         # Gap-hunt (2026-08-26): exact-key validation (see FLOOR_LEVELS).
         if set(self.floor) != Scorer.FLOOR_LEVELS:
             raise ValueError(
@@ -143,14 +203,39 @@ class Scorer:
                 f"{sorted(Scorer.FLOOR_LEVELS)})", level=level)
         return 0
 
-    def score(self, matched_rules) -> int:
+    def _exposure_points(self, event: dict | None) -> int:
+        """Phase 5 (2026-09-04): absolute point add from
+        `exposure.factors.asset_criticality.tiers`, keyed by the OT point's
+        `criticality` (contracts/ot-points/*.yml, looked up by the event's
+        `unmapped.ot.address`). 0 when exposure is disabled, the event
+        carries no OT address, the address isn't in any loaded ot-points
+        file, or that criticality has no tier entry -- every one of those
+        is "no signal", not an error."""
+        if not self._exposure.get("enabled") or not event:
+            return 0
+        addr = ((event.get("unmapped") or {}).get("ot") or {}).get("address")
+        if not isinstance(addr, int) or isinstance(addr, bool):
+            return 0
+        criticality = self._ot_criticality.get(addr)
+        if criticality is None:
+            return 0
+        tiers = ((self._exposure.get("factors") or {}).get("asset_criticality") or {}).get("tiers") or {}
+        return int(tiers.get(criticality, 0))
+
+    def _apply_exposure(self, base_score: int, event: dict | None) -> int:
+        adjusted = base_score + self._exposure_points(event)
+        ceiling = (self._exposure.get("cap") or {}).get("ceiling", self.clamp_max)
+        return max(self.clamp_min, min(self.clamp_max, min(ceiling, adjusted)))
+
+    def score(self, matched_rules, event: dict | None = None) -> int:
         if not matched_rules:
             return 0
         weight_sum = sum(r.score_weight for r in matched_rules)
         floor = max(self._floor_for(r.level) for r in matched_rules)
-        return max(self.clamp_min, min(self.clamp_max, max(weight_sum, floor)))
+        base = max(self.clamp_min, min(self.clamp_max, max(weight_sum, floor)))
+        return self._apply_exposure(base, event)
 
-    def routing_score(self, matched_rules) -> int:
+    def routing_score(self, matched_rules, event: dict | None = None) -> int:
         """Design-B (2026-07-29 audit): like ``score()``, but a matched rule
         with ``llm_gate: false`` (``Rule.llm_gate is False``) does not
         contribute its severity floor to this value -- only to the
@@ -164,7 +249,8 @@ class Scorer:
         weight_sum = sum(r.score_weight for r in matched_rules)
         gated_levels = [r.level for r in matched_rules if r.llm_gate]
         floor = max((self._floor_for(lvl) for lvl in gated_levels), default=0)
-        return max(self.clamp_min, min(self.clamp_max, max(weight_sum, floor)))
+        base = max(self.clamp_min, min(self.clamp_max, max(weight_sum, floor)))
+        return self._apply_exposure(base, event)
 
     def route(self, score: int) -> str:
         """Return funnel action: 'store' | 'classifier' | 'llm'."""

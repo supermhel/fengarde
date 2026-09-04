@@ -8,10 +8,16 @@ mean "cooling"; it means what a deployment's point map says it means. This
 directory is the place that map lives.
 
 This directory is a **frozen-contract-ish config surface** in the same
-opt-in spirit as `contracts/tenants/` and `contracts/webhooks/`: nothing in
-the pipeline reads these files yet (see "Relationship to current code"
-below), and the shipped sample is exactly that — a *sample*, not a claim
-about any real plant floor.
+opt-in spirit as `contracts/tenants/` and `contracts/webhooks/`. As of
+Phase 5 (2026-09-04), `points[].criticality` has a real reader —
+`services/ws4-detection/scoring.py::load_ot_criticality()` feeds
+`contracts/scoring.yaml`'s `exposure.factors.asset_criticality` — so an
+alert on a `critical`/`high` point now measurably outscores the same rule
+on an unmarked one (see "Relationship to current code" below for the
+full wiring). Every other field, `business_context` included, is still
+schema-only: config, not inference, until its own reader exists. The
+shipped sample is exactly that — a *sample*, not a claim about any real
+plant floor.
 
 ## Directory layout
 
@@ -144,6 +150,7 @@ exposing a small register/coil map). Honest provenance, two facts:
 | `... _EXPECTED_WRITE_ADDRESSES = range(40001, 40010)` | the parser's **coarse hardcoded default**: a write function code (05/06/15/16) targeting an address outside 40001–40009 is `unauthorized_write` |
 | `contracts/rules/ot_modbus_unauthorized_write.yml` (id `9c1d2e3f-4a5b-4c6d-8e7f-1a2b3c4d5e6f`) | the rule that keys on `unmapped.ot.anomaly_type: unauthorized_write` and fires (single-shot, level high) |
 | `contracts/ot-points/*.yml` (**this directory**) | the place a deployment expresses **richer** point knowledge: coil-space points, per-point semantics, allowed writers, maintenance windows |
+| `services/ws4-detection/scoring.py::load_ot_criticality()` (Phase 5, 2026-09-04) | the reader: `{wire_address: criticality}` across every `<device-id>.yml` here, keyed on the anomaly event's `unmapped.ot.address`; feeds `contracts/scoring.yaml`'s `exposure.factors.asset_criticality.tiers` as an absolute point add to both `score()` and `routing_score()` |
 
 `_EXPECTED_WRITE_ADDRESSES` is exactly what this config is meant to
 supersede in a later package: it is a holding-register-only range with no

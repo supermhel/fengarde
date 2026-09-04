@@ -44,6 +44,7 @@ RULES_DIR = _CONTRACTS / "rules"
 SCORING_YAML = _CONTRACTS / "scoring.yaml"
 TENANTS_DIR = _CONTRACTS / "tenants"
 ALLOWLISTS_DIR = _CONTRACTS / "allowlists"
+OT_POINTS_DIR = _CONTRACTS / "ot-points"  # Phase 5, 2026-09-04
 
 
 class Detector:
@@ -83,7 +84,7 @@ class Detector:
         self.rules_dir = Path(rules_dir) if rules_dir is not None else Path(RULES_DIR)
         self.allowlists_dir = Path(allowlists_dir) if allowlists_dir is not None else Path(ALLOWLISTS_DIR)
         self.tenants_dir = Path(tenants_dir) if tenants_dir is not None else Path(TENANTS_DIR)
-        self.scorer = Scorer(SCORING_YAML)
+        self.scorer = Scorer(SCORING_YAML, ot_points_dir=OT_POINTS_DIR)
         # Detector-owned (not Rule-owned) so it survives reload(): each
         # DequeWindowCounter.hit()/hit_distinct() call is keyed by a string
         # that already starts with the rule's id (engine.py's window_key),
@@ -258,7 +259,7 @@ class Detector:
         if disabled:
             candidates = [r for r in candidates if r.id not in disabled]
         matched = [r for r in candidates if r.evaluate(event)]
-        score = self.scorer.score(matched)
+        score = self.scorer.score(matched, event)
         # R4-28 (2026-08-27): the old `event.setdefault("siem", {})["score"]`
         # raised TypeError on a `siem: null` event -- setdefault returns the
         # literal None (the key IS present) and None["score"] exploded. Read
@@ -272,7 +273,7 @@ class Detector:
         # analyst-facing score -- routing_score is the one that respects a
         # matched rule's llm_gate:false opt-out. The stored/displayed score
         # above is unaffected either way.
-        action = self.scorer.route(self.scorer.routing_score(matched))
+        action = self.scorer.route(self.scorer.routing_score(matched, event))
         return event, matched, action
 
     def _funnel_fresh(self, event: dict, matched: list) -> bool:
