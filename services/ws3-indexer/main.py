@@ -28,7 +28,17 @@ from shared.authz import require_auth_or_die  # noqa: E402
 # event the batch path indexes. The live daemon does NOT rely on this: its
 # per-topic threads have no ordering guarantee, which is why the
 # normalized-events worker writes create-only instead (normalized_handler).
-TOPICS = ["normalized.events", "scored.events", "alerts", "ai.results", "incidents"]
+TOPICS = ["normalized.events", "scored.events", "alerts", "ai.results", "incidents",
+          # Phase 5 (2026-09-04): the analyst read path. Both topics existed
+          # on the bus since Phase 2/3 (WS-9, WS-8) with WS-3 only reaper-
+          # trimming them (see _ALL_BUS_TOPICS below) -- no consumer, no
+          # storage, no read route. entity.updates/incident.graph are
+          # "current state" documents (each republish carries the full
+          # latest snapshot, not a delta), so route() indexes them under a
+          # flat, non-date-suffixed index keyed by entity_id/incident_id --
+          # a plain last-write-wins overwrite is correct, same as `incidents`
+          # itself already re-emitting in place as it grows.
+          "entity.updates", "incident.graph"]
 
 
 def make_store():
@@ -259,9 +269,11 @@ def run(bus, store) -> dict:
 # entity-plane work (WS-8/WS-9) started producing onto these two topics
 # without this list being updated -- the reaper never trimmed either stream,
 # an unbounded-growth vector in the live Redis stack identical to the one
-# this whole list exists to prevent. Note WS-3 does NOT yet consume/index
-# either topic into a queryable document (see contracts/bus-topics.md); this
-# entry only stops them growing unbounded, it does not add persistence.
+# this whole list exists to prevent. Phase 5 (2026-09-04): both are now ALSO
+# real `TOPICS` entries above (indexed via GET /entities/{id} and
+# GET /incidents/{id}/graph) -- this list stays because the reaper's job
+# (bound the RAW STREAM length) is orthogonal to whether a queryable
+# document exists; a consumer group ack doesn't trim the stream itself.
 _ALL_BUS_TOPICS = ["raw.events", "normalized.events", "scored.events",
                    "ai.requests", "ai.results", "alerts", "assets.updates",
                    "incidents", "entity.updates", "incident.graph"]

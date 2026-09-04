@@ -72,11 +72,45 @@ EXPECTED_ROUTES: list[tuple[str, str, bool]] = [
 ]
 
 
+# Phase 5 (2026-09-04): real new routes, added on top of the frozen
+# pre-refactor baseline above -- entity/causal-graph/evidence read path.
+# Kept as a SEPARATE list rather than folded into EXPECTED_ROUTES: that one
+# is a byte-level historical snapshot proving WP-2-I's refactor changed
+# nothing, and growing it on every real feature would defeat its own point.
+ROUTES_ADDED_SINCE_REFACTOR: list[tuple[str, str, bool]] = [
+    ("GET", "/entities/{entity_id}", False),
+    ("GET", "/incidents/{incident_id}/graph", False),
+    ("GET", "/incidents/{incident_id}/evidence", False),
+]
+
+
 def test_route_inventory_matches_pre_refactor_baseline():
-    check(sorted(triage_api.ROUTE_INVENTORY) == sorted(EXPECTED_ROUTES),
-          f"ROUTE_INVENTORY(surfaces {len(triage_api.ROUTE_INVENTORY)} routes) "
-          f"must match the pre-refactor baseline ({len(EXPECTED_ROUTES)} routes). "
-          f"POST: {sorted(triage_api.ROUTE_INVENTORY)} vs EXPECTED: {sorted(EXPECTED_ROUTES)}")
+    """(b), part 1: every pre-refactor route is still present, unchanged --
+    the original guarantee this test existed to prove. No longer an exact-
+    match assertion (2026-09-04): ROUTE_INVENTORY legitimately grows as real
+    routes ship (see ROUTES_ADDED_SINCE_REFACTOR); a superset check still
+    catches the actual regression this test guards against -- a pre-refactor
+    route silently dropped or its path/rbac flag changed."""
+    missing = set(EXPECTED_ROUTES) - set(triage_api.ROUTE_INVENTORY)
+    check(not missing,
+          f"ROUTE_INVENTORY is missing {len(missing)} pre-refactor baseline "
+          f"route(s) that WP-2-I proved present: {sorted(missing)}")
+    # (b), part 2: every route added since the refactor is present too --
+    # catches the opposite regression (a real route function that exists
+    # but was never wired into ROUTE_INVENTORY/_route_get, invisible to
+    # this file's own (c) full-path smoke below).
+    missing_new = set(ROUTES_ADDED_SINCE_REFACTOR) - set(triage_api.ROUTE_INVENTORY)
+    check(not missing_new,
+          f"ROUTE_INVENTORY is missing {len(missing_new)} post-refactor "
+          f"route(s) it should have: {sorted(missing_new)}")
+    # (b), part 3: nothing else has snuck in undeclared -- the inventory is
+    # EXACTLY the union of the two lists above, no third source of drift.
+    expected_union = set(EXPECTED_ROUTES) | set(ROUTES_ADDED_SINCE_REFACTOR)
+    extra = set(triage_api.ROUTE_INVENTORY) - expected_union
+    check(not extra,
+          f"ROUTE_INVENTORY has {len(extra)} route(s) neither the frozen "
+          f"baseline nor ROUTES_ADDED_SINCE_REFACTOR account for -- a new "
+          f"route was added without updating this test: {sorted(extra)}")
     # sanity: no accidental NUL / dupes
     check(len(triage_api.ROUTE_INVENTORY) == len(set(triage_api.ROUTE_INVENTORY)),
           "ROUTE_INVENTORY must not contain duplicate entries")
@@ -511,12 +545,24 @@ def test_full_path_smoke_rbac_off():
     store = MemoryStore()
     store.index("alerts-acme-2026.07.16", "a1",
                 {"alert_id": "a1", "tenant_id": "acme", "rule_title": "t"})
+    # Phase 5 (2026-09-04): real fixtures for the new id types, same "a1"
+    # value, so the smoke loop below proves an actual 200 for each new
+    # route rather than a literal unreplaced "{entity_id}" 404ing past
+    # _is_routed's weak "not the dispatch fallback" bar.
+    store.index("entities", "a1", {"entity_id": "a1", "entity_type": "actor",
+                                    "tenant_id": "acme", "entity_value": "x"})
+    store.index("incident-graphs", "a1", {"incident_id": "a1", "tenant_id": "acme",
+                                           "nodes": [], "edges": []})
+    store.index("incidents-acme-2026.07.16", "a1",
+                {"incident_id": "a1", "tenant_id": "acme", "member_alert_ids": []})
     srv, port = _start(store)
     try:
         non_rbac = [r for r in triage_api.ROUTE_INVENTORY if not r[2]]
         served = 0
         for method, path_tpl, _ in non_rbac:
-            path = path_tpl.replace("{alert_id}", "a1")
+            path = (path_tpl.replace("{alert_id}", "a1")
+                    .replace("{entity_id}", "a1")
+                    .replace("{incident_id}", "a1"))
             code, body = _request(port, method, path)
             if _is_routed(code, body):
                 served += 1

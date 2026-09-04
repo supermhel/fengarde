@@ -88,6 +88,9 @@ echo
 echo "== WP-3-B: evidence package (hash-chained, tamper-evident, reporting.md seam) =="; LAST_HEADER="== WP-3-B: evidence package (hash-chained, tamper-evident, reporting.md seam) =="
 $PY services/ws3-indexer/test_evidence_package.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
+echo "== Phase 5 (2026-09-04): entity/causal-graph/evidence read path =="; LAST_HEADER="== Phase 5 (2026-09-04): entity/causal-graph/evidence read path =="
+$PY services/ws3-indexer/test_phase5_read_path.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
 echo "== ws3 (P1.3): OpenSearch index transient-retry / permanent-surface =="; LAST_HEADER="== ws3 (P1.3): OpenSearch index transient-retry / permanent-surface =="
 $PY services/ws3-indexer/test_opensearch_retry.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo

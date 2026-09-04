@@ -1,7 +1,11 @@
 # WS-3 Indexer — Interface Declaration
 
 ## Consumes
-- Topics `normalized.events`, `scored.events`, `alerts`, `ai.results` (group `cg-index`).
+- Topics `normalized.events`, `scored.events`, `alerts`, `ai.results`,
+  `incidents`, `entity.updates`, `incident.graph` (group `cg-index`). The
+  last two are Phase 5 (2026-09-04) — see `contracts/bus-topics.md`, both
+  existed on the bus since Phase 2/3 with WS-3 only reaper-trimming the
+  stream, no real consumer, until this.
 - Contracts: A (events), E (index templates / ILM), B (bus).
 
 ## Produces
@@ -24,6 +28,14 @@
   generate one (`?template=nis2` for the M5 German/English NIS2 generator,
   otherwise the generic markdown backend). Every report is `status: "draft"` with
   a mandatory disclaimer.
+- `GET /entities/{id}` (Phase 5, 2026-09-04) — a WS-9-resolved entity's
+  current canonical state (`entity.updates` topic, indexed).
+- `GET /incidents/{id}/graph` (Phase 5) — the typed causal DAG WS-8 emitted
+  for this incident (`incident.graph` v2, indexed).
+- `GET /incidents/{id}/evidence` (Phase 5) — builds, hash-verifies, and
+  serves this incident's evidence package on demand
+  (`evidence_package.py`'s first real HTTP consumer); 409 (never a silent
+  200) if a freshly-built package fails `verify_evidence_package()`.
 - `/api/v1/...` (M4.3) — versioned aliases for `GET /alerts`, `GET /events`,
   `GET /rules`, alongside the unchanged bare paths. Spec-vs-code drift is
   CI-tested against `contracts/triage-api.yaml`.

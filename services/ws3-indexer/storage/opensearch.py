@@ -466,6 +466,87 @@ class OpenSearchStore(StorageAdapter):
             return None
         return index, source
 
+    def find_events(self, event_ids) -> list[dict]:
+        """Bulk cross-index lookup by id across all events-* indices
+        (Phase 5, 2026-09-04) via a single `terms` query -- one round trip
+        for a whole incident's worth of events, not one GET per id."""
+        wanted = list({str(e) for e in event_ids})
+        if not wanted:
+            return []
+        body = {"size": len(wanted), "query": {"terms": {"_id": wanted}}}
+        try:
+            result = self._request("POST", "/events-*/_search", body)
+        except urllib.error.HTTPError as exc:
+            if _read_error_is_index_missing(exc):
+                return []
+            _log_rw_warn("opensearch bulk find events failed (HTTP %s): %s",
+                        exc.code, exc.reason)
+            raise
+        hits = result.get("hits", {}).get("hits", [])
+        return [h["_source"] for h in hits if isinstance(h.get("_source"), dict)]
+
+    def _search_by_id_wildcard(self, index_pattern: str, doc_id: str,
+                                log_label: str) -> tuple[str, dict] | None:
+        """Shared shape for the flat, non-date-suffixed indices added in
+        Phase 5 (2026-09-04) -- entities/incident-graphs/entities-{tenant}/
+        incident-graphs-{tenant}. No sort needed (unlike _search_alert):
+        each is a single canonical doc per id, never re-emitted across a
+        rolling day-index, so at most one real hit exists."""
+        body = {"size": 1, "query": {"term": {"_id": doc_id}}}
+        try:
+            result = self._request("POST", f"/{index_pattern}/_search", body)
+        except urllib.error.HTTPError as exc:
+            if _read_error_is_index_missing(exc):
+                return None
+            _log_rw_warn(f"opensearch search {log_label} %s failed (HTTP %s): %s",
+                        doc_id, exc.code, exc.reason)
+            raise
+        hits = result.get("hits", {}).get("hits", [])
+        if not hits:
+            return None
+        index, source = hits[0].get("_index"), hits[0].get("_source")
+        if not isinstance(index, str) or not isinstance(source, dict) or not source:
+            return None
+        return index, source
+
+    def find_entity(self, entity_id: str) -> tuple[str, dict] | None:
+        """Cross-index lookup across entities*/entities-*-tenant (Phase 5,
+        2026-09-04). Wildcard covers both the flat default-tenant "entities"
+        index and any "entities-{tenant}" one -- "entities*" matches both."""
+        return self._search_by_id_wildcard("entities*", entity_id, "entity")
+
+    def find_incident_graph(self, incident_id: str) -> tuple[str, dict] | None:
+        """Cross-index lookup across incident-graphs*/incident-graphs-*-
+        tenant (Phase 5, 2026-09-04)."""
+        return self._search_by_id_wildcard("incident-graphs*", incident_id, "incident graph")
+
+    def find_incident(self, incident_id: str) -> tuple[str, dict] | None:
+        """Locate an incident doc by id across all daily incidents(-tenant)-*
+        indices (Phase 5, 2026-09-04). Mirrors _search_alert's shape exactly,
+        sorted by `first_seen` desc -- router.py routes a growing incident's
+        re-emissions to the SAME day-index keyed off first_seen (stable, not
+        `last_seen`), so this should only ever see one real match, but the
+        sort keeps the same "newest wins" determinism as find_alert for the
+        same reason: never let an ambiguous multi-hit resolve arbitrarily."""
+        body = {"size": 1, "query": {"term": {"_id": incident_id}},
+                "sort": [{"first_seen": {"order": "desc", "unmapped_type": "long"}}]}
+        try:
+            result = self._request("POST", "/incidents-*/_search", body)
+        except urllib.error.HTTPError as exc:
+            if _read_error_is_index_missing(exc):
+                return None
+            _log_rw_warn("opensearch search incident %s failed (HTTP %s): %s",
+                        incident_id, exc.code, exc.reason)
+            raise
+        hits = result.get("hits", {}).get("hits", [])
+        if not hits:
+            return None
+        hit = hits[0]
+        index, source = hit.get("_index"), hit.get("_source")
+        if not isinstance(index, str) or not isinstance(source, dict) or not source:
+            return None
+        return index, source
+
     # -- v0.4 Track R: cross-index lookup by report_id -----------------------
     def find_report(self, alert_id: str) -> dict | None:
         """Locate a report doc (report_id == f"{alert_id}:report") across all

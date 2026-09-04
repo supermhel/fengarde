@@ -116,6 +116,7 @@ import reporting  # noqa: E402
 import rules_view  # noqa: E402
 import nis2_template  # noqa: E402
 import audit  # noqa: E402
+import evidence_package  # noqa: E402
 
 _MAX_BODY_BYTES = 4096  # a triage update is a status enum + a short note.
 _MAX_NOTE_CHARS = 2000
@@ -242,6 +243,9 @@ ROUTE_INVENTORY: list[tuple[str, str, bool]] = [
     ("GET", "/audit", False),
     ("GET", "/alerts/{alert_id}/report", False),
     ("GET", "/alerts/{alert_id}/triage", False),
+    ("GET", "/entities/{entity_id}", False),
+    ("GET", "/incidents/{incident_id}/graph", False),
+    ("GET", "/incidents/{incident_id}/evidence", False),
     ("POST", "/auth/login", True),
     ("POST", "/auth/logout", True),
     ("POST", "/auth/mfa/enable", True),
@@ -330,6 +334,92 @@ def route_get_triage(self, alert_id: str):
     if not self._tenant_gate(session, doc):
         return
     return self._send(200, doc.get("triage") or _default_triage())
+
+
+def route_get_entity(self, entity_id: str):
+    """GET /entities/{id} -- a WS-9-resolved entity's current canonical
+    state (Phase 5, 2026-09-04: the entity.updates topic existed since
+    Phase 2 with no consumer or read route until this)."""
+    if not entity_id:
+        raise _BadRequest("entity_id required")
+    session = self._require_role("read_only")
+    if session is None:
+        return
+    found = self.deps.store.find_entity(entity_id)
+    if found is None:
+        return self._send(404, {"error": "entity not found"})
+    _, doc = found
+    if not self._tenant_gate(session, doc):
+        return
+    return self._send(200, doc)
+
+
+def route_get_incident_graph(self, incident_id: str):
+    """GET /incidents/{id}/graph -- the typed causal DAG WS-8 emitted for
+    this incident (Phase 5, 2026-09-04)."""
+    if not incident_id:
+        raise _BadRequest("incident_id required")
+    session = self._require_role("read_only")
+    if session is None:
+        return
+    found = self.deps.store.find_incident_graph(incident_id)
+    if found is None:
+        return self._send(404, {"error": "incident graph not found"})
+    _, doc = found
+    if not self._tenant_gate(session, doc):
+        return
+    return self._send(200, doc)
+
+
+def route_get_incident_evidence(self, incident_id: str):
+    """GET /incidents/{id}/evidence -- build, hash-verify, and serve this
+    incident's evidence package on demand (Phase 5, 2026-09-04).
+
+    Built fresh from the store's own current data on every call, not
+    persisted -- evidence_package.py was delivered standalone (WP-3-B) with
+    no route ever calling it; this is that first consumer. NEVER serves an
+    unverified/tampered chain: verify_evidence_package() runs before the
+    response is sent, not after -- a verification failure here means the
+    STORED source docs disagree with what a freshly-built package's own
+    hash chain expects (a data-integrity problem, not normally reachable --
+    test_evidence_package.py already proves a fresh build always verifies),
+    and gets a 409, never a 200 with the failures silently dropped.
+    """
+    if not incident_id:
+        raise _BadRequest("incident_id required")
+    session = self._require_role("read_only")
+    if session is None:
+        return
+    found = self.deps.store.find_incident(incident_id)
+    if found is None:
+        return self._send(404, {"error": "incident not found"})
+    _, incident = found
+    if not self._tenant_gate(session, incident):
+        return
+
+    member_ids = set(incident.get("member_alert_ids") or [])
+    alerts = []
+    for alert_id in member_ids:
+        found_alert = self.deps.store.find_alert(alert_id)
+        if found_alert is not None:
+            alerts.append(found_alert[1])
+    event_ids: set[str] = set()
+    for alert in alerts:
+        event_ids.update(str(e) for e in (alert.get("event_ids") or []))
+    events = self.deps.store.find_events(event_ids) if event_ids else []
+    graph_found = self.deps.store.find_incident_graph(incident_id)
+    graph = graph_found[1] if graph_found is not None else None
+
+    pkg = evidence_package.build_evidence_package(
+        incident, alerts, events, graph,
+        now_ms=int(time.time() * 1000), package_id_prefix="ws3-live")
+    failures = evidence_package.verify_evidence_package(pkg)
+    if failures:
+        _LOG.error("evidence package failed verification on build",
+                   incident_id=incident_id, failures=failures)
+        return self._send(409, {"error": "evidence package failed verification",
+                                "failures": failures})
+    return self._send(200, pkg)
 
 
 def route_list_alerts(self):
@@ -760,6 +850,21 @@ class Handler(BaseHTTPRequestHandler):
             return parts[1]
         return None
 
+    def _id_from_path(self, path: str, prefix: str, resource: str | None = None) -> str | None:
+        """Generic sibling of _alert_id_from_path (Phase 5, 2026-09-04):
+        /{prefix}/{id} when resource is None, /{prefix}/{id}/{resource}
+        otherwise. Kept separate rather than generalizing
+        _alert_id_from_path itself -- that one's docstring/name is
+        alerts-specific and every existing call site relies on that."""
+        parts = path.strip("/").split("/")
+        if resource is None:
+            if len(parts) == 2 and parts[0] == prefix:
+                return parts[1]
+            return None
+        if len(parts) == 3 and parts[0] == prefix and parts[2] == resource:
+            return parts[1]
+        return None
+
     # -- M4.2 session helpers (no-ops when RBAC is off) ----------------------
 
     def _session_token(self) -> str:
@@ -954,6 +1059,17 @@ class Handler(BaseHTTPRequestHandler):
         report_alert_id = self._alert_id_from_path(path, "report")
         if report_alert_id is not None:
             return route_get_report(self, report_alert_id)
+
+        # Phase 5 (2026-09-04): entity/causal-graph/evidence read path.
+        graph_incident_id = self._id_from_path(path, "incidents", "graph")
+        if graph_incident_id is not None:
+            return route_get_incident_graph(self, graph_incident_id)
+        evidence_incident_id = self._id_from_path(path, "incidents", "evidence")
+        if evidence_incident_id is not None:
+            return route_get_incident_evidence(self, evidence_incident_id)
+        entity_id = self._id_from_path(path, "entities")
+        if entity_id is not None:
+            return route_get_entity(self, entity_id)
 
         alert_id = self._alert_id_from_path(path)
         if alert_id is None:
