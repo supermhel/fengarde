@@ -2075,11 +2075,161 @@ async function renderIncidents(){
   // payload the table row reads, just laid out for reading rather than scanning.
   showIncident(sorted[0]);
 }
+// ---- Phase 5 (2026-09-04): causal graph + evidence package -------------
+// GET /entities/{id} isn't fetched by showIncident() below -- incident.graph
+// nodes already carry entity_type/entity_value/label inline (see
+// contracts/bus-topics.md's incident.graph row), enough to render without a
+// per-node entity lookup. ENTITIES_API exists for a possible future
+// standalone entity-browser view; not called from here on purpose.
+const ENTITIES_API = (window.ENTITIES_API !== undefined) ? window.ENTITIES_API : "/api/entities";
+
+async function getIncidentGraph(incidentId){
+  if(!INCIDENTS_API) return null;
+  try{
+    const r = await _fetch(`${INCIDENTS_API}/${encodeURIComponent(incidentId)}/graph${tenantQuery()}`);
+    if(!r.ok) return null;
+    return await r.json();
+  }catch(e){
+    return null;
+  }
+}
+
+async function getIncidentEvidence(incidentId){
+  if(!INCIDENTS_API) return null;
+  try{
+    const r = await _fetch(`${INCIDENTS_API}/${encodeURIComponent(incidentId)}/evidence${tenantQuery()}`);
+    if(r.status === 409){
+      // route_get_incident_evidence's own contract: a failed
+      // verify_evidence_package() is a 409 with the reasons, never a
+      // silent 200 -- surface it as a distinct state, not a fetch error.
+      const body = await r.json().catch(()=>({}));
+      return {_verification_failed: true, failures: body.failures||[]};
+    }
+    if(!r.ok) return null;
+    return await r.json();
+  }catch(e){
+    return null;
+  }
+}
+
+// Layered-DAG layout -- no chart library (this project's own "0 stock chart
+// libraries" line, docs/index.html's footer). A causal graph's own edge
+// direction gives the layout for free: a node with no incoming edge sits at
+// depth 0; every other node's depth is 1 + max(depth of its predecessors).
+// WS-8's "no transitive inference" guarantee means this should always be a
+// DAG, but the loop is defensive anyway -- capped at nodes.length passes,
+// so a malformed/cyclic graph degrades to "everything left at its
+// last-resolved depth" instead of looping forever.
+function _graphLayers(nodes, edges){
+  const byId = new Set(nodes.map(n => n.entity_id));
+  const depth = new Map(nodes.map(n => [n.entity_id, 0]));
+  const preds = new Map(nodes.map(n => [n.entity_id, []]));
+  for(const e of (edges||[])){
+    if(byId.has(e.from) && byId.has(e.to) && e.from !== e.to) preds.get(e.to).push(e.from);
+  }
+  for(let pass = 0; pass < nodes.length + 1; pass++){
+    let changed = false;
+    for(const n of nodes){
+      const ps = preds.get(n.entity_id);
+      if(!ps.length) continue;
+      const want = 1 + Math.max(...ps.map(p => depth.get(p) ?? 0));
+      if(want > depth.get(n.entity_id) && want <= nodes.length){
+        depth.set(n.entity_id, want);
+        changed = true;
+      }
+    }
+    if(!changed) break;
+  }
+  const layers = [];
+  for(const n of nodes){
+    const d = depth.get(n.entity_id);
+    (layers[d] = layers[d] || []).push(n);
+  }
+  return layers.filter(Boolean);
+}
+
+const _EDGE_KIND_COLOR = {caused_by:"var(--crit)", invoked:"var(--accent)",
+  authenticated_as:"var(--high)", wrote_to:"var(--med)", changed:"var(--med)"};
+
+function renderCausalGraphSvg(nodes, edges){
+  if(!nodes || !nodes.length) return `<p class="muted">No graph nodes.</p>`;
+  const layers = _graphLayers(nodes, edges);
+  const colW = 190, rowH = 56, pad = 16, boxW = 160, boxH = 34;
+  const pos = new Map();
+  layers.forEach((layer, ci) => layer.forEach((n, ri) =>
+    pos.set(n.entity_id, {x: pad + ci*colW, y: pad + ri*rowH})));
+  const width = pad*2 + (layers.length-1)*colW + boxW;
+  const maxRows = Math.max(...layers.map(l => l.length), 1);
+  const height = pad*2 + (maxRows-1)*rowH + boxH;
+
+  const edgeSvg = (edges||[]).map(e => {
+    const a = pos.get(e.from), b = pos.get(e.to);
+    if(!a || !b) return "";
+    const x1 = a.x + boxW, y1 = a.y + boxH/2, x2 = b.x, y2 = b.y + boxH/2;
+    const color = _EDGE_KIND_COLOR[e.kind] || "var(--muted)";
+    return `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${color}" stroke-width="1.5"
+        marker-end="url(#phase5arrow)"/>
+      <text x="${(x1+x2)/2}" y="${(y1+y2)/2-4}" font-size="9" fill="${color}" text-anchor="middle">${esc(e.kind||"")}</text>`;
+  }).join("");
+
+  const nodeSvg = nodes.map(n => {
+    const p = pos.get(n.entity_id);
+    if(!p) return "";
+    const label = String(n.label || n.entity_value || n.entity_id || "");
+    return `<g>
+      <rect x="${p.x}" y="${p.y}" width="${boxW}" height="${boxH}" rx="6"
+        fill="var(--panel)" stroke="var(--border)"/>
+      <text x="${p.x+8}" y="${p.y+14}" font-size="10" fill="var(--muted)">${esc(n.entity_type||"")}</text>
+      <text x="${p.x+8}" y="${p.y+27}" font-size="12" fill="var(--txt)" font-weight="600">${esc(label.slice(0,22))}</text>
+    </g>`;
+  }).join("");
+
+  return `<div class="table-scroll"><svg viewBox="0 0 ${width} ${height}" width="${width}" height="${height}"
+      xmlns="http://www.w3.org/2000/svg" style="max-width:100%">
+    <defs><marker id="phase5arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7"
+      orient="auto-start-reverse"><path d="M0,0L10,5L0,10z" fill="var(--muted)"/></marker></defs>
+    ${edgeSvg}${nodeSvg}
+  </svg></div>`;
+}
+
+function _evidenceBlockRows(pkg){
+  return (pkg.blocks||[]).map((b,i) => `<tr>
+    <td>${i}</td><td>${esc(b.type||"")}</td>
+    <td class="muted" style="font-family:var(--mono, ui-monospace, monospace);font-size:11px">${esc(String(b.block_id||""))}</td>
+    <td class="muted" style="font-family:var(--mono, ui-monospace, monospace);font-size:10px;word-break:break-all">${esc(String(b.header_hash||"").slice(0,16))}…</td>
+  </tr>`).join("") || `<tr><td colspan="4" class="muted">—</td></tr>`;
+}
+
+async function showEvidencePanel(incidentId, btn){
+  const el = document.getElementById("evidencePanel");
+  if(btn) btn.disabled = true;
+  el.innerHTML = `<p class="muted">Building evidence package…</p>`;
+  const pkg = await getIncidentEvidence(incidentId);
+  if(btn) btn.disabled = false;
+  if(!pkg){
+    el.innerHTML = `<p class="muted">Evidence package unavailable.</p>`;
+    return;
+  }
+  if(pkg._verification_failed){
+    el.innerHTML = `<p><span class="pill crit">${icon("circle")}TAMPERED</span> verification failed: `
+      + `${esc((pkg.failures||[]).join("; ")||"unknown")}</p>`;
+    return;
+  }
+  el.innerHTML = `<div>
+    <p><span class="pill low">${icon("check")}VERIFIED</span>
+      <span class="muted" style="font-family:var(--mono, ui-monospace, monospace);font-size:11px">${esc(pkg.package_id||"")}</span>
+      · ${esc(String((pkg.chain||{}).block_count||0))} blocks</p>
+    <div class="table-scroll"><table><thead><tr><th>#</th><th>Type</th><th>Block ID</th><th>Header hash</th></tr></thead>
+      <tbody>${_evidenceBlockRows(pkg)}</tbody></table></div>
+  </div>`;
+}
+
 function showIncident(inc){
   const detail = document.getElementById("incidentDetail");
   if(!inc){ detail.innerHTML = ""; return; }
   const tactics = (inc.tactics||[]).map(t => `<span class="tactic-chip">${esc(t)}</span>`).join("") || "<span class=\"muted\">—</span>";
   const members = (inc.member_alert_ids||[]).map(esc).join(", ") || "—";
+  const incidentId = inc.incident_id;
   detail.innerHTML = `<div class="detail">
     <h3>${esc(inc.entity_value)} <span class="muted">(${esc(inc.entity_type)})</span></h3>
     <div class="kv">
@@ -2088,12 +2238,41 @@ function showIncident(inc){
       <div class="k">Members</div><div>${esc(inc.member_count)}${inc.truncated ? ' <span class="muted" title="member cap reached">(truncated)</span>' : ""}</div>
       <div class="k">First seen</div><div>${inc.first_seen ? esc(new Date(inc.first_seen).toLocaleString()) : "—"}</div>
       <div class="k">Last seen</div><div>${inc.last_seen ? esc(new Date(inc.last_seen).toLocaleString()) : "—"}</div>
-      <div class="k">Incident ID</div><div class="muted">${esc(inc.incident_id||"—")}</div>
+      <div class="k">Incident ID</div><div class="muted">${esc(incidentId||"—")}</div>
       <div class="k">Tenant</div><div class="muted">${esc(inc.tenant_id||"default")}</div>
     </div>
     <h3 style="margin-top:16px">Member alerts (${(inc.member_alert_ids||[]).length})</h3>
     <p style="font-size:12.5px;color:var(--muted);word-break:break-all">${members}</p>
+
+    <h3 style="margin-top:16px">Causal graph</h3>
+    <div id="incidentGraph"><p class="muted">Loading…</p></div>
+
+    <h3 style="margin-top:16px">Evidence package
+      <button type="button" id="evidenceBtn" class="btn-sm" style="margin-left:8px;font-size:11px;padding:3px 9px;
+        border-radius:6px;border:1px solid var(--border);background:var(--panel);color:var(--txt);cursor:pointer">
+        Build + verify</button>
+    </h3>
+    <div id="evidencePanel"><p class="muted">Not requested yet.</p></div>
   </div>`;
+
+  if(!incidentId) return;
+  const btn = document.getElementById("evidenceBtn");
+  if(btn) btn.onclick = () => showEvidencePanel(incidentId, btn);
+
+  // Fire-and-render: the graph is cheap (an indexed doc, not built on
+  // demand like evidence), fetched eagerly; evidence stays a click because
+  // build_evidence_package() does real work (WP-3-B) and an incident
+  // detail panel opened for every row in a list would otherwise burn a
+  // full package build per row with nobody looking at most of them.
+  getIncidentGraph(incidentId).then(graph => {
+    const el = document.getElementById("incidentGraph");
+    if(!el) return;  // the panel moved on to a different incident already
+    if(!graph){
+      el.innerHTML = `<p class="muted">No causal graph for this incident yet.</p>`;
+      return;
+    }
+    el.innerHTML = renderCausalGraphSvg(graph.nodes, graph.edges);
+  });
 }
 
 // ---- LEVEL 2: inventory ----

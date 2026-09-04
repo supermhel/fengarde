@@ -521,6 +521,9 @@ $PY services/ws7-dashboard/test_fix_read_plane.py || { fail=1; FAILED="${FAILED}
 echo
 echo "== Phase 5 item 4 (2026-09-04): GET /assets/{mac} wired into the Inventory drill-in =="; LAST_HEADER="== Phase 5 item 4 (2026-09-04): GET /assets/{mac} wired into the Inventory drill-in =="
 $PY services/ws7-dashboard/test_phase5_asset_detail.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
+echo "== Phase 5 item 3 (2026-09-04): incident detail renders the causal graph + evidence package =="; LAST_HEADER="== Phase 5 item 3 (2026-09-04): incident detail renders the causal graph + evidence package =="
+$PY services/ws7-dashboard/test_phase5_incident_graph_evidence.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 
 echo
 if [ "$fail" -eq 0 ]; then
