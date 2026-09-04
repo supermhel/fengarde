@@ -446,6 +446,10 @@ echo "== detection-quality: precision/recall/F1 canary over the labeled corpus (
 $PY tools/test_detection_quality.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 $PY tools/detection_quality_eval.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 
+echo
+echo "== Phase 5 item 6 (2026-09-04): eval/trend.jsonl viewer generator =="; LAST_HEADER="== Phase 5 item 6 (2026-09-04): eval/trend.jsonl viewer generator =="
+$PY tools/test_generate_trend_viewer.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+
 # == AI-to-OT twin (WP-1-A..F): PLC sim, attack chain, degradation rig, FPR ==
 echo
 echo "== twin: telemetry-degradation rig self-check (delay/duplicate/reorder/loss determinism + loss-subset proof) =="; LAST_HEADER="== twin: telemetry-degradation rig self-check (delay/duplicate/reorder/loss determinism + loss-subset proof) =="
