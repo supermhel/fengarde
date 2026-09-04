@@ -220,6 +220,8 @@ def main():
     test_invalid_stage_and_lang_fall_back_gracefully()
     test_tolerates_a_minimal_alert_doc()
     test_build_report_matches_frozen_envelope()
+    test_build_report_envelope_matches_nis2_schema()
+    test_invalid_stage_lang_coercion_is_logged_loudly()
     test_http_report_route_selects_nis2_template_via_query_params()
     test_http_report_route_without_template_param_keeps_generic_backend()
 

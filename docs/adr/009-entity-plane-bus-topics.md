@@ -1,9 +1,9 @@
 # ADR 009: Entity/context plane — two new bus topics (WS-9)
 
-**Status:** Accepted (owner-ratified, Option 2); **implementation in progress —
-WS-9 is zero-infra-proven but NOT yet live in the deployable stack**
-(no `infra/docker-compose.yml` entry, not in `KILL_TARGETS`; the ADR's
-Consequences below are not all met until that lands). **Date:** 2026-08-28.
+**Status:** Accepted (owner-ratified, Option 2); **implemented and live in the
+deployable stack** (`infra/docker-compose.yml`, `KILL_TARGETS` -- both added
+2026-09-02; gap-hunt 2026-09-04 found this status line hadn't been updated to
+say so). **Date:** 2026-08-28.
 
 ## Context
 

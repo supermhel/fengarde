@@ -73,7 +73,7 @@
 - `REPORT_BACKEND` (template|http), `REPORT_BACKEND_TIMEOUT`,
   `FENGARDE_SEC_REPORT_URL` — incident-report backend seam (`reporting.py`).
 - `RATE_LIMIT_REQUESTS_PER_MIN` (default off / ≤0) — per-IP request rate cap.
-- `FENGARDE_AUDIT_LOG` and `FENGARDE_AUDIT_LOG_MAX_ENTRIES` — audit JSONL path /
+- `FENGARDE_AUDIT_LOG` and `FENGARDE_AUDIT_MAX_ENTRIES` — audit JSONL path /
   capacity cap (`audit.py`; fail-open, never breaks a request).
 
 ## Contract tests

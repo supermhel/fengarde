@@ -289,7 +289,13 @@ class Enricher:
                 if result is not None:
                     rep, loc = result
                     if need_rep and rep is not None:
-                        src["reputation"] = rep
+                        # Copy, don't alias (gap-hunt 2026-09-04): same
+                        # sharing hazard as `location` below -- `rep` is the
+                        # SAME cached object for every event sharing this
+                        # source IP. Missed in the 2026-09-02 location fix;
+                        # this field was one line over from the comment
+                        # explaining exactly why it needed the same treatment.
+                        src["reputation"] = dict(rep)
                     if need_loc and loc is not None:
                         # Copy, don't alias (2026-09-02 review): `loc` is the
                         # SAME dict object cached for every event sharing this

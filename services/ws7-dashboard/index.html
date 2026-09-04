@@ -1918,9 +1918,9 @@ async function getRules(){
       const q = SESSION && SESSION.tenant_id ? `?tenant_id=${encodeURIComponent(SESSION.tenant_id)}` : "";
       const r = await _fetch(`${RULES_API}${q}`, {headers:{Accept:"application/json"}});
       if(r.ok){ const data = await r.json(); return data.rules || []; }
-    }catch(e){ /* fall through to mock */ }
+    }catch(e){ /* fall through to honest empty -- see getIncidents' comment */ }
   }
-  return (window.SIEM_MOCK && window.SIEM_MOCK.rules) || [];
+  return [];
 }
 
 async function renderCoverage(){
@@ -1996,9 +1996,14 @@ async function getIncidents(){
       const q = SESSION && SESSION.tenant_id ? `?tenant_id=${encodeURIComponent(SESSION.tenant_id)}` : "";
       const r = await _fetch(`${INCIDENTS_API}${q}`, {headers:{Accept:"application/json"}});
       if(r.ok){ const data = await r.json(); return data.incidents || []; }
-    }catch(e){ /* fall through to mock */ }
+    }catch(e){ /* fall through to honest empty, not mock -- gap-hunt 2026-09-04:
+                  this is the same attacker-influenced, backend-sourced data
+                  class the alerts path (getAlerts, R4-#65/#91) was already
+                  hardened for; rules/incidents were missed and would have
+                  silently shown fabricated data as real the moment
+                  mock_data.js ever grew a `rules`/`incidents` key */ }
   }
-  return (window.SIEM_MOCK && window.SIEM_MOCK.incidents) || [];
+  return [];
 }
 
 async function renderIncidents(){
