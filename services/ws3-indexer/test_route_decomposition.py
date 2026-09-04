@@ -81,6 +81,7 @@ ROUTES_ADDED_SINCE_REFACTOR: list[tuple[str, str, bool]] = [
     ("GET", "/entities/{entity_id}", False),
     ("GET", "/incidents/{incident_id}/graph", False),
     ("GET", "/incidents/{incident_id}/evidence", False),
+    ("POST", "/incidents/{incident_id}/report", False),
 ]
 
 

@@ -221,6 +221,159 @@ def test_cross_tenant_entity_and_graph_are_404_not_leaked():
         srv.shutdown(); srv.server_close()
 
 
+def _seed_two_step_causal_chain(store, *, tenant="default", incident_id="inc-2"):
+    """Two alerts, two graph edges in a KNOWN, deliberately non-chronological-
+    by-alert-time order -- proves the report's timeline follows the graph's
+    own ts_ms, not alert-arrival order (item 7's whole point)."""
+    alert_late = {"alert_id": "a-late", "tenant_id": tenant, "time": 1,
+                  "level": "medium", "rule_title": "later-arriving alert",
+                  "score": 40, "event_ids": ["ev-early"]}
+    alert_early = {"alert_id": "a-early", "tenant_id": tenant, "time": 2,
+                   "level": "high", "rule_title": "earlier-in-the-chain alert",
+                   "score": 70, "event_ids": ["ev-late"]}
+    for a in (alert_late, alert_early):
+        idx, doc_id = route(a)
+        store.index(idx, doc_id, a)
+    for eid in ("ev-early", "ev-late"):
+        ev = {"event_id": eid, "time": 1, "siem": {"sector": "common", "ingest_id": eid}}
+        idx, doc_id = route(ev)
+        store.index(idx, doc_id, ev)
+    incident = {"incident_id": incident_id, "tenant_id": tenant,
+                "first_seen": 1, "last_seen": 2,
+                "member_alert_ids": ["a-late", "a-early"],
+                "entity_type": "actor", "entity_value": "admin"}
+    idx, doc_id = route(incident)
+    store.index(idx, doc_id, incident)
+    graph = {"version": 2, "incident_id": incident_id, "tenant_id": tenant,
+             "nodes": [{"entity_id": "e1", "entity_type": "actor", "entity_value": "admin", "label": "admin"},
+                       {"entity_id": "e2", "entity_type": "ip", "entity_value": "10.1.1.5", "label": "10.1.1.5"},
+                       {"entity_id": "e3", "entity_type": "device", "entity_value": "plc-1", "label": "plc-1"}],
+             # ts_ms order is e1->e2 (authenticated_as) THEN e2->e3 (wrote_to) --
+             # event_ids point at the EARLY-alert's event first, then the LATE-alert's,
+             # the opposite of the two alerts' own `time` fields above.
+             "edges": [
+                 {"from": "e1", "to": "e2", "kind": "authenticated_as", "event_id": "ev-early", "ts_ms": 100},
+                 {"from": "e2", "to": "e3", "kind": "wrote_to", "event_id": "ev-late", "ts_ms": 200},
+             ],
+             "tactic_sources": []}
+    idx, doc_id = route(graph)
+    store.index(idx, doc_id, graph)
+    return incident, graph
+
+
+def test_incident_report_causal_order_not_alert_arrival_order():
+    store = MemoryStore()
+    _seed_two_step_causal_chain(store)
+    srv, port = _serve(store)
+    try:
+        code, body = _http("POST", f"http://127.0.0.1:{port}/incidents/inc-2/report")
+        check(code == 200, f"POST /incidents/inc-2/report must be 200, got {code}: {body}")
+        check(body.get("report_id") == "inc-2:incident-report",
+              f"report_id must be '{{incident_id}}:incident-report', got {body.get('report_id')!r}")
+        check(body.get("incident_id") == "inc-2",
+              f"response must name the incident it was built for, got {body.get('incident_id')!r}")
+        check(body.get("evidence_verified") is True, "a clean build must report evidence_verified: true")
+        check(body.get("format") == "markdown" and body.get("status") == "draft",
+              "must match this repo's report-envelope conventions (format/status)")
+        text = body.get("body", "")
+        # the causal order test: "later-arriving alert" (ev-early's rule,
+        # the FIRST edge by ts_ms) must appear BEFORE "earlier-in-the-chain
+        # alert" (ev-late's rule, the SECOND edge) -- the opposite of the
+        # two alerts' own arrival-time order.
+        pos_first_edge_rule = text.index("later-arriving alert")
+        pos_second_edge_rule = text.index("earlier-in-the-chain alert")
+        check(pos_first_edge_rule < pos_second_edge_rule,
+              "the timeline must follow the graph's edge ts_ms order, not alert-arrival order")
+        check("authenticated_as" in text and "wrote_to" in text,
+              "both edge kinds must appear in the rendered timeline")
+        check("[ANALYST MUST" in text or "[ANALYST MUSS" in text,
+              "entity facts must still be explicit placeholders, never fabricated")
+    finally:
+        srv.shutdown(); srv.server_close()
+
+
+def test_incident_report_falls_back_to_alert_order_with_no_graph():
+    store = MemoryStore()
+    alert = {"alert_id": "a-1", "tenant_id": "default", "time": 1750000000000,
+             "level": "high", "rule_title": "only alert", "score": 70, "event_ids": []}
+    idx, doc_id = route(alert)
+    store.index(idx, doc_id, alert)
+    incident = {"incident_id": "inc-nograph", "tenant_id": "default",
+                "first_seen": 1750000000000, "last_seen": 1750000000000,
+                "member_alert_ids": ["a-1"], "entity_type": "actor", "entity_value": "x"}
+    idx, doc_id = route(incident)
+    store.index(idx, doc_id, incident)
+    srv, port = _serve(store)
+    try:
+        code, body = _http("POST", f"http://127.0.0.1:{port}/incidents/inc-nograph/report")
+        check(code == 200, f"an incident with no graph must still produce a report, got {code}: {body}")
+        check("only alert" in body.get("body", ""),
+              "must fall back to listing the member alert even with no causal graph")
+    finally:
+        srv.shutdown(); srv.server_close()
+
+
+def test_incident_report_404_on_unknown_incident():
+    store = MemoryStore()
+    srv, port = _serve(store)
+    try:
+        code, body = _http("POST", f"http://127.0.0.1:{port}/incidents/nope/report")
+        check(code == 404, f"an unknown incident must 404, got {code}: {body}")
+    finally:
+        srv.shutdown(); srv.server_close()
+
+
+def test_incident_report_409s_on_verification_failure_mutation_verified():
+    store = MemoryStore()
+    _seed_incident_chain(store, incident_id="inc-3")
+    srv, port = _serve(store)
+    real_verify = evidence_package.verify_evidence_package
+    try:
+        evidence_package.verify_evidence_package = lambda pkg: ["forced failure"]
+        code, body = _http("POST", f"http://127.0.0.1:{port}/incidents/inc-3/report")
+        check(code == 409, f"a failing verification must 409 the report route too, got {code}: {body}")
+        check(body.get("failures") == ["forced failure"], f"failures must reach the caller, got {body}")
+    finally:
+        evidence_package.verify_evidence_package = real_verify
+        srv.shutdown(); srv.server_close()
+
+    store2 = MemoryStore()
+    _seed_incident_chain(store2, incident_id="inc-3")
+    srv2, port2 = _serve(store2)
+    try:
+        code, _ = _http("POST", f"http://127.0.0.1:{port2}/incidents/inc-3/report")
+        check(code == 200, f"with verify_evidence_package restored, must be 200 again, got {code}")
+    finally:
+        srv2.shutdown(); srv2.server_close()
+
+
+def test_incident_report_id_never_collides_with_alert_report_id():
+    """report_id "{incident_id}:incident-report" vs "{alert_id}:report" --
+    if an operator ever names an alert_id equal to some incident_id, the two
+    report_id FORMATS still can't collide (different suffix), unlike a
+    naive f"{id}:report" would risk."""
+    store = MemoryStore()
+    _seed_incident_chain(store, incident_id="shared-id")
+    alert2 = {"alert_id": "shared-id", "tenant_id": "default", "time": 1,
+              "level": "low", "rule_title": "x", "score": 10, "event_ids": []}
+    idx, doc_id = route(alert2)
+    store.index(idx, doc_id, alert2)
+    srv, port = _serve(store)
+    try:
+        code, body = _http("POST", f"http://127.0.0.1:{port}/incidents/shared-id/report")
+        check(code == 200, f"expected 200, got {code}: {body}")
+        check(body.get("report_id") == "shared-id:incident-report",
+              f"got {body.get('report_id')!r}")
+        code2, body2 = _http("POST", f"http://127.0.0.1:{port}/alerts/shared-id/report")
+        check(code2 == 200, f"the alert-scoped route must be unaffected, got {code2}: {body2}")
+        check(body2.get("report_id") == "shared-id:report",
+              f"the alert-scoped report_id format must be untouched, got {body2.get('report_id')!r}")
+        check(body.get("report_id") != body2.get("report_id"),
+              "the two report_id FORMATS must never collide even when the raw id is shared")
+    finally:
+        srv.shutdown(); srv.server_close()
+
+
 def main():
     test_topics_are_real_consumer_topics_not_just_reaper_entries()
     test_get_entity_real_http()
@@ -228,6 +381,11 @@ def main():
     test_get_incident_evidence_builds_and_verifies_real_http()
     test_evidence_route_409s_on_a_verification_failure_mutation_verified()
     test_cross_tenant_entity_and_graph_are_404_not_leaked()
+    test_incident_report_causal_order_not_alert_arrival_order()
+    test_incident_report_falls_back_to_alert_order_with_no_graph()
+    test_incident_report_404_on_unknown_incident()
+    test_incident_report_409s_on_verification_failure_mutation_verified()
+    test_incident_report_id_never_collides_with_alert_report_id()
 
     if FAILS:
         print(f"[FAIL] Phase 5 read path: {len(FAILS)} problem(s)")
@@ -238,7 +396,11 @@ def main():
           "topics; GET /entities/{id}, GET /incidents/{id}/graph, "
           "GET /incidents/{id}/evidence all serve real data over real HTTP; "
           "evidence route verifies before serving (409 mutation-proven, not just "
-          "asserted); cross-tenant entity/graph/evidence fetches 404, never leak")
+          "asserted); cross-tenant entity/graph/evidence fetches 404, never leak; "
+          "POST /incidents/{id}/report renders a causal-ordered narrative (proven "
+          "against alert-arrival order, not just asserted), falls back honestly with "
+          "no graph, 409s on verification failure (mutation-proven), and its "
+          "report_id format never collides with the alert-scoped seam's own")
 
 
 if __name__ == "__main__":

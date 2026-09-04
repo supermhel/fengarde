@@ -246,6 +246,7 @@ ROUTE_INVENTORY: list[tuple[str, str, bool]] = [
     ("GET", "/entities/{entity_id}", False),
     ("GET", "/incidents/{incident_id}/graph", False),
     ("GET", "/incidents/{incident_id}/evidence", False),
+    ("POST", "/incidents/{incident_id}/report", False),
     ("POST", "/auth/login", True),
     ("POST", "/auth/logout", True),
     ("POST", "/auth/mfa/enable", True),
@@ -371,6 +372,36 @@ def route_get_incident_graph(self, incident_id: str):
     return self._send(200, doc)
 
 
+def _build_incident_evidence(self, incident):
+    """Shared by route_get_incident_evidence and route_post_incident_report
+    (Phase 5, 2026-09-04) -- gather the incident's member alerts/events/
+    graph from the store and build+verify a fresh evidence package.
+    Callers already hold `incident` (fetched + tenant-gated); this never
+    re-fetches or re-gates it. Returns (pkg, failures) -- failures is
+    non-empty on a verification problem, pkg is always the built package
+    either way (a caller inspects failures itself rather than this
+    function deciding what a failure means for its own response code)."""
+    incident_id = incident.get("incident_id")
+    member_ids = set(incident.get("member_alert_ids") or [])
+    alerts = []
+    for alert_id in member_ids:
+        found_alert = self.deps.store.find_alert(alert_id)
+        if found_alert is not None:
+            alerts.append(found_alert[1])
+    event_ids: set[str] = set()
+    for alert in alerts:
+        event_ids.update(str(e) for e in (alert.get("event_ids") or []))
+    events = self.deps.store.find_events(event_ids) if event_ids else []
+    graph_found = self.deps.store.find_incident_graph(incident_id)
+    graph = graph_found[1] if graph_found is not None else None
+
+    pkg = evidence_package.build_evidence_package(
+        incident, alerts, events, graph,
+        now_ms=int(time.time() * 1000), package_id_prefix="ws3-live")
+    failures = evidence_package.verify_evidence_package(pkg)
+    return pkg, failures
+
+
 def route_get_incident_evidence(self, incident_id: str):
     """GET /incidents/{id}/evidence -- build, hash-verify, and serve this
     incident's evidence package on demand (Phase 5, 2026-09-04).
@@ -397,29 +428,74 @@ def route_get_incident_evidence(self, incident_id: str):
     if not self._tenant_gate(session, incident):
         return
 
-    member_ids = set(incident.get("member_alert_ids") or [])
-    alerts = []
-    for alert_id in member_ids:
-        found_alert = self.deps.store.find_alert(alert_id)
-        if found_alert is not None:
-            alerts.append(found_alert[1])
-    event_ids: set[str] = set()
-    for alert in alerts:
-        event_ids.update(str(e) for e in (alert.get("event_ids") or []))
-    events = self.deps.store.find_events(event_ids) if event_ids else []
-    graph_found = self.deps.store.find_incident_graph(incident_id)
-    graph = graph_found[1] if graph_found is not None else None
-
-    pkg = evidence_package.build_evidence_package(
-        incident, alerts, events, graph,
-        now_ms=int(time.time() * 1000), package_id_prefix="ws3-live")
-    failures = evidence_package.verify_evidence_package(pkg)
+    pkg, failures = _build_incident_evidence(self, incident)
     if failures:
         _LOG.error("evidence package failed verification on build",
                    incident_id=incident_id, failures=failures)
         return self._send(409, {"error": "evidence package failed verification",
                                 "failures": failures})
     return self._send(200, pkg)
+
+
+def route_post_incident_report(self, incident_id: str):
+    """POST /incidents/{id}/report -- a causal-ordered NIS2-style draft for
+    a whole incident (Phase 5, 2026-09-04). A genuinely SEPARATE surface
+    from POST /alerts/{id}/report: own report_id format
+    ("{incident_id}:incident-report", never "{alert_id}:report"), own
+    response shape -- contracts/reporting.md's frozen alert-scoped schema
+    is untouched (see nis2_template.build_incident_report's own docstring
+    for why to_reporting_payload()/the existing seam aren't reused here).
+
+    Same verify-before-serve discipline as route_get_incident_evidence:
+    a failed verification is a 409, the report is never rendered from an
+    unverified package.
+
+    Drains any request body the client may send (this endpoint takes none,
+    same as route_post_report) so the connection doesn't get reset with
+    unread bytes still buffered.
+    """
+    try:
+        length = int(self.headers.get("Content-Length", 0))
+    except (TypeError, ValueError):
+        raise _BadRequest("invalid Content-Length")
+    if length < 0:
+        raise _BadRequest("invalid Content-Length")
+    if length > _MAX_BODY_BYTES:
+        self.close_connection = True
+        raise _BadRequest("request body too large")
+    elif length > 0:
+        self.rfile.read(length)
+    if not incident_id:
+        raise _BadRequest("incident_id required")
+    session = self._require_role("analyst")  # report generation is a write action, mirrors route_post_report
+    if session is None:
+        return
+    found = self.deps.store.find_incident(incident_id)
+    if found is None:
+        return self._send(404, {"error": "incident not found"})
+    _, incident = found
+    if not self._tenant_gate(session, incident):
+        return
+
+    q = parse_qs(self._query())
+    lang = (q.get("lang", ["de"])[0] or "de").lower()
+
+    pkg, failures = _build_incident_evidence(self, incident)
+    if failures:
+        _LOG.error("evidence package failed verification on incident-report build",
+                   incident_id=incident_id, failures=failures)
+        return self._send(409, {"error": "evidence package failed verification",
+                                "failures": failures})
+
+    report = nis2_template.build_incident_report(pkg, verified=True, lang=lang)
+    report_index = reporting._report_index()
+    self.deps.store.index(report_index, report["report_id"], report)
+    self._audit("incident_report_generated",
+                actor=self._audit_actor(session),
+                tenant_id=incident.get("tenant_id"),
+                detail={"incident_id": incident_id, "report_id": report.get("report_id"),
+                        "evidence_package_id": pkg.get("package_id")})
+    return self._send(200, report)
 
 
 def route_list_alerts(self):
@@ -1107,6 +1183,12 @@ class Handler(BaseHTTPRequestHandler):
         report_alert_id = self._alert_id_from_path(path, "report")
         if report_alert_id is not None:
             return route_post_report(self, report_alert_id)
+        # Phase 5 (2026-09-04): checked before the bare alert_id fallback
+        # below, same ordering discipline _route_get already uses for its
+        # own incidents sub-paths.
+        report_incident_id = self._id_from_path(path, "incidents", "report")
+        if report_incident_id is not None:
+            return route_post_incident_report(self, report_incident_id)
         alert_id = self._alert_id_from_path(path)
         if alert_id is not None:
             return route_post_triage(self, alert_id)
