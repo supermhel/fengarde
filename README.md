@@ -11,9 +11,13 @@
 > initial ~54 open alerts down to 19, all of which are accepted policy-level
 > trade-offs (see `SSOT.md` §1), not unaddressed gaps.
 
-**The open-source SIEM for the European industrial Mittelstand — turns your
-factory and IT logs into draft NIS2 incident notifications, with AI triage that
-never leaves your network.**
+**FENGARDE connects security telemetry across IT, AI and OT to show what
+happened, who or what acted, what was affected, how the events relate, and
+what evidence supports the conclusion.**
+
+Built for the European industrial Mittelstand — open-source, self-hosted,
+Apache-2.0, with a draft NIS2 incident-notification path and AI triage that
+never leaves your network.
 
 FENGARDE ingests logs from multiple sources, normalizes them to a single schema
 ([OCSF](https://schema.ocsf.io/)), runs correlation rules over a sliding window,
