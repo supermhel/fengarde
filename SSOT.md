@@ -202,6 +202,27 @@ LOSING write could differ in *content* from the winner's, not just whether
 a write was wasted. If yes, it's a correctness bug regardless of how it was
 originally filed.
 
+**Phase-completion doc checklist (added 2026-09-04, after README + the GitHub
+Pages tour page both went 6+ days stale across Phases 2/3/3.5/4 with nobody
+catching it until the owner did).** Before marking any roadmap phase SHIPPED
+in this file, verify these public-facing surfaces are still accurate against
+what actually landed — a doc going stale is not itself the failure; nobody
+checking it at the phase boundary is:
+- `README.md` — "What's real" table, architecture diagram/WS table, version
+  header (last tagged release).
+- `docs/index.html` (the GitHub Pages tour) — architecture step count/cards,
+  hero positioning copy.
+- `SECURITY.md` — release-artifact verification section, if the release
+  workflow or its image list changed.
+- Positioning/identity claims specifically — cross-check against whatever the
+  current founder-ratified vision doc says (`fengarde-sec/docs/2026-07-30-cto-vision-plan.md`
+  §2 as of 2026-09-04; a newer doc may supersede it — check `docs/STATUS.md`'s
+  own index first) before reusing an existing headline verbatim. Don't assume
+  prior copy was already checked against it.
+This is a checklist, not a guard — nothing enforces it mechanically. If that
+turns out not to be good enough, the next fix is a real freshness check (e.g.
+extending `tools/check_lane_coverage.py`), not another paragraph here.
+
 - Two perf items from `docs/superpowers/specs/2026-07-21-audit-fix-plan.md` were
   marked "OPEN, deliberately deferred" there and never carried forward into this
   file (found in the 2026-08-13 audit — the audit-fix-plan doc itself is
