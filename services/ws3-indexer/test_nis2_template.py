@@ -110,20 +110,36 @@ def test_build_report_matches_frozen_envelope():
     check(report["backend_degraded"] is False, "a successful NIS2 render is never 'degraded'")
 
 
+def _assert_required_fields_present(schema_node: dict, doc, path: str) -> None:
+    """Minimal stdlib-only stand-in for jsonschema.validate()'s required-field
+    check (gap-hunt 2026-09-04: the real jsonschema library isn't a declared
+    dependency anywhere in this repo -- ADR-008 already rules out pulling in
+    a heavyweight schema-validation package for one test; this walks the same
+    schema file's own `required`/`properties` structure instead). Not a
+    general JSON-Schema validator -- just enough to prove build_report's
+    envelope carries every field contracts/nis2-de-schema.json requires,
+    recursing into nested `type: object` properties."""
+    for key in schema_node.get("required", []):
+        check(isinstance(doc, dict) and key in doc,
+              f"{path}.{key} is required by contracts/nis2-de-schema.json but missing")
+    for key, subschema in schema_node.get("properties", {}).items():
+        if subschema.get("type") == "object" and isinstance(doc, dict) and key in doc:
+            _assert_required_fields_present(subschema, doc[key], f"{path}.{key}")
+
+
 def test_build_report_envelope_matches_nis2_schema():
     """R3-#42: contracts/nis2-de-schema.json requires stage/language/
     disclaimer/entity/incident in the envelope; the generator used to ship
     all of that only inside the Markdown body. Prove build_report's envelope
-    now validates against the schema (and never fabricates entity facts --
-    every entity field stays an explicit placeholder)."""
+    carries every field the schema requires (and never fabricates entity
+    facts -- every entity field stays an explicit placeholder)."""
     import json
-    import jsonschema
     schema_path = (HERE.parent.parent / "contracts" / "nis2-de-schema.json")
     schema = json.loads(schema_path.read_text(encoding="utf-8"))
 
     report = nis2_template.build_report(_ALERT, _TRIAGE,
                                         stage="notification", lang="de")
-    jsonschema.validate(report, schema)  # raises on any required-field/type violation
+    _assert_required_fields_present(schema, report, "report")
 
     check(report["stage"] == "notification" and report["language"] == "de",
           "the envelope must carry the real (coerced) stage/language")
