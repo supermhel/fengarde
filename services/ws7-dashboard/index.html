@@ -2083,6 +2083,17 @@ async function renderIncidents(){
 // standalone entity-browser view; not called from here on purpose.
 const ENTITIES_API = (window.ENTITIES_API !== undefined) ? window.ENTITIES_API : "/api/entities";
 
+// Review-fix (2026-09-04): showIncident()/showEvidencePanel() recreate
+// #incidentGraph/#evidencePanel with the SAME id on every call, so a
+// slower, earlier fetch's `.then()` can resolve after the analyst has
+// already switched to a different incident and silently overwrite the
+// now-displayed one's panel with stale data (or, for evidence, write into
+// an already-detached node). Track which incident is actually selected and
+// have every async continuation below check it's still current before
+// touching the DOM -- same guard shape for both call sites, not a
+// one-off patch on either.
+let _selectedIncidentId = null;
+
 async function getIncidentGraph(incidentId){
   if(!INCIDENTS_API) return null;
   try{
@@ -2201,11 +2212,20 @@ function _evidenceBlockRows(pkg){
 }
 
 async function showEvidencePanel(incidentId, btn){
-  const el = document.getElementById("evidencePanel");
   if(btn) btn.disabled = true;
-  el.innerHTML = `<p class="muted">Building evidence package…</p>`;
+  const elNow = document.getElementById("evidencePanel");
+  if(elNow) elNow.innerHTML = `<p class="muted">Building evidence package…</p>`;
   const pkg = await getIncidentEvidence(incidentId);
   if(btn) btn.disabled = false;
+  // Review-fix (2026-09-04): re-check selection AND re-query the element
+  // after the await -- the analyst may have switched to a different
+  // incident while the (real, server-side) evidence build was in flight.
+  // The old #evidencePanel node captured above is detached by then; write
+  // into whichever node is live for the CURRENT incident, or not at all if
+  // that's no longer this one.
+  if(incidentId !== _selectedIncidentId) return;
+  const el = document.getElementById("evidencePanel");
+  if(!el) return;
   if(!pkg){
     el.innerHTML = `<p class="muted">Evidence package unavailable.</p>`;
     return;
@@ -2226,10 +2246,11 @@ async function showEvidencePanel(incidentId, btn){
 
 function showIncident(inc){
   const detail = document.getElementById("incidentDetail");
-  if(!inc){ detail.innerHTML = ""; return; }
+  if(!inc){ _selectedIncidentId = null; detail.innerHTML = ""; return; }
   const tactics = (inc.tactics||[]).map(t => `<span class="tactic-chip">${esc(t)}</span>`).join("") || "<span class=\"muted\">—</span>";
   const members = (inc.member_alert_ids||[]).map(esc).join(", ") || "—";
   const incidentId = inc.incident_id;
+  _selectedIncidentId = incidentId;
   detail.innerHTML = `<div class="detail">
     <h3>${esc(inc.entity_value)} <span class="muted">(${esc(inc.entity_type)})</span></h3>
     <div class="kv">
@@ -2265,8 +2286,14 @@ function showIncident(inc){
   // detail panel opened for every row in a list would otherwise burn a
   // full package build per row with nobody looking at most of them.
   getIncidentGraph(incidentId).then(graph => {
+    // Review-fix (2026-09-04): `#incidentGraph` is recreated with the SAME
+    // id on every showIncident() call, so getElementById alone can't tell
+    // "gone" from "belongs to whatever incident is selected now" -- check
+    // _selectedIncidentId first; it's the only thing that actually changes
+    // when the analyst moves on to a different incident.
+    if(incidentId !== _selectedIncidentId) return;
     const el = document.getElementById("incidentGraph");
-    if(!el) return;  // the panel moved on to a different incident already
+    if(!el) return;
     if(!graph){
       el.innerHTML = `<p class="muted">No causal graph for this incident yet.</p>`;
       return;
@@ -2333,9 +2360,18 @@ function _renderAssetDetail(a, live){
 // then refresh with the authoritative single-device read once it resolves
 // -- getAsset() returns null on any failure, in which case the snapshot
 // stays displayed rather than being replaced with nothing.
+// Review-fix (2026-09-04): #assetDetail is a single static container
+// (mutated in place, never recreated), so a slower getAsset() for a
+// previously-clicked asset can resolve AFTER a newer click already
+// rendered a different asset and silently clobber it. Track the currently-
+// selected mac and skip the write if the click that started this fetch is
+// no longer the one selected when it resolves.
+let _selectedAssetMac = null;
 async function showAsset(a){
+  _selectedAssetMac = a.mac;
   _renderAssetDetail(a, undefined);
   const fresh = await getAsset(a.mac);
+  if(a.mac !== _selectedAssetMac) return;
   _renderAssetDetail(fresh || a, !!fresh);
 }
 function applyFilter(){

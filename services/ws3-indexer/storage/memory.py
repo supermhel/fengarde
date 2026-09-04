@@ -97,6 +97,24 @@ class MemoryStore(StorageAdapter):
                     return index, doc
             return None
 
+    def find_alerts(self, alert_ids) -> list[dict]:
+        """Bulk cross-index lookup by id across all alerts-* indices
+        (review-fix, 2026-09-04) -- single locked pass instead of one
+        find_alert() call (and one lock acquisition) per id. Same lock
+        discipline and missing-id contract as find_events."""
+        wanted = set(alert_ids)
+        if not wanted:
+            return []
+        found: list[dict] = []
+        with self._lock:
+            for index, bucket in self._indices.items():
+                if not index.startswith("alerts-"):
+                    continue
+                for doc_id, doc in bucket.items():
+                    if doc_id in wanted:
+                        found.append(doc)
+        return found
+
     def find_events(self, event_ids) -> list[dict]:
         """Bulk cross-index lookup by id across all events-* indices
         (Phase 5, 2026-09-04). Same lock discipline as find_alert."""

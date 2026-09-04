@@ -243,13 +243,25 @@ class Scorer:
         rule either way (an operator's weight tuning always matters); this
         only removes the floor's override for rules that opted out of it.
         Use this (never ``score()``) to decide the funnel action -- ``score()``
-        is what gets stored on the alert and shown to analysts."""
+        is what gets stored on the alert and shown to analysts.
+
+        Review-fix (2026-09-04): a matched rule with ``exposure_gate: false``
+        (``Rule.exposure_gate is False``) excludes exposure's point-add from
+        THIS value only -- ``score()`` still applies it in full, so the
+        alert's analyst-facing severity honestly reflects a high/critical
+        asset. Without this, exposure could silently push a rule that was
+        deliberately scored low to stay out of the classifier/LLM funnel
+        (e.g. a ticketed/authorized OT write) back over ``classifier_min``
+        purely because the asset it hit happens to be exposure-tiered --
+        defeating that rule's whole reason for existing."""
         if not matched_rules:
             return 0
         weight_sum = sum(r.score_weight for r in matched_rules)
         gated_levels = [r.level for r in matched_rules if r.llm_gate]
         floor = max((self._floor_for(lvl) for lvl in gated_levels), default=0)
         base = max(self.clamp_min, min(self.clamp_max, max(weight_sum, floor)))
+        if any(not r.exposure_gate for r in matched_rules):
+            return base
         return self._apply_exposure(base, event)
 
     def route(self, score: int) -> str:

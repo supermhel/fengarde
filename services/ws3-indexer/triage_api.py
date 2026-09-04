@@ -350,7 +350,7 @@ def route_get_entity(self, entity_id: str):
     if found is None:
         return self._send(404, {"error": "entity not found"})
     _, doc = found
-    if not self._tenant_gate(session, doc):
+    if not self._tenant_gate(session, doc, "entity not found"):
         return
     return self._send(200, doc)
 
@@ -367,7 +367,7 @@ def route_get_incident_graph(self, incident_id: str):
     if found is None:
         return self._send(404, {"error": "incident graph not found"})
     _, doc = found
-    if not self._tenant_gate(session, doc):
+    if not self._tenant_gate(session, doc, "incident graph not found"):
         return
     return self._send(200, doc)
 
@@ -383,11 +383,10 @@ def _build_incident_evidence(self, incident):
     function deciding what a failure means for its own response code)."""
     incident_id = incident.get("incident_id")
     member_ids = set(incident.get("member_alert_ids") or [])
-    alerts = []
-    for alert_id in member_ids:
-        found_alert = self.deps.store.find_alert(alert_id)
-        if found_alert is not None:
-            alerts.append(found_alert[1])
+    # Review-fix (2026-09-04): bulk lookup instead of one find_alert() call
+    # per member id -- was an N+1 (one full cross-index search per alert)
+    # on every hit to this shared helper. See StorageAdapter.find_alerts.
+    alerts = self.deps.store.find_alerts(member_ids) if member_ids else []
     event_ids: set[str] = set()
     for alert in alerts:
         event_ids.update(str(e) for e in (alert.get("event_ids") or []))
@@ -425,7 +424,7 @@ def route_get_incident_evidence(self, incident_id: str):
     if found is None:
         return self._send(404, {"error": "incident not found"})
     _, incident = found
-    if not self._tenant_gate(session, incident):
+    if not self._tenant_gate(session, incident, "incident not found"):
         return
 
     pkg, failures = _build_incident_evidence(self, incident)
@@ -474,7 +473,7 @@ def route_post_incident_report(self, incident_id: str):
     if found is None:
         return self._send(404, {"error": "incident not found"})
     _, incident = found
-    if not self._tenant_gate(session, incident):
+    if not self._tenant_gate(session, incident, "incident not found"):
         return
 
     q = parse_qs(self._query())
@@ -978,14 +977,21 @@ class Handler(BaseHTTPRequestHandler):
             return None
         return session
 
-    def _tenant_gate(self, session, doc: dict) -> bool:
+    def _tenant_gate(self, session, doc: dict, not_found_msg: str = "alert not found") -> bool:
         """True if `session` (real Session, or True when RBAC is off) may access
-        `doc`'s tenant. Sends 404 and returns False otherwise."""
+        `doc`'s tenant. Sends 404 and returns False otherwise.
+
+        Review-fix (2026-09-04): `not_found_msg` defaults to "alert not
+        found" (every pre-Phase-5 caller is alert-scoped, unchanged), but a
+        non-alert resource (entity/incident-graph/incident) must pass its
+        own message -- a cross-tenant denial on GET /entities/{id} used to
+        claim "alert not found", which is simply wrong for that resource
+        and misleading to anyone debugging the response."""
         if session is True:  # RBAC off
             return True
         if can_access_tenant(session.role, session.tenant_id, doc.get("tenant_id")):
             return True
-        self._send(404, {"error": "alert not found"})
+        self._send(404, {"error": not_found_msg})
         return False
 
     def _check_auth(self) -> bool:

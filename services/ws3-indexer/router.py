@@ -75,7 +75,27 @@ def _validated_tenant(tenant: str) -> str:
 
 
 def route(doc: dict) -> tuple[str, str]:
-    """Return (index_name, doc_id) for a document. Raises ValueError if unroutable."""
+    """Return (index_name, doc_id) for a document. Raises ValueError if unroutable.
+
+    Review-fix (2026-09-04): dispatch is structural key-sniffing, not an
+    explicit type discriminator (contrast contracts/ocsf-event.schema.json's
+    class_uid/type_uid, used elsewhere in this codebase) -- flagged in
+    review as fragile: a future document shape could collide with an
+    existing branch with no exception raised, just a silent misroute. This
+    was NOT changed to a discriminator field: every producer (WS-8's
+    incident.graph, WS-9's entity.updates) is on the FROZEN bus contract
+    (contracts/bus-topics.md) and stamping a new required field onto it is a
+    cross-repo, cross-workstream migration this review-fix pass is not
+    scoped to make safely. Instead, the branch order below IS the contract
+    -- made explicit and locked down by test_router.py's
+    test_shape_dispatch_order_is_collision_free(), which proves every
+    current shape routes correctly AND that the specific near-future shape
+    review flagged (a flattened single graph node -- entity_id+entity_type
+    with no nodes/incident_id) is routed as an entity BY DESIGN, not by
+    accident: a lone entity_id+entity_type pair genuinely IS entity-shaped
+    regardless of what larger message it came from. Any future branch
+    addition must extend that test, not just this function.
+    """
     # incident.graph? (WP-3-A/ADR-010, Phase 5 2026-09-04) -- checked BEFORE
     # the "incident_id" branch below since this payload also carries
     # incident_id; "nodes" is unique to the graph shape (an incidents

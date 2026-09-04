@@ -474,6 +474,8 @@ def build_incident_report(pkg: dict, verified: bool, *, lang: str = "de",
     before serving, not after" discipline the evidence route itself
     holds, kept in the caller so this stays a pure renderer)."""
     if lang not in LANGUAGES:
+        _warn(f"nis2 build_incident_report lang {lang!r} is not one of "
+              f"{LANGUAGES}; coercing to 'de' default")
         lang = "de"
     requested_at = time.time() if requested_at is None else requested_at
     incident_id = pkg.get("incident_id")

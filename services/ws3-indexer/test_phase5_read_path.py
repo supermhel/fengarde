@@ -46,10 +46,12 @@ def _serve(store, users_db=None):
     return srv, srv.server_address[1]
 
 
-def _http(method, url, cookie=None):
+def _http(method, url, cookie=None, csrf=None):
     headers = {}
     if cookie:
         headers["Cookie"] = cookie
+    if csrf is not None:
+        headers["X-CSRF-Token"] = csrf
     req = urllib.request.Request(url, method=method, headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=5) as resp:
@@ -207,16 +209,37 @@ def test_cross_tenant_entity_and_graph_are_404_not_leaked():
             headers={"Content-Type": "application/json"})
         with urllib.request.urlopen(req, timeout=5) as resp:
             set_cookie = resp.headers.get("Set-Cookie")
+            login_body = json.loads(resp.read().decode())
         cookie = set_cookie.split(";")[0]
+        csrf = login_body["csrf_token"]
 
         code, body = _http("GET", f"http://127.0.0.1:{port}/entities/e1", cookie=cookie)
         check(code == 404, f"cross-tenant entity fetch must 404 (never leak existence), got {code}: {body}")
+        # Review-fix (2026-09-04): _tenant_gate used to hardcode "alert not
+        # found" for every resource -- an entity denial saying that was
+        # simply wrong. Each resource must now report its own kind.
+        check(body.get("error") == "entity not found",
+              f"cross-tenant entity denial must say 'entity not found', not the "
+              f"stale alert-shaped message, got {body!r}")
 
         code2, body2 = _http("GET", f"http://127.0.0.1:{port}/incidents/inc-1/graph", cookie=cookie)
         check(code2 == 404, f"cross-tenant graph fetch must 404, got {code2}: {body2}")
+        check(body2.get("error") == "incident graph not found",
+              f"cross-tenant graph denial must say 'incident graph not found', "
+              f"got {body2!r}")
 
         code3, body3 = _http("GET", f"http://127.0.0.1:{port}/incidents/inc-1/evidence", cookie=cookie)
         check(code3 == 404, f"cross-tenant evidence fetch must 404, got {code3}: {body3}")
+        check(body3.get("error") == "incident not found",
+              f"cross-tenant evidence denial must say 'incident not found', "
+              f"got {body3!r}")
+
+        code4, body4 = _http("POST", f"http://127.0.0.1:{port}/incidents/inc-1/report",
+                              cookie=cookie, csrf=csrf)
+        check(code4 == 404, f"cross-tenant incident-report POST must 404, got {code4}: {body4}")
+        check(body4.get("error") == "incident not found",
+              f"cross-tenant incident-report denial must say 'incident not found', "
+              f"got {body4!r}")
     finally:
         srv.shutdown(); srv.server_close()
 

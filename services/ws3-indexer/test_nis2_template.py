@@ -174,6 +174,12 @@ def test_invalid_stage_lang_coercion_is_logged_loudly():
     try:
         nis2_template.build_report(_ALERT, _TRIAGE, stage="not-a-stage", lang="fr")
         nis2_template.render_nis2_report(_ALERT, _TRIAGE, stage="nope", lang="xx")
+        # Review-fix (2026-09-04): build_incident_report's own lang guard used
+        # to coerce silently (no _warn call) unlike the three sibling guards
+        # above -- assert it now logs too, same as render_incident_report.
+        _fake_pkg = {"incident_id": "inc-1", "package_id": "pkg-1", "blocks": [],
+                     "chain": {"block_count": 0}}
+        nis2_template.build_incident_report(_fake_pkg, verified=True, lang="zz")
     finally:
         shared_log.get_logger = real
 
@@ -185,6 +191,9 @@ def test_invalid_stage_lang_coercion_is_logged_loudly():
           "render_nis2_report must also log its stage coercion")
     check(any("lang" in w and "xx" in w for w in fake.warnings),
           "render_nis2_report must also log its lang coercion")
+    check(any("build_incident_report" in w and "zz" in w for w in fake.warnings),
+          f"build_incident_report must also log its lang coercion (was silent "
+          f"before this fix), got {fake.warnings}")
 
 
 # -- HTTP wiring: ?template=nis2&stage=&lang= on the existing report route --

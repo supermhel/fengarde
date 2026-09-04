@@ -176,6 +176,28 @@ class StorageAdapter(abc.ABC):
         self.index(index, doc_id, document)
         return True
 
+    # -- bulk alert lookup (review-fix, 2026-09-04) -------------------------
+    #
+    # _build_incident_evidence (triage_api.py) used to call find_alert() once
+    # per member alert id -- an N+1 that costs one full cross-index search
+    # request per alert on every GET /incidents/{id}/evidence and POST
+    # /incidents/{id}/report. find_events (above) already proved the bulk
+    # shape for the sibling lookup; this gives alerts the same one. Default
+    # degrades to the old per-id find_alert() loop for a third-party adapter
+    # that predates this method -- same "old behavior, never worse" contract
+    # as index_cas/get_versioned above; MemoryStore/OpenSearchStore override
+    # with a real single-pass/bulk lookup.
+
+    def find_alerts(self, alert_ids) -> list[dict]:
+        """Bulk cross-index lookup of alert docs by id. Missing ids are
+        silently omitted -- same contract as :meth:`find_events`."""
+        out: list[dict] = []
+        for alert_id in alert_ids:
+            found = self.find_alert(alert_id)
+            if found is not None:
+                out.append(found[1])
+        return out
+
     # -- create-only write (P1-4 remainder: normalized/scored double-index) --
     #
     # WS-3 consumes BOTH `normalized.events` and `scored.events`, and the

@@ -466,6 +466,45 @@ class OpenSearchStore(StorageAdapter):
             return None
         return index, source
 
+    def find_alerts(self, alert_ids) -> list[dict]:
+        """Bulk cross-index lookup by id across all daily alerts-* indices
+        (review-fix, 2026-09-04) via a single `terms` query -- one round
+        trip for a whole incident's member-alert set, not one _search per
+        id (was `_build_incident_evidence`'s N+1, triage_api.py).
+
+        Same duplicate-_id risk `_search_alert`/FIX #12 documents (a
+        re-indexed/re-timed alert can exist in two adjacent daily indices):
+        oversize the fetch and sort by time desc so, per id, the FIRST hit
+        encountered is the newest -- same "newest wins" contract as
+        find_alert's single-id lookup, just deduped across one bulk result
+        instead of one size-1 search per id."""
+        wanted = list({str(a) for a in alert_ids})
+        if not wanted:
+            return []
+        body = {"size": len(wanted) * 4, "query": {"terms": {"_id": wanted}},
+                "sort": [{"time": {"order": "desc", "unmapped_type": "long"}}]}
+        try:
+            result = self._request("POST", "/alerts-*/_search", body)
+        except urllib.error.HTTPError as exc:
+            if _read_error_is_index_missing(exc):
+                return []
+            _log_rw_warn("opensearch bulk find alerts failed (HTTP %s): %s",
+                        exc.code, exc.reason)
+            raise
+        hits = result.get("hits", {}).get("hits", [])
+        seen: set[str] = set()
+        out: list[dict] = []
+        for h in hits:
+            doc_id = h.get("_id")
+            source = h.get("_source")
+            if not isinstance(doc_id, str) or doc_id in seen:
+                continue
+            if not isinstance(source, dict) or not source:
+                continue
+            seen.add(doc_id)
+            out.append(source)
+        return out
+
     def find_events(self, event_ids) -> list[dict]:
         """Bulk cross-index lookup by id across all events-* indices
         (Phase 5, 2026-09-04) via a single `terms` query -- one round trip

@@ -408,6 +408,19 @@ class Rule:
         # rather than less) instead of `bool("false") == True` silently
         # doing the wrong thing.
         self.llm_gate = siem.get("llm_gate", True) is not False
+        # Phase 5 review-fix (2026-09-04): same lever as llm_gate, for
+        # exposure-aware scoring (Scorer._apply_exposure). A rule can be
+        # deliberately scored `low` to stay out of the classifier/LLM funnel
+        # for an authorized/ticketed condition (e.g.
+        # ot_modbus_unauthorized_write_ticketed.yml) -- exposure's point-add
+        # (contracts/scoring.yaml's asset_criticality tiers) must not be
+        # allowed to silently push that rule's FUNNEL ROUTING decision back
+        # over classifier_min just because the asset happens to be
+        # high/critical-tier; the alert still fires and still shows its true
+        # exposure-adjusted severity to the analyst (Scorer.score is
+        # unaffected), only the funnel action is gated. Defaults to True
+        # (exposure applies), same opt-in-to-exemption posture as llm_gate.
+        self.exposure_gate = siem.get("exposure_gate", True) is not False
         self.window_seconds = siem.get("window_seconds")
         self.threshold = siem.get("threshold")
         # FIX 2(b) poison-pill guard (2026-08-06): validate the stateful

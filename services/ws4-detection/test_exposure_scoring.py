@@ -136,10 +136,11 @@ def test_schema_shape_and_load_bearing_keys_unchanged():
 
 
 class _FakeRule:
-    def __init__(self, score_weight=30, level="medium", llm_gate=True):
+    def __init__(self, score_weight=30, level="medium", llm_gate=True, exposure_gate=True):
         self.score_weight = score_weight
         self.level = level
         self.llm_gate = llm_gate
+        self.exposure_gate = exposure_gate
 
 
 def test_load_ot_criticality_reads_the_real_sample():
@@ -214,6 +215,79 @@ def test_event_with_no_ot_address_is_unaffected():
           "exposure adjustment")
 
 
+def test_exposure_gate_false_excludes_routing_but_not_score():
+    """Review-fix (2026-09-04): a rule with exposure_gate=False must not let
+    exposure's point-add cross it into a higher funnel tier via
+    routing_score(), while score() (the analyst-facing value) still shows
+    the full exposure-adjusted severity. Reproduces the exact regression
+    found in review: a low-scored, ticketed rule (base 10, under
+    classifier_min=20) on a 'critical' tier OT point (+20) must NOT reach
+    the classifier funnel, even though its true severity (score()) does
+    reflect the critical asset."""
+    scorer = Scorer(SCORING_YAML, ot_points_dir=OT_POINTS_DIR)
+    gated_rule = _FakeRule(score_weight=10, level="low", exposure_gate=False)
+    ungated_rule = _FakeRule(score_weight=10, level="low", exposure_gate=True)
+    critical_event = {"unmapped": {"ot": {"address": 1}}}  # plc-line3.yml: criticality critical -> +20
+
+    gated_score = scorer.score([gated_rule], critical_event)
+    gated_routing = scorer.routing_score([gated_rule], critical_event)
+    ungated_score = scorer.score([ungated_rule], critical_event)
+    ungated_routing = scorer.routing_score([ungated_rule], critical_event)
+
+    check(gated_score == ungated_score == 30,
+          f"score() must show full exposure-adjusted severity regardless of "
+          f"exposure_gate (both must be base 10 + critical tier 20 = 30), "
+          f"got gated={gated_score} ungated={ungated_score}")
+    check(gated_routing == 10,
+          f"routing_score() with exposure_gate=False must stay at the base "
+          f"score (10), unaffected by exposure, got {gated_routing}")
+    check(ungated_routing == 30,
+          f"routing_score() with exposure_gate=True (default) must include "
+          f"exposure same as score(), got {ungated_routing}")
+
+    from scoring import Scorer as _S  # local import, avoids polluting module scope
+    t = _S(SCORING_YAML).t
+    check(gated_routing < t["classifier_min"],
+          f"the whole point of exposure_gate=False: gated routing_score "
+          f"({gated_routing}) must stay under classifier_min "
+          f"({t['classifier_min']}) -- this is the ticketed-OT-write "
+          f"regression this test exists to prevent")
+    check(ungated_routing >= t["classifier_min"],
+          f"sanity: without the gate, the same event WOULD cross into the "
+          f"classifier funnel (got {ungated_routing} vs classifier_min "
+          f"{t['classifier_min']}), confirming the gate is what's doing the work")
+
+
+def test_ticketed_ot_write_rule_ships_with_exposure_gate_set():
+    """Regression guard: the real rule this bug was found against
+    (contracts/rules/ot_modbus_unauthorized_write_ticketed.yml) must
+    actually carry exposure_gate: false, not just a synthetic fixture --
+    otherwise this whole fix is unverified against the rule it was written
+    for."""
+    rule_path = ROOT / "contracts" / "rules" / "ot_modbus_unauthorized_write_ticketed.yml"
+    raw = yaml.safe_load(rule_path.read_text(encoding="utf-8"))
+    siem = raw.get("siem", {})
+    check(siem.get("exposure_gate") is False,
+          f"ot_modbus_unauthorized_write_ticketed.yml must set "
+          f"siem.exposure_gate: false, got {siem.get('exposure_gate')!r}")
+
+    import sys as _sys
+    _sys.path.insert(0, str(SERVICES / "ws4-detection"))
+    from engine import Rule
+    rule = Rule(raw)
+    check(rule.exposure_gate is False,
+          f"engine.Rule must parse siem.exposure_gate into rule.exposure_gate, "
+          f"got {rule.exposure_gate!r}")
+
+    scorer = Scorer(SCORING_YAML, ot_points_dir=OT_POINTS_DIR)
+    critical_event = {"unmapped": {"ot": {"address": 1}}}
+    routing = scorer.routing_score([rule], critical_event)
+    check(routing < scorer.t["classifier_min"],
+          f"the real shipped rule, on a real critical-tier OT point, must "
+          f"still route to 'store' not 'classifier' -- got routing_score="
+          f"{routing} vs classifier_min={scorer.t['classifier_min']}")
+
+
 def main():
     test_schema_shape_and_load_bearing_keys_unchanged()
     test_load_ot_criticality_reads_the_real_sample()
@@ -221,6 +295,8 @@ def main():
     test_ot_alert_on_a_criticality_tagged_point_measurably_outranks_an_unmarked_one()
     test_exposure_gap_disappears_when_disabled_mutation_verified()
     test_event_with_no_ot_address_is_unaffected()
+    test_exposure_gate_false_excludes_routing_but_not_score()
+    test_ticketed_ot_write_rule_ships_with_exposure_gate_set()
 
     if FAILS:
         print(f"[FAIL] WP-2-F exposure scoring extension: {len(FAILS)} problem(s)")
