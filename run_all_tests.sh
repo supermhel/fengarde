@@ -518,6 +518,9 @@ $PY services/ws7-dashboard/test_fix_ux.py || { fail=1; FAILED="${FAILED} ${LAST_
 echo
 echo "== ws7 read-plane regression: LIVE ownership, outage marker, config.js gate, badge copy =="; LAST_HEADER="== ws7 read-plane regression: LIVE ownership, outage marker, config.js gate, badge copy =="
 $PY services/ws7-dashboard/test_fix_read_plane.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
+echo "== Phase 5 item 4 (2026-09-04): GET /assets/{mac} wired into the Inventory drill-in =="; LAST_HEADER="== Phase 5 item 4 (2026-09-04): GET /assets/{mac} wired into the Inventory drill-in =="
+$PY services/ws7-dashboard/test_phase5_asset_detail.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 
 echo
 if [ "$fail" -eq 0 ]; then

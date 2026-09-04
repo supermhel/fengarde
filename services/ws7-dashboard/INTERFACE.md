@@ -22,8 +22,12 @@
   the Inventory view showed mock data on every deployment). Fetches
   `/assets?limit=200` and `/keys` (key metadata, never material). Falls back
   to `mocks/mock_data.js` only if explicitly overridden with
-  `window.INVENTORY_API = null`. `/assets/{mac}` is still a WS-6 contract
-  endpoint the dashboard doesn't currently call.
+  `window.INVENTORY_API = null`. `/assets/{mac}` (Phase 5, 2026-09-04) is now
+  called too: clicking a device in the Inventory drill-in renders the list
+  snapshot immediately, then refreshes with this authoritative single-device
+  read once it resolves ("live device record" vs "list snapshot" badge shows
+  which one is on screen; a failed/unavailable fetch just keeps the snapshot,
+  never blanks the panel).
 - `/api/audit` (2026-08-20) → WS-3's `GET /audit`, admin-scoped by the backend's
   own session check — the "Audit" nav view.
 - `/api/ops/{ws1,ws2,ws3,ws4,ws8}` (2026-08-20) → each workstream's own

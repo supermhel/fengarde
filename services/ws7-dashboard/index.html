@@ -874,7 +874,27 @@ async function getAssets(){
       return [];
     }
   }
-  return window.SIEM_MOCK.assets;
+  return (window.SIEM_MOCK && window.SIEM_MOCK.assets) || [];
+}
+
+// Phase 5 (2026-09-04): GET /assets/{mac} -- a real WS-6 contract endpoint
+// that existed since before this file did (services/ws7-dashboard/
+// INTERFACE.md: "still a WS-6 contract endpoint the dashboard doesn't
+// currently call"). The list fetch above is a snapshot, possibly seconds
+// or minutes stale by the time an analyst clicks a row; this is the
+// authoritative single-device read. Same fetch-fallback discipline as
+// getAssets(): a non-2xx or thrown fetch returns null (never fabricate),
+// the caller keeps showing the list-snapshot render rather than going
+// blank on a transient failure.
+async function getAsset(mac){
+  if(!INVENTORY_API) return null;
+  try{
+    const r = await _fetch(`${INVENTORY_API}/assets/${encodeURIComponent(mac)}${tenantQuery()}`);
+    if(!r.ok) return null;
+    return await r.json();
+  }catch(e){
+    return null;
+  }
 }
 async function getKeys(){
   if(!INVENTORY_API) return [];
@@ -2108,10 +2128,16 @@ function fmtDate(s){
   const d = new Date(s);
   return isNaN(d.getTime()) ? s : d.toLocaleString();
 }
-function showAsset(a){
+function _renderAssetDetail(a, live){
   const hist = (a.ip_history||[]).map(h=>`<tr><td>${esc(h.ip)}</td><td class="muted">${esc(fmtDate(h.from))}</td><td class="muted">${h.to ? esc(fmtDate(h.to)) : "current"}</td></tr>`).join("")||"<tr><td colspan=3 class=muted>—</td></tr>";
+  // Phase 5 (2026-09-04): live !== undefined only once GET /assets/{mac}
+  // (or its absence) has been resolved -- "checking..." while in flight,
+  // never silently presented as either state before we actually know.
+  const badge = live === undefined ? `<span class="muted">checking…</span>`
+    : live ? `<span class="pill low">live device record</span>`
+    : `<span class="pill med" title="GET /assets/{mac} unavailable -- showing the list snapshot">list snapshot</span>`;
   document.getElementById("assetDetail").innerHTML = `<div class="detail">
-    <h3>${esc(a.hostname||a.mac)} <span class="muted">(${esc(a.mac)})</span></h3>
+    <h3>${esc(a.hostname||a.mac)} <span class="muted">(${esc(a.mac)})</span> ${badge}</h3>
     <div class="kv"><div class="k">Current IP</div><div>${esc(a.ip_current||"—")}</div>
     <div class="k">Sector</div><div>${esc(a.sector||"—")}</div>
     <div class="k">Type</div><div>${esc(a.type||"—")}</div>
@@ -2120,6 +2146,18 @@ function showAsset(a){
     <div class="k">Tenant</div><div class="muted">${esc(a.tenant_id||"default")}</div></div>
     <h3 style="margin-top:16px">IP history</h3>
     <div class="table-scroll"><table><thead><tr><th>IP</th><th>From</th><th>To</th></tr></thead><tbody>${hist}</tbody></table></div></div>`;
+}
+// Phase 5 (2026-09-04): was a pure sync render off the LIST snapshot only
+// (services/ws7-dashboard/INTERFACE.md's own noted gap: "/assets/{mac} is
+// still a WS-6 contract endpoint the dashboard doesn't currently call").
+// Now: render the snapshot immediately (no blank/loading flash on click),
+// then refresh with the authoritative single-device read once it resolves
+// -- getAsset() returns null on any failure, in which case the snapshot
+// stays displayed rather than being replaced with nothing.
+async function showAsset(a){
+  _renderAssetDetail(a, undefined);
+  const fresh = await getAsset(a.mac);
+  _renderAssetDetail(fresh || a, !!fresh);
 }
 function applyFilter(){
   const q=document.getElementById("q").value.trim().toLowerCase();
