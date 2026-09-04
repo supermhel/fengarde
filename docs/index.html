@@ -276,7 +276,7 @@ review, the verdict, DESIGN.md, and every shipping raster carrying its provenanc
 <section class="block wrap">
   <div class="section-head">
     <span class="eyebrow">Architecture</span>
-    <h2>Eight independent services.<br>One message bus between them.</h2>
+    <h2>Nine independent services.<br>One message bus between them.</h2>
     <p>No service calls another directly. Every arrow below is a real Redis Streams topic — swap, restart,
       or scale any one stage without touching the rest. (Two arrows are HTTP via the same-origin nginx
       proxy instead: Console↔Index and Console↔Inventory-read — the dashboard talks HTTP, not streams.)</p>
@@ -306,6 +306,9 @@ review, the verdict, DESIGN.md, and every shipping raster carrying its provenanc
     <div class="stage live"><div class="no">08</div>
       <div class="stage-head"><div class="icn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg></div><h3>Console</h3></div>
       <p>This dashboard — read-only over HTTP</p></div>
+    <div class="stage"><div class="no">09</div>
+      <div class="stage-head"><div class="icn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="18" r="2.4"/><circle cx="18" cy="18" r="2.4"/><circle cx="12" cy="6" r="2.4"/><path d="M12 8.4V13M8.4 16.7L10.7 14.5M15.6 16.7L13.3 14.5"/></svg></div><h3>Resolve</h3></div>
+      <p>Deterministic entity IDs off the same alert stream, alongside Correlate — not yet surfaced in the console (API/bus only today)</p></div>
   </div>
 </section>
 
