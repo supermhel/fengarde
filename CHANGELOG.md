@@ -7,58 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added (2026-09-03, Phase 3.5 — WP-3.5-A operational outcome metrics)
-
-Phase 3.5 (roadmap "weeks 14–16" — operational outcome metrics) ships as one
-package, `WP-3.5-A`, on top of Phase 3 (PR #89 merged `c0d7c2e`). Distribution:
-`eval/twin/report.py` measures the Phase 3.5 metric set against the REAL WS-8
-artifacts; `eval/twin/test_phase3_5.py` (mutation-sound, wired into
-`run_all_tests.sh`) is the acceptance test. All numbers harness-measured
-(Phase 3.5 discipline); `eval/twin/baseline.json` (WP-1-G) stays frozen —
-`delta_vs_baseline` reports `n/a` for the previously-null keys (the honest
-encoding of "null before, real now").
-
-- **False correlation rate** — fraction of oracle-DECLARED forbidden
-  relationships (`allowed: false` in `eval/twin/oracle.yaml`) that a real v2
-  graph edge joined, computed from the same real edges chain_fidelity grades,
-  with `forbidden_denominator` + per-pair breakdown in context. Seed 7:
-  **2/2 = 1.0** — the honest signal that the entity-presence join cannot
-  discriminate direction (the actor+ip pair sits on both sides of every step
-  cut). Reported raw, never hidden.
-- **Alert reduction ratio** — `1 − (incidents/alerts)` over the same real
-  window: 7 raw WS-4 alerts → 2 WS-8 incidents = **0.7143** (71% of raw alert
-  volume absorbed by correlation).
-- **Incident reconstruction time** — builds the REAL WS-3 evidence package
-  (`services/ws3-indexer/evidence_package.py`) from the chain's real
-  incident/alerts/events/graph, verifies the hash chain, and reports the real
-  wall-clock assembly latency (median of 3 samples, ~0.8–5.9 ms machine-load
-  dependent — the committed run records 5.9224 ms; 14 blocks,
-  `verified: true`, deterministic `package_id`). Wall-clock is informational
-  — the same carve-out `date` enjoys — so it is excluded from the report's
-  byte-determinism assertion, with `package_id`/`block_count` asserted
-  deterministically instead.
-- **Analyst investigation time (MTTI)** — a scripted walk over the REAL
-  incident graph: open incident + member alerts + distinct entities + causal
-  edges + assemble = **12 steps** for seed 7, × the documented 30 s/step
-  analyst-latency model = **360.0 s**. Step counts are the measured quantity;
-  the seconds conversion is the documented model until a design partner
-  supplies wall-clock.
-- **Severity calibration confusion matrix** — oracle-expected level vs real
-  fired-alert level per alert: seed 7 = **6 correct / 0 over / 0 under /
-  1 unexpected** (a fired rule the oracle does not declare at its step,
-  surfaced not folded).
-- **MTTR stays an honest null** with a documented `context.mttr_null_reason`:
-  the twin harness has no remediation/closure event (no triage-API status
-  transition is replayed; incidents never close in the sim), and the
-  roadmap's own MTTR cell requires "triage-API status transitions on real
-  replays" — a live-replay measure a twin cannot fabricate.
-- `test_chain_fidelity.py`'s WP-3-C grade is untouched except its (d)
-  determinism check now carves out the informational wall-clock
-  reconstruction key (same carve-out `date` enjoys), documented in the test's
-  docstring.
-- Route/branch: `feat/phase-3.5` → PR #90. Cross-repo note in
-  `fengarde-sec/docs/STATUS.md` §0; roadmap Part 4 Phase 3.5 strike + the
-  execution-breakdown's Phase 3.5 promotion-and-close pass.
+## [0.10.0] - 2026-09-04
 
 ### Added (2026-09-03, Phase 4 — WP-4-A adversarial system-level validation)
 
@@ -128,6 +77,61 @@ Layer C stochastic+NON-blocking (its output never enters the gate).
   `.gitignore` covers `eval/adversarial/out/` (same convention as
   `report.latest.json`). Route: branch `feat/phase-4` (off the phase-3.5
   head) → PR #91.
+
+## [0.9.1] - 2026-09-04
+
+### Added (2026-09-03, Phase 3.5 — WP-3.5-A operational outcome metrics)
+
+Phase 3.5 (roadmap "weeks 14–16" — operational outcome metrics) ships as one
+package, `WP-3.5-A`, on top of Phase 3 (PR #89 merged `c0d7c2e`). Distribution:
+`eval/twin/report.py` measures the Phase 3.5 metric set against the REAL WS-8
+artifacts; `eval/twin/test_phase3_5.py` (mutation-sound, wired into
+`run_all_tests.sh`) is the acceptance test. All numbers harness-measured
+(Phase 3.5 discipline); `eval/twin/baseline.json` (WP-1-G) stays frozen —
+`delta_vs_baseline` reports `n/a` for the previously-null keys (the honest
+encoding of "null before, real now").
+
+- **False correlation rate** — fraction of oracle-DECLARED forbidden
+  relationships (`allowed: false` in `eval/twin/oracle.yaml`) that a real v2
+  graph edge joined, computed from the same real edges chain_fidelity grades,
+  with `forbidden_denominator` + per-pair breakdown in context. Seed 7:
+  **2/2 = 1.0** — the honest signal that the entity-presence join cannot
+  discriminate direction (the actor+ip pair sits on both sides of every step
+  cut). Reported raw, never hidden.
+- **Alert reduction ratio** — `1 − (incidents/alerts)` over the same real
+  window: 7 raw WS-4 alerts → 2 WS-8 incidents = **0.7143** (71% of raw alert
+  volume absorbed by correlation).
+- **Incident reconstruction time** — builds the REAL WS-3 evidence package
+  (`services/ws3-indexer/evidence_package.py`) from the chain's real
+  incident/alerts/events/graph, verifies the hash chain, and reports the real
+  wall-clock assembly latency (median of 3 samples, ~0.8–5.9 ms machine-load
+  dependent — the committed run records 5.9224 ms; 14 blocks,
+  `verified: true`, deterministic `package_id`). Wall-clock is informational
+  — the same carve-out `date` enjoys — so it is excluded from the report's
+  byte-determinism assertion, with `package_id`/`block_count` asserted
+  deterministically instead.
+- **Analyst investigation time (MTTI)** — a scripted walk over the REAL
+  incident graph: open incident + member alerts + distinct entities + causal
+  edges + assemble = **12 steps** for seed 7, × the documented 30 s/step
+  analyst-latency model = **360.0 s**. Step counts are the measured quantity;
+  the seconds conversion is the documented model until a design partner
+  supplies wall-clock.
+- **Severity calibration confusion matrix** — oracle-expected level vs real
+  fired-alert level per alert: seed 7 = **6 correct / 0 over / 0 under /
+  1 unexpected** (a fired rule the oracle does not declare at its step,
+  surfaced not folded).
+- **MTTR stays an honest null** with a documented `context.mttr_null_reason`:
+  the twin harness has no remediation/closure event (no triage-API status
+  transition is replayed; incidents never close in the sim), and the
+  roadmap's own MTTR cell requires "triage-API status transitions on real
+  replays" — a live-replay measure a twin cannot fabricate.
+- `test_chain_fidelity.py`'s WP-3-C grade is untouched except its (d)
+  determinism check now carves out the informational wall-clock
+  reconstruction key (same carve-out `date` enjoys), documented in the test's
+  docstring.
+- Route/branch: `feat/phase-3.5` → PR #90. Cross-repo note in
+  `fengarde-sec/docs/STATUS.md` §0; roadmap Part 4 Phase 3.5 strike + the
+  execution-breakdown's Phase 3.5 promotion-and-close pass.
 
 ### Fixed (2026-09-03, WP-3.5-A review-fix round: 14 confirmed defects from a fresh-session code review)
 
@@ -214,6 +218,8 @@ specific data shape happened not to trigger, not incorrect prior output.
 - **Verified**: `run_all_tests.sh` **ALL TESTS PASS** exit 0, both
   `test_phase3_5.py` and `test_chain_fidelity.py` green with the extended
   checks above.
+
+## [0.9.0] - 2026-09-03
 
 ### Added (2026-09-02, Phase 3 — WP-3-A/B/C/D/E shipped)
 
@@ -496,6 +502,8 @@ see SSOT.md §2's Phase 2 row for the full verification account.
   `ws6-inventory` recreated a second time back to its default 3600s
   baseline afterward so the standing dev stack isn't left non-default.
 
+## [0.8.0] - 2026-09-02
+
 ### Fixed (2026-09-02, PR #81 merged; dependabot PR #82-#87 reviewed/merged, one real CI bug caught)
 
 **PR #81 (Phase 2 entity-plane, all 20 defects above) MERGED to `main`**
@@ -549,6 +557,68 @@ before merge, not bypassed.
 - **WS-8 `_build_incident_graph` redundant re-bounding removed.** `cooccur` values are already
   bounded at store time (the side-table's single writer), so the graph-build re-bound was dead
   weight; the invariant is now documented at both sites.
+
+### Added (2026-08-28, Phase 2 — entity/context plane: ADR-009 + WS-9 resolver + incident graph + baselines)
+
+- **ADR-009 (owner-ratified): entity-plane bus topics.** `docs/adr/009-entity-plane-bus-topics.md`
+  + `contracts/bus-topics.md` amended with two additive topics: `entity.updates` (deterministic
+  entity_id, idempotent under redelivery) and `incident.graph` (version 1, provenance-carrying
+  edges, no transitive inference), plus a **new WS-9 resolver service**.
+- **WS-9 entity resolver (WP-2-B).** `services/ws9-resolver/` — sha256(tenant|type|canonical)
+  entity_id; edge canonicalization mirroring ws8 (IP via `shared.ocsf.valid_ip`, MAC lowercased,
+  usernames case-folded); replay-safe; emits `entity.updates` on the memory bus; INTERFACE.md.
+- **Incident relationship edges (WP-2-C).** WS-8 correlator now emits `incident.graph` with
+  provenance edges — only same-alert co-occurrences (no transitive inference, proven by test),
+  redelivery-identical, member-set-bounded, pruned by the existing `_sweep_dead_tracks`.
+- **Behavioral baselines (WP-2-D).** `services/ws4-detection/behavioral_baseline.py` —
+  learn-then-detect baselines reusing `shared.window.DequeWindowCounter` (no new store),
+  bounded/deterministic/replay-safe. Not wired into the rule engine yet (honest scope).
+- **OT point config (WP-2-E).** `contracts/ot-points/` — machine-readable OT point map
+  (meaning/criticality/allowed-writers/maintenance-window), twin-derived sample; documents the
+  FPR relationship honestly.
+- **Exposure-aware scoring schema (WP-2-F).** `contracts/scoring.yaml` gains an inert
+  (enabled:false) `exposure` extension; schema-additive; wired `test_exposure_scoring.py`.
+- **Sanitizer gap fix (WP-2-G).** `ws2-normalization/main.py` `_FREE_TEXT_PATHS` extended to
+  cover real mapped free-text gaps (`api.operation`, `actor.user.domain`, `actor.user.uid`);
+  `unmapped.*` wildcard confirmed mutation-sound. (Roadmap's "_FREE_TEXT_PATHS gone" claim was
+  stale — it lives in `main.py`.)
+- **Bounded per-IP enrichment cache (WP-2-H).** `Enricher` gains an OrderedDict per-IP result
+  cache (cap 10_000, LRU, miss-marker; junk IPs never cached); additive, thread-safe.
+- **triage_api decomposition (WP-2-I).** `services/ws3-indexer/triage_api.py` decomposed:
+  ~788-line closure → ~30-line assembler + 16 per-route `Handler` functions + `ROUTE_INVENTORY`;
+  behavior-preserving (ws3 suite incl. MFA live-e2e green).
+
+### Added (2026-08-28, MSSP distribution: partner list + quickstart went live)
+
+Re-measuring the README's live-stack Performance table surfaced a real bug
+instead of clean numbers: 4/10 latency bursts against the live Docker stack
+never produced a visible alert within the 120s timeout, with 586 "exhausted
+5 CAS retries" errors in one `fengarde_bench_live.py` run.
+
+Root cause: `_index_alert_preserving_triage` (`services/ws3-indexer/main.py`)
+read the current alert state via `find_alert_versioned`, a cross-index
+**search** bounded by OpenSearch's default 1s `refresh_interval`. WS-4's
+stateful rules fire on `count >= threshold` (not `==`), so a single burst can
+emit several `alerts` messages sharing one deterministic `alert_id` within
+milliseconds. Each CAS retry's search-based read saw stale (already
+superseded) state and lost against a write the SAME process had just made
+moments earlier — a self-inflicted race, not concurrent-writer contention.
+
+Fixed by adding `StorageAdapter.get_versioned(index, doc_id)` — an exact
+`(index, doc_id)` read (direct `GET` on OpenSearch, immediately consistent,
+no refresh lag; dict lookup on `MemoryStore`) — implemented in
+`storage/adapter.py`, `storage/memory.py`, and `storage/opensearch.py`, and
+wired into the CAS retry loop as the primary read, falling back to the
+cross-index search only on a genuine miss (preserving the existing
+day-boundary routing-drift check). Regression test:
+`test_storage_cas.py::test_alert_rewrite_uses_get_not_stale_search_under_frozen_refresh`
+against a fake transport with permanently-stale search + correct GET/PUT
+semantics; mutation-verified (reverting the fix reproduces the exact failure
+signature). Re-ran `fengarde_bench_live.py` post-fix: 10/10 bursts succeeded,
+zero CAS-exhaustion errors, p50/p99 unchanged (~2,045/2,063 ms) — see
+README.md's Performance section.
+
+## [0.7.0] - 2026-08-29
 
 ### Fixed (2026-08-28, third review-fix round — adversarial PR review of #80)
 
@@ -776,65 +846,7 @@ them incomplete, plus one new critical issue in the fix commit itself.
   owner sign-off on the terms — is now in place.
 
 ### Fixed (2026-08-28, WS-3: live-stack CAS race under stateful-rule re-fire)
-### Added (2026-08-28, Phase 2 — entity/context plane: ADR-009 + WS-9 resolver + incident graph + baselines)
-
-- **ADR-009 (owner-ratified): entity-plane bus topics.** `docs/adr/009-entity-plane-bus-topics.md`
-  + `contracts/bus-topics.md` amended with two additive topics: `entity.updates` (deterministic
-  entity_id, idempotent under redelivery) and `incident.graph` (version 1, provenance-carrying
-  edges, no transitive inference), plus a **new WS-9 resolver service**.
-- **WS-9 entity resolver (WP-2-B).** `services/ws9-resolver/` — sha256(tenant|type|canonical)
-  entity_id; edge canonicalization mirroring ws8 (IP via `shared.ocsf.valid_ip`, MAC lowercased,
-  usernames case-folded); replay-safe; emits `entity.updates` on the memory bus; INTERFACE.md.
-- **Incident relationship edges (WP-2-C).** WS-8 correlator now emits `incident.graph` with
-  provenance edges — only same-alert co-occurrences (no transitive inference, proven by test),
-  redelivery-identical, member-set-bounded, pruned by the existing `_sweep_dead_tracks`.
-- **Behavioral baselines (WP-2-D).** `services/ws4-detection/behavioral_baseline.py` —
-  learn-then-detect baselines reusing `shared.window.DequeWindowCounter` (no new store),
-  bounded/deterministic/replay-safe. Not wired into the rule engine yet (honest scope).
-- **OT point config (WP-2-E).** `contracts/ot-points/` — machine-readable OT point map
-  (meaning/criticality/allowed-writers/maintenance-window), twin-derived sample; documents the
-  FPR relationship honestly.
-- **Exposure-aware scoring schema (WP-2-F).** `contracts/scoring.yaml` gains an inert
-  (enabled:false) `exposure` extension; schema-additive; wired `test_exposure_scoring.py`.
-- **Sanitizer gap fix (WP-2-G).** `ws2-normalization/main.py` `_FREE_TEXT_PATHS` extended to
-  cover real mapped free-text gaps (`api.operation`, `actor.user.domain`, `actor.user.uid`);
-  `unmapped.*` wildcard confirmed mutation-sound. (Roadmap's "_FREE_TEXT_PATHS gone" claim was
-  stale — it lives in `main.py`.)
-- **Bounded per-IP enrichment cache (WP-2-H).** `Enricher` gains an OrderedDict per-IP result
-  cache (cap 10_000, LRU, miss-marker; junk IPs never cached); additive, thread-safe.
-- **triage_api decomposition (WP-2-I).** `services/ws3-indexer/triage_api.py` decomposed:
-  ~788-line closure → ~30-line assembler + 16 per-route `Handler` functions + `ROUTE_INVENTORY`;
-  behavior-preserving (ws3 suite incl. MFA live-e2e green).
-
-### Added (2026-08-28, MSSP distribution: partner list + quickstart went live)
-
-Re-measuring the README's live-stack Performance table surfaced a real bug
-instead of clean numbers: 4/10 latency bursts against the live Docker stack
-never produced a visible alert within the 120s timeout, with 586 "exhausted
-5 CAS retries" errors in one `fengarde_bench_live.py` run.
-
-Root cause: `_index_alert_preserving_triage` (`services/ws3-indexer/main.py`)
-read the current alert state via `find_alert_versioned`, a cross-index
-**search** bounded by OpenSearch's default 1s `refresh_interval`. WS-4's
-stateful rules fire on `count >= threshold` (not `==`), so a single burst can
-emit several `alerts` messages sharing one deterministic `alert_id` within
-milliseconds. Each CAS retry's search-based read saw stale (already
-superseded) state and lost against a write the SAME process had just made
-moments earlier — a self-inflicted race, not concurrent-writer contention.
-
-Fixed by adding `StorageAdapter.get_versioned(index, doc_id)` — an exact
-`(index, doc_id)` read (direct `GET` on OpenSearch, immediately consistent,
-no refresh lag; dict lookup on `MemoryStore`) — implemented in
-`storage/adapter.py`, `storage/memory.py`, and `storage/opensearch.py`, and
-wired into the CAS retry loop as the primary read, falling back to the
-cross-index search only on a genuine miss (preserving the existing
-day-boundary routing-drift check). Regression test:
-`test_storage_cas.py::test_alert_rewrite_uses_get_not_stale_search_under_frozen_refresh`
-against a fake transport with permanently-stale search + correct GET/PUT
-semantics; mutation-verified (reverting the fix reproduces the exact failure
-signature). Re-ran `fengarde_bench_live.py` post-fix: 10/10 bursts succeeded,
-zero CAS-exhaustion errors, p50/p99 unchanged (~2,045/2,063 ms) — see
-README.md's Performance section.
+## [0.6.0] - 2026-08-27
 
 ### Fixed (2026-08-27, CI: Dependabot codeql-action version skew)
 
@@ -847,8 +859,6 @@ version `analyze` is running, so landing #75 or #76 alone broke CI:
 Fixed by cherry-picking all three Dependabot commits onto one branch (PR #78) so
 `init`/`analyze`/`upload-sarif` land on the same SHA in one atomic change; confirmed
 green before merge. #75/#76 closed as superseded, #77/#78 merged.
-
-## [0.6.0] - 2026-08-27
 
 First tagged release since v0.5.0 (2026-07-23) — 310 commits' worth of shipped,
 tested work that had never been cut into a version. Closes the gap SSOT.md's own
