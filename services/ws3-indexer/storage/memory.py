@@ -101,17 +101,29 @@ class MemoryStore(StorageAdapter):
         """Bulk cross-index lookup by id across all alerts-* indices
         (review-fix, 2026-09-04) -- single locked pass instead of one
         find_alert() call (and one lock acquisition) per id. Same lock
-        discipline and missing-id contract as find_events."""
+        discipline and missing-id contract as find_events.
+
+        Review-fix (2026-09-04, round 2): dedup by id -- an alert_id CAN
+        legitimately exist in two daily buckets (the same cross-index
+        write race find_alert's own docstring and OpenSearchStore's
+        FIX #12 document), and this used to append every matching copy,
+        regressing from the old per-id `find_alert()` loop it replaced
+        (which always returns at most one doc per id). Keeps the FIRST
+        copy encountered per id, in the same `self._indices` iteration
+        order `find_alert()` itself scans in -- same "first match wins"
+        contract, just batched."""
         wanted = set(alert_ids)
         if not wanted:
             return []
+        seen: set[str] = set()
         found: list[dict] = []
         with self._lock:
             for index, bucket in self._indices.items():
                 if not index.startswith("alerts-"):
                     continue
                 for doc_id, doc in bucket.items():
-                    if doc_id in wanted:
+                    if doc_id in wanted and doc_id not in seen:
+                        seen.add(doc_id)
                         found.append(doc)
         return found
 

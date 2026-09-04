@@ -397,8 +397,39 @@ def test_incident_report_id_never_collides_with_alert_report_id():
         srv.shutdown(); srv.server_close()
 
 
+def test_find_alerts_dedups_when_same_id_lands_in_two_daily_buckets():
+    """Review-fix (2026-09-04, round 2): MemoryStore.find_alerts() (the bulk
+    lookup _build_incident_evidence now uses instead of one find_alert()
+    call per member id) used to append EVERY matching doc across every
+    alerts-* bucket for a given id, with no dedup -- a regression from the
+    old per-id find_alert() loop, which always returns at most one doc per
+    id. An alert_id CAN legitimately exist in two daily buckets (the same
+    cross-index write race find_alert's own docstring documents), so this
+    must dedup exactly like find_alert() does."""
+    store = MemoryStore()
+    store.index("alerts-2026.09.01", "a-dup", {"alert_id": "a-dup", "time": 1, "copy": "first"})
+    store.index("alerts-2026.09.02", "a-dup", {"alert_id": "a-dup", "time": 2, "copy": "second"})
+    store.index("alerts-2026.09.01", "a-solo", {"alert_id": "a-solo", "time": 1})
+
+    single = store.find_alert("a-dup")
+    check(single is not None, "sanity: find_alert must locate the duplicated id")
+
+    bulk = store.find_alerts({"a-dup", "a-solo", "a-missing"})
+    dup_hits = [d for d in bulk if d.get("alert_id") == "a-dup"]
+    check(len(dup_hits) == 1,
+          f"find_alerts must return exactly ONE doc for a duplicated id, got {len(dup_hits)}: {dup_hits}")
+    check(dup_hits[0]["copy"] == single[1]["copy"],
+          f"the deduped copy must match find_alert()'s own pick (same 'first match wins' "
+          f"contract), got find_alerts={dup_hits[0]['copy']!r} find_alert={single[1]['copy']!r}")
+    check(len([d for d in bulk if d.get("alert_id") == "a-solo"]) == 1,
+          "a non-duplicated id must still appear exactly once")
+    check(len(bulk) == 2,
+          f"a missing id must be silently omitted, not padded/errored, got {len(bulk)} results: {bulk}")
+
+
 def main():
     test_topics_are_real_consumer_topics_not_just_reaper_entries()
+    test_find_alerts_dedups_when_same_id_lands_in_two_daily_buckets()
     test_get_entity_real_http()
     test_get_incident_graph_real_http()
     test_get_incident_evidence_builds_and_verifies_real_http()

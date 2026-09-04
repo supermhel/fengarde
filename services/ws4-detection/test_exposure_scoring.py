@@ -258,6 +258,43 @@ def test_exposure_gate_false_excludes_routing_but_not_score():
           f"{t['classifier_min']}), confirming the gate is what's doing the work")
 
 
+def test_exposure_gate_mixed_co_fire_does_not_suppress_the_ungated_rule():
+    """Review-fix (2026-09-04, round 2): matched_rules can contain BOTH a
+    gated and an ungated rule at once -- several shipped rules share
+    class_uid 4001 with the ticketed OT-write rule (common_port_scan.yml,
+    ot_new_device_on_segment.yml, common_beaconing.yml), so a burst of OT
+    traffic could plausibly trip one of those on the SAME event a ticketed
+    write also matches. The OLD 'any rule opts out -> skip exposure for
+    the whole alert' logic silently suppressed exposure for the UNGATED
+    rule too in that case. This proves the fix: an ungated rule co-firing
+    with a gated one still gets its exposure boost, while the gated rule's
+    own baseline still acts as a floor (never scores below its no-exposure
+    value just because it's mixed in)."""
+    scorer = Scorer(SCORING_YAML, ot_points_dir=OT_POINTS_DIR)
+    gated_rule = _FakeRule(score_weight=5, level="low", exposure_gate=False)
+    ungated_rule = _FakeRule(score_weight=5, level="low", exposure_gate=True)
+    critical_event = {"unmapped": {"ot": {"address": 1}}}  # criticality critical -> +20
+
+    mixed_routing = scorer.routing_score([gated_rule, ungated_rule], critical_event)
+    gated_alone_routing = scorer.routing_score([gated_rule], critical_event)
+    classifier_min = scorer.t["classifier_min"]
+
+    check(mixed_routing >= classifier_min,
+          f"the ungated rule's exposure eligibility must survive an unrelated "
+          f"gated rule co-firing on the same event -- got mixed routing_score="
+          f"{mixed_routing}, classifier_min={classifier_min}")
+    check(mixed_routing >= gated_alone_routing,
+          f"mixing in an ungated rule must never make the routing score LOWER "
+          f"than the gated rule scores alone -- got mixed={mixed_routing} "
+          f"alone={gated_alone_routing}")
+
+    mixed_score = scorer.score([gated_rule, ungated_rule], critical_event)
+    check(mixed_score == 30,
+          f"score() (analyst-facing) is untouched by this fix -- still weight_sum(10) "
+          f"+ critical tier(20) = 30 regardless of either rule's exposure_gate, "
+          f"got {mixed_score}")
+
+
 def test_ticketed_ot_write_rule_ships_with_exposure_gate_set():
     """Regression guard: the real rule this bug was found against
     (contracts/rules/ot_modbus_unauthorized_write_ticketed.yml) must
@@ -296,6 +333,7 @@ def main():
     test_exposure_gap_disappears_when_disabled_mutation_verified()
     test_event_with_no_ot_address_is_unaffected()
     test_exposure_gate_false_excludes_routing_but_not_score()
+    test_exposure_gate_mixed_co_fire_does_not_suppress_the_ungated_rule()
     test_ticketed_ot_write_rule_ships_with_exposure_gate_set()
 
     if FAILS:

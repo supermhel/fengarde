@@ -253,16 +253,46 @@ class Scorer:
         deliberately scored low to stay out of the classifier/LLM funnel
         (e.g. a ticketed/authorized OT write) back over ``classifier_min``
         purely because the asset it hit happens to be exposure-tiered --
-        defeating that rule's whole reason for existing."""
+        defeating that rule's whole reason for existing.
+
+        Review-fix (2026-09-04, round 2): exposure is a single event-level
+        signal, not a per-rule one, so it can't be split across a mixed
+        matched_rules list the way llm_gate's per-rule floor exclusion can.
+        Two matched rules CAN legitimately co-fire on one event (several
+        shipped rules share class_uid 4001 with the ticketed OT-write rule
+        -- a burst of OT traffic can trip a stateful rule on the SAME event
+        a ticketed write also matches), so "any rule opts out -> skip
+        exposure for the WHOLE alert" silently defeated exposure for an
+        unrelated, ungated rule too. Fixed by computing routing_score as
+        the MAX of two clamped values: `base` (every matched rule, weight +
+        gated floor, NO exposure -- the alert's guaranteed floor,
+        independent of exposure_gate) and exposure applied to a SECOND
+        base computed from ONLY the exposure-eligible rules (their own
+        weight_sum/floor, exposure_gate'd rules excluded entirely from
+        this second computation). A gated rule can never gain from
+        exposure (covered by the first term), and an ungated rule can
+        never LOSE its exposure eligibility just because an unrelated
+        gated rule happened to co-fire (covered by the second term) --
+        collapses to the exact same two fast paths as before when the
+        matched set is uniformly gated or uniformly ungated."""
         if not matched_rules:
             return 0
         weight_sum = sum(r.score_weight for r in matched_rules)
         gated_levels = [r.level for r in matched_rules if r.llm_gate]
         floor = max((self._floor_for(lvl) for lvl in gated_levels), default=0)
         base = max(self.clamp_min, min(self.clamp_max, max(weight_sum, floor)))
-        if any(not r.exposure_gate for r in matched_rules):
-            return base
-        return self._apply_exposure(base, event)
+
+        exposure_eligible = [r for r in matched_rules if r.exposure_gate]
+        if len(exposure_eligible) == len(matched_rules):
+            return self._apply_exposure(base, event)  # uniformly ungated
+        if not exposure_eligible:
+            return base  # uniformly gated
+
+        weight_sum_elig = sum(r.score_weight for r in exposure_eligible)
+        gated_levels_elig = [r.level for r in exposure_eligible if r.llm_gate]
+        floor_elig = max((self._floor_for(lvl) for lvl in gated_levels_elig), default=0)
+        base_elig = max(self.clamp_min, min(self.clamp_max, max(weight_sum_elig, floor_elig)))
+        return max(base, self._apply_exposure(base_elig, event))
 
     def route(self, score: int) -> str:
         """Return funnel action: 'store' | 'classifier' | 'llm'."""
