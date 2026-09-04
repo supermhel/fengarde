@@ -36,7 +36,7 @@ def run() -> None:
     # Review-fix (2026-09-04): exposure_gate must round-trip like llm_gate --
     # this allowlist drifted out of sync with validate_rules.py's once
     # before (exposure_gate landed in one but not the other).
-    errs = []
+    gate_errs: list[str] = []
     rule = import_sigma_rule({
         "title": "exposure_gate round-trips",
         "id": "33333333-3333-3333-3333-333333333333",
@@ -44,12 +44,12 @@ def run() -> None:
         "logsource": {"category": "network_activity"},
         "detection": {"sel": {"class_uid": 4001}, "condition": "sel"},
         "siem": {"score_weight": 10, "exposure_gate": False},
-    }, errs)
-    check(not errs, f"exposure_gate must be accepted, not reported as unsupported, got {errs}")
+    }, gate_errs)
+    check(not gate_errs, f"exposure_gate must be accepted, not reported as unsupported, got {gate_errs}")
     check(rule["siem"].get("exposure_gate") is False,
           f"exposure_gate must survive the rewrite, got {rule['siem'].get('exposure_gate')!r}")
 
-    errs = []
+    gate_type_errs: list[str] = []
     import_sigma_rule({
         "title": "exposure_gate must be a real bool",
         "id": "44444444-4444-4444-4444-444444444444",
@@ -57,9 +57,9 @@ def run() -> None:
         "logsource": {"category": "network_activity"},
         "detection": {"sel": {"class_uid": 4001}, "condition": "sel"},
         "siem": {"exposure_gate": "false"},
-    }, errs)
-    check(any("exposure_gate" in e and "bool" in e for e in errs),
-          f"a non-bool exposure_gate must be rejected with a clear reason, got {errs}")
+    }, gate_type_errs)
+    check(any("exposure_gate" in e and "bool" in e for e in gate_type_errs),
+          f"a non-bool exposure_gate must be rejected with a clear reason, got {gate_type_errs}")
 
     # Sigma selection names sanitized.
     rule = import_sigma_rule({
