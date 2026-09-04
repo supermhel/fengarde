@@ -116,6 +116,7 @@ import reporting  # noqa: E402
 import rules_view  # noqa: E402
 import nis2_template  # noqa: E402
 import audit  # noqa: E402
+import evidence_package  # noqa: E402
 
 _MAX_BODY_BYTES = 4096  # a triage update is a status enum + a short note.
 _MAX_NOTE_CHARS = 2000
@@ -242,6 +243,10 @@ ROUTE_INVENTORY: list[tuple[str, str, bool]] = [
     ("GET", "/audit", False),
     ("GET", "/alerts/{alert_id}/report", False),
     ("GET", "/alerts/{alert_id}/triage", False),
+    ("GET", "/entities/{entity_id}", False),
+    ("GET", "/incidents/{incident_id}/graph", False),
+    ("GET", "/incidents/{incident_id}/evidence", False),
+    ("POST", "/incidents/{incident_id}/report", False),
     ("POST", "/auth/login", True),
     ("POST", "/auth/logout", True),
     ("POST", "/auth/mfa/enable", True),
@@ -330,6 +335,166 @@ def route_get_triage(self, alert_id: str):
     if not self._tenant_gate(session, doc):
         return
     return self._send(200, doc.get("triage") or _default_triage())
+
+
+def route_get_entity(self, entity_id: str):
+    """GET /entities/{id} -- a WS-9-resolved entity's current canonical
+    state (Phase 5, 2026-09-04: the entity.updates topic existed since
+    Phase 2 with no consumer or read route until this)."""
+    if not entity_id:
+        raise _BadRequest("entity_id required")
+    session = self._require_role("read_only")
+    if session is None:
+        return
+    found = self.deps.store.find_entity(entity_id)
+    if found is None:
+        return self._send(404, {"error": "entity not found"})
+    _, doc = found
+    if not self._tenant_gate(session, doc, "entity not found"):
+        return
+    return self._send(200, doc)
+
+
+def route_get_incident_graph(self, incident_id: str):
+    """GET /incidents/{id}/graph -- the typed causal DAG WS-8 emitted for
+    this incident (Phase 5, 2026-09-04)."""
+    if not incident_id:
+        raise _BadRequest("incident_id required")
+    session = self._require_role("read_only")
+    if session is None:
+        return
+    found = self.deps.store.find_incident_graph(incident_id)
+    if found is None:
+        return self._send(404, {"error": "incident graph not found"})
+    _, doc = found
+    if not self._tenant_gate(session, doc, "incident graph not found"):
+        return
+    return self._send(200, doc)
+
+
+def _build_incident_evidence(self, incident):
+    """Shared by route_get_incident_evidence and route_post_incident_report
+    (Phase 5, 2026-09-04) -- gather the incident's member alerts/events/
+    graph from the store and build+verify a fresh evidence package.
+    Callers already hold `incident` (fetched + tenant-gated); this never
+    re-fetches or re-gates it. Returns (pkg, failures) -- failures is
+    non-empty on a verification problem, pkg is always the built package
+    either way (a caller inspects failures itself rather than this
+    function deciding what a failure means for its own response code)."""
+    incident_id = incident.get("incident_id")
+    member_ids = set(incident.get("member_alert_ids") or [])
+    # Review-fix (2026-09-04): bulk lookup instead of one find_alert() call
+    # per member id -- was an N+1 (one full cross-index search per alert)
+    # on every hit to this shared helper. See StorageAdapter.find_alerts.
+    alerts = self.deps.store.find_alerts(member_ids) if member_ids else []
+    event_ids: set[str] = set()
+    for alert in alerts:
+        event_ids.update(str(e) for e in (alert.get("event_ids") or []))
+    events = self.deps.store.find_events(event_ids) if event_ids else []
+    graph_found = self.deps.store.find_incident_graph(incident_id)
+    graph = graph_found[1] if graph_found is not None else None
+
+    pkg = evidence_package.build_evidence_package(
+        incident, alerts, events, graph,
+        now_ms=int(time.time() * 1000), package_id_prefix="ws3-live")
+    failures = evidence_package.verify_evidence_package(pkg)
+    return pkg, failures
+
+
+def route_get_incident_evidence(self, incident_id: str):
+    """GET /incidents/{id}/evidence -- build, hash-verify, and serve this
+    incident's evidence package on demand (Phase 5, 2026-09-04).
+
+    Built fresh from the store's own current data on every call, not
+    persisted -- evidence_package.py was delivered standalone (WP-3-B) with
+    no route ever calling it; this is that first consumer. NEVER serves an
+    unverified/tampered chain: verify_evidence_package() runs before the
+    response is sent, not after -- a verification failure here means the
+    STORED source docs disagree with what a freshly-built package's own
+    hash chain expects (a data-integrity problem, not normally reachable --
+    test_evidence_package.py already proves a fresh build always verifies),
+    and gets a 409, never a 200 with the failures silently dropped.
+    """
+    if not incident_id:
+        raise _BadRequest("incident_id required")
+    session = self._require_role("read_only")
+    if session is None:
+        return
+    found = self.deps.store.find_incident(incident_id)
+    if found is None:
+        return self._send(404, {"error": "incident not found"})
+    _, incident = found
+    if not self._tenant_gate(session, incident, "incident not found"):
+        return
+
+    pkg, failures = _build_incident_evidence(self, incident)
+    if failures:
+        _LOG.error("evidence package failed verification on build",
+                   incident_id=incident_id, failures=failures)
+        return self._send(409, {"error": "evidence package failed verification",
+                                "failures": failures})
+    return self._send(200, pkg)
+
+
+def route_post_incident_report(self, incident_id: str):
+    """POST /incidents/{id}/report -- a causal-ordered NIS2-style draft for
+    a whole incident (Phase 5, 2026-09-04). A genuinely SEPARATE surface
+    from POST /alerts/{id}/report: own report_id format
+    ("{incident_id}:incident-report", never "{alert_id}:report"), own
+    response shape -- contracts/reporting.md's frozen alert-scoped schema
+    is untouched (see nis2_template.build_incident_report's own docstring
+    for why to_reporting_payload()/the existing seam aren't reused here).
+
+    Same verify-before-serve discipline as route_get_incident_evidence:
+    a failed verification is a 409, the report is never rendered from an
+    unverified package.
+
+    Drains any request body the client may send (this endpoint takes none,
+    same as route_post_report) so the connection doesn't get reset with
+    unread bytes still buffered.
+    """
+    try:
+        length = int(self.headers.get("Content-Length", 0))
+    except (TypeError, ValueError):
+        raise _BadRequest("invalid Content-Length")
+    if length < 0:
+        raise _BadRequest("invalid Content-Length")
+    if length > _MAX_BODY_BYTES:
+        self.close_connection = True
+        raise _BadRequest("request body too large")
+    elif length > 0:
+        self.rfile.read(length)
+    if not incident_id:
+        raise _BadRequest("incident_id required")
+    session = self._require_role("analyst")  # report generation is a write action, mirrors route_post_report
+    if session is None:
+        return
+    found = self.deps.store.find_incident(incident_id)
+    if found is None:
+        return self._send(404, {"error": "incident not found"})
+    _, incident = found
+    if not self._tenant_gate(session, incident, "incident not found"):
+        return
+
+    q = parse_qs(self._query())
+    lang = (q.get("lang", ["de"])[0] or "de").lower()
+
+    pkg, failures = _build_incident_evidence(self, incident)
+    if failures:
+        _LOG.error("evidence package failed verification on incident-report build",
+                   incident_id=incident_id, failures=failures)
+        return self._send(409, {"error": "evidence package failed verification",
+                                "failures": failures})
+
+    report = nis2_template.build_incident_report(pkg, verified=True, lang=lang)
+    report_index = reporting._report_index()
+    self.deps.store.index(report_index, report["report_id"], report)
+    self._audit("incident_report_generated",
+                actor=self._audit_actor(session),
+                tenant_id=incident.get("tenant_id"),
+                detail={"incident_id": incident_id, "report_id": report.get("report_id"),
+                        "evidence_package_id": pkg.get("package_id")})
+    return self._send(200, report)
 
 
 def route_list_alerts(self):
@@ -760,6 +925,21 @@ class Handler(BaseHTTPRequestHandler):
             return parts[1]
         return None
 
+    def _id_from_path(self, path: str, prefix: str, resource: str | None = None) -> str | None:
+        """Generic sibling of _alert_id_from_path (Phase 5, 2026-09-04):
+        /{prefix}/{id} when resource is None, /{prefix}/{id}/{resource}
+        otherwise. Kept separate rather than generalizing
+        _alert_id_from_path itself -- that one's docstring/name is
+        alerts-specific and every existing call site relies on that."""
+        parts = path.strip("/").split("/")
+        if resource is None:
+            if len(parts) == 2 and parts[0] == prefix:
+                return parts[1]
+            return None
+        if len(parts) == 3 and parts[0] == prefix and parts[2] == resource:
+            return parts[1]
+        return None
+
     # -- M4.2 session helpers (no-ops when RBAC is off) ----------------------
 
     def _session_token(self) -> str:
@@ -797,18 +977,45 @@ class Handler(BaseHTTPRequestHandler):
             return None
         return session
 
-    def _tenant_gate(self, session, doc: dict) -> bool:
+    def _tenant_gate(self, session, doc: dict, not_found_msg: str = "alert not found") -> bool:
         """True if `session` (real Session, or True when RBAC is off) may access
-        `doc`'s tenant. Sends 404 and returns False otherwise."""
+        `doc`'s tenant. Sends 404 and returns False otherwise.
+
+        Review-fix (2026-09-04): `not_found_msg` defaults to "alert not
+        found" (every pre-Phase-5 caller is alert-scoped, unchanged), but a
+        non-alert resource (entity/incident-graph/incident) must pass its
+        own message -- a cross-tenant denial on GET /entities/{id} used to
+        claim "alert not found", which is simply wrong for that resource
+        and misleading to anyone debugging the response."""
         if session is True:  # RBAC off
             return True
         if can_access_tenant(session.role, session.tenant_id, doc.get("tenant_id")):
             return True
-        self._send(404, {"error": "alert not found"})
+        self._send(404, {"error": not_found_msg})
         return False
 
     def _check_auth(self) -> bool:
+        """Coarse pre-dispatch gate. `_require_role()` (session role) and
+        `_tenant_gate()` (session tenant scope) do the fine-grained work
+        per route; this only decides whether the caller presented SOME
+        valid credential at all.
+
+        Gap-hunt fix (2026-09-04): a valid RBAC session used to still need
+        the API key header too when both FENGARDE_RBAC_DB and
+        FENGARDE_API_KEY were set -- contradicting this module's own
+        documented contract ("triage/report endpoints require a logged-in
+        SESSION (not the API key)") and `_require_role`'s own comment
+        ("when RBAC is off... auth already happened via check_api_key"),
+        which only makes sense if a session is the alternative auth path
+        when RBAC is ON. Untested combination (test_rbac_api never sends
+        X-Api-Key) is exactly how this went unnoticed. A session with an
+        insufficient role, or no session/key at all, is still rejected --
+        by `_require_role`/`_tenant_gate` for the former, here for the
+        latter.
+        """
         if check_api_key(self.headers):
+            return True
+        if self.deps.rbac_enabled and self._current_session() is not None:
             return True
         self._send(401, {"error": "unauthorized"})
         return False
@@ -935,6 +1142,17 @@ class Handler(BaseHTTPRequestHandler):
         if report_alert_id is not None:
             return route_get_report(self, report_alert_id)
 
+        # Phase 5 (2026-09-04): entity/causal-graph/evidence read path.
+        graph_incident_id = self._id_from_path(path, "incidents", "graph")
+        if graph_incident_id is not None:
+            return route_get_incident_graph(self, graph_incident_id)
+        evidence_incident_id = self._id_from_path(path, "incidents", "evidence")
+        if evidence_incident_id is not None:
+            return route_get_incident_evidence(self, evidence_incident_id)
+        entity_id = self._id_from_path(path, "entities")
+        if entity_id is not None:
+            return route_get_entity(self, entity_id)
+
         alert_id = self._alert_id_from_path(path)
         if alert_id is None:
             return self._send(404, {"error": "no such path"})
@@ -971,6 +1189,12 @@ class Handler(BaseHTTPRequestHandler):
         report_alert_id = self._alert_id_from_path(path, "report")
         if report_alert_id is not None:
             return route_post_report(self, report_alert_id)
+        # Phase 5 (2026-09-04): checked before the bare alert_id fallback
+        # below, same ordering discipline _route_get already uses for its
+        # own incidents sub-paths.
+        report_incident_id = self._id_from_path(path, "incidents", "report")
+        if report_incident_id is not None:
+            return route_post_incident_report(self, report_incident_id)
         alert_id = self._alert_id_from_path(path)
         if alert_id is not None:
             return route_post_triage(self, alert_id)

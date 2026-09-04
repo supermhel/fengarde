@@ -75,7 +75,48 @@ def _validated_tenant(tenant: str) -> str:
 
 
 def route(doc: dict) -> tuple[str, str]:
-    """Return (index_name, doc_id) for a document. Raises ValueError if unroutable."""
+    """Return (index_name, doc_id) for a document. Raises ValueError if unroutable.
+
+    Review-fix (2026-09-04): dispatch is structural key-sniffing, not an
+    explicit type discriminator (contrast contracts/ocsf-event.schema.json's
+    class_uid/type_uid, used elsewhere in this codebase) -- flagged in
+    review as fragile: a future document shape could collide with an
+    existing branch with no exception raised, just a silent misroute. This
+    was NOT changed to a discriminator field: every producer (WS-8's
+    incident.graph, WS-9's entity.updates) is on the FROZEN bus contract
+    (contracts/bus-topics.md) and stamping a new required field onto it is a
+    cross-repo, cross-workstream migration this review-fix pass is not
+    scoped to make safely. Instead, the branch order below IS the contract
+    -- made explicit and locked down by test_router.py's
+    test_shape_dispatch_order_is_collision_free(), which proves every
+    current shape routes correctly AND that the specific near-future shape
+    review flagged (a flattened single graph node -- entity_id+entity_type
+    with no nodes/incident_id) is routed as an entity BY DESIGN, not by
+    accident: a lone entity_id+entity_type pair genuinely IS entity-shaped
+    regardless of what larger message it came from. Any future branch
+    addition must extend that test, not just this function.
+    """
+    # incident.graph? (WP-3-A/ADR-010, Phase 5 2026-09-04) -- checked BEFORE
+    # the "incident_id" branch below since this payload also carries
+    # incident_id; "nodes" is unique to the graph shape (an incidents
+    # summary doc has member_alert_ids, never nodes). No date suffix: each
+    # republish carries the FULL current graph, not a delta, so this is a
+    # single canonical doc per incident_id looked up directly by id
+    # (get_versioned), not a day-bucketed time series.
+    if "nodes" in doc and "incident_id" in doc:
+        tenant = _validated_tenant(doc.get("tenant_id") or DEFAULT_TENANT)
+        base = "incident-graphs" if tenant == DEFAULT_TENANT else f"incident-graphs-{tenant}"
+        return base, str(doc["incident_id"])
+
+    # entity.updates? (WP-2-B, WS-9, Phase 5 2026-09-04) -- entity_id +
+    # entity_type together are unique to this shape. Same no-date-suffix
+    # reasoning as incident.graph above: one canonical doc per entity_id,
+    # WS-9 already merges before republishing.
+    if "entity_id" in doc and "entity_type" in doc:
+        tenant = _validated_tenant(doc.get("tenant_id") or DEFAULT_TENANT)
+        base = "entities" if tenant == DEFAULT_TENANT else f"entities-{tenant}"
+        return base, str(doc["entity_id"])
+
     # incident? (WS-8 correlation, 2026-08-18) -- checked before "alert_id"
     # since an incident document has no alert_id of its own, only a list
     # of member_alert_ids; the two shapes never collide.
@@ -123,4 +164,8 @@ def template_for(index_name: str) -> str:
         return "alerts"
     if index_name.startswith("incidents-"):
         return "incidents"
+    if index_name.startswith("incident-graphs"):
+        return "incident-graphs"
+    if index_name.startswith("entities"):
+        return "entities"
     return "unknown"

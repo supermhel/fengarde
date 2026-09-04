@@ -338,6 +338,51 @@ server {
         proxy_read_timeout 5s;
     }
 
+    # Phase 5 (2026-09-04): per-incident sub-paths -- GET /incidents/{id}/graph,
+    # GET /incidents/{id}/evidence (triage_api.py's route_get_incident_graph/
+    # route_get_incident_evidence). Deliberately a SEPARATE block from the
+    # exact-match `/api/incidents` list route above, same shape as
+    # /api/triage/ vs a hypothetical exact /api/triage would need to be: the
+    # trailing slash makes this a prefix match nginx only picks for a path
+    # WITH something after /api/incidents/, so the two blocks never collide
+    # -- the more specific (longer) match wins per nginx's own location
+    # selection rules, verified via `docker compose config`-equivalent
+    # (nginx -t) before shipping this file's own precedent elsewhere.
+    location /api/incidents/ {
+        resolver 127.0.0.11 ipv6=off valid=30s;
+        set $ws3_incidents_sub "http://ws3-indexer:${WS3_TRIAGE_PORT}";
+        if ($http_x_api_key != "${FENGARDE_API_KEY}") {
+            return 401;
+        }
+        rewrite ^/api/incidents/(.*)$ /incidents/$1 break;
+        proxy_pass $ws3_incidents_sub;
+        proxy_set_header Host $host;
+        proxy_set_header X-Api-Key $http_x_api_key;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_connect_timeout 3s;
+        # Evidence-package assembly builds the package on demand (WP-3-B,
+        # triage_api.py::route_get_incident_evidence) -- not a bounded doc
+        # GET like every other read route here, so it gets a longer budget.
+        proxy_read_timeout 15s;
+    }
+
+    # Phase 5 (2026-09-04): GET /entities/{id} (triage_api.py's
+    # route_get_entity) -- same shape as /api/incidents/ above.
+    location /api/entities/ {
+        resolver 127.0.0.11 ipv6=off valid=30s;
+        set $ws3_entities "http://ws3-indexer:${WS3_TRIAGE_PORT}";
+        if ($http_x_api_key != "${FENGARDE_API_KEY}") {
+            return 401;
+        }
+        rewrite ^/api/entities/(.*)$ /entities/$1 break;
+        proxy_pass $ws3_entities;
+        proxy_set_header Host $host;
+        proxy_set_header X-Api-Key $http_x_api_key;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_connect_timeout 3s;
+        proxy_read_timeout 5s;
+    }
+
     # 2026-08-20: WS-6 inventory feed. window.INVENTORY_API (index.html) had no
     # default -- unlike every other *_API constant here -- and nothing anywhere
     # (no compose env, no injected script) ever set it, so the Inventory view

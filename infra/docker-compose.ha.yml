@@ -520,6 +520,19 @@ services:
     depends_on: !override {redis-1: {condition: service_healthy}}
     networks: [default, ha]
 
+  # ws9-resolver (Phase 2, added to the base compose 2026-09-02) hit the exact
+  # same gap a third time: no profile tag in the base file, so it still
+  # `depends_on: redis` -- unsatisfiable once this file disables that service
+  # under `ha`. Same fix shape as ws8-correlation above.
+  ws9-resolver:
+    environment:
+      - BUS_BACKEND=redis-sentinel
+      - REDIS_SENTINEL_HOSTS=redis-sentinel-1:26379,redis-sentinel-2:26379,redis-sentinel-3:26379
+      - REDIS_SENTINEL_MASTER=mymaster
+      - REDIS_PASSWORD=${REDIS_PASSWORD:-}
+    depends_on: !override {redis-1: {condition: service_healthy}}
+    networks: [default, ha]
+
 networks:
   # Explicit subnet so the Redis + Sentinel nodes can be pinned to static IPs.
   #

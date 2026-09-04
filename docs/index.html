@@ -237,9 +237,12 @@ review, the verdict, DESIGN.md, and every shipping raster carrying its provenanc
       <div>
         <span class="eyebrow">Captured live off a running stack</span>
         <h1>Every alert is real.<br>Every screenshot <em>proves</em> it.</h1>
-        <p class="lede">FENGARDE is an open-source SIEM pipeline — <code class="mono">collect → normalize →
-          detect → correlate → index</code>, self-hosted, Apache-2.0. The eight views below aren't mockups:
-          each one is a render from a live Docker stack, seconds after the HTTP request that produced it.</p>
+        <p class="lede">FENGARDE connects security telemetry across IT, AI and OT — <code
+          class="mono">collect → normalize → detect → correlate → index</code> — to show what happened,
+          who or what acted, and what evidence supports the conclusion. Open-source, self-hosted,
+          Apache-2.0, built for the European industrial Mittelstand with a draft-NIS2 path in. The eight
+          views below aren't mockups: each one is a render from a live Docker stack, seconds after the
+          HTTP request that produced it.</p>
         <div class="cta-row">
           <a class="btn btn-primary" href="https://github.com/supermhel/fengarde">
             <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.58 2 12.25c0 4.53 2.87 8.37 6.84 9.73.5.1.68-.22.68-.5 0-.24-.01-1.04-.01-1.88-2.78.62-3.37-1.21-3.37-1.21-.46-1.19-1.11-1.51-1.11-1.51-.91-.63.07-.62.07-.62 1 .07 1.53 1.05 1.53 1.05.89 1.56 2.34 1.11 2.91.85.09-.66.35-1.11.63-1.37-2.22-.26-4.56-1.14-4.56-5.06 0-1.12.39-2.03 1.03-2.75-.1-.26-.45-1.3.1-2.71 0 0 .84-.28 2.75 1.05a9.3 9.3 0 0 1 5 0c1.9-1.33 2.74-1.05 2.74-1.05.55 1.41.2 2.45.1 2.71.64.72 1.03 1.63 1.03 2.75 0 3.93-2.34 4.79-4.57 5.05.36.32.68.94.68 1.9 0 1.37-.01 2.48-.01 2.81 0 .28.18.61.69.5A10.26 10.26 0 0 0 22 12.25C22 6.58 17.52 2 12 2z"/></svg>
@@ -276,7 +279,7 @@ review, the verdict, DESIGN.md, and every shipping raster carrying its provenanc
 <section class="block wrap">
   <div class="section-head">
     <span class="eyebrow">Architecture</span>
-    <h2>Eight independent services.<br>One message bus between them.</h2>
+    <h2>Nine independent services.<br>One message bus between them.</h2>
     <p>No service calls another directly. Every arrow below is a real Redis Streams topic — swap, restart,
       or scale any one stage without touching the rest. (Two arrows are HTTP via the same-origin nginx
       proxy instead: Console↔Index and Console↔Inventory-read — the dashboard talks HTTP, not streams.)</p>
@@ -306,6 +309,9 @@ review, the verdict, DESIGN.md, and every shipping raster carrying its provenanc
     <div class="stage live"><div class="no">08</div>
       <div class="stage-head"><div class="icn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg></div><h3>Console</h3></div>
       <p>This dashboard — read-only over HTTP</p></div>
+    <div class="stage"><div class="no">09</div>
+      <div class="stage-head"><div class="icn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="18" r="2.4"/><circle cx="18" cy="18" r="2.4"/><circle cx="12" cy="6" r="2.4"/><path d="M12 8.4V13M8.4 16.7L10.7 14.5M15.6 16.7L13.3 14.5"/></svg></div><h3>Resolve</h3></div>
+      <p>Deterministic entity IDs off the same alert stream, alongside Correlate — not yet surfaced in the console (API/bus only today)</p></div>
   </div>
 </section>
 
@@ -516,8 +522,8 @@ review, the verdict, DESIGN.md, and every shipping raster carrying its provenanc
 <footer class="wrap">
   <div class="foot-grid">
     <div class="foot-brand">FENGARDE
-      <p>An open-source SIEM pipeline for teams who want to see the whole signal path — collectors to
-        console — without a vendor in between.</p>
+      <p>An open-source IT/AI/OT security pipeline for teams who want to see the whole signal path —
+        collectors to console — without a vendor in between.</p>
     </div>
     <div class="foot-links">
       <a class="navlink" href="https://github.com/supermhel/fengarde">Repository</a>

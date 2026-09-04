@@ -41,7 +41,7 @@ Ports: 6379 Redis (bus), 9200 OpenSearch, 5601 OpenSearch Dashboards, 8000 inven
 
 ## Architecture
 
-Eight workstreams (WS) under `services/`, coupled **only** through a message bus — no service imports or calls another. Bus topics, payloads, and partition keys are frozen in `contracts/bus-topics.md`.
+Nine workstreams (WS) under `services/`, coupled **only** through a message bus — no service imports or calls another. Bus topics, payloads, and partition keys are frozen in `contracts/bus-topics.md`.
 
 Pipeline stages and topic names (the WS-1..WS-4 naming you'll see in test output):
 
@@ -49,6 +49,7 @@ Pipeline stages and topic names (the WS-1..WS-4 naming you'll see in test output
 WS-1 collectors  --raw.events-->  WS-2 normalization  --normalized.events-->  WS-4 detection  --scored.events / alerts-->  WS-3 indexer --> OpenSearch
                                   (parsers -> OCSF)         |                       |--ai.requests--> WS-5 ai (triage)
                                                             +--> WS-6 inventory     |--alerts (cg-correlate)--> WS-8 correlation --incidents--> WS-3
+                                                                                    |--alerts (cg-entity)-----> WS-9 resolver --entity.updates (unconsumed)
                                                                                     WS-7 dashboard reads alerts/incidents + WS-6 API
 ```
 

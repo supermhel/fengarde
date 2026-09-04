@@ -1,9 +1,9 @@
 # ADR 009: Entity/context plane — two new bus topics (WS-9)
 
-**Status:** Accepted (owner-ratified, Option 2); **implementation in progress —
-WS-9 is zero-infra-proven but NOT yet live in the deployable stack**
-(no `infra/docker-compose.yml` entry, not in `KILL_TARGETS`; the ADR's
-Consequences below are not all met until that lands). **Date:** 2026-08-28.
+**Status:** Accepted (owner-ratified, Option 2); **implemented and live in the
+deployable stack** (`infra/docker-compose.yml`, `KILL_TARGETS` -- both added
+2026-09-02; gap-hunt 2026-09-04 found this status line hadn't been updated to
+say so). **Date:** 2026-08-28.
 
 ## Context
 
@@ -43,7 +43,7 @@ service** that owns entity resolution, per the owner's Option-2 ratification.
 | | |
 |---|---|
 | Producer | WS-9 (entity resolver); WS-6 Inventory (asset sightings) |
-| Consumers | WS-9 (self), WS-3 indexer (persist), future WS-7 read path via WS-3 API |
+| Consumers | WS-9 (self), WS-3 indexer (persist, `GET /entities/{id}` — Phase 5, 2026-09-04, this row's "future" delivered) |
 | Payload | `{entity_id, entity_type, tenant_id, entity_value, first_seen_ms, last_seen_ms, attributes}` |
 | Partition key | `entity_id` |
 
@@ -60,7 +60,7 @@ service** that owns entity resolution, per the owner's Option-2 ratification.
 | | |
 |---|---|
 | Producer | WS-8 Correlation (when it promotes/updates an incident), WS-9 |
-| Consumers | WS-9 (entity resolver), WS-3 indexer (persist) |
+| Consumers | ~~WS-9 (entity resolver)~~ (never built — WS-9 does not consume this topic, confirmed 2026-09-04), WS-3 indexer (persist, `GET /incidents/{id}/graph` + `GET /incidents/{id}/evidence` — Phase 5, 2026-09-04) |
 | Payload | `{version: 1, incident_id, tenant_id, nodes: [type:value…], edges: [{from, to, kind, event_id, ts_ms}], tactic_sources}` |
 | Partition key | `incident_id` |
 

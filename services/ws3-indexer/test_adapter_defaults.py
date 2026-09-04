@@ -53,6 +53,29 @@ class _LegacyAdapter(StorageAdapter):
                 return index, doc
         return None
 
+    def find_events(self, event_ids):  # pragma: no cover - trivial
+        wanted = set(event_ids)
+        return [doc for (index, doc_id), doc in self.docs.items()
+                if index.startswith("events") and doc_id in wanted]
+
+    def find_entity(self, entity_id):  # pragma: no cover - trivial
+        for (index, doc_id), doc in self.docs.items():
+            if doc_id == entity_id and index.startswith("entities"):
+                return index, doc
+        return None
+
+    def find_incident_graph(self, incident_id):  # pragma: no cover - trivial
+        for (index, doc_id), doc in self.docs.items():
+            if doc_id == incident_id and index.startswith("incident-graphs"):
+                return index, doc
+        return None
+
+    def find_incident(self, incident_id):
+        for (index, doc_id), doc in self.docs.items():
+            if doc_id == incident_id:
+                return index, doc
+        return None
+
     def find_report(self, alert_id):  # pragma: no cover - trivial
         return self.docs.get(("reports", f"{alert_id}:report"))
 

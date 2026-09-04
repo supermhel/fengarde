@@ -146,10 +146,39 @@ forward-looking, currently-empty `events` field into a real, provenance-linked
 payload. The package is the single provenance-linked source multiple views
 render from (analyst timeline, incident report, regulatory draft, customer
 communication, management summary, postmortem); only the *rendering* is
-plural, the hash-chained core stays one artifact. No existing WS-3 route calls
-it yet — delivered standalone; a later package wires a consumer. Tampering any
+plural, the hash-chained core stays one artifact. Tampering any
 block fails `verify_evidence_package()`. This note is additive; the frozen
 response schema above is unchanged.
+
+**Update (Phase 5, 2026-09-04): the first consumer landed, as a genuinely
+separate surface, not a widened version of this one.** `GET
+/incidents/{id}/evidence` serves the package itself (built fresh on demand,
+never an unverified/tampered one — 409 with the failure reasons instead of
+a silent 200); `POST /incidents/{id}/report` renders an incident-level
+NIS2-style draft FROM it. Both live entirely outside this contract's
+request/response schema above — the reason is structural, not a style
+choice: `to_reporting_payload()` (the function that maps a package onto
+THIS contract's request shape) deliberately collapses the package to its
+`primary_alert_id` (chronological first member alert only) because this
+seam's response is `alert`-scoped by construction (`report_id:
+"{alert_id}:report"`, frozen, and a real cross-repo seam — `fengarde-sec`'s
+paid backend implements this exact schema too). An incident can have many
+member alerts; widening this frozen schema to carry all of them would mean
+breaking or version-coordinating that external implementation for a need
+this doc's own design already anticipated (see the "multiple views render
+from" language above) without needing to touch the frozen shape.
+
+So: `POST /incidents/{id}/report`'s response is its **own** shape —
+`report_id: "{incident_id}:incident-report"` (never `"{alert_id}:report"`,
+so the two can never collide in the same `reports-*` index), a
+`evidence_verified`/`evidence_package_id` pair naming the package it was
+built from, and a `body` ordered by the causal graph's own edge
+timestamps (falling back to alert-arrival order only when no graph
+exists) — not `to_reporting_payload()`'s alert-shaped request at all.
+`services/ws3-indexer/nis2_template.py::build_incident_report()` is the
+renderer; `route_post_incident_report` in `triage_api.py` is the route.
+Same disclaimer/draft-status/never-fabricate discipline as every other
+report this repo generates.
 
 ## What this is not
 

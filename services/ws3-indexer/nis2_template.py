@@ -325,3 +325,171 @@ def build_report(alert: dict, triage: dict, *, stage: str = "notification",
             "mitigation_measures": ph,
         },
     }
+
+
+# ---------------------------------------------------------------------------
+# Phase 5 (2026-09-04): incident-level draft, from an evidence package.
+#
+# Deliberately NOT built on build_report() above or contracts/reporting.md's
+# frozen alert-scoped seam -- that schema's response is hardcoded
+# report_id: "{alert_id}:report" and is a real cross-repo contract
+# fengarde-sec's paid backend also implements; widening it to carry N
+# alerts would mean breaking or version-coordinating that consumer. This is
+# a genuinely separate, additive surface (own report_id format, own caller
+# in triage_api.py's route_get_incident_report -- not reachable through
+# POST/GET /alerts/{id}/report). See contracts/reporting.md's own "Incident-
+# level report (Phase 5)" section for the seam's documentation.
+#
+# to_reporting_payload() (evidence_package.py) is NOT used here either --
+# it deliberately collapses a package to its primary_alert_id for the
+# alert-scoped seam. This reads the package's raw blocks directly so every
+# member alert (and the causal graph) survives into the narrative.
+# ---------------------------------------------------------------------------
+
+def _event_id_to_alert(alerts: list[dict]) -> dict:
+    """event_id -> the alert that lists it in its own event_ids -- the join
+    that lets a causal-graph edge (which carries event_id, per ADR-010) be
+    attributed to the alert/rule whose evidence produced it."""
+    out: dict[str, dict] = {}
+    for a in alerts:
+        for eid in (a.get("event_ids") or []):
+            out[str(eid)] = a
+    return out
+
+
+def _causal_steps(alerts: list[dict], graph: dict | None) -> list[dict]:
+    """The narrative's real differentiator: ordered by the causal graph's
+    own edge timestamps when a graph exists, falling back to alert-arrival
+    order only when it doesn't (an incident promoted before Phase 2/3, or a
+    v1-only graph with no typed kinds). Every step states its `kind`
+    plainly when known and leaves it unlabeled rather than inventing one --
+    a causal claim the graph itself doesn't make must never appear stronger
+    in the prose than it is in the data (same discipline as WS-8's own
+    "never a transitive join" guarantee)."""
+    if graph and graph.get("edges"):
+        nodes = {n.get("entity_id"): n for n in (graph.get("nodes") or [])}
+        ev2alert = _event_id_to_alert(alerts)
+        steps = []
+        for e in sorted(graph["edges"], key=lambda x: x.get("ts_ms") or 0):
+            alert = ev2alert.get(str(e.get("event_id")))
+            frm = nodes.get(e.get("from"), {})
+            to = nodes.get(e.get("to"), {})
+            steps.append({
+                "ts_ms": e.get("ts_ms"),
+                "kind": e.get("kind"),
+                "from_label": frm.get("label") or frm.get("entity_value") or e.get("from"),
+                "to_label": to.get("label") or to.get("entity_value") or e.get("to"),
+                "rule_title": alert.get("rule_title") if alert else None,
+                "level": alert.get("level") if alert else None,
+                "alert_id": alert.get("alert_id") if alert else None,
+            })
+        return steps
+    return [
+        {"ts_ms": a.get("time"), "kind": None, "from_label": None, "to_label": None,
+         "rule_title": a.get("rule_title"), "level": a.get("level"), "alert_id": a.get("alert_id")}
+        for a in sorted(alerts, key=lambda x: x.get("time") or 0)
+    ]
+
+
+_INCIDENT_LABELS = {
+    "de": {"timeline": "## Kausaler Ablauf", "timeline_note": (
+               "Reihenfolge nach den Zeitstempeln des kausalen Graphen (WS-8); "
+               "fällt auf die Reihenfolge des Alarmeingangs zurück, falls kein Graph vorliegt."),
+           "evidence_section": "## Beweispaket", "evidence_verified": "Verifiziert",
+           "evidence_id": "Paket-ID", "evidence_blocks": "Blöcke",
+           "no_kind": "(kein typisierter Kausalzusammenhang)"},
+    "en": {"timeline": "## Causal timeline", "timeline_note": (
+               "Ordered by the causal graph's (WS-8) own edge timestamps; falls back to "
+               "alert-arrival order when no graph exists."),
+           "evidence_section": "## Evidence package", "evidence_verified": "Verified",
+           "evidence_id": "Package ID", "evidence_blocks": "Blocks",
+           "no_kind": "(no typed causal relationship)"},
+}
+
+
+def render_incident_report(pkg: dict, verified: bool, *, lang: str = "de") -> str:
+    if lang not in LANGUAGES:
+        _warn(f"nis2 render_incident_report lang {lang!r} is not one of {LANGUAGES}; "
+              "coercing to 'de' default")
+        lang = "de"
+    L = _LABELS[lang]
+    IL = _INCIDENT_LABELS[lang]
+    ph = _ph(lang)
+
+    blocks = pkg.get("blocks") or []
+    incident: dict = next((b["content"] for b in blocks if b.get("type") == "incident"), {})
+    alerts = [b["content"] for b in blocks if b.get("type") == "alert"]
+    graph = next((b["content"] for b in blocks if b.get("type") == "graph"), None)
+    steps = _causal_steps(alerts, graph)
+
+    step_lines = []
+    for s in steps:
+        when = _fmt_time(s["ts_ms"])
+        kind = f"`{s['kind']}`" if s["kind"] else IL["no_kind"]
+        who = f" ({s['from_label']} → {s['to_label']})" if s.get("from_label") else ""
+        rule = s["rule_title"] or ph
+        level = s["level"] or "?"
+        step_lines.append(f"- **{when}** — {kind}{who}: {rule} ({level})")
+    timeline = "\n".join(step_lines) if step_lines else f"- {ph}"
+
+    lines = [
+        f"# {L['title']} — Incident",
+        "",
+        f"_{_DISCLAIMER[lang]}_",
+        "",
+        _SCOPE_CAVEAT[lang],
+        "",
+        L["entity_section"],
+        f"- {L['entity_name']}: {ph}",
+        f"- {L['entity_class']}: {ph}",
+        f"- {L['entity_authority']}: {ph}",
+        "",
+        L["incident_section"],
+        f"- {L['incident_title']}: {incident.get('entity_value') or ph} "
+        f"({incident.get('entity_type') or ph})",
+        f"- {L['detected_at']}: {_fmt_time(incident.get('first_seen'))}",
+        f"- {L['severity']}: {incident.get('severity') or 'unknown'}",
+        f"- {L['significant']}: {ph}",
+        "",
+        IL["timeline"],
+        IL["timeline_note"],
+        "",
+        timeline,
+        "",
+        IL["evidence_section"],
+        f"- {IL['evidence_verified']}: {'✓' if verified else '✗'}",
+        f"- {IL['evidence_id']}: `{pkg.get('package_id', ph)}`",
+        f"- {IL['evidence_blocks']}: {(pkg.get('chain') or {}).get('block_count', 0)}",
+    ]
+    return "\n".join(lines)
+
+
+def build_incident_report(pkg: dict, verified: bool, *, lang: str = "de",
+                          requested_at: float | None = None) -> dict:
+    """The incident-level draft's own envelope -- own report_id format
+    (never `{alert_id}:report`, contracts/reporting.md's frozen shape),
+    own required fields. `verified` must come from a caller that has
+    ALREADY run evidence_package.verify_evidence_package(pkg) -- this
+    function renders what it's told, it does not re-verify (same "verify
+    before serving, not after" discipline the evidence route itself
+    holds, kept in the caller so this stays a pure renderer)."""
+    if lang not in LANGUAGES:
+        _warn(f"nis2 build_incident_report lang {lang!r} is not one of "
+              f"{LANGUAGES}; coercing to 'de' default")
+        lang = "de"
+    requested_at = time.time() if requested_at is None else requested_at
+    incident_id = pkg.get("incident_id")
+    return {
+        "report_id": f"{incident_id}:incident-report",
+        "incident_id": incident_id,
+        "format": "markdown",
+        "body": render_incident_report(pkg, verified, lang=lang),
+        "status": "draft",
+        "disclaimer": _DISCLAIMER[lang],
+        "generated_at": int(requested_at * 1000),
+        "backend": "template-nis2-incident-de",
+        "evidence_verified": verified,
+        "evidence_package_id": pkg.get("package_id"),
+        "language": lang,
+        "citations": _citations(),
+    }

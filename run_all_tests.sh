@@ -88,6 +88,9 @@ echo
 echo "== WP-3-B: evidence package (hash-chained, tamper-evident, reporting.md seam) =="; LAST_HEADER="== WP-3-B: evidence package (hash-chained, tamper-evident, reporting.md seam) =="
 $PY services/ws3-indexer/test_evidence_package.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
+echo "== Phase 5 (2026-09-04): entity/causal-graph/evidence read path =="; LAST_HEADER="== Phase 5 (2026-09-04): entity/causal-graph/evidence read path =="
+$PY services/ws3-indexer/test_phase5_read_path.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
 echo "== ws3 (P1.3): OpenSearch index transient-retry / permanent-surface =="; LAST_HEADER="== ws3 (P1.3): OpenSearch index transient-retry / permanent-surface =="
 $PY services/ws3-indexer/test_opensearch_retry.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
@@ -443,6 +446,10 @@ echo "== detection-quality: precision/recall/F1 canary over the labeled corpus (
 $PY tools/test_detection_quality.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 $PY tools/detection_quality_eval.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 
+echo
+echo "== Phase 5 item 6 (2026-09-04): eval/trend.jsonl viewer generator =="; LAST_HEADER="== Phase 5 item 6 (2026-09-04): eval/trend.jsonl viewer generator =="
+$PY tools/test_generate_trend_viewer.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+
 # == AI-to-OT twin (WP-1-A..F): PLC sim, attack chain, degradation rig, FPR ==
 echo
 echo "== twin: telemetry-degradation rig self-check (delay/duplicate/reorder/loss determinism + loss-subset proof) =="; LAST_HEADER="== twin: telemetry-degradation rig self-check (delay/duplicate/reorder/loss determinism + loss-subset proof) =="
@@ -511,6 +518,12 @@ $PY services/ws7-dashboard/test_fix_ux.py || { fail=1; FAILED="${FAILED} ${LAST_
 echo
 echo "== ws7 read-plane regression: LIVE ownership, outage marker, config.js gate, badge copy =="; LAST_HEADER="== ws7 read-plane regression: LIVE ownership, outage marker, config.js gate, badge copy =="
 $PY services/ws7-dashboard/test_fix_read_plane.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
+echo "== Phase 5 item 4 (2026-09-04): GET /assets/{mac} wired into the Inventory drill-in =="; LAST_HEADER="== Phase 5 item 4 (2026-09-04): GET /assets/{mac} wired into the Inventory drill-in =="
+$PY services/ws7-dashboard/test_phase5_asset_detail.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
+echo "== Phase 5 item 3 (2026-09-04): incident detail renders the causal graph + evidence package =="; LAST_HEADER="== Phase 5 item 3 (2026-09-04): incident detail renders the causal graph + evidence package =="
+$PY services/ws7-dashboard/test_phase5_incident_graph_evidence.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 
 echo
 if [ "$fail" -eq 0 ]; then

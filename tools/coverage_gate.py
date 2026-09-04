@@ -8,10 +8,13 @@ kept in sync with run_all_tests.sh by hand since there's no shared manifest).
 HONEST THRESHOLDS, not the PLAN_C target itself: re-measured 2026-07-19 after
 the PR#2 merge (and after syncing TARGETS with the merged run_all_tests.sh --
 the gate briefly read WS-3 at 50% because the M4 code was in --source while
-its test suites weren't in this list). Current enforced floors (see TARGETS):
-WS-2 88.0, WS-3 65.0 (dropped from 75 on 2026-08-06 when the hardened
-session/SSRF/rate-limit surface made it measure lower -- gap honestly open),
-WS-3-reports 45.0, WS-4 40.0, WS-6 60.0. This gate enforces those MEASURED
+its test suites weren't in this list). Current enforced floors, kept in sync
+with TARGETS itself by hand (gap-hunt 2026-09-04: this prose had drifted --
+a ghost "WS-3-reports" label that isn't a TARGETS key, and three real,
+enforced targets missing from the list entirely): WS-2 88.0, WS-3 65.0
+(dropped from 75 on 2026-08-06 when the hardened session/SSRF/rate-limit
+surface made it measure lower -- gap honestly open), services-shared 42.0,
+WS-4 40.0, WS-6 60.0, WS-8 60.0, WS-9 68.0. This gate enforces those MEASURED
 numbers minus a small buffer as a regression guard, not the unmet 85%
 target -- claiming a gate "blocks CI on 85%" when a service demonstrably
 doesn't meet it would be exactly the overclaiming SSOT.md sec2 exists to

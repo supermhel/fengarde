@@ -227,6 +227,14 @@ jobs:
       # push back to main (least-privilege contents: read; "do not auto-commit"
       # convention) -- rows live in the committed seed file and the per-run
       # artifacts, appended again by whoever runs the lane locally.
+      # Phase 5 item 6 (2026-09-04): regenerate the internal trend viewer
+      # against the row this run just appended (in-runner file, matching the
+      # "this job does NOT push back to main" convention every other step
+      # here already holds -- eval/trend.jsonl itself is the same: appended
+      # in-runner, only landed in git by whoever runs the lane locally).
+      - name: Regenerate eval/trend_viewer.html
+        run: python tools/generate_trend_viewer.py
+
       - name: Upload detection-accuracy trend artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
@@ -234,4 +242,5 @@ jobs:
           path: |
             eval/trend.jsonl
             eval/twin/report.json
+            eval/trend_viewer.html
           if-no-files-found: error

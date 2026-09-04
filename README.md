@@ -11,9 +11,13 @@
 > initial ~54 open alerts down to 19, all of which are accepted policy-level
 > trade-offs (see `SSOT.md` §1), not unaddressed gaps.
 
-**The open-source SIEM for the European industrial Mittelstand — turns your
-factory and IT logs into draft NIS2 incident notifications, with AI triage that
-never leaves your network.**
+**FENGARDE connects security telemetry across IT, AI and OT to show what
+happened, who or what acted, what was affected, how the events relate, and
+what evidence supports the conclusion.**
+
+Built for the European industrial Mittelstand — open-source, self-hosted,
+Apache-2.0, with a draft NIS2 incident-notification path and AI triage that
+never leaves your network.
 
 FENGARDE ingests logs from multiple sources, normalizes them to a single schema
 ([OCSF](https://schema.ocsf.io/)), runs correlation rules over a sliding window,
@@ -103,20 +107,24 @@ make down                                 # stop the stack and remove volumes
 
 ---
 
-## What's real (on `main` today — last tagged release is v0.6.0)
+## What's real (on `main` today — last tagged release is v0.10.0)
 
 FENGARDE ships a **working detection pipeline**. We are deliberate about what is
 real versus what is planned — this is a security tool, so accuracy matters more than
 a long feature list. This table describes the current tip of `main`, not just the
-last tag: v0.6.0 (`v0.1.0` through `v0.6.0` all tagged) shipped 2026-08-27 — it
-closes 310 commits' worth of work that had accumulated on `main` since v0.5.0
-(2026-07-23) with no release boundary of its own: WS-8 cross-alert correlation
-(device-scoped pivot tracking, unbounded-growth fix), the repo-wide chaos gate
-(`make chaos`, 40 scenarios / 0 lost / 0 duplicated across 6 SIGKILLed services),
-a full dashboard backend-wiring pass, ingestion-edge spool durability + silence
-watchdog, RBAC/MFA hardening, and the screenshot product tour now live at
+last tag: `v0.7.0` through `v0.10.0` (2026-08-29 to 2026-09-04) each close one
+roadmap phase — v0.7.0 (Phase 0+1: coverage guard, supply-chain signing, the
+AI-to-OT digital twin), v0.8.0 (Phase 2: WS-9 entity resolver, `incident.graph`
+v1), v0.9.0 (Phase 3: causal incident graph v2, the evidence package, bounded
+WS-5 concurrency), v0.9.1 (Phase 3.5: operational outcome metrics measured on
+the twin), v0.10.0 (Phase 4: the three-layer adversarial mutation-validation
+engine) — on top of `v0.6.0` (2026-08-27), which closed 310 commits' worth of
+work that had accumulated on `main` since v0.5.0 with no release boundary of
+its own: WS-8 cross-alert correlation, the repo-wide chaos gate, a full
+dashboard backend-wiring pass, ingestion-edge spool durability, RBAC/MFA
+hardening, and the screenshot product tour now live at
 [supermhel.github.io/fengarde](https://supermhel.github.io/fengarde/) — if you need
-a pinned, tagged release rather than the moving tip, use `v0.6.0`. See
+a pinned, tagged release rather than the moving tip, use the latest `v0.10.0`. See
 [CHANGELOG.md](CHANGELOG.md) for the itemized list and [SSOT.md](SSOT.md) for the
 authoritative, continuously updated status — this table is a snapshot, that file
 is the source of truth.
@@ -152,6 +160,13 @@ is the source of truth.
 | **Dashboard: full backend wiring pass** | ✅ Works (2026-08-20) | An 8-workstream audit (4 parallel deep-reads, not a guess) found every remaining real-but-unsurfaced backend capability; all closed same session, not selectively. **Inventory view showed mock data on every deployment** — `window.INVENTORY_API` had no default (unlike every other `*_API` constant) and nothing anywhere ever set it; fixed with a proper default + new `/api/inventory/` nginx proxy. **New "Ops" tab**: every workstream's own `GET /metrics` (WS-1/2/3/4/8, `services/shared/runner.py`) is now proxied and rendered — real per-topic ack/fail/deadletter counts plus service-specific extras (WS-1 per-source ingest, WS-4 rule-fire-recency, WS-8 correlator track/promotion counts); live-verified this immediately surfaced a real, previously-invisible 24-deep dead-letter backlog on WS-2. **New "Audit" tab** surfaces the admin trail (see Admin audit log row). **MFA enrollment UI** shipped (see MFA/TOTP row). **New "API keys" panel** in Inventory — `GET /keys` had no HTTP route at all (CLI-only); added, tenant-scoped, never returns key material. **Per-tenant rule fields** (`enabled`/`score_weight`/`stateful`) now shown in a new "All rules" table on the Coverage view. **NIS2 report stage/language picker** — the backend supports 3 stages × 2 languages (6 real combinations), the UI only ever requested one; a selector in the report panel now reaches all 6. **Why panel**: the light classifier's `{category, priority, confidence}` (computed for every alert, previously fetched and silently dropped) and local-IOC `src_endpoint.reputation` (already riding in the same payload as the already-shown `.location.country`) are now both rendered. **Tenant scoping**: a logged-in session's `tenant_id` is now actually sent on the rules/assets/incidents fetches (see Multi-tenancy row). **Follow-up UX/QA pass (2026-08-20)**: found and fixed a real Ops layout bug (a 3-level-deep metrics shape collapsed to `[object Object]` and visually collided with adjacent text — now a genuinely recursive formatter), reformatted Audit's Detail column from raw JSON to `key: value` pairs, wrapped every table in a scroll container, and fixed the header time-range picker — it only ever scoped 2 of 8 tabs and silently no-op'd (with no explanation) on the rest; now scopes Incidents/Audit/Sources too and visibly disables itself with a tooltip where a time window is genuinely meaningless (Inventory/Coverage/Ops). **Events tab decodes OCSF class/activity names** (`Authentication (3002)` not just `3002`) from `contracts/ocsf-classes.md`, this project's own frozen 8-class profile — not guessed against the full public spec. **Sources tab was 100% `window.SIEM_MOCK.sources`, permanently** — the one tab with no real endpoint to wire to at all; replaced with real per-parser counts derived from `siem.source_type` on the same event set the Events tab already fetches. **Nav is now hash-deep-linkable** (`#ops`, `#audit`, ...) — bookmarkable/shareable views |
 | **Dashboard: screenshot product tour** | ✅ Works (2026-08-20), **live** | **[supermhel.github.io/fengarde](https://supermhel.github.io/fengarde/)** — 8 real screenshots captured off the live stack. Redesigned same-day to a sticky-scroll showcase (owner-pinned reference: `deepseek.com/harness`'s component vocabulary and scroll behavior — eyebrow-pill labels, a terminal-styled hero with the real `git clone`/`make preflight`/`make demo` quickstart, a left-column feature list scrolling past a `position:sticky` right panel that swaps screenshot + caption via `IntersectionObserver`) — kept FENGARDE's own indigo/near-black palette throughout, not the reference's navy blue. Two real bugs fixed in the same pass: a missing `<meta charset="utf-8">` was rendering every `→`/`—` as mojibake, and a `min-width:0`/`overflow-wrap` gap was clipping the hero on mobile. Also mirrored as a self-contained Claude artifact. |
 | **NIS2 (DE) report template** | ✅ Works | Deterministic German/English NIS2 Art. 23 / §32 BSIG draft, additive on the report hook (`?template=nis2`); every entity-specific fact renders as an explicit `[ANALYST MUST PROVIDE]` placeholder, never fabricated |
+| **Entity resolution** (WS-9, 9th workstream) | ✅ Works (Phase 2, `v0.8.0`) | Deterministic `sha256(tenant\|type\|canonical)` entity ids off the `entity.updates` bus topic; bounded/LRU tables, idempotent under redelivery. Live-verified as a 9th managed container (chaos-tested, CI mypy/coverage-gated alongside the other 8) |
+| **Causal incident graph** (`incident.graph`) | ✅ Works (v1 Phase 2, v2 Phase 3 — `v0.9.0`) | WS-8 emits a typed causal DAG per incident — `caused_by`/`invoked`/`authenticated_as`/`wrote_to`/`changed` edges, each grounded in one alert's own evidence, never a transitive inference. Twin-measured `chain_fidelity = 0.6` (seed 7, harness-measured) |
+| **Evidence package** (WS-3) | ✅ Works (`v0.9.0`) | Immutable Merkle hash-chain over an incident's alerts/events/graph (`services/ws3-indexer/evidence_package.py`), tamper-evident verification, deterministic `package_id`; speaks `contracts/reporting.md`'s existing multi-view schema |
+| **Bounded AI-triage concurrency** (WS-5) | ✅ Works (`v0.9.0`) | `ThreadPoolExecutor` (`AI_MAX_WORKERS`, default 4) + admission semaphore (`AI_QUEUE_CAP`); per-event-id dedup under concurrent redelivery |
+| **OT business context** (`contracts/ot-points/`) | ✅ Works, opt-in (`v0.9.0`) | Additive per-device `plant`/`production_line`/`business_service`/`owner`/`safety_relevance` — schema-only (config, not inference); absent means no claim |
+| **AI-to-OT digital twin** (`eval/twin/`) | ✅ Works (Phase 1 `v0.7.0`, metrics `v0.9.1`) | Deterministic, stdlib-only offline validation harness (PLC sim, 7-step attack scenario, oracle, negative controls, telemetry degradation). Phase 3.5 measures operational outcome on it: `alert_reduction_ratio=0.7143`, `false_correlation_rate` reported raw (not hidden), `mtti`, incident-reconstruction wall-clock, severity confusion matrix — every number `harness-measured`, `MTTR` an honest `null` (no closure event exists in the sim to measure it from) |
+| **Adversarial mutation validation** (`eval/adversarial/`) | ✅ Works (`v0.10.0`) | Three layers: **A** (`mutate.py`, 8 axes/36 catalogue entries, deterministic + blocking — a mutation must keep detection **and** chain fidelity **and** FCR to pass; `mutation_robustness=0.6111` seed 7, per-axis breakdown incl. an honestly-reported prompt-injection gap); **B** (`corpus_b.py`, 8 curated cases through the real pipeline); **C** (`adversary_c.py` + nightly workflow, local-LLM-composed, advisory-only, never blocks CI) |
 | SNMP parser | 🚧 Planned | Deferred — [good first issue](CONTRIBUTING.md) |
 | NetFlow parser | 🚧 Planned | Deferred (binary format) |
 | Custom JSON parser | 🚧 Planned | Deferred |
@@ -389,16 +404,18 @@ For the full Dockerized stack (collect → normalize → detect → index → da
 ```
 WS-1 Collectors ─raw.events─▶ WS-2 Normalization ─normalized.events─┬─▶ WS-3 Indexer ─▶ OpenSearch
    (Cisco ASA / AD /          (parsers → OCSF)                      └─▶ WS-4 Detection ─scored.events─▶ WS-3
-    VMware / Linux SSH)                                                  │  alerts ─▶ WS-3, WS-8
+    VMware / Linux SSH)                                                  │  alerts ─▶ WS-3, WS-8, WS-9
    ─assets.updates─▶ WS-6 Inventory (IP/MAC) ─raw.events─▶ (new device -> WS-2, feedback loop)
                                                                           └─ai.requests─▶ WS-5 AI (real local
                                                                                 Ollama triage, stub fallback)
                                                                                 ─ai.results/alerts─▶ WS-3
 WS-8 Correlation ◀─alerts (2nd consumer group)── multi-tactic entity tracks ─incidents─▶ WS-3
+                    └─ incident.graph (typed causal DAG, v2) — produced, no consumer wired yet
+WS-9 Resolver ◀─alerts (3rd consumer group, entity extraction)── entity.updates — produced, self-consumed only today
 WS-7 Dashboard ◀── HTTP only (nginx → WS-3's triage/report/rules/incidents API + WS-6's inventory API), never the bus
 ```
 
-The **only** coupling between backend services (WS-1 through WS-6, WS-8) is the message
+The **only** coupling between backend services (WS-1 through WS-6, WS-8, WS-9) is the message
 bus — no service calls another's code or API directly. Everything else is a frozen
 contract under [`contracts/`](contracts/). All source-format heterogeneity is absorbed at
 the edge (one parser per source in WS-2); the interior of the system handles a single
@@ -412,10 +429,11 @@ on it.
 | 2 | `services/ws2-normalization` | Parsers → validated OCSF events | ✅ (17 parsers) |
 | 3 | `services/ws3-indexer` | Routing + OpenSearch indexing (idempotent) | ✅ |
 | 4 | `services/ws4-detection` | Correlation rules + scoring + windowing | ✅ (29 rules) |
-| 5 | `services/ws5-ai` | Triage | ✅ real local-LLM (Ollama) since v0.2, stub fallback |
+| 5 | `services/ws5-ai` | Triage | ✅ real local-LLM (Ollama) since v0.2, stub fallback; bounded concurrency since `v0.9.0` |
 | 6 | `services/ws6-inventory` | IP/MAC inventory API (SQLite) | ✅ |
 | 7 | `services/ws7-dashboard` | Alert console | ✅ |
-| 8 | `services/ws8-correlation` | Cross-alert correlation (multi-stage incident detection) | ✅ (2026-08-18, live-verified) |
+| 8 | `services/ws8-correlation` | Cross-alert correlation + causal incident graph | ✅ (2026-08-18 correlation; `incident.graph` v1 `v0.8.0`, v2 `v0.9.0`) |
+| 9 | `services/ws9-resolver` | Deterministic entity resolution (`entity.updates`) | ✅ (`v0.8.0`, Phase 2; live-verified, chaos-tested) |
 
 For current status and the forward roadmap, see **[SSOT.md](SSOT.md)** (read that first).
 For historical design context: [`docs/PHASE0_README.md`](docs/PHASE0_README.md).

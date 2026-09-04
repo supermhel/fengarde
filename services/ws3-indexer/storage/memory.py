@@ -97,6 +97,91 @@ class MemoryStore(StorageAdapter):
                     return index, doc
             return None
 
+    def find_alerts(self, alert_ids) -> list[dict]:
+        """Bulk cross-index lookup by id across all alerts-* indices
+        (review-fix, 2026-09-04) -- single locked pass instead of one
+        find_alert() call (and one lock acquisition) per id. Same lock
+        discipline and missing-id contract as find_events.
+
+        Review-fix (2026-09-04, round 2): dedup by id -- an alert_id CAN
+        legitimately exist in two daily buckets (the same cross-index
+        write race find_alert's own docstring and OpenSearchStore's
+        FIX #12 document), and this used to append every matching copy,
+        regressing from the old per-id `find_alert()` loop it replaced
+        (which always returns at most one doc per id). Keeps the FIRST
+        copy encountered per id, in the same `self._indices` iteration
+        order `find_alert()` itself scans in -- same "first match wins"
+        contract, just batched."""
+        wanted = set(alert_ids)
+        if not wanted:
+            return []
+        seen: set[str] = set()
+        found: list[dict] = []
+        with self._lock:
+            for index, bucket in self._indices.items():
+                if not index.startswith("alerts-"):
+                    continue
+                for doc_id, doc in bucket.items():
+                    if doc_id in wanted and doc_id not in seen:
+                        seen.add(doc_id)
+                        found.append(doc)
+        return found
+
+    def find_events(self, event_ids) -> list[dict]:
+        """Bulk cross-index lookup by id across all events-* indices
+        (Phase 5, 2026-09-04). Same lock discipline as find_alert."""
+        wanted = set(event_ids)
+        if not wanted:
+            return []
+        found: list[dict] = []
+        with self._lock:
+            for index, bucket in self._indices.items():
+                if not index.startswith("events"):
+                    continue
+                for doc_id, doc in bucket.items():
+                    if doc_id in wanted:
+                        found.append(doc)
+        return found
+
+    def find_entity(self, entity_id: str) -> tuple[str, dict] | None:
+        """Cross-index lookup across entities(-tenant) (Phase 5, 2026-09-04)."""
+        with self._lock:
+            for index in self._indices:
+                if index != "entities" and not index.startswith("entities-"):
+                    continue
+                doc = self._indices[index].get(entity_id)
+                if doc is not None:
+                    return index, doc
+            return None
+
+    def find_incident_graph(self, incident_id: str) -> tuple[str, dict] | None:
+        """Cross-index lookup across incident-graphs(-tenant) (Phase 5,
+        2026-09-04)."""
+        with self._lock:
+            for index in self._indices:
+                if index != "incident-graphs" and not index.startswith("incident-graphs-"):
+                    continue
+                doc = self._indices[index].get(incident_id)
+                if doc is not None:
+                    return index, doc
+            return None
+
+    def find_incident(self, incident_id: str) -> tuple[str, dict] | None:
+        """Locate an incident doc by id across all daily incidents(-tenant)-*
+        indices -- same shape and same lock discipline as find_alert above
+        (Phase 5, 2026-09-04). "incidents-" (with the trailing hyphen) never
+        collides with the separate, non-date-suffixed "incident-graphs"
+        index added in this same pass -- "incident-graphs" has no 's' before
+        its hyphen."""
+        with self._lock:
+            for index in self._indices:
+                if not index.startswith("incidents-"):
+                    continue
+                doc = self._indices[index].get(incident_id)
+                if doc is not None:
+                    return index, doc
+            return None
+
     # -- v0.4 Track R: cross-index lookup by report_id -----------------------
     def find_report(self, alert_id: str) -> dict | None:
         """Locate a report doc (report_id == f"{alert_id}:report") across all

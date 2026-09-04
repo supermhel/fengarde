@@ -113,6 +113,42 @@ def _baseline_grade(seed: int, oracle: dict) -> dict:
     return report._grade_chain(scenario.run_chain(seed, strict=True), oracle)
 
 
+# ---------------------------------------------------------------------------
+# Public grading surface (review-fix, 2026-09-04)
+#
+# Layer C (adversary_c.py) grades single ad-hoc compositions through this
+# same machinery and used to call _grade_variant/_baseline_grade/_cmp (and
+# even layer_a.report._load_oracle(), two hops into another module's own
+# private function) directly -- underscore-prefixed internals reached across
+# a module boundary with no contract, untested by test_layer_a.py, breakable
+# by any internal refactor with only a nightly-workflow failure to notice.
+# These wrappers ARE that contract: a stable, tested surface for any caller
+# outside this module. run_matrix/_selfcheck above keep using the private
+# names directly (same module, no boundary to name); everything crossing
+# the module boundary should go through these instead.
+# ---------------------------------------------------------------------------
+
+def load_oracle() -> dict:
+    """Public one-hop re-export of report._load_oracle()."""
+    return report._load_oracle()
+
+
+def baseline_grade(seed: int, oracle: dict) -> dict:
+    """Public wrapper for _baseline_grade -- see module note above."""
+    return _baseline_grade(seed, oracle)
+
+
+def grade_variant(mutated: list, seed: int, oracle: dict,
+                   base_build: tuple | None = None) -> dict:
+    """Public wrapper for _grade_variant -- see module note above."""
+    return _grade_variant(mutated, seed, oracle, base_build=base_build)
+
+
+def cmp_result(axis: str, variant: str, base: dict, mut: dict) -> dict:
+    """Public wrapper for _cmp -- see module note above."""
+    return _cmp(axis, variant, base, mut)
+
+
 def _cmp(axis: str, variant: str, base: dict, mut: dict) -> dict:
     """Compare a mutated grade against the baseline grade; emit the three
     success criteria + the causal-join-break verdict."""

@@ -7,6 +7,7 @@ Run: python services/ws3-indexer/test_rbac_api.py
 from __future__ import annotations
 
 import json
+import os
 import sys
 import threading
 import urllib.error
@@ -269,6 +270,45 @@ def test_rbac_off_by_default_no_auth_routes():
         srv.shutdown(); srv.server_close()
 
 
+def test_session_suffices_when_api_key_also_set():
+    """Gap-hunt 2026-09-04: with BOTH FENGARDE_RBAC_DB and FENGARDE_API_KEY
+    configured, a valid RBAC session must be sufficient on its own -- the
+    documented contract ("triage/report endpoints require a logged-in
+    SESSION, not the API key") and _require_role's own comment both say so.
+    Previously _check_auth() required the API key unconditionally, so a
+    logged-in browser session with no X-Api-Key header got 401'd here even
+    though it would pass every route's own _require_role/_tenant_gate check.
+    Untested before this: no existing test in this file sends X-Api-Key, so
+    this exact combination had zero coverage."""
+    store, users = _make_store_and_users()
+    os.environ["FENGARDE_API_KEY"] = "s3cr3t-unrelated-to-the-session"
+    try:
+        srv, port = _serve(store, users)
+        try:
+            code, body, set_cookie = _request(port, "POST", "/auth/login",
+                                               {"username": "acme_analyst", "password": "pw-acme-1"})
+            check(code == 200, f"login must still succeed with API key also configured, got {code}")
+            cookie = _cookie_value(set_cookie)
+
+            # The actual regression: a valid session, NO X-Api-Key header, a
+            # route this session's role is entitled to.
+            code2, body2, _ = _request(port, "GET", "/alerts", cookie=cookie)
+            check(code2 == 200,
+                  f"a valid RBAC session must be sufficient even when "
+                  f"FENGARDE_API_KEY is also set (no X-Api-Key header sent), "
+                  f"got {code2}: {body2}")
+
+            # Negative control: neither a session nor the API key must still
+            # be rejected -- the fix must not have made the gate a no-op.
+            code3, _, _ = _request(port, "GET", "/alerts")
+            check(code3 == 401,
+                  f"no session AND no API key must still 401, got {code3}")
+        finally:
+            srv.shutdown(); srv.server_close()
+    finally:
+        os.environ.pop("FENGARDE_API_KEY", None)
+
+
 def main():
     test_login_success_and_failure()
     test_me_requires_session()
@@ -280,6 +320,7 @@ def main():
     test_rbac_off_by_default_no_auth_routes()
     test_csrf_required_for_writes_when_session_active()
     test_csrf_not_required_when_rbac_off_or_no_session()
+    test_session_suffices_when_api_key_also_set()
 
     if FAILS:
         print(f"[FAIL] rbac api: {len(FAILS)} problem(s)")

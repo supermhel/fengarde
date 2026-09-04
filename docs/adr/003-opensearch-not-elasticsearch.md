@@ -42,9 +42,12 @@ the entire zero-infra test suite (`STORAGE_BACKEND=memory`, the default for
   when the multi-tenant tier (ADR 001's Kafka trigger, M4's RBAC work) is
   built — that tier likely needs OpenSearch's security plugin enabled for
   real per-tenant index isolation.
-- **Trade-off:** single-instance OpenSearch in the current tier, same HA
-  caveat as ADR 001's Redis decision — no replica/cluster design yet,
-  conscious Phase-3 scope cut per the 2026-07-02 architecture review.
+- **Trade-off (stale, corrected 2026-09-04):** this row said "no
+  replica/cluster design yet" — false since 2026-08-05: a 3-node OpenSearch
+  HA profile (`docker-compose.ha.yml` / `make ha-up`) is live and proven,
+  including a real node-kill test confirming a write still succeeds via
+  round-robin to a surviving node. Single-instance stays the *default* tier;
+  the HA profile is opt-in, not unbuilt.
 - A `docs/posts/opensearch-not-elastic.md` draft write-up expanded on this
   rationale for a public audience; it was never published and moved out of
   this repo's working tree in the 2026-07-31 doc audit (SSOT.md §4).
