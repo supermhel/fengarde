@@ -808,7 +808,27 @@ class Handler(BaseHTTPRequestHandler):
         return False
 
     def _check_auth(self) -> bool:
+        """Coarse pre-dispatch gate. `_require_role()` (session role) and
+        `_tenant_gate()` (session tenant scope) do the fine-grained work
+        per route; this only decides whether the caller presented SOME
+        valid credential at all.
+
+        Gap-hunt fix (2026-09-04): a valid RBAC session used to still need
+        the API key header too when both FENGARDE_RBAC_DB and
+        FENGARDE_API_KEY were set -- contradicting this module's own
+        documented contract ("triage/report endpoints require a logged-in
+        SESSION (not the API key)") and `_require_role`'s own comment
+        ("when RBAC is off... auth already happened via check_api_key"),
+        which only makes sense if a session is the alternative auth path
+        when RBAC is ON. Untested combination (test_rbac_api never sends
+        X-Api-Key) is exactly how this went unnoticed. A session with an
+        insufficient role, or no session/key at all, is still rejected --
+        by `_require_role`/`_tenant_gate` for the former, here for the
+        latter.
+        """
         if check_api_key(self.headers):
+            return True
+        if self.deps.rbac_enabled and self._current_session() is not None:
             return True
         self._send(401, {"error": "unauthorized"})
         return False
