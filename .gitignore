@@ -61,6 +61,9 @@ eval/detection_accuracy/*_eval_results.json
 # it never dirties the committed eval/twin/report.json checkpoint; that file
 # is updated only deliberately (e.g. the nightly-eval workflow).
 eval/twin/report.latest.json
+# Phase 4 adversarial lane regenerated artifacts (gate runs must not dirty
+# tracked files -- same convention as eval/twin/report.latest.json).
+eval/adversarial/out/
 
 # Claude Code local/editor files (not project artifacts)
 .claude/settings.local.json

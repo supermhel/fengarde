@@ -453,6 +453,24 @@ $PY eval/twin/scenario.py --selfcheck || { fail=1; FAILED="${FAILED} ${LAST_HEAD
 echo
 echo "== twin: negative controls (FPR source) -- four benign scenarios, all must yield zero incidents =="; LAST_HEADER="== twin: negative controls (FPR source) -- four benign scenarios, all must yield zero incidents =="
 $PY eval/twin/negative_controls.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+
+# == Phase 4 adversarial system-level validation (WP-4-A) ==
+# Layer A is DETERMINISTIC and BLOCKING (determinism is what licenses
+# blocking); Layer B curated corpus is deterministic + blocking; the
+# stochastic Layer C (adaptive LLM adversary) NEVER runs in this gate --
+# it lives only in .github/workflows/nightly-adversary.yml.
+echo
+echo "== Phase 4: mutation engine self-check (8 axes, every variant byte-changes, deterministic catalogue) =="; LAST_HEADER="== Phase 4: mutation engine self-check (8 axes, every variant byte-changes, deterministic catalogue) =="
+$PY eval/adversarial/mutate.py --selfcheck || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
+echo "== Phase 4 Layer A: deterministic BLOCKING mutation matrix (every catalogue variant vs the real WS-2->WS-4->WS-8 path) =="; LAST_HEADER="== Phase 4 Layer A: deterministic BLOCKING mutation matrix (every catalogue variant vs the real WS-2->WS-4->WS-8 path) =="
+$PY eval/adversarial/layer_a.py --seed 7 || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
+echo "== Phase 4 Layer B: curated attack corpus replayed through the real path (hard positives must fire; cross-case merge check) =="; LAST_HEADER="== Phase 4 Layer B: curated attack corpus replayed through the real path (hard positives must fire; cross-case merge check) =="
+$PY eval/adversarial/corpus_b.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
+echo "== Phase 4 Layer A acceptance: determinism double-run, sensitivity both ways, causal-join-break = FAILURE, weakened-rule drop =="; LAST_HEADER="== Phase 4 Layer A acceptance: determinism double-run, sensitivity both ways, causal-join-break = FAILURE, weakened-rule drop =="
+$PY eval/adversarial/test_layer_a.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
 echo "== twin: full scorecard smoke run (report.py must complete without error on the real cascade) =="; LAST_HEADER="== twin: full scorecard smoke run (report.py must complete without error on the real cascade) =="
 # PR #80 finding 10: write to a GITIGNORED last-run path, NOT the committed
