@@ -129,6 +129,16 @@ a pinned, tagged release rather than the moving tip, use the latest `v0.10.0`. S
 authoritative, continuously updated status — this table is a snapshot, that file
 is the source of truth.
 
+**Phase 5 (analyst read path) is code-complete on [PR #92](https://github.com/supermhel/fengarde/pull/92)
+(branch `feat/phase-4`), all CI green, not yet merged or tagged** — it closes the gap
+`incident.graph` (WS-8) and `entity.updates` (WS-9) sat in since Phase 2/3: produced onto
+the bus with zero consumers, zero storage, zero dashboard surface. It ships WS-3 storage +
+three new read routes for entities/incident graphs/evidence packages, a causal-graph SVG +
+evidence panel in the incident detail view, a live single-device asset drill-in, real
+OT-criticality exposure scoring, and a separate incident-level NIS2 draft seam. Rows below
+marked **(Phase 5, PR #92)** describe this branch, not `main` — see the Phase 5 row in
+[SSOT.md](SSOT.md) §1 for the full account and code-review history.
+
 | Capability | Status | Notes |
 |---|---|---|
 | **Detection pipeline** (collect → normalize → detect → index → dashboard) | ✅ Works | End-to-end since v0.1 |
@@ -167,6 +177,12 @@ is the source of truth.
 | **OT business context** (`contracts/ot-points/`) | ✅ Works, opt-in (`v0.9.0`) | Additive per-device `plant`/`production_line`/`business_service`/`owner`/`safety_relevance` — schema-only (config, not inference); absent means no claim |
 | **AI-to-OT digital twin** (`eval/twin/`) | ✅ Works (Phase 1 `v0.7.0`, metrics `v0.9.1`) | Deterministic, stdlib-only offline validation harness (PLC sim, 7-step attack scenario, oracle, negative controls, telemetry degradation). Phase 3.5 measures operational outcome on it: `alert_reduction_ratio=0.7143`, `false_correlation_rate` reported raw (not hidden), `mtti`, incident-reconstruction wall-clock, severity confusion matrix — every number `harness-measured`, `MTTR` an honest `null` (no closure event exists in the sim to measure it from) |
 | **Adversarial mutation validation** (`eval/adversarial/`) | ✅ Works (`v0.10.0`) | Three layers: **A** (`mutate.py`, 8 axes/36 catalogue entries, deterministic + blocking — a mutation must keep detection **and** chain fidelity **and** FCR to pass; `mutation_robustness=0.6111` seed 7, per-axis breakdown incl. an honestly-reported prompt-injection gap); **B** (`corpus_b.py`, 8 curated cases through the real pipeline); **C** (`adversary_c.py` + nightly workflow, local-LLM-composed, advisory-only, never blocks CI) |
+| **Entity / incident-graph / evidence read routes** (WS-3) | ✅ Works (Phase 5, PR #92) | `GET /entities/{id}`, `GET /incidents/{id}/graph`, `GET /incidents/{id}/evidence` — the two topics above were produced since Phase 2/3 with WS-3 only reaper-trimming the stream; now persisted to flat last-write-wins indices and served, tenant-gated. Evidence route builds the package on demand and runs `verify_evidence_package()` **before** any 200 — a failure is 409 with reasons, never a silent unverified serve |
+| **Dashboard: incident causal graph + evidence panel** | ✅ Works (Phase 5, PR #92), browser-verified live | Incident detail now renders WS-8's typed causal DAG as a from-scratch layered SVG (no chart library) plus a build-on-click evidence panel (verified / tampered-409 / unavailable states), alongside the existing member-alert list |
+| **Dashboard: live asset drill-in** | ✅ Works (Phase 5, PR #92), browser-verified live | Asset detail now calls the previously-unwired `GET /assets/{mac}` for the current single-device record instead of only ever showing the possibly-stale `/assets?limit=200` list snapshot; the panel visibly labels which one is on screen, never blanks on a failed refresh |
+| **OT-criticality exposure scoring** | ✅ Works (Phase 5, PR #92) | `contracts/ot-points/*.yml`'s `points[].criticality` (scaffolded since 2026-08-28, inert until now) now adds real points to an OT alert's score via `contracts/scoring.yaml`'s exposure block — only `asset_criticality` is wired; `internet_exposure`/`tenant_tier` stay explicitly inert (no config source for either exists yet) |
+| **Incident-level NIS2 draft** | ✅ Works (Phase 5, PR #92) | `POST /incidents/{id}/report` — a genuinely separate seam from the alert-scoped report hook (`report_id: "{incident_id}:incident-report"`, never collides with `"{alert_id}:report"`), narrative ordered by the causal graph's own edge timestamps, same never-fabricate `[ANALYST MUST PROVIDE]` discipline |
+| **`eval/trend.jsonl` viewer** | ✅ Works (Phase 5, PR #92) | `tools/generate_trend_viewer.py` renders the real nightly detection-quality + AI-to-OT twin scorecard rows (newest-first) into a static `eval/trend_viewer.html` — no more checking the raw JSONL by hand |
 | SNMP parser | 🚧 Planned | Deferred — [good first issue](CONTRIBUTING.md) |
 | NetFlow parser | 🚧 Planned | Deferred (binary format) |
 | Custom JSON parser | 🚧 Planned | Deferred |
@@ -410,9 +426,9 @@ WS-1 Collectors ─raw.events─▶ WS-2 Normalization ─normalized.events─�
                                                                                 Ollama triage, stub fallback)
                                                                                 ─ai.results/alerts─▶ WS-3
 WS-8 Correlation ◀─alerts (2nd consumer group)── multi-tactic entity tracks ─incidents─▶ WS-3
-                    └─ incident.graph (typed causal DAG, v2) — produced, no consumer wired yet
-WS-9 Resolver ◀─alerts (3rd consumer group, entity extraction)── entity.updates — produced, self-consumed only today
-WS-7 Dashboard ◀── HTTP only (nginx → WS-3's triage/report/rules/incidents API + WS-6's inventory API), never the bus
+                    └─ incident.graph (typed causal DAG, v2) ─▶ WS-3 (persists + serves; dashboard renders it)
+WS-9 Resolver ◀─alerts (3rd consumer group, entity extraction)── entity.updates ─▶ WS-3 (persists + serves `GET /entities/{id}`)
+WS-7 Dashboard ◀── HTTP only (nginx → WS-3's triage/report/rules/incidents/entities/evidence API + WS-6's inventory API), never the bus
 ```
 
 The **only** coupling between backend services (WS-1 through WS-6, WS-8, WS-9) is the message
@@ -427,13 +443,13 @@ on it.
 |----|---------|------|-------------|
 | 1 | `services/ws1-collectors` | Collect logs → `raw.events` | ✅ |
 | 2 | `services/ws2-normalization` | Parsers → validated OCSF events | ✅ (17 parsers) |
-| 3 | `services/ws3-indexer` | Routing + OpenSearch indexing (idempotent) | ✅ |
+| 3 | `services/ws3-indexer` | Routing + OpenSearch indexing (idempotent); entity/incident-graph/evidence read routes (Phase 5) | ✅ |
 | 4 | `services/ws4-detection` | Correlation rules + scoring + windowing | ✅ (29 rules) |
 | 5 | `services/ws5-ai` | Triage | ✅ real local-LLM (Ollama) since v0.2, stub fallback; bounded concurrency since `v0.9.0` |
 | 6 | `services/ws6-inventory` | IP/MAC inventory API (SQLite) | ✅ |
 | 7 | `services/ws7-dashboard` | Alert console | ✅ |
 | 8 | `services/ws8-correlation` | Cross-alert correlation + causal incident graph | ✅ (2026-08-18 correlation; `incident.graph` v1 `v0.8.0`, v2 `v0.9.0`) |
-| 9 | `services/ws9-resolver` | Deterministic entity resolution (`entity.updates`) | ✅ (`v0.8.0`, Phase 2; live-verified, chaos-tested) |
+| 9 | `services/ws9-resolver` | Deterministic entity resolution (`entity.updates`) | ✅ (`v0.8.0`, Phase 2; live-verified, chaos-tested; persisted + served + dashboard-surfaced as of Phase 5, PR #92) |
 
 For current status and the forward roadmap, see **[SSOT.md](SSOT.md)** (read that first).
 For historical design context: [`docs/PHASE0_README.md`](docs/PHASE0_README.md).

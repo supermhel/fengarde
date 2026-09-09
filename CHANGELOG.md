@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (2026-09-04/05, Phase 5 — analyst read path for the entity/causal/evidence plane, PR #92 on `feat/phase-4`, not yet merged)
+
+- WS-3 persists `incident.graph` and `entity.updates` (produced since Phase 2/3, previously reaper-trimmed with no storage or read route) and serves `GET /entities/{id}`, `GET /incidents/{id}/graph`, `GET /incidents/{id}/evidence` (the latter builds `evidence_package.py`'s package on demand and verifies it before any 200 — a failure is 409, never a silent unverified serve), all tenant-gated.
+- Dashboard incident detail renders WS-8's typed causal DAG as a from-scratch layered SVG (no chart library) and a build-on-click evidence panel (verified / tampered-409 / unavailable states), alongside the existing member-alert list.
+- Dashboard asset drill-in now calls the previously-unwired `GET /assets/{mac}` for the live single-device record instead of only the possibly-stale list snapshot.
+- WS-4 detection wires `contracts/ot-points/*.yml`'s `points[].criticality` into the exposure-scoring block (`contracts/scoring.yaml`, scaffolded inert since WP-2-F) — only `asset_criticality` is wired; `internet_exposure`/`tenant_tier` stay explicitly inert.
+- A genuinely separate incident-level NIS2 draft seam: `POST /incidents/{id}/report` (`report_id: "{incident_id}:incident-report"`, never collides with the alert-scoped `"{alert_id}:report"`), causal narrative ordered by the graph's own edge timestamps.
+- `tools/generate_trend_viewer.py` renders `eval/trend.jsonl`'s real nightly rows into a static `eval/trend_viewer.html`.
+- Two code-review rounds (`/code-review high` then `/code-review max`) found and fixed 13 issues total, including a WS-4 co-firing scoring bug (an `exposure_gate`-off rule co-firing with a same-weight/level ungated rule fully hid the ungated rule's exposure score) and a dashboard async state race on fast incident deselect/reselect. See `SSOT.md` §1's Phase 5 row for the full account.
+
 ## [0.10.0] - 2026-09-04
 
 ### Added (2026-09-03, Phase 4 — WP-4-A adversarial system-level validation)
