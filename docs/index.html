@@ -311,7 +311,7 @@ review, the verdict, DESIGN.md, and every shipping raster carrying its provenanc
       <p>This dashboard — read-only over HTTP</p></div>
     <div class="stage"><div class="no">09</div>
       <div class="stage-head"><div class="icn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="18" r="2.4"/><circle cx="18" cy="18" r="2.4"/><circle cx="12" cy="6" r="2.4"/><path d="M12 8.4V13M8.4 16.7L10.7 14.5M15.6 16.7L13.3 14.5"/></svg></div><h3>Resolve</h3></div>
-      <p>Deterministic entity IDs off the same alert stream, alongside Correlate — surfaced in the console as of Phase 5 (PR #92, unmerged): an incident's causal graph nodes carry entity type/value/label directly, and <code class="mono">GET /entities/{id}</code> serves the resolved record</p></div>
+      <p>Deterministic entity IDs off the same alert stream, alongside Correlate — surfaced in the incident causal graph, with a dedicated <code class="mono">GET /entities/{id}</code> lookup</p></div>
   </div>
 </section>
 
@@ -445,10 +445,10 @@ review, the verdict, DESIGN.md, and every shipping raster carrying its provenanc
         <div class="no">08 / Incidents</div><h3>Multi-stage attacks, correlated across alerts</h3>
         <p>A single actor, IP, or device that crosses two distinct MITRE tactics gets promoted from N separate
           alerts into one incident — evidence of an attack that stayed under any single rule's own threshold.
-          This run: a brute-force burst (TA0006) and a DNS-exfil burst (TA0011) from one IP, merged. Phase 5
-          (PR #92) adds the causal graph — a real DAG edge derived from the two alerts' own MITRE tags, not a
-          fabricated line — and a build-on-click evidence package: a Merkle hash-chain over the incident's
-          alerts/events, verified before it ever renders <code class="mono">VERIFIED</code>.</p>
+          This run: a brute-force burst (TA0006) and a DNS-exfil burst (TA0011) from one IP, merged into the
+          causal graph below — each edge derived from the two alerts' own MITRE tags, never a fabricated line —
+          alongside a build-on-click evidence package: a Merkle hash-chain over the incident's alerts and
+          events, verified before it ever renders <code class="mono">VERIFIED</code>.</p>
         <span class="tag">WS-8 · 3 · 9</span>
         </div>
         <div class="mob-shot"><img loading="lazy" alt="FENGARDE incident detail for a real ip-scoped incident spanning two MITRE tactics, showing its causal graph (actor:admin used_ip ip:203.0.113.77) and a verified 16-block evidence package"></div>
