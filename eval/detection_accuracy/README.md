@@ -128,6 +128,36 @@ snapshot, not a comprehensive detection-accuracy claim:
 Both are reproducible: `git clone` the two corpora per this file's fetch
 commands above, then `make eval-detection`.
 
+## Coverage broadened (2026-09-10)
+
+Both of the above were stuck, untouched, since 2026-08-19 — not a technical
+blocker, just never re-picked-up (flagged as such in `fengarde-sec`'s backlog).
+Fixed for real, re-run against the same two real corpora:
+
+- **Sysmon parser coverage**: `sysmon.py` gained EventID 5 (ProcessTerminate,
+  mapped to class 1002 activity 3 — a clean sibling of EventID 1's Launch
+  under the same class Contract A leaves open 0-99). Coverage moved
+  1864/3241 (57.5%) → **1910/3241 (58.9%)**; combined Security+Sysmon 42.3%
+  → 43.2%. The module docstring now names every remaining excluded Sysmon
+  ID (7 ImageLoad, 8 CreateRemoteThread, 10 ProcessAccess, 12/13/14
+  Registry*, 18 PipeConnected) with the specific reason none of them has a
+  clean class fit in the current restricted OCSF profile — closing the gap
+  further needs a schema decision (a Module/Process-Access/Registry class),
+  not another parser tweak. Still 0 mismatches against the independent
+  oracle after the change.
+- **splunk/attack_data lane**: the loader required the filename to contain
+  "security" AND raw content to start `<Event` — the filename check was
+  filtering on the wrong signal. `attack_techniques/` ships 57 genuinely
+  raw-XML `.log` files corpus-wide (only 4 had "security" in the name), and
+  the lane never read the Sysmon channel at all even inside the files it
+  did load. Dropped the filename gate (content alone decides now) and added
+  Sysmon-channel routing identical to the EVTX lane's. Files usable: 4 → 57;
+  supported records: 20 → **12,561** (security=47, sysmon=12,514). Still 0
+  mismatches. Every other format in the corpus (Splunk's plaintext export,
+  CrowdStrike Falcon JSON, Zeek JSON, PowerShell transcripts, Linux auditd)
+  is a genuinely different schema needing its own extractor — left as an
+  honest, disclosed gap, not forced through this one.
+
 ## Relationship to `make attack-scorecard` (P3-2)
 
 This eval lane produces the **empirical** half of the ATT&CK coverage

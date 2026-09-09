@@ -43,6 +43,12 @@ REC_NETWORK = {
     "DestinationHostname": "evil.example",
 }
 
+REC_TERMINATE = {
+    "EventID": 5, "TimeCreated": 1750000003000, "Computer": "wks-jdoe",
+    "Image": r"C:\Windows\System32\cmd.exe", "ProcessId": "1234",
+    "User": "CORP\\jdoe",
+}
+
 REC_FILE = {
     "EventID": 11, "TimeCreated": 1750000002000, "Computer": "wks-jdoe",
     "Image": r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
@@ -78,6 +84,20 @@ class TestSysmonParser(unittest.TestCase):
         self.assertEqual(event["dst_endpoint"]["hostname"], "evil.example")
         self.assertEqual(validate(event), [])
 
+    def test_process_terminate_maps_to_kernel_process_distinct_activity(self):
+        """Added 2026-09-10: EventID 5 is a clean sibling of EventID 1 under
+        the SAME class (1002) -- must get its OWN activity_id, not collide
+        with Launch (1) or windows_eventlog's Priv-use (2)."""
+        event = PARSER.parse(_raw(REC_TERMINATE))
+        self.assertIsNotNone(event)
+        self.assertEqual(event["class_uid"], 1002)
+        self.assertEqual(event["activity_id"], 3)
+        self.assertNotEqual(event["activity_id"], 1)  # not Launch
+        self.assertNotEqual(event["activity_id"], 2)  # not windows_eventlog's Priv-use
+        self.assertEqual(event["type_uid"], 100203)
+        self.assertEqual(event["actor"]["process"]["name"], r"C:\Windows\System32\cmd.exe")
+        self.assertEqual(validate(event), [])
+
     def test_file_create_maps_to_file_system_activity_first_producer(self):
         """P0-3's headline fix: class 1001 had ZERO producers before this
         parser (contracts/detection-coverage.md's documented gap)."""
@@ -90,10 +110,13 @@ class TestSysmonParser(unittest.TestCase):
         self.assertEqual(validate(event), [])
 
     def test_unmapped_event_id_returns_none(self):
-        """EventID 13 (RegistryValueSet) is deliberately unmapped -- no clean
-        OCSF class fit in the restricted profile (see module docstring)."""
-        self.assertIsNone(PARSER.parse(_raw({"EventID": 13, "TimeCreated": 1})))
-        self.assertIsNone(PARSER.parse(_raw({"EventID": 9999})))
+        """Deliberately unmapped -- no clean OCSF class fit in the restricted
+        profile (see module docstring's full accounting, updated 2026-09-10):
+        7 ImageLoad, 8 CreateRemoteThread, 10 ProcessAccess, 12/13/14 Registry*,
+        18 PipeConnected."""
+        for eid in (7, 8, 10, 12, 13, 14, 18, 9999):
+            self.assertIsNone(PARSER.parse(_raw({"EventID": eid, "TimeCreated": 1})),
+                              f"EventID {eid} must stay an honest gap, not a forced mapping")
 
     def test_malformed_input_never_raises(self):
         self.assertIsNone(PARSER.parse({"source_type": "sysmon", "raw": "not json{"}))
@@ -112,7 +135,7 @@ class TestSysmonParser(unittest.TestCase):
         EventID 1/3/11 to sysmon, not fall through to windows_eventlog's
         catch-all (which doesn't know these IDs and would silently drop
         the event)."""
-        for eid, rec in ((1, REC_PROCESS), (3, REC_NETWORK), (11, REC_FILE)):
+        for eid, rec in ((1, REC_PROCESS), (3, REC_NETWORK), (5, REC_TERMINATE), (11, REC_FILE)):
             parser = resolve({"raw": rec})  # no source_type set
             self.assertIsInstance(parser, SysmonParser,
                                   f"EventID {eid} must content-sniff to SysmonParser")
