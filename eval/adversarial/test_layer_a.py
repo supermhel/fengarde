@@ -14,11 +14,18 @@ Checks (all against REAL pipeline numbers -- nothing hand-picked):
   (b) DETERMINISM (the property that licenses BLOCKING): two fresh
       run_matrix(seed) calls produce byte-identical matrices. Without this
       the lane must not gate; with it, a green run is reproducible.
-  (c) sensitivity both ways: a mutation known to EVADE (unicode_confusables)
-      is graded detection_retained=False (the lane CAN go red on a real
-      evasion), and a mutation known to preserve detection (case_flip) is
-      graded detection_retained=True (positive control -- the grader is not
-      pathologically pessimistic).
+  (c) sensitivity both ways: a mutation known to EVADE (credential/
+      borrowed_credential -- a real secret path shape the R1 credential-path
+      regex's finite pattern list doesn't cover, disclosed not fixed here,
+      see SSOT.md) is graded detection_retained=False (the lane CAN go red
+      on a real evasion), and a mutation known to preserve detection
+      (prompt/case_flip) is graded detection_retained=True (positive
+      control -- the grader is not pathologically pessimistic). This check
+      used prompt/unicode_confusables until 2026-09-10, when the injection
+      rule's encoding-evasion gap it relied on got fixed (mcp_agent.py's
+      _scan_text normalization pass) -- the WHOLE prompt axis is now 10/10,
+      so the negative control moved to a still-genuinely-evading case in a
+      different axis rather than assert a now-false evasion.
   (d) the causal-join-break class: the segment_ips mutation keeps detection
       (rules key on arguments, not identity) but drops chain_fidelity -- the
       grader MUST record causal_join_broken=True and pass=False, proving the
@@ -111,7 +118,7 @@ def _test_determinism(m1: dict) -> None:
 
 
 def _test_sensitivity() -> None:
-    ev = _grade_one("prompt", "unicode_confusables")
+    ev = _grade_one("credential", "borrowed_credential")
     _check("(c) evasion variant is graded detection_retained=False (can go red)",
            ev["detection_retained"] is False,
            f"det={ev['detection_retained']} tpr={ev['tpr']} fid={ev['chain_fidelity']}")

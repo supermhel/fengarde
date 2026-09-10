@@ -7,7 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added (2026-09-04/05, Phase 5 — analyst read path for the entity/causal/evidence plane, PR #92 on `feat/phase-4`, not yet merged)
+### Fixed (2026-09-10 — R3 prompt-injection encoding evasion, found by Phase 4's own adversarial harness)
+
+- `services/ws2-normalization/parsers/mcp_agent.py`: the `agent_prompt_injection_indicator` (R3), `agent_credential_file_access` (R1), and `agent_destructive_command` (R5) heuristics now scan a normalized corpus (NFKC + Cyrillic/Greek homoglyph fold, whitespace-collapsed, percent-decoded, bounded base64-decoded) alongside the raw text, closing the specific evasions `eval/adversarial/mutate.py`'s `prompt` axis measured and disclosed (Phase 4, 2026-09-03): Cyrillic homoglyphs, URL-encoding, base64 wrapping, run-together whitespace. `_INJECTION_PATTERNS` also gained a documented synonym set and a German equivalent, closing the remaining two content-mutation misses (`equivalent_phrasing`, `language_switch`).
+- Found while testing the fix: `json.dumps(arguments)`'s default `ensure_ascii=True` was silently `\uXXXX`-escaping homoglyphs into literal ASCII text before the fold could ever see them — a second, independent bug in the same code path. Fixed with `ensure_ascii=False`.
+- **Re-measured, not just asserted**: `eval/adversarial/layer_a.py --seed 7` mutation_robustness **0.6111 → 0.8056** (22/36 → 29/36); `prompt` axis **4/10 → 10/10**. `eval/adversarial/corpus_b.py`'s c03 (the corpus's own documented Cyrillic-homoglyph evasion case) is now a hard positive instead of a disclosed miss. `eval/attack/fire_check.py` unaffected (still 28/28). Full `run_all_tests.sh`, ruff, mypy all green. Mutation-verified (reverted the `_scan_text` wiring, confirmed 5 tests went red, restored).
+- `eval/adversarial/test_layer_a.py`'s sensitivity check (proves the lane "can go red") moved its negative control from `prompt/unicode_confusables` (now fixed, no longer evades) to `credential/borrowed_credential` — a real, still-open, separately-disclosed gap: R1's credential-path pattern list doesn't recognize `service_tokens.txt`-shaped paths outside its fixed literal set. Not fixed here — flagged for its own follow-up.
+
+### Added (2026-09-04/05, Phase 5 — analyst read path for the entity/causal/evidence plane, PR #92, merged to `main` 2026-09-10 as `285ca72`)
 
 - WS-3 persists `incident.graph` and `entity.updates` (produced since Phase 2/3, previously reaper-trimmed with no storage or read route) and serves `GET /entities/{id}`, `GET /incidents/{id}/graph`, `GET /incidents/{id}/evidence` (the latter builds `evidence_package.py`'s package on demand and verifies it before any 200 — a failure is 409, never a silent unverified serve), all tenant-gated.
 - Dashboard incident detail renders WS-8's typed causal DAG as a from-scratch layered SVG (no chart library) and a build-on-click evidence panel (verified / tampered-409 / unavailable states), alongside the existing member-alert list.
