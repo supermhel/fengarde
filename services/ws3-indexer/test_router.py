@@ -83,10 +83,59 @@ def test_valid_tenants_still_route():
     check(index3.startswith("alerts-") and "None" not in index3, f"missing tenant_id alert routed to {index3}")
 
 
+def test_shape_dispatch_order_is_collision_free():
+    """Review-fix (2026-09-04): route() dispatches by structural key-
+    sniffing, not an explicit type discriminator -- flagged in review as
+    fragile. This locks the branch order down as a tested contract: every
+    current producer shape routes to its own index, AND the specific near-
+    future shape review named (a flattened single graph node -- carrying
+    entity_id+entity_type but none of incident.graph's other keys) is
+    proven to route as an entity deliberately, not by accident. Any new
+    branch added to route() must extend this test."""
+    graph_v2 = {"incident_id": "inc-1", "tenant_id": "default", "version": 2,
+                "nodes": [{"entity_id": "e1", "entity_type": "actor",
+                           "entity_value": "admin", "label": "admin"}],
+                "edges": [], "tactic_sources": {}}
+    idx, doc_id = route(graph_v2)
+    check(idx == "incident-graphs" and doc_id == "inc-1",
+          f"a nodes+incident_id doc must route to incident-graphs, got {idx}/{doc_id}")
+
+    entity = {"entity_id": "e1", "entity_type": "actor", "entity_value": "admin",
+              "tenant_id": "default"}
+    idx2, doc_id2 = route(entity)
+    check(idx2 == "entities" and doc_id2 == "e1",
+          f"an entity_id+entity_type doc must route to entities, got {idx2}/{doc_id2}")
+
+    # The near-future shape review flagged: the SAME entity_id+entity_type
+    # pair a graph's nodes[] carries, but as its own top-level message (no
+    # "nodes", no "incident_id") -- e.g. a hypothetical per-node live-update
+    # message. Must NOT collide with the incident-graph branch (it has none
+    # of that branch's keys) and must land as an entity, on purpose.
+    flattened_node = {"entity_id": "e1", "entity_type": "actor",
+                       "entity_value": "admin", "label": "admin", "tenant_id": "default"}
+    idx3, doc_id3 = route(flattened_node)
+    check(idx3 == "entities" and doc_id3 == "e1",
+          f"a flattened graph-node-shaped doc must route to entities (a lone "
+          f"entity_id+entity_type IS entity-shaped, regardless of origin), "
+          f"got {idx3}/{doc_id3}")
+
+    incident = {"incident_id": "inc-2", "tenant_id": "default", "first_seen": 1750000000000,
+                "member_alert_ids": ["a-1"]}
+    idx4, doc_id4 = route(incident)
+    check(idx4.startswith("incidents-") and doc_id4 == "inc-2",
+          f"an incident_id-only doc (no nodes) must route to incidents, got {idx4}/{doc_id4}")
+
+    alert = {"alert_id": "a-5", "time": 1750000000000, "level": "high", "tenant_id": "default"}
+    idx5, doc_id5 = route(alert)
+    check(idx5.startswith("alerts-") and doc_id5 == "a-5",
+          f"an alert_id-only doc must route to alerts, got {idx5}/{doc_id5}")
+
+
 def run():
     test_invalid_tenant_rejected_on_alert_branch()
     test_invalid_tenant_rejected_on_event_branch()
     test_valid_tenants_still_route()
+    test_shape_dispatch_order_is_collision_free()
 
 
 def main():

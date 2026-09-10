@@ -56,6 +56,49 @@ class StorageAdapter(abc.ABC):
         """
 
     @abc.abstractmethod
+    def find_events(self, event_ids) -> list[dict]:
+        """Bulk cross-index lookup of normalized-event docs by id (Phase 5,
+        2026-09-04) -- the ``event_id``/``siem.ingest_id`` values an alert's
+        own ``event_ids`` field carries. Events are date-and-family-bucketed
+        (``events-{family}-{tenant}-{date}``) with no single index name the
+        caller can derive, unlike the flat ``entities``/``incident-graphs``
+        indices -- a bulk sibling of :meth:`find_alert`'s cross-index scan,
+        not a per-id loop (evidence-package assembly needs every member
+        alert's events in one call). Missing ids are silently omitted, never
+        an error -- same "best-effort provenance join" contract
+        ``evidence_package.py``'s own ``_dedupe_events``/unresolved-id
+        accounting already expects.
+        """
+
+    @abc.abstractmethod
+    def find_entity(self, entity_id: str) -> tuple[str, dict] | None:
+        """Locate an entity doc across the (flat, non-date-suffixed)
+        ``entities``/``entities-{tenant}`` indices (Phase 5, 2026-09-04).
+        Cross-index for the same reason :meth:`find_alert` is: a
+        `GET /entities/{id}` caller only has the id, not which tenant it
+        belongs to -- the route tenant-gates the result AFTER fetching,
+        same pattern as every other single-doc GET route in this file.
+        """
+
+    @abc.abstractmethod
+    def find_incident_graph(self, incident_id: str) -> tuple[str, dict] | None:
+        """Locate an incident.graph doc across the (flat, non-date-suffixed)
+        ``incident-graphs``/``incident-graphs-{tenant}`` indices (Phase 5,
+        2026-09-04). Same cross-index-then-tenant-gate shape as
+        :meth:`find_entity` above.
+        """
+
+    @abc.abstractmethod
+    def find_incident(self, incident_id: str) -> tuple[str, dict] | None:
+        """Locate an incident doc by ``incident_id`` across ``incidents*``
+        indices (Phase 5, 2026-09-04). Mirrors :meth:`find_alert` exactly --
+        an incident re-emits under the same id as it grows (router.py), day-
+        bucketed like alerts, so the caller (a `GET /incidents/{id}/...`
+        route, or evidence-package assembly) needs the same cross-index
+        lookup ``list_incidents`` doesn't provide.
+        """
+
+    @abc.abstractmethod
     def find_report(self, alert_id: str) -> dict | None:
         """Locate a report doc (``report_id == f"{alert_id}:report"``) across
         all daily ``reports-*`` indices. Mirrors :meth:`find_alert`'s lookup
@@ -132,6 +175,28 @@ class StorageAdapter(abc.ABC):
         ``version=None`` writes unconditionally (legacy adapters)."""
         self.index(index, doc_id, document)
         return True
+
+    # -- bulk alert lookup (review-fix, 2026-09-04) -------------------------
+    #
+    # _build_incident_evidence (triage_api.py) used to call find_alert() once
+    # per member alert id -- an N+1 that costs one full cross-index search
+    # request per alert on every GET /incidents/{id}/evidence and POST
+    # /incidents/{id}/report. find_events (above) already proved the bulk
+    # shape for the sibling lookup; this gives alerts the same one. Default
+    # degrades to the old per-id find_alert() loop for a third-party adapter
+    # that predates this method -- same "old behavior, never worse" contract
+    # as index_cas/get_versioned above; MemoryStore/OpenSearchStore override
+    # with a real single-pass/bulk lookup.
+
+    def find_alerts(self, alert_ids) -> list[dict]:
+        """Bulk cross-index lookup of alert docs by id. Missing ids are
+        silently omitted -- same contract as :meth:`find_events`."""
+        out: list[dict] = []
+        for alert_id in alert_ids:
+            found = self.find_alert(alert_id)
+            if found is not None:
+                out.append(found[1])
+        return out
 
     # -- create-only write (P1-4 remainder: normalized/scored double-index) --
     #

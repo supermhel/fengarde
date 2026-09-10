@@ -24,6 +24,15 @@ on:
   push:
     # Release = a version tag pushed. github.ref_name == the tag (e.g. v0.6.0).
     tags: ["v*"]
+  workflow_dispatch:
+    # Manual fallback: re-run a release for a tag that already exists (e.g.
+    # the tag-push trigger didn't fire, or a step needs a clean re-run).
+    # Does not create new tags -- `tag` must name one that's already pushed.
+    inputs:
+      tag:
+        description: "Existing version tag to release (e.g. v0.10.0)"
+        required: true
+        type: string
 
 # Least-privilege default (Scorecard TokenPermissionsID). Individual jobs
 # re-grant only what they need, mirroring scorecard.yml's pattern.
@@ -47,6 +56,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
         with:
+          ref: ${{ inputs.tag || github.ref_name }}
           fetch-depth: 0  # so `git archive` and tag resolution see the tag
 
       - name: Set up buildx (container driver for multi-platform + push)
@@ -76,7 +86,7 @@ jobs:
           # Passed via env, not interpolated into the script -- a git tag
           # name can contain shell metacharacters (;, `, $, |, ") and this
           # job holds packages:write/contents:write/id-token:write.
-          REF: ${{ github.ref_name }}
+          REF: ${{ inputs.tag || github.ref_name }}
         run: |
           set -euo pipefail
           mkdir -p dist
@@ -89,7 +99,7 @@ jobs:
       - name: Build, push, and keyless-sign every service image
         id: subjects
         env:
-          REF: ${{ github.ref_name }}
+          REF: ${{ inputs.tag || github.ref_name }}
           REPO_OWNER: ${{ github.repository_owner }}
         run: |
           set -euo pipefail
@@ -97,7 +107,8 @@ jobs:
           # Every service that ships a Dockerfile (matches the compose-file
           # services in infra/docker-compose.yml).
           services="devkit-feeder ws1-collectors ws2-normalization ws3-indexer \
-                    ws4-detection ws5-ai ws6-inventory ws7-dashboard ws8-correlation"
+                    ws4-detection ws5-ai ws6-inventory ws7-dashboard ws8-correlation \
+                    ws9-resolver"
           # Start the subject list with the source tarball.
           tarhex=$(sha256sum "dist/fengarde-${REF}.tar.gz"); tarhex=${tarhex%% *}
           subjects="${tarhex}  fengarde-${REF}.tar.gz"$'\n'
@@ -132,13 +143,16 @@ jobs:
       - name: Attach artifacts to the GitHub Release
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64  # v3.0.3
         with:
+          # Explicit, not inferred from github.ref_name: on workflow_dispatch
+          # that's the branch the run was launched from, not the release tag.
+          tag_name: ${{ inputs.tag || github.ref_name }}
           # The source tarball + its keyless signature + certificate.
           # SLSA provenance (.intoto.jsonl + .sig + .cert) is attached by the
           # provenance job via the generator's own upload-assets.
           files: |
-            dist/fengarde-${{ github.ref_name }}.tar.gz
-            dist/fengarde-${{ github.ref_name }}.tar.gz.sig
-            dist/fengarde-${{ github.ref_name }}.tar.gz.pem
+            dist/fengarde-${{ inputs.tag || github.ref_name }}.tar.gz
+            dist/fengarde-${{ inputs.tag || github.ref_name }}.tar.gz.sig
+            dist/fengarde-${{ inputs.tag || github.ref_name }}.tar.gz.pem
           fail_on_unmatched_files: true
 
   # ---------------------------------------------------------------------

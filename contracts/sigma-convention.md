@@ -56,7 +56,7 @@ detection:
     score: {gt: 60}                       # gt|gte|lt|lte|ne — numeric, non-numeric operand => no match
     activity_id: {in: [1, 3]}             # list membership (bool != int; missing field => no match)
     api.operation: {contains: "credentials."} # bounded substring, both operands strings, NO regex
-    process.file.name: {glob: "svchost*.exe"} # Sigma-style */?/[seq] wildcard (A-Sigma; shipped in v0.5.0, no v0.6 release exists), NOT regex
+    process.file.name: {glob: "svchost*.exe"} # Sigma-style */?/[seq] wildcard (A-Sigma; shipped in v0.5.0; tags now go through v0.10.0, gap-hunt 2026-09-04 fixed this stale claim), NOT regex
     src_endpoint.ip: {not_in: corp_ranges} # suppress if value ∈ contracts/allowlists/corp_ranges.yml (CIDR + exact)
     time:                                  # time-of-day / day-of-week
       outside_hours:
@@ -80,7 +80,7 @@ detection:
 - `contains` (v0.4): plain substring test — both operands must be strings and the
   needle is length-capped; it is **not** a regex (no ReDoS on contributor rules).
   A non-string operand or empty/oversized needle fails closed.
-- `glob` (A-Sigma; shipped in v0.5.0, no v0.6 release exists): Sigma-style wildcard match (`*`, `?`, `[seq]`, `[!seq]`)
+- `glob` (A-Sigma; shipped in v0.5.0; tags now go through v0.10.0, gap-hunt 2026-09-04 fixed this stale claim): Sigma-style wildcard match (`*`, `?`, `[seq]`, `[!seq]`)
   via Python's `fnmatch`, the first step toward mechanical Sigma-rule portability
   (design-review finding D, 2026-07-29 — the rule grammar had no wildcard support
   at all). **Still not a regex**: `fnmatch` translates these four metacharacters

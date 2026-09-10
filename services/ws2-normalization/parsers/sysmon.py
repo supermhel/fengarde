@@ -6,15 +6,62 @@ showed FENGARDE parsed only ~9% of the Security-channel volume in real
 attack captures and ZERO Sysmon -- yet Sysmon (process/network/file
 telemetry) was the DOMINANT channel in both real-world corpora (EVTX:
 Sysmon EventIDs 1/3/7/10/11/12/13 outnumbered every Security EventID
-combined; same shape in Splunk attack_data). This parser closes the three
-Sysmon event types with a clean fit in Contract A's restricted OCSF profile:
+combined; same shape in Splunk attack_data). This parser closes the Sysmon
+event types with a clean fit in Contract A's restricted OCSF profile:
 
     EventID 1  (ProcessCreate)     -> 1002 Kernel/Process,   activity 1 (Launch)
     EventID 3  (NetworkConnect)    -> 4001 Network Activity, activity 7 (Accept)
+    EventID 5  (ProcessTerminate)  -> 1002 Kernel/Process,   activity 3 (Terminate)
+                                       -- added 2026-09-10; a clean sibling to
+                                       Launch (activity 1) and windows_eventlog's
+                                       Priv-use (activity 2) under the SAME class,
+                                       which Contract A leaves open for 0-99
+                                       (see windows_eventlog.py's own comment).
     EventID 11 (FileCreate)        -> 1001 File System Activity, activity 1 (Create)
                                        -- the FIRST producer for class 1001,
                                        previously a documented total gap
                                        (contracts/detection-coverage.md).
+
+**Coverage re-derived 2026-09-10** against the real EVTX-ATTACK-SAMPLES corpus
+(``eval/detection_accuracy/evtx_eval.py``): before this pass, IDs 1/3/11
+covered 1864/3241 = 57.5% of Sysmon volume, stuck at that number since
+2026-08-19 (nobody had picked the item up, not a technical blocker -- see
+``fengarde-sec``'s ``2026-08-27-forward-roadmap.md`` Part 4-D). Adding ID 5
+(46 events in that corpus) brings it to 1910/3241 = 58.9%. The remaining
+~41% is every OTHER Sysmon event type, deliberately left unmapped -- each
+checked individually against Contract A's 8-class restricted profile, not
+lumped together as "everything else, later":
+
+    EventID 7  (ImageLoad)          -- a DLL/module load is neither a process
+                                        launch/terminate nor a file mutation in
+                                        the sense 1001 is scoped for ("auditd
+                                        file access, config changes"); no
+                                        Module Activity class exists in the
+                                        restricted profile. Highest-volume
+                                        excluded ID (654 in this corpus).
+    EventID 8  (CreateRemoteThread) -- real T1055 process-injection signal
+                                        (security-valuable), but it names TWO
+                                        processes in a cross-process relationship
+                                        that doesn't fit Launch, Terminate, or
+                                        Priv-use; no Process-Access class exists.
+    EventID 10 (ProcessAccess)      -- same cross-process shape as ID 8, same
+                                        gap.
+    EventID 12/13/14 (RegistryEvent/
+                       RegistryValueSet/RegistryRename)
+                                     -- no Registry Activity class in the
+                                        restricted profile (documented below,
+                                        unchanged from the original P0-3 note).
+    EventID 18 (PipeConnected)      -- no IPC/Named-Pipe class in the
+                                        restricted profile.
+
+Every one of these is the SAME "wrong mapping is worse than an honest gap"
+call already made for EventID 13 below, not a new exception -- forcing any
+of them onto Kernel/Process, File System, or Network Activity would misrepresent
+the event to every downstream rule and dashboard view keyed on those classes.
+Closing this gap for real needs Contract A gaining a Module/Process-Access/
+Registry class, which is a schema decision (contracts/ocsf-event.schema.json's
+frozen enum), not a parser-file change -- tracked, not silently worked around
+here.
 
 EventID 13 (RegistryValueSet) is deliberately NOT mapped: Contract A's
 restricted profile has no Registry Activity class, and forcing it onto an
@@ -57,6 +104,7 @@ _CLS_NET = 4001     # Network Activity
 _CLS_FILE = 1001    # File System Activity
 
 _ACT_PROC_LAUNCH = 1   # matches windows_eventlog.py's own convention
+_ACT_PROC_TERMINATE = 3   # windows_eventlog.py already owns 2 (Priv use)
 
 # Network Activity (4001): 6=Deny, 7=Accept, per ocsf-classes.md / cisco_asa.py's
 # existing convention. Sysmon EventID 3 only fires on an ESTABLISHED connection
@@ -70,6 +118,7 @@ _ACT_FILE_CREATE = 1
 _EVENT_MAP = {
     1: (_CLS_PROC, _ACT_PROC_LAUNCH, SEV_INFO, "Process created"),
     3: (_CLS_NET, _ACT_NET_ACCEPT, SEV_INFO, "Network connection"),
+    5: (_CLS_PROC, _ACT_PROC_TERMINATE, SEV_INFO, "Process terminated"),
     11: (_CLS_FILE, _ACT_FILE_CREATE, SEV_MEDIUM, "File created"),
 }
 

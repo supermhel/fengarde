@@ -59,11 +59,12 @@ _SECTORS = {"common", "bank", "datacenter"}
 # reject any key the real schema does not define. The canonical set is
 # exactly the keys engine.Rule.__init__ consumes (sector, score_weight,
 # llm_gate, window_seconds, threshold, group_by, distinct_field,
-# periodicity), cross-checked 2026-08-26 against every shipped
+# periodicity, exposure_gate), cross-checked 2026-08-26 against every shipped
 # contracts/rules/*.yml -- no rule uses any other key.
 _SIEM_ALLOWED_KEYS = {
     "score_weight", "sector", "window_seconds", "threshold",
     "group_by", "distinct_field", "llm_gate", "periodicity",
+    "exposure_gate",
 }
 _KNOWN_OPS = set(_NUMERIC_OPS) | {"not_in", "outside_hours", "in", "contains", "glob", "exists"}
 # C3: optional MITRE tagging. Enterprise ATT&CK ("Txxxx"/"Txxxx.xxx", "TAxxxx"),
@@ -350,6 +351,13 @@ def validate_rule(rule: dict) -> list[str]:
             # crash -- catch the typo here instead, at validate-time, so it
             # doesn't ship silently doing nothing.
             errors.append(f"siem.llm_gate must be a bool, got {siem['llm_gate']!r}")
+
+        if "exposure_gate" in siem and not isinstance(siem["exposure_gate"], bool):
+            # Same fail-closed-on-typo reasoning as llm_gate above --
+            # engine.py's Rule does `is not False` so a typo'd non-bool
+            # silently keeps exposure applied rather than crashing; catch it
+            # here at validate-time.
+            errors.append(f"siem.exposure_gate must be a bool, got {siem['exposure_gate']!r}")
 
         if "periodicity" in siem:
             periodicity = siem["periodicity"]

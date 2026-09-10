@@ -218,9 +218,15 @@ def _unknown_condition_refs(condition: str, known: set[str]) -> set[str]:
 
 
 def _rewrite_siem(siem: dict[str, Any], errors: list[str]) -> dict[str, Any]:
+    # Review-fix (2026-09-04): mirrors validate_rules.py's _SIEM_ALLOWED_KEYS
+    # -- keep the two in sync. No live SigmaHQ rule carries exposure_gate
+    # (it's a field this repo invented, not part of Sigma's schema), but a
+    # local rule with it set that ever gets round-tripped through this
+    # converter must not have it silently stripped.
     allowed = {
         "sector", "score_weight", "window_seconds", "threshold",
         "group_by", "distinct_field", "periodicity", "llm_gate",
+        "exposure_gate",
     }
     out: dict[str, Any] = {}
     for k, v in siem.items():
@@ -237,9 +243,9 @@ def _rewrite_siem(siem: dict[str, Any], errors: list[str]) -> dict[str, Any]:
                 continue
             out[k] = v
             continue
-        if k == "llm_gate":
+        if k in {"llm_gate", "exposure_gate"}:
             if not isinstance(v, bool):
-                errors.append(f"siem.llm_gate: must be a bool, got {v!r}")
+                errors.append(f"siem.{k}: must be a bool, got {v!r}")
                 continue
             out[k] = v
             continue

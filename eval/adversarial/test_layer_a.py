@@ -57,6 +57,7 @@ import mutate  # noqa: E402
 import layer_a  # noqa: E402
 import report  # noqa: E402
 import scenario  # noqa: E402
+import adversary_c  # noqa: E402
 
 SEED = 7
 _INJECTION_RULE_ID = "3c4d5e6f-7081-48a9-9b1c-3d4e5f6a7b8d"
@@ -183,6 +184,76 @@ def _test_weakened_rule_drop() -> None:
            f"stock={_INJECTION_RULE_ID in stock_ids} weak={sorted(weak_ids)}")
 
 
+def _test_public_grading_wrappers_and_layer_c_boundary() -> None:
+    """(f) Review-fix (2026-09-04): layer_a's public grading wrappers
+    (load_oracle/baseline_grade/grade_variant/cmp_result) must be true,
+    unconditional pass-throughs of the underscore-prefixed internals they
+    wrap -- proven by monkeypatching each internal with a call-recording
+    stub and checking the wrapper both forwards the exact arguments and
+    returns the stub's value unchanged (NOT by comparing two independent
+    real-pipeline runs: the grading pipeline embeds enough non-grading-
+    relevant detail -- e.g. object identity in nested structures -- that
+    two fresh runs aren't guaranteed dict-equal even though the graded
+    OUTCOME is deterministic, same as why _test_determinism above compares
+    via json.dumps rather than raw ==). Also proves Layer C's own
+    _grade_composition (adversary_c.py, which now calls these wrappers
+    instead of reaching into layer_a's/report's private functions
+    directly) actually runs end-to-end for real. Previously nothing in
+    this repo exercised adversary_c.py at all -- a breaking change to
+    layer_a's internals would only ever surface as a nightly-workflow
+    failure, never a `make test` one."""
+    _SENTINEL = object()
+    calls: dict[str, tuple] = {}
+
+    def _stub(name):
+        def _fn(*args, **kwargs):
+            calls[name] = (args, kwargs)
+            return _SENTINEL
+        return _fn
+
+    orig = {
+        "_load_oracle": report._load_oracle,
+        "_baseline_grade": layer_a._baseline_grade,
+        "_grade_variant": layer_a._grade_variant,
+        "_cmp": layer_a._cmp,
+    }
+    try:
+        report._load_oracle = _stub("_load_oracle")
+        layer_a._baseline_grade = _stub("_baseline_grade")
+        layer_a._grade_variant = _stub("_grade_variant")
+        layer_a._cmp = _stub("_cmp")
+
+        result = layer_a.load_oracle()
+        _check("(f) load_oracle() delegates to report._load_oracle() unchanged",
+               result is _SENTINEL and "_load_oracle" in calls)
+
+        result = layer_a.baseline_grade(SEED, {"o": 1})
+        _check("(f) baseline_grade() delegates to _baseline_grade() with the same args",
+               result is _SENTINEL and calls.get("_baseline_grade") == ((SEED, {"o": 1}), {}))
+
+        result = layer_a.grade_variant(["m"], SEED, {"o": 1}, base_build=("bb",))
+        _check("(f) grade_variant() delegates to _grade_variant() with the same args",
+               result is _SENTINEL and calls.get("_grade_variant") ==
+               ((["m"], SEED, {"o": 1}), {"base_build": ("bb",)}))
+
+        result = layer_a.cmp_result("ax", "va", {"b": 1}, {"m": 1})
+        _check("(f) cmp_result() delegates to _cmp() with the same args",
+               result is _SENTINEL and calls.get("_cmp") == (("ax", "va", {"b": 1}, {"m": 1}), {}))
+    finally:
+        report._load_oracle = orig["_load_oracle"]
+        layer_a._baseline_grade = orig["_baseline_grade"]
+        layer_a._grade_variant = orig["_grade_variant"]
+        layer_a._cmp = orig["_cmp"]
+
+    # adversary_c.py itself, end-to-end (real pipeline, wrappers restored),
+    # through the boundary it now uses instead of layer_a's/report's privates.
+    row = adversary_c._grade_composition([("prompt", "case_flip")], SEED)
+    _check("(f) adversary_c._grade_composition runs end-to-end via the public wrappers",
+           row.get("axis") == "adversary_c" and row.get("composition") ==
+           [{"axis": "prompt", "variant": "case_flip"}],
+           f"row={row}")
+
+
 def main() -> int:
     print(f"== Phase 4 Layer A acceptance test (seed={SEED}) ==")
     matrix = layer_a.run_matrix(SEED)  # one full real-pipeline matrix
@@ -191,6 +262,7 @@ def main() -> int:
     _test_sensitivity()
     _test_causal_join_break()
     _test_weakened_rule_drop()
+    _test_public_grading_wrappers_and_layer_c_boundary()
 
     print()
     if _FAILURES:

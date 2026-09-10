@@ -40,6 +40,17 @@ fields:
 siem:
   sector: datacenter
   score_weight: 10
+  # Review-fix (2026-09-04): this rule is deliberately `low`/weight-10 so a
+  # ticketed write stays under classifier_min and routes to store-only, not
+  # LLM/classifier triage. Exposure-aware scoring (contracts/scoring.yaml's
+  # asset_criticality tiers) adds points AFTER a rule matches, keyed only by
+  # the target OT point's criticality -- with no gate, a ticketed write to a
+  # critical-tier point (e.g. plc-line3.yml's pump_enable) would get pushed
+  # back over classifier_min purely because of the asset, defeating this
+  # rule's whole purpose. exposure_gate: false excludes exposure from the
+  # FUNNEL ROUTING decision only; the alert's stored/analyst-facing score
+  # still reflects the true exposure-adjusted severity.
+  exposure_gate: false
 mitre:
   framework: attack-ics
   tactic: TA0106      # Impair Process Control

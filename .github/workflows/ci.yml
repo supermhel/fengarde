@@ -465,6 +465,24 @@ jobs:
   # the unresolvable `ossf/scorecard-action@v2` tag shipped broken and sat
   # undetected until its first live run -- actionlint-class checks are the
   # gate for that file class).
+  # Validates the HA compose overlay actually resolves. Nothing else in CI
+  # does -- docker-build/container-smoke above only exercise the base file.
+  # This exact bug class ("new service added to the base compose, never
+  # given an HA override, so --profile ha breaks on an unsatisfiable
+  # `depends_on: redis`") has recurred three times: ws6, ws8 (both fixed
+  # 2026-08-20), ws9 (found and fixed by a 2026-09-04 gap-hunt after landing
+  # 2026-09-02 with zero CI signal). Config resolution only -- no live infra,
+  # seconds not minutes.
+  ha-compose-config:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+      - name: HA profile resolves (docker compose config, no containers started)
+        run: |
+          REDIS_PASSWORD=ci-config-check-only \
+            docker compose -f infra/docker-compose.yml -f infra/docker-compose.ha.yml \
+              --profile ha config >/dev/null
+
   actionlint:
     runs-on: ubuntu-latest
     steps:

@@ -22,8 +22,23 @@
   the Inventory view showed mock data on every deployment). Fetches
   `/assets?limit=200` and `/keys` (key metadata, never material). Falls back
   to `mocks/mock_data.js` only if explicitly overridden with
-  `window.INVENTORY_API = null`. `/assets/{mac}` is still a WS-6 contract
-  endpoint the dashboard doesn't currently call.
+  `window.INVENTORY_API = null`. `/assets/{mac}` (Phase 5, 2026-09-04) is now
+  called too: clicking a device in the Inventory drill-in renders the list
+  snapshot immediately, then refreshes with this authoritative single-device
+  read once it resolves ("live device record" vs "list snapshot" badge shows
+  which one is on screen; a failed/unavailable fetch just keeps the snapshot,
+  never blanks the panel).
+- `/api/incidents` → WS-3's `GET /incidents` (WS-8 correlation) — the "Incidents"
+  nav view's list. `/api/incidents/{id}/graph` and `/api/incidents/{id}/evidence`
+  (Phase 5, 2026-09-04, separate nginx `location /api/incidents/` block —
+  prefix match, does not disturb the exact-match list route above) feed the
+  incident detail panel's causal-graph SVG (rendered client-side, no chart
+  library — a layered-DAG layout derived from the edges themselves) and its
+  on-demand "Build + verify" evidence-package button. `/api/entities/{id}`
+  exists (same pattern) but nothing calls it yet — `incident.graph`'s own
+  nodes already carry `entity_type`/`entity_value`/`label` inline, so the
+  causal graph doesn't need a per-node entity lookup; it's there for a
+  possible future standalone entity-browser view.
 - `/api/audit` (2026-08-20) → WS-3's `GET /audit`, admin-scoped by the backend's
   own session check — the "Audit" nav view.
 - `/api/ops/{ws1,ws2,ws3,ws4,ws8}` (2026-08-20) → each workstream's own

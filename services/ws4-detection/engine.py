@@ -121,6 +121,12 @@ from shared.allowlist import Allowlist, invalidate_dir, load_allowlist  # noqa: 
 
 _NUMERIC_OPS = {"gt", "gte", "lt", "lte", "ne"}
 _CONTAINS_MAX = 200  # cap the needle length; contains is a plain (non-regex) match
+# Every operator key `_operator_matches` recognizes. Kept in sync manually
+# (gap-hunt 2026-09-04) so a rule-load-time check can warn on a typo'd key
+# (`not: in`, `exist:`) instead of the rule silently fail-closing to no-match
+# forever with zero signal -- same "shows active, never fires" blackout class
+# the condition-parse warning above already exists to catch.
+_KNOWN_OPS = _NUMERIC_OPS | {"not_in", "outside_hours", "in", "contains", "glob", "exists"}
 
 # Single source for the T4 condition tokenizer. tools/validate_rules.py imports
 # this (R3-#41, 2026-08-27): a hand-copied duplicate in the validator used to
@@ -320,6 +326,26 @@ class Rule:
             name: [(tuple(path.split(".")), expected) for path, expected in sel.items()]
             for name, sel in self.selections.items()
         }
+        # Load-time unknown-operator check (gap-hunt 2026-09-04): an
+        # operator-shaped selection value (e.g. {gt: 60}) whose key
+        # `_operator_matches` doesn't recognize fail-closes to no-match on
+        # every event, silently, forever -- same class of blackout the
+        # condition-parse warning above exists to catch, and for the same
+        # reason done here rather than only in `_operator_matches`: a rule
+        # bucketed under a class_uid that never sees a matching event would
+        # never reach the runtime check at all.
+        for sel in self.selections.values():
+            for expected in sel.values():
+                if isinstance(expected, dict):
+                    bad = set(expected) - _KNOWN_OPS
+                    if bad:
+                        _log.warn(
+                            f"rule {self.id}: selection uses unrecognized "
+                            f"operator key(s) {sorted(bad)}; that predicate "
+                            f"will fail closed to no-match on every event "
+                            f"until this rule is fixed and reloaded -- it "
+                            f"will show as 'active' via /rules but never fire"
+                        )
         # B1: bucket this rule under class_uid X only when X is provably
         # NECESSARY for any match -- i.e. the condition is UNSATISFIABLE when
         # every selection carrying a plain equality class_uid==X is False and
@@ -382,6 +408,19 @@ class Rule:
         # rather than less) instead of `bool("false") == True` silently
         # doing the wrong thing.
         self.llm_gate = siem.get("llm_gate", True) is not False
+        # Phase 5 review-fix (2026-09-04): same lever as llm_gate, for
+        # exposure-aware scoring (Scorer._apply_exposure). A rule can be
+        # deliberately scored `low` to stay out of the classifier/LLM funnel
+        # for an authorized/ticketed condition (e.g.
+        # ot_modbus_unauthorized_write_ticketed.yml) -- exposure's point-add
+        # (contracts/scoring.yaml's asset_criticality tiers) must not be
+        # allowed to silently push that rule's FUNNEL ROUTING decision back
+        # over classifier_min just because the asset happens to be
+        # high/critical-tier; the alert still fires and still shows its true
+        # exposure-adjusted severity to the analyst (Scorer.score is
+        # unaffected), only the funnel action is gated. Defaults to True
+        # (exposure applies), same opt-in-to-exemption posture as llm_gate.
+        self.exposure_gate = siem.get("exposure_gate", True) is not False
         self.window_seconds = siem.get("window_seconds")
         self.threshold = siem.get("threshold")
         # FIX 2(b) poison-pill guard (2026-08-06): validate the stateful

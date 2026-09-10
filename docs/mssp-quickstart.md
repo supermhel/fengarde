@@ -11,6 +11,16 @@ is Apache-2.0 — you can deploy it, white-label it, and run it for as many cust
 you want, today, with no registration and no fee. This doc is about doing that well, not
 about permission you don't already have.
 
+## The MSP model: one shared deployment, honestly
+
+**The real story, decided: one shared deployment serving many tenants —
+not one deployment per tenant.** Data isolation is complete and proven
+(separate indices, separate credentials, separate rules, separate users).
+Compute isolation is real but bounded, not absolute — see "Gaps worth
+knowing" below for exactly what that means and when to deploy a customer
+separately instead. That's the whole positioning: no oversell, no
+hidden asterisk found later.
+
 ## What's actually real for a multi-customer deployment
 
 Everything below is code-verified, not aspirational (see `SSOT.md` in this repo for the
@@ -129,3 +139,11 @@ Per-tenant fair consume ordering (the must-fix-before-outreach item) landed
 2026-08-07 — see the gap list above for its real, bounded scope. F-10 (partner terms)
 decided 2026-08-28: Option-B terms ratified as-is, partner list published with a
 placeholder (manual-review inclusion rule), this doc linked from README.
+
+**F-9 (MSP deployment model) decided 2026-09-10: one shared deployment, many
+tenants — positioned honestly, not "one deployment per tenant."** This doc's
+own "Gaps worth knowing" section already carried the real, bounded scope of
+that decision since it was first written; this closes the open backlog
+item (`fengarde-sec`'s `2026-08-27-forward-roadmap.md` Part 4-F) that had
+never formally recorded it as resolved — the positioning itself needed no
+new copy, only the sign-off.

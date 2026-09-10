@@ -65,7 +65,9 @@ AD_IDS = {4625, 4768, 4771}
 WEL_IDS = {4624, 4634, 4647, 4688, 4672, 4720, 4722, 4726, 4728, 4732}
 SUPPORTED = AD_IDS | WEL_IDS
 # P0-3 (2026-07-21 audit): Sysmon channel, separate from Security.
-SYSMON_IDS = {1, 3, 11}
+# 5 (ProcessTerminate) added 2026-09-10, see sysmon.py's module docstring for
+# the full accounting of what's mapped and why the rest (7/8/10/12/13/18) isn't.
+SYSMON_IDS = {1, 3, 5, 11}
 SYSMON_CHANNEL = "Microsoft-Windows-Sysmon/Operational"
 
 RULE_BRUTE = "6f1c8a2e-0d3b-4c11-9a21-7b5e2f9a1c01"

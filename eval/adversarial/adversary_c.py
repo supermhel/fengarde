@@ -21,10 +21,11 @@ WHAT IT DOES
        cross-axis compositions deterministically (random.Random(seed)), so
        the harness plumbing is proven WITHOUT an LLM and WITHOUT
        stochasticity. Same seed -> same compositions -> same grades.
-    4. Every produced mutation is graded by Layer A's own real grader
-       (layer_a._grade_variant + layer_a._cmp) -> the same row shape as the
-       matrix: detection_retained / fidelity_retained / fcr_unchanged /
-       causal_join_broken.
+    4. Every produced mutation is graded by Layer A's own real grader, via
+       its public wrappers (layer_a.grade_variant + layer_a.cmp_result,
+       review-fix 2026-09-04 -- see layer_a.py's own docstring on those) ->
+       the same row shape as the matrix: detection_retained /
+       fidelity_retained / fcr_unchanged / causal_join_broken.
     5. Reproducibility: the output records seed, producer (stub|llm), the
        model identity when known, and the FULL produced case list -- so a
        nightly stochastic run can be replayed from its recorded cases even
@@ -212,16 +213,22 @@ def _llm_compositions(llm: Any, seed: int, n: int = _N_PER_MODE) -> list[list[tu
 
 def _grade_composition(comp: list[tuple[str, str]], seed: int) -> dict:
     """Grade ONE composed mutation through Layer A's REAL grader; returns the
-    same row shape the Layer A matrix uses."""
-    oracle = layer_a.report._load_oracle()
+    same row shape the Layer A matrix uses.
+
+    Review-fix (2026-09-04): goes through layer_a's public grading wrappers
+    (load_oracle/baseline_grade/grade_variant/cmp_result) instead of reaching
+    into its underscore-prefixed internals -- see layer_a.py's own docstring
+    on those wrappers for why (this was flagged in review as an untested,
+    breakable cross-module reach-through)."""
+    oracle = layer_a.load_oracle()
     base_build = scenario._build_chain_payloads(seed)
     base_payloads = base_build[0]
-    base_grade = layer_a._baseline_grade(seed, oracle)
+    base_grade = layer_a.baseline_grade(seed, oracle)
     mutated = mutate.apply_mutation(base_payloads, "composition", "", seed,
                                     composition=comp)
-    mut_grade = layer_a._grade_variant(mutated, seed, oracle)
-    row = layer_a._cmp("adversary_c", "+".join(a for a, _v in comp),
-                       base_grade, mut_grade)
+    mut_grade = layer_a.grade_variant(mutated, seed, oracle)
+    row = layer_a.cmp_result("adversary_c", "+".join(a for a, _v in comp),
+                             base_grade, mut_grade)
     row["composition"] = [{"axis": a, "variant": v} for a, v in comp]
     return row
 

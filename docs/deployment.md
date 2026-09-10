@@ -3,8 +3,9 @@
 FENGARDE itself does not terminate TLS anywhere. This is still true even
 though the rest of SECURITY.md §2's original v0.4 scope has moved well past
 "no users, roles" — real per-user accounts, roles, and RBAC shipped in M4.2
-(`services/shared/users.py`/`rbac.py`, part of the v0.5.0 release line; no v0.6
-release/tag exists) and MFA/audit-logging landed
+(`services/shared/users.py`/`rbac.py`, part of the v0.5.0 release line; tags
+now go through v0.10.0 -- gap-hunt 2026-09-04, this line hadn't been updated
+since v0.5.0) and MFA/audit-logging landed
 since. TLS specifically stayed out of scope the whole time: none of that
 identity work terminates TLS either, so if analysts need to reach the
 dashboard from outside the machine it runs on, a reverse proxy is still the
