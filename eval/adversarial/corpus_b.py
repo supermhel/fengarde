@@ -21,13 +21,18 @@ HONESTY RULES (the same discipline as the rest of Phase 4)
     - Each case marks expected rule ids. A hard_positive case whose expected
       rule does NOT fire FAILS the gate (the lane's sensitivity floor). A
       case marked hard_positive: False is a DOCUMENTED EVASION -- the
-      heuristic being bypassable is a real MEASURED finding, reported in
-      rule_evasions and NOT a gate failure: the point of Phase 4 is to
-      surface these, not to hide them. (c03's Cyrillic-homoglyph case was
-      exactly this kind of finding until 2026-09-10, when the underlying
-      evasion got fixed -- see c03's own note for the account. It's a
-      hard_positive now; the mechanism this comment describes is still real
-      and still applies to whatever the corpus finds next.)
+      heuristic being bypassable is a real MEASURED finding, visible in the
+      case's own `per_case` entry in the output (`missed` non-empty, cross-
+      referenced against CORPUS's `hard_positive`/`note` fields) and NOT a
+      gate failure: the point of Phase 4 is to surface these, not to hide
+      them. (Adversarial review, 2026-09-10: this paragraph used to say
+      "reported in rule_evasions" -- no such field exists anywhere in
+      `main()`'s `result` dict; corrected to name the real mechanism.)
+      (c03's Cyrillic-homoglyph case was exactly this kind of finding until
+      2026-09-10, when the underlying evasion got fixed -- see c03's own
+      note for the account. It's a hard_positive now; the mechanism this
+      comment describes is still real and still applies to whatever the
+      corpus finds next.)
     - The WS-8 leg feeds ALL cases' real make_alert alerts into ONE real
       Correlator session and asserts NO incident mixes alerts from two
       corpus cases (each case carries its own actor + ip). A cross-case
