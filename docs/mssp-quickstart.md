@@ -51,6 +51,9 @@ proof trail if you want to check any of it yourself):
   See [docs/plugin-development.md](plugin-development.md).
 - **Backup/restore and schema migration** for the one persistent local datastore (the RBAC
   DB) plus your `contracts/` customizations — see [docs/ops-lifecycle.md](ops-lifecycle.md).
+- **Opt-in HA profile, live-kill-tested on both sides** — Redis Sentinel failover and
+  3-node OpenSearch (a real node killed, write succeeded via round-robin to a survivor,
+  cluster back to `green` after restart) — not just wired, proven. `make ha-up`.
 
 ## Onboarding one new customer, end to end
 
@@ -96,13 +99,12 @@ own technical claims:
   than relying on this.
 - **No tenant-provisioning admin UI.** Everything above is a CLI/YAML-file workflow. There
   is no dashboard "add a customer" wizard yet.
-- **OpenSearch's own high-availability profile (3-node) has never been live-failure-tested.**
-  Redis/Sentinel HA has been (kill-tested, proven). If uptime-under-node-failure is part of
-  your customer promise, verify this yourself before relying on it, or ask what's changed
-  since this doc was written.
-- **WS-5 AI triage is single-threaded.** Under heavy multi-tenant incident load it becomes
-  the throughput ceiling for LLM-based triage specifically (rule-based detection is
-  unaffected).
+- **WS-5 AI triage is bounded-concurrent, not unlimited.** `AI_MAX_WORKERS` (default 4)
+  caps how many LLM-tier triage requests run at once, reachable in production via
+  `topic_workers` on the `ai.requests` consumer (`services/ws5-ai/main.py`) — not a single
+  serial thread. Under multi-tenant load past that cap, LLM-based triage queues (rule-based
+  detection is unaffected either way); raise `AI_MAX_WORKERS`/`AI_QUEUE_CAP` if that becomes
+  your bottleneck.
 
 ## Running this for customers today
 
