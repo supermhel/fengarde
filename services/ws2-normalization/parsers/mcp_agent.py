@@ -119,10 +119,21 @@ _CREDENTIAL_PATH_PATTERNS = re.compile(
 # a claim of covering every phrasing or every language -- a semantic
 # classifier would generalize further and remains a documented future
 # option, not built here.
+#
+# Adversarial review (same day) caught the first version of this broadening
+# overshooting: `disclose (the )?(system )?prompt` and a `disregard`
+# alternative ending in bare `system prompt` matched ordinary sentences
+# like "Please disclose prompt engineering best practices" or "disregard
+# system prompt rendering bug" -- neither malicious. Both branches are now
+# anchored to the exact phrase shape the equivalent_phrasing mutation
+# actually produces ("disregard ... PREVIOUS INSTRUCTIONS", "disclose THE
+# SYSTEM prompt", no optional/bare-word paths) -- still catches the
+# measured evasion (verified below), no longer matches the benign
+# constructions above (also verified).
 _INJECTION_PATTERNS = re.compile(
     r"(ignore (all )?previous instructions|"
-    r"disregard (all |the )?(previous instructions|system prompt)|"
-    r"disclose (the )?(system )?prompt|reveal your (system )?prompt|"
+    r"disregard (all |the )?previous instructions|"
+    r"disclose the system prompt|reveal your (system )?prompt|"
     r"you are now|new instructions:|act as if you have no restrictions|"
     r"ignoriere (alle )?vorherigen anweisungen|nenne deinen system-prompt)",
     re.IGNORECASE,
@@ -181,26 +192,58 @@ _WHITESPACE_RUN_RE = re.compile(r"\s+")
 _B64_TOKEN_RE = re.compile(r"[A-Za-z0-9+/]{16,}={0,2}")
 
 
-def _decoded_variants(text: str) -> list:
-    """Bounded, deterministic alternate readings of attacker-controlled
-    text, for the heuristic classifiers below to scan ALONGSIDE the
-    original -- never replacing it, so nothing that matched before this
-    fix stops matching now."""
-    variants = []
+def _fold(text: str) -> str:
+    """NFKC-normalize + homoglyph-fold + whitespace-collapse -- the single
+    unit both call sites below apply, so composing it (fold a decoded
+    variant, or decode a folded variant) is one call, not copy-pasted
+    logic."""
     folded = unicodedata.normalize("NFKC", text).translate(_HOMOGLYPH_FOLD)
-    folded = _WHITESPACE_RUN_RE.sub(" ", folded)
-    variants.append(folded)
+    return _WHITESPACE_RUN_RE.sub(" ", folded)
+
+
+def _decode_layer(text: str) -> list:
+    """One layer of percent-decode + bounded base64-decode attempts."""
+    out = []
     try:
         decoded = urllib.parse.unquote(text, errors="strict")
         if decoded != text:
-            variants.append(decoded)
+            out.append(decoded)
     except (UnicodeDecodeError, ValueError):
         pass
     for token in _B64_TOKEN_RE.findall(text):
         try:
-            variants.append(base64.b64decode(token, validate=True).decode("utf-8"))
+            out.append(base64.b64decode(token, validate=True).decode("utf-8"))
         except (ValueError, UnicodeDecodeError):
             continue
+    return out
+
+
+def _decoded_variants(text: str) -> list:
+    """Bounded, deterministic alternate readings of attacker-controlled
+    text, for the heuristic classifiers below to scan ALONGSIDE the
+    original -- never replacing it, so nothing that matched before this
+    fix stops matching now.
+
+    2026-09-10, adversarial review: the first version applied fold/decode
+    as three independent single-pass transforms on the ORIGINAL text only,
+    so a mutation that CHAINS two techniques (a base64-wrapped homoglyph
+    phrase, or a homoglyph phrase that's then percent-encoded) evaded both
+    passes individually. Now composes one level deep each way -- fold each
+    decoded variant, and decode the folded variant -- covering both
+    encode-then-obfuscate and obfuscate-then-encode without adding a new
+    transform, still bounded by the same _MAX_ARGS_CHARS-capped input."""
+    variants = []
+    folded = _fold(text)
+    variants.append(folded)
+
+    decode_layer = _decode_layer(text)
+    variants.extend(decode_layer)
+    for decoded in decode_layer:
+        refolded = _fold(decoded)
+        if refolded != decoded:
+            variants.append(refolded)
+    if folded != text:
+        variants.extend(_decode_layer(folded))
     return variants
 
 
