@@ -458,6 +458,7 @@ table here, not a new file; cadence weekly for the first month, then monthly). E
 | 2026-08-06 | 10 | 0 | 0 | No inbound design-partner or MSSP contact yet |
 | 2026-08-21 | 11 | 0 | 0 | No inbound design-partner or MSSP contact yet; weekly cadence lapsed since 2026-08-06, this row catches it up |
 | 2026-08-28 | 11 | 0 | 0 | **WP-0.4 distribution restart started** (owner, 2026-08-28) — the roadmap's Phase 0.4 weekly cadence (r/netsec / Show HN / r/cybersecurity retry + German/EU + optional 5th) is in motion; post outcomes + URLs to be logged here as they land. Cadence restored. |
+| 2026-09-10 | 11 | 0 | 0 | **Cadence lapsed again** — 0/3 retry posts, German/EU posts, and the r/msp-or-r/sysadmin 5th-community post from the 08-28 row ever landed; no inbound MSSP/design-partner contact (0 issues, 0 watchers). Distribution is stalled, not slow — see `fengarde-sec`'s roadmap Part G for the full breakdown. Separately, **PR #92 merged to `main` today** (`285ca72`) — the Phase 5 dashboard work + real screenshots are now live on GitHub Pages for the first time. |
 
 Still a point-in-time signal, not a verdict — track the trend across check-ins, don't over-read
 any single row.
