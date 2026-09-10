@@ -97,6 +97,23 @@ class TestMcpAgentParser(unittest.TestCase):
         event = PARSER.parse(_raw({"tool": "read_file", "arguments": {"path": "/tmp/notes.txt"}}))
         self.assertFalse(event["unmapped"]["mcp"]["credential_path_access"])
 
+    def test_token_file_path_flagged(self):
+        """2026-09-10: eval/adversarial's credential/borrowed_credential
+        mutation measured a real miss on a token-file path outside the
+        original pattern list's branches."""
+        for path in ("/opt/ot/shared/service_tokens.txt", "api_token.json",
+                     "tokens.yaml"):
+            with self.subTest(path=path):
+                event = PARSER.parse(_raw({"tool": "read_file", "arguments": {"path": path}}))
+                self.assertTrue(event["unmapped"]["mcp"]["credential_path_access"], path)
+
+    def test_benign_filename_containing_token_substring_not_flagged(self):
+        """The token branch must not fire on ordinary filenames that merely
+        contain the substring -- it's anchored on a token(s).<ext> shape."""
+        event = PARSER.parse(_raw({"tool": "read_file",
+                                   "arguments": {"path": "/tmp/tokenizer_output.txt"}}))
+        self.assertFalse(event["unmapped"]["mcp"]["credential_path_access"])
+
     def test_injection_indicator_flagged(self):
         event = PARSER.parse(_raw({
             "tool": "run_query",
