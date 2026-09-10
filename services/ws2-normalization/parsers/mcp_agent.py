@@ -96,11 +96,17 @@ def _tokenize(tool: str) -> list:
 
 # Heuristic path patterns that indicate a tool call is touching secret
 # material. Deliberately simple/documented, not a security boundary on its
-# own -- the rule that consumes this flag says so too.
+# own -- the rule that consumes this flag says so too. 2026-09-10: added
+# a token-file branch (eval/adversarial/mutate.py's credential/
+# borrowed_credential variant measured a real miss on
+# "service_tokens.txt" -- a real secret-bearing filename shape the
+# original list had no branch for at all, not an encoding evasion of an
+# existing branch). Still a finite, documented list, not a claim of
+# catching every secret-shaped filename.
 _CREDENTIAL_PATH_PATTERNS = re.compile(
     r"(\.env\b|id_rsa|id_ed25519|\.aws[/\\]credentials|\.ssh[/\\]|"
     r"secrets?\.(ya?ml|json|txt)|credentials\.(ya?ml|json)|\.pem$|\.key$|"
-    r"\.kube[/\\]config|\.netrc\b)",
+    r"\.kube[/\\]config|\.netrc\b|\w*tokens?\.(ya?ml|json|txt)\b)",
     re.IGNORECASE,
 )
 

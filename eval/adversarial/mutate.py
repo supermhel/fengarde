@@ -217,9 +217,17 @@ def mutate_tool(payloads: list, rng: Random, *, variant: str, **_kw) -> list:
             elif tool == "read_file":
                 raw["tool"] = "open_file"
         elif variant == "argument_shape":
-            # same tool, different argument shape: move 'q' under an envelope
+            # same tool, different argument shape: move 'q' under an envelope.
+            # 2026-09-10 bug fix: this used to REPLACE the whole args dict
+            # (`args = {"payload": ...}`), silently dropping every sibling
+            # key -- scenario.py's agent_mcp_tool_call step carries BOTH `q`
+            # and `url`, so the old code destroyed the `url` argument as a
+            # side effect and made the egress rule (R4) look like a
+            # detection miss that was actually a harness bug, not a parser
+            # gap. Now only `q` moves; every other key (`url` included)
+            # survives untouched.
             if "q" in args:
-                args = {"payload": {"query": args.pop("q")}}
+                args["payload"] = {"query": args.pop("q")}
                 raw["arguments"] = args
         elif variant == "chained_intermediary":
             raw["server"] = "fengarde-ot-bridge-relay"
@@ -412,12 +420,23 @@ def mutate_protocol(payloads: list, rng: Random, *, variant: str, **_kw) -> list
             # for the REAL opcua_audit parser. It reads `eventType` from the
             # record root, classifies write events, and derives
             # unmapped.ot.is_config_node from a config marker in the node id
-            # (consumed by ot_config_change). Scoped to the modbus_anomaly
+            # (consumed by ot_config_change). Scoped to the modbus_write
             # step ONLY -- unlike modbus_func_code/changed_register (which
             # self-gate via a field-value check that no-ops on other steps),
             # this branch REPLACES the whole raw record, so every other step
             # must be left untouched or the mutation corrupts the entire chain.
-            if payload.get("source_type") != "modbus_anomaly":
+            #
+            # 2026-09-10 bug fix: the old guard checked source_type !=
+            # "modbus_anomaly", but scenario.py has TWO steps with that same
+            # source_type -- modbus_write AND process_anomaly (both parsed
+            # by ModbusAnomalyParser). The guard didn't distinguish them, so
+            # BOTH steps got overwritten with the identical hardcoded OPC UA
+            # record, silently deleting process_anomaly's own real raw
+            # payload too and making its rule look like a detection miss
+            # that was actually the same harness bug, not a parser gap.
+            # Scope by step label instead, matching how mutate_credential
+            # scopes to "credential_use" via _find_step.
+            if getattr(_spec, "label", None) != "modbus_write":
                 _set_raw(payloads, i, raw)
                 continue
             client = raw.get("sourceIp") or raw.get("src_ip")

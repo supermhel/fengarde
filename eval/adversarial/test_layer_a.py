@@ -14,18 +14,22 @@ Checks (all against REAL pipeline numbers -- nothing hand-picked):
   (b) DETERMINISM (the property that licenses BLOCKING): two fresh
       run_matrix(seed) calls produce byte-identical matrices. Without this
       the lane must not gate; with it, a green run is reproducible.
-  (c) sensitivity both ways: a mutation known to EVADE (credential/
-      borrowed_credential -- a real secret path shape the R1 credential-path
-      regex's finite pattern list doesn't cover, disclosed not fixed here,
-      see SSOT.md) is graded detection_retained=False (the lane CAN go red
-      on a real evasion), and a mutation known to preserve detection
+  (c) sensitivity both ways: a mutation known to EVADE (protocol/
+      opcua_path -- an OPC UA write to an operational, non-"config"-marked
+      node has zero rule coverage today; ot_config_change only fires on
+      nodeIds carrying a Config/Firmware/Setpoint/Parameter marker, by
+      design -- extending coverage to every OPC UA write would need a real
+      authorized-node-list rule, a design decision, disclosed not built
+      here, see SSOT.md) is graded detection_retained=False (the lane CAN
+      go red on a real evasion), and a mutation known to preserve detection
       (prompt/case_flip) is graded detection_retained=True (positive
       control -- the grader is not pathologically pessimistic). This check
-      used prompt/unicode_confusables until 2026-09-10, when the injection
-      rule's encoding-evasion gap it relied on got fixed (mcp_agent.py's
-      _scan_text normalization pass) -- the WHOLE prompt axis is now 10/10,
-      so the negative control moved to a still-genuinely-evading case in a
-      different axis rather than assert a now-false evasion.
+      has moved twice: originally prompt/unicode_confusables (fixed
+      2026-09-10, injection encoding evasion), then credential/
+      borrowed_credential (fixed the same day, R1 pattern list broadened)
+      -- each time a negative control got closed for real, the check moved
+      to a still-genuinely-evading case rather than assert a now-false
+      evasion.
   (d) the causal-join-break class: the segment_ips mutation keeps detection
       (rules key on arguments, not identity) but drops chain_fidelity -- the
       grader MUST record causal_join_broken=True and pass=False, proving the
@@ -118,7 +122,7 @@ def _test_determinism(m1: dict) -> None:
 
 
 def _test_sensitivity() -> None:
-    ev = _grade_one("credential", "borrowed_credential")
+    ev = _grade_one("protocol", "opcua_path")
     _check("(c) evasion variant is graded detection_retained=False (can go red)",
            ev["detection_retained"] is False,
            f"det={ev['detection_retained']} tpr={ev['tpr']} fid={ev['chain_fidelity']}")
