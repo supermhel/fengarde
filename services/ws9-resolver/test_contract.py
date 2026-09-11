@@ -680,7 +680,12 @@ def check_no_dormant_tests():
     module = sys.modules[__name__]
     defined = {name for name, obj in inspect.getmembers(module, inspect.isfunction)
                if name.startswith("test_") and obj.__module__ == __name__}
-    called = set(re.findall(r"\b(test_\w+)\(\)", inspect.getsource(run_all)))
+    # Match a call with ANY argument list, not just "()" -- a sibling suite
+    # (ws4-detection/test_fix_detection_engine.py) passes a tmpdir as
+    # `test_x(p)`, and a `\(\)`-only pattern would report those as dormant.
+    # A false "dormant" report is as corrosive as a missed one: it trains
+    # the next person to ignore this check.
+    called = set(re.findall(r"\b(test_\w+)\s*\(", inspect.getsource(run_all)))
     dormant = sorted(defined - called)
     check(not dormant,
           f"dormant test(s) defined but never called by run_all(): {dormant} "
