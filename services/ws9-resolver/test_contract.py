@@ -20,6 +20,7 @@ Run:  python services/ws9-resolver/test_contract.py
 """
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -108,6 +109,43 @@ def test_distinct_tenant_type_value_distinct_id():
           "b: different entity_type must give a different entity_id")
     check(compute_entity_id("default", "actor", "bob") != base,
           "b: different canonical value must give a different entity_id")
+
+
+def test_delimiter_injection_cannot_collide_two_entities():
+    """b: the entity_id preimage is delimiter-JOINED, so a field that can
+    contain the delimiter collides two different entities onto one id:
+    ("acme|actor", "ip", "1.2.3.4") and ("acme", "actor", "ip|1.2.3.4")
+    both join to "acme|actor|ip|1.2.3.4". In a shared multi-tenant
+    deployment (the F-9 model) that is a silent CROSS-CUSTOMER merge.
+
+    Unreachable in practice -- valid_tenant_id bans the pipe and
+    entity_type comes from the fixed ENTITY_TYPES set -- but both of those
+    guarantees live in other modules, so compute_entity_id now enforces
+    the invariant itself: only the trailing canonical_value may contain
+    the separator. Added 2026-09-11 by a core-invariant audit.
+    """
+    for tenant, etype in (("acme|actor", "ip"), ("acme", "actor|device")):
+        try:
+            compute_entity_id(tenant, etype, "1.2.3.4")
+            check(False, f"b: compute_entity_id({tenant!r}, {etype!r}) must reject a "
+                         "separator in tenant/entity_type, not silently collide")
+        except InvalidTenant:
+            pass
+
+    # The guard must NOT restrict the trailing value: a username legitimately
+    # containing a pipe still gets its own stable, distinct id.
+    piped = compute_entity_id("default", "actor", "weird|name")
+    check(piped != compute_entity_id("default", "actor", "weirdname"),
+          "b: a pipe in the canonical VALUE stays legal and distinct")
+
+    # Stability: the guard rejects, it never rewrites the preimage, so every
+    # legitimate id is byte-identical to the pre-guard implementation.
+    import hashlib
+    for t, e, v in (("default", "actor", "alice"), ("acme", "ip", "1.2.3.4"),
+                    ("default", "actor", "weird|name")):
+        expected = hashlib.sha256("|".join((t, e, v)).encode("utf-8", errors="replace")).hexdigest()
+        check(compute_entity_id(t, e, v) == expected,
+              f"b: entity_id for ({t},{e},{v}) must stay byte-identical forever")
 
 
 # --- (c) canonicalization ----------------------------------------------------
@@ -596,6 +634,7 @@ def test_apply_update_then_alert_sighting_does_not_crash():
 def run_all():
     test_same_input_same_entity_id()
     test_distinct_tenant_type_value_distinct_id()
+    test_delimiter_injection_cannot_collide_two_entities()
     test_canonicalization_ip_variants_same_id()
     test_canonicalization_mac_variants_same_id()
     test_canonicalization_username_variants_same_id()
@@ -619,8 +658,38 @@ def run_all():
     test_dockerfile_copy_set_imports_without_tools_dir()
 
 
+def check_no_dormant_tests():
+    """Every ``test_*`` in this module must actually be called by run_all().
+
+    This file dispatches by an explicit call list, so a newly added test
+    function is DEAD by default -- defined, never run, and indistinguishable
+    from a passing one in the output. Found 2026-09-11 the honest way: a new
+    collision test was added, the suite went green, and mutation-verifying it
+    (neuter the guard, expect red) stayed green because the test was never
+    invoked.
+
+    Same bug class this project already closed one layer down --
+    ``tools/check_rule_producers.py``'s anti-dormancy check, which exists
+    because a detection rule keyed on a field no parser emits passes every
+    unit test and never fires in production. A test nothing calls is the
+    same defect wearing a different hat, so it gets the same treatment: a
+    mechanical check, wired into the run, that FAILS rather than a comment
+    asking the next person to remember.
+    """
+    import inspect
+    module = sys.modules[__name__]
+    defined = {name for name, obj in inspect.getmembers(module, inspect.isfunction)
+               if name.startswith("test_") and obj.__module__ == __name__}
+    called = set(re.findall(r"\b(test_\w+)\(\)", inspect.getsource(run_all)))
+    dormant = sorted(defined - called)
+    check(not dormant,
+          f"dormant test(s) defined but never called by run_all(): {dormant} "
+          "-- add the call, or the test is decorative")
+
+
 if __name__ == "__main__":
     run_all()
+    check_no_dormant_tests()
     if FAILS:
         print(f"[FAIL] WS-9 resolver: {len(FAILS)} problem(s)")
         for f in FAILS:
