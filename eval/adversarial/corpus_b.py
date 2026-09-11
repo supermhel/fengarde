@@ -21,10 +21,18 @@ HONESTY RULES (the same discipline as the rest of Phase 4)
     - Each case marks expected rule ids. A hard_positive case whose expected
       rule does NOT fire FAILS the gate (the lane's sensitivity floor). A
       case marked hard_positive: False is a DOCUMENTED EVASION -- the
-      heuristic being bypassable (e.g. a Cyrillic homoglyph slipping past an
-      ASCII regex) is a real MEASURED finding, reported in rule_evasions and
-      NOT a gate failure: the point of Phase 4 is to surface these, not to
-      hide them.
+      heuristic being bypassable is a real MEASURED finding, visible in the
+      case's own `per_case` entry in the output (`missed` non-empty, cross-
+      referenced against CORPUS's `hard_positive`/`note` fields) and NOT a
+      gate failure: the point of Phase 4 is to surface these, not to hide
+      them. (Adversarial review, 2026-09-10: this paragraph used to say
+      "reported in rule_evasions" -- no such field exists anywhere in
+      `main()`'s `result` dict; corrected to name the real mechanism.)
+      (c03's Cyrillic-homoglyph case was exactly this kind of finding until
+      2026-09-10, when the underlying evasion got fixed -- see c03's own
+      note for the account. It's a hard_positive now; the mechanism this
+      comment describes is still real and still applies to whatever the
+      corpus finds next.)
     - The WS-8 leg feeds ALL cases' real make_alert alerts into ONE real
       Correlator session and asserts NO incident mixes alerts from two
       corpus cases (each case carries its own actor + ip). A cross-case
@@ -114,7 +122,7 @@ CORPUS: list[dict] = [
     },
     {
         "id": "c03-confusable-injection",
-        "description": "unicode-confusable (Cyrillic) injection -- DOCUMENTED EVASION",
+        "description": "unicode-confusable (Cyrillic) injection -- FIXED 2026-09-10, was a documented evasion",
         "source_type": "mcp_agent",
         "raw": {
             "ts": _BASE_TS + 120_000, "session_id": "sess-corpus-3", "agent": "ops-user-c",
@@ -123,8 +131,16 @@ CORPUS: list[dict] = [
             "outcome": "success", "client_ip": "10.21.0.3"},
         "meta": _meta(3, "10.21.0.3"),
         "expect_rules": ["3c4d5e6f-7081-48a9-9b1c-3d4e5f6a7b8d"],
-        "hard_positive": False,  # MEASURED EVASION: Cyrillic homoglyphs (i/o) bypass the ASCII regex
-        "note": "bounded ASCII regex cannot see homoglyphs -- honest measurement, not a harness error",
+        # 2026-09-10: was hard_positive False (a MEASURED EVASION -- Cyrillic
+        # homoglyphs bypassed the plain ASCII regex). mcp_agent.py's
+        # _scan_text now NFKC-normalizes + homoglyph-folds args_text before
+        # every heuristic pattern search (and json.dumps(..., ensure_ascii=
+        # False) stopped silently escaping the homoglyphs into literal
+        # backslash-u text before the fold ever saw them -- the second, real
+        # bug found writing this fix). Promoted to a hard positive: this is
+        # no longer an acceptable miss.
+        "hard_positive": True,
+        "note": "homoglyph evasion fixed -- see mcp_agent.py::_decoded_variants/_scan_text",
     },
     {
         "id": "c04-destructive-command",

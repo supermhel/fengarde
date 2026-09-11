@@ -147,14 +147,50 @@ def canonical_entity_value(entity_type: str, raw) -> str | None:
     raise ValueError(f"unknown entity_type {entity_type!r} (known: {sorted(ENTITY_TYPES)})")
 
 
+#: The preimage field separator. Only the LAST field may contain it -- see
+#: :func:`compute_entity_id`.
+_ID_SEP = "|"
+
+
 def compute_entity_id(tenant: str, entity_type: str, canonical_value: str) -> str:
     """``sha256("{tenant}|{entity_type}|{canonical_value}")`` hexdigest.
 
     ``canonical_value`` must ALREADY be canonical (pass it through
     :func:`canonical_entity_value` first); this function is the pure hash of
     the exact ADR preimage so the id is stable forever and test-pinnable.
+
+    COLLISION SAFETY (guard added 2026-09-11 by a core-invariant audit).
+    A delimiter-joined hash preimage collides whenever a field can contain
+    the delimiter: ``("acme|actor", "ip", "1.2.3.4")`` and
+    ``("acme", "actor", "ip|1.2.3.4")`` both join to
+    ``"acme|actor|ip|1.2.3.4"``, i.e. two DIFFERENT entities -- in a
+    multi-tenant deployment, potentially two different CUSTOMERS -- would
+    share one entity_id and silently merge.
+
+    That is not reachable today, but only because of guarantees made
+    somewhere else entirely: ``shared.envelope.valid_tenant_id`` restricts
+    a tenant to ``^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`` (no pipe), and
+    ``entity_type`` only ever comes from the fixed :data:`ENTITY_TYPES`
+    set. Nothing HERE enforced either, so the property would have broken
+    silently if a later change relaxed the tenant charset (an MSSP wanting
+    unicode customer names, say), added an entity type from a non-constant
+    source, or called this function from a new site that skipped
+    ``validated_tenant``.
+
+    The invariant is now local and enforced: **only the last field may
+    contain the separator.** With `tenant` and `entity_type` pipe-free the
+    preimage parses unambiguously no matter what the attacker-controlled
+    ``canonical_value`` contains, so no charset restriction on the value
+    itself is needed (and none is imposed -- a username legitimately
+    containing a pipe still gets its own distinct, stable id).
     """
-    preimage = "|".join((tenant, entity_type, canonical_value))
+    for field_name, field in (("tenant", tenant), ("entity_type", entity_type)):
+        if _ID_SEP in field:
+            raise InvalidTenant(
+                f"{field_name}={field!r} contains the entity_id separator {_ID_SEP!r}; "
+                "only the trailing canonical_value may contain it, otherwise two "
+                "different entities can collide onto one entity_id")
+    preimage = _ID_SEP.join((tenant, entity_type, canonical_value))
     return hashlib.sha256(preimage.encode("utf-8", errors="replace")).hexdigest()
 
 

@@ -14,11 +14,22 @@ Checks (all against REAL pipeline numbers -- nothing hand-picked):
   (b) DETERMINISM (the property that licenses BLOCKING): two fresh
       run_matrix(seed) calls produce byte-identical matrices. Without this
       the lane must not gate; with it, a green run is reproducible.
-  (c) sensitivity both ways: a mutation known to EVADE (unicode_confusables)
-      is graded detection_retained=False (the lane CAN go red on a real
-      evasion), and a mutation known to preserve detection (case_flip) is
-      graded detection_retained=True (positive control -- the grader is not
-      pathologically pessimistic).
+  (c) sensitivity both ways: a mutation known to EVADE (protocol/
+      opcua_path -- an OPC UA write to an operational, non-"config"-marked
+      node has zero rule coverage today; ot_config_change only fires on
+      nodeIds carrying a Config/Firmware/Setpoint/Parameter marker, by
+      design -- extending coverage to every OPC UA write would need a real
+      authorized-node-list rule, a design decision, disclosed not built
+      here, see SSOT.md) is graded detection_retained=False (the lane CAN
+      go red on a real evasion), and a mutation known to preserve detection
+      (prompt/case_flip) is graded detection_retained=True (positive
+      control -- the grader is not pathologically pessimistic). This check
+      has moved twice: originally prompt/unicode_confusables (fixed
+      2026-09-10, injection encoding evasion), then credential/
+      borrowed_credential (fixed the same day, R1 pattern list broadened)
+      -- each time a negative control got closed for real, the check moved
+      to a still-genuinely-evading case rather than assert a now-false
+      evasion.
   (d) the causal-join-break class: the segment_ips mutation keeps detection
       (rules key on arguments, not identity) but drops chain_fidelity -- the
       grader MUST record causal_join_broken=True and pass=False, proving the
@@ -111,7 +122,7 @@ def _test_determinism(m1: dict) -> None:
 
 
 def _test_sensitivity() -> None:
-    ev = _grade_one("prompt", "unicode_confusables")
+    ev = _grade_one("protocol", "opcua_path")
     _check("(c) evasion variant is graded detection_retained=False (can go red)",
            ev["detection_retained"] is False,
            f"det={ev['detection_retained']} tpr={ev['tpr']} fid={ev['chain_fidelity']}")
@@ -119,6 +130,61 @@ def _test_sensitivity() -> None:
     _check("(c) surviving variant is graded detection_retained=True (positive control)",
            ok_row["detection_retained"] is True,
            f"det={ok_row['detection_retained']} tpr={ok_row['tpr']}")
+
+
+def _test_detection_semantics(m1: dict) -> None:
+    """(g) The grader must measure STEP COVERAGE, not fingerprint equality
+    (rewritten 2026-09-10 -- see layer_a._cmp's docstring for why).
+
+    Three properties, each of which the OLD definition got wrong:
+      1. a step going dark is the failure, and the row NAMES it;
+      2. a mutation that keeps every step but changes WHICH rule caught it
+         is detection_retained (recorded via rule_identity_changed);
+      3. a mutation that keeps every step but DOUBLES alert volume is
+         detection_retained (recorded via alert_volume_ratio) -- the old
+         count-equality test called exact duplicate delivery an evasion.
+    """
+    dark = _grade_one("protocol", "opcua_path")
+    _check("(g) a lost step fails detection AND is named in steps_lost",
+           dark["detection_retained"] is False and dark["steps_lost"] == ["modbus_write"],
+           f"det={dark['detection_retained']} steps_lost={dark['steps_lost']}")
+
+    dup = _grade_one("telemetry", "duplicate")
+    _check("(g) exact duplicate delivery is NOT an evasion (every step still covered)",
+           dup["detection_retained"] is True and not dup["steps_lost"],
+           f"det={dup['detection_retained']} steps_lost={dup['steps_lost']}")
+    _check("(g) ...and the doubled volume is recorded informationally, not as a failure",
+           dup["alert_volume_ratio"] == 2.0,
+           f"alert_volume_ratio={dup['alert_volume_ratio']} pass={dup['pass']}")
+
+    # Every row must carry the informational fields, and no row may be
+    # failed BY them -- they are diagnostics, never criteria.
+    bad = [f"{r['axis']}/{r['variant']}" for r in m1["rows"]
+           if r["pass"] is False and not r["steps_lost"]
+           and r["fidelity_retained"] and r["fcr_unchanged"]]
+    _check("(g) no row fails on rule-identity/volume alone (informational never gates)",
+           not bad, f"rows failing with no lost step and no fid/fcr drop: {bad}")
+
+
+def _test_baseline_quality(m1: dict) -> None:
+    """(h) The headline is RELATIVE, so the matrix must publish what it is
+    relative to, and refuse to call a weak reference sound."""
+    bq = m1.get("baseline_quality")
+    _check("(h) matrix publishes a baseline_quality assessment",
+           isinstance(bq, dict) and "sound_reference" in bq and "caveats" in bq,
+           f"baseline_quality={'present' if bq else 'MISSING'}")
+    if not isinstance(bq, dict):
+        return
+    base = m1["baseline"]
+    weak = ((base["chain_fidelity"] is not None
+             and base["chain_fidelity"] < layer_a._FIDELITY_FLOOR)
+            or (base["false_correlation_rate"] is not None
+                and base["false_correlation_rate"] > layer_a._FCR_CEILING))
+    _check("(h) a weak baseline is flagged unsound with explicit caveats "
+           "(never silently quoted as robustness)",
+           (not weak) or (bq["sound_reference"] is False and len(bq["caveats"]) > 0),
+           f"fid={base['chain_fidelity']} fcr={base['false_correlation_rate']} "
+           f"sound={bq['sound_reference']} caveats={len(bq['caveats'])}")
 
 
 def _test_causal_join_break() -> None:
@@ -260,6 +326,8 @@ def main() -> int:
     _test_coverage(matrix)
     _test_determinism(matrix)  # + one more fresh run = two independent runs
     _test_sensitivity()
+    _test_detection_semantics(matrix)
+    _test_baseline_quality(matrix)
     _test_causal_join_break()
     _test_weakened_rule_drop()
     _test_public_grading_wrappers_and_layer_c_boundary()
