@@ -460,6 +460,9 @@ $PY eval/twin/scenario.py --selfcheck || { fail=1; FAILED="${FAILED} ${LAST_HEAD
 echo
 echo "== twin: negative controls (FPR source) -- four benign scenarios, all must yield zero incidents =="; LAST_HEADER="== twin: negative controls (FPR source) -- four benign scenarios, all must yield zero incidents =="
 $PY eval/twin/negative_controls.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
+echo "== twin: oracle <-> reality reconciliation (the answer key is self-authored; drift must not be silent) =="; LAST_HEADER="== twin: oracle <-> reality reconciliation (the answer key is self-authored; drift must not be silent) =="
+$PY eval/twin/oracle_consistency.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 
 # == Phase 4 adversarial system-level validation (WP-4-A) ==
 # Layer A is DETERMINISTIC and BLOCKING (determinism is what licenses
