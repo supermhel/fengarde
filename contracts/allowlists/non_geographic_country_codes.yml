@@ -1,0 +1,16 @@
+# Country codes that are NOT a real country, for rules that count DISTINCT
+# countries (common_impossible_travel).
+#
+# `ZZ` is the sentinel contracts/enrichment/geoip.yml assigns to RFC1918
+# space. Its header documents the intent: an internal address must "never be
+# mistaken for a genuine country in a distinct-country count". That only holds
+# if the counting rule actually leaves it out -- until 2026-10-01 it did not,
+# so one account seen from a public address and then an internal one (VPN, a
+# jump host, a pivot: the most ordinary pattern there is) scored as "two
+# countries" and raised a HIGH alert.
+#
+# Matches by EXACT string on src_endpoint.location.country. Add further
+# sentinels here if the enrichment source ever emits them (e.g. a resolver's
+# own "unknown" code); a real ISO country must never be listed.
+entries:
+  - "ZZ"

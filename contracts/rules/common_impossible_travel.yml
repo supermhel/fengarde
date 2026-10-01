@@ -26,7 +26,11 @@ description: >
   country; allowlist those known VPN/egress IPs (a not_in suppression on
   src_endpoint.ip) rather than weakening the threshold. Events whose IP does not
   resolve to a country are not counted at all (fail-closed since v0.4), so this
-  rule only fires on genuinely known, distinct countries.
+  rule only fires on genuinely known, distinct countries. Internal (RFC1918)
+  sources resolve to the non-country sentinel ZZ and are excluded the same way
+  (fixed 2026-10-01: they used to count as a second "country", so a public
+  login followed by an internal one -- VPN, jump host, pivot -- fired a HIGH
+  alert on every ordinary remote-access session).
 level: high
 logsource:
   category: authentication
@@ -35,6 +39,12 @@ detection:
     class_uid: 3002
     activity_id: 1
     status: Success
+    # An internal (RFC1918) source resolves to the sentinel "ZZ", which is not
+    # a country. Leave it out of the distinct-country count: public-then-
+    # internal is a VPN / jump host / pivot, not travel. See
+    # contracts/allowlists/non_geographic_country_codes.yml.
+    src_endpoint.location.country:
+      not_in: non_geographic_country_codes
   condition: auth_success
 fields:
   - actor.user.name

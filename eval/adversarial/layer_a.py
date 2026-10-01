@@ -213,7 +213,22 @@ def _cmp(axis: str, variant: str, base: dict, mut: dict) -> dict:
     b_fcr, m_fcr = base.get("false_correlation_rate"), mut.get("false_correlation_rate")
     fcr_unchanged = (b_fcr is not None and b_fcr == m_fcr)
 
-    passed = bool(detection_retained and fidelity_retained and fcr_unchanged)
+    # ORDER (2026-10-01): the oracle has always declared ``strict_order`` and
+    # nothing enforced it, so a mutation could scramble the chain's order and
+    # still pass. A mutation that turns an in-order baseline out-of-order is
+    # now a failure. None on either side (fewer than two alerting steps) means
+    # there is no order to lose -- not a failure.
+    b_order, m_order = base.get("alert_order_ok"), mut.get("alert_order_ok")
+    order_retained = not (b_order is True and m_order is False)
+
+    # DECOYS (2026-10-01): benign look-alike activity injected next to the
+    # attack must not be absorbed into the attack's incident. None = no decoy
+    # alert fired, nothing to contaminate.
+    m_decoy = mut.get("decoy_contamination")
+    decoy_clean = m_decoy in (None, 0.0)
+
+    passed = bool(detection_retained and fidelity_retained and fcr_unchanged
+                  and order_retained and decoy_clean)
 
     # THE failure class: alert kept but causal join broken.
     causal_join_broken = bool(
@@ -236,6 +251,10 @@ def _cmp(axis: str, variant: str, base: dict, mut: dict) -> dict:
         "alert_volume_ratio": alert_volume_ratio,
         "fidelity_retained": fidelity_retained,
         "fcr_unchanged": fcr_unchanged,
+        "alert_order_ok": m_order,
+        "order_retained": order_retained,
+        "decoy_contamination": m_decoy,
+        "decoy_clean": decoy_clean,
         "pass": passed,
         "causal_join_broken": causal_join_broken,
     }
@@ -261,7 +280,17 @@ def _baseline_quality(base: dict) -> dict:
     plainly when it is too weak to carry a robustness claim."""
     fid = base.get("chain_fidelity")
     fcr = base.get("false_correlation_rate")
+    dd = base.get("directional_discrimination")
     caveats = []
+    if dd is not None and dd < 0.5:
+        caveats.append(
+            f"directional_discrimination={dd} (< 0.5): the join predicate answers 'joined' for "
+            "a step pair AND for the same pair in REVERSE order on most/all pairs. chain_fidelity "
+            "and false_correlation_rate therefore carry no information about causal ORDER -- they "
+            "only record that the steps share an entity (one actor / one IP across the chain "
+            "satisfies every relation, allowed and forbidden alike). Treat both as 'is there an "
+            "entity bridge', never as 'was the causal chain reconstructed'. Order is graded "
+            "separately (alert_order_ok) and false correlation by decoy_contamination.")
     if fid is not None and fid < _FIDELITY_FLOOR:
         caveats.append(
             f"chain_fidelity={fid} (< {_FIDELITY_FLOOR}): the UNMUTATED chain already fails to "
@@ -276,6 +305,7 @@ def _baseline_quality(base: dict) -> dict:
     return {
         "chain_fidelity": fid,
         "false_correlation_rate": fcr,
+        "directional_discrimination": dd,
         "fidelity_floor": _FIDELITY_FLOOR,
         "fcr_ceiling": _FCR_CEILING,
         "sound_reference": not caveats,
@@ -385,11 +415,13 @@ def run_multi_seed(seeds: list, out_dir: Path = OUT_DIR) -> dict:
     those things, so the seed CANNOT move a grade.
 
     Therefore: a flat spread here means "the seed is not a source of
-    variation", NOT "the result generalizes". Real generality needs
-    SCENARIO diversity -- additional attack shapes (lateral movement,
-    staged exfil, insider misuse) with their own oracles -- which this
-    harness does not yet have. Do not quote a flat multi-seed spread as
-    evidence of anything.
+    variation", NOT "the result generalizes". Generality needs SCENARIO
+    diversity. As of 2026-10-01 the harness has it: ``scenario_matrix.py``
+    runs scenario-agnostic operators over every storyline in
+    ``eval/twin/scenario_registry`` (AI-to-OT, IT intrusion, infra takeover),
+    and those storylines' seeds DO vary attack structure. This AI-to-OT
+    catalogue's own multi-seed spread is still flat and still not evidence
+    of anything.
     """
     per_seed = {}
     for s in seeds:
@@ -435,10 +467,10 @@ def run_multi_seed(seeds: list, out_dir: Path = OUT_DIR) -> dict:
         "interpretation": (
             "A seed_stable_fail is a reproducible gap worth fixing. A seed_dependent row means "
             "the single-seed verdict was luck -- do not quote it either way. CRITICAL CAVEAT: "
-            "the seed varies only identifiers and sensor values, never attack structure, so a "
-            "FLAT spread across seeds is the expected result and is NOT evidence of robustness "
-            "or generality. Real generality requires additional SCENARIO shapes with their own "
-            "oracles, which this harness does not yet have."
+            "for THIS catalogue the seed varies only identifiers and sensor values, never attack "
+            "structure, so a FLAT spread across seeds is the expected result and is NOT evidence "
+            "of robustness or generality. Other attack shapes (with seeds that DO vary structure) "
+            "are graded by eval/adversarial/scenario_matrix.py."
         ),
     }
 
@@ -448,6 +480,7 @@ _ROW_KEYS = frozenset({
     "fired_count", "incident_count", "incident_membership_ok",
     "detection_retained", "steps_lost", "rule_identity_changed",
     "alert_volume_ratio", "fidelity_retained", "fcr_unchanged",
+    "alert_order_ok", "order_retained", "decoy_contamination", "decoy_clean",
     "pass", "causal_join_broken",
 })
 
@@ -516,8 +549,8 @@ def main(argv: list[str] | None = None) -> int:
             print("  NOTE: this is the EXPECTED result and is NOT evidence of robustness.")
             print(f"  seed varies:      {agg['seed_varies']}")
             print(f"  seed does NOT vary: {agg['seed_does_not_vary']}")
-            print("  => a flat spread means the seed cannot move a grade. Generality needs")
-            print("     additional SCENARIO shapes, not more seeds. Not yet built.")
+            print("  => a flat spread means the seed cannot move a grade. Generality comes from")
+            print("     other attack SHAPES, not more seeds: see scenario_matrix.py.")
         print(f"=> {agg['interpretation']}")
         print(f"[OK] multi-seed spread written to {out_path}")
         return 0

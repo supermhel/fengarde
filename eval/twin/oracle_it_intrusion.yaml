@@ -1,0 +1,131 @@
+# =============================================================================
+# FENGARDE eval/twin/oracle_it_intrusion.yaml
+# Grading ground truth for the IT-intrusion storyline (scenarios_extra.py):
+#   recon_port_scan -> ssh_bruteforce -> initial_access -> lateral_movement
+#     -> priv_grant -> dns_exfil
+#
+# AUTHORING RULES (written BEFORE the pipeline was run against it, 2026-10-01):
+#   1. A step is expected to fire a rule only if a shipped rule's DOCUMENTED
+#      intent covers that behaviour. Nothing here was tuned to match observed
+#      output; eval/twin/oracle_consistency.py reconciles the two afterwards and
+#      every disagreement is either fixed or recorded in its accepted list.
+#   2. An `allowed` relationship is declared only where the telemetry carries a
+#      SHARED OBSERVABLE (the same IP / account / host evidenced at both ends).
+#      A causal link that exists in the attacker's head but leaves no common
+#      entity in any log (e.g. attacker IP -> internal foothold IP) cannot be
+#      reconstructed by ANY correlator and is not asked of this one.
+#   3. incident_count is 1: the operational question is "does the SOC see ONE
+#      campaign". No single entity spans all six steps -- the story is carried
+#      by three entities that overlap pairwise (attacker IP, the stolen account,
+#      the foothold IP). Whether the correlator bridges that is the thing being
+#      measured, not assumed.
+# =============================================================================
+schema_version: 1
+oracle_id: "it-intrusion-v1"
+kind: "attack-chain-grading-oracle"
+scope: "it-intrusion"
+
+expected_sequence:
+  - recon_port_scan
+  - ssh_bruteforce
+  - initial_access
+  - lateral_movement
+  - priv_grant
+  - dns_exfil
+
+sequence_constraints:
+  strict_order: true
+  allow_extra_steps: false
+  max_clock_span_seconds: 3600
+
+allowed_relationships:
+  - {from: recon_port_scan,   to: ssh_bruteforce,  allowed: true, causal_kind: reconnaissance}   # same attacker IP
+  - {from: ssh_bruteforce,    to: initial_access,  allowed: true, causal_kind: execution}        # same IP + same account
+  - {from: initial_access,    to: lateral_movement, allowed: true, causal_kind: credential_reuse} # same account
+  - {from: lateral_movement,  to: priv_grant,      allowed: true, causal_kind: escalation}       # same account + foothold IP
+  - {from: lateral_movement,  to: dns_exfil,       allowed: true, causal_kind: staging}          # same foothold IP
+  - {from: priv_grant,        to: dns_exfil,       allowed: true, causal_kind: staging}          # same foothold IP
+  # Anti-causal non-edges (the exfil can never precede the access that enabled it):
+  - {from: dns_exfil,         to: initial_access,  allowed: false, causal_kind: none}
+  - {from: priv_grant,        to: ssh_bruteforce,  allowed: false, causal_kind: none}
+
+detection_points:
+  recon_port_scan:
+    step: recon_port_scan
+    role: "vertical port scan: many distinct denied destination ports from one source"
+    expected_event_source: "cisco_asa (class 4001, activity 6 deny)"
+    expected_rules:
+      - {rule_id: "1d2c3b4a-5e6f-4708-8a91-0b1c2d3e4f05", title: "Port scan from single source", level: high, role: scan detection}
+    gap: {no_rule_exists: false}
+
+  ssh_bruteforce:
+    step: ssh_bruteforce
+    role: "password guessing: 10+ failed logons from one source in 60 s"
+    expected_event_source: "linux_ssh (class 3002, activity 4)"
+    expected_rules:
+      - {rule_id: "6f1c8a2e-0d3b-4c11-9a21-7b5e2f9a1c01", title: "Authentication brute-force from single source", level: high, role: brute-force detection}
+    gap: {no_rule_exists: false}
+
+  initial_access:
+    step: initial_access
+    role: "the guessed password works -- a successful logon from the same external source"
+    expected_event_source: "linux_ssh (class 3002, activity 1)"
+    expected_rules: []
+    gap:
+      no_rule_exists: true
+      reason: >
+        No shipped rule correlates a SUCCESSFUL logon with a preceding failure
+        burst from the same source (the classic "brute force that worked"
+        signal). A single successful SSH logon from an external address is
+        ordinary telemetry; the compromise is only visible as the sequence.
+        A real coverage gap, recorded rather than papered over.
+
+  lateral_movement:
+    step: lateral_movement
+    role: "one account authenticates to 5+ distinct hosts within 300 s"
+    expected_event_source: "windows_eventlog (class 3002, activity 1, dst hostname populated)"
+    expected_rules:
+      - {rule_id: "2e3d4c5b-6f70-4819-9b02-1c2d3e4f5061", title: "Lateral movement", level: high, role: lateral-movement detection}
+    gap: {no_rule_exists: false}
+
+  priv_grant:
+    step: priv_grant
+    role: "the stolen account adds a member to a privileged group"
+    expected_event_source: "windows_eventlog 4728 (class 3003, activity 5)"
+    expected_rules:
+      - {rule_id: "7d3e9a52-1f6c-4a88-9b3d-2e5c8f1a6d40", title: "Privileged group membership grant", level: high, role: persistence/escalation detection}
+    gap: {no_rule_exists: false}
+
+  dns_exfil:
+    step: dns_exfil
+    role: "DNS tunnelling shape: 40+ distinct names from one source in 60 s"
+    expected_event_source: "dns_query (class 4002)"
+    expected_rules:
+      - {rule_id: "a1b2c3d4-5e6f-4708-9a1b-2c3d4e5f6071", title: "DNS query volume to many distinct domains", level: medium, role: exfil/C2-over-DNS detection}
+    gap: {no_rule_exists: false}
+
+severity_band:
+  score: {min: 40, max: 100}
+  severity_id: {min: 3, max: 6}
+  dominant_band: "high"
+
+evidence:
+  correlation_key: [actor.user.name, src_endpoint.ip]
+  per_step:
+    recon_port_scan:  {fields: [src_endpoint.ip, dst_endpoint.port]}
+    ssh_bruteforce:   {fields: [src_endpoint.ip, actor.user.name]}
+    initial_access:   {fields: [src_endpoint.ip, actor.user.name]}
+    lateral_movement: {fields: [actor.user.name, dst_endpoint.hostname, src_endpoint.ip]}
+    priv_grant:       {fields: [actor.user.name, unmapped.target_user.name]}
+    dns_exfil:        {fields: [src_endpoint.ip, dst_endpoint.hostname]}
+
+incident_membership:
+  incident_count: 1
+  incident_key: "it-intrusion"
+  include: [recon_port_scan, ssh_bruteforce, initial_access, lateral_movement, priv_grant, dns_exfil]
+  cross_step_rule_ids:
+    - "1d2c3b4a-5e6f-4708-8a91-0b1c2d3e4f05"
+    - "6f1c8a2e-0d3b-4c11-9a21-7b5e2f9a1c01"
+    - "2e3d4c5b-6f70-4819-9b02-1c2d3e4f5061"
+    - "7d3e9a52-1f6c-4a88-9b3d-2e5c8f1a6d40"
+    - "a1b2c3d4-5e6f-4708-9a1b-2c3d4e5f6071"
