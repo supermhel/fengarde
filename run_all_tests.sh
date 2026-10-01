@@ -482,6 +482,15 @@ echo
 echo "== Phase 4 Layer A acceptance: determinism double-run, sensitivity both ways, causal-join-break = FAILURE, weakened-rule drop =="; LAST_HEADER="== Phase 4 Layer A acceptance: determinism double-run, sensitivity both ways, causal-join-break = FAILURE, weakened-rule drop =="
 $PY eval/adversarial/test_layer_a.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
+echo "== Phase 4 multi-storyline: instruments pass positive+negative controls (directional discrimination, order, decoys, operators, search) =="; LAST_HEADER="== Phase 4 multi-storyline: instruments pass positive+negative controls =="
+$PY eval/adversarial/test_scenario_harness.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
+echo "== Phase 4 multi-storyline: mutation lane over EVERY attack shape (AI-to-OT, IT intrusion, infra takeover) =="; LAST_HEADER="== Phase 4 multi-storyline: mutation lane over every attack shape =="
+$PY eval/adversarial/scenario_matrix.py --seed 7 || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
+echo "== Phase 4 evasion-boundary search: measured boundary of each volume rule == its declared threshold/window/group_by =="; LAST_HEADER="== Phase 4 evasion-boundary search =="
+$PY eval/adversarial/evasion_search.py --seed 7 || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
 echo "== twin: full scorecard smoke run (report.py must complete without error on the real cascade) =="; LAST_HEADER="== twin: full scorecard smoke run (report.py must complete without error on the real cascade) =="
 # PR #80 finding 10: write to a GITIGNORED last-run path, NOT the committed
 # eval/twin/report.json -- a gate run must not dirty a tracked artifact.

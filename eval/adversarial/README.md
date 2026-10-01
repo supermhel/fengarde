@@ -42,6 +42,57 @@ one incident**? Three layers, per the forward-roadmap:
   deterministic, gitignored `out/matrix.latest.json` (same convention as
   `eval/twin/report.latest.json`).
 
+## Multi-storyline harness (2026-10-01)
+
+Everything above was measured on **one** attack storyline (AI-to-OT). A seed
+varied identifiers only, never the attack's structure, so "robust across seeds"
+was one data point measured four times. The harness now runs over a registry of
+storylines (`eval/twin/scenario_registry.py`), each with its own raw-format
+builder on the REAL parsers and its own oracle:
+
+| Storyline | Shape | What it can show that the others cannot |
+|---|---|---|
+| `ai_to_ot` | prompt-injected agent -> credential read -> unauthorized Modbus write | cross-domain (AI -> OT); almost entirely single-shot rules |
+| `it_intrusion` | scan -> SSH brute force -> login -> lateral movement -> priv grant -> DNS exfil | stateful **volume/window** rules; an attack that **pivots** across three entities |
+| `infra_takeover` | cloud root login (no MFA) -> privileged container -> mass VM delete | three control planes, a different actor at every step, one shared source IP |
+
+`it_intrusion` / `infra_takeover` seeds vary **structure** (attacker address,
+burst sizes, account and host names).
+
+New instruments, each tested with a positive **and** a negative control
+(`test_scenario_harness.py`):
+
+- **`scenario_matrix.py`** -- scenario-agnostic operators (`mutate_generic.py`:
+  thin a burst, slow it down, spread it over addresses/accounts, drop a log
+  source, scramble *arrival* order, inject benign decoys). A variant that
+  changes nothing is `N/A` and excluded -- never a free pass. Losing a source is
+  graded as *graceful degradation* (no collateral), not as a failure.
+- **`evasion_search.py`** -- instead of sampling fixed points, *searches* each
+  burst step for the smallest thinning / slowdown / address-spread /
+  account-split that evades it, and cross-checks the boundary against what the
+  rule's own YAML declares (`threshold`, `window_seconds`, `group_by`). Agreement
+  means the end-to-end pipeline honours the rule as written; a mismatch is a
+  hidden blind spot or hidden slack.
+- **`oracle_consistency.py`** -- reconciles every oracle against what its own
+  pipeline run does (stale gaps, decorative expectations, unexpected firings).
+
+What the metrics can and cannot say (measured, not assumed):
+
+- `directional_discrimination` is **0.0 on all three storylines**. The legacy
+  `chain_fidelity` join predicate returns "joined" for a step pair *and* for the
+  same pair in reverse. The WS-8 v2 graph only has edges between entities that
+  co-occur in a single alert, so it cannot encode "A caused B"; fidelity and
+  false-correlation rate therefore measure "do the steps share an entity", not
+  "was the causal chain reconstructed". They are kept (frozen baseline) and
+  flagged in every `baseline_quality`.
+- Order is graded separately (`alert_order_ok`, the oracle's own `strict_order`
+  constraint, previously never enforced) and false correlation is graded by
+  `decoy_contamination` -- benign look-alike activity on disjoint entities must
+  not land inside the attack incident (control: a decoy on the attacker's own
+  address *is* absorbed, so the metric can go non-zero).
+- MTTD for a burst step is measured to the event the rule fired on, not the
+  step's first event.
+
 ## Running
 
 ```bash
@@ -50,6 +101,10 @@ python eval/adversarial/mutate.py --selfcheck      # engine self-check
 python eval/adversarial/layer_a.py --seed 7        # Layer A matrix (blocking)
 python eval/adversarial/corpus_b.py                # Layer B corpus (blocking)
 python eval/adversarial/test_layer_a.py            # acceptance + determinism + probes
+python eval/adversarial/scenario_matrix.py --seed 7   # mutation lane over EVERY storyline (blocking)
+python eval/adversarial/evasion_search.py --seed 7    # measured evasion boundary vs declared rule params (blocking)
+python eval/adversarial/test_scenario_harness.py      # positive+negative controls for the new instruments
+python eval/twin/oracle_consistency.py                # every oracle vs its own pipeline run
 python eval/adversarial/adversary_c.py --dry-run   # Layer C dry-run (deterministic stub)
 ```
 

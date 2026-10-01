@@ -74,6 +74,29 @@ def run():
     check(rule.evaluate(ev3) is True,
           "impossible-travel: a second DISTINCT country within the window MUST fire")
 
+    # REGRESSION (2026-10-01, found by the it_intrusion storyline): an internal
+    # address resolves to the sentinel country "ZZ" (geoip.yml: RFC1918 ->
+    # ZZ, documented as "can never be mistaken for a genuine country in a
+    # distinct-country count"). The rule used to COUNT it, so the most ordinary
+    # pattern there is -- the same account seen from a public address and then
+    # from an internal one (VPN, jump host, a pivot) -- scored as "two
+    # countries" and raised a HIGH impossible-travel alert.
+    rule_zz = rule_by_id(load_rules(RULES_DIR), IMPOSSIBLE_TRAVEL_ID)
+    ext = enrich(ssh.parse(_accepted("203.0.113.5", 10, base)))        # RU
+    internal = enrich(ssh.parse(_accepted("10.50.0.46", 11, base)))    # ZZ (RFC1918)
+    check(internal["src_endpoint"]["location"]["country"] == "ZZ",
+          "REAL enrichment must resolve an RFC1918 address to the ZZ sentinel")
+    check(rule_zz.evaluate(ext) is False, "impossible-travel: public login alone must not fire")
+    check(rule_zz.evaluate(internal) is False,
+          "impossible-travel: public-then-INTERNAL login is not travel; the ZZ sentinel "
+          "must not count as a second country")
+    # ...and ZZ must not mask a genuine second country either: public RU, internal ZZ,
+    # then public CN is still two real countries -> must fire.
+    cn = enrich(ssh.parse(_accepted("198.51.100.9", 12, base)))
+    check(rule_zz.evaluate(cn) is True,
+          "impossible-travel: two REAL countries must still fire when an internal login "
+          "sits between them")
+
     # A different account entirely, one login, must not fire (fresh window state).
     rule2 = rule_by_id(load_rules(RULES_DIR), IMPOSSIBLE_TRAVEL_ID)
     other = enrich(ssh.parse({

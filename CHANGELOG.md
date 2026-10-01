@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (2026-10-01 -- evaluation harness: three attack storylines, boundary search, honest metrics)
+
+- **New storylines** (`eval/twin/scenario_registry.py`, `scenarios_extra.py`, two new oracles): `it_intrusion` and `infra_takeover` alongside `ai_to_ot`; real parsers, burst steps, seeds that vary attack structure. `scenario.run_chain` gains `steps=`; `ScenarioDef` added.
+- **`eval/adversarial/evasion_search.py`**: bisects each volume rule's evasion boundary end to end and cross-checks it against the rule YAML's declared `threshold`/`window_seconds`/`group_by` (measured == declared on seeds 7/11/13/17). **`scenario_matrix.py` + `mutate_generic.py`**: scenario-agnostic operators; no-op variants are N/A, never passes; source loss graded as graceful degradation.
+- **Grader honesty** (`eval/twin/report.py`): `directional_discrimination` (order-reversal control; 0.0 on every storyline -- legacy `chain_fidelity`/FCR measure entity sharing, not causal order; kept, flagged), `alert_order_ok` (enforces the oracle's `strict_order`), `decoy_contamination` (true false-correlation test), burst-aware TPR/entity/ingest ids, MTTD to the rule's firing event (burst step: 0.0 -> 28.0s), `chain_start` = earliest event. AI-to-OT frozen numbers unchanged (TPR 1.0, fidelity 0.6, FCR 1.0, MTTD 60.0); Layer A still 32/36.
+- `eval/twin/oracle_consistency.py` reconciles every registered oracle against its own pipeline run.
+- Gate: three new `run_all_tests.sh` stanzas (`test_scenario_harness.py`, `scenario_matrix.py`, `evasion_search.py`).
+
+### Fixed (2026-10-01 -- found by the new `it_intrusion` storyline)
+
+- `contracts/rules/common_impossible_travel.yml`: the RFC1918 sentinel country `ZZ` no longer counts as a country in the distinct-country window (new `contracts/allowlists/non_geographic_country_codes.yml`). Previously a public-IP login followed by an internal-IP login for the same account within an hour -- VPN, jump host, lateral pivot -- fired a HIGH alert, contradicting `geoip.yml`'s documented purpose for `ZZ`. Regression test in `services/ws4-detection/test_v04_new_rules.py` (reproduced failing first); `fire_check.py` still 28/28.
+
+### Known limitations surfaced (not fixed -- product decisions)
+
+- Per-key volume rules are evaded by splitting across **2 source addresses** (port scan, brute force, DNS exfil) or **2 accounts** (lateral movement, mass VM delete). WS-8 splits a pivoting campaign (`it_intrusion`) into 4 incidents.
+
 ### Fixed (2026-09-10 — R3 prompt-injection encoding evasion, found by Phase 4's own adversarial harness)
 
 - `services/ws2-normalization/parsers/mcp_agent.py`: the `agent_prompt_injection_indicator` (R3), `agent_credential_file_access` (R1), and `agent_destructive_command` (R5) heuristics now scan a normalized corpus (NFKC + Cyrillic/Greek homoglyph fold, whitespace-collapsed, percent-decoded, bounded base64-decoded) alongside the raw text, closing the specific evasions `eval/adversarial/mutate.py`'s `prompt` axis measured and disclosed (Phase 4, 2026-09-03): Cyrillic homoglyphs, URL-encoding, base64 wrapping, run-together whitespace. `_INJECTION_PATTERNS` also gained a documented synonym set and a German equivalent, closing the remaining two content-mutation misses (`equivalent_phrasing`, `language_switch`).

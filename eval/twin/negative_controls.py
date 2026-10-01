@@ -232,7 +232,11 @@ def run_pipeline(raw_events: list[tuple], tenant: str) -> list[dict]:
                            "level": rule.level,
                            "source_type": (event.get("siem") or {}).get(
                                "source_type"),
-                           "step": (event.get("siem") or {}).get("twin_step")})
+                           "step": (event.get("siem") or {}).get("twin_step"),
+                           # event time of the alert's TRIGGER event, so a
+                           # volume rule's MTTD is measured to the event it
+                           # actually fired on, not the first event of its step
+                           "time": event.get("time")})
     return alerts
 
 

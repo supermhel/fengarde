@@ -62,7 +62,7 @@ for p in (str(TWIN), str(SERVICES), str(ROOT)):
         sys.path.insert(0, p)
 
 import report  # noqa: E402
-import scenario  # noqa: E402
+import scenario_registry as reg  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -82,19 +82,19 @@ import scenario  # noqa: E402
 #
 # Removing an entry here is the correct way to close one for real.
 _ACCEPTED = {
-    ("stale_gap", "process_anomaly", "9c1d2e3f-4a5b-4c6d-8e7f-1a2b3c4d5e6f"):
+    ("ai_to_ot", "stale_gap", "process_anomaly", "9c1d2e3f-4a5b-4c6d-8e7f-1a2b3c4d5e6f"):
         "2026-09-11: oracle declares this step a no_rule_exists gap ('no log line'), but "
         "scenario.py emits a real Modbus FC6 write to _ANOMALY_ADDR which the real parser "
         "classifies as unauthorized_write. Documented in oracle.yaml's own "
         "known_inconsistency block since 2026-09-03. Resolving it means either declaring "
         "the rule at this step (changes the expected detection-point set AND the severity "
         "score) or changing what the scenario emits -- both move frozen baseline numbers.",
-    ("decorative", "agent_mcp_tool_call", "2b3c4d5e-6f70-4899-8a1b-2c3d4e5f6a7c"):
+    ("ai_to_ot", "decorative", "agent_mcp_tool_call", "2b3c4d5e-6f70-4899-8a1b-2c3d4e5f6a7c"):
         "2026-09-11: agent_tool_call_burst is declared expected but the chain issues too few "
         "tool calls in-window to trip its threshold. Either the scenario should issue a real "
         "burst (changes the event count and every downstream count) or the oracle should stop "
         "claiming it. NOT previously documented anywhere -- found by this checker.",
-    ("decorative", "agent_mcp_tool_call", "5e6f7081-92a3-4bc4-ad2e-4f5a6b7c8d9e"):
+    ("ai_to_ot", "decorative", "agent_mcp_tool_call", "5e6f7081-92a3-4bc4-ad2e-4f5a6b7c8d9e"):
         "2026-09-11: agent_destructive_command is declared expected but the chain's tool-call "
         "arguments carry an injection + egress URL, no destructive command pattern. Same "
         "choice as above: emit one, or stop declaring it. NOT previously documented -- found "
@@ -102,18 +102,21 @@ _ACCEPTED = {
 }
 
 
-def _key(kind: str, item: dict) -> tuple:
+def _key(scenario_name: str, kind: str, item: dict) -> tuple:
     if kind == "stale_gap":
-        return (kind, item["step"], item["observed_rules"][0] if item["observed_rules"] else "")
+        return (scenario_name, kind, item["step"],
+                item["observed_rules"][0] if item["observed_rules"] else "")
     if kind in ("decorative", "unexpected"):
-        return (kind, item["step"], item["rule_id"])
-    return (kind, item["from"], item["to"])
+        return (scenario_name, kind, item["step"], item["rule_id"])
+    return (scenario_name, kind, item["from"], item["to"])
 
 
-def reconcile(seed: int = 7) -> dict:
-    """Run the real chain and diff the oracle's declarations against it."""
-    oracle = report._load_oracle()
-    grade = report._grade_chain(scenario.run_chain(seed, strict=True), oracle)
+def reconcile(seed: int = 7, sdef=None) -> dict:
+    """Run one storyline's real chain and diff its oracle's declarations
+    against what the pipeline did. ``sdef`` defaults to the AI-to-OT chain."""
+    sdef = sdef or reg.BY_NAME["ai_to_ot"]
+    oracle = reg.load_oracle(sdef)
+    grade = report._grade_chain(reg.run(sdef, seed), oracle)
 
     fired_by_step: dict = {}
     for alert in grade.get("fired", []):
@@ -161,6 +164,7 @@ def reconcile(seed: int = 7) -> dict:
                                                           "direction; the graph claims it"})
 
     findings = {
+        "scenario": sdef.name,
         "seed": seed,
         "basis": "harness-measured",
         "stale_gaps": stale_gaps,
@@ -184,30 +188,22 @@ def reconcile(seed: int = 7) -> dict:
     for kind, items in (("stale_gap", stale_gaps), ("decorative", decorative),
                         ("unexpected", unexpected), ("forbidden", forbidden_claimed)):
         for item in items:
-            k = _key(kind, item)
+            k = _key(sdef.name, kind, item)
             seen.add(k)
             if k not in _ACCEPTED:
                 new.append({"kind": kind, **item})
     findings["new"] = new
     findings["accepted_count"] = len(seen & set(_ACCEPTED))
+    # a waiver is "stale" only for ITS OWN scenario -- another storyline's
+    # waivers are simply not in scope for this run
+    mine = {k for k in _ACCEPTED if k[0] == sdef.name}
     findings["stale_allowlist_entries"] = [
-        {"key": list(k), "reason": _ACCEPTED[k]} for k in sorted(set(_ACCEPTED) - seen)
+        {"key": list(k), "reason": _ACCEPTED[k]} for k in sorted(mine - seen)
     ]
     return findings
 
 
-def main(argv: list | None = None) -> int:
-    ap = argparse.ArgumentParser(prog="oracle_consistency")
-    ap.add_argument("--seed", type=int, default=7)
-    ap.add_argument("--out", type=Path, default=None)
-    ap.add_argument("--warn-only", action="store_true",
-                     help="report findings but exit 0 (for recording a known, "
-                          "deliberately-unresolved disagreement)")
-    args = ap.parse_args(argv)
-
-    print(f"== twin oracle <-> reality reconciliation (seed={args.seed}) ==")
-    f = reconcile(args.seed)
-
+def _report_one(f: dict, warn_only: bool) -> int:
     for item in f["stale_gaps"]:
         print(f"  [STALE GAP]   {item['step']}: declared {item['declared']}, but "
               f"{', '.join(item['observed_rules'])} actually fires")
@@ -217,35 +213,53 @@ def main(argv: list | None = None) -> int:
         print(f"  [UNEXPECTED]  {item['step']}: {item['rule_id']} fires but is not declared")
     for item in f["forbidden_edges_claimed"]:
         print(f"  [FORBIDDEN]   graph claims {item['from']} -> {item['to']}, oracle forbids it")
-
-    print(f"  NOTE: {f['tpr_semantics']}")
-
-    if args.out:
-        args.out.parent.mkdir(parents=True, exist_ok=True)
-        with open(args.out, "w", encoding="utf-8") as fh:
-            json.dump(f, fh, indent=2)
-
     for entry in f["stale_allowlist_entries"]:
         print(f"  [STALE WAIVER] {entry['key']} is on the accepted list but no longer "
               "reproduces -- delete the entry, the disagreement is gone")
 
     if f["total"] == 0 and not f["stale_allowlist_entries"]:
-        print("[OK] oracle and pipeline agree on every step, rule and forbidden edge.")
+        print("  [OK] oracle and pipeline agree on every step, rule and forbidden edge.")
         return 0
-
     print(f"  accepted (known, dated, on the frozen list): {f['accepted_count']}")
     if not f["new"] and not f["stale_allowlist_entries"]:
-        print(f"[OK] {f['total']} disagreement(s), ALL of them known and accepted. "
+        print(f"  [OK] {f['total']} disagreement(s), ALL of them known and accepted. "
               "No new drift. Each accepted entry names what resolving it would move.")
         return 0
-
     for item in f["new"]:
         print(f"  [NEW DRIFT]   {item['kind']}: {item}")
-    print(f"[{'WARN' if args.warn_only else 'FAIL'}] {len(f['new'])} NEW oracle/reality "
+    print(f"  [{'WARN' if warn_only else 'FAIL'}] {len(f['new'])} NEW oracle/reality "
           f"disagreement(s) + {len(f['stale_allowlist_entries'])} stale waiver(s) -- the "
           "answer key and the system disagree in a way nobody has accepted. Fix whichever "
           "is wrong, deliberately (both feed frozen baseline numbers), or add a dated entry.")
-    return 0 if args.warn_only else 1
+    return 0 if warn_only else 1
+
+
+def main(argv: list | None = None) -> int:
+    ap = argparse.ArgumentParser(prog="oracle_consistency")
+    ap.add_argument("--seed", type=int, default=7)
+    ap.add_argument("--out", type=Path, default=None)
+    ap.add_argument("--scenario", action="append", default=None,
+                    help="restrict to one registered scenario (repeatable); default: all")
+    ap.add_argument("--warn-only", action="store_true",
+                     help="report findings but exit 0 (for recording a known, "
+                          "deliberately-unresolved disagreement)")
+    args = ap.parse_args(argv)
+
+    sdefs = [reg.get(n) for n in args.scenario] if args.scenario else list(reg.ALL)
+    rc = 0
+    all_findings = {}
+    for sdef in sdefs:
+        print(f"== oracle <-> reality reconciliation: {sdef.name} (seed={args.seed}) ==")
+        f = reconcile(args.seed, sdef)
+        all_findings[sdef.name] = f
+        rc |= _report_one(f, args.warn_only)
+    print(f"  NOTE: {next(iter(all_findings.values()))['tpr_semantics']}")
+
+    if args.out:
+        args.out.parent.mkdir(parents=True, exist_ok=True)
+        with open(args.out, "w", encoding="utf-8") as fh:
+            json.dump(all_findings, fh, indent=2)
+    return rc
 
 
 if __name__ == "__main__":
