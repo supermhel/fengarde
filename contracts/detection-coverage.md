@@ -13,7 +13,7 @@ detection rules. Update this file in the same PR as any parser or rule change.
 > two tools as the source of truth for "is a rule dormant", not this doc.
 >
 > **Rule filename convention (R3-#47, 2026-08-27):** the `<sector>_<name>.yml`
-> naming is a strong convention, not a validator-enforced invariant. 14 of the 29
+> naming is a strong convention, not a validator-enforced invariant. 14 of the 33
 > shipped files use a rule-family prefix instead (`agent_*`, `cloud_*`, `n8n_*`,
 > `ot_*`) -- that's deliberate: the sector is DECLARED inside each file
 > (`siem.sector`), never inferred from the filename, so the prefix is a grouping
@@ -69,14 +69,18 @@ this is now a rule gap, not a parser gap.
 | Rule | Fields required | Producer exists? | MITRE |
 |---|---|---|---|
 | common_bruteforce | class 3002, activity 4 (Failure) | yes (linux_ssh, active_directory) | ATT&CK T1110 / TA0006 |
+| common_bruteforce_by_account | class 3002, activity 4 (Failure), group_by actor.user.name (immune to source-address rotation; added 2026-10-01) | yes (linux_ssh, active_directory) | ATT&CK T1110 / TA0006 |
 | common_password_spray | class 3002, activity 4, distinct src_endpoint.ip | yes (linux_ssh, active_directory) | ATT&CK T1110.004 / TA0006 |
 | common_bruteforce_sourceless | class 3002, activity 4, distinct actor.user.name per src_endpoint.hostname | yes (active_directory, added P0-2, 2026-07-21 audit fix plan) | ATT&CK T1110 / TA0006 |
 | common_lateral_movement | class 3002, activity 1, status Success, dst_endpoint.hostname | yes (windows_eventlog 4624) | ATT&CK T1021 / TA0008 |
+| common_lateral_movement_by_source | class 3002, activity 1, status Success, group_by src_endpoint.ip, distinct dst_endpoint.hostname (immune to credential rotation; added 2026-10-01) | yes (windows_eventlog 4624) | ATT&CK T1021 / TA0008 |
 | common_port_scan | class 4001, activity 6 (Deny), dst_endpoint.port | yes (cisco_asa) | ATT&CK T1046 / TA0007 |
+| common_port_scan_by_target | class 4001, activity 6 (Deny), group_by dst_endpoint.ip, distinct dst_endpoint.port, threshold 15, level low (distributed scan; noisy on internet-edge deny logs -- see rule; added 2026-10-01) | yes (cisco_asa) | ATT&CK T1046 / TA0007 |
 | common_priv_grant | class 3003, activity 5 | yes (windows_eventlog 4728/4732) | ATT&CK T1098 / TA0003 |
 | common_after_hours_admin | class 1002, activity 2, outside_hours | yes (windows_eventlog 4672) | ATT&CK T1078 / TA0004 |
 | common_impossible_travel | class 3002, activity 1, distinct src_endpoint.location.country | yes (linux_ssh + A5 geo enrichment, added v0.4 -- see A5's note below: `check_rule_producers.py` now runs the real enrich() step too, not just parsers) | ATT&CK T1078 / TA0001 |
 | dc_mass_vm_delete | class 6003, activity 4, siem.sector=datacenter | yes (vmware_vsphere) | ATT&CK T1485 / TA0040 |
+| dc_mass_vm_delete_by_source | class 6003, activity 4, siem.sector=datacenter, group_by src_endpoint.ip (immune to account rotation; added 2026-10-01) | yes (vmware_vsphere) | ATT&CK T1485 / TA0040 |
 | bank_db_priv_esc | class 6005, activity 5, siem.sector=bank | yes (db_audit, added v0.3) | ATT&CK T1548 / TA0004 |
 | agent_credential_file_access | class 6003, unmapped.mcp.credential_path_access=true | yes (mcp_agent, added v0.4) | ATT&CK T1552 / TA0006 |
 | agent_destructive_command | class 6003, unmapped.mcp.destructive_command_indicator=true | yes (mcp_agent, added v0.4) | ATT&CK T1485 / TA0040 |
@@ -86,10 +90,12 @@ this is now a rule gap, not a parser gap.
 | ot_write_outside_maintenance | class 6003, activity 3, time outside_hours | yes (opcua_audit, added v0.4) | ATT&CK-ICS T0836 / TA0106 |
 | ot_new_engineering_connection | class 3002, activity 1, distinct src_endpoint.ip per unmapped.ot.server_id | yes (opcua_audit, added v0.4) | ATT&CK-ICS T0864 / TA0108 |
 | ot_config_change | class 6003, unmapped.ot.is_config_node=true | yes (opcua_audit, added v0.4) | ATT&CK-ICS T0836 / TA0106 |
+| ot_opcua_write_unauthorized_node | class 6003, activity 3, siem.source_type=opcua_audit, unmapped.ot.node_id not_in opcua_authorized_nodes (allowlist-first; ships empty = alerts on every write until populated; added 2026-10-01) | yes (opcua_audit) | ATT&CK-ICS T0855 / TA0106 |
 | ot_new_device_on_segment | class 4001, activity 1, siem.source_type=inventory_diff, siem.sector=datacenter, unmapped.ot.sector=ot | yes, zero-infra proven end to end (inventory_diff, WS-6 bus_consumer.py added M7 Track Y follow-up 2026-08-05 -- not yet live-verified against a real Docker/Redis stack, see SSOT.md) | ATT&CK-ICS T0864 / TA0108 |
 | n8n_new_webhook_exposed | class 6003, activity 1, api.operation=webhook.created | yes (n8n_audit, added v0.4) | ATT&CK T1133 / TA0003 |
 | n8n_workflow_modified_after_hours | class 6003, siem.source_type=n8n_audit, time outside_hours | yes (n8n_audit, added v0.4) | ATT&CK T1078 / TA0004 |
 | common_dns_exfil | class 4002, activity 1, distinct dst_endpoint.hostname | yes (dns_query, added v0.5) | ATT&CK T1071.004 / TA0011 |
+| common_dns_tunnel_by_domain | class 4002, activity 1, group_by unmapped.dns.parent_domain, distinct dst_endpoint.hostname (parser-derived parent domain; immune to spreading across clients; added 2026-10-01) | yes (dns_query) | ATT&CK T1071.004 / TA0011 |
 | dc_privileged_container | class 6003, activity 1, siem.source_type=k8s_audit, unmapped.k8s.is_privileged=true | yes (k8s_audit, added v0.5) | ATT&CK T1610 / TA0002 |
 | cloud_root_console_login | class 3002, activity 1, siem.source_type=cloudtrail, unmapped.cloud.identity_type=Root, unmapped.cloud.mfa_used=No | yes (cloudtrail, added v0.5) | ATT&CK T1078.004 / TA0001 |
 | bank_mass_card_read | class 6005, activity 1, siem.sector=bank, distinct unmapped.db.object | yes (db_audit, object field added v0.5) | ATT&CK T1005 / TA0009 |

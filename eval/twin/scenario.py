@@ -629,7 +629,13 @@ def run_chain(seed: int = 7, *, disable_parser: Optional[str] = None, strict: bo
                 ChainEvent(
                     event_id=idx,
                     step=spec.label,
-                    source_type=spec.source_type,
+                    # The source the payload ACTUALLY carries, not the one the step
+                    # spec expects: a protocol mutation re-shapes a step onto a
+                    # different source (Modbus -> OPC UA). Taking the spec's value
+                    # made the grader replay an OPC UA record through the Modbus
+                    # parser, drop it, and report the step "dark" -- a measurement
+                    # artefact that was read as a real coverage gap for weeks.
+                    source_type=payload.get("source_type") or spec.source_type,
                     parser=(event.get("siem", {}).get("source_type") if event else None),
                     type_uid=type_uid,
                     class_uid=event.get("class_uid") if event else None,

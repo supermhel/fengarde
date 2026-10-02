@@ -1,0 +1,48 @@
+title: Mass VM deletion from one source address (any number of accounts)
+id: 9c86195a-8cd6-4b73-b526-a708bbb5299e
+status: stable
+description: >
+  5+ VM/datastore delete operations via the hypervisor API within 120 seconds
+  from the SAME SOURCE ADDRESS, counted regardless of which account issued them.
+
+  Why this exists (2026-10-01, found by the multi-storyline evasion search):
+  dc_mass_vm_delete.yml groups on the account, so an attacker who splits the
+  deletions across two service accounts keeps each under its threshold -- measured
+  end to end, the whole destructive run went undetected. This rule is keyed on
+  the originating address instead and is immune to account rotation; the
+  attacker would have to spread across source addresses, which the account-keyed
+  rule sees. Same scoping as its sibling: siem.source_type=vmware_vsphere, so
+  another API producer's deletes cannot pool into a "VM deletion" alert.
+
+  False-positive honesty: a legitimate bulk decommission run by a platform
+  engineer or an automation host trips this exactly as it trips the sibling rule.
+  That is the intended trade for a destructive-impact signal; suppress the known
+  automation address via a not_in allowlist once seen, do not raise the threshold.
+level: critical
+logsource:
+  category: api_activity
+detection:
+  vm_delete:
+    class_uid: 6003
+    activity_id: 4
+    siem.source_type: vmware_vsphere
+  dc:
+    siem.sector: datacenter
+  condition: vm_delete and dc
+fields:
+  - actor.user.name
+  - src_endpoint.ip
+siem:
+  sector: datacenter
+  # Adds NO weight of its own: this rule restates its sibling's behaviour on the other key, so
+  # when both fire the score must not double-count one attack (a plain brute force went 70 -> 100
+  # in the demo e2e when this carried a weight). Its `level` still guarantees the right floor
+  # when it fires ALONE, which is the only case it exists for.
+  score_weight: 0
+  companion_of: 8c4e1f90-7a2b-4d33-9e55-6f1b2c3a4d03   # tenant-disabling the sibling disables this too
+  window_seconds: 120
+  threshold: 5
+  group_by: src_endpoint.ip
+mitre:
+  tactic: TA0040      # Impact
+  technique: T1485    # Data Destruction

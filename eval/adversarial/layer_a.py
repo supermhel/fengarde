@@ -192,11 +192,17 @@ def _cmp(axis: str, variant: str, base: dict, mut: dict) -> dict:
     m_steps = {a.get("step") for a in m_fired}
     steps_lost = sorted(s for s in (b_steps - m_steps) if s is not None)
 
-    detection_retained = (
-        b_tpr is not None
-        and b_tpr == m_tpr
-        and not steps_lost
-    )
+    # Tactic coverage (2026-10-01): a step the baseline covered by an expected
+    # ATT&CK tactic must still be covered by that tactic. Replaces
+    # ``b_tpr == m_tpr`` (same expected RULE), which no protocol/source swap can
+    # ever satisfy -- see report._tactic_covered_steps. TPR stays reported.
+    b_cov = set(base.get("tactic_covered_steps") or [])
+    m_cov = set(mut.get("tactic_covered_steps") or [])
+    tactic_lost = sorted(b_cov - m_cov)
+    # With no tactic information (an oracle whose expected rules declare none)
+    # fall back to the old same-expected-rule comparison.
+    coverage_ok = (not tactic_lost) if b_cov else (b_tpr == m_tpr)
+    detection_retained = bool(b_tpr is not None and coverage_ok and not steps_lost)
 
     # Informational only -- NEVER part of pass/fail. A mutation that keeps
     # every step covered but by a different rule, or with a different alert
@@ -225,7 +231,8 @@ def _cmp(axis: str, variant: str, base: dict, mut: dict) -> dict:
     # attack must not be absorbed into the attack's incident. None = no decoy
     # alert fired, nothing to contaminate.
     m_decoy = mut.get("decoy_contamination")
-    decoy_clean = m_decoy in (None, 0.0)
+    m_decoy_c = mut.get("campaign_decoy_contamination")
+    decoy_clean = m_decoy in (None, 0.0) and m_decoy_c in (None, 0.0)
 
     passed = bool(detection_retained and fidelity_retained and fcr_unchanged
                   and order_retained and decoy_clean)
@@ -247,6 +254,7 @@ def _cmp(axis: str, variant: str, base: dict, mut: dict) -> dict:
         "incident_membership_ok": mut.get("incident_membership_ok"),
         "detection_retained": detection_retained,
         "steps_lost": steps_lost,
+        "tactic_lost": tactic_lost,
         "rule_identity_changed": rule_identity_changed,
         "alert_volume_ratio": alert_volume_ratio,
         "fidelity_retained": fidelity_retained,
@@ -254,6 +262,7 @@ def _cmp(axis: str, variant: str, base: dict, mut: dict) -> dict:
         "alert_order_ok": m_order,
         "order_retained": order_retained,
         "decoy_contamination": m_decoy,
+        "campaign_decoy_contamination": m_decoy_c,
         "decoy_clean": decoy_clean,
         "pass": passed,
         "causal_join_broken": causal_join_broken,
@@ -478,9 +487,10 @@ def run_multi_seed(seeds: list, out_dir: Path = OUT_DIR) -> dict:
 _ROW_KEYS = frozenset({
     "axis", "variant", "tpr", "chain_fidelity", "false_correlation_rate",
     "fired_count", "incident_count", "incident_membership_ok",
-    "detection_retained", "steps_lost", "rule_identity_changed",
+    "detection_retained", "steps_lost", "tactic_lost", "rule_identity_changed",
     "alert_volume_ratio", "fidelity_retained", "fcr_unchanged",
-    "alert_order_ok", "order_retained", "decoy_contamination", "decoy_clean",
+    "alert_order_ok", "order_retained", "decoy_contamination",
+    "campaign_decoy_contamination", "decoy_clean",
     "pass", "causal_join_broken",
 })
 

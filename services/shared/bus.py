@@ -127,10 +127,32 @@ class _MemoryBus:
         return group or "cg-default"
 
     def produce(self, topic, key, payload):
+        # WIRE PARITY WITH _RedisBus (2026-10-01). Redis does
+        # ``json.dumps(payload)`` on produce and ``json.loads`` on every
+        # delivery, which means three things this backend used to silently NOT do
+        # -- and every zero-infra test in the repo runs on this backend:
+        #   * a payload JSON cannot encode (bytes, set, datetime...) RAISES on
+        #     Redis but was accepted here, so such a bug passed every test and
+        #     first appeared in production;
+        #   * the producer keeps no handle on the stored message: mutating the dict
+        #     after produce() changed what consumers received;
+        #   * each consumer group receives its OWN parsed copy: one group mutating
+        #     msg.payload (WS-2 sanitises in place) leaked into the next group's view.
+        # Serialising here and handing out a fresh copy per delivery (see
+        # ``_fresh``) restores all three.
+        wire = json.dumps(payload)
+        stored = json.loads(wire)
         with self._seq_lock:
             self._seq += 1
             seq = self._seq
-        self._streams[topic].append(Message(topic, key, payload, str(seq)))
+        # Redis does xadd({"key": key or ""}), so a None key reads back as "" there.
+        self._streams[topic].append(Message(topic, key or "", stored, str(seq)))
+
+    @staticmethod
+    def _fresh(msg: "Message") -> "Message":
+        """An independent copy for delivery: Redis parses the wire bytes anew for
+        every delivery, so no two consumers (or redeliveries) ever share a dict."""
+        return Message(msg.topic, msg.key, json.loads(json.dumps(msg.payload)), msg.id)
 
     def consume(self, topic, group=None, block_ms=0) -> Iterator[Message]:
         group_key = self._group_key(group)
@@ -187,7 +209,7 @@ class _MemoryBus:
                         topic=topic, group=group_key, cap=self._pel_cap,
                         pel_size=len(pel))
         for msg in batch:
-            yield msg
+            yield self._fresh(msg)
 
     def ack(self, msg, group=None):
         group_key = self._group_key(group)
@@ -229,7 +251,7 @@ class _MemoryBus:
                     pel[mid] = (msg, now, new_count)
                     claimed.append((msg, new_count))
         for msg, times in claimed:
-            yield msg, times
+            yield self._fresh(msg), times
 
     def drain(self, topic):
         """Messages not yet delivered to ANY consumer group (the remainder
@@ -243,7 +265,7 @@ class _MemoryBus:
             q = self._streams[topic]
             cursors = self._cursors.get(topic, {})
             done = max(cursors.values()) if cursors else 0
-            return list(q)[done:]
+            return [self._fresh(m) for m in list(q)[done:]]
 
     def depth(self, topic) -> int:
         """B2/gap-hunt #53: messages not yet delivered to ANY consumer group --

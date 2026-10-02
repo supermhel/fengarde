@@ -177,7 +177,10 @@ IT_DECOY_STEPS: tuple[ChainStepSpec, ...] = (
 def _build_it_decoys(seed: int) -> list:
     """Benign activity that trips the SAME volume rules as the attack, from
     entities the attack never touches (different IPs, different account,
-    different workstation). Overlaps the attack's windows on purpose."""
+    different workstation, and a DIFFERENT scan target than the attack's 10.0.0.10
+    -- a target-keyed rule pools every source hitting one host, so a scanner on the
+    attack's own target is not "disjoint"; that case is tested separately as the
+    documented cost of the pooled rule). Overlaps the attack's windows on purpose."""
     steps = {s.label: s for s in IT_DECOY_STEPS}
     out: list = []
     scanner = "10.60.0.99"
@@ -187,7 +190,7 @@ def _build_it_decoys(seed: int) -> list:
         out.append((steps["decoy_scanner"], {
             "source_type": "cisco_asa",
             "raw": f"%ASA-4-106023: Deny tcp src inside:{scanner}/{45000 + i} "
-                   f"dst inside:10.0.0.10/{1000 + i * 11} by access-group acl_in",
+                   f"dst inside:10.0.0.77/{1000 + i * 11} by access-group acl_in",
             "meta": _meta(seed, "itd", i, ts, scanner)}))
     for i in range(6):                                        # 6 > 5 distinct hosts
         ts = _BASE_MS + 410_000 + i * 20_000

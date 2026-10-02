@@ -1,0 +1,52 @@
+title: Port scan against one target (any number of sources)
+id: aaa9dc23-8550-41ae-acbc-0ae50837d8d6
+status: stable
+description: >
+  15+ DISTINCT destination ports hit with DENIED connections on the SAME TARGET
+  address within 60 seconds, counted regardless of which source sent them.
+
+  Why this exists (2026-10-01, found by the multi-storyline evasion search):
+  common_port_scan.yml groups on the source address, so a scanner that shares
+  the sweep across just TWO source addresses keeps each under its 15-port
+  threshold -- measured end to end, the scan went undetected. This rule is keyed
+  on the victim: a target seeing many distinct ports probed in a minute is being
+  scanned however many addresses are doing it. The threshold is the SAME 15 as
+  the source-keyed rule on purpose: a first version used 30 to limit noise and
+  the reconciler showed it never fired on a 16-22 port scan, i.e. it did not
+  close the evasion it was written for. The cost of meaning the same thing is
+  noise, which is why this rule ships at level LOW with a low score weight.
+
+  False-positive honesty (read before enabling on an internet-facing firewall):
+  an exposed host sees constant background scanning from many unrelated
+  sources, and on the pooled count that can reach 30 distinct denied ports in a
+  minute with no single actor doing anything notable. On an internal-only
+  segment this is a strong signal; on an internet-edge deny log it will be
+  noisy. Scope it with a not_in suppression on dst_endpoint.ip for
+  internet-facing targets, or accept it as the cost of seeing distributed scans.
+  A VERTICAL scan only, like its sibling: many ports, one target.
+level: low
+logsource:
+  category: network_activity
+detection:
+  network_deny:
+    class_uid: 4001
+    activity_id: 6
+  condition: network_deny
+fields:
+  - dst_endpoint.ip
+  - dst_endpoint.port
+siem:
+  sector: common
+  # Adds NO weight of its own: this rule restates its sibling's behaviour on the other key, so
+  # when both fire the score must not double-count one attack (a plain brute force went 70 -> 100
+  # in the demo e2e when this carried a weight). Its `level` still guarantees the right floor
+  # when it fires ALONE, which is the only case it exists for.
+  score_weight: 0
+  companion_of: 1d2c3b4a-5e6f-4708-8a91-0b1c2d3e4f05   # tenant-disabling the sibling disables this too
+  window_seconds: 60
+  threshold: 15
+  group_by: dst_endpoint.ip
+  distinct_field: dst_endpoint.port
+mitre:
+  tactic: TA0007      # Discovery
+  technique: T1046    # Network Service Discovery

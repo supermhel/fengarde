@@ -81,25 +81,33 @@ import scenario_registry as reg  # noqa: E402
 # growing.
 #
 # Removing an entry here is the correct way to close one for real.
-_ACCEPTED = {
-    ("ai_to_ot", "stale_gap", "process_anomaly", "9c1d2e3f-4a5b-4c6d-8e7f-1a2b3c4d5e6f"):
-        "2026-09-11: oracle declares this step a no_rule_exists gap ('no log line'), but "
-        "scenario.py emits a real Modbus FC6 write to _ANOMALY_ADDR which the real parser "
-        "classifies as unauthorized_write. Documented in oracle.yaml's own "
-        "known_inconsistency block since 2026-09-03. Resolving it means either declaring "
-        "the rule at this step (changes the expected detection-point set AND the severity "
-        "score) or changing what the scenario emits -- both move frozen baseline numbers.",
-    ("ai_to_ot", "decorative", "agent_mcp_tool_call", "2b3c4d5e-6f70-4899-8a1b-2c3d4e5f6a7c"):
-        "2026-09-11: agent_tool_call_burst is declared expected but the chain issues too few "
-        "tool calls in-window to trip its threshold. Either the scenario should issue a real "
-        "burst (changes the event count and every downstream count) or the oracle should stop "
-        "claiming it. NOT previously documented anywhere -- found by this checker.",
-    ("ai_to_ot", "decorative", "agent_mcp_tool_call", "5e6f7081-92a3-4bc4-ad2e-4f5a6b7c8d9e"):
-        "2026-09-11: agent_destructive_command is declared expected but the chain's tool-call "
-        "arguments carry an injection + egress URL, no destructive command pattern. Same "
-        "choice as above: emit one, or stop declaring it. NOT previously documented -- found "
-        "by this checker.",
-}
+_ACCEPTED: dict = {}
+# EMPTY as of 2026-10-01. The three AI-to-OT disagreements that used to live here
+# (a stale process_anomaly gap; agent_tool_call_burst and agent_destructive_command
+# declared at agent_mcp_tool_call but never fired) were RESOLVED in oracle.yaml, not
+# waived: the process_anomaly step now declares the rule that really fires there, and
+# the two rules this storyline never triggers were dropped from its answer key. The
+# mechanism stays -- an entry is ``(scenario, kind, step_or_from, rule_or_to): reason``;
+# anything not on the list fails the gate, and an entry that stops reproducing fails
+# as a stale waiver -- so the next deliberate disagreement can be recorded rather than
+# ignored.
+
+
+_COMPANION_OF: dict = {}
+
+
+def _companion_sibling(rule_id: str):
+    """``siem.companion_of`` of ``rule_id`` (the sibling's rule id), or None."""
+    if not _COMPANION_OF:
+        import yaml  # noqa: PLC0415
+        for f in sorted((ROOT / "contracts" / "rules").glob("*.yml")):
+            try:
+                d = yaml.safe_load(f.read_text(encoding="utf-8")) or {}
+            except Exception:  # noqa: BLE001 - validate_rules.py owns broken rule files
+                continue
+            if d.get("id"):
+                _COMPANION_OF[d["id"]] = (d.get("siem") or {}).get("companion_of")
+    return _COMPANION_OF.get(rule_id)
 
 
 def _key(scenario_name: str, kind: str, item: dict) -> tuple:
@@ -140,6 +148,13 @@ def reconcile(seed: int = 7, sdef=None) -> dict:
                                    "as 'unexpected' severity noise instead of a real detection",
             })
         for rule_id in sorted(expected - observed):
+            # A companion rule restates its sibling on another group key and is dropped when
+            # the sibling alerted on the same event (ws4 main.py), so on the baseline run --
+            # where the sibling fires -- silence is its designed behaviour, not decoration.
+            # It is still decorative if the sibling did NOT fire either: then nothing covers
+            # the step and the declaration is genuinely unbacked.
+            if _companion_sibling(rule_id) in observed:
+                continue
             decorative.append({
                 "step": step,
                 "rule_id": rule_id,

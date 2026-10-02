@@ -63,6 +63,9 @@ echo
 echo "== ws8 NEW-hunt regression: flat prometheus skip keys + skew-future/NaN time rejected + fully-anonymous deterministic member id + oldest-by-time member-cap eviction =="; LAST_HEADER="== ws8 NEW-hunt regression: flat prometheus skip keys + skew-future/NaN time rejected + fully-anonymous deterministic member id + oldest-by-time member-cap eviction =="
 $PY services/ws8-correlation/test_correlator_new_hunt.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
+echo "== ws8 campaign view: shared-alert linking, tenant isolation, no entity-only merge =="; LAST_HEADER="== ws8 campaign view =="
+$PY services/ws8-correlation/test_campaigns.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
 echo "== ws3 WS-8 wiring: incident routing (day-stable across growth), storage list_incidents, OpenSearch wire format =="; LAST_HEADER="== ws3 WS-8 wiring: incident routing (day-stable across growth), storage list_incidents, OpenSearch wire format =="
 $PY services/ws3-indexer/test_ws8_incidents_routing.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 
@@ -176,6 +179,9 @@ echo
 echo "== shared bus fan-out (multi-consumer-group fan-out + ack independence) =="; LAST_HEADER="== shared bus fan-out (multi-consumer-group fan-out + ack independence) =="
 $PY services/shared/test_bus_groups.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
+echo "== bus wire parity: memory backend rejects what Redis rejects and never shares a payload dict =="; LAST_HEADER="== bus wire parity =="
+$PY services/shared/test_bus_wire_parity.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
 echo "== shared bus PEL-cap in-flight eviction (2026-08-27 gap-hunt #1: at-least-once) =="; LAST_HEADER="== shared bus PEL-cap in-flight eviction (2026-08-27 gap-hunt #1: at-least-once) =="
 $PY services/shared/test_bus_pel_cap.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
@@ -259,6 +265,12 @@ $PY services/ws4-detection/test_v03_new_rules.py || { fail=1; FAILED="${FAILED} 
 echo
 echo "== ws4 v0.4 (P4): impossible-travel fires on REAL parser + enrichment output =="; LAST_HEADER="== ws4 v0.4 (P4): impossible-travel fires on REAL parser + enrichment output =="
 $PY services/ws4-detection/test_v04_new_rules.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
+echo "== companion rules: each closes one measured evasion (fires on the split attack its sibling cannot see) =="; LAST_HEADER="== companion rules =="
+$PY services/ws4-detection/test_companion_rules.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
+echo "== ws4 window poisoning: a forged near-future timestamp must not wipe a stateful window =="; LAST_HEADER="== ws4 window poisoning =="
+$PY services/ws4-detection/test_window_poisoning.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
 echo "== ws4 v0.5 (A3): common_beaconing.yml fires on regular cadence, not on irregular =="; LAST_HEADER="== ws4 v0.5 (A3): common_beaconing.yml fires on regular cadence, not on irregular =="
 $PY services/ws4-detection/test_v05_beaconing.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }

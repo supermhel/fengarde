@@ -69,6 +69,34 @@ class TestDnsQueryParser(unittest.TestCase):
                           "query[A] example.com from 10.0.0.5", "meta": {}})
         self.assertIs(type(parser), DnsQueryParser)
 
+    # -- parent_domain: the grouping key common_dns_tunnel_by_domain.yml needs --
+    def test_parent_domain_is_the_registered_domain(self):
+        from parsers.dns_query import parent_domain
+        cases = {
+            "chunk007.t3.exfil.example.invalid": "example.invalid",
+            "a.b.example.co.uk": "example.co.uk",
+            "www.example.com.au": "example.com.au",
+            "EXAMPLE.com.": "example.com",
+            "evil-c2.example.com": "example.com",
+        }
+        for name, want in cases.items():
+            self.assertEqual(parent_domain(name), want, name)
+
+    def test_parent_domain_never_pools_reverse_lookups_or_junk(self):
+        # Every PTR query for every address would otherwise share one parent
+        # ("in-addr.arpa") and read as a tunnel.
+        from parsers.dns_query import parent_domain
+        for name in ("5.0.0.10.in-addr.arpa", "1.0.0.0.ip6.arpa", "10.0.0.5",
+                     "localhost", "", ".", "a..b", "x" * 300 + ".com"):
+            self.assertIsNone(parent_domain(name), name)
+
+    def test_event_carries_parent_domain_only_when_poolable(self):
+        e = PARSER.parse(_raw("query[A] a.b.example.com from 10.0.0.5"))
+        self.assertEqual(e["unmapped"]["dns"]["parent_domain"], "example.com")
+        self.assertEqual(validate(e), [])
+        e = PARSER.parse(_raw("query[PTR] 5.0.0.10.in-addr.arpa from 10.0.0.5"))
+        self.assertNotIn("unmapped", e)
+
 
 if __name__ == "__main__":
     unittest.main()

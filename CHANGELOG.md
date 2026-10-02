@@ -19,9 +19,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `contracts/rules/common_impossible_travel.yml`: the RFC1918 sentinel country `ZZ` no longer counts as a country in the distinct-country window (new `contracts/allowlists/non_geographic_country_codes.yml`). Previously a public-IP login followed by an internal-IP login for the same account within an hour -- VPN, jump host, lateral pivot -- fired a HIGH alert, contradicting `geoip.yml`'s documented purpose for `ZZ`. Regression test in `services/ws4-detection/test_v04_new_rules.py` (reproduced failing first); `fire_check.py` still 28/28.
 
-### Known limitations surfaced (not fixed -- product decisions)
+### Added / Fixed (2026-10-02 -- closing the findings the storyline harness surfaced)
 
-- Per-key volume rules are evaded by splitting across **2 source addresses** (port scan, brute force, DNS exfil) or **2 accounts** (lateral movement, mass VM delete). WS-8 splits a pivoting campaign (`it_intrusion`) into 4 incidents.
+- **Companion rules** close the 2-address / 2-account evasions, measured end to end: `common_bruteforce_by_account`, `common_lateral_movement_by_source`, `dc_mass_vm_delete_by_source`, `common_port_scan_by_target`, `common_dns_tunnel_by_domain` (WS-2 `dns_query` now emits `unmapped.dns.parent_domain`). They carry `score_weight: 0` (no score inflation: a plain brute force went 70 -> 100 before this), a new `siem.companion_of` link (tenant-disabling the sibling disables the companion; `rules_view` honours it), and WS-4 drops a companion alert when its sibling already matched the same event (one attack, one alert). `tools/validate_rules.py` allows `companion_of`. Tests: `test_companion_rules.py`; live proof `tools/live_companion_e2e.py` (wired into CI after container smoke).
+- **`ot_opcua_write_unauthorized_node`** + `contracts/allowlists/opcua_authorized_nodes.yml`: OPC UA write to a node outside the authorised list, in or out of hours. The allowlist ships EMPTY, so the rule alerts on every OPC UA write until the plant owner populates it.
+- **WS-4 window poisoning fixed** (`engine.py`): the eviction horizon followed event timestamps, so one forged timestamp inside the 5-minute skew allowance could wipe a stateful window and let an attack evade. Windows are now driven by `min(event_time, wall_clock)`. Regression test `test_window_poisoning.py` reproduced the evasion first.
+- **Memory bus now matches Redis on the wire** (`shared/bus.py`): non-JSON payloads rejected at produce, per-delivery payload copies (WS-2 sanitises in place), `None` key delivered as `""`. `test_bus_wire_parity.py` (optional real-Redis half via `BUS_PARITY_REDIS_URL`).
+- **WS-8 campaign read view** (`services/ws8-correlation/campaigns.py`): groups incidents that share a member alert (3 incidents -> 1 campaign for the pivoting `it_intrusion`). Read-side only; tracks never merge (ADR-009/010). Persisting/emitting it is an owner decision: `docs/proposals/2026-10-01-ws8-campaign-view.md`.
+- **Harness**: the 3 accepted AI-to-OT oracle disagreements are resolved in `oracle.yaml` (waiver list empty); `oracle_consistency` treats a companion's silence as designed only when its sibling fired. Detection is judged by ATT&CK tactic equivalence; `ChainEvent.source_type` now comes from the emitted payload. **Correction**: the 2026-10-01 claim that OPC UA protocol mutations exposed a product gap was a grader artefact (source type taken from the step spec); Layer A is 34/37 (0.9189), the remaining 3 are WS-8 join-class rows.
+
+### Known limitations (not fixed -- product decisions)
+
+- Thinning / slowing an attack below a threshold rule's rate evades it by design; the evasion search reports the boundary, it cannot remove it.
+- Companion rules trade noise for coverage (pooled port-scan count on an internet-facing target; legitimate bulk VM decommission).
+- WS-8 does not persist campaigns; `chain_fidelity`/FCR still measure entity sharing, not causal order (kept, flagged).
 
 ### Fixed (2026-09-10 — R3 prompt-injection encoding evasion, found by Phase 4's own adversarial harness)
 

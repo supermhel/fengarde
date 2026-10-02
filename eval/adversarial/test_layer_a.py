@@ -91,6 +91,25 @@ def _grade_one(axis: str, variant: str) -> dict:
     return layer_a._cmp(axis, variant, base, mut_grade)
 
 
+def _grade_dropped(step_label: str) -> dict:
+    """Grade the chain with ONE step's telemetry removed entirely.
+
+    This is the negative control for the grader. It used to be
+    ``protocol/opcua_path``, a catalogue mutation believed to evade; that belief
+    was a measurement artefact (the grader replayed the re-shaped OPC UA record
+    through the Modbus parser -- fixed 2026-10-01) and the real residual gap has
+    since been closed by ot_opcua_write_unauthorized_node. No catalogue
+    mutation evades any more, so the control is built directly: a step whose
+    source went dark cannot be detected, which is true by construction, not by
+    the state of the rule set -- the right property for a negative control."""
+    oracle = report._load_oracle()
+    base = layer_a._baseline_grade(SEED, oracle)
+    base_build = scenario._build_chain_payloads(SEED)
+    kept = [(sp, p) for sp, p in base_build[0] if sp.label != step_label]
+    mut_grade = layer_a._grade_variant(kept, SEED, oracle)
+    return layer_a._cmp("control", f"drop_{step_label}", base, mut_grade)
+
+
 def _test_coverage(matrix: dict) -> None:
     cata = mutate.variant_specs(SEED)
     graded = matrix["overall"]["total_variants"]
@@ -122,10 +141,19 @@ def _test_determinism(m1: dict) -> None:
 
 
 def _test_sensitivity() -> None:
-    ev = _grade_one("protocol", "opcua_path")
-    _check("(c) evasion variant is graded detection_retained=False (can go red)",
-           ev["detection_retained"] is False,
+    ev = _grade_dropped("credential_use")
+    _check("(c) a step whose telemetry is gone is graded detection_retained=False (can go red)",
+           ev["detection_retained"] is False and ev["pass"] is False,
            f"det={ev['detection_retained']} tpr={ev['tpr']} fid={ev['chain_fidelity']}")
+    # The protocol swap is DETECTED -- by a different rule for the same ATT&CK tactic.
+    for variant in ("opcua_path", "opcua_path_in_hours"):
+        row = _grade_one("protocol", variant)
+        _check(f"(c) protocol/{variant}: step still detected, by a rule of the same tactic "
+               "(rule identity changes, detection is retained)",
+               row["detection_retained"] is True and row["rule_identity_changed"] is True
+               and not row["steps_lost"] and not row["tactic_lost"],
+               f"det={row['detection_retained']} identity_changed={row['rule_identity_changed']} "
+               f"lost={row['steps_lost']} tactic_lost={row['tactic_lost']}")
     ok_row = _grade_one("prompt", "case_flip")
     _check("(c) surviving variant is graded detection_retained=True (positive control)",
            ok_row["detection_retained"] is True,
@@ -144,7 +172,7 @@ def _test_detection_semantics(m1: dict) -> None:
          detection_retained (recorded via alert_volume_ratio) -- the old
          count-equality test called exact duplicate delivery an evasion.
     """
-    dark = _grade_one("protocol", "opcua_path")
+    dark = _grade_dropped("modbus_write")
     _check("(g) a lost step fails detection AND is named in steps_lost",
            dark["detection_retained"] is False and dark["steps_lost"] == ["modbus_write"],
            f"det={dark['detection_retained']} steps_lost={dark['steps_lost']}")

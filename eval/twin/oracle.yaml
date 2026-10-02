@@ -146,14 +146,15 @@ detection_points:
         title: "AI agent tool call reached a non-allowlisted domain"
         level: high
         role: egress to unallowlisted endpoint
-      - rule_id: "5e6f7081-92a3-4bc4-ad2e-4f5a6b7c8d9e"     # agent_destructive_command
-        title: "AI agent tool call carries a destructive command pattern"
-        level: critical
-        role: destructive command/query in tool call
-      - rule_id: "2b3c4d5e-6f70-4899-8a1b-2c3d4e5f6a7c"     # agent_tool_call_burst
-        title: "AI agent tool-call burst (runaway/abused agent session)"
-        level: medium
-        role: rapid repetitive tool-use pattern
+    # RESOLVED 2026-10-01 (oracle_consistency.py found these): this step used to
+    # also declare agent_destructive_command and agent_tool_call_burst. This
+    # storyline never issues a destructive command (its arguments carry an
+    # injection + an egress URL) nor enough in-window tool calls to cross the
+    # burst threshold, so neither could ever fire here -- and because TPR counts
+    # a step matched when ANY expected rule fires, the over-declaration cost
+    # nothing and was invisible. Those rules are still exercised by their own
+    # fire_check fixtures and by eval/adversarial/corpus_b.py; they are simply
+    # not part of THIS chain's answer key.
     gap:
       no_rule_exists: false
 
@@ -200,33 +201,26 @@ detection_points:
 
   process_anomaly:
     step: process_anomaly
-    role: "the controlled process diverges (tank level driven out of band / unsafe state)"
-    expected_event_source: "none (recomputed from the plc_sim trace; no log line)"
-    expected_rules: []
+    role: "continued anomalous OT manipulation: an out-of-range Modbus FC6 write while the process state diverges"
+    expected_event_source: "modbus_anomaly (class 4001) -- a real FC6 write frame; the diverged process state is additionally recomputed from the plc_sim trace"
+    expected_rules:
+      - rule_id: "9c1d2e3f-4a5b-4c6d-8e7f-1a2b3c4d5e6f"   # ot_modbus_unauthorized_write
+        title: "Modbus/TCP write outside the expected address range (unauthorized write)"
+        level: high
+        role: the same core OT write-detection signal, on the second out-of-range write
     gap:
-      no_rule_exists: true
-      reason: >
-        No rule in contracts/rules/*.yml evaluates process-state anomaly (e.g.
-        tank level outside a safe band). The twin must still EMIT this step's
-        evidence (the diverged process state) so report.py can grade the chain
-        end-to-end, but its detection coverage is zero today -- an honest gap
-        that lowers the attainable detection score for this chain.
-    known_inconsistency: >
-      DOCUMENTED 2026-09-03 (surfaced by the WP-3.5-A severity-confusion
-      metric, not a code change): scenario.py DOES emit a real raw Modbus FC6
-      write for this step (to _ANOMALY_ADDR, outside the parser's whitelisted
-      holding-register range), which the real modbus_anomaly parser classifies
-      as unauthorized_write and fires ot_modbus_unauthorized_write (high).
-      The oracle declares the step a no_rule_exists gap ("no log line") -- so
-      the fired alert is correctly graded as the severity-confusion metric's
-      ONE 'unexpected' alert (6 correct / 0 over / 0 under / 1 unexpected on
-      seed 7). This is a pre-existing oracle-vs-scenario contradiction, kept
-      honest and visible rather than silently reconciled. Resolution deferred:
-      either declare the rule at this step (which would change the expected
-      detection-point set and the severity score) or align the scenario's
-      process_anomaly emission. Treating it as either would alter the frozen
-      baseline delta contract's current numbers, so it needs its own decision,
-      not a drive-by edit.
+      no_rule_exists: false
+    resolved_inconsistency: >
+      RESOLVED 2026-10-01. This step was declared a no_rule_exists gap ("no log
+      line") for as long as the oracle existed, while scenario.py emitted a real
+      Modbus FC6 write here that the real parser classifies as
+      unauthorized_write and ot_modbus_unauthorized_write fires on. The
+      contradiction was documented (WP-3.5-A, 2026-09-03) and deliberately left
+      standing because resolving it moves graded numbers; it is resolved now
+      because oracle_consistency.py made leaving it standing visible every run.
+      What a rule-less process-STATE anomaly (tank level out of band, with no
+      wire frame at all) would need is still a real gap -- but it is a different
+      thing from this step, which does emit a frame and is detected by it.
 
 # ---------------------------------------------------------------------------
 # (iv) EXPECTED SEVERITY BAND -- numeric bounds the incident's alerts must fall
@@ -303,7 +297,5 @@ incident_membership:
     - "8192a3b4-c516-4ef4-9c5f-6a7b8c9d0e13"
     - "3c4d5e6f-7081-48a9-9b1c-3d4e5f6a7b8d"
     - "6f708192-a3b4-4cd5-be3f-5a6b7c8d9e0f"
-    - "5e6f7081-92a3-4bc4-ad2e-4f5a6b7c8d9e"
-    - "2b3c4d5e-6f70-4899-8a1b-2c3d4e5f6a7c"
     - "1a2b3c4d-5e6f-4788-9a0b-1c2d3e4f5a6b"
     - "9c1d2e3f-4a5b-4c6d-8e7f-1a2b3c4d5e6f"

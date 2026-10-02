@@ -570,6 +570,55 @@ def _run_negatives(seed: int) -> tuple[dict, dict]:
     return per_scenario, explained
 
 
+_TACTIC_CACHE: dict = {}
+
+
+def _rule_tactic(rule_id: str) -> Optional[str]:
+    """The ATT&CK tactic a rule declares in its ``mitre:`` block (``TA0106``), or
+    None. Read from contracts/rules/*.yml -- the engine itself does not carry it."""
+    if not _TACTIC_CACHE:
+        for f in sorted((ROOT / "contracts" / "rules").glob("*.yml")):
+            try:
+                d = yaml.safe_load(f.read_text(encoding="utf-8")) or {}
+            except Exception:  # noqa: BLE001 - a broken rule file is validate_rules.py's job
+                continue
+            if d.get("id"):
+                tac = (d.get("mitre") or {}).get("tactic")
+                _TACTIC_CACHE[d["id"]] = str(tac) if tac else None
+    return _TACTIC_CACHE.get(rule_id)
+
+
+def _tactic_covered_steps(oracle: dict, fired: list) -> list:
+    """Steps whose ORACLE-EXPECTED detection is still delivered, judged by ATT&CK
+    TACTIC rather than rule identity.
+
+    Why (2026-10-01). "Did the expected RULE fire" fails a mutation that
+    legitimately moves the same behaviour onto a different source: re-shape a
+    Modbus write as an OPC UA write and ``ot_modbus_unauthorized_write`` (T0855)
+    can never fire -- a different parser feeds a different rule
+    (``ot_write_outside_maintenance``, T0836) -- though the attack is caught, by a
+    rule for the same tactic (TA0106, Impair Process Control). "Did ANY alert fire
+    at the step" is too lenient the other way: an incidental unrelated rule
+    (impossible-travel, TA0001, on a lateral-movement pivot, TA0008) kept a step
+    looking detected after its real detection was evaded. A step counts as covered
+    when a rule declaring the SAME TACTIC as one of its expected rules fires there;
+    an expected rule that declares no tactic falls back to rule identity."""
+    out = []
+    for step, pt in (oracle.get("detection_points") or {}).items():
+        exp = [r.get("rule_id") for r in (pt.get("expected_rules") or [])]
+        if not exp:
+            continue
+        want_tac = {_rule_tactic(r) for r in exp} - {None}
+        want_ids = {r for r in exp if _rule_tactic(r) is None}
+        for a in fired:
+            if a.get("step") != step:
+                continue
+            if a.get("rule_id") in want_ids or _rule_tactic(a.get("rule_id")) in want_tac:
+                out.append(step)
+                break
+    return sorted(out)
+
+
 def _grade_chain(result: scenario.ChainResult, oracle: dict) -> dict:
     """Grade the chain against the oracle; return the metric sub-table.
 
@@ -691,6 +740,7 @@ def _grade_chain(result: scenario.ChainResult, oracle: dict) -> dict:
         "gap_steps": len(gaps),
         "fired_alerts": len(fired),
         "fired": fired,  # the real fired-alert dicts, so run() need not re-detect
+        "tactic_covered_steps": _tactic_covered_steps(oracle, fired),
         "mttd_seconds": mttd_seconds,
         "evidence_completeness": (
             round(evidence_completeness, 4) if evidence_completeness is not None else None
@@ -702,6 +752,9 @@ def _grade_chain(result: scenario.ChainResult, oracle: dict) -> dict:
         "chain_fidelity": ws8_grade["chain_fidelity"],
         "directional_discrimination": ws8_grade["directional_discrimination"],
         "alert_order_ok": ws8_grade["alert_order_ok"],
+        "campaign_count": ws8_grade["campaign_count"],
+        "campaign_full_coverage": ws8_grade["campaign_full_coverage"],
+        "campaign_decoy_contamination": ws8_grade["campaign_decoy_contamination"],
         "decoy_alert_count": ws8_grade["decoy_alert_count"],
         "decoy_absorbed_count": ws8_grade["decoy_absorbed_count"],
         "decoy_contamination": ws8_grade["decoy_contamination"],
@@ -1011,6 +1064,25 @@ def _incident_membership_grade(alerts_by_step: list[dict], incidents: list[dict]
     }
 
 
+_CAMPAIGNS_MOD_NAME = "ws8_campaigns_mod"
+
+
+def _ensure_campaigns():
+    """Load WS-8's read-side campaign linker (stdlib-only; unique module name,
+    same discipline as the correlator)."""
+    mod = sys.modules.get(_CAMPAIGNS_MOD_NAME)
+    if mod is not None:
+        return mod
+    path = APPROOT_SERVICES / "ws8-correlation" / "campaigns.py"
+    spec = importlib.util.spec_from_file_location(_CAMPAIGNS_MOD_NAME, path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot locate {path}")
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[_CAMPAIGNS_MOD_NAME] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
 def _alert_order_ok(alerts_by_step: list[dict], expected_seq: list) -> Optional[bool]:
     """Do the ATTACK alerts, ordered by their own event time, follow the
     oracle's ``expected_sequence``?
@@ -1177,7 +1249,23 @@ def _grade_ws8(result: "scenario.ChainResult", oracle: dict, alerts_total: int) 
     absorbed = sorted(decoy_ids & attack_incident_members)
     decoy_contamination = (round(len(absorbed) / len(decoy_ids), 4) if decoy_ids else None)
 
+    # 7) CAMPAIGN VIEW. Incidents are per entity track by ratified design, so a
+    #    pivoting attack is several incidents. The read-side campaign view links
+    #    incidents that share a MEMBER ALERT (direct evidence). Graded here:
+    #    does ONE campaign cover the whole attack, and did a decoy get dragged
+    #    into it? Reported next to -- never instead of -- the per-incident grade.
+    campaigns = _ensure_campaigns().link_campaigns(list(by_id.values()))
+    attack_set = set(attack_ids)
+    covering = [c for c in campaigns if attack_set <= set(c["member_alert_ids"])]
+    campaign_absorbed = sorted(decoy_ids & {a for c in campaigns
+                                            if attack_set & set(c["member_alert_ids"])
+                                            for a in c["member_alert_ids"]})
+
     return {
+        "campaign_count": len(campaigns),
+        "campaign_full_coverage": bool(covering),
+        "campaign_decoy_contamination": (round(len(campaign_absorbed) / len(decoy_ids), 4)
+                                         if decoy_ids else None),
         "alert_order_ok": _alert_order_ok(alerts_by_step, oracle.get("expected_sequence") or []),
         "decoy_alert_count": len(decoy_ids),
         "decoy_absorbed_count": len(absorbed),

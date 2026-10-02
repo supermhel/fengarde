@@ -52,6 +52,7 @@ detection_points:
     expected_event_source: "vmware_vsphere (class 6003, activity 4)"
     expected_rules:
       - {rule_id: "8c4e1f90-7a2b-4d33-9e55-6f1b2c3a4d03", title: "Mass VM deletion via hypervisor API", level: critical, role: impact detection}
+      - {rule_id: "9c86195a-8cd6-4b73-b526-a708bbb5299e", title: "Mass VM deletion from one source address (any number of accounts)", level: critical, role: account-rotation-proof impact detection -- closes the 2-account evasion}
     gap: {no_rule_exists: false}
 
 severity_band:
@@ -74,3 +75,4 @@ incident_membership:
     - "c3d4e5f6-7081-4920-9a3b-4c5d6e7f8093"
     - "b2c3d4e5-6f70-4819-8a2b-3c4d5e6f7082"
     - "8c4e1f90-7a2b-4d33-9e55-6f1b2c3a4d03"
+    - "9c86195a-8cd6-4b73-b526-a708bbb5299e"

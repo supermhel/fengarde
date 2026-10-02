@@ -245,6 +245,34 @@ def _predict(params, times_ms, n):
     return pred
 
 
+def _combine(preds: list) -> dict:
+    """Combine per-rule predictions into the prediction for a STEP.
+
+    A step stays detected while ANY of its expected rules fires (the oracle's
+    own any-intersection semantics), so:
+      * tolerated loss / slowdown = the MOST tolerant rule's;
+      * an axis is evaded only when EVERY rule is evaded, so the fewest keys
+        that evade the step is the LARGEST of the rules' k -- and if any rule
+        is immune on that axis (it is keyed on the other one, or cannot be
+        evaded at all), the step is immune there.
+    This is what makes a companion rule (e.g. one keyed on the account next to
+    one keyed on the address) show up as exactly what it is: a step that can no
+    longer be defeated by changing just one thing."""
+    def _mx(vals):
+        vals = [v for v in vals if v is not None]
+        return max(vals) if vals else None
+
+    out = {"loss": _mx([p["loss"] for p in preds]),
+           "stretch_pct": _mx([p["stretch_pct"] for p in preds])}
+    for key in ("ip_k", "account_k"):
+        vs = [p[key] for p in preds]
+        if any(v == "immune" or v is None for v in vs):
+            out[key] = "immune"
+        else:
+            out[key] = max(vs)
+    return out
+
+
 def _agree(measured, predicted, key):
     if predicted is None:
         return None
@@ -280,14 +308,14 @@ def search_scenario(sdef, seed: int = 7) -> dict:
                          "reason": ("single-event step" if n < mg._BURST_MIN else "no expected rule (oracle gap)")})
             continue
         expected = set(exp)
-        # predictions use the first expected rule that declares a threshold
-        decl = next((rules[r] for r in exp if r in rules and rules[r]["threshold"]), None)
-        if decl is None:
+        # every expected rule with a declared threshold contributes to the prediction
+        decls = [rules[r] for r in exp if r in rules and rules[r]["threshold"]]
+        if not decls or len(decls) < len([r for r in exp if r in rules]):
             rows.append({"step": step, "events": n, "searched": False,
-                         "reason": "expected rule is stateless (no threshold to bound)"})
+                         "reason": "an expected rule is stateless (no threshold to bound)"})
             continue
         times = [mg.get_time(payloads[i][1]) for i in idxs]
-        pred = _predict(decl, times, n)
+        pred = _combine([_predict(d, times, n) for d in decls])
         measured = {
             "loss": _search_loss(payloads, step, expected, n),
             "stretch_pct": _search_stretch(payloads, step, expected),
@@ -304,11 +332,13 @@ def search_scenario(sdef, seed: int = 7) -> dict:
                 verdict[key] = _agree(measured[key], p, key)
         rows.append({
             "step": step, "events": n, "searched": True,
-            "rule": decl["name"], "threshold": decl["threshold"],
-            "window_seconds": decl["window_seconds"], "group_by": decl["group_by"],
+            "rule": " + ".join(d["name"] for d in decls),
+            "threshold": "/".join(str(d["threshold"]) for d in decls),
+            "window_seconds": "/".join(str(d["window_seconds"]) for d in decls),
+            "group_by": " | ".join(str(d["group_by"]) for d in decls),
             "measured": measured, "predicted": pred, "agree": verdict,
             "all_agree": all(v in (True, None) for v in verdict.values()),
-            "margin_over_threshold": n - decl["threshold"],
+            "margin_over_threshold": n - min(d["threshold"] for d in decls),
         })
     return {"scenario": sdef.name, "seed": seed, "rows": rows}
 

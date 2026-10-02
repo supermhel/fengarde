@@ -1,0 +1,57 @@
+title: Lateral movement from one source host (any number of accounts)
+id: 90561d27-ace4-4138-8cc4-c74569a439c6
+status: stable
+description: >
+  One SOURCE address successfully authenticating to 5+ DISTINCT destination
+  hosts within 300 seconds, counted regardless of which account was used.
+
+  Why this exists (2026-10-01, found by the multi-storyline evasion search):
+  common_lateral_movement.yml groups on the account, so an attacker holding two
+  stolen credentials who alternates them across the same hop sequence keeps each
+  account under its 5-host threshold -- measured end to end: splitting the burst
+  over just two account names made lateral movement go undetected. This rule is
+  keyed on the other axis, the host the hops originate from, so the same attacker
+  working from one foothold is still counted. It is immune to credential
+  rotation; the attacker would have to spread across SOURCE hosts instead, which
+  is what the account-keyed rule sees.
+
+  Parser-coverage honesty: like its sibling, this relies on dst_endpoint.hostname
+  and src_endpoint.ip both being populated, which today is true for
+  windows_eventlog 4624 only (the active_directory parser maps the logon host
+  onto src_endpoint.hostname and emits no dst_endpoint at all -- finding #136 in
+  the 2026-08-26 gap hunt). No dst host or no source IP = not counted (fail
+  closed), exactly as for the account-keyed rule.
+
+  False-positive honesty: a jump host, patch/orchestration server, vulnerability
+  scanner with credentials, or backup server legitimately authenticates to many
+  hosts in minutes from one address. Nothing is suppressed by default (the
+  project's honest-default posture); add a not_in suppression on src_endpoint.ip
+  for the known management hosts once you have seen them rather than raising the
+  threshold.
+level: high
+logsource:
+  category: authentication
+detection:
+  auth_success:
+    class_uid: 3002
+    activity_id: 1
+    status: Success
+  condition: auth_success
+fields:
+  - src_endpoint.ip
+  - dst_endpoint.hostname
+siem:
+  sector: common
+  # Adds NO weight of its own: this rule restates its sibling's behaviour on the other key, so
+  # when both fire the score must not double-count one attack (a plain brute force went 70 -> 100
+  # in the demo e2e when this carried a weight). Its `level` still guarantees the right floor
+  # when it fires ALONE, which is the only case it exists for.
+  score_weight: 0
+  companion_of: 2e3d4c5b-6f70-4819-9b02-1c2d3e4f5061   # tenant-disabling the sibling disables this too
+  window_seconds: 300
+  threshold: 5
+  group_by: src_endpoint.ip
+  distinct_field: dst_endpoint.hostname
+mitre:
+  tactic: TA0008      # Lateral Movement
+  technique: T1021    # Remote Services

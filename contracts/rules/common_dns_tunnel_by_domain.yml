@@ -1,0 +1,55 @@
+title: DNS tunnelling shape - many distinct names under one parent domain
+id: 5f3c9d18-72a4-4e0b-b6d1-8c2e7a4f1b93
+status: stable
+description: >
+  40+ DISTINCT fully-qualified names queried under the SAME PARENT DOMAIN within
+  60 seconds, counted across every client.
+
+  This is the precise DNS-tunnelling signal common_dns_exfil.yml's description
+  says the grammar could not express ("many distinct subdomain labels under one
+  parent domain"). The dns_query parser now derives unmapped.dns.parent_domain
+  (registered-domain approximation; reverse-lookup zones and IP literals are
+  never pooled), which is the grouping key.
+
+  Why this exists (2026-10-01, found by the multi-storyline evasion search):
+  common_dns_exfil.yml counts distinct names per SOURCE ADDRESS, so an exfil that
+  is shared across just TWO hosts -- or two resolvers -- keeps each under its
+  40-name threshold and goes undetected (measured end to end). Tunnelling tools
+  are keyed on the attacker-controlled parent domain whichever host emits the
+  query, so this rule is immune to spreading the traffic across clients. It does
+  NOT replace the per-source rule: that one still catches one host resolving many
+  unrelated domains, which this rule (one parent at a time) does not.
+
+  False-positive honesty: CDNs and large SaaS providers legitimately serve many
+  distinct subdomains under one parent (content-addressed hostnames, per-tenant
+  names). 40 distinct names under one parent in a minute is unusual but not
+  impossible on a busy network; suppress the known parent domains once you have
+  seen them rather than raising the threshold. The registered-domain heuristic
+  is not a public-suffix list: an unlisted multi-part suffix pools one label too
+  high, which can over-count a window but never hide one.
+level: medium
+logsource:
+  category: network_activity
+detection:
+  dns_query:
+    class_uid: 4002
+    activity_id: 1
+  condition: dns_query
+fields:
+  - unmapped.dns.parent_domain
+  - dst_endpoint.hostname
+siem:
+  sector: common
+  # Adds NO weight of its own: this rule restates its sibling's behaviour on the other key, so
+  # when both fire the score must not double-count one attack (a plain brute force went 70 -> 100
+  # in the demo e2e when this carried a weight). Its `level` still guarantees the right floor
+  # when it fires ALONE, which is the only case it exists for.
+  score_weight: 0
+  companion_of: a1b2c3d4-5e6f-4708-9a1b-2c3d4e5f6071   # tenant-disabling the sibling disables this too
+  window_seconds: 60
+  threshold: 40
+  group_by: unmapped.dns.parent_domain
+  distinct_field: dst_endpoint.hostname
+mitre:
+  tactic: TA0011      # Command and Control
+  technique: T1071.004  # Application Layer Protocol: DNS
