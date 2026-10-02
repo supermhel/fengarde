@@ -158,6 +158,109 @@ Fixed for real, re-run against the same two real corpora:
   is a genuinely different schema needing its own extractor — left as an
   honest, disclosed gap, not forced through this one.
 
+## Blind-recall lane (third-party labels)
+
+`evtx_eval.py` / `splunk_eval.py` compare the engine to an oracle **this repo
+wrote** (`oracle()` recomputes six rules' logic from the raw records) and throw
+the dataset's own ATT&CK label away. `blind_recall.py` is the other half: the
+label comes from the **dataset author**, and the question is "did any rule in
+that technique's family fire?". Nothing FENGARDE wrote (rule id, rule name,
+oracle output, alert) is visible to an adapter; `test_blind_recall.py` pins that.
+
+| File | Role |
+|---|---|
+| `corpus_manifest.json` | per corpus: pinned commit, licence SPDX id, label source, lanes, `vendored: false` for all |
+| `fetch_corpora.py` | on-demand fetch at the pin (`git fetch --depth 1 origin <sha>` + detached checkout, HEAD verified); splunk data files are git-lfs, pulled **only** for the pre-registered selection (below). Never part of `run_all_tests.sh` |
+| `corpus_adapters.py` | `SplunkAttackData` (Windows `XmlWinEventLog:*` only) and `EvtxToMitre` (`.evtx`, python-evtx imported lazily) |
+| `technique_match.py` | label vs rule-technique matching, rule index, funnel bucket assignment |
+| `blind_recall.py` | driver: replay each scenario on a fresh bus + `Detector(rules_dir=...)`, bucket, aggregate, write `blind_recall_results.json` |
+| `test_blind_recall.py` | **blocking, zero-infra, synthetic CONTROLS only** (below) |
+
+```sh
+python eval/detection_accuracy/fetch_corpora.py            # splunk-attack-data + evtx-to-mitre
+python eval/detection_accuracy/blind_recall.py [--require-corpus]
+python eval/detection_accuracy/test_blind_recall.py        # the gate, no data needed
+```
+
+**Unit of scoring.** One *scenario* = one Splunk YAML with **all** of its
+`datasets[]` files merged and replayed together (17% of labelled YAMLs declare
+more than one file, and Security + Sysmon together changes which rules can
+fire), or one `.evtx` file. A scenario with *k* labels is *k* units, each scored
+independently against the same single replay (alert reuse across labels is
+allowed and visible in `fired_in_family` / `off_label_rules`).
+
+**Label provenance** (recorded in every result row as `label_source`):
+Splunk = the YAML's `mitre_technique` list; the technique directory name is kept
+as `dir_label` (disagreements flagged `label_dir_disagree`) and is the only
+label for the old-style YAMLs that carry a `dataset:` URL list. EVTX-to-MITRE =
+the folder `TAxxxx-<Tactic>/Txxxx[.yyy|.xxx]-<name>/`; the literal `.xxx` is a
+family-level label (`sub_unspecified`), the sub-technique is never invented;
+anything outside that layout (e.g. `Antivirus/`) is `UNLABELLED`.
+
+**Funnel buckets** (every unit lands in exactly one; the bucket counts are
+asserted to sum to the units, and the units to `sum(max(1, labels))` over the
+scenarios):
+
+| Bucket | Meaning |
+|---|---|
+| `NOT_FETCHED` | declared, but no readable file (absent, empty, or an un-pulled git-lfs pointer); outside the denominator, never a miss |
+| `READER_UNAVAILABLE` | files present, python-evtx missing: a tooling gap, not a verdict |
+| `UNLABELLED` | no usable technique label from the dataset's own metadata/path |
+| `NO_PARSER` | no shipped WS-2 parser normalised any record (unsupported source, or 0 of N records) |
+| `NO_RULE` | ingested, but no loaded enterprise-ATT&CK rule is in the label's technique family: the **gap list** |
+| `HIT_EXACT` / `HIT_FAMILY` | an in-family alert fired; rule technique == label / same parent |
+| `MISS` | parser **and** rule exist, nothing in the family fired |
+
+`partial_parse` (+ `parsed_fraction`, `unparsed_event_ids`) flags a unit where
+some records had no parser class (e.g. Sysmon 10/13, PowerShell 4104), so a
+`MISS`/`NO_RULE` there may be missing telemetry rather than missing detection.
+Match rule: exact, or same parent with at least one side being the parent;
+**sibling sub-techniques never match**. `common_password_spray.yml` is T1110.004
+(credential stuffing) by documented design, and true one-source-many-accounts
+spraying (T1110.003) is a disclosed gap, so a T1110.003 dataset is at best
+`HIT_FAMILY` via the T1110 brute-force rules and is listed under
+"no exact rule". The rule index keeps rules with no `framework` key (default
+`attack`) and skips `atlas` / `attack-ics` / no-`mitre` rules.
+`oracle` is `agrees_no_fire` / `disagrees_oracle_expects_fire` **only** for a
+`MISS` whose family contains one of the six `ORACLE_RULES` ids; every other
+`MISS` is `not_applicable` (the oracle has no answer there). `HIT_TACTIC` is not
+implemented.
+
+**Selection is pre-registered.** `fetch_corpora.py` pulls LFS data only for
+scenarios chosen from dataset metadata and the rule families, never outcomes:
+Windows-XML scenarios whose label shares a parent with a rule technique; per
+parent the N smallest by declared LFS size (tie-break `dataset_id`), capped by
+`max_files` / `max_bytes` (manifest). A pull that does not deliver a file leaves
+a pointer, which scores `NOT_FETCHED` and makes the fetcher exit 1.
+
+**Exit codes.** Zero fetched units: `[SKIP]`, rc 0 (same as `evtx_eval.py`).
+`--require-corpus`: rc 1 on zero fetched units **or** zero units in a scoreable
+bucket (`HIT_*`/`MISS`: parser and rule both present), so a nightly cannot go
+green on nothing. `--baseline` (optional `{unit_key: bucket}` JSON) fails when a
+unit that was `HIT_*` becomes anything else; no absolute recall threshold exists
+and none is invented.
+
+**What this does not tell you.** Labels are per *dataset*, not per event: a hit
+means a rule fired somewhere in a file that contains the technique *plus*
+background, not that it isolated the technique event. There is no benign corpus,
+so **no false-positive rate**. Most corpus techniques have no FENGARDE rule at
+all (`NO_RULE`), and a `MISS` can mean the rule was never designed for that
+procedure. A rule whose own `mitre:` block is wrong shows up falsely as
+`NO_RULE` (`off_label_rules` is the check). Per-technique numbers are printed as
+`hits/n` text, never a bare percent. `linux_secure`, CloudTrail, k8s and OTRF
+Security-Datasets adapters are deferred until each has a fixture-backed positive
+control; EVTX-ATTACK-SAMPLES (GPL-3.0, tactic-level labels only) stays with
+`evtx_eval.py`.
+
+**The blocking test is not a third-party measurement.** `test_blind_recall.py`
+builds tiny synthetic trees in a temp dir (P1 burst, P2 lateral, P3 two-file
+merge, P4 parent label; negatives: label-not-alert, sensitivity, rules removed,
+no vacuous green, sibling labels, determinism, partial parse, LFS pointers,
+unsupported sources, reader missing, selection/pin tooling) to prove the
+*instrument* works. Real third-party data is never in the blocking gate;
+vendoring a subset is an owner decision (it needs licence sign-off and a new
+`THIRD_PARTY_NOTICES` file; the repo has only `LICENSE`).
+
 ## Relationship to `make attack-scorecard` (P3-2)
 
 This eval lane produces the **empirical** half of the ATT&CK coverage
