@@ -1,4 +1,4 @@
-"""Keep pytest from collecting the standalone Layer A acceptance script.
+"""Keep pytest from collecting the standalone acceptance scripts that import report.py.
 
 test_layer_a.py is NOT a pytest test module (see its own docstring) -- it
 must run only via `python eval/adversarial/test_layer_a.py` (or through
@@ -11,6 +11,12 @@ for a DIFFERENT service, whichever imports first would silently win
 sys.modules["main"] for the rest of that pytest session -- collection-order
 -dependent, unrelated-looking failures. `collect_ignore` here stops pytest
 from importing this file at all, matching how the repo actually runs it.
+
+test_order_controls.py (2026-10-02) is the same kind of script: it imports report.py
+(directly, to pre-seed sys.modules["main"], and through scenario_registry.grade) and runs
+via ``python eval/adversarial/test_order_controls.py`` / run_all_tests.sh. It is listed
+here for the same reason. (test_scenario_harness.py is deliberately not listed: it
+predates this guard and imports layer_a/report first, the same way.)
 """
 
-collect_ignore = ["test_layer_a.py"]
+collect_ignore = ["test_layer_a.py", "test_order_controls.py"]
