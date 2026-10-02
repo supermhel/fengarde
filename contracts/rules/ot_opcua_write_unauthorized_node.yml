@@ -1,0 +1,45 @@
+title: OPC UA write to a node not on the authorised-node list
+id: e7a14b6d-3c52-4d90-8f1b-5a9c0d2e6b47
+status: stable
+description: >
+  An OPC UA client wrote a value to a control-system node that is NOT listed in
+  contracts/allowlists/opcua_authorized_nodes.yml (OCSF API Activity 6003,
+  activity 3 Update, siem.source_type=opcua_audit).
+
+  Why this exists (2026-10-01, found by the Phase-4 mutation harness): the only
+  OPC UA write detections were ot_config_change (fires when the node id contains a
+  Config/Firmware/Setpoint/Parameter marker) and ot_write_outside_maintenance
+  (fires outside 08:00-18:00 Mon-Fri). A write to an ordinary process node during
+  business hours -- e.g. Line3/PumpEnable at 10:00 on a Thursday -- matched
+  neither, so the same actuation that is caught as a Modbus coil write was
+  invisible once an attacker used OPC UA in working hours. Measured end to end
+  (protocol/opcua_path_in_hours), not inferred.
+
+  This is deliberately ALLOWLIST-FIRST: it flags the writes nobody declared. The
+  allowlist ships EMPTY (the project's honest-default posture -- nothing
+  suppressed on first install), so out of the box it alerts on every OPC UA write.
+  Populate the allowlist from a reviewed baseline before relying on the signal;
+  see that file. Level is medium, not high, because until the list is populated
+  most hits are routine operations.
+level: medium
+logsource:
+  category: application_activity
+detection:
+  ot_write:
+    class_uid: 6003
+    activity_id: 3
+    siem.source_type: opcua_audit
+    unmapped.ot.node_id:
+      not_in: opcua_authorized_nodes
+  condition: ot_write
+fields:
+  - actor.user.name
+  - unmapped.ot.node_id
+  - unmapped.ot.server_id
+siem:
+  sector: datacenter
+  score_weight: 50
+mitre:
+  framework: attack-ics
+  tactic: TA0106      # Impair Process Control
+  technique: T0855    # Unauthorized Command Message

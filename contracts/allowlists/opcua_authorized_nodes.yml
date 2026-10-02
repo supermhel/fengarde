@@ -1,0 +1,18 @@
+# OPC UA nodes that engineering/operations have DECLARED writable
+# (ot_opcua_write_unauthorized_node.yml).
+#
+# Matches by EXACT string on unmapped.ot.node_id, e.g. "ns=2;s=Line3/PumpEnable".
+#
+# Shipped EMPTY on purpose, and read this before enabling the rule on a live
+# plant: with no entries NOTHING is authorised, so the rule alerts on EVERY OPC UA
+# write until you list the nodes your HMI/SCADA clients legitimately write. That is
+# the honest default for a control network where nobody has yet declared what is
+# allowed -- an undeclared write IS the thing worth seeing -- but it is noisy on
+# day one. Populate this from a baseline period of observed writes (review them
+# first: do not simply bulk-import what you saw, that would whitelist an attacker
+# who was already there), then the rule narrows to genuinely unexpected writes.
+#
+#   entries:
+#     - "ns=2;s=Line3/PumpEnable"
+#     - "ns=2;s=Line3/TankLevelSetpoint"
+entries: []

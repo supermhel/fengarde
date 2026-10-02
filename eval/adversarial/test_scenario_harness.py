@@ -131,6 +131,21 @@ def test_directional_discrimination() -> None:
                f"caveats={len(bq['caveats'])}")
 
 
+def test_campaign_view() -> None:
+    # the per-incident grade fails for a pivoting attack; the read-side campaign view
+    # covers it. Both are reported -- neither replaces the other.
+    it = reg.grade(reg.BY_NAME["it_intrusion"], SEED)
+    _check("(k) it_intrusion: per-incident membership FAILS (no single entity spans a pivot) ...",
+           it["incident_membership_ok"] is False and it["incident_promotions"] > 1,
+           f"incidents={it['incident_promotions']}")
+    _check("(k) ... but ONE campaign (incidents linked by a shared member alert) covers the whole attack",
+           it["campaign_count"] == 1 and it["campaign_full_coverage"] is True,
+           f"campaigns={it['campaign_count']}")
+    for sd in reg.ALL:
+        g = reg.grade(sd, SEED)
+        _check(f"(k) {sd.name}: a campaign covers the full attack", g["campaign_full_coverage"] is True)
+
+
 def test_alert_order() -> None:
     ok = report._alert_order_ok
     seq = ["a", "b", "c"]
@@ -174,6 +189,31 @@ def test_decoy_contamination() -> None:
     _check("(e) CONTROL: a decoy that shares the attacker's address IS absorbed (metric can go non-zero)",
            (g["decoy_contamination"] or 0) > 0, f"contamination={g['decoy_contamination']}")
     base = reg.grade(sd, SEED)
+    # DOCUMENTED TRADE-OFF of the pooled rules: a benign scanner that hits the SAME target
+    # as the attacker is pooled with it by common_port_scan_by_target (it keys on the
+    # target, not the source), so the two share one alert and the decoy is absorbed.
+    # Measured, not hoped: this is the false-positive cost the rule's description names.
+    it_sd = reg.BY_NAME["it_intrusion"]
+
+    def _same_target(seed):
+        pl, sr, nt, b = it_sd.build(seed)
+        extra = copy.deepcopy(it_sd.decoy(seed))
+        for sp, p in extra:
+            if sp.label == "decoy_scanner":
+                p["raw"] = p["raw"].replace("10.0.0.77", "10.0.0.10")
+        return sorted(list(pl) + extra, key=lambda x: mg.get_time(x[1]) or 0), sr, nt, b
+
+    gt = reg.grade(it_sd, SEED, payload_source=_same_target)
+    _check("(e) TRADE-OFF (documented): a benign scanner on the attacker's own TARGET is pooled "
+           "by the target-keyed rule and absorbed (the price of closing the 2-address evasion)",
+           (gt["decoy_contamination"] or 0) > 0, f"contamination={gt['decoy_contamination']}")
+    _check("(e) CONTROL: ...and the campaign view absorbs it too (campaign-level contamination > 0)",
+           (g["campaign_decoy_contamination"] or 0) > 0, f"{g['campaign_decoy_contamination']}")
+    for name in ("it_intrusion", "infra_takeover"):
+        sdx = reg.BY_NAME[name]
+        gx = reg.grade(sdx, SEED, payload_source=_with_decoys(sdx))
+        _check(f"(e) {name}: disjoint decoys stay out of the CAMPAIGN as well",
+               gx["campaign_decoy_contamination"] == 0.0, f"{gx['campaign_decoy_contamination']}")
     _check("(e) no decoys -> contamination is None, not a fabricated 0.0",
            base["decoy_contamination"] is None and base["decoy_alert_count"] == 0)
 
@@ -276,8 +316,15 @@ def test_evasion_search() -> None:
            r["all_agree"] is True, f"measured={r['measured']} predicted={r['predicted']}")
     _check("(i) loss tolerance is exactly events - threshold (dc_mass_vm_delete T=5)",
            r["measured"]["loss"] == r["events"] - 5, f"{r['measured']['loss']} vs {r['events'] - 5}")
-    _check("(i) an account-grouped rule is evaded by splitting accounts and immune to IP spread",
-           r["measured"]["account_k"] == 2 and r["measured"]["ip_k"] is None, f"{r['measured']}")
+    _check("(i) with the account-keyed rule AND its source-keyed companion, the step cannot be "
+           "evaded by splitting accounts alone OR addresses alone (before the companion, 2 accounts sufficed)",
+           r["measured"]["account_k"] is None and r["measured"]["ip_k"] is None, f"{r['measured']}")
+    _check("(i) the step's declared prediction is the combination of BOTH expected rules",
+           "dc_mass_vm_delete_by_source" in r["rule"] and "dc_mass_vm_delete" in r["rule"], r["rule"])
+    it = evasion_search.search_scenario(reg.BY_NAME["it_intrusion"], SEED)
+    dns = next(x for x in it["rows"] if x["step"] == "dns_exfil")
+    _check("(i) it_intrusion dns_exfil: the parent-domain rule closes the 2-host evasion "
+           "(address spread no longer evades)", dns["measured"]["ip_k"] is None, f"{dns['measured']}")
     # NEGATIVE CONTROL: a deliberately wrong declaration must be flagged
     real_predict = evasion_search._predict
     try:
@@ -310,6 +357,7 @@ def main() -> int:
     test_burst_mttd()
     test_directional_discrimination()
     test_alert_order()
+    test_campaign_view()
     test_decoy_contamination()
     test_generic_operators()
     test_cmp_criteria()

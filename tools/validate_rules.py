@@ -64,7 +64,7 @@ _SECTORS = {"common", "bank", "datacenter"}
 _SIEM_ALLOWED_KEYS = {
     "score_weight", "sector", "window_seconds", "threshold",
     "group_by", "distinct_field", "llm_gate", "periodicity",
-    "exposure_gate",
+    "exposure_gate", "companion_of",
 }
 _KNOWN_OPS = set(_NUMERIC_OPS) | {"not_in", "outside_hours", "in", "contains", "glob", "exists"}
 # C3: optional MITRE tagging. Enterprise ATT&CK ("Txxxx"/"Txxxx.xxx", "TAxxxx"),

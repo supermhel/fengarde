@@ -36,6 +36,38 @@ _QUERY = re.compile(
 )
 
 
+# Second-level labels that, under a two-letter country code, make the REGISTERED
+# domain three labels long (example.co.uk, example.com.au). A real public-suffix
+# list is the right tool; this is the deliberately small, dependency-free
+# approximation, and its failure mode is benign: an unlisted multi-part suffix
+# groups one label too high (everything under ".xx.yy" pools together), which can
+# only OVER-count a window, never hide one.
+_SLD = frozenset({"co", "com", "org", "net", "gov", "edu", "ac"})
+_REVERSE_ZONES = (".in-addr.arpa", ".ip6.arpa")
+_MAX_NAME = 253
+
+
+def parent_domain(name: str) -> Optional[str]:
+    """The registered-domain-ish parent of a queried name, lower-cased, or None.
+
+    ``chunk007.t3.exfil.example.invalid`` -> ``example.invalid``;
+    ``a.b.example.co.uk`` -> ``example.co.uk``. None for names that must not be
+    pooled: a bare label, an over-long name, an IP literal, and reverse-lookup
+    zones (``*.in-addr.arpa`` / ``*.ip6.arpa``) -- every PTR query for every
+    address would otherwise pool under one parent and look like a tunnel."""
+    n = name.strip().rstrip(".").lower()
+    if not n or len(n) > _MAX_NAME or valid_ip(n) is not None:
+        return None
+    if any(n.endswith(z) for z in _REVERSE_ZONES):
+        return None
+    labels = n.split(".")
+    if len(labels) < 2 or any(not lab for lab in labels):
+        return None
+    if len(labels) >= 3 and len(labels[-1]) == 2 and labels[-2] in _SLD:
+        return ".".join(labels[-3:])
+    return ".".join(labels[-2:])
+
+
 class DnsQueryParser(Parser):
     SOURCE_TYPE = "dns_query"
     SECTOR = "common"
@@ -77,6 +109,12 @@ class DnsQueryParser(Parser):
         if ip:
             event["src_endpoint"] = {"ip": ip}
         event["dst_endpoint"] = {"hostname": name}
+        # Parent-domain grouping key for common_dns_tunnel_by_domain.yml: the
+        # grammar has no "group by parent domain" primitive, so the parser
+        # derives one. Omitted (not null) when the name must not be pooled.
+        parent = parent_domain(name)
+        if parent:
+            event["unmapped"] = {"dns": {"parent_domain": parent}}
         return event
 
     @staticmethod

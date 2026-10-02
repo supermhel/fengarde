@@ -108,7 +108,8 @@ def list_rule_summaries(tenant_id: str | None = None) -> list[dict]:
             "stateful": siem.get("window_seconds") is not None
             and siem.get("threshold") is not None,
             "mitre": raw.get("mitre"),
-            "enabled": rule_id not in disabled,
+            "enabled": (rule_id not in disabled
+                        and (raw.get("siem") or {}).get("companion_of") not in disabled),
         })
     summaries.sort(key=lambda r: r["id"])
     return summaries

@@ -1,0 +1,51 @@
+title: Authentication brute-force against one account (any number of sources)
+id: d83b71c3-93eb-439f-86f9-5985ebcc38cb
+status: stable
+description: >
+  10+ failed authentications against the SAME ACCOUNT within 60 seconds, counted
+  regardless of where they came from.
+
+  Why this exists (2026-10-01, found by the multi-storyline evasion search):
+  common_bruteforce.yml groups on src_endpoint.ip, so an attacker who spreads
+  the same guessing run over just TWO source addresses puts each address under
+  its threshold and the whole burst goes undetected -- measured end to end,
+  not inferred. common_password_spray.yml counts distinct source IPs per
+  account but needs 8 of them in 300 s, so two or three addresses do not trip
+  it either. This rule is keyed on the other axis: the victim account. It is
+  immune to address rotation; an attacker now has to spread across ACCOUNTS
+  instead, which is what common_bruteforce_sourceless.yml and
+  common_password_spray.yml are shaped to see. Complements, does not replace,
+  the per-source rule: per-source is the better signal for one noisy host, this
+  is the better signal for one targeted account.
+
+  False-positive honesty: a service account whose credential expired, or a
+  mis-configured integration retrying a stale password, will cross 10 failures
+  in a minute on its own. The same posture as every rule here applies -- nothing
+  is suppressed by default; add the known-noisy account to
+  contracts/allowlists/service_accounts.yml-style suppression once you have
+  seen it, rather than raising the threshold.
+level: high
+logsource:
+  category: authentication
+detection:
+  failed_auth:
+    class_uid: 3002
+    activity_id: 4
+  condition: failed_auth
+fields:
+  - actor.user.name
+  - src_endpoint.ip
+siem:
+  sector: common
+  # Adds NO weight of its own: this rule restates its sibling's behaviour on the other key, so
+  # when both fire the score must not double-count one attack (a plain brute force went 70 -> 100
+  # in the demo e2e when this carried a weight). Its `level` still guarantees the right floor
+  # when it fires ALONE, which is the only case it exists for.
+  score_weight: 0
+  companion_of: 6f1c8a2e-0d3b-4c11-9a21-7b5e2f9a1c01   # tenant-disabling the sibling disables this too
+  window_seconds: 60
+  threshold: 10
+  group_by: actor.user.name
+mitre:
+  tactic: TA0006      # Credential Access
+  technique: T1110    # Brute Force

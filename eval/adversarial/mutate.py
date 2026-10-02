@@ -390,6 +390,9 @@ def mutate_network(payloads: list, rng: Random, *, variant: str, **_kw) -> list:
     return payloads
 
 
+_TWIN_BASE_MS = 1751500000000  # eval/twin/scenario.py::_BASE_MS (fixed deterministic epoch)
+
+
 def mutate_protocol(payloads: list, rng: Random, *, variant: str, **_kw) -> list:
     """Protocol axis: different Modbus function code with equivalent effect /
     changed register-coil reaching the same process variable / OPC UA path
@@ -415,7 +418,7 @@ def mutate_protocol(payloads: list, rng: Random, *, variant: str, **_kw) -> list
             # outside, like the chain's own 41999).
             if raw.get("address") == 41999:
                 raw["address"] = 41998
-        elif variant == "opcua_path":
+        elif variant in ("opcua_path", "opcua_path_in_hours"):
             # OPC UA path instead of Modbus: re-shape the step's RAW record
             # for the REAL opcua_audit parser. It reads `eventType` from the
             # record root, classifies write events, and derives
@@ -453,6 +456,24 @@ def mutate_protocol(payloads: list, rng: Random, *, variant: str, **_kw) -> list
         else:
             raise ValueError(f"unknown protocol variant {variant!r}")
         _set_raw(payloads, i, raw)
+    if variant == "opcua_path_in_hours":
+        # The attacker writes DURING business hours. ``opcua_path`` alone is
+        # still caught, but only by ot_write_outside_maintenance, which fires
+        # because the twin's fixed clock (Thu 00:26 UTC) happens to be outside
+        # 08:00-18:00 -- a coincidence of the test clock, not coverage of the
+        # behaviour. Shift the WHOLE chain to Thu 10:00 UTC (events keep their
+        # spacing and order) so the maintenance-window rule cannot fire, which
+        # leaves only a rule that does not depend on the clock.
+        _shift = 1_751_536_800_000 - _TWIN_BASE_MS
+        for _s, _p in payloads:
+            _m = _p.setdefault("meta", {})
+            if isinstance(_m.get("received_at"), int):
+                _m["received_at"] += _shift
+            _rw = _p.get("raw")
+            if isinstance(_rw, dict):
+                for _k in ("ts", "time", "TimeCreated", "createdTime"):
+                    if isinstance(_rw.get(_k), int):
+                        _rw[_k] += _shift
     return payloads
 
 
@@ -534,7 +555,7 @@ _VARIANTS: dict[str, list[str]] = {
     "credential": ["different_path", "borrowed_credential"],
     "timing": ["delayed", "split_window", "straddle_maintenance"],
     "network": ["ip_pivot", "source_rotation", "actor_multiple_ips", "segment_ips"],
-    "protocol": ["modbus_func_code", "changed_register", "opcua_path"],
+    "protocol": ["modbus_func_code", "changed_register", "opcua_path", "opcua_path_in_hours"],
     "telemetry": ["loss", "reorder", "duplicate", "delay"],
 }
 

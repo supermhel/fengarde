@@ -257,8 +257,17 @@ class Detector:
         tenant = tenant_of(event)
         disabled = load_disabled_rules(self.tenants_dir, tenant)
         if disabled:
-            candidates = [r for r in candidates if r.id not in disabled]
+            # a companion rule follows its sibling: disabling the sibling disables both
+            candidates = [r for r in candidates
+                          if r.id not in disabled and r.companion_of not in disabled]
         matched = [r for r in candidates if r.evaluate(event)]
+        # A companion exists to catch the attack its sibling cannot see (same
+        # behaviour, other key). When the sibling ALSO matched this event, it has
+        # already raised the alert: emitting the companion too would double the
+        # analyst's volume for every ordinary attack. Every rule above was
+        # evaluated first, so the companion's window state is still updated.
+        _matched_ids = {r.id for r in matched}
+        matched = [r for r in matched if r.companion_of not in _matched_ids]
         score = self.scorer.score(matched, event)
         # R4-28 (2026-08-27): the old `event.setdefault("siem", {})["score"]`
         # raised TypeError on a `siem: null` event -- setdefault returns the
