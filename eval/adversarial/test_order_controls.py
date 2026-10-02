@@ -31,6 +31,11 @@ on the true one -- and the legacy pair must be shown NOT to.
   (f) policy                                   the control is NOT in mutate_generic's product
                                                catalogue and never enters mutation_robustness
   (g) determinism                              two runs are byte-identical
+  (h) Stage 1 wiring                           layer_a._cmp RECORDS causal_order_fidelity /
+                                               causal_order_retained without changing `pass`;
+                                               the row whitelist accepts them; scenario_matrix
+                                               prints the control in a separate section, never
+                                               pooled, and its self-check fails a broken control
 """
 from __future__ import annotations
 
@@ -48,8 +53,10 @@ for _p in (str(ADVERSARIAL), str(TWIN), str(SERVICES)):
         sys.path.insert(0, _p)
 
 import report  # noqa: E402,F401  (pre-seeds sys.modules['main']; must precede the harness imports)
+import layer_a  # noqa: E402
 import mutate_generic as mg  # noqa: E402
 import order_controls as oc  # noqa: E402
+import scenario_matrix  # noqa: E402
 import scenario_registry as reg  # noqa: E402
 
 SEED = 7
@@ -235,6 +242,44 @@ def test_policy_and_determinism(tables: dict) -> None:
            "elapsed" not in json.dumps(tables) and "date" not in json.dumps(tables))
 
 
+def test_stage1_wiring(tables: dict) -> None:
+    base = reg.grade(reg.get("ai_to_ot"), SEED)
+    same = layer_a._cmp("ax", "va", base, dict(base))
+    _check("(h) _cmp on an unchanged grade: causal_order_retained True and pass True (the flag does not "
+           "make a clean row fail)", same["causal_order_retained"] is True and same["pass"] is True,
+           f"cof={same['causal_order_fidelity']}")
+    worse = layer_a._cmp("ax", "va", base, dict(base, causal_order_fidelity=0.5))
+    gone = layer_a._cmp("ax", "va", base, dict(base, causal_order_fidelity=None))
+    _check("(h) a lower or vanished causal_order_fidelity flips causal_order_retained to False but NOT `pass` "
+           "(Stage 1: recorded, not gating -- Stage 2 is owner-gated)",
+           worse["causal_order_retained"] is False and gone["causal_order_retained"] is False
+           and worse["pass"] is True and gone["pass"] is True)
+    nobase = layer_a._cmp("ax", "va", dict(base, causal_order_fidelity=None),
+                          dict(base, causal_order_fidelity=0.0))
+    better = layer_a._cmp("ax", "va", dict(base, causal_order_fidelity=0.5), dict(base, causal_order_fidelity=1.0))
+    _check("(h) nothing to lose when the baseline had no graded fidelity; an improvement is retained",
+           nobase["causal_order_retained"] is True and better["causal_order_retained"] is True)
+    _check("(h) the strict row-key whitelist accepts exactly the new keys (and still rejects strangers)",
+           {"causal_order_fidelity", "causal_order_retained"} <= layer_a._ROW_KEYS
+           and set(same) <= layer_a._ROW_KEYS and "wall_clock" not in layer_a._ROW_KEYS)
+    _check("(h) layer_a's baseline-quality caveat still names directional_discrimination and now points at the "
+           "order metrics",
+           any("directional_discrimination" in c and "causal_order_fidelity" in c
+               for c in layer_a._baseline_quality(base)["caveats"]))
+
+    mc = scenario_matrix.run_metric_controls(SEED, ["ai_to_ot"])
+    _check("(h) scenario_matrix.run_metric_controls returns the control table under its own key and run_all "
+           "does not carry it (never pooled)",
+           set(mc["scenarios"]) == {"ai_to_ot"} and mc["scenarios"]["ai_to_ot"]["mirror_valid"] is True
+           and "metric_controls" not in scenario_matrix.run_all(SEED, ["ai_to_ot"]))
+    good = {"scenarios": {}, "metric_controls": {"scenarios": {"ai_to_ot": tables["ai_to_ot"]}}}
+    bad_ctl = copy.deepcopy(tables["ai_to_ot"])
+    bad_ctl["rows"]["mirror"]["order_concordance"] = 1.0
+    bad = {"scenarios": {}, "metric_controls": {"scenarios": {"ai_to_ot": bad_ctl}}}
+    _check("(h) scenario_matrix._selfcheck passes a sound control and FAILS one that cannot say no",
+           scenario_matrix._selfcheck(good) is True and scenario_matrix._selfcheck(bad) is False)
+
+
 def main() -> int:
     print("== FENGARDE adversarial: reversed-order metric control ==")
     test_pure_helpers()
@@ -242,6 +287,7 @@ def main() -> int:
     test_graded_swap(tables)
     test_control_can_fail(tables)
     test_policy_and_determinism(tables)
+    test_stage1_wiring(tables)
     print("-" * 60)
     if _FAILURES:
         print(f"[FAIL] {len(_FAILURES)} check(s) failed: {', '.join(_FAILURES)}")
