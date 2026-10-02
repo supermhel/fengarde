@@ -818,7 +818,7 @@ def main(argv: list | None = None) -> int:
         else:
             print(f"  [FAIL] {len(res['unwaived'])} unwaived finding(s), {len(res['stale_waivers'])} stale waiver(s)")
             rc = 1
-    print(f"  NOTE: observed (pipeline) column: python eval/twin/oracle_consistency.py --triangulate")
+    print("  NOTE: observed (pipeline) column: python eval/twin/oracle_consistency.py --triangulate")
     print(f"  {LIMITS}")
     if args.out:
         args.out.parent.mkdir(parents=True, exist_ok=True)
