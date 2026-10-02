@@ -98,8 +98,19 @@ def _rule_params() -> dict:
 # Detection leg only (WS-2 -> WS-4): fast, no WS-8
 # ---------------------------------------------------------------------------
 def _fired(payloads: list) -> list:
-    import report  # noqa: PLC0415
+    """Fired-rule dicts for ``payloads``.
+
+    Default: ``probe_session.FastProbe`` (one Detector, a fresh window counter
+    per probe; ~0.1 s per probe instead of ~2-4 s). ``FENGARDE_SLOW_PROBE=1``
+    restores the original per-probe fresh ``Detector`` via
+    ``report._real_detection``. The two are PROVEN to return identical lists
+    (``probe_session.verify_parity``; ``test_evasion_axes.py``) and the JSON
+    this module writes is byte-identical under either."""
+    import probe_session  # noqa: PLC0415
     pairs = [(p["source_type"], p["raw"], p.get("meta"), spec.label) for spec, p in payloads]
+    if probe_session.fast_probe_enabled():
+        return probe_session.default_probe().detect(pairs)
+    import report  # noqa: PLC0415
     return report._real_detection(pairs)
 
 
