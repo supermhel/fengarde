@@ -105,7 +105,54 @@ def test_contracts_dir_container_layout():
              rules_view.RULES_DIR, rules_view.TENANTS_DIR) = save
 
 
+def test_companion_of_must_be_a_str_to_participate():
+    """A list-valued siem.companion_of (a typo tools/validate_rules.py rejects,
+    but this read model must not depend on the gate having run) is unhashable:
+    `list in frozenset` raised TypeError and crashed the whole /rules listing.
+    Only a non-empty str may name a sibling; a str companion still follows its
+    sibling's tenant-disable (positive control)."""
+    import tempfile
+    sib = "6f1c8a2e-0d3b-4c11-9a21-7b5e2f9a1c01"
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        (root / "rules").mkdir()
+        (root / "tenants").mkdir()
+        for name, extra in (("sib", ""),
+                            ("comp", f"  companion_of: {sib}\n"),
+                            ("listy", f"  companion_of: [{sib}]\n"),
+                            ("dicty", f"  companion_of: {{a: {sib}}}\n"),
+                            ("empty", "  companion_of: ''\n"),
+                            ("nulled", "  companion_of:\n")):
+            rid = sib if name == "sib" else f"00000000-0000-4000-8000-{name:0>12}"
+            (root / "rules" / f"{name}.yml").write_text(
+                f"id: {rid}\ntitle: {name}\nlevel: high\nsiem:\n  sector: common\n{extra}",
+                encoding="utf-8")
+        (root / "tenants" / "acme.yml").write_text(
+            f"disabled_rules:\n  - {sib}\n", encoding="utf-8")
+        save = (rules_view.RULES_DIR, rules_view.TENANTS_DIR)
+        try:
+            rules_view.RULES_DIR = root / "rules"
+            rules_view.TENANTS_DIR = root / "tenants"
+            try:
+                everyone = {s["title"]: s for s in rules_view.list_rule_summaries()}
+                acme = {s["title"]: s for s in rules_view.list_rule_summaries("acme")}
+            except TypeError as exc:
+                check(False, f"list_rule_summaries crashed on a non-str companion_of: {exc}")
+                return
+        finally:
+            rules_view.RULES_DIR, rules_view.TENANTS_DIR = save
+    check(len(everyone) == 6, f"all 6 rules must be listed, got {sorted(everyone)}")
+    check(all(s["enabled"] for s in everyone.values()), "no tenant -> all enabled")
+    check(not acme["comp"]["enabled"],
+          "a str companion must follow its sibling's tenant-disable")
+    check(not acme["sib"]["enabled"], "the disabled sibling itself is disabled")
+    for odd in ("listy", "dicty", "empty", "nulled"):
+        check(acme[odd]["enabled"],
+              f"{odd}: a non-str/empty companion_of names no sibling -> stays enabled")
+
+
 def main():
+    test_companion_of_must_be_a_str_to_participate()
     test_contracts_dir_resolves_to_a_real_rules_dir()
     test_list_all_rules_no_tenant()
     test_malformed_tenant_id_disables_nothing()

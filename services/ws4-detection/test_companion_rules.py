@@ -166,9 +166,140 @@ def run_opcua():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+SSH_SIBLING = "6f1c8a2e-0d3b-4c11-9a21-7b5e2f9a1c01"
+SSH_COMPANION = "d83b71c3-93eb-439f-86f9-5985ebcc38cb"
+
+
+def _ssh_burst(ips, n=12):
+    """n failed SSH logins for ONE account, round-robin over ``ips``, 3s apart."""
+    return [_event("linux_ssh",
+                   f"Jun 10 13:55:{i:02d} db01 sshd[{2000 + i}]: Failed password for deploy "
+                   f"from {ips[i % len(ips)]} port {51000 + i} ssh2", i, BASE + i * 3_000)
+            for i in range(n)]
+
+
+def _detector(tenants_dir):
+    from main import Detector
+    return Detector(tenants_dir=tenants_dir, plugin_rule_dirs=[])
+
+
+def _emit_one(det, event):
+    """process + _emit one event on a fresh bus; return (matched, alerts)."""
+    from shared.bus import Bus
+    bus = Bus()
+    event, matched, action = det.process(event)
+    det._emit(bus, event, matched, action)
+    return matched, [m.payload for m in bus.drain("alerts")]
+
+
+def run_suppression_invariant():
+    """FINDING 8 (2026-10-02 review): WS-4 drops a companion's alert whenever its
+    sibling MATCHED the same event. That is only sound if "sibling matched" implies
+    "a sibling alert is actually emitted" -- otherwise the companion's alert is
+    removed in favour of an alert that never exists and the attack goes silent.
+
+    Traced end to end (main.py Detector.process -> _emit): there is NO point
+    between `matched` and `bus.produce("alerts")` that can drop a matched rule --
+    score does not gate emission, alert_id dedup happens downstream in the
+    indexer (a repeat of an already-indexed sibling alert is the sibling having
+    "already raised the alert"), and a redelivered event re-matches the sibling
+    because window membership is keyed by ingest_id (idempotent). So no scenario
+    exists TODAY where the sibling matches but no sibling alert is emitted.
+
+    These checks PIN that invariant so a future downstream filter (a per-rule
+    score floor, a rate limit, a mute list) fails here, loudly, instead of
+    silently deleting the companion's coverage."""
+    import copy
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tenants = Path(tmp)
+        det = _detector(tenants)
+
+        # spy on the companion so the test knows on which events it WOULD have fired
+        comp = next(r for r in det.rules if r.id == SSH_COMPANION)
+        check(comp.companion_of == SSH_SIBLING, "companion must link to the ssh brute-force sibling")
+        comp_fired = []
+        real_eval = comp.evaluate
+
+        def spy(ev, _real=real_eval):
+            hit = _real(ev)
+            if hit:
+                comp_fired.append(ev["time"])
+            return hit
+        comp.evaluate = spy
+
+        events = _ssh_burst(["203.0.113.21"])           # ONE ip + ONE account: both rules match
+        alert_ids_by_time: dict = {}
+        first_sibling_idx = None
+        for i, ev in enumerate(events):
+            matched, alerts = _emit_one(det, ev)
+            emitted = [a["rule_id"] for a in alerts]
+            # (1) emission is exactly the matched set: nothing downstream of
+            #     `matched` may drop a rule (this is the pinned invariant)
+            check(sorted(emitted) == sorted(r.id for r in matched),
+                  f"event {i}: alerts emitted {emitted} != matched {[r.id for r in matched]}")
+            alert_ids_by_time[ev["time"]] = emitted
+            if SSH_SIBLING in emitted and first_sibling_idx is None:
+                first_sibling_idx = i
+        check(first_sibling_idx is not None, "the sibling must alert on a 12-failure single-source burst")
+        check(len(comp_fired) > 0,
+              "vacuity guard: the companion must have MATCHED on this burst, else the suppression is untested")
+        # (2) every event the companion matched on carries a sibling alert and NO companion alert
+        for t in comp_fired:
+            got = alert_ids_by_time.get(t, [])
+            check(SSH_SIBLING in got,
+                  f"companion matched at t={t} but no sibling alert was emitted for that event: {got}")
+            check(SSH_COMPANION not in got,
+                  f"companion alert must be suppressed when the sibling alerted (t={t}): {got}")
+
+        # (3) at-least-once redelivery: the same event processed again re-matches the
+        #     sibling (idempotent window) -> the companion stays suppressed, no
+        #     double alert and no gap
+        if first_sibling_idx is not None:
+            redelivered = copy.deepcopy(events[first_sibling_idx])
+            matched, alerts = _emit_one(det, redelivered)
+            ids = [a["rule_id"] for a in alerts]
+            check(SSH_SIBLING in ids and SSH_COMPANION not in ids,
+                  f"redelivered trigger event must still alert via the sibling only, got {ids}")
+
+        # (4) negative control: the SPLIT attack (sibling blind) still alerts via the companion
+        det2 = _detector(tenants)
+        seen = []
+        for ev in _ssh_burst(["203.0.113.21", "192.0.2.44"]):
+            _m, alerts = _emit_one(det2, ev)
+            seen.extend(a["rule_id"] for a in alerts)
+        check(SSH_COMPANION in seen and SSH_SIBLING not in seen,
+              f"split attack must alert via the companion alone, got {sorted(set(seen))}")
+
+        # (5) tenant-disable is untouched: disabling the sibling disables the companion.
+        #     (fresh dirs: load_disabled_rules caches per (dir, tenant))
+        dis_dir = Path(tmp) / "disabling"
+        dis_dir.mkdir()
+        (dis_dir / "acme.yml").write_text(f"disabled_rules:\n  - {SSH_SIBLING}\n", encoding="utf-8")
+        open_dir = Path(tmp) / "open"
+        open_dir.mkdir()
+
+        def tenant_run(tenants_dir):
+            d = _detector(tenants_dir)
+            out = []
+            for ev in _ssh_burst(["203.0.113.21"]):
+                ev.setdefault("siem", {})["tenant"] = "acme"
+                _m, alerts = _emit_one(d, ev)
+                out.extend(a["rule_id"] for a in alerts)
+            return out
+
+        seen3 = tenant_run(dis_dir)
+        seen4 = tenant_run(open_dir)       # control: tenant "acme" with nothing disabled
+        check(SSH_SIBLING in seen4, "control: the same burst alerts for a tenant that disabled nothing")
+        check(SSH_SIBLING not in seen3 and SSH_COMPANION not in seen3,
+              f"tenant that disabled the sibling must get neither alert, got {sorted(set(seen3))}")
+
+
 def main():
     run()
     run_opcua()
+    run_suppression_invariant()
     if FAILS:
         print(f"[FAIL] companion rules: {len(FAILS)} problem(s)")
         for f in FAILS:

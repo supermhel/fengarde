@@ -276,7 +276,60 @@ def _validate_condition(condition, selection_names: set[str], errors: list[str],
                       f"({type(exc).__name__}: {exc})")
 
 
-def validate_rule(rule: dict) -> list[str]:
+def _validate_companion_of(rule: dict, siem: dict, errors: list[str],
+                           rules_index: "dict[str, dict] | None") -> None:
+    """siem.companion_of links a companion rule to its sibling (WS-4 drops the
+    companion's alert when the sibling matched the same event, and a tenant that
+    disables the sibling disables the companion). The engine reads it as
+    ``isinstance(x, str) and x`` and otherwise silently treats the rule as a
+    standalone one, so a typo'd id, a list, or a self-link ships as a
+    "companion" that is neither suppressed nor disabled with its sibling.
+    Fail loudly here instead.
+
+    The shape checks always run. The cross-rule checks (target exists, target is
+    not itself a companion) need ``rules_index`` (rule id -> parsed rule for the
+    same rules dir) and are skipped when it is None (single dict validation)."""
+    if "companion_of" not in siem:
+        return
+    target = siem["companion_of"]
+    if not isinstance(target, str) or not target:
+        errors.append(f"siem.companion_of must be a non-empty string (the sibling "
+                      f"rule's id), got {target!r}")
+        return
+    if target == rule.get("id"):
+        errors.append(f"siem.companion_of {target!r} is the rule's own id -- a rule "
+                      f"cannot be its own companion")
+        return
+    if rules_index is None:
+        return
+    sibling = rules_index.get(target)
+    if sibling is None:
+        errors.append(f"siem.companion_of {target!r} is not the id of any rule in the "
+                      f"same rules directory (typo? the companion would never be "
+                      f"suppressed or disabled with a sibling)")
+        return
+    sibling_siem = sibling.get("siem") if isinstance(sibling, dict) else None
+    if isinstance(sibling_siem, dict) and sibling_siem.get("companion_of") is not None:
+        errors.append(f"siem.companion_of {target!r} points at a rule that is itself "
+                      f"a companion (companion_of chains are not supported: the "
+                      f"suppression and tenant-disable logic follow ONE link)")
+
+
+def load_rules_index(rules_dir: Path) -> "dict[str, dict]":
+    """rule id -> parsed rule for every well-formed *.yml in ``rules_dir``.
+    Unparseable files are skipped here (main() reports them separately)."""
+    index: dict[str, dict] = {}
+    for path in sorted(Path(rules_dir).glob("*.yml")):
+        try:
+            raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+        except (yaml.YAMLError, OSError):
+            continue
+        if isinstance(raw, dict) and isinstance(raw.get("id"), str):
+            index.setdefault(raw["id"], raw)
+    return index
+
+
+def validate_rule(rule: dict, rules_index: "dict[str, dict] | None" = None) -> list[str]:
     errors: list[str] = []
     if not isinstance(rule, dict):
         return [f"top level must be a mapping, got {type(rule).__name__}"]
@@ -344,6 +397,8 @@ def validate_rule(rule: dict) -> list[str]:
             v = siem.get(f)
             if v is not None and (not isinstance(v, str) or not v):
                 errors.append(f"siem.{f} must be a non-empty dotted path, got {v!r}")
+        _validate_companion_of(rule, siem, errors, rules_index)
+
         if "llm_gate" in siem and not isinstance(siem["llm_gate"], bool):
             # Design-B (2026-07-29 audit): engine.py's Rule deliberately fails
             # closed (`is not False`) on a non-bool value here, so a typo'd
@@ -410,6 +465,10 @@ def main(argv: list[str]) -> int:
               f"pointing somewhere empty.")
         return 1
 
+    # Cross-rule index for siem.companion_of: the rules dir of the file(s) being
+    # validated (RULES_DIR for a full run, the file's own dir for a single file).
+    rules_index = load_rules_index(paths[0].parent if len(argv) > 1 else RULES_DIR)
+
     seen_ids: dict[str, str] = {}
     failures: list[tuple[str, list[str]]] = []
     for path in paths:
@@ -421,7 +480,7 @@ def main(argv: list[str]) -> int:
         if not rule:
             failures.append((path.name, ["file is empty"]))
             continue
-        errors = validate_rule(rule)
+        errors = validate_rule(rule, rules_index)
         # Global invariant: rule ids must be unique (a duplicate id collapses two
         # rules' dedup/alert identity -- T7 keys on rule id).
         rid = rule.get("id")
