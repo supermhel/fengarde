@@ -339,6 +339,117 @@ def parity_on_noise_stream(lab: ax.Lab, w_short_ms: int, n: int) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# The F1 primitive (counter level) -- the cheap, exact reproduction
+# ---------------------------------------------------------------------------
+def f1_primitive(counter_cls=DequeWindowCounter, *, noise_window_ms: int = 60_000,
+                 long_window_ms: int = 300_000, noise_delay_ms: int = 100_000) -> dict:
+    """The counter-level repro of F1 (no detector, no parser): record a distinct
+    value under a 300 s key, send ``_SWEEP_EVERY - 1`` hits on OTHER keys with a
+    60 s window 100 s later (the last of them lands on the sweep tick), then
+    record a second value and read the distinct count. 2 is correct; 1 means the
+    live state of the long-window key was swept by the short-window tick.
+
+    The phase is computed from the counter's own ``_hits`` (never hard-coded 255):
+    the target hit is hit number 1, so the tick is ``SWEEP_EVERY - 1`` hits later."""
+    c = counter_cls()
+    t0 = 1_000_000
+    long_w = long_window_ms
+    c.hit_distinct("long", t0, long_w, "h1")
+    need = SWEEP_EVERY - c._hits           # hits until (and including) the tick
+    for i in range(need):
+        c.hit(f"noise-{i}", t0 + noise_delay_ms, noise_window_ms)
+    count = c.hit_distinct("long", t0 + noise_delay_ms, long_w, "h2")
+    return {"distinct_after": count, "state_lost": count < 2, "noise_hits": need,
+            "long_window_ms": long_w, "noise_window_ms": noise_window_ms}
+
+
+def f1_reproduces() -> bool:
+    """True while the product still has the cross-window sweep defect (the
+    finding is open); False once ``DequeWindowCounter._sweep`` is fixed."""
+    return bool(f1_primitive()["state_lost"])
+
+
+def noise_predict(lab: ax.Lab, w_short_ms: int, calib: dict, *, prefix_noise: int = 0) -> tuple:
+    """(built, phase, predicted N*) for a stream with ``prefix_noise`` events
+    BEFORE the burst -- the control that proves N* is computed from the counter's
+    own state, not a constant."""
+    built = build_stream(lab, w_short_ms, 0, prefix_noise=prefix_noise)
+    phase = _phase_before_noise(lab, built)
+    pred = predict_noise_events(phase, calib["windows_ms"], built["idle_start_ms"], w_short_ms,
+                                post_hits=post_event_hits(lab, built), post_idle_ms=built["post_idle_ms"])
+    return built, phase, pred
+
+
+def run_controls(sets: dict | None = None, *, probe: ps.FastProbe | None = None, key: str = "common_lateral_movement",
+                 seed: int = 7) -> list:
+    """Every control of the state-exhaustion instrument, as ``(name, ok, detail)``.
+    Each one can fail: the positive reproduces the defect, each negative removes
+    one ingredient (the idle time, the window mismatch, the defective sweep) and
+    must make the loss disappear."""
+    out: list = []
+
+    def add(name, ok, detail=""):
+        out.append((name, bool(ok), detail))
+    prim = f1_primitive()
+    add("N1 F1 primitive, positive: the long-window state is swept by short-window noise", prim["state_lost"], str(prim))
+    same = f1_primitive(noise_delay_ms=30_000)
+    add("N2 negative: the same noise while the key is idle for less than the noise window leaves the state intact",
+        not same["state_lost"], str(same))
+    # no-noise control: nothing between the two hits -> 2
+    c = DequeWindowCounter()
+    c.hit_distinct("long", 1_000_000, 300_000, "h1")
+    add("N3 negative: with no noise the second value counts 2", c.hit_distinct("long", 1_100_000, 300_000, "h2") == 2)
+    fixed = f1_primitive(PerKeyWindowCounter)
+    add("N4 the instrument can turn green: a per-key sweep (the product fix) keeps the state", not fixed["state_lost"], str(fixed))
+    sets = sets or ax.build_rule_sets()
+    probe = probe or ps.FastProbe(strict_clock=True)
+    w = shortest_window_ms(sets)
+    burst = ax.reference_burst(key, seed)
+    lab = ax.Lab(probe, sets[key], burst)
+    calib = calibrate_noise()
+    res = state_exhaustion(lab, w, calib=calib)
+    add(f"N5 end to end ({key}): a pause plus noise makes the set forget; measured == predicted",
+        res.get("searched") and res["agree"] and isinstance(res["noise_events"], int), str(res))
+    n = res["noise_events"]
+    base = build_stream(lab, w, 0)
+    add("N6 negative: with no noise the split burst is detected", lab.detected(base["payloads"]))
+    add("N7 negative: N*-1 noise events keep it detected (the loss starts exactly at the prediction)",
+        not _lost(lab, w, n - 1) and _lost(lab, w, n), f"N*={n}")
+    add("N8 negative: the same noise while the key is NOT idle past the short window is detected (cause = sweep)",
+        res["not_idle_control_detected"] is True)
+    # a defective-sweep-free detector keeps detecting under the SAME stream
+    fixed_probe = ps.FastProbe(strict_clock=True, counter_factory=PerKeyWindowCounter)
+    fixed_lab = ax.Lab(fixed_probe, sets[key], burst)
+    add("N9 the product fix turns the end-to-end result green (N* noise events no longer hide the burst)",
+        not _lost(fixed_lab, w, n) and not _lost(fixed_lab, w, _NOISE_CAP))
+    # the prediction tracks the counter's phase
+    shifts = []
+    for pre in (17, 100):
+        built, phase, pred = noise_predict(lab, w, calib, prefix_noise=pre)
+        meas = ax._first_true(1, _NOISE_CAP, lambda k, pre=pre: _lost(lab, w, k, prefix_noise=pre))
+        shifts.append((pre, phase, pred, meas))
+    add("N10 moving the sweep phase (events before the burst) moves N* exactly as predicted",
+        all(pred == meas for _p, _ph, pred, meas in shifts) and len({x[3] for x in shifts} | {n}) > 1, str(shifts))
+    # parity on THIS noise stream
+    add("N11 FastProbe == the slow per-probe Detector on the noise stream itself", parity_on_noise_stream(lab, w, n))
+    leaky = ps.FastProbe(strict_clock=True, reset_counter=False)
+    pairs = ps.payloads_to_pairs(build_stream(lab, w, n)["payloads"])
+    first, second = leaky.detect(pairs), leaky.detect(pairs)
+    add("N12 negative: a probe that leaks window state between calls FAILS parity on the noise stream",
+        first != second)
+    # F5 alert-id economics
+    fl = alert_flood_cost(probe)
+    rows = {(r["groups"], r["buckets"], r["events_per_cell"]): r for r in fl["rows"]}
+    add("N13 F5 unit control: one group in one bucket is ONE alert id however many events it gets",
+        fl["one_group_one_bucket_is_one_id"])
+    add("N14 F5: distinct (group, bucket) cells each cost ~T events per alert id (floods DO create alert floods)",
+        all(r["alert_ids"] == r["groups"] * r["buckets"] for r in fl["rows"]) and
+        all(r["events_per_alert"] is not None and r["events_per_alert"] <= fl["threshold"] * 10 for r in rows.values()),
+        str([(r["groups"], r["buckets"], r["alert_ids"], r["events_per_alert"]) for r in fl["rows"]]))
+    return out
+
+
+# ---------------------------------------------------------------------------
 # F5: alert-id economics of floods (informational)
 # ---------------------------------------------------------------------------
 def _ssh_fail(ip: str, user: str, t: int, i: int) -> tuple:
@@ -407,12 +518,25 @@ def measure_all(seed: int = 7, rules_dir=None, *, probe: ps.FastProbe | None = N
             "shortest_window_seconds": w_short / 1000.0, "noise": calib, "rule_sets": out}
 
 
+#: The two rule-sets the blocking lane measures (one with a companion, one without
+#: companion but with 4 hits per event); ``--full`` measures every rule-set.
+BLOCKING_SETS = ["common_lateral_movement", "common_password_spray"]
+
+
 def main(argv: list | None = None) -> int:
     ap = argparse.ArgumentParser(prog="noise_dilution")
     ap.add_argument("--seed", type=int, default=7)
     ap.add_argument("--out", type=Path, default=DEFAULT_OUT)
     ap.add_argument("--rule-set", action="append", default=None)
+    ap.add_argument("--blocking-subset", action="store_true",
+                    help="the CI lane: every control plus two rule-sets (the full table is --full / default)")
     args = ap.parse_args(argv)
+    if args.blocking_subset:
+        failed = 0
+        for name, ok, detail in run_controls(seed=args.seed):
+            print(f"[{'OK' if ok else 'FAIL'}] {name}" + (f" -- {detail}" if detail and not ok else ""))
+            failed += 0 if ok else 1
+        args.rule_set = args.rule_set or BLOCKING_SETS
     res = measure_all(args.seed, only=args.rule_set)
     res["alert_flood_cost"] = alert_flood_cost()
     print(f"== state exhaustion (F1, deque backend; sweep every {SWEEP_EVERY} hits; shortest window "
@@ -434,6 +558,9 @@ def main(argv: list | None = None) -> int:
     with open(args.out, "w", encoding="utf-8") as fh:
         json.dump(res, fh, indent=2, sort_keys=True)
     print(f"-> {args.out}")
+    if args.blocking_subset and failed:
+        print(f"[FAIL] {failed} noise-dilution control(s) failed")
+        return 1
     return 0 if ok else 1
 
 
