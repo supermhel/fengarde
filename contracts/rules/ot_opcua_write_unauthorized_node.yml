@@ -1,6 +1,10 @@
 title: OPC UA write to a node not on the authorised-node list
 id: e7a14b6d-3c52-4d90-8f1b-5a9c0d2e6b47
-status: stable
+# status: experimental is METADATA ONLY -- no engine or service code gates on `status`
+# (verified 2026-10-02), so it does not disable or mute the rule. It exists so the file
+# does not claim `stable` for a signal that is noise until the plant owner populates
+# opcua_authorized_nodes.yml. Flip it to `stable` once that list has been reviewed.
+status: experimental
 description: >
   An OPC UA client wrote a value to a control-system node that is NOT listed in
   contracts/allowlists/opcua_authorized_nodes.yml (OCSF API Activity 6003,
@@ -21,6 +25,26 @@ description: >
   Populate the allowlist from a reviewed baseline before relying on the signal;
   see that file. Level is medium, not high, because until the list is populated
   most hits are routine operations.
+
+  Scoring honesty (2026-10-02 review): this rule adds NO score weight of its own.
+  Its event is, by construction, often ALSO matched by ot_config_change (config /
+  firmware / setpoint nodes, weight 60) and ot_write_outside_maintenance (off-hours,
+  weight 65); with its own weight of 50 one config write scored 70 -> 100 purely
+  from the overlap. The medium severity floor (40) still scores it when it fires
+  alone -- the in-hours write to an ordinary node that nothing else sees, which is
+  the only case it exists for -- so it reaches the classifier but never the LLM
+  funnel by itself. It still raises its own alert beside the older rules on an
+  overlapping event (it states a different fact: the node was never declared
+  writable); it just does not inflate the score. It cannot be a `companion_of`
+  either rule: companion_of takes ONE sibling and ties tenant-disablement to it,
+  and this rule overlaps two.
+
+  Owner decision (not made here): shipping it default-DISABLED until the allowlist
+  is populated would be quieter on day one, but the engine has no default-off
+  rule state, a tenant opt-in would silently lose the in-hours OPC UA write
+  coverage this rule was added to give, and that coverage is what Layer A's
+  protocol/opcua_path_in_hours variant measures. The safer default is kept: ON,
+  low-weight, labelled experimental.
 level: medium
 logsource:
   category: application_activity
@@ -38,7 +62,10 @@ fields:
   - unmapped.ot.server_id
 siem:
   sector: datacenter
-  score_weight: 50
+  # Adds NO weight of its own -- see "Scoring honesty" above. The `level: medium` floor
+  # (contracts/scoring.yaml severity_floor.medium = 40) still guarantees a score when
+  # it fires alone.
+  score_weight: 0
 mitre:
   framework: attack-ics
   tactic: TA0106      # Impair Process Control
