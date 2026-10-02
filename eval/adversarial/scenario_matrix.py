@@ -33,6 +33,16 @@ BLOCKING FLOOR (``main`` returns 1 on any failure)
       scenario -- the lane can say no;
     - every scenario has at least one applicable variant per axis it claims.
 
+METRIC CONTROLS (2026-10-02) -- a SEPARATE section, never pooled
+    ``order_controls`` replays each storyline time-MIRRORED (the attack happens
+    backwards) and checks that the order metrics say no while the legacy join
+    metrics -- which never read a clock -- do not move. That is a control for the
+    INSTRUMENT, so it is printed beside the product rows under ``metric_controls``
+    and is never counted in a pass rate or in ``mutation_robustness`` (an earlier
+    time-rewriting ``swap_first_two_steps`` variant was removed from the product
+    catalogue because failing it said nothing about the product). Its self-check
+    fails the lane when the control cannot say yes or cannot say no.
+
 STDLIB ONLY. Deterministic: no wall clock, no network, no sampling.
 """
 from __future__ import annotations
@@ -203,8 +213,27 @@ def run_multi_seed(seeds: list, scenarios: list | None = None) -> dict:
     return out
 
 
+def run_metric_controls(seed: int = 7, scenarios: list | None = None) -> dict:
+    """The reversed-order control table per storyline (see the module docstring). Kept OUT of
+    ``run_all`` so the per-scenario rows, the pooled number and every existing artefact are
+    byte-for-byte what they were."""
+    import order_controls  # noqa: PLC0415  (imports the harness; keep it off module import)
+    sdefs = [reg.get(n) for n in scenarios] if scenarios else list(reg.ALL)
+    return {
+        "note": "metric controls for the order metrics; NOT product mutations, never pooled into "
+                "a pass rate or mutation_robustness",
+        "scenarios": {s.name: order_controls.run_order_controls(s, seed) for s in sdefs},
+    }
+
+
 def _selfcheck(result: dict) -> bool:
     ok = True
+    if "metric_controls" in result:
+        import order_controls  # noqa: PLC0415
+        for name, ctl in result["metric_controls"]["scenarios"].items():
+            for problem in order_controls.controls_ok(ctl):
+                print(f"[FAIL] metric control: {problem}")
+                ok = False
     for name, m in result["scenarios"].items():
         if m["baseline"]["tpr"] != 1.0:
             print(f"[FAIL] {name}: baseline tpr={m['baseline']['tpr']!r}, expected 1.0 "
@@ -294,6 +323,20 @@ def main(argv: list | None = None) -> int:
     p = result["pooled"]
     print(f"\npooled (convenience only, hides per-shape failures): "
           f"{p['passed']}/{p['applicable']} = {p['mutation_robustness']}")
+
+    result["metric_controls"] = run_metric_controls(args.seed, args.scenario)
+    print("\nmetric_controls (instrument controls for the ORDER metrics -- not mutations, "
+          "never pooled above; order_concordance is a timestamp invariant):")
+    for name, ctl in result["metric_controls"]["scenarios"].items():
+        r = ctl["rows"]
+        print(f"  [{name}] true chain: order_concordance={r['identity']['order_concordance']} "
+              f"causal_order_fidelity={r['identity']['causal_order_fidelity']} | "
+              f"MIRRORED: order_concordance={r['mirror']['order_concordance']} "
+              f"causal_order_fidelity={r['mirror']['causal_order_fidelity']} "
+              f"alert_order_ok={r['mirror']['alert_order_ok']} | legacy chain_fidelity "
+              f"{r['identity']['chain_fidelity']} -> {r['mirror']['chain_fidelity']}, FCR "
+              f"{r['identity']['false_correlation_rate']} -> {r['mirror']['false_correlation_rate']} "
+              f"(legacy join metrics equal under mirror: {ctl['legacy_equal_under_mirror']})")
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
     with open(args.out, "w", encoding="utf-8") as fh:

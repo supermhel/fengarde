@@ -33,7 +33,11 @@ WHAT IT DOES (real pipeline, nothing stubbed)
       fidelity_retained   = chain_fidelity(mutated) == chain_fidelity(base)
                             (a mutation must not degrade the causal join).
       fcr_unchanged       = false_correlation_rate(mutated) == FCR(base).
-      PASS  = all three.
+      PASS  = all three (plus order retained and decoys clean, below).
+      causal_order_fidelity / causal_order_retained are RECORDED beside them
+                            (2026-10-02, eval/twin/causal_order.py) but are NOT in PASS:
+                            promoting them moves the published mutation_robustness and
+                            is an owner decision (see SSOT / the causal-order plan).
       causal_join_broken  = detection retained (alerts still fire) BUT
                             fidelity dropped -- THE failure this phase exists
                             to catch: the alert lured past the join. NEVER
@@ -227,6 +231,16 @@ def _cmp(axis: str, variant: str, base: dict, mut: dict) -> dict:
     b_order, m_order = base.get("alert_order_ok"), mut.get("alert_order_ok")
     order_retained = not (b_order is True and m_order is False)
 
+    # CAUSAL ORDER, STAGE 1 (2026-10-02) -- INFORMATIONAL, NOT IN ``pass``.
+    # causal_order_fidelity (eval/twin/causal_order.py) grades the oracle's
+    # allowed_relationships DAG on event time and on the time carried by the WS-8
+    # edges. It is recorded here with its own retained flag, but promoting it into
+    # ``pass`` (Stage 2) moves the published mutation_robustness and is an owner
+    # decision, so ``pass`` below is computed exactly as before. A baseline of None
+    # (no edge, nothing graded) has nothing to lose.
+    b_cof, m_cof = base.get("causal_order_fidelity"), mut.get("causal_order_fidelity")
+    causal_order_retained = not (b_cof is not None and (m_cof is None or m_cof < b_cof))
+
     # DECOYS (2026-10-01): benign look-alike activity injected next to the
     # attack must not be absorbed into the attack's incident. None = no decoy
     # alert fired, nothing to contaminate.
@@ -261,6 +275,8 @@ def _cmp(axis: str, variant: str, base: dict, mut: dict) -> dict:
         "fcr_unchanged": fcr_unchanged,
         "alert_order_ok": m_order,
         "order_retained": order_retained,
+        "causal_order_fidelity": m_cof,
+        "causal_order_retained": causal_order_retained,
         "decoy_contamination": m_decoy,
         "campaign_decoy_contamination": m_decoy_c,
         "decoy_clean": decoy_clean,
@@ -299,7 +315,9 @@ def _baseline_quality(base: dict) -> dict:
             "only record that the steps share an entity (one actor / one IP across the chain "
             "satisfies every relation, allowed and forbidden alike). Treat both as 'is there an "
             "entity bridge', never as 'was the causal chain reconstructed'. Order is graded "
-            "separately (alert_order_ok) and false correlation by decoy_contamination.")
+            "separately (alert_order_ok; order_concordance and causal_order_fidelity from "
+            "eval/twin/causal_order.py, co-reported -- order_concordance is a timestamp invariant) "
+            "and false correlation by decoy_contamination.")
     if fid is not None and fid < _FIDELITY_FLOOR:
         caveats.append(
             f"chain_fidelity={fid} (< {_FIDELITY_FLOOR}): the UNMUTATED chain already fails to "
@@ -489,8 +507,8 @@ _ROW_KEYS = frozenset({
     "fired_count", "incident_count", "incident_membership_ok",
     "detection_retained", "steps_lost", "tactic_lost", "rule_identity_changed",
     "alert_volume_ratio", "fidelity_retained", "fcr_unchanged",
-    "alert_order_ok", "order_retained", "decoy_contamination",
-    "campaign_decoy_contamination", "decoy_clean",
+    "alert_order_ok", "order_retained", "causal_order_fidelity", "causal_order_retained",
+    "decoy_contamination", "campaign_decoy_contamination", "decoy_clean",
     "pass", "causal_join_broken",
 })
 

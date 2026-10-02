@@ -37,6 +37,20 @@ _ROW_TWIN = json.dumps({"_schema": "1", "run_type": "twin",
                         "date": "2026-08-01T00:00:00+00:00", "seed": 7,
                         "basis": "harness-measured",
                         "twin_metrics": {"tpr": 1.0, "fpr": 0.0, "chain_fidelity": None}})
+# A twin row written AFTER the causal-order co-metrics landed (2026-10-02): a bool, a float and a
+# null in the new columns. _ROW_TWIN above predates them and must still render (as n/a).
+_ROW_TWIN_CO = json.dumps({"_schema": "1", "run_type": "twin",
+                           "date": "2026-10-02T00:00:00+00:00", "seed": 7,
+                           "basis": "harness-measured",
+                           "twin_metrics": {"tpr": 1.0, "chain_fidelity": 0.6,
+                                            "causal_order_fidelity": 0.8333,
+                                            "order_concordance": 1.0, "alert_order_ok": True}})
+_ROW_TWIN_REV = json.dumps({"_schema": "1", "run_type": "twin",
+                            "date": "2026-10-03T00:00:00+00:00", "seed": 7,
+                            "basis": "harness-measured",
+                            "twin_metrics": {"tpr": 1.0, "chain_fidelity": 0.6,
+                                             "causal_order_fidelity": None,
+                                             "order_concordance": 0.0, "alert_order_ok": False}})
 _SAMPLE_JSONL = (
     "# a comment line, matching the real file's own convention -- must be skipped\n"
     f"{_ROW_OLD}\n{_ROW_NEW}\n{_ROW_TWIN}\n\nnot valid json at all\n"
@@ -78,6 +92,30 @@ def test_generate_writes_real_html_with_both_tables_newest_first():
         check("password_spray" not in text, "sanity: fixture doesn't reuse real repo strings")
 
 
+def test_twin_table_has_causal_order_columns_additively():
+    """The co-metrics are extra columns: the legacy columns keep their names and order, the new ones
+    come AFTER them (not leading), old rows render n/a for them, and a bool False / float / null all
+    render without crashing."""
+    with tempfile.TemporaryDirectory() as tmp:
+        trend = Path(tmp) / "trend.jsonl"
+        trend.write_text(_SAMPLE_JSONL + f"{_ROW_TWIN_CO}\n{_ROW_TWIN_REV}\n", encoding="utf-8")
+        out = Path(tmp) / "viewer.html"
+        count = generate(trend, out)
+        check(count == 5, f"generate() must load 5 rows, got {count}")
+        text = out.read_text(encoding="utf-8")
+        legacy = ["tpr", "fpr", "chain_fidelity", "evidence_completeness", "mtti",
+                  "false_correlation_rate", "alert_reduction_ratio", "mutation_robustness"]
+        new = ["causal_order_fidelity", "order_concordance", "alert_order_ok"]
+        pos = [text.find(f"<th>{c}</th>") for c in legacy + new]
+        check(all(p >= 0 for p in pos), f"every legacy and new twin column header must render, got {pos}")
+        check(pos == sorted(pos), "legacy columns keep their order and the co-metric columns come after them")
+        check("0.8333" in text, "a causal_order_fidelity float must render")
+        check("<td>False</td>" in text and "<td>True</td>" in text,
+              "alert_order_ok True and False must both render as values (False is not 'n/a')")
+        check(text.index("2026-10-03") < text.index("2026-10-02") < text.index("2026-08-01T00"),
+              "twin rows must still render newest-first")
+
+
 def test_generate_empty_trend_shows_honest_empty_state():
     with tempfile.TemporaryDirectory() as tmp:
         trend = Path(tmp) / "trend.jsonl"
@@ -94,6 +132,7 @@ def main():
     test_load_rows_skips_comments_and_blank_and_warns_on_malformed()
     test_load_rows_missing_file_is_empty_not_an_error()
     test_generate_writes_real_html_with_both_tables_newest_first()
+    test_twin_table_has_causal_order_columns_additively()
     test_generate_empty_trend_shows_honest_empty_state()
 
     if FAILS:
