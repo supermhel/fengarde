@@ -260,7 +260,7 @@ rule_sets:
         basis: harness-measured
         better: min
         value: 0.849816
-    fingerprint: 2efe3d918dec86c9fa47f46b6fb5875aa37213919c5087aa3b8ccb2e37e9b03d
+    fingerprint: 5522e13c166066b467edf0baebbbc4f2e52811dfb4883a8c2bfa8e38e6f720d5
     joint_frontier:
       basis: harness-measured
       frontier:

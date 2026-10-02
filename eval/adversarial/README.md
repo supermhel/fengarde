@@ -119,3 +119,32 @@ Layer C's adaptive mode is invoked only by the nightly workflow — never by
   `report._incident_membership_grade` early-return key fix, both additive.
 - Layer C is advisory: a stochastic finding is a review item, not a CI
   failure.
+
+### Causal-order grading and the reversed-order control (2026-10-02)
+
+chain_fidelity, false_correlation_rate and directional_discrimination never read a clock. They are provably order-blind: a time-mirrored copy of each storyline scores the same on them. Only the boolean alert_order_ok flips.
+
+eval/twin/causal_order.py grades the oracle's allowed_relationships DAG on event time and on the ts_ms carried by the WS-8 edges. It uses per-incident graphs with the minimum ts_ms per pair, and a typed-kind winner can displace an earlier field-pair edge.
+
+report.py co-reports `causal_order_fidelity` and `order_concordance`. order_concordance is a timestamp invariant: 1.0 by construction on the harness's own chain. Do not read it as product capability. `alert_order_ok` is now emitted too.
+
+layer_a rows RECORD `causal_order_fidelity` and `causal_order_retained`, but `pass` is computed as before. Promoting the flag is an owner decision. The Stage 1 comparison (84 rows, 0 pass flips) is in eval/adversarial/stage1_row_diff.md.
+
+eval/adversarial/order_controls.py is a metric control (mirror, swap, shift). It checks that the order metrics say no on a reversed chain while the legacy join metrics do not move. scenario_matrix prints it under `metric_controls`, never pooled into a pass rate or mutation_robustness, and fails the lane if the control cannot say yes or no.
+
+### Oracle cross-check (eval/twin)
+
+The three hand-written oracles are checked two ways. `python eval/twin/oracle_mutate.py [--seed 7|11]` applies about 223 small edits to in-memory copies of each oracle and grades them against one observed run. A sound grader must score a WRONG oracle worse, and notice a WEAKER one. Kills are split into HEADLINE (graded metrics) and COUPLED (severity and reconcile, which only measure coupling to the current output). Survivors need a dated, capped waiver, and `eval/twin/oracle_strength.json` is the ratchet. Only `--update-baseline` writes it. `python eval/twin/oracle_derive.py` derives an oracle from the rule files alone and diffs it against the hand oracles. `python eval/twin/oracle_consistency.py --triangulate` adds the observed column. LIMIT: the derived oracle shares the rule YAML, parsers and scenario builders with the system, so it detects skew and drift, not original error. A third-party labelled corpus is the remedy.
+
+### Adaptive evasion: the cost vector, the floor and the findings register (2026-10-02)
+
+`evasion_search.py` measures four axes; this lane measures what it COSTS to get past each stateful rule-set and refuses to let that cost silently shrink.
+
+- `probe_session.FastProbe` replays a stream through ONE Detector with a fresh window counter per probe (~0.01-0.1 s instead of 1.5-4.7 s). Speed is only allowed because it is proven not to change the answer: `verify_parity` (baseline + thin / ip_rotate_2 / stretch_6x) against `report._real_detection`, a leaky-counter negative control that MUST fail parity, an A,B,A state-leak check, and a refusal of any event whose time comes from the wall clock. `FENGARDE_SLOW_PROBE=1` restores the slow path in `evasion_search`; the JSON is byte-identical either way.
+- `evasion_cost.py --seed 7` writes `out/evasion_cost.latest.json`: per rule-set (a rule plus its `companion_of` siblings) a VECTOR, never a weighted scalar: forgone events, extra seconds of the optimal slow schedule, sustainable stealth rate, fewest keys per kind (`immune` when a companion on another kind still detects), the joint Pareto frontier over a key grid, and the respelling / forgery / clock-forgeable flags. Every number carries an independent prediction (`evasion_axes.predict_*`); a disagreement fails.
+- `evasion_floor.yaml` is the ratchet: each field has `better: min|max`; a worse value, a changed rule parameter / selection clause / allowlist hash (fingerprint), a lost axis, a vanished companion or an uncovered stateful rule FAILS and names rule, axis, measured value and floor. `--update-floor` only moves toward the defender; lowering needs `--update-floor --allow-lower --reason '...'` and appends a dated `lowered:` entry. Lowering by hand editing the file is not detected by the tool: review the diff.
+- `evasion_findings.yaml` is the closed register (F1 cross-window sweep, F2 identity canonicalisation, F3 attribution forgery = open BUGs; F4 record-clock trust = TRUST_MODEL). An unlisted evasion fails (once the tables are ratified), a listed one that no longer reproduces is STALE and fails until deleted. Thinning, slowing and spreading across truly distinct entities are INHERENT to threshold rules: reported as cost, never as fix items.
+- `evasion_tables.yaml` holds the security-judgement inputs (which fields an attacker controls, which respellings a source treats as one identity). Every row is `ratified: false`; findings resting on unratified rows are WARN/INFO and do not gate. Ratifying a row is the deliberate act that turns it into a gate.
+- `noise_dilution.py --blocking-subset` turns F1 into an end-to-end instrument: benign noise on a 60 s rule sweeps the live state of every longer-window rule; the noise count is in counter hits (a companion makes one event two hits), found by bisection on full-stream replays, predicted independently from `_SWEEP_EVERY`, and the mandatory >60 s pause is part of the cost. Controls: no noise, key-not-idle, N*-1, per-key-sweep fix turns it green, phase shift, parity on the noise stream. Deque backend only (Redis expires per key).
+- The generated table in `contracts/detection-coverage.md` is bracketed by `evasion-cost` markers and its header is `| Rule-set (key) |`, deliberately not `| Rule |` (check_lane_coverage would read it as the rule scorecard). `evasion_cost.py --write-doc` regenerates it; the default run fails if it is stale.
+- Not covered: the WS-8 member-cap flood and the incident/triage metrics (need `reg.grade` and metrics that do not exist yet).
