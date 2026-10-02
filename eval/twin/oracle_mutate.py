@@ -816,7 +816,7 @@ def main(argv: list | None = None) -> int:
         if not ev["ok"]:
             rc = 1
     ei = evaluate_inert(inert)
-    print(f"-- oracle keys no grader reads (perturbing every occurrence changes nothing) --")
+    print("-- oracle keys no grader reads (perturbing every occurrence changes nothing) --")
     print(f"   declared-but-unenforced ({len(ei['declared_unenforced'])}): {ei['declared_unenforced']}")
     print(f"   doc-only ({len(ei['doc_only'])}): {ei['doc_only']}")
     for k in ei["unknown"]:
