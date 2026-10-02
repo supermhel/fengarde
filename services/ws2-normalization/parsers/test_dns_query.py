@@ -82,6 +82,54 @@ class TestDnsQueryParser(unittest.TestCase):
         for name, want in cases.items():
             self.assertEqual(parent_domain(name), want, name)
 
+    def test_parent_domain_knows_country_specific_second_level_labels(self):
+        # 2026-10-02: ne/or/go/ad/gr/lg/ed under .jp (and the other common
+        # country-specific labels) are public suffixes; without them every
+        # *.ne.jp customer pooled under the single parent "ne.jp".
+        from parsers.dns_query import parent_domain
+        cases = {
+            "a.b.example.ne.jp": "example.ne.jp",
+            "www.example.or.jp": "example.or.jp",
+            "city.example.go.jp": "example.go.jp",
+            "x.example.ad.jp": "example.ad.jp",
+            "x.example.co.jp": "example.co.jp",       # already global, must be unchanged
+            "x.example.ac.jp": "example.ac.jp",       # already global, must be unchanged
+            "x.example.ne.kr": "example.ne.kr",
+            "x.example.ltd.uk": "example.ltd.uk",
+            "x.example.id.au": "example.id.au",
+            "x.example.gob.mx": "example.gob.mx",
+            "x.example.gouv.fr": "example.gouv.fr",
+            "x.example.idv.tw": "example.idv.tw",
+        }
+        for name, want in cases.items():
+            self.assertEqual(parent_domain(name), want, name)
+
+    def test_country_specific_labels_do_not_leak_to_other_tlds(self):
+        # Scoping is the point: a global "ne"/"or"/"go" would turn a registered
+        # domain such as go.de into a fake suffix, so an attacker who owns it
+        # could scatter one tunnel across many "parents" by varying the label in
+        # front. Under any TLD the label is not a suffix for, pooling is unchanged.
+        from parsers.dns_query import parent_domain
+        cases = {
+            "a.b.example.ne.de": "ne.de",
+            "x.go.de": "go.de",
+            "chunk1.t.or.it": "or.it",
+            "x.example.ltd.jp": "ltd.jp",             # 'ltd' is a .uk label, not a .jp one
+            "x.example.ne.uk": "ne.uk",               # 'ne' is a .jp/.kr label, not a .uk one
+            "x.example.gouv.jp": "gouv.jp",
+        }
+        for name, want in cases.items():
+            self.assertEqual(parent_domain(name), want, name)
+
+    def test_event_pools_a_jp_customer_under_its_own_registered_domain(self):
+        # End to end through the parser: two different ne.jp customers must not
+        # share a grouping key (they used to, both becoming "ne.jp").
+        a = PARSER.parse(_raw("query[A] www.alpha.ne.jp from 10.0.0.5"))
+        b = PARSER.parse(_raw("query[A] www.beta.ne.jp from 10.0.0.5"))
+        self.assertEqual(a["unmapped"]["dns"]["parent_domain"], "alpha.ne.jp")
+        self.assertEqual(b["unmapped"]["dns"]["parent_domain"], "beta.ne.jp")
+        self.assertEqual(validate(a), [])
+
     def test_parent_domain_never_pools_reverse_lookups_or_junk(self):
         # Every PTR query for every address would otherwise share one parent
         # ("in-addr.arpa") and read as a tunnel.

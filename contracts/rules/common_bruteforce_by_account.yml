@@ -24,7 +24,24 @@ description: >
   is suppressed by default; add the known-noisy account to
   contracts/allowlists/service_accounts.yml-style suppression once you have
   seen it, rather than raising the threshold.
-level: high
+
+  Severity (2026-10-02 review, level high -> medium): this rule pools EVERY source
+  address and host, so ambient internet spraying of root/admin/postgres -- one or
+  two attempts from each of hundreds of scanners -- crosses 10 failures a minute
+  fleet-wide with no single address anywhere near common_bruteforce.yml's own
+  threshold. At `high` the severity floor (70) is above llm_min (60), so every
+  such burst paid an LLM triage call. At `medium` the floor is 40: the alert is
+  still raised, indexed and classifier-scored, but it does not queue LLM triage
+  by itself. Nothing is lost on a REAL attack: one noisy source still fires the
+  per-source sibling (high, LLM-triaged; WS-4 drops this companion on the same
+  event), and WS-8 still correlates this alert by entity into the same incident.
+  What is traded away: a 2-address split brute force on its own now routes to the
+  classifier instead of the LLM. Not expressible instead: "require >= 2 distinct
+  source addresses" (the grammar counts events or distinct values of ONE field per
+  group, not both), a service/spray username `not_in` (it would blind brute force
+  against root, the very account this noise targets), or a higher threshold (it
+  reopens the 2-address evasion this rule exists to close).
+level: medium
 logsource:
   category: authentication
 detection:

@@ -65,7 +65,7 @@ detection_points:
     expected_event_source: "linux_ssh (class 3002, activity 4)"
     expected_rules:
       - {rule_id: "6f1c8a2e-0d3b-4c11-9a21-7b5e2f9a1c01", title: "Authentication brute-force from single source", level: high, role: brute-force detection}
-      - {rule_id: "d83b71c3-93eb-439f-86f9-5985ebcc38cb", title: "Authentication brute-force against one account (any number of sources)", level: high, role: distributed brute-force detection -- closes the 2-source-address evasion}
+      - {rule_id: "d83b71c3-93eb-439f-86f9-5985ebcc38cb", title: "Authentication brute-force against one account (any number of sources)", level: medium, role: distributed brute-force detection -- closes the 2-source-address evasion}
     gap: {no_rule_exists: false}
 
   initial_access:

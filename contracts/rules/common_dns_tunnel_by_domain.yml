@@ -23,10 +23,20 @@ description: >
   False-positive honesty: CDNs and large SaaS providers legitimately serve many
   distinct subdomains under one parent (content-addressed hostnames, per-tenant
   names). 40 distinct names under one parent in a minute is unusual but not
-  impossible on a busy network; suppress the known parent domains once you have
-  seen them rather than raising the threshold. The registered-domain heuristic
-  is not a public-suffix list: an unlisted multi-part suffix pools one label too
-  high, which can over-count a window but never hide one.
+  impossible on a busy network. The registered-domain heuristic is not a
+  public-suffix list: an unlisted multi-part suffix pools one label too high,
+  which can over-count a window but never hide one.
+
+  Suppression (2026-10-02 review): because the rule pools ACROSS clients, a single
+  busy CDN zone is enough to trip it, and it shipped with nothing wired to
+  silence one. It now carries `unmapped.dns.parent_domain: {not_in:
+  dns_high_cardinality_parents}`, backed by contracts/allowlists/
+  dns_high_cardinality_parents.yml -- a small starter set of vendor-operated CDN /
+  update / reputation-lookup zones. The file's header states the admission test
+  (the attacker must not be able to be that zone's authoritative server) and how
+  to extend it. An attacker-registered parent is never on it, so the 2-host
+  evasion this rule closes stays closed (re-measured by the evasion search). An
+  unreadable allowlist fails OPEN: the rule simply keeps alerting.
 level: medium
 logsource:
   category: network_activity
@@ -34,6 +44,8 @@ detection:
   dns_query:
     class_uid: 4002
     activity_id: 1
+    unmapped.dns.parent_domain:
+      not_in: dns_high_cardinality_parents
   condition: dns_query
 fields:
   - unmapped.dns.parent_domain
