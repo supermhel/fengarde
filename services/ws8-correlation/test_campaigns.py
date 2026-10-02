@@ -86,6 +86,83 @@ def run():
     out = link_campaigns(many)
     check(len(out) == 1 and out[0]["incident_count"] == 5000, "5000 incidents through one hub alert -> one campaign")
 
+    # 9. FINDING 5: campaign_id must be a stable handle -- unchanged when a pivoting attack
+    #    gains an incident (it is derived from the smallest member incident id, the union-find
+    #    root, not from the whole member list)
+    before = link_campaigns([inc("i1", members=["a1", "a2"]), inc("i2", members=["a2", "a3"])])
+    after = link_campaigns([inc("i1", members=["a1", "a2"]), inc("i2", members=["a2", "a3"]),
+                            inc("i3", members=["a3", "a4"])])
+    check(len(before) == 1 and len(after) == 1 and after[0]["incident_count"] == 3,
+          "positive control: the third incident really joined the campaign")
+    check(before[0]["campaign_id"] == after[0]["campaign_id"],
+          f"campaign_id is unchanged when an incident joins: {before[0]['campaign_id']} vs {after[0]['campaign_id']}")
+    check(before[0].get("merged_from") == [] and after[0].get("merged_from") == [],
+          "no lineage is reported when nothing merged (and with no `previous` supplied)")
+    # negative control: different roots give different ids (the id is not a constant)
+    other = link_campaigns([inc("z9", members=["q"])])
+    check(other[0]["campaign_id"] != before[0]["campaign_id"], "distinct campaigns have distinct ids")
+
+    # 10. FINDING 5 residual case: two campaigns MERGE. The survivor keeps the smaller root id and the
+    #     lineage (the id it replaces) is reported when the caller passes the previous view.
+    prev = link_campaigns([inc("a", members=["1"]), inc("b", members=["1"]),
+                           inc("m", members=["7"]), inc("n", members=["7"])])
+    id_ab = next(c["campaign_id"] for c in prev if c["incident_ids"] == ["a", "b"])
+    id_mn = next(c["campaign_id"] for c in prev if c["incident_ids"] == ["m", "n"])
+    bridge = [inc("a", members=["1"]), inc("b", members=["1", "7"]), inc("m", members=["7"]),
+              inc("n", members=["7"])]
+    merged = link_campaigns(bridge, previous=prev)
+    check(len(merged) == 1 and merged[0]["incident_ids"] == ["a", "b", "m", "n"],
+          "the bridge merges the two campaigns")
+    check(merged[0]["campaign_id"] == id_ab, "the survivor keeps the campaign id of the smaller root (a)")
+    check(merged[0].get("merged_from") == [id_mn],
+          f"lineage names the absorbed campaign, got {merged[0].get('merged_from')}")
+    # order independence still holds with a previous view, and previous never changes the id
+    rng2 = random.Random(3)
+    sh = list(bridge)
+    rng2.shuffle(sh)
+    check(link_campaigns(sh, previous=list(reversed(prev))) == merged,
+          "result (incl. merged_from) is order-independent")
+    check(link_campaigns(bridge)[0]["campaign_id"] == merged[0]["campaign_id"],
+          "`previous` is lineage only; it never changes the id")
+    # the other residual: a joiner whose id sorts LOWER becomes the new root. The id moves, but the
+    # old id is reported, so a persisted handle can be re-pointed.
+    old_view = link_campaigns([inc("a2", members=["x"]), inc("b2", members=["x"])])
+    old = old_view[0]["campaign_id"]
+    joiner = link_campaigns([inc("a2", members=["x"]), inc("b2", members=["x"]),
+                             inc("a1", members=["x", "y"])], previous=old_view)
+    check(len(joiner) == 1 and joiner[0]["campaign_id"] != old and joiner[0].get("merged_from") == [old],
+          f"a lower-sorting joiner moves the id but reports the old one, got {joiner}")
+    # malformed previous is ignored, not fatal
+    junk_prev = [None, 3, {"campaign_id": 5}, {"incident_ids": "x"},
+                 {"campaign_id": "c", "incident_ids": [1, None]}]
+    check(link_campaigns(bridge, previous=junk_prev)[0].get("merged_from") == [],
+          "malformed `previous` entries are ignored")
+
+    # 11. FINDING 6a: never silently truncate. Past the old 50_000 cap, every incident is still linked.
+    n = 50_050
+    big = [inc(f"b{i:06d}", members=["hub"]) for i in range(n)]
+    out = link_campaigns(big)
+    check(len(out) == 1 and out[0]["incident_count"] == n and len(out[0]["incident_ids"]) == n,
+          f"no incident is dropped past the old cap, got {[c['incident_count'] for c in out]}")
+
+    # 12. FINDING 6b: an incident with no tenant must not be pooled with other tenant-less incidents,
+    #     nor linked to a tenanted one, even when they share an alert.
+    for bad in (None, "", "   ", 7):
+        pair = [inc("u1", tenant=bad, members=["shared"]), inc("u2", tenant=bad, members=["shared"])]
+        out = link_campaigns(pair)
+        check(len(out) == 2 and all(c["incident_count"] == 1 for c in out),
+              f"tenant={bad!r}: tenant-less incidents sharing an alert are NOT linked, "
+              f"got {[c['incident_ids'] for c in out]}")
+        check(all(c.get("untenanted") is True and c["tenant_id"] == "" for c in out),
+              f"tenant={bad!r}: marked untenanted")
+    mixed = link_campaigns([inc("u1", tenant=None, members=["shared"]),
+                            inc("t1", tenant="acme", members=["shared"])])
+    check(len(mixed) == 2, "a tenant-less incident does not link to a tenanted one via a shared alert")
+    check([c.get("untenanted") for c in link_campaigns([inc("t1", tenant="acme", members=["x"])])] == [False],
+          "negative control: a tenanted incident is not marked untenanted")
+    ids = {c["campaign_id"] for c in link_campaigns([inc("u1", tenant=None), inc("u2", tenant=None)])}
+    check(len(ids) == 2, "tenant-less singletons still get distinct campaign ids")
+
 
 def main():
     run()

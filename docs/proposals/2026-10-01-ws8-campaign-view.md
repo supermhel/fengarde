@@ -30,11 +30,27 @@ Benign decoys on disjoint entities stay out of the campaign (contamination 0.0 o
 Nothing above changes what WS-8 emits. To make the campaign visible to an analyst it has to be *carried* somewhere, and each option is a contract change:
 
 1. **Compute on read** in WS-3's incident API (`GET /incidents`, `/incidents/{id}`): `related_incident_ids` / `campaign_id` derived at query time from the stored incidents. No schema change if returned as a computed field; no index mapping change. *Recommended first step.*
-2. **Persist `campaign_id` on the incident document.** Requires an `incidents.json` mapping bump (the index is `dynamic: false`, so an unmapped field is stored but not searchable) and a decision on id stability, because a campaign's membership grows and its id would change.
+2. **Persist `campaign_id` on the incident document.** Requires an `incidents.json` mapping bump (the index is `dynamic: false`, so an unmapped field is stored but not searchable). The id-stability question is answered in the code (see *Campaign id stability* below): the id is derived from the smallest member `incident_id`, not from the member list, so it survives growth. Two residual cases move it and must be handled by whoever persists it.
 3. **Emit a `campaigns` topic.** New bus contract (`contracts/bus-topics.md` is frozen); only worth it if a second consumer needs it.
+
+## Campaign id stability
+
+`campaign_id` is `campaign:<tenant>:<sha256(smallest member incident_id)[:16]>`. It is derived from the union-find root (the lexicographically smallest member `incident_id`), **not** from the whole member list, so it does not change when a pivoting attack gains an incident whose id sorts after the root. (An earlier draft hashed every member id, which changed the id on every join and made it unusable as a persisted handle.)
+
+Residual cases, all reported rather than hidden:
+
+1. **Two campaigns merge** (a new incident bridges them). The survivor keeps the id of the smaller root; the other campaign's id disappears.
+2. **A joining incident sorts below the current root.** It becomes the new root and the id moves. Incident ids are `tenant:type:value:bucket`, so they are not time-ordered and this can happen.
+
+`link_campaigns` is stateless, so it cannot know the past by itself. Pass `previous=` (an earlier result, or any list of `{campaign_id, incident_ids}`) and every returned campaign carries `merged_from`: the previous campaign ids now contained in it, excluding its own. A persisted handle can be re-pointed from that. Without `previous`, `merged_from` is `[]`. `previous` is lineage only and never changes an id. Whoever persists the id (option 2 above) owns storing the previous view.
+
+## Tenancy and caps
+
+- **No silent caps.** Every well-formed incident is processed and lands in exactly one campaign. The old 50,000-incident slice was removed: union-find over an alert-to-owner inverted index is near-linear, so the cap guarded nothing and could only drop incidents without a signal. Incidents with no usable `incident_id` are the only ones skipped.
+- **Tenant-less incidents never link.** An incident whose `tenant_id` is missing, empty, blank or not a string has no tenant boundary, so it is returned as its own singleton campaign (`tenant_id == ""`, `untenanted == true`) and is never pooled with other tenant-less incidents or linked to a tenanted one, even when they share an alert. Real WS-8 incidents always carry a tenant; this is the fail-safe for input that does not.
 
 ## Risks to weigh
 
-- **Transitive chains.** Linking is transitive across a chain of shared alerts, which is the point (a pivot *is* a chain), but a long chain through a busy shared host could in principle grow a campaign larger than the real attack. Mitigation already in the code: tenant-scoped, linear (inverted-index) cost, input bounded; and the existing `shared_infrastructure` allowlist already keeps allowlisted addresses from opening `ip:` tracks at all, so they cannot be the bridge.
+- **Transitive chains.** Linking is transitive across a chain of shared alerts, which is the point (a pivot *is* a chain), but a long chain through a busy shared host could in principle grow a campaign larger than the real attack. Mitigation already in the code: tenant-scoped, linear (inverted-index) cost; and the existing `shared_infrastructure` allowlist already keeps allowlisted addresses from opening `ip:` tracks at all, so they cannot be the bridge.
 - **Display, not detection.** A campaign must not change severity, scoring or triage routing unless that is decided separately; ADR-005 (deterministic controls decide, LLMs explain) is unaffected.
 - **No claim of causality.** "Same campaign" means "linked by shared direct evidence", not "A caused B". The harness's `directional_discrimination` finding (the WS-8 graph cannot encode causal order) stands and is a separate question.
