@@ -15,7 +15,7 @@
       "lfs": true,
       "lfs_note": "Data files (*.log, *.json, *.ndjson) are git-lfs objects. The checkout runs with GIT_LFS_SKIP_SMUDGE=1 (pointers only); only the files named by the pre-registered selection predicate are pulled. A full pull is > 9 GB and is never done.",
       "selection": {
-        "predicate": "scenarios whose YAML source is XmlWinEventLog:* and whose label shares a parent technique with an enterprise-ATT&CK rule in contracts/rules; per parent technique the N smallest scenarios by total declared LFS size, tie-break dataset_id ascending. Uses only dataset metadata and rule families, never outcomes.",
+        "predicate": "scenarios whose YAML source is XmlWinEventLog:* and whose label shares a parent technique with an enterprise-ATT&CK rule in contracts/rules; per parent technique the N smallest scenarios (known-size LFS pointers first, then absent files whose size is unknown) by total declared LFS size, tie-break dataset_id ascending. Uses only dataset metadata and rule families, never outcomes.",
         "per_technique": 3,
         "max_files": 60,
         "max_bytes": 314572800

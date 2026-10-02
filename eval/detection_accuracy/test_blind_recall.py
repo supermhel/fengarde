@@ -688,6 +688,10 @@ class TestFetchTooling(unittest.TestCase):
             write_splunk(root, "T1110.001", "s_ct", [("c.json", "aws_cloudtrail", ptr(1))], ["T1110.001"])
             write_splunk(root, "T1110.001", "s_present", [("w.log", SEC, "\n".join(failed_logons(2)))],
                          ["T1110.001"])
+            # absent from the work tree (no pointer, size unknown): still a candidate, sorted
+            # after every known-size scenario
+            gone = write_splunk(root, "T1110.001", "s_absent", [("w.log", SEC, "x")], ["T1110.001"])
+            (gone / "w.log").unlink()
             sel = FC.select_splunk_files(root, RULES, {"per_technique": 2, "max_files": 60,
                                                        "max_bytes": 10 ** 9})
             self.assertEqual([s["dataset_id"].split("/")[1] for s in sel["scenarios"]],
@@ -695,10 +699,14 @@ class TestFetchTooling(unittest.TestCase):
             self.assertEqual(sel["bytes"], 300)
             self.assertTrue(all(f.endswith("w.log") and "s_norule" not in f and "s_ct" not in f
                                 and "s_present" not in f for f in sel["files"]))
+            wide = FC.select_splunk_files(root, RULES, {"per_technique": 9, "max_files": 60,
+                                                        "max_bytes": 10 ** 9})
+            self.assertEqual([s["dataset_id"].split("/")[1] for s in wide["scenarios"]],
+                             ["s_a", "s_b", "s_c", "s_d", "s_absent"])
             capped = FC.select_splunk_files(root, RULES, {"per_technique": 4, "max_files": 60,
                                                           "max_bytes": 350})
             self.assertEqual([s["dataset_id"].split("/")[1] for s in capped["scenarios"]],
-                             ["s_a", "s_b"])
+                             ["s_a", "s_b"])      # per_technique=4 -> a,b,c,d considered; c,d exceed max_bytes
             self.assertGreaterEqual(capped["skipped"]["over_cap"], 1)
             again = FC.select_splunk_files(root, RULES, {"per_technique": 2, "max_files": 60,
                                                          "max_bytes": 10 ** 9})

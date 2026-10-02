@@ -132,10 +132,11 @@ def fetch_corpus(name: str, entry: dict, dest: Path, *, run=subprocess.run,
 def select_splunk_files(dest: Path, rules_dir: Path, selection: dict) -> dict:
     """Pre-registered, outcome-blind selection of splunk/attack_data scenarios.
 
-    Candidate = a scenario with >= 1 un-pulled LFS pointer among its Windows-XML
-    files and a label in a technique family some enterprise-ATT&CK rule covers.
-    Per parent technique keep the ``per_technique`` smallest (total declared LFS
-    bytes, then dataset_id); then cap by ``max_files`` / ``max_bytes`` walking in
+    Candidate = a scenario with >= 1 not-yet-present (LFS pointer or absent) file
+    among its Windows-XML files and a label in a technique family some
+    enterprise-ATT&CK rule covers. Per parent technique keep the ``per_technique``
+    smallest (known-size scenarios first, then total declared LFS bytes, then
+    dataset_id); then cap by ``max_files`` / ``max_bytes`` walking in
     (parent, size, id) order. Returns {'files': [rel,...], 'scenarios': [...],
     'bytes': n, 'skipped': {...}}.
     """
@@ -151,14 +152,17 @@ def select_splunk_files(dest: Path, rules_dir: Path, selection: dict) -> dict:
         parents = sorted({TM.parent(lb) for lb in sc.labels} & families)
         if not parents:
             continue
-        wanted = [f for f in sc.files if f.kind == "winxml" and f.state == "lfs_pointer"]
+        # an un-pulled LFS pointer (size known) or a file absent from the work tree (size
+        # unknown: some clones lack even the pointers) is a candidate for the pull
+        wanted = [f for f in sc.files if f.kind == "winxml" and f.state in ("lfs_pointer", "missing")]
         if not wanted:
             continue
         size = sum(f.lfs_size or 0 for f in wanted)
-        per_parent.setdefault(parents[0], []).append((size, sc.dataset_id, wanted))
+        unknown = any(f.lfs_size is None for f in wanted)   # unknown size sorts after known
+        per_parent.setdefault(parents[0], []).append((size, sc.dataset_id, wanted, unknown))
     chosen, files, total, skipped = [], [], 0, {"comma_in_path": 0, "over_cap": 0}
     for par in sorted(per_parent):
-        for size, sid, wanted in sorted(per_parent[par], key=lambda t: (t[0], t[1]))[
+        for size, sid, wanted, _unk in sorted(per_parent[par], key=lambda t: (t[3], t[0], t[1]))[
                 :int(selection.get("per_technique", 3))]:
             rels = [f.rel for f in wanted]
             if any("," in r for r in rels):          # --include is comma separated
