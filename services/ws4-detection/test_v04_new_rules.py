@@ -206,7 +206,8 @@ def run_dns_tunnel_allowlist():
     # must already be in the exact form dns_query.parent_domain() produces.
     bad = [e for e in entries if not isinstance(e, str) or parent_domain(e) != e]
     check(not bad, f"every allowlist entry must equal parent_domain(entry) (lower-case registered domain): {bad}")
-    check("akamaiedge.net" in entries and "cloudfront.net" in entries,
+    # set comparison of whole entries: an exact-match list check, not URL/host substring matching
+    check({"akamaiedge.net", "cloudfront.net"} <= set(entries),
           "the starter set covers the common CDN edge zones")
 
     clients = ["10.50.0.46", "10.50.0.47"]
