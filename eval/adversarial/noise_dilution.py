@@ -53,9 +53,7 @@ and the new triage_rank / incident_inflation metrics, which do not exist yet.
 from __future__ import annotations
 
 import argparse
-import copy
 import json
-import math
 import sys
 from pathlib import Path
 
@@ -92,13 +90,16 @@ class RecordingCounter(DequeWindowCounter):
     def __init__(self) -> None:
         super().__init__()
         self.log: list = []
+        self.keys: list = []
 
     def hit(self, key, now_ms, window_ms, member=None):
         self.log.append(window_ms)
+        self.keys.append(key)
         return super().hit(key, now_ms, window_ms, member)
 
     def hit_distinct(self, key, now_ms, window_ms, value=None, member=None):
         self.log.append(window_ms)
+        self.keys.append(key)
         return super().hit_distinct(key, now_ms, window_ms, value, member)
 
 
@@ -218,7 +219,8 @@ def build_stream(lab: ax.Lab, w_short_ms: int, n_noise: int, *, idle_ms: int | N
     prefix = [noise_payload(10_000 + k, t_first - 1_000_000 + k) for k in range(prefix_noise)]
     stream = prefix + body[:j] + noise + body[j:]
     return {"payloads": stream, "t_last_pre": t_last_pre, "pre_events": len(prefix) + j,
-            "m": m, "j": j, "idle_start_ms": start}
+            "m": m, "j": j, "idle_start_ms": start,
+            "post_idle_ms": min(ax.event_times(body[j:])) - t_last_pre}
 
 
 def _phase_before_noise(lab: ax.Lab, built: dict) -> int:
@@ -230,19 +232,54 @@ def _phase_before_noise(lab: ax.Lab, built: dict) -> int:
     return trace[-1] if trace else 0
 
 
+def post_event_hits(lab: ax.Lab, built: dict) -> list:
+    """The window of each counter hit the FIRST post-pause burst event causes,
+    in order, flagged ``True`` once the event has reached a hit on one of the
+    target set's own rules (from there on the target key is refreshed by the
+    event itself, so a later tick cannot evict it). Read from a recording
+    counter on the same detector, never assumed.
+
+    Why it matters: the sweep tick can land INSIDE that event, on a hit of a
+    short-window rule that runs before the target rule's own hit (password
+    spray: 4 hits per event) -- one noise event earlier than the noise train
+    alone predicts."""
+    probe = ps.FastProbe(rules_dir=lab.probe.rules_dir, strict_clock=True, counter_factory=RecordingCounter)
+    trace: list = []
+    probe.detect(ps.payloads_to_pairs(built["payloads"]), hit_trace=trace)
+    idx = built["pre_events"]                       # first event after the pause
+    lo = trace[idx - 1] if idx >= 1 else 0
+    hi = trace[idx] if idx < len(trace) else lo
+    c = probe.last_counter
+    out, reached = [], False
+    for w, k in zip(c.log[lo:hi], c.keys[lo:hi]):
+        reached = reached or k.split(":", 1)[0] in lab.rs.ids
+        out.append((w, reached))
+    return out
+
+
 def predict_noise_events(phase: int, windows_per_event: list, idle_start_ms: int, w_short_ms: int,
-                         cap: int = _NOISE_CAP):
+                         cap: int = _NOISE_CAP, post_hits: list | None = None, post_idle_ms: int = 0):
     """Independent model of N*: walk the counter's hit arithmetic. A sweep runs
     on every ``_SWEEP_EVERY``-th hit and evicts a key whose last hit is older than
     THAT hit's window; the target's last hit is ``idle_start_ms + k - 1`` ms before
     the k-th noise event, so the target is swept when the tick's window is shorter
-    than that idle time. Returns the smallest k, or None."""
+    than that idle time. After the k-th noise event the first post-pause burst
+    event is walked the same way (``post_hits`` / ``post_idle_ms``): a tick on a
+    hit BEFORE the event reaches the target's own rule also evicts it.
+    Returns the smallest k, or None."""
     hits = phase
     for k in range(1, cap + 1):
         idle = idle_start_ms + (k - 1)
         for w in windows_per_event:
             hits += 1
             if hits % SWEEP_EVERY == 0 and idle > w:
+                return k
+        h2 = hits
+        for w, reached in post_hits or ():
+            if reached:
+                break
+            h2 += 1
+            if h2 % SWEEP_EVERY == 0 and post_idle_ms > w:
                 return k
     return None
 
@@ -266,7 +303,8 @@ def state_exhaustion(lab: ax.Lab, w_short_ms: int, *, calib: dict | None = None)
                 "reason": "the split reference burst is not detected without noise (the instrument cannot "
                           "separate cause from baseline)"}
     phase = _phase_before_noise(lab, base)
-    pred = predict_noise_events(phase, calib["windows_ms"], base["idle_start_ms"], w_short_ms)
+    pred = predict_noise_events(phase, calib["windows_ms"], base["idle_start_ms"], w_short_ms,
+                                post_hits=post_event_hits(lab, base), post_idle_ms=base["post_idle_ms"])
     if not _lost(lab, w_short_ms, _NOISE_CAP):
         measured = None
     else:
