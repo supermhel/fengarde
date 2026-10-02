@@ -1,9 +1,10 @@
 title: OPC UA write to a node not on the authorised-node list
 id: e7a14b6d-3c52-4d90-8f1b-5a9c0d2e6b47
 # status: experimental is METADATA ONLY -- no engine or service code gates on `status`
-# (verified 2026-10-02), so it does not disable or mute the rule. It exists so the file
-# does not claim `stable` for a signal that is noise until the plant owner populates
-# opcua_authorized_nodes.yml. Flip it to `stable` once that list has been reviewed.
+# (verified 2026-10-02). What keeps this rule quiet is `siem.default_enabled: false`
+# below (OFF until a tenant opts in). `status` exists so the file does not claim `stable`
+# for a signal that is noise until the plant owner populates opcua_authorized_nodes.yml.
+# Flip it to `stable` once that list has been reviewed.
 status: experimental
 description: >
   An OPC UA client wrote a value to a control-system node that is NOT listed in
@@ -19,12 +20,26 @@ description: >
   invisible once an attacker used OPC UA in working hours. Measured end to end
   (protocol/opcua_path_in_hours), not inferred.
 
-  This is deliberately ALLOWLIST-FIRST: it flags the writes nobody declared. The
-  allowlist ships EMPTY (the project's honest-default posture -- nothing
-  suppressed on first install), so out of the box it alerts on every OPC UA write.
-  Populate the allowlist from a reviewed baseline before relying on the signal;
-  see that file. Level is medium, not high, because until the list is populated
-  most hits are routine operations.
+  OFF BY DEFAULT (owner decision, 2026-10-02): this rule ships with
+  siem.default_enabled: false, so a stock install does NOT evaluate it. The reason
+  is the allowlist: contracts/allowlists/opcua_authorized_nodes.yml ships EMPTY
+  (nothing suppressed on first install), so enabling the rule before you populate
+  that list alerts on EVERY OPC UA write. Populate the allowlist from a reviewed
+  baseline first (see that file), then opt in:
+    * per tenant: add this rule's id to `enabled_rules` in
+      contracts/tenants/<tenant_id>.yml (see contracts/tenants/README.md); a tenant
+      that lists it in `disabled_rules` too stays OFF (disabled wins); or
+    * every tenant of a single-tenant install: set the environment variable
+      FENGARDE_OPT_IN_RULES=e7a14b6d-3c52-4d90-8f1b-5a9c0d2e6b47 on the WS-4
+      detection service (comma-separated for several rules).
+  Until you opt in, an in-hours OPC UA write to an ordinary process node is NOT
+  detected by this rule -- that is the coverage trade the owner accepted for a quiet
+  first install; the older ot_config_change and ot_write_outside_maintenance rules
+  still cover config/firmware/setpoint nodes and off-hours writes. Level is medium,
+  not high, because even with a populated list some hits are routine operations.
+
+  This is deliberately ALLOWLIST-FIRST once enabled: it flags the writes nobody
+  declared.
 
   Scoring honesty (2026-10-02 review): this rule adds NO score weight of its own.
   Its event is, by construction, often ALSO matched by ot_config_change (config /
@@ -38,13 +53,6 @@ description: >
   writable); it just does not inflate the score. It cannot be a `companion_of`
   either rule: companion_of takes ONE sibling and ties tenant-disablement to it,
   and this rule overlaps two.
-
-  Owner decision (not made here): shipping it default-DISABLED until the allowlist
-  is populated would be quieter on day one, but the engine has no default-off
-  rule state, a tenant opt-in would silently lose the in-hours OPC UA write
-  coverage this rule was added to give, and that coverage is what Layer A's
-  protocol/opcua_path_in_hours variant measures. The safer default is kept: ON,
-  low-weight, labelled experimental.
 level: medium
 logsource:
   category: application_activity
@@ -62,6 +70,8 @@ fields:
   - unmapped.ot.server_id
 siem:
   sector: datacenter
+  # OFF until a tenant opts in (enabled_rules) -- see "OFF BY DEFAULT" above.
+  default_enabled: false
   # Adds NO weight of its own -- see "Scoring honesty" above. The `level: medium` floor
   # (contracts/scoring.yaml severity_floor.medium = 40) still guarantees a score when
   # it fires alone.

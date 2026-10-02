@@ -64,7 +64,7 @@ _SECTORS = {"common", "bank", "datacenter"}
 _SIEM_ALLOWED_KEYS = {
     "score_weight", "sector", "window_seconds", "threshold",
     "group_by", "distinct_field", "llm_gate", "periodicity",
-    "exposure_gate", "companion_of",
+    "exposure_gate", "companion_of", "default_enabled",
 }
 _KNOWN_OPS = set(_NUMERIC_OPS) | {"not_in", "outside_hours", "in", "contains", "glob", "exists"}
 # C3: optional MITRE tagging. Enterprise ATT&CK ("Txxxx"/"Txxxx.xxx", "TAxxxx"),
@@ -413,6 +413,13 @@ def validate_rule(rule: dict, rules_index: "dict[str, dict] | None" = None) -> l
             # silently keeps exposure applied rather than crashing; catch it
             # here at validate-time.
             errors.append(f"siem.exposure_gate must be a bool, got {siem['exposure_gate']!r}")
+
+        if "default_enabled" in siem and not isinstance(siem["default_enabled"], bool):
+            # siem.default_enabled: false ships a rule OFF until a tenant opts in
+            # (contracts/tenants/<t>.yml enabled_rules / FENGARDE_OPT_IN_RULES).
+            # engine.py switches a rule off only for a literal False, so a typo'd
+            # "false" string would silently ship the rule ENABLED -- catch it here.
+            errors.append(f"siem.default_enabled must be a bool, got {siem['default_enabled']!r}")
 
         if "periodicity" in siem:
             periodicity = siem["periodicity"]
