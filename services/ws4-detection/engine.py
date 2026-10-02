@@ -394,6 +394,25 @@ class Rule:
         # ordinary rule.
         _co = siem.get("companion_of")
         self.companion_of = _co if isinstance(_co, str) and _co else None
+        # DEFAULT-OFF RULES (2026-10-02). `siem.default_enabled: false` ships a rule
+        # that is NOT evaluated for a tenant until that tenant opts in
+        # (contracts/tenants/<tenant>.yml `enabled_rules`, or Detector
+        # opt_in_rules / FENGARDE_OPT_IN_RULES for every tenant). The gate lives in
+        # Detector.process(), not here: load_rules()/evaluate() still see the rule,
+        # so tooling that evaluates a rule directly is unaffected. Absent -> True.
+        # Only a literal False switches a rule off (`is not False`, the llm_gate
+        # convention): a typo'd "false" string keeps the rule ON -- tools/
+        # validate_rules.py rejects a non-bool at the gate -- but we also say so.
+        _de = siem.get("default_enabled", True)
+        if not isinstance(_de, bool):
+            _log.warn(f"rule {self.id}: siem.default_enabled must be a bool, got {_de!r}; "
+                      f"treating the rule as default-ENABLED")
+        self.default_enabled = _de is not False
+        # Effective opt-in requirement. Starts as the rule's own flag; the Detector
+        # widens it after loading (a companion of a default-off sibling is
+        # default-off too -- see Detector._load / tenants.py). True = this rule runs
+        # only for a tenant (or Detector) that opted in.
+        self.opt_in_required = not self.default_enabled
         # Design-B (2026-07-29 audit): `severity_floor` (scoring.yaml) floors
         # a high/critical rule's score to 70/80, which is always >= llm_min
         # (60) -- so today EVERY high/critical rule always pays for an LLM

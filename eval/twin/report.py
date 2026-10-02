@@ -826,7 +826,7 @@ def _build_chain_alerts(parsed: list["scenario.ChainEvent"]) -> list[dict]:
     _evidence_reconstruction's provenance join. Deterministic: a fresh
     detector per call + all chain timestamps fixed in the past.
     """
-    detector = _WS4_MOD.Detector(plugin_rule_dirs=[])
+    detector = _WS4_MOD.Detector(plugin_rule_dirs=[], opt_in_rules=['e7a14b6d-3c52-4d90-8f1b-5a9c0d2e6b47'])
     out: list[dict] = []
     per_step_n: dict = {}
     for ev in parsed:

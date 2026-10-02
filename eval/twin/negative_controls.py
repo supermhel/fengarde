@@ -221,7 +221,7 @@ def run_pipeline(raw_events: list[tuple], tenant: str) -> list[dict]:
         bus.produce("normalized.events", key=_DST_PLC, payload=event)
         events.append(event)
 
-    detector = Detector(plugin_rule_dirs=[])  # deterministic rule set
+    detector = Detector(plugin_rule_dirs=[], opt_in_rules=['e7a14b6d-3c52-4d90-8f1b-5a9c0d2e6b47'])  # deterministic rule set
     alerts: list[dict] = []
     for msg in list(bus.consume("normalized.events", group="cg-detect")):
         event = msg.payload

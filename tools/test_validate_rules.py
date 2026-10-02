@@ -429,6 +429,42 @@ class TestCompanionOf(unittest.TestCase):
             self.assertEqual(validate_rule(index[comp_id], index), [])
 
 
+class TestDefaultEnabled(unittest.TestCase):
+    """siem.default_enabled (rule ships OFF until a tenant opts in) is accepted
+    ONLY as a bool. The engine switches a rule off for a literal False alone, so
+    a typo'd "false" string would ship the rule silently ENABLED."""
+
+    def _with(self, value):
+        r = _base_rule()
+        r["siem"]["default_enabled"] = value
+        return validate_rule(r)
+
+    def test_bool_values_are_accepted(self):
+        self.assertEqual(self._with(False), [])
+        self.assertEqual(self._with(True), [])
+
+    def test_absent_is_accepted(self):
+        self.assertEqual(validate_rule(_base_rule()), [])   # control
+
+    def test_non_bool_values_are_rejected(self):
+        for bad in ("false", "no", 0, 1, None, [False], {"a": 1}):
+            errs = self._with(bad)
+            self.assertTrue(any("default_enabled must be a bool" in e for e in errs),
+                            f"{bad!r} must be rejected, got {errs}")
+
+    def test_key_is_no_longer_an_unknown_siem_key(self):
+        # negative control: a genuinely unknown key is still rejected
+        r = _base_rule()
+        r["siem"]["default_enabld"] = False
+        self.assertTrue(any("unknown key" in e for e in validate_rule(r)))
+
+    def test_shipped_opcua_rule_is_default_off(self):
+        rule = yaml.safe_load((RULES_DIR / "ot_opcua_write_unauthorized_node.yml")
+                              .read_text(encoding="utf-8"))
+        self.assertIs(rule["siem"]["default_enabled"], False)
+        self.assertEqual(validate_rule(rule), [])
+
+
 class TestShippedRules(unittest.TestCase):
     def test_all_shipped_rules_pass(self):
         for path in sorted(RULES_DIR.glob("*.yml")):
