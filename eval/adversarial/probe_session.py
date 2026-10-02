@@ -133,6 +133,7 @@ class FastProbe:
                  strict_clock: bool = True, reset_counter: bool = True,
                  counter_factory=None) -> None:
         self.tenant = tenant
+        self.rules_dir = rules_dir
         self.counter_factory = counter_factory or DequeWindowCounter
         self.strict_clock = strict_clock
         self.reset_counter = reset_counter
