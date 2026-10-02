@@ -87,7 +87,9 @@ def run():
     # rejects a stateful rule's window count on any event timestamped
     # implausibly far from actual "now" -- a fixed distant-past/future base_s
     # would silently zero out every match here, not raise.
-    base_s = int(time.time()) - 1000   # anchored in the PAST: a "future" stamp inside the skew allowance is clamped to wall-clock (window-poisoning guard)
+    # anchored in the PAST: a "future" stamp inside the skew allowance is clamped to
+    # wall-clock (window-poisoning guard)
+    base_s = int(time.time()) - 1000
 
     # tenant "acme" gets brute-force DISABLED via a real tenant config file;
     # tenant "globex" has no config at all (fail-open: every global rule applies).
@@ -181,7 +183,9 @@ def run_shared_group_key_isolation():
     their own -- attributed to whichever tenant's event crossed the line.
     """
     bus = Bus()
-    base_s = int(time.time()) - 1000   # anchored in the PAST: a "future" stamp inside the skew allowance is clamped to wall-clock (window-poisoning guard)
+    # anchored in the PAST: a "future" stamp inside the skew allowance is clamped to
+    # wall-clock (window-poisoning guard)
+    base_s = int(time.time()) - 1000
     shared_ip = "198.51.100.99"
 
     # Neither tenant alone reaches the threshold (10); pooled, they would.
@@ -228,7 +232,9 @@ def run_shared_bucket_alert_id_collision():
     OWN alert_id resolves to THEIR OWN doc via find_alert().
     """
     bus = Bus()
-    base_s = int(time.time()) - 1000   # anchored in the PAST: a "future" stamp inside the skew allowance is clamped to wall-clock (window-poisoning guard)
+    # anchored in the PAST: a "future" stamp inside the skew allowance is clamped to
+    # wall-clock (window-poisoning guard)
+    base_s = int(time.time()) - 1000
     shared_ip = "198.51.100.77"
 
     # Same base_s, same per-event offsets for both tenants -> both bursts
