@@ -266,6 +266,17 @@ class Detector:
         # already raised the alert: emitting the companion too would double the
         # analyst's volume for every ordinary attack. Every rule above was
         # evaluated first, so the companion's window state is still updated.
+        #
+        # INVARIANT this relies on (review finding, 2026-10-02): "sibling in
+        # `matched`" == "a sibling alert WILL be emitted". It holds because
+        # _emit() raises an alert for EVERY rule left in `matched`, with no
+        # score floor, rate limit or mute list in between (a produce failure
+        # raises, the message stays unacked, and the redelivery re-matches the
+        # sibling -- window membership is idempotent on ingest_id). If you add
+        # ANY filter between this line and bus.produce("alerts"), move this
+        # suppression behind it, or the companion's alert is deleted in favour
+        # of a sibling alert that never exists. test_companion_rules.py
+        # (run_suppression_invariant) fails when that happens.
         _matched_ids = {r.id for r in matched}
         matched = [r for r in matched if r.companion_of not in _matched_ids]
         score = self.scorer.score(matched, event)

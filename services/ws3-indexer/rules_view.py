@@ -99,6 +99,11 @@ def list_rule_summaries(tenant_id: str | None = None) -> list[dict]:
         if not isinstance(rule_id, str):
             continue
         siem = raw.get("siem", {}) if isinstance(raw.get("siem"), dict) else {}
+        # Only a non-empty str can name a sibling. A list/dict value (a typo the
+        # validator rejects, but this view must not depend on that) is
+        # unhashable, and `value in <set>` raised TypeError and took the whole
+        # /rules listing down with it.
+        companion_of = siem.get("companion_of")
         summaries.append({
             "id": rule_id,
             "title": raw.get("title", "untitled"),
@@ -109,7 +114,8 @@ def list_rule_summaries(tenant_id: str | None = None) -> list[dict]:
             and siem.get("threshold") is not None,
             "mitre": raw.get("mitre"),
             "enabled": (rule_id not in disabled
-                        and (raw.get("siem") or {}).get("companion_of") not in disabled),
+                        and not (isinstance(companion_of, str) and companion_of
+                                 and companion_of in disabled)),
         })
     summaries.sort(key=lambda r: r["id"])
     return summaries
