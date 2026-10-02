@@ -84,7 +84,7 @@ def render(fmt: str, recs: list[Rec], *, timestamps: bool = True) -> str:
             lines.append(f"{ts},{cl},{name}" if timestamps else f"{cl},{name}")
     elif fmt == "jsonl":
         for ts, name, cl in recs:
-            obj = {"qname": name, "client": cl}
+            obj: dict = {"qname": name, "client": cl}
             if timestamps:
                 obj["ts"] = ts
             lines.append(json.dumps(obj))

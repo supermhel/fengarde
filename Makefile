@@ -4,7 +4,7 @@
 
 COMPOSE := docker compose -f infra/docker-compose.yml
 
-.PHONY: help preflight demo test adversarial e2e nis2-demo up down ha-up ha-down chaos test-live ha-verify attack-scorecard eval-detection mutation-test bench
+.PHONY: help preflight demo test adversarial e2e nis2-demo up down ha-up ha-down chaos test-live ha-verify attack-scorecard eval-detection eval-blind-recall mutation-test bench
 
 PYTHON ?= python3
 
@@ -24,6 +24,7 @@ help:
 	@echo "  make test-live  - OPT-IN: real Redis + OpenSearch (needs 'make up' or REDIS_URL/OPENSEARCH_URL)"
 	@echo "  make attack-scorecard - P3-2: declared ATT&CK/ATLAS coverage + Navigator layer export (zero infra)"
 	@echo "  make eval-detection   - P3 eval lane: EVTX/Splunk oracle-replay detection accuracy (needs datasets, see eval/detection_accuracy/README.md)"
+	@echo "  make eval-blind-recall - blind-recall lane: fetch pinned third-party corpora, score FENGARDE against dataset-author ATT&CK labels (needs network + git-lfs)"
 
 # DX3 — the "doctor". Fails fast with plain-English remedies before anything starts.
 preflight:
@@ -156,6 +157,10 @@ attack-scorecard:
 # see eval/detection_accuracy/README.md), so this target SKIPS cleanly (not
 # fail) when the datasets aren't present locally, same "safe to run with no
 # setup, just proves nothing that time" convention as `make test-live`.
+eval-blind-recall:
+	@$(PYTHON) eval/detection_accuracy/fetch_corpora.py
+	@$(PYTHON) eval/detection_accuracy/blind_recall.py --require-corpus
+
 eval-detection:
 	@$(PYTHON) eval/detection_accuracy/evtx_eval.py
 	@$(PYTHON) eval/detection_accuracy/splunk_eval.py
