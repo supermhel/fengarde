@@ -248,7 +248,7 @@ def _detect_case(case: dict) -> tuple[dict, list[dict]]:
                 "matched": [], "missed": list(case["expect_rules"])}, []
     siem = event.setdefault("siem", {})
     siem.update({"tenant": CORPUS_TENANT, "ingest_id": f"corpus:{case['id']}"})
-    detector = report._WS4_MOD.Detector(plugin_rule_dirs=[])
+    detector = report._WS4_MOD.Detector(plugin_rule_dirs=[], opt_in_rules=['e7a14b6d-3c52-4d90-8f1b-5a9c0d2e6b47'])
     _event, alerts = report._fire_alerts(detector, event)
     fired_ids = {a.get("rule_id") for a in alerts}
     return {

@@ -204,7 +204,7 @@ def test_list_rules_reads_real_contract_files():
         check(body["count"] > 0, "must list at least one real rule from contracts/rules/*.yml")
         sample = body["rules"][0]
         check(set(sample) == {"id", "title", "level", "sector", "score_weight",
-                               "stateful", "mitre", "enabled"},
+                               "stateful", "mitre", "enabled", "default_enabled", "opt_in"},
               f"a rule summary must never leak the raw `condition` field, got keys {set(sample)}")
     finally:
         srv.shutdown(); srv.server_close()

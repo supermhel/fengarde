@@ -1009,7 +1009,9 @@ def main() -> int:
         return 1
     print()
 
-    detector = Detector(plugin_rule_dirs=[])
+    # ot_opcua_write_unauthorized_node ships default-off (siem.default_enabled: false);
+    # fire_check measures that every MITRE-tagged rule CAN fire, so opt it in here.
+    detector = Detector(plugin_rule_dirs=[], opt_in_rules=['e7a14b6d-3c52-4d90-8f1b-5a9c0d2e6b47'])
 
     results = []
     untagged: list[dict] = []

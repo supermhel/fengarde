@@ -170,10 +170,10 @@ def _detector(base: Path, tenants_dir: Path, **kw):
 
 
 def _matched_ids(det, tenant: str | None, activity: int = 1) -> set:
-    event = {"class_uid": 9999, "activity_id": activity,
-             "siem": {"ingest_id": f"i-{tenant}-{activity}"}}
+    siem: dict = {"ingest_id": f"i-{tenant}-{activity}"}
+    event = {"class_uid": 9999, "activity_id": activity, "siem": siem}
     if tenant is not None:
-        event["siem"]["tenant"] = tenant
+        siem["tenant"] = tenant
     _ev, matched, _action = det.process(event)
     return {r.id for r in matched}
 

@@ -1998,7 +1998,9 @@ async function renderCoverage(){
       <td>${esc(r.score_weight ?? "—")}</td>
       <td>${r.stateful ? icon("check","icon-sm") : "—"}</td>
       <td>${r.enabled === false
-        ? `<span class="pill high">${icon("circle")}disabled</span>`
+        ? (r.default_enabled === false && r.opt_in === false
+            ? `<span class="pill med" title="Ships off by default; enable per tenant with enabled_rules (contracts/tenants/README.md)">${icon("circle")}off by default</span>`
+            : `<span class="pill high">${icon("circle")}disabled</span>`)
         : `<span class="pill low">${icon("check")}enabled</span>`}</td>
     </tr>`).join("") || `<tr><td colspan="6" class="muted">No rules loaded.</td></tr>`;
   }
