@@ -136,6 +136,32 @@ def run(kind="memory"):
     check([mm.payload["n"] for mm in left] == [2],
           f"only the unacked message may be redelivered, got {[mm.payload for mm in left]}")
 
+    # (4) structural (memory only, no timing): the stream stores the serialised wire
+    # string ONCE -- not a parsed dict that every delivery would re-dump -- and the
+    # PEL shares that same record instead of copying payloads.
+    if not redis:
+        import json
+        bus = Bus()
+        bus.produce("t9", None, {"t": (1, 2), "n": 1})
+        entry = bus._streams["t9"][0]
+        check(isinstance(getattr(entry, "wire", None), str) and json.loads(entry.wire) == {"t": [1, 2], "n": 1},
+              f"stream entry must hold the serialised wire string, got {entry!r}")
+        check(entry.key == "", f"stored None key must already be '' (Redis xadd), got {entry.key!r}")
+        check(not isinstance(getattr(entry, "payload", None), str) and entry.payload is not entry.payload,
+              "entry.payload must be a fresh parse per access, never a shared dict")
+        got = consume(bus, "t9", "g")[0]
+        check(bus._pel["t9"]["g"][got.id][0] is entry,
+              "the PEL must reference the stored record, not hold a second copy of the payload")
+        check(got.payload == {"t": [1, 2], "n": 1} and got.key == "",
+              f"delivery must parse the wire into a plain Message, got {got!r}")
+        # drain() returns only the undelivered tail, each with an independent dict
+        for i in range(3):
+            bus.produce("t10", "k", {"i": i})
+        consume(bus, "t10", "g")
+        bus.produce("t10", "k", {"i": 3})
+        tail = bus.drain("t10")
+        check([m.payload for m in tail] == [{"i": 3}], f"drain() must return only the undelivered tail: {tail}")
+
 
 _keys: dict = {}
 
