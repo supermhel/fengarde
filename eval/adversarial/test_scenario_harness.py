@@ -347,9 +347,14 @@ def test_oracle_reconciliation() -> None:
                not f["new"] and not f["stale_allowlist_entries"],
                f"new={len(f['new'])} stale_waivers={len(f['stale_allowlist_entries'])}")
     f = oracle_consistency.reconcile(SEED, reg.BY_NAME["it_intrusion"])
+    # 2026-10-02: ``total`` now also counts the ACCEPTED forbidden-edge findings (the channel used to be
+    # dead and always empty), so "nothing unexpected fires" is stated on the unexpected firings
+    # themselves rather than on a total that includes known order-blind waivers.
     _check("(j) it_intrusion: Impossible-travel no longer fires on the pivot "
            "(regression: RFC1918 'ZZ' must not count as a country)",
-           f["total"] == 0, f"disagreements={f['total']}")
+           not f["unexpected_firings"] and not f["stale_gaps"] and not f["decorative_expectations"],
+           f"unexpected={len(f['unexpected_firings'])} stale_gaps={len(f['stale_gaps'])} "
+           f"decorative={len(f['decorative_expectations'])}")
 
 
 def main() -> int:

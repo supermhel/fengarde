@@ -113,15 +113,21 @@ severity_band:
   severity_id: {min: 3, max: 6}
   dominant_band: "high"
 
+# 2026-10-02 (oracle_derive.py, finding F12): an expected STATEFUL rule's group_by / distinct_field must
+# be among the step's evidence fields, or the evidence the oracle asks for cannot show why the rule fired.
+# Two companion rules were declared without their own key: recon_port_scan/aaa9dc23 is keyed on the TARGET
+# (dst_endpoint.ip) and dns_exfil/5f3c9d18 on the parent domain (unmapped.dns.parent_domain). Both fields
+# were added because the RULE FILES say they are the group keys -- not because of anything the pipeline
+# output; evidence_completeness stays 1.0 (both fields are populated on the real events).
 evidence:
   correlation_key: [actor.user.name, src_endpoint.ip]
   per_step:
-    recon_port_scan:  {fields: [src_endpoint.ip, dst_endpoint.port]}
+    recon_port_scan:  {fields: [src_endpoint.ip, dst_endpoint.port, dst_endpoint.ip]}
     ssh_bruteforce:   {fields: [src_endpoint.ip, actor.user.name]}
     initial_access:   {fields: [src_endpoint.ip, actor.user.name]}
     lateral_movement: {fields: [actor.user.name, dst_endpoint.hostname, src_endpoint.ip]}
     priv_grant:       {fields: [actor.user.name, unmapped.target_user.name]}
-    dns_exfil:        {fields: [src_endpoint.ip, dst_endpoint.hostname]}
+    dns_exfil:        {fields: [src_endpoint.ip, dst_endpoint.hostname, unmapped.dns.parent_domain]}
 
 incident_membership:
   incident_count: 1
