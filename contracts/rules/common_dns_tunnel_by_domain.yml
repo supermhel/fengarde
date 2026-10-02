@@ -36,7 +36,9 @@ description: >
   (the attacker must not be able to be that zone's authoritative server) and how
   to extend it. An attacker-registered parent is never on it, so the 2-host
   evasion this rule closes stays closed (re-measured by the evasion search). An
-  unreadable allowlist fails OPEN: the rule simply keeps alerting.
+  unreadable allowlist fails OPEN: the rule simply keeps alerting. The starter set is
+  UNVERIFIED; tools/dns_cardinality_report.py replays a real resolver log through this
+  rule's window and reports which parents would trip it, to vet and extend the list.
 level: medium
 logsource:
   category: network_activity

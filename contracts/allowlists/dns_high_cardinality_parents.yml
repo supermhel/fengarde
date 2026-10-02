@@ -36,9 +36,27 @@
 # allowlists on hot reload. A missing or malformed file FAILS OPEN (the rule keeps
 # alerting) -- the safe direction.
 #
-# This is a STARTER set of widely deployed CDN / update / lookup zones, not a
-# vetted baseline of your network. Verify it against your own resolver logs before
-# relying on it, and trim anything you do not expect to see.
+# STATUS: UNVERIFIED. This is a STARTER set of widely deployed CDN / update / lookup
+# zones, chosen from general knowledge of what such zones look like. It has NOT been
+# checked against real traffic, and it is not a vetted baseline of your network.
+# Trim anything you do not expect to see, and extend it only from measurement.
+#
+# HOW TO VALIDATE AND EXTEND IT ON YOUR OWN TRAFFIC:
+#   python tools/dns_cardinality_report.py <resolver-query-log | ->  [--json]
+# (Zeek dns.log, BIND query log, dnsmasq, CSV or JSON lines; the format is detected.)
+# The tool replays the log through the rule's own window (threshold and window are read
+# from common_dns_tunnel_by_domain.yml) and lists every parent that WOULD trip the rule,
+# with the maximum distinct names in any window, client count, first/last seen, and
+# whether it is already listed here. It NEVER edits this file: it prints suggested
+# entries commented out. Review procedure for each parent it reports:
+#   1. A parent that is high-cardinality is exactly what the rule exists to catch; it
+#      may be a tunnel. Look at the sample names and which clients query it first.
+#   2. Apply the admission test above ((a) vendor-operated, (b) no NS delegation).
+#      Dynamic-DNS / free-subdomain / tunnel-service zones are flagged by the tool and
+#      must never be listed.
+#   3. Only then un-comment ONE line into `entries` below, alphabetically, in its own
+#      reviewed change. A log without timestamps is measured as one window (an upper
+#      bound): do not decide anything from it.
 entries:
   # CDN edge hostnames (per-customer / per-object names under one vendor zone)
   - "akamai.net"
