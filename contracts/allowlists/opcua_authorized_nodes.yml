@@ -1,6 +1,13 @@
 # OPC UA nodes that engineering/operations have DECLARED writable
 # (ot_opcua_write_unauthorized_node.yml).
 #
+# OPERATOR NOTE: the rule that reads this file is OFF BY DEFAULT
+# (siem.default_enabled: false). Populate this list FIRST, then opt in -- per tenant
+# with `enabled_rules: [e7a14b6d-3c52-4d90-8f1b-5a9c0d2e6b47]` in
+# contracts/tenants/<tenant>.yml, or for a single-tenant install with the
+# FENGARDE_OPT_IN_RULES=e7a14b6d-3c52-4d90-8f1b-5a9c0d2e6b47 environment variable on
+# the WS-4 detection service. See contracts/tenants/README.md.
+#
 # Matches by EXACT string on unmapped.ot.node_id, e.g. "ns=2;s=Line3/PumpEnable".
 #
 # Shipped EMPTY on purpose, and read this before enabling the rule on a live
