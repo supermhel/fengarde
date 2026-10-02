@@ -36,6 +36,31 @@ fabricated one:
                                        discriminate direction): fidelity =
                                        (5 correct - 2 forbidden) / 5 = 0.6,
                                        with the breakdown reported in context.
+  * causal_order_fidelity /
+    order_concordance /
+    alert_order_ok             = CO-METRICS (2026-10-02), reported BESIDE the
+                                       legacy pair above, never instead of it.
+                                       chain_fidelity and false_correlation_rate
+                                       never read a clock: a time-MIRRORED copy
+                                       of every storyline scores identically on
+                                       both (measured, eval/adversarial/
+                                       order_controls.py). eval/twin/
+                                       causal_order.py grades the oracle's
+                                       allowed_relationships on EVENT TIME
+                                       (order_concordance, edge-free) and on
+                                       the time already carried by the WS-8 v2
+                                       edges (causal_order_fidelity). READ THE
+                                       LABEL: order_concordance is a TIMESTAMP
+                                       INVARIANT, 1.0 BY CONSTRUCTION on the
+                                       harness's own chains -- it records that
+                                       the ingested clock agrees with the
+                                       oracle, it is NOT evidence that WS-8
+                                       reconstructs causal order (an edge is
+                                       evidenced by ONE alert, its direction
+                                       comes from entity type). Which metric
+                                       LEADS the report is an owner decision
+                                       (Stage 3, not applied): chain_fidelity
+                                       keeps its name, value and position.
   * fpr                        = 0.0 (measured: an INCIDENT count, i.e.,
                                        medium+ alerts only — see
                                        negative_controls.is_incident(). The
@@ -145,6 +170,7 @@ sys.path.insert(0, str(APPROOT_SERVICES))
 import importlib.util  # noqa: E402
 import yaml  # noqa: E402
 
+import causal_order  # noqa: E402  (stdlib-only + import-pure: cannot collide on sys.modules['main'])
 import degradation  # noqa: E402
 import scenario  # noqa: E402
 
@@ -382,6 +408,12 @@ def _evidence_reconstruction(alerts_by_step: list[dict], by_id: dict,
     failures = evpkg.verify_evidence_package(pkg) if pkg is not None else ["no package"]
     provenance = (pkg or {}).get("provenance") or []
     unresolved = sum(len(p.get("unresolved_event_ids") or []) for p in provenance)
+    # The order the WS-3 package PRESENTS the attack in (its alert blocks), as
+    # (oracle step, alert time) -- graded by causal_order.story_order_ok.
+    step_of = {a["alert"].get("alert_id"): a.get("step") for a in alerts_by_step}
+    package_alert_order = [
+        [step_of.get((b.get("content") or {}).get("alert_id")), (b.get("content") or {}).get("time")]
+        for b in ((pkg or {}).get("blocks") or []) if b.get("type") == "alert"]
     return {
         "basis": "harness-measured (wall-clock, informational like date)",
         "package_id": (pkg or {}).get("package_id"),
@@ -392,6 +424,7 @@ def _evidence_reconstruction(alerts_by_step: list[dict], by_id: dict,
         "assembly_median_ms": median_ms,
         "assembly_samples_ms": samples,
         "provenance_unresolved_event_ids": unresolved,
+        "package_alert_order": package_alert_order,
     }
 
 
@@ -752,6 +785,9 @@ def _grade_chain(result: scenario.ChainResult, oracle: dict) -> dict:
         "chain_fidelity": ws8_grade["chain_fidelity"],
         "directional_discrimination": ws8_grade["directional_discrimination"],
         "alert_order_ok": ws8_grade["alert_order_ok"],
+        "causal_order": ws8_grade["causal_order"],
+        "causal_order_fidelity": ws8_grade["causal_order_fidelity"],
+        "order_concordance": ws8_grade["order_concordance"],
         "campaign_count": ws8_grade["campaign_count"],
         "campaign_full_coverage": ws8_grade["campaign_full_coverage"],
         "campaign_decoy_contamination": ws8_grade["campaign_decoy_contamination"],
@@ -1180,6 +1216,15 @@ def _grade_ws8(result: "scenario.ChainResult", oracle: dict, alerts_total: int) 
     membership = _incident_membership_grade(
         alerts_by_step, list(by_id.values()),
         oracle.get("incident_membership") or {})
+    # CAUSAL ORDER (2026-10-02). Graded from the PER-INCIDENT graphs (not the
+    # deduped union above: two incidents can carry different ts_ms for the same
+    # pair, and an incident-id sort must not decide credit) on the ATTACK
+    # alerts only, with the SAME direction predicate chain_fidelity uses.
+    causal = causal_order.grade_causal_order(
+        [graphs_by_id[iid] for iid in sorted(graphs_by_id)],
+        step_entities, oracle.get("allowed_relationships") or [],
+        oracle.get("expected_sequence") or list(step_entities),
+        causal_order.step_times(parsed), alerts_by_step, join_fn=_fidelity_join)
 
     chain_alerts = [a["alert"]["alert_id"] for a in alerts_by_step]
     chain_set = set(chain_alerts)
@@ -1226,6 +1271,12 @@ def _grade_ws8(result: "scenario.ChainResult", oracle: dict, alerts_total: int) 
     #    deterministic. None when no incident promoted.
     reconstruction = _evidence_reconstruction(
         alerts_by_step, by_id, graphs_by_id.get, now_ms)
+    alert_order = _alert_order_ok(alerts_by_step, oracle.get("expected_sequence") or [])
+    causal["story_order_ok"] = causal_order.story_order_ok(
+        (reconstruction or {}).get("package_alert_order") or [],
+        oracle.get("expected_sequence") or [])
+    causal["parser_time_agreement"] = causal_order.parser_time_agreement(parsed, _event_ts)
+    causal["reporting_policy"] = causal_order.reporting_policy(fidelity["directional_discrimination"])
     # 4) Analyst investigation time (MTTI): scripted walk over the picked
     #    incident's OWN graph (graphs_by_id.get, never the cross-incident
     #    union), counting steps + API round-trips; seconds = steps x the
@@ -1266,7 +1317,10 @@ def _grade_ws8(result: "scenario.ChainResult", oracle: dict, alerts_total: int) 
         "campaign_full_coverage": bool(covering),
         "campaign_decoy_contamination": (round(len(campaign_absorbed) / len(decoy_ids), 4)
                                          if decoy_ids else None),
-        "alert_order_ok": _alert_order_ok(alerts_by_step, oracle.get("expected_sequence") or []),
+        "alert_order_ok": alert_order,
+        "causal_order": causal,
+        "causal_order_fidelity": causal["causal_order_fidelity"],
+        "order_concordance": causal["order_concordance"],
         "decoy_alert_count": len(decoy_ids),
         "decoy_absorbed_count": len(absorbed),
         "decoy_contamination": decoy_contamination,
@@ -1400,9 +1454,12 @@ def _baseline_delta(metrics: dict, path: Path = BASELINE_PATH) -> Optional[dict]
     Honest null-vs-0.0 handling: only keys present in BOTH are compared; a
     null on either side means "no denominator / not measured", reported as
     ``"n/a"``, never coerced into a numeric 0.0 that would read as
-    "measured and zero" (same discipline as the metrics themselves -- e.g.
-    chain_fidelity is null on both sides today: WS-8 has no causal-edge
-    graph, so 0.0 would be fabricated). Non-numeric values (bools, the
+    "measured and zero" (same discipline as the metrics themselves -- the frozen baseline
+    holds chain_fidelity, false_correlation_rate and mutation_robustness as
+    null, so they compare as "n/a" although the live run now measures them).
+    A metric that is NEW since the freeze (causal_order_fidelity,
+    order_concordance, alert_order_ok) is absent from the baseline and is
+    never compared: it appears in the report and the trend row only. Non-numeric values (bools, the
     degradation_behavior dict) that are byte-equal get delta 0.0 ("no change");
     if they ever differ they are reported as ``"n/a"`` rather than given a
     made-up numeric. Returns None when no baseline file exists.
@@ -1497,6 +1554,15 @@ def run(seed: int = 7) -> dict:
             # graph (see _grade_chain_fidelity); None only when no incident
             # promoted or no denominator exists -- never a fabricated number.
             "chain_fidelity": grade["chain_fidelity"],
+            # CO-METRICS (2026-10-02), co-reported beside chain_fidelity. NOT in
+            # eval/twin/baseline.json (frozen before they existed), so they never
+            # enter delta_vs_baseline. order_concordance is a TIMESTAMP INVARIANT
+            # (1.0 by construction on this harness's own chain); see
+            # context.causal_order_details.order_concordance_basis. alert_order_ok
+            # was graded (and forwarded) before but never emitted as a metric.
+            "causal_order_fidelity": grade["causal_order_fidelity"],
+            "order_concordance": grade["order_concordance"],
+            "alert_order_ok": grade["alert_order_ok"],
             "evidence_completeness": evidence,  # already rounded (or None) by _grade_chain
             # WP-3.5-A: real ratio of oracle-forbidden relationships that a
             # real graph edge joined (the negative-control half of chain
@@ -1552,6 +1618,11 @@ def run(seed: int = 7) -> dict:
                 "per_allowed_pair": grade["per_allowed_pair"],
                 "per_forbidden_pair": grade["per_forbidden_pair"],
             },
+            # Per-pair breakdown, forbidden_order_realised_rate, temporal_discrimination,
+            # edge attribution stats, story_order_ok (WS-3 package presents the attack in
+            # order) and parser_time_agreement (WS-2 time normalisation). Co-reported:
+            # reporting_policy.mode == "co_reported" (headline switch is owner-gated).
+            "causal_order_details": grade["causal_order"],
             "chain_graph_edges": [
                 {"from": e["from"], "to": e["to"], "kind": e["kind"],
                  "event_id": e["event_id"], "ts_ms": e["ts_ms"]}
@@ -1634,6 +1705,12 @@ def run(seed: int = 7) -> dict:
                    if grade["incident_summary"] else "no incident")
                 + ")."
             )
+            + (  # CO-metrics: co-reported, with the invariant labelled as such
+                " Causal order (co-reported, timestamp-based): order_concordance="
+                + str(grade["order_concordance"]) + " [" + causal_order.ORDER_BASIS + "]"
+                + ", causal_order_fidelity=" + str(grade["causal_order_fidelity"])
+                + ", alert_order_ok=" + str(grade["alert_order_ok"]) + "."
+            )
         ),
         "elapsed_seconds": round(time.time() - started, 3),
     }
@@ -1697,6 +1774,16 @@ def main(argv: list[str] | None = None) -> int:
             f"{negative_controls._MAINTENANCE_NAME} produced 0 LOW explained "
             "alerts -- the ticketed downgrade mechanism has silently regressed "
             "to suppression (see negative_controls.py / SECURITY.md 12)")
+    # Order floors (2026-10-02). Both are timestamp invariants on this
+    # deterministic chain: they trip on a mutation/parser/WS-3 clock bug, not on
+    # a correlator regression. causal_order_fidelity gets NO floor (an owner call:
+    # it would block PRs on an edge-timing change).
+    if m["alert_order_ok"] is not True:
+        floor_failures.append(f"alert_order_ok == {m['alert_order_ok']!r}, expected True (the chain's "
+                              "alerts no longer follow the oracle's expected_sequence in time)")
+    if m["order_concordance"] != 1.0:
+        floor_failures.append(f"order_concordance == {m['order_concordance']!r}, expected 1.0 "
+                              "(timestamp invariant on the harness's own chain)")
     if floor_failures:
         for f in floor_failures:
             print(f"[FAIL] twin report floor assertion: {f}")
@@ -1711,6 +1798,8 @@ def main(argv: list[str] | None = None) -> int:
     # print a human summary line for the gate
     summary = (f"[OK] twin report (seed={args.seed}): TPR={m['tpr']} FPR={m['fpr']} "
                f"chain_fidelity={m['chain_fidelity']} "
+               f"causal_order_fidelity={m['causal_order_fidelity']} "
+               f"order_concordance={m['order_concordance']}(timestamp invariant) "
                f"evidence={m['evidence_completeness']} "
                f"fcr={m['false_correlation_rate']} "
                f"arr={m['alert_reduction_ratio']} "
