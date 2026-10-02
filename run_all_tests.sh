@@ -31,6 +31,9 @@ echo "== B4: rule validation gate (schema, condition parse, operator safety) =="
 $PY tools/validate_rules.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 $PY tools/test_validate_rules.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
+echo "== tools: dns_cardinality_report (measures the UNVERIFIED DNS allowlist; never edits it) =="; LAST_HEADER="== tools: dns_cardinality_report (measures the UNVERIFIED DNS allowlist; never edits it) =="
+$PY tools/test_dns_cardinality_report.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
 echo "== coverage gate floor/buffer tests (was orphaned -- only run directly) =="; LAST_HEADER="== coverage gate floor/buffer tests (was orphaned -- only run directly) =="
 $PY tools/test_coverage_gate.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
@@ -62,6 +65,9 @@ $PY services/ws8-correlation/test_incident_graph_v2.py || { fail=1; FAILED="${FA
 echo
 echo "== ws8 NEW-hunt regression: flat prometheus skip keys + skew-future/NaN time rejected + fully-anonymous deterministic member id + oldest-by-time member-cap eviction =="; LAST_HEADER="== ws8 NEW-hunt regression: flat prometheus skip keys + skew-future/NaN time rejected + fully-anonymous deterministic member id + oldest-by-time member-cap eviction =="
 $PY services/ws8-correlation/test_correlator_new_hunt.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
+echo "== ws8 campaign view: shared-alert linking, tenant isolation, no entity-only merge =="; LAST_HEADER="== ws8 campaign view =="
+$PY services/ws8-correlation/test_campaigns.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
 echo "== ws3 WS-8 wiring: incident routing (day-stable across growth), storage list_incidents, OpenSearch wire format =="; LAST_HEADER="== ws3 WS-8 wiring: incident routing (day-stable across growth), storage list_incidents, OpenSearch wire format =="
 $PY services/ws3-indexer/test_ws8_incidents_routing.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
@@ -176,6 +182,9 @@ echo
 echo "== shared bus fan-out (multi-consumer-group fan-out + ack independence) =="; LAST_HEADER="== shared bus fan-out (multi-consumer-group fan-out + ack independence) =="
 $PY services/shared/test_bus_groups.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
+echo "== bus wire parity: memory backend rejects what Redis rejects and never shares a payload dict =="; LAST_HEADER="== bus wire parity =="
+$PY services/shared/test_bus_wire_parity.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
 echo "== shared bus PEL-cap in-flight eviction (2026-08-27 gap-hunt #1: at-least-once) =="; LAST_HEADER="== shared bus PEL-cap in-flight eviction (2026-08-27 gap-hunt #1: at-least-once) =="
 $PY services/shared/test_bus_pel_cap.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
@@ -259,6 +268,12 @@ $PY services/ws4-detection/test_v03_new_rules.py || { fail=1; FAILED="${FAILED} 
 echo
 echo "== ws4 v0.4 (P4): impossible-travel fires on REAL parser + enrichment output =="; LAST_HEADER="== ws4 v0.4 (P4): impossible-travel fires on REAL parser + enrichment output =="
 $PY services/ws4-detection/test_v04_new_rules.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
+echo "== companion rules: each closes one measured evasion (fires on the split attack its sibling cannot see) =="; LAST_HEADER="== companion rules =="
+$PY services/ws4-detection/test_companion_rules.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
+echo "== ws4 window poisoning: a forged near-future timestamp must not wipe a stateful window =="; LAST_HEADER="== ws4 window poisoning =="
+$PY services/ws4-detection/test_window_poisoning.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
 echo "== ws4 v0.5 (A3): common_beaconing.yml fires on regular cadence, not on irregular =="; LAST_HEADER="== ws4 v0.5 (A3): common_beaconing.yml fires on regular cadence, not on irregular =="
 $PY services/ws4-detection/test_v05_beaconing.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
@@ -460,6 +475,9 @@ $PY eval/twin/scenario.py --selfcheck || { fail=1; FAILED="${FAILED} ${LAST_HEAD
 echo
 echo "== twin: negative controls (FPR source) -- four benign scenarios, all must yield zero incidents =="; LAST_HEADER="== twin: negative controls (FPR source) -- four benign scenarios, all must yield zero incidents =="
 $PY eval/twin/negative_controls.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
+echo "== twin: oracle <-> reality reconciliation (the answer key is self-authored; drift must not be silent) =="; LAST_HEADER="== twin: oracle <-> reality reconciliation (the answer key is self-authored; drift must not be silent) =="
+$PY eval/twin/oracle_consistency.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 
 # == Phase 4 adversarial system-level validation (WP-4-A) ==
 # Layer A is DETERMINISTIC and BLOCKING (determinism is what licenses
@@ -479,6 +497,30 @@ echo
 echo "== Phase 4 Layer A acceptance: determinism double-run, sensitivity both ways, causal-join-break = FAILURE, weakened-rule drop =="; LAST_HEADER="== Phase 4 Layer A acceptance: determinism double-run, sensitivity both ways, causal-join-break = FAILURE, weakened-rule drop =="
 $PY eval/adversarial/test_layer_a.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
+echo "== Phase 4 multi-storyline: instruments pass positive+negative controls (directional discrimination, order, decoys, operators, search) =="; LAST_HEADER="== Phase 4 multi-storyline: instruments pass positive+negative controls =="
+$PY eval/adversarial/test_scenario_harness.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
+echo "== twin: oracle cross-check (mutation testing + independent derived oracle + triangulation) =="; LAST_HEADER="== twin: oracle cross-check (mutation testing + independent derived oracle + triangulation) =="
+$PY eval/twin/test_oracle_crosscheck.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
+echo "== Phase 4 multi-storyline: mutation lane over EVERY attack shape (AI-to-OT, IT intrusion, infra takeover) =="; LAST_HEADER="== Phase 4 multi-storyline: mutation lane over every attack shape =="
+$PY eval/adversarial/scenario_matrix.py --seed 7 || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
+echo "== Phase 4 reversed-order metric control (mirror/swap/shift: order metrics must say no, legacy join metrics must not move) =="; LAST_HEADER="== Phase 4 reversed-order metric control (mirror/swap/shift: order metrics must say no, legacy join metrics must not move) =="
+$PY eval/adversarial/test_order_controls.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
+echo "== Phase 4 evasion-boundary search: measured boundary of each volume rule == its declared threshold/window/group_by =="; LAST_HEADER="== Phase 4 evasion-boundary search =="
+$PY eval/adversarial/evasion_search.py --seed 7 || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
+echo "== Phase 4 adaptive evasion: FastProbe parity + axes + findings register controls =="; LAST_HEADER="== Phase 4 adaptive evasion: FastProbe parity + axes + findings register controls =="
+$PY eval/adversarial/test_evasion_axes.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
+echo "== Phase 4 adaptive evasion: per-rule evasion cost vector vs committed floor =="; LAST_HEADER="== Phase 4 adaptive evasion: per-rule evasion cost vector vs committed floor =="
+$PY eval/adversarial/evasion_cost.py --seed 7 || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
+echo "== Phase 4 adaptive evasion: benign-noise dilution (F1 sweep), blocking subset =="; LAST_HEADER="== Phase 4 adaptive evasion: benign-noise dilution (F1 sweep), blocking subset =="
+$PY eval/adversarial/noise_dilution.py --blocking-subset || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
 echo "== twin: full scorecard smoke run (report.py must complete without error on the real cascade) =="; LAST_HEADER="== twin: full scorecard smoke run (report.py must complete without error on the real cascade) =="
 # PR #80 finding 10: write to a GITIGNORED last-run path, NOT the committed
 # eval/twin/report.json -- a gate run must not dirty a tracked artifact.
@@ -486,6 +528,9 @@ $PY eval/twin/report.py --no-trend --out eval/twin/report.latest.json || { fail=
 echo
 echo "== WP-3-C: twin chain-fidelity graded against the real v2 incident graph (determinism + mutation-soundness) =="; LAST_HEADER="== WP-3-C: twin chain-fidelity graded against the real v2 incident graph (determinism + mutation-soundness) =="
 $PY eval/twin/test_chain_fidelity.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
+echo "== twin: causal-order grading (per-incident min ts_ms, DAG pairs, typed-kind winner; order_concordance is a timestamp invariant) =="; LAST_HEADER="== twin: causal-order grading (per-incident min ts_ms, DAG pairs, typed-kind winner; order_concordance is a timestamp invariant) =="
+$PY eval/twin/test_causal_order.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
 echo "== WP-3.5-A: twin Phase 3.5 operational outcome metrics (alert reduction, false correlation, reconstruction, investigation, severity confusion -- determinism + mutation-soundness) =="; LAST_HEADER="== WP-3.5-A: twin Phase 3.5 operational outcome metrics (alert reduction, false correlation, reconstruction, investigation, severity confusion -- determinism + mutation-soundness) =="
 $PY eval/twin/test_phase3_5.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
@@ -512,6 +557,9 @@ $PY services/ws1-collectors/test_fix_counters_deterministic.py || { fail=1; FAIL
 echo
 echo "== H7 regression: EVTX business-hours boundary (oracle vs real engine at 18:00:00) =="; LAST_HEADER="== H7 regression: EVTX business-hours boundary (oracle vs real engine at 18:00:00) =="
 $PY eval/detection_accuracy/test_evtx_eval.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
+echo "== blind-recall lane: synthetic controls (label from the dataset, never from FENGARDE; NOT a third-party measurement) =="; LAST_HEADER="== blind-recall lane: synthetic controls (label from the dataset, never from FENGARDE; NOT a third-party measurement) =="
+$PY eval/detection_accuracy/test_blind_recall.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
 echo "== ws7 UX fixes: saved searches, dark mode, alert lifecycle (static assertions) =="; LAST_HEADER="== ws7 UX fixes: saved searches, dark mode, alert lifecycle (static assertions) =="
 $PY services/ws7-dashboard/test_fix_ux.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }

@@ -1,0 +1,82 @@
+title: OPC UA write to a node not on the authorised-node list
+id: e7a14b6d-3c52-4d90-8f1b-5a9c0d2e6b47
+# status: experimental is METADATA ONLY -- no engine or service code gates on `status`
+# (verified 2026-10-02). What keeps this rule quiet is `siem.default_enabled: false`
+# below (OFF until a tenant opts in). `status` exists so the file does not claim `stable`
+# for a signal that is noise until the plant owner populates opcua_authorized_nodes.yml.
+# Flip it to `stable` once that list has been reviewed.
+status: experimental
+description: >
+  An OPC UA client wrote a value to a control-system node that is NOT listed in
+  contracts/allowlists/opcua_authorized_nodes.yml (OCSF API Activity 6003,
+  activity 3 Update, siem.source_type=opcua_audit).
+
+  Why this exists (2026-10-01, found by the Phase-4 mutation harness): the only
+  OPC UA write detections were ot_config_change (fires when the node id contains a
+  Config/Firmware/Setpoint/Parameter marker) and ot_write_outside_maintenance
+  (fires outside 08:00-18:00 Mon-Fri). A write to an ordinary process node during
+  business hours -- e.g. Line3/PumpEnable at 10:00 on a Thursday -- matched
+  neither, so the same actuation that is caught as a Modbus coil write was
+  invisible once an attacker used OPC UA in working hours. Measured end to end
+  (protocol/opcua_path_in_hours), not inferred.
+
+  OFF BY DEFAULT (owner decision, 2026-10-02): this rule ships with
+  siem.default_enabled: false, so a stock install does NOT evaluate it. The reason
+  is the allowlist: contracts/allowlists/opcua_authorized_nodes.yml ships EMPTY
+  (nothing suppressed on first install), so enabling the rule before you populate
+  that list alerts on EVERY OPC UA write. Populate the allowlist from a reviewed
+  baseline first (see that file), then opt in:
+    * per tenant: add this rule's id to `enabled_rules` in
+      contracts/tenants/<tenant_id>.yml (see contracts/tenants/README.md); a tenant
+      that lists it in `disabled_rules` too stays OFF (disabled wins); or
+    * every tenant of a single-tenant install: set the environment variable
+      FENGARDE_OPT_IN_RULES=e7a14b6d-3c52-4d90-8f1b-5a9c0d2e6b47 on the WS-4
+      detection service (comma-separated for several rules).
+  Until you opt in, an in-hours OPC UA write to an ordinary process node is NOT
+  detected by this rule -- that is the coverage trade the owner accepted for a quiet
+  first install; the older ot_config_change and ot_write_outside_maintenance rules
+  still cover config/firmware/setpoint nodes and off-hours writes. Level is medium,
+  not high, because even with a populated list some hits are routine operations.
+
+  This is deliberately ALLOWLIST-FIRST once enabled: it flags the writes nobody
+  declared.
+
+  Scoring honesty (2026-10-02 review): this rule adds NO score weight of its own.
+  Its event is, by construction, often ALSO matched by ot_config_change (config /
+  firmware / setpoint nodes, weight 60) and ot_write_outside_maintenance (off-hours,
+  weight 65); with its own weight of 50 one config write scored 70 -> 100 purely
+  from the overlap. The medium severity floor (40) still scores it when it fires
+  alone -- the in-hours write to an ordinary node that nothing else sees, which is
+  the only case it exists for -- so it reaches the classifier but never the LLM
+  funnel by itself. It still raises its own alert beside the older rules on an
+  overlapping event (it states a different fact: the node was never declared
+  writable); it just does not inflate the score. It cannot be a `companion_of`
+  either rule: companion_of takes ONE sibling and ties tenant-disablement to it,
+  and this rule overlaps two.
+level: medium
+logsource:
+  category: application_activity
+detection:
+  ot_write:
+    class_uid: 6003
+    activity_id: 3
+    siem.source_type: opcua_audit
+    unmapped.ot.node_id:
+      not_in: opcua_authorized_nodes
+  condition: ot_write
+fields:
+  - actor.user.name
+  - unmapped.ot.node_id
+  - unmapped.ot.server_id
+siem:
+  sector: datacenter
+  # OFF until a tenant opts in (enabled_rules) -- see "OFF BY DEFAULT" above.
+  default_enabled: false
+  # Adds NO weight of its own -- see "Scoring honesty" above. The `level: medium` floor
+  # (contracts/scoring.yaml severity_floor.medium = 40) still guarantees a score when
+  # it fires alone.
+  score_weight: 0
+mitre:
+  framework: attack-ics
+  tactic: TA0106      # Impair Process Control
+  technique: T0855    # Unauthorized Command Message

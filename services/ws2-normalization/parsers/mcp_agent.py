@@ -52,9 +52,11 @@ more fields:
 """
 from __future__ import annotations
 
+import base64
 import json
 import re
 import time
+import unicodedata
 import urllib.parse
 from typing import Optional
 
@@ -94,21 +96,46 @@ def _tokenize(tool: str) -> list:
 
 # Heuristic path patterns that indicate a tool call is touching secret
 # material. Deliberately simple/documented, not a security boundary on its
-# own -- the rule that consumes this flag says so too.
+# own -- the rule that consumes this flag says so too. 2026-09-10: added
+# a token-file branch (eval/adversarial/mutate.py's credential/
+# borrowed_credential variant measured a real miss on
+# "service_tokens.txt" -- a real secret-bearing filename shape the
+# original list had no branch for at all, not an encoding evasion of an
+# existing branch). Still a finite, documented list, not a claim of
+# catching every secret-shaped filename.
 _CREDENTIAL_PATH_PATTERNS = re.compile(
     r"(\.env\b|id_rsa|id_ed25519|\.aws[/\\]credentials|\.ssh[/\\]|"
     r"secrets?\.(ya?ml|json|txt)|credentials\.(ya?ml|json)|\.pem$|\.key$|"
-    r"\.kube[/\\]config|\.netrc\b)",
+    r"\.kube[/\\]config|\.netrc\b|\w*tokens?\.(ya?ml|json|txt)\b)",
     re.IGNORECASE,
 )
 
 # Common prompt-injection phrasing seen in log-line/tool-arg content. A
 # heuristic string-match, not a classifier -- exactly what the rule's
-# description says.
+# description says. 2026-09-10: broadened with the documented synonym set
+# and the German equivalent tested by eval/adversarial/mutate.py's
+# equivalent_phrasing/language_switch variants (Phase 4 measured this rule
+# at 0/2 against those two specifically). Still a finite, bounded list, not
+# a claim of covering every phrasing or every language -- a semantic
+# classifier would generalize further and remains a documented future
+# option, not built here.
+#
+# Adversarial review (same day) caught the first version of this broadening
+# overshooting: `disclose (the )?(system )?prompt` and a `disregard`
+# alternative ending in bare `system prompt` matched ordinary sentences
+# like "Please disclose prompt engineering best practices" or "disregard
+# system prompt rendering bug" -- neither malicious. Both branches are now
+# anchored to the exact phrase shape the equivalent_phrasing mutation
+# actually produces ("disregard ... PREVIOUS INSTRUCTIONS", "disclose THE
+# SYSTEM prompt", no optional/bare-word paths) -- still catches the
+# measured evasion (verified below), no longer matches the benign
+# constructions above (also verified).
 _INJECTION_PATTERNS = re.compile(
-    r"(ignore (all )?previous instructions|disregard (the )?system prompt|"
-    r"you are now|new instructions:|reveal your (system )?prompt|"
-    r"act as if you have no restrictions)",
+    r"(ignore (all )?previous instructions|"
+    r"disregard (all |the )?previous instructions|"
+    r"disclose the system prompt|reveal your (system )?prompt|"
+    r"you are now|new instructions:|act as if you have no restrictions|"
+    r"ignoriere (alle )?vorherigen anweisungen|nenne deinen system-prompt)",
     re.IGNORECASE,
 )
 
@@ -124,6 +151,107 @@ _DESTRUCTIVE_COMMAND_PATTERNS = re.compile(
 )
 
 _MAX_ARGS_CHARS = 2000  # arguments are attacker-controlled -- cap, never eval.
+
+# 2026-09-10: bounded, deterministic normalization pass closing the encoding-
+# evasion gap eval/adversarial/mutate.py::mutate_prompt's "prompt" axis
+# measured and disclosed (Phase 4, 2026-09-03): 6 of 10 content mutations
+# (Cyrillic homoglyphs, URL-encoding, base64 wrapping, run-together
+# whitespace, plus the two phrasing variants the pattern list above now
+# covers directly) defeated the plain-ASCII regex below. This does not
+# widen the regex itself -- it widens what text gets searched, by decoding/
+# folding the SAME attacker-controlled string through the specific
+# transforms the harness tests, then scanning original + every decoded
+# variant. Still a heuristic, still documented as one (see the rule
+# descriptions and docs/agent-monitoring.md) -- not a claim this closes
+# every possible encoding, just the measured, disclosed ones plus their
+# near neighbors.
+_HOMOGLYPH_FOLD = str.maketrans({
+    # Cyrillic look-alikes (the exact pair eval/adversarial/mutate.py's
+    # unicode_confusables variant uses is і/о; the rest are the
+    # same visual-confusable family, most likely to appear alongside them).
+    "і": "i", "І": "I",
+    "о": "o", "О": "O",
+    "а": "a", "А": "A",
+    "е": "e", "Е": "E",
+    "р": "p", "Р": "P",
+    "с": "c", "С": "C",
+    "у": "y", "У": "Y",
+    "х": "x", "Х": "X",
+    # Greek look-alikes, same rationale.
+    "ο": "o", "Ο": "O",
+    "α": "a", "Α": "A",
+})
+
+_WHITESPACE_RUN_RE = re.compile(r"\s+")
+# Base64 detection is intentionally narrow: a 16+ char run of base64-alphabet
+# characters (with optional padding). Short runs risk false-positive decodes
+# of ordinary alphanumeric tokens (session IDs, hashes) into garbage, which
+# _decoded_variants already tolerates (decode failure -> skipped, not
+# raised) but there is no reason to spend the cycles on tokens too short to
+# plausibly carry a wrapped phrase.
+_B64_TOKEN_RE = re.compile(r"[A-Za-z0-9+/]{16,}={0,2}")
+
+
+def _fold(text: str) -> str:
+    """NFKC-normalize + homoglyph-fold + whitespace-collapse -- the single
+    unit both call sites below apply, so composing it (fold a decoded
+    variant, or decode a folded variant) is one call, not copy-pasted
+    logic."""
+    folded = unicodedata.normalize("NFKC", text).translate(_HOMOGLYPH_FOLD)
+    return _WHITESPACE_RUN_RE.sub(" ", folded)
+
+
+def _decode_layer(text: str) -> list:
+    """One layer of percent-decode + bounded base64-decode attempts."""
+    out = []
+    try:
+        decoded = urllib.parse.unquote(text, errors="strict")
+        if decoded != text:
+            out.append(decoded)
+    except (UnicodeDecodeError, ValueError):
+        pass
+    for token in _B64_TOKEN_RE.findall(text):
+        try:
+            out.append(base64.b64decode(token, validate=True).decode("utf-8"))
+        except (ValueError, UnicodeDecodeError):
+            continue
+    return out
+
+
+def _decoded_variants(text: str) -> list:
+    """Bounded, deterministic alternate readings of attacker-controlled
+    text, for the heuristic classifiers below to scan ALONGSIDE the
+    original -- never replacing it, so nothing that matched before this
+    fix stops matching now.
+
+    2026-09-10, adversarial review: the first version applied fold/decode
+    as three independent single-pass transforms on the ORIGINAL text only,
+    so a mutation that CHAINS two techniques (a base64-wrapped homoglyph
+    phrase, or a homoglyph phrase that's then percent-encoded) evaded both
+    passes individually. Now composes one level deep each way -- fold each
+    decoded variant, and decode the folded variant -- covering both
+    encode-then-obfuscate and obfuscate-then-encode without adding a new
+    transform, still bounded by the same _MAX_ARGS_CHARS-capped input."""
+    variants = []
+    folded = _fold(text)
+    variants.append(folded)
+
+    decode_layer = _decode_layer(text)
+    variants.extend(decode_layer)
+    for decoded in decode_layer:
+        refolded = _fold(decoded)
+        if refolded != decoded:
+            variants.append(refolded)
+    if folded != text:
+        variants.extend(_decode_layer(folded))
+    return variants
+
+
+def _scan_text(text: str) -> str:
+    """The corpus R1/R3/R5 search: the original text plus every decoded/
+    normalized variant, newline-joined so a pattern spanning a decode
+    boundary can't accidentally splice two variants into a false match."""
+    return "\n".join([text] + _decoded_variants(text))
 
 
 def _pick(rec: dict, *keys):
@@ -187,12 +315,13 @@ class McpAgentParser(Parser):
             event["src_endpoint"] = {"ip": src_ip}
 
         egress_domain = self._egress_domain(str(tool), arguments)
+        scan_text = _scan_text(args_text)
         unmapped: dict = {"mcp": {
             "session_id": session,
             "server": server,
-            "credential_path_access": bool(_CREDENTIAL_PATH_PATTERNS.search(args_text)),
-            "injection_indicator": bool(_INJECTION_PATTERNS.search(args_text)),
-            "destructive_command_indicator": bool(_DESTRUCTIVE_COMMAND_PATTERNS.search(args_text)),
+            "credential_path_access": bool(_CREDENTIAL_PATH_PATTERNS.search(scan_text)),
+            "injection_indicator": bool(_INJECTION_PATTERNS.search(scan_text)),
+            "destructive_command_indicator": bool(_DESTRUCTIVE_COMMAND_PATTERNS.search(scan_text)),
             "is_egress_call": egress_domain is not None,
         }}
         if egress_domain is not None:
@@ -243,7 +372,16 @@ class McpAgentParser(Parser):
     @staticmethod
     def _args_text(arguments) -> str:
         try:
-            text = json.dumps(arguments) if not isinstance(arguments, str) else arguments
+            # ensure_ascii=False: the default True would \uXXXX-escape any
+            # non-ASCII byte (a Cyrillic/Greek homoglyph included) into
+            # literal backslash-u text -- silently defeating
+            # _HOMOGLYPH_FOLD, which folds real Unicode codepoints, not
+            # their escaped ASCII spelling. 2026-09-10, found writing the
+            # test for the fold: the fold worked in isolation but not
+            # through this path, because json.dumps was mangling the input
+            # before the fold ever saw it.
+            text = (json.dumps(arguments, ensure_ascii=False)
+                     if not isinstance(arguments, str) else arguments)
         except (TypeError, ValueError):
             text = str(arguments)
         return text[:_MAX_ARGS_CHARS]

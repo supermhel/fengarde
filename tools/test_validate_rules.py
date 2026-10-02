@@ -331,6 +331,140 @@ class TestMainFloors(unittest.TestCase):
         self.assertIn("not found", out)
 
 
+_SIB_ID = "6f1c8a2e-0d3b-4c11-9a21-7b5e2f9a1c01"
+_COMP_ID = "d83b71c3-93eb-439f-86f9-5985ebcc38cb"
+_OTHER_ID = "a1b2c3d4-5e6f-4708-9a1b-2c3d4e5f6071"
+
+
+def _sibling() -> dict:
+    r = _base_rule()
+    r["id"] = _SIB_ID
+    return r
+
+
+def _companion(companion_of=_SIB_ID) -> dict:
+    r = _base_rule()
+    r["id"] = _COMP_ID
+    r["siem"]["companion_of"] = companion_of
+    return r
+
+
+class TestCompanionOf(unittest.TestCase):
+    """siem.companion_of is whitelisted by _SIEM_ALLOWED_KEYS but its VALUE used
+    to be unchecked: a typo'd id, a list, a self-link or a chained link all
+    shipped silently as a "companion" that is never suppressed nor disabled with
+    its sibling (the engine just stores None for anything that is not a str)."""
+
+    def _index(self, *rules):
+        return {r["id"]: r for r in rules}
+
+    def test_valid_link_passes(self):
+        sib, comp = _sibling(), _companion()
+        self.assertEqual(validate_rule(comp, self._index(sib, comp)), [])
+        # the sibling itself (no companion_of) is unaffected
+        self.assertEqual(validate_rule(sib, self._index(sib, comp)), [])
+
+    def test_typo_id_fails(self):
+        sib, comp = _sibling(), _companion("6f1c8a2e-0d3b-4c11-9a21-7b5e2f9a1c02")
+        errs = validate_rule(comp, self._index(sib, comp))
+        self.assertTrue(any("companion_of" in e and "not the id of any rule" in e
+                            for e in errs), errs)
+
+    def test_list_value_fails_even_without_index(self):
+        for bad in ([_SIB_ID], {"id": _SIB_ID}, 7, True, ""):
+            comp = _companion(bad)
+            errs = validate_rule(comp)  # shape check needs no index
+            self.assertTrue(any("companion_of must be a non-empty string" in e
+                                for e in errs), (bad, errs))
+
+    def test_self_link_fails(self):
+        comp = _companion(_COMP_ID)
+        errs = validate_rule(comp, self._index(comp))
+        self.assertTrue(any("own id" in e for e in errs), errs)
+
+    def test_chained_link_fails(self):
+        sib = _sibling()
+        mid = _companion(_SIB_ID)               # mid is a companion of sib ...
+        mid["id"] = _OTHER_ID
+        leaf = _companion(_OTHER_ID)            # ... and leaf is a companion of mid
+        errs = validate_rule(leaf, self._index(sib, mid, leaf))
+        self.assertTrue(any("itself a companion" in e for e in errs), errs)
+        # the one-hop link mid -> sib stays valid
+        self.assertEqual(validate_rule(mid, self._index(sib, mid, leaf)), [])
+
+    def test_main_checks_links_against_the_same_rules_dir(self):
+        def write(d, name, rule):
+            (Path(d) / name).write_text(yaml.safe_dump(rule), encoding="utf-8")
+
+        real_dir = vr.RULES_DIR
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                vr.RULES_DIR = Path(tmp)
+                write(tmp, "sib.yml", _sibling())
+                write(tmp, "comp.yml", _companion())
+                with contextlib.redirect_stdout(io.StringIO()):
+                    self.assertEqual(main(["validate_rules.py"]), 0)
+                    # single-file mode resolves siblings from the file's own dir
+                    self.assertEqual(main(["validate_rules.py", str(Path(tmp) / "comp.yml")]), 0)
+                write(tmp, "comp.yml", _companion("6f1c8a2e-0d3b-4c11-9a21-7b5e2f9a1c02"))
+                buf = io.StringIO()
+                with contextlib.redirect_stdout(buf):
+                    self.assertNotEqual(main(["validate_rules.py"]), 0)
+                    self.assertNotEqual(
+                        main(["validate_rules.py", str(Path(tmp) / "comp.yml")]), 0)
+                self.assertIn("companion_of", buf.getvalue())
+        finally:
+            vr.RULES_DIR = real_dir
+
+    def test_every_shipped_companion_resolves(self):
+        """Positive control on the REAL rule set: each shipped companion names a
+        real, non-companion sibling (this is the gate working, not a tautology:
+        test_typo_id_fails proves the same code rejects a bad link)."""
+        index = vr.load_rules_index(RULES_DIR)
+        links = [(r["id"], r["siem"]["companion_of"]) for r in index.values()
+                 if isinstance(r.get("siem"), dict) and "companion_of" in r["siem"]]
+        self.assertGreaterEqual(len(links), 5, links)
+        for comp_id, sib_id in links:
+            self.assertIn(sib_id, index, f"{comp_id} -> {sib_id}")
+            self.assertEqual(validate_rule(index[comp_id], index), [])
+
+
+class TestDefaultEnabled(unittest.TestCase):
+    """siem.default_enabled (rule ships OFF until a tenant opts in) is accepted
+    ONLY as a bool. The engine switches a rule off for a literal False alone, so
+    a typo'd "false" string would ship the rule silently ENABLED."""
+
+    def _with(self, value):
+        r = _base_rule()
+        r["siem"]["default_enabled"] = value
+        return validate_rule(r)
+
+    def test_bool_values_are_accepted(self):
+        self.assertEqual(self._with(False), [])
+        self.assertEqual(self._with(True), [])
+
+    def test_absent_is_accepted(self):
+        self.assertEqual(validate_rule(_base_rule()), [])   # control
+
+    def test_non_bool_values_are_rejected(self):
+        for bad in ("false", "no", 0, 1, None, [False], {"a": 1}):
+            errs = self._with(bad)
+            self.assertTrue(any("default_enabled must be a bool" in e for e in errs),
+                            f"{bad!r} must be rejected, got {errs}")
+
+    def test_key_is_no_longer_an_unknown_siem_key(self):
+        # negative control: a genuinely unknown key is still rejected
+        r = _base_rule()
+        r["siem"]["default_enabld"] = False
+        self.assertTrue(any("unknown key" in e for e in validate_rule(r)))
+
+    def test_shipped_opcua_rule_is_default_off(self):
+        rule = yaml.safe_load((RULES_DIR / "ot_opcua_write_unauthorized_node.yml")
+                              .read_text(encoding="utf-8"))
+        self.assertIs(rule["siem"]["default_enabled"], False)
+        self.assertEqual(validate_rule(rule), [])
+
+
 class TestShippedRules(unittest.TestCase):
     def test_all_shipped_rules_pass(self):
         for path in sorted(RULES_DIR.glob("*.yml")):

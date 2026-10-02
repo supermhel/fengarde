@@ -178,6 +178,36 @@ CHAIN_STEPS: tuple[ChainStepSpec, ...] = (
 CHAIN_LABELS: tuple[str, ...] = tuple(s.label for s in CHAIN_STEPS)
 
 
+@dataclass(frozen=True)
+class ScenarioDef:
+    """One attack storyline: its ordered step specs, the deterministic raw
+    payload builder, and the grading oracle that states what the chain is
+    SUPPOSED to do. The AI-to-OT chain above is the first; further shapes
+    register in ``scenario_registry`` so the same grader, reconciler and
+    mutation harness run over every one of them.
+
+    ``build`` has the exact shape of ``_build_chain_payloads``: it returns
+    ``(payloads, sensor_readings, notes, baseline)`` where ``payloads`` is a
+    list of ``(ChainStepSpec, {"source_type", "raw", "meta"})``. A step may
+    appear in several tuples (a burst) -- stateful windowed rules need
+    volume, and one event per step cannot express a port scan.
+    """
+
+    name: str
+    steps: tuple
+    build: Callable[[int], tuple]
+    oracle_path: Path
+    summary: str = ""
+    # Benign look-alike activity for the ``noise`` mutation axis: a callable
+    # ``seed -> [(ChainStepSpec, payload), ...]`` whose entities are DISJOINT
+    # from the attack's, plus the specs it uses. A correct correlator keeps
+    # decoys out of the attack incident; the grader measures whether it did.
+    # None = this storyline defines no decoys (the axis is then reported
+    # not-applicable rather than silently passing).
+    decoy: Optional[Callable[[int], list]] = None
+    decoy_steps: tuple = ()
+
+
 # ---------------------------------------------------------------------------
 # Result records
 # ---------------------------------------------------------------------------
@@ -507,11 +537,21 @@ def _build_chain_payloads(seed: int):
     return payloads, sensor_readings, notes, baseline
 
 
+AI_TO_OT = ScenarioDef(
+    name="ai_to_ot",
+    steps=CHAIN_STEPS,
+    build=_build_chain_payloads,
+    oracle_path=TWIN / "oracle.yaml",
+    summary="prompt-injected agent -> credential read -> unauthorized Modbus write (AI->OT)",
+)
+
+
 # ---------------------------------------------------------------------------
 # Public entry point
 # ---------------------------------------------------------------------------
 def run_chain(seed: int = 7, *, disable_parser: Optional[str] = None, strict: bool = True,
-              payload_source: Optional[Callable[[int], tuple]] = None) -> ChainResult:
+              payload_source: Optional[Callable[[int], tuple]] = None,
+              steps: Optional[tuple] = None) -> ChainResult:
     """Emit + parse the full AI-to-OT chain and return the normalized OCSF
     timeline (see module docstring / ChainResult for the interface).
 
@@ -535,8 +575,16 @@ def run_chain(seed: int = 7, *, disable_parser: Optional[str] = None, strict: bo
     by the real parser, dead-letter behavior identical). Determinism holds:
     the mutation engine is itself seeded, so a mutated run is still a pure
     function of (seed, mutation).
+
+    ``steps`` is the step-spec set the payloads are checked against (default:
+    this module's AI-to-OT ``CHAIN_STEPS``). Other scenarios (see
+    ``scenario_registry``) pass their own. A step may own SEVERAL payloads (a
+    burst, e.g. the 16 denied connections of a port scan): every payload is
+    parsed and integrity-checked individually, and the bus-integration counts
+    below are per PAYLOAD, not per step spec.
     """
     ws2 = _get_ws2()
+    chain_steps = CHAIN_STEPS if steps is None else steps
 
     if payload_source is None:
         payload_source = _build_chain_payloads
@@ -581,7 +629,13 @@ def run_chain(seed: int = 7, *, disable_parser: Optional[str] = None, strict: bo
                 ChainEvent(
                     event_id=idx,
                     step=spec.label,
-                    source_type=spec.source_type,
+                    # The source the payload ACTUALLY carries, not the one the step
+                    # spec expects: a protocol mutation re-shapes a step onto a
+                    # different source (Modbus -> OPC UA). Taking the spec's value
+                    # made the grader replay an OPC UA record through the Modbus
+                    # parser, drop it, and report the step "dark" -- a measurement
+                    # artefact that was read as a real coverage gap for weeks.
+                    source_type=payload.get("source_type") or spec.source_type,
                     parser=(event.get("siem", {}).get("source_type") if event else None),
                     type_uid=type_uid,
                     class_uid=event.get("class_uid") if event else None,
@@ -611,7 +665,7 @@ def run_chain(seed: int = 7, *, disable_parser: Optional[str] = None, strict: bo
         # 3) Integrity check: every parse_expected step must be parsed; an
         #    intended gap must be a gap. Anything else is a LOUD failure.
         for ev in events:
-            spec = next(s for s in CHAIN_STEPS if s.label == ev.step)
+            spec = next(s for s in chain_steps if s.label == ev.step)
             if spec.parse_expected and (not ev.parsed or ev.errors):
                 failures.append(
                     f"step {ev.step!r}: expected real parser "
@@ -621,8 +675,8 @@ def run_chain(seed: int = 7, *, disable_parser: Optional[str] = None, strict: bo
             if not spec.parse_expected and ev.parsed:
                 failures.append(f"step {ev.step!r}: declared a gap (no parser) but it parsed -- the gap report is dishonest")
 
-        expect_normalized = sum(1 for s in CHAIN_STEPS if s.parse_expected)
-        expect_dropped = sum(1 for s in CHAIN_STEPS if not s.parse_expected)
+        expect_normalized = sum(1 for spec, _p in payloads if spec.parse_expected)
+        expect_dropped = sum(1 for spec, _p in payloads if not spec.parse_expected)
         if stats.get("normalized", 0) != expect_normalized:
             failures.append(
                 f"bus integration: normalized={stats.get('normalized')} but expected {expect_normalized} (real parsers ran)"

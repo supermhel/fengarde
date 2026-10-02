@@ -1,0 +1,78 @@
+# =============================================================================
+# FENGARDE eval/twin/oracle_infra_takeover.yaml
+# Grading ground truth for the infrastructure-takeover storyline
+# (scenarios_extra.py):
+#   cloud_root_login -> privileged_container -> mass_vm_delete
+#
+# Same authoring rules as oracle_it_intrusion.yaml: expectations come from the
+# shipped rules' DOCUMENTED intent, written before the pipeline was run against
+# them; a relationship is declared only where a shared observable exists (here:
+# the attacker's source IP -- every actor differs per control plane).
+# =============================================================================
+schema_version: 1
+oracle_id: "infra-takeover-v1"
+kind: "attack-chain-grading-oracle"
+scope: "infra-takeover"
+
+expected_sequence:
+  - cloud_root_login
+  - privileged_container
+  - mass_vm_delete
+
+sequence_constraints:
+  strict_order: true
+  allow_extra_steps: false
+  max_clock_span_seconds: 3600
+
+allowed_relationships:
+  - {from: cloud_root_login,      to: privileged_container, allowed: true, causal_kind: access}      # same attacker IP
+  - {from: privileged_container,  to: mass_vm_delete,       allowed: true, causal_kind: execution}   # same attacker IP
+  - {from: mass_vm_delete,        to: cloud_root_login,     allowed: false, causal_kind: none}       # the destruction never precedes the access
+
+detection_points:
+  cloud_root_login:
+    step: cloud_root_login
+    role: "AWS root console login without MFA"
+    expected_event_source: "cloudtrail (class 3002, activity 1)"
+    expected_rules:
+      - {rule_id: "c3d4e5f6-7081-4920-9a3b-4c5d6e7f8093", title: "AWS root console login without MFA", level: critical, role: initial access detection}
+    gap: {no_rule_exists: false}
+
+  privileged_container:
+    step: privileged_container
+    role: "privileged pod created through the Kubernetes API"
+    expected_event_source: "k8s_audit (class 6003, activity 1)"
+    expected_rules:
+      - {rule_id: "b2c3d4e5-6f70-4819-8a2b-3c4d5e6f7082", title: "Privileged container created via the Kubernetes API", level: high, role: execution detection}
+    gap: {no_rule_exists: false}
+
+  mass_vm_delete:
+    step: mass_vm_delete
+    role: "5+ VM deletions by one account within 120 s"
+    expected_event_source: "vmware_vsphere (class 6003, activity 4)"
+    expected_rules:
+      - {rule_id: "8c4e1f90-7a2b-4d33-9e55-6f1b2c3a4d03", title: "Mass VM deletion via hypervisor API", level: critical, role: impact detection}
+      - {rule_id: "9c86195a-8cd6-4b73-b526-a708bbb5299e", title: "Mass VM deletion from one source address (any number of accounts)", level: critical, role: account-rotation-proof impact detection -- closes the 2-account evasion}
+    gap: {no_rule_exists: false}
+
+severity_band:
+  score: {min: 40, max: 100}
+  severity_id: {min: 3, max: 6}
+  dominant_band: "critical"
+
+evidence:
+  correlation_key: [src_endpoint.ip]
+  per_step:
+    cloud_root_login:     {fields: [src_endpoint.ip, actor.user.name]}
+    privileged_container: {fields: [src_endpoint.ip, actor.user.name]}
+    mass_vm_delete:       {fields: [src_endpoint.ip, actor.user.name, dst_endpoint.hostname]}
+
+incident_membership:
+  incident_count: 1
+  incident_key: "infra-takeover"
+  include: [cloud_root_login, privileged_container, mass_vm_delete]
+  cross_step_rule_ids:
+    - "c3d4e5f6-7081-4920-9a3b-4c5d6e7f8093"
+    - "b2c3d4e5-6f70-4819-8a2b-3c4d5e6f7082"
+    - "8c4e1f90-7a2b-4d33-9e55-6f1b2c3a4d03"
+    - "9c86195a-8cd6-4b73-b526-a708bbb5299e"

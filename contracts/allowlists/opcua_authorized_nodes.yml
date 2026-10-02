@@ -1,0 +1,25 @@
+# OPC UA nodes that engineering/operations have DECLARED writable
+# (ot_opcua_write_unauthorized_node.yml).
+#
+# OPERATOR NOTE: the rule that reads this file is OFF BY DEFAULT
+# (siem.default_enabled: false). Populate this list FIRST, then opt in -- per tenant
+# with `enabled_rules: [e7a14b6d-3c52-4d90-8f1b-5a9c0d2e6b47]` in
+# contracts/tenants/<tenant>.yml, or for a single-tenant install with the
+# FENGARDE_OPT_IN_RULES=e7a14b6d-3c52-4d90-8f1b-5a9c0d2e6b47 environment variable on
+# the WS-4 detection service. See contracts/tenants/README.md.
+#
+# Matches by EXACT string on unmapped.ot.node_id, e.g. "ns=2;s=Line3/PumpEnable".
+#
+# Shipped EMPTY on purpose, and read this before enabling the rule on a live
+# plant: with no entries NOTHING is authorised, so the rule alerts on EVERY OPC UA
+# write until you list the nodes your HMI/SCADA clients legitimately write. That is
+# the honest default for a control network where nobody has yet declared what is
+# allowed -- an undeclared write IS the thing worth seeing -- but it is noisy on
+# day one. Populate this from a baseline period of observed writes (review them
+# first: do not simply bulk-import what you saw, that would whitelist an attacker
+# who was already there), then the rule narrows to genuinely unexpected writes.
+#
+#   entries:
+#     - "ns=2;s=Line3/PumpEnable"
+#     - "ns=2;s=Line3/TankLevelSetpoint"
+entries: []
