@@ -1,0 +1,28 @@
+# technique_waivers.yaml -- the CLOSED, DATED waiver list of eval/adversarial/technique_matrix.py.
+#
+# A rule appears here ONLY because no storyline exercises it yet. The gate never lets that be silent:
+#   * `unexercised`: rule file stem -> "YYYY-MM-DD <reason, naming the storyline that will exercise it>".
+#     When a storyline lands and the rule fires in it, its entry becomes STALE and the gate FAILS until
+#     the line is deleted -- so a storyline's author deletes the lines for the rules it covers.
+#   * `no_technique`: rule file stem -> reason. A rule that deliberately carries no `mitre:` block.
+#
+# One entry per line, alphabetical, so parallel storyline branches touch disjoint lines.
+# Dates are the date the entry was written; an entry is never extended by editing its date.
+
+unexercised:
+  agent_destructive_command: "2026-10-03 no storyline runs a destructive agent shell command yet; pending storyline supply_chain_ci (pipeline_sabotage)"
+  agent_tool_call_burst: "2026-10-03 no storyline runs a 50-call agent burst yet; pending storyline supply_chain_ci (agent_runaway)"
+  bank_db_priv_esc: "2026-10-03 no storyline grants itself access on a banking DB yet; pending storyline insider_exfil (grant_self_access)"
+  bank_mass_card_read: "2026-10-03 no storyline reads 20+ distinct tables yet; pending storyline insider_exfil (bulk_table_read)"
+  common_after_hours_admin: "2026-10-03 every shipped storyline starts at night, so no step is shown in the rule's positive direction; pending storyline ransomware (admin_privilege_use)"
+  common_bruteforce_sourceless: "2026-10-03 no storyline sprays accounts with no source address yet; pending storyline ransomware (cred_spray)"
+  common_rapid_account_lifecycle: "2026-10-03 no storyline creates and deletes an account within minutes yet; pending storyline ransomware (backdoor_account)"
+  ot_config_change: "2026-10-03 no storyline writes an OPC UA configuration node yet; pending storyline ot_opcua_sabotage (setpoint_tamper)"
+  ot_modbus_unauthorized_write_ticketed: "2026-10-03 no storyline forges a change ticket on a Modbus write yet; pending storyline ot_opcua_sabotage (forged_ticket_write)"
+  ot_new_device_on_segment: "2026-10-03 no storyline introduces a rogue device on an OT segment yet; pending storyline ot_opcua_sabotage (rogue_device)"
+  ot_new_engineering_connection: "2026-10-03 no storyline opens engineering sessions from several addresses yet; pending storyline ot_opcua_sabotage (engineering_sessions)"
+  ot_opcua_write_unauthorized_node: "2026-10-03 no storyline writes an OPC UA node yet; pending storyline ot_opcua_sabotage (process_write_night)"
+  ot_write_outside_maintenance: "2026-10-03 no storyline writes an OPC UA node outside the window yet; pending storyline ot_opcua_sabotage (process_write_night)"
+
+no_technique:
+  agent_tool_call_burst: "2026-10-03 no solid single ATT&CK mapping for a generic tool-call-volume burst; the rule omits the mitre block on purpose (contracts/detection-coverage.md, C3 rule)"
