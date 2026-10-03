@@ -272,8 +272,11 @@ def default_probe() -> FastProbe:
 # Parity proof
 # ---------------------------------------------------------------------------
 #: The perturbed streams parity is proven on, besides the baseline: one per
-#: perturbation family the existing four axes use (loss, distribution, pacing).
-PARITY_VARIANTS = (("volume", "thin_25pct"), ("distribution", "ip_rotate_2"), ("pacing", "stretch_6x"))
+#: perturbation family the existing four axes use (loss, distribution, pacing), plus (2026-10-03)
+#: ``jitter_100pct``, which re-orders event TIMES within a burst: the periodic (beacon) rule reads
+#: the order of arrivals, so a probe that only matched on evenly spaced streams could still diverge.
+PARITY_VARIANTS = (("volume", "thin_25pct"), ("distribution", "ip_rotate_2"), ("pacing", "stretch_6x"),
+                   ("pacing", "jitter_100pct"))
 
 
 def _slow(pairs: list) -> list:
