@@ -159,6 +159,11 @@ services:
       - REDIS_PASSWORD=${REDIS_PASSWORD:-}
       - REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0
       - STORAGE_BACKEND=opensearch
+      # Default-off rules (siem.default_enabled: false) are opted in with this variable on BOTH
+      # ws4-detection (which evaluates them) and ws3-indexer (whose /rules view reports them);
+      # keep the two values identical. Empty = no opt-in. Per-tenant opt-in uses enabled_rules in
+      # contracts/tenants/<tenant>.yml instead.
+      - FENGARDE_OPT_IN_RULES=${FENGARDE_OPT_IN_RULES:-}
       - OPENSEARCH_URL=http://opensearch:9200
       # Triage API listener. Internal only -- the dashboard nginx proxies to
       # ws3-indexer:8013 container-to-container; NOT published to the host.
@@ -193,7 +198,7 @@ services:
   ws4-detection:
     build: { context: .., dockerfile: services/ws4-detection/Dockerfile }
     restart: unless-stopped
-    environment: ["BUS_BACKEND=redis", "REDIS_PASSWORD=${REDIS_PASSWORD:-}", "REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0"]
+    environment: ["BUS_BACKEND=redis", "REDIS_PASSWORD=${REDIS_PASSWORD:-}", "REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0", "FENGARDE_OPT_IN_RULES=${FENGARDE_OPT_IN_RULES:-}"]
     depends_on: { redis: { condition: service_healthy } }
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8004/health', timeout=3)"]
