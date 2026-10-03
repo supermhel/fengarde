@@ -125,7 +125,10 @@ _WAIVED: dict = {
         "invariant is not touched."),
 }
 # F2 (rule undecidable by the static model) is a WARN, but capped per scenario so it cannot grow.
-_F2_CAP: dict = {}
+# 2026-10-03 phishing_bec: 1 -- common_beaconing's periodicity bound (coefficient of variation of the
+# inter-arrival times) is not modelled by this static interpreter, so c2_beacon is reported UNDECIDED
+# rather than guessed. The engine and the negative twins (5-of-6 beats, irregular interval) cover it.
+_F2_CAP: dict = {"phishing_bec": 1}
 
 _REASON_RE = re.compile(r"^\d{4}-\d{2}-\d{2} \S.{8,}")
 

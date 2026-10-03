@@ -119,6 +119,46 @@ def _dependents(oracle: dict, step: str) -> set:
     return {dep for dep, needs in deps.items() if step in (needs or [])}
 
 
+def _reattribute_displaced(row: dict, oracle: dict, base: dict, grade: dict) -> None:
+    """A detection that needs TWO steps' telemetry fires on whichever event arrives (or sorts) LAST.
+
+    Impossible travel is the case: the alert is raised by the second country's login. Deliver the
+    stream backwards and the second country is the account's own earlier session, so the same
+    rule fires, on the same account, one step away -- on the CONTEXT step the oracle declares in
+    ``step_dependencies``. ``layer_a.cmp_result`` reads "no alert at the step's own events" as
+    "step lost", which would score a still-working detection as a failure of the product.
+
+    For a step the oracle says depends on context steps, an expected rule that fired at a
+    DEPENDENCY step of the mutated run counts as the step's detection (reported in
+    ``steps_displaced``, never silent). ``steps_lost`` / ``tactic_lost`` / ``detection_retained`` /
+    ``pass`` are recomputed from that. A storyline with no ``step_dependencies`` never reaches this
+    code, so every pre-existing number is untouched."""
+    deps_of = oracle.get("step_dependencies") or {}
+    if not deps_of or not row.get("steps_lost"):
+        return
+    dp = oracle.get("detection_points") or {}
+    displaced = []
+    for step in list(row["steps_lost"]):
+        deps = set(deps_of.get(step) or [])
+        exp = {r.get("rule_id") for r in ((dp.get(step) or {}).get("expected_rules") or [])}
+        if deps and any(a.get("step") in deps and a.get("rule_id") in exp for a in grade.get("fired", [])):
+            displaced.append(step)
+    if not displaced:
+        return
+    row["steps_displaced"] = sorted(displaced)
+    row["steps_lost"] = [s for s in row["steps_lost"] if s not in displaced]
+    row["tactic_lost"] = [s for s in row.get("tactic_lost", []) if s not in displaced]
+    row["expected_rule_lost_steps"] = [s for s in row.get("expected_rule_lost_steps", []) if s not in displaced]
+    b_cov = set(base.get("tactic_covered_steps") or [])
+    coverage_ok = (not row["tactic_lost"]) if b_cov else (base.get("tpr") == row.get("tpr"))
+    row["detection_retained"] = bool(base.get("tpr") is not None and coverage_ok and not row["steps_lost"])
+    row["pass"] = bool(row["detection_retained"] and row["fidelity_retained"] and row["fcr_unchanged"]
+                       and row["order_retained"] and row["decoy_clean"])
+    row["causal_join_broken"] = bool(
+        row["detection_retained"] and base.get("chain_fidelity") is not None
+        and row.get("chain_fidelity") is not None and row["chain_fidelity"] < base["chain_fidelity"])
+
+
 def _scenario_baseline_quality(base: dict) -> dict:
     """Same standard as layer_a._baseline_quality, applied per scenario."""
     return layer_a._baseline_quality(base)
@@ -195,6 +235,7 @@ def run_scenario(sdef, seed: int = 7) -> dict:
         row["changed_events"] = changed
         row["expected_rule_lost_steps"] = _expected_lost(oracle, base, grade)
         row["fired_pairs"] = [list(p) for p in _fired_pairs(grade)]
+        _reattribute_displaced(row, oracle, base, grade)
         if axis == "loss":
             # A log source going dark cannot be "detected through", so losing
             # the dropped step's own detection is not a product failure -- it

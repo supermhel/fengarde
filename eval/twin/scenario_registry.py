@@ -32,16 +32,21 @@ BUILTIN: tuple = (
 )
 
 
-def _discover() -> tuple:
+def _discover(directory: Path = TWIN) -> tuple:
     """Storylines contributed as ``eval/twin/storyline_<name>.py``, each exporting ONE
     ``STORYLINE`` (a ``scenario.ScenarioDef``). Adding a storyline is therefore adding files
     (the module, its ``oracle_<name>.yaml``) and editing nothing shared, so several can land in
     parallel without touching this registry. Order is the sorted module name -- deterministic and
     independent of the filesystem. A module that fails to import, exports no ``STORYLINE`` or
     reuses a name FAILS LOUDLY here: a registry that silently skipped a broken storyline would
-    report robustness over fewer attack shapes than it claims."""
+    report robustness over fewer attack shapes than it claims. A helper module shared by
+    storylines must NOT be named ``storyline_*`` (see ``scenario_kit``). ``directory`` is a
+    parameter only so the tests can drive the discovery with throw-away modules."""
+    directory = Path(directory)
+    if str(directory) not in sys.path:
+        sys.path.insert(0, str(directory))
     found: list = []
-    for path in sorted(TWIN.glob("storyline_*.py")):
+    for path in sorted(directory.glob("storyline_*.py")):
         mod = importlib.import_module(path.stem)
         sdef = getattr(mod, "STORYLINE", None)
         if not isinstance(sdef, scenario.ScenarioDef):
