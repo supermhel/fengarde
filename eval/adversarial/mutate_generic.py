@@ -11,8 +11,8 @@ WHY THIS EXISTS (2026-10-01)
 
     These operators know nothing about a specific chain. They act on STRUCTURE
     that every storyline has -- events, steps, bursts, time, source address,
-    account -- through small per-source-type FIELD ADAPTERS (below). Three
-    properties keep them honest:
+    account, workstation -- through small per-source-type FIELD ADAPTERS
+    (below). Three properties keep them honest:
 
       * every variant returns ``(payloads, changed)`` where ``changed`` is the
         number of raw events it actually altered. ``changed == 0`` is reported
@@ -20,10 +20,17 @@ WHY THIS EXISTS (2026-10-01)
         a pass;
       * the evasion classes are the ones a volume/window rule is actually
         weak to (spread the burst over time, over source addresses, over
-        accounts; thin it; lose a log source) -- classes the AI-to-OT chain,
-        whose detections are almost all single-shot, could not even express;
+        accounts, over workstation names; thin it; lose a log source) --
+        classes the AI-to-OT chain, whose detections are almost all
+        single-shot, could not even express;
       * everything is a pure function of (payloads, seed): no wall clock, no
         randomness beyond ``Random(derived seed)``.
+
+ADAPTERS (2026-10-03). Every source a registered storyline can emit has an adapter for the three
+fields the operators need (time, source address, actor), and the sources that carry a workstation
+name have one for it. ``test_mutation_adapters.py`` proves each adapter moves the PARSED field, not
+only the raw one: an adapter that edits a raw key the parser ignores would make its variant a silent
+no-op that still reports ``changed > 0``.
 
 BURST = a step label with >= ``_BURST_MIN`` events (a port scan's 16 denied
 connections, a brute force's 12 failures). Burst-only operators leave
@@ -36,7 +43,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from random import Random
 from typing import Callable, Optional
 
@@ -47,10 +54,17 @@ _ASA_SRC = re.compile(r"(src \w+:)(" + _IP_RE + r")")
 _SSH_FROM = re.compile(r"(from )(" + _IP_RE + r")")
 _SSH_USER = re.compile(r"(for (?:invalid user )?)(\S+)( from )")
 _DNS_FROM = re.compile(r"(from )(" + _IP_RE + r")\s*$")
+# CEF extension keys (``src=1.2.3.4 suser=bob``). The look-behind keeps ``src=`` from matching
+# inside another key (``msrc=``); ``duser`` is the parser's fallback identity when no ``suser``.
+_CEF_SRC = re.compile(r"((?<![\w])src=)(" + _IP_RE + r")")
+_CEF_SUSER = re.compile(r"((?<![\w])suser=)(\S+)")
+_CEF_DUSER = re.compile(r"((?<![\w])duser=)(\S+)")
 
 
 # ---------------------------------------------------------------------------
-# Field adapters: (get, set) per source_type, for time / source address / actor
+# Field adapters: (get, set) per source_type for time / source address / actor /
+# hostname. A source with no adapter for a field returns None / False and the
+# variant that needed it is reported N/A -- never a silent pass.
 # ---------------------------------------------------------------------------
 def _meta(p: dict) -> dict:
     return p.setdefault("meta", {})
@@ -58,6 +72,22 @@ def _meta(p: dict) -> dict:
 
 def get_time(p: dict) -> Optional[int]:
     return _meta(p).get("received_at")
+
+
+#: raw-record keys that carry an epoch-ms event time (rewritten when present). ``timestamp`` is
+#: db_audit's / opcua_audit's own clock and ``seen_at`` inventory_diff's: the parser reads those in
+#: preference to ``meta.received_at``, so leaving them behind would silently keep the old time.
+_EPOCH_KEYS = ("TimeCreated", "createdTime", "ts", "time", "timestamp", "seen_at")
+#: raw-record keys that carry an ISO-8601 event time (rewritten when present). k8s audit records
+#: carry ``requestReceivedTimestamp`` (microsecond precision) and the parser prefers it to
+#: ``meta.received_at``.
+_ISO_KEYS = ("eventTime", "requestReceivedTimestamp", "stageTimestamp")
+
+
+def _iso(ts: int, template) -> str:
+    """ISO form of ``ts`` in the same shape as ``template`` (fractional seconds preserved)."""
+    dt = datetime.fromtimestamp(ts / 1000.0, tz=timezone.utc)
+    return dt.strftime("%Y-%m-%dT%H:%M:%S.%fZ" if "." in str(template) else "%Y-%m-%dT%H:%M:%SZ")
 
 
 def set_time(p: dict, ts: int) -> bool:
@@ -69,34 +99,60 @@ def set_time(p: dict, ts: int) -> bool:
     m["received_at"] = ts
     raw = p.get("raw")
     if isinstance(raw, dict):
-        for key in ("TimeCreated", "createdTime", "ts", "time"):
+        for key in _EPOCH_KEYS:
             if key in raw:
                 raw[key] = ts
-        if "eventTime" in raw:
-            raw["eventTime"] = datetime.fromtimestamp(ts / 1000.0, tz=timezone.utc).strftime(
-                "%Y-%m-%dT%H:%M:%SZ")
+        for key in _ISO_KEYS:
+            if key in raw:
+                raw[key] = _iso(ts, raw[key])
     return True
 
 
+# source_type -> the raw-record keys that can carry the source address / identity / workstation
+# (first present key wins; the same key is written back).
 _DICT_IP_KEYS = {
-    "windows_eventlog": "IpAddress", "active_directory": "IpAddress",
-    "cloudtrail": "sourceIPAddress", "vmware_vsphere": "ipAddress",
-    "mcp_agent": "client_ip", "n8n_audit": "ip", "modbus_anomaly": "sourceIp",
-    "web_access": "src_ip",
+    "windows_eventlog": ("IpAddress",), "active_directory": ("IpAddress",),
+    "cloudtrail": ("sourceIPAddress",), "vmware_vsphere": ("ipAddress",),
+    "mcp_agent": ("client_ip",), "n8n_audit": ("ip",), "modbus_anomaly": ("sourceIp",),
+    "web_access": ("src_ip",),
+    "db_audit": ("ipAddress", "ip"), "opcua_audit": ("clientAddress", "clientIp"),
+    "sysmon": ("SourceIp",), "inventory_diff": ("ip",),
 }
+_STR_IP_RX = {"cisco_asa": _ASA_SRC, "linux_ssh": _SSH_FROM, "dns_query": _DNS_FROM, "cef": _CEF_SRC}
+
+_DICT_ACTOR_KEYS = {
+    "vmware_vsphere": ("userName",), "mcp_agent": ("agent",), "n8n_audit": ("user",),
+    "db_audit": ("user", "userName"), "opcua_audit": ("clientUserId", "userId"),
+    "sysmon": ("User",),
+}
+
+_DICT_HOST_KEYS = {
+    "windows_eventlog": ("WorkstationName",), "active_directory": ("WorkstationName",),
+    "sysmon": ("SourceHostname", "Computer"), "inventory_diff": ("hostname",),
+}
+#: a Windows log writes a literal "-" for "no workstation recorded"; that is absence, not a name
+_NO_HOST = ("", "-")
+
+
+def _first_key(raw: dict, keys: tuple):
+    for k in keys:
+        if raw.get(k) is not None:
+            return k
+    return None
 
 
 def get_src_ip(p: dict) -> Optional[str]:
     raw, st = p.get("raw"), p.get("source_type")
     if isinstance(raw, str):
-        rx = {"cisco_asa": _ASA_SRC, "linux_ssh": _SSH_FROM, "dns_query": _DNS_FROM}.get(st)
+        rx = _STR_IP_RX.get(st)
         mt = rx.search(raw) if rx else None
         return mt.group(2) if mt else None
     if isinstance(raw, dict):
         if st == "k8s_audit":
             ips = raw.get("sourceIPs")
             return ips[0] if isinstance(ips, list) and ips else None
-        return raw.get(_DICT_IP_KEYS.get(st, ""))
+        key = _first_key(raw, _DICT_IP_KEYS.get(st, ()))
+        return raw.get(key) if key else None
     return None
 
 
@@ -106,27 +162,26 @@ def set_src_ip(p: dict, ip: str) -> bool:
     if old is None:
         return False
     if isinstance(raw, str):
-        rx = {"cisco_asa": _ASA_SRC, "linux_ssh": _SSH_FROM, "dns_query": _DNS_FROM}[st]
-        p["raw"] = rx.sub(lambda mt: mt.group(1) + ip, raw, count=1)
+        p["raw"] = _STR_IP_RX[st].sub(lambda mt: mt.group(1) + ip, raw, count=1)
     elif st == "k8s_audit":
         raw["sourceIPs"] = [ip] + list(raw["sourceIPs"][1:])
     else:
-        raw[_DICT_IP_KEYS[st]] = ip
+        raw[_first_key(raw, _DICT_IP_KEYS[st])] = ip
     if _meta(p).get("ip") == old:
         _meta(p)["ip"] = ip
     return True
 
 
-_DICT_ACTOR_KEYS = {
-    "vmware_vsphere": "userName", "mcp_agent": "agent", "n8n_audit": "user",
-}
-
-
 def get_actor(p: dict) -> Optional[str]:
     raw, st = p.get("raw"), p.get("source_type")
     if isinstance(raw, str):
-        mt = _SSH_USER.search(raw) if st == "linux_ssh" else None
-        return mt.group(2) if mt else None
+        if st == "linux_ssh":
+            mt = _SSH_USER.search(raw)
+            return mt.group(2) if mt else None
+        if st == "cef":
+            mt = _CEF_SUSER.search(raw) or _CEF_DUSER.search(raw)
+            return mt.group(2) if mt else None
+        return None
     if isinstance(raw, dict):
         if st in ("windows_eventlog", "active_directory"):
             return raw.get("SubjectUserName") if raw.get("EventID") == 4728 else raw.get("TargetUserName")
@@ -134,7 +189,8 @@ def get_actor(p: dict) -> Optional[str]:
             return (raw.get("user") or {}).get("username")
         if st == "cloudtrail":
             return (raw.get("userIdentity") or {}).get("arn")
-        return raw.get(_DICT_ACTOR_KEYS.get(st, ""))
+        key = _first_key(raw, _DICT_ACTOR_KEYS.get(st, ()))
+        return raw.get(key) if key else None
     return None
 
 
@@ -143,7 +199,11 @@ def set_actor(p: dict, name: str) -> bool:
     if get_actor(p) is None:
         return False
     if isinstance(raw, str):
-        p["raw"] = _SSH_USER.sub(lambda mt: mt.group(1) + name + mt.group(3), raw, count=1)
+        if st == "cef":
+            rx = _CEF_SUSER if _CEF_SUSER.search(raw) else _CEF_DUSER
+            p["raw"] = rx.sub(lambda mt: mt.group(1) + name, raw, count=1)
+        else:
+            p["raw"] = _SSH_USER.sub(lambda mt: mt.group(1) + name + mt.group(3), raw, count=1)
     elif st in ("windows_eventlog", "active_directory"):
         raw["SubjectUserName" if raw.get("EventID") == 4728 else "TargetUserName"] = name
     elif st == "k8s_audit":
@@ -151,8 +211,33 @@ def set_actor(p: dict, name: str) -> bool:
     elif st == "cloudtrail":
         raw["userIdentity"]["arn"] = name
     else:
-        raw[_DICT_ACTOR_KEYS[st]] = name
+        raw[_first_key(raw, _DICT_ACTOR_KEYS[st])] = name
     return True
+
+
+def get_hostname(p: dict) -> Optional[str]:
+    """The workstation / host name the parser reads as the event's SOURCE host (for Windows
+    logons ``WorkstationName``). None when the source has no adapter or records none."""
+    raw, st = p.get("raw"), p.get("source_type")
+    if not isinstance(raw, dict):
+        return None
+    for k in _DICT_HOST_KEYS.get(st, ()):
+        v = raw.get(k)
+        if isinstance(v, str) and v.strip() not in _NO_HOST:
+            return v
+    return None
+
+
+def set_hostname(p: dict, name: str) -> bool:
+    raw, st = p.get("raw"), p.get("source_type")
+    if get_hostname(p) is None:
+        return False
+    for k in _DICT_HOST_KEYS[st]:
+        v = raw.get(k)
+        if isinstance(v, str) and v.strip() not in _NO_HOST:
+            raw[k] = name
+            return True
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -234,6 +319,20 @@ def _split_actor(k: int):
     return op
 
 
+def _rotate_hostname(payloads, ctx):
+    """Give every event of every burst its OWN workstation name. A rule keyed on the source
+    workstation (``common_bruteforce_sourceless`` pools failed logons by ``WorkstationName``) can
+    be bypassed by a client that simply lies about its name; the one rule that is shaped that way
+    is the question this variant asks. Sources that record no workstation name are untouched."""
+    out = copy.deepcopy(payloads)
+    changed = 0
+    for n, idxs in enumerate(_bursts(out, ctx["attack_steps"]).values()):
+        for rank, i in enumerate(idxs):
+            if set_hostname(out[i][1], f"rot-{n + 1}-{rank:03d}"):
+                changed += 1
+    return out, changed
+
+
 def _drop_step(label: str):
     def op(payloads, ctx):
         kept = [x for x in payloads if x[0].label != label]
@@ -246,6 +345,28 @@ def _shift(ms: int):
         out = copy.deepcopy(payloads)
         changed = sum(1 for _s, p in out if get_time(p) is not None and set_time(p, get_time(p) + ms))
         return out, changed
+    return op
+
+
+def _to_clock(hour: int, minute: int, *, weekday_only: bool):
+    """Move the WHOLE stream, rigidly, so its first event lands at ``hour:minute`` UTC on the next
+    calendar day (the next WEEKDAY when ``weekday_only``). A pure shift: every gap, every ordering
+    and every inter-step distance is preserved, so the only thing that changes is the wall-clock
+    time of day a time-predicate rule sees. ``changed == 0`` (N/A) only if the stream already
+    starts at exactly that instant."""
+    def op(payloads, ctx):
+        times = [get_time(p) for _s, p in payloads if get_time(p) is not None]
+        if not times:
+            return copy.deepcopy(payloads), 0
+        t0 = min(times)
+        day = datetime.fromtimestamp(t0 / 1000.0, tz=timezone.utc).replace(
+            hour=hour, minute=minute, second=0, microsecond=0) + timedelta(days=1)
+        while weekday_only and day.weekday() >= 5:
+            day += timedelta(days=1)
+        shift = int(day.timestamp() * 1000) - t0
+        if shift == 0:
+            return copy.deepcopy(payloads), 0
+        return _shift(shift)(payloads, ctx)
     return op
 
 
@@ -262,6 +383,33 @@ def _jitter(max_ms: int):
                 changed += 1
         return out, changed
     return op
+
+
+def _jitter_period(payloads, ctx):
+    """Per-timestamp jitter of +/-100% of each burst's own PERIOD (its median inter-event gap).
+
+    Each event of a burst step is displaced independently by a uniform draw in [-period, +period].
+    This is the realistic evasion for a periodic (beacon) rule: the analytic shortcut 'uniform
+    jitter j gives CV = j/sqrt(3), so the rule is evaded above j = 0.433' is WRONG for this engine,
+    which evaluates the SAMPLE coefficient of variation on the prefixes of 6..n events and
+    re-evaluates on every arrival, and a per-timestamp draw doubles the interval variance. At
+    +/-50% the rule still fired in about 17% of draws; at +/-100% about 2%. Which side of the
+    boundary one seed lands on is therefore a MEASUREMENT, reported per seed, not a prediction.
+    Deterministic: the draw is a hash of (seed, event index), never a random source."""
+    out = copy.deepcopy(payloads)
+    changed = 0
+    for idxs in _bursts(out, ctx["attack_steps"]).values():
+        ts = sorted(get_time(out[i][1]) for i in idxs)
+        gaps = sorted(b - a for a, b in zip(ts, ts[1:]) if b > a)
+        if not gaps:
+            continue
+        period = gaps[len(gaps) // 2]
+        for i in idxs:
+            t = get_time(out[i][1])
+            d = (_stable(ctx["seed"], "jitter100", i) % (2 * period + 1)) - period
+            if d and set_time(out[i][1], t + d):
+                changed += 1
+    return out, changed
 
 
 def _duplicate(payloads, ctx):
@@ -315,6 +463,11 @@ _STATIC: dict = {
     ("delivery", "reverse_arrival"): _reverse_arrival,
     ("delivery", "shuffle_arrival"): _shuffle_arrival,
     ("noise", "benign_decoys"):      _decoy,
+    # 2026-10-03 (wave 2): the variants the six new storylines need
+    ("timing", "to_business_hours"): _to_clock(10, 30, weekday_only=True),
+    ("timing", "to_night"):          _to_clock(3, 0, weekday_only=False),
+    ("pacing", "jitter_100pct"):     _jitter_period,
+    ("distribution", "hostname_rotate_all"): _rotate_hostname,
 }
 
 
