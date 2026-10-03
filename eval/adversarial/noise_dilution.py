@@ -6,14 +6,20 @@ WHY THIS EXISTS (2026-10-02)
     the adversary's question: "what can I send, that no analyst would call an
     attack, that makes the detector lose track of the thing I am doing?"
 
-    Probing found one answer end to end. ``DequeWindowCounter._sweep`` evicts
-    every idle key using the CURRENT hit's window, not the key's own: noise on a
-    60 s rule (one hit in 256) sweeps away the live 300 s / 600 s / 3600 s state
-    of every other rule. The Redis backend uses a per-key ``EXPIRE`` so the two
-    backends disagree. This module turns that primitive into an end-to-end
-    instrument and states the attacker's price.
+    Probing found one answer end to end (finding F1). ``DequeWindowCounter._sweep``
+    evicted every idle key using the TRIGGERING hit's window, not the key's own:
+    noise on a 60 s rule (one hit in 256) swept away the live 300 s / 600 s / 3600 s
+    state of every other rule, at a price of ~124 noise events and a >60 s pause on
+    lateral_movement. The Redis backend uses a per-key ``EXPIRE`` so the two
+    backends disagreed.
 
-WHAT IS MEASURED (finding F1, an open BUG)
+    F1 IS FIXED (2026-10-03): every key is now evicted by its own deadline
+    (``services/shared/window.py``), the finding is deleted from
+    ``evasion_findings.yaml``, and this module now asserts the FIXED behaviour: the
+    shipped counter is immune (up to the noise cap). The old behaviour survives only
+    as ``LegacyGlobalSweepCounter``, a negative control that must still go red.
+
+WHAT IS MEASURED (shipped counter: immune; legacy counter: the historical cost)
     For every stateful rule-set whose window is longer than the shortest window in
     the rule base, the reference burst is split by a pause longer than that short
     window, benign noise on disjoint keys is inserted in the pause, and the burst
@@ -28,17 +34,21 @@ WHAT IS MEASURED (finding F1, an open BUG)
 
     ``predict_noise_events`` re-derives that number from ``_SWEEP_EVERY``, the
     counter's hit count before the noise and the windows of the hits one noise
-    event causes -- an independent model; measured != predicted is a finding.
+    event causes (``sweep="global"``), or predicts "immune" from the target's own
+    window (``sweep="per_key"``) -- an independent model; measured != predicted is
+    a finding.
 
 CONTROLS (each can fail)
-    no noise -> detected; noise on a key that is NOT idle long enough -> detected
-    (the negative that shows the cause is the sweep, not the noise); N*-1 events ->
-    detected; a counter with a per-key sweep (the product fix) -> detected, so the
-    instrument turns green when the bug is fixed; slow-path parity on the noise
-    stream itself (parity on other streams does not cover this one).
+    shipped counter -> detected under any noise, and the memory bound still holds (an
+    idle key past its own window is reclaimed); legacy counter (the old global sweep
+    re-introduced) -> forgets after N* events, so the instrument can still go red;
+    no noise -> detected; noise on a key that is NOT idle long enough -> detected (the
+    negative that shows the cause is the sweep, not the noise); N*-1 events -> detected;
+    slow-path parity on the noise stream itself (parity on other streams does not
+    cover this one).
 
 BACKEND: DequeWindowCounter only. The Redis counter expires keys itself and has no
-sweep, so this is a single-process (default backend) defect.
+sweep (per-key EXPIRE), so it never had the defect.
 
 ALERT FLOODS (F5, informational)
     ``alert_flood_cost`` reports events per distinct alert id for floods built as
@@ -84,8 +94,36 @@ _PAUSE_SLACK_MS = 2_000
 # ---------------------------------------------------------------------------
 # Counters used as instruments
 # ---------------------------------------------------------------------------
-class RecordingCounter(DequeWindowCounter):
-    """Logs the window of every hit, in hit order (calibration of one noise event)."""
+class LegacyGlobalSweepCounter(DequeWindowCounter):
+    """The F1 defect, re-introduced on purpose: the idle sweep judges EVERY key against
+    the window of the hit that triggered it (the shipped counter, fixed 2026-10-03,
+    judges each key by its own deadline). Used only as the NEGATIVE control that proves
+    the instruments can still go red when the old behaviour comes back."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._trigger_window = 0
+
+    def hit(self, key, now_ms, window_ms, member=None):
+        self._trigger_window = window_ms
+        return super().hit(key, now_ms, window_ms, member)
+
+    def hit_distinct(self, key, now_ms, window_ms, value=None, member=None):
+        self._trigger_window = window_ms
+        return super().hit_distinct(key, now_ms, window_ms, value, member)
+
+    def _sweep(self, now_ms: int) -> None:
+        self._hits += 1
+        if self._hits % SWEEP_EVERY:
+            return
+        horizon = now_ms - self._trigger_window
+        for k in [k for k, ts in self._last.items() if ts < horizon]:
+            self._forget(k)
+
+
+class _Recording:
+    """Mixin: logs the window and key of every hit, in hit order (calibration of one
+    noise event)."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -103,33 +141,12 @@ class RecordingCounter(DequeWindowCounter):
         return super().hit_distinct(key, now_ms, window_ms, value, member)
 
 
-class PerKeyWindowCounter(DequeWindowCounter):
-    """The product fix for F1: the sweep evicts a key against ITS OWN window.
-    Used only as the 'the instrument can turn green' control."""
+class RecordingCounter(_Recording, DequeWindowCounter):
+    """Recording wrapper around the shipped counter."""
 
-    def __init__(self) -> None:
-        super().__init__()
-        self._kw: dict = {}
 
-    def hit(self, key, now_ms, window_ms, member=None):
-        self._kw[key] = window_ms
-        return super().hit(key, now_ms, window_ms, member)
-
-    def hit_distinct(self, key, now_ms, window_ms, value=None, member=None):
-        self._kw[key] = window_ms
-        return super().hit_distinct(key, now_ms, window_ms, value, member)
-
-    def _sweep(self, now_ms: int, window_ms: int) -> None:
-        self._hits += 1
-        if self._hits % SWEEP_EVERY:
-            return
-        stale = [k for k, ts in self._last.items() if ts < now_ms - self._kw.get(k, window_ms)]
-        for k in stale:
-            self._w.pop(k, None)
-            self._dw.pop(k, None)
-            self._live_members.pop(k, None)
-            self._last.pop(k, None)
-            self._kw.pop(k, None)
+class RecordingLegacyCounter(_Recording, LegacyGlobalSweepCounter):
+    """Recording wrapper around the re-introduced defect."""
 
 
 # ---------------------------------------------------------------------------
@@ -232,7 +249,7 @@ def _phase_before_noise(lab: ax.Lab, built: dict) -> int:
     return trace[-1] if trace else 0
 
 
-def post_event_hits(lab: ax.Lab, built: dict) -> list:
+def post_event_hits(lab: ax.Lab, built: dict, counter_cls=RecordingCounter) -> list:
     """The window of each counter hit the FIRST post-pause burst event causes,
     in order, flagged ``True`` once the event has reached a hit on one of the
     target set's own rules (from there on the target key is refreshed by the
@@ -243,7 +260,7 @@ def post_event_hits(lab: ax.Lab, built: dict) -> list:
     short-window rule that runs before the target rule's own hit (password
     spray: 4 hits per event) -- one noise event earlier than the noise train
     alone predicts."""
-    probe = ps.FastProbe(rules_dir=lab.probe.rules_dir, strict_clock=True, counter_factory=RecordingCounter)
+    probe = ps.FastProbe(rules_dir=lab.probe.rules_dir, strict_clock=True, counter_factory=counter_cls)
     trace: list = []
     probe.detect(ps.payloads_to_pairs(built["payloads"]), hit_trace=trace)
     idx = built["pre_events"]                       # first event after the pause
@@ -258,28 +275,41 @@ def post_event_hits(lab: ax.Lab, built: dict) -> list:
 
 
 def predict_noise_events(phase: int, windows_per_event: list, idle_start_ms: int, w_short_ms: int,
-                         cap: int = _NOISE_CAP, post_hits: list | None = None, post_idle_ms: int = 0):
+                         cap: int = _NOISE_CAP, post_hits: list | None = None, post_idle_ms: int = 0,
+                         *, sweep: str = "per_key", target_window_ms: int | None = None):
     """Independent model of N*: walk the counter's hit arithmetic. A sweep runs
-    on every ``_SWEEP_EVERY``-th hit and evicts a key whose last hit is older than
-    THAT hit's window; the target's last hit is ``idle_start_ms + k - 1`` ms before
-    the k-th noise event, so the target is swept when the tick's window is shorter
-    than that idle time. After the k-th noise event the first post-pause burst
-    event is walked the same way (``post_hits`` / ``post_idle_ms``): a tick on a
-    hit BEFORE the event reaches the target's own rule also evicts it.
+    on every ``_SWEEP_EVERY``-th hit; the target's last hit is ``idle_start_ms + k - 1``
+    ms before the k-th noise event. Two sweep models:
+
+    ``per_key`` (the shipped counter): a key is evicted only when it is idle longer
+    than ITS OWN window, so the target (``target_window_ms``, the shortest window of
+    the set's own rules) survives whenever the pause is shorter than that. The noise
+    cannot choose the window the sweep judges by -> the answer is None (immune) for
+    every ``cap``, unless the idle time itself outgrows the target's window.
+
+    ``global`` (the F1 defect, ``LegacyGlobalSweepCounter``): a key is evicted when it
+    is idle longer than the window of the hit that TRIGGERED the sweep, so the target
+    is swept when that tick's window is shorter than the idle time. After the k-th
+    noise event the first post-pause burst event is walked the same way
+    (``post_hits`` / ``post_idle_ms``): a tick on a hit BEFORE the event reaches the
+    target's own rule also evicts it.
+
     Returns the smallest k, or None."""
     hits = phase
     for k in range(1, cap + 1):
         idle = idle_start_ms + (k - 1)
         for w in windows_per_event:
             hits += 1
-            if hits % SWEEP_EVERY == 0 and idle > w:
+            limit = w if sweep == "global" else target_window_ms
+            if hits % SWEEP_EVERY == 0 and limit is not None and idle > limit:
                 return k
         h2 = hits
         for w, reached in post_hits or ():
             if reached:
                 break
             h2 += 1
-            if h2 % SWEEP_EVERY == 0 and post_idle_ms > w:
+            limit = w if sweep == "global" else target_window_ms
+            if h2 % SWEEP_EVERY == 0 and limit is not None and post_idle_ms > limit:
                 return k
     return None
 
@@ -289,9 +319,15 @@ def _lost(lab: ax.Lab, w_short_ms: int, n: int, **kw) -> bool:
     return not lab.detected(built["payloads"])
 
 
-def state_exhaustion(lab: ax.Lab, w_short_ms: int, *, calib: dict | None = None) -> dict:
-    """Measured vs predicted cost of making ``lab.rs`` forget the burst by noise."""
+def state_exhaustion(lab: ax.Lab, w_short_ms: int, *, calib: dict | None = None, sweep: str = "per_key") -> dict:
+    """Measured vs predicted cost of making ``lab.rs`` forget the burst by noise.
+
+    ``sweep`` names the sweep model the PREDICTION assumes and must match the counter
+    ``lab.probe`` was built with: ``per_key`` (shipped; expected result: immune, the
+    noise cannot make the set forget) or ``global`` (``LegacyGlobalSweepCounter``, the
+    F1 defect; expected result: an integer N*)."""
     rs = lab.rs
+    target_w = min(r.window_ms for r in rs.rules)
     if not applicable(rs, w_short_ms):
         return {"applicable": False, "reason": "a rule in this set has the shortest window: the sweep never "
                                                "evicts it early", "agree": True}
@@ -303,8 +339,10 @@ def state_exhaustion(lab: ax.Lab, w_short_ms: int, *, calib: dict | None = None)
                 "reason": "the split reference burst is not detected without noise (the instrument cannot "
                           "separate cause from baseline)"}
     phase = _phase_before_noise(lab, base)
+    rec_cls = RecordingLegacyCounter if sweep == "global" else RecordingCounter
     pred = predict_noise_events(phase, calib["windows_ms"], base["idle_start_ms"], w_short_ms,
-                                post_hits=post_event_hits(lab, base), post_idle_ms=base["post_idle_ms"])
+                                post_hits=post_event_hits(lab, base, rec_cls), post_idle_ms=base["post_idle_ms"],
+                                sweep=sweep, target_window_ms=target_w)
     if not _lost(lab, w_short_ms, _NOISE_CAP):
         measured = None
     else:
@@ -325,7 +363,7 @@ def state_exhaustion(lab: ax.Lab, w_short_ms: int, *, calib: dict | None = None)
             "counter_hits": None if measured is None else measured * h,
             "min_pause_seconds": None if measured is None else round((w_short_ms + measured) / 1000.0, 3),
             "monotone_checked": mono, "not_idle_control_detected": not_idle,
-            "agree": (measured == pred) and mono and (not_idle in (None, True)), "backend": "deque"}
+            "agree": (measured == pred) and mono and (not_idle in (None, True)), "backend": "deque", "sweep": sweep}
 
 
 def parity_on_noise_stream(lab: ax.Lab, w_short_ms: int, n: int) -> bool:
@@ -364,43 +402,61 @@ def f1_primitive(counter_cls=DequeWindowCounter, *, noise_window_ms: int = 60_00
 
 
 def f1_reproduces() -> bool:
-    """True while the product still has the cross-window sweep defect (the
-    finding is open); False once ``DequeWindowCounter._sweep`` is fixed."""
+    """True if the SHIPPED counter has the cross-window sweep defect. It was fixed
+    2026-10-03 (F1 deleted from evasion_findings.yaml), so this must be False; the
+    function stays as the regression probe, and as the thing the negative control
+    (``LegacyGlobalSweepCounter``) is compared with."""
     return bool(f1_primitive()["state_lost"])
 
 
-def noise_predict(lab: ax.Lab, w_short_ms: int, calib: dict, *, prefix_noise: int = 0) -> tuple:
+def noise_predict(lab: ax.Lab, w_short_ms: int, calib: dict, *, prefix_noise: int = 0,
+                  sweep: str = "global") -> tuple:
     """(built, phase, predicted N*) for a stream with ``prefix_noise`` events
     BEFORE the burst -- the control that proves N* is computed from the counter's
-    own state, not a constant."""
+    own state, not a constant. Defaults to the ``global`` (defect) model because that
+    is the only one whose N* depends on the phase."""
     built = build_stream(lab, w_short_ms, 0, prefix_noise=prefix_noise)
     phase = _phase_before_noise(lab, built)
+    rec_cls = RecordingLegacyCounter if sweep == "global" else RecordingCounter
     pred = predict_noise_events(phase, calib["windows_ms"], built["idle_start_ms"], w_short_ms,
-                                post_hits=post_event_hits(lab, built), post_idle_ms=built["post_idle_ms"])
+                                post_hits=post_event_hits(lab, built, rec_cls), post_idle_ms=built["post_idle_ms"],
+                                sweep=sweep, target_window_ms=min(r.window_ms for r in lab.rs.rules))
     return built, phase, pred
 
 
 def run_controls(sets: dict | None = None, *, probe: ps.FastProbe | None = None, key: str = "common_lateral_movement",
                  seed: int = 7) -> list:
     """Every control of the state-exhaustion instrument, as ``(name, ok, detail)``.
-    Each one can fail: the positive reproduces the defect, each negative removes
-    one ingredient (the idle time, the window mismatch, the defective sweep) and
-    must make the loss disappear."""
+
+    F1 is FIXED (2026-10-03: the sweep judges each key by its own window). The shipped
+    counter is therefore asserted to be immune; the old behaviour lives on only as
+    ``LegacyGlobalSweepCounter``, the negative control that must still go red, so a
+    regression of the product (or a blind instrument) cannot pass silently.
+    Each control can fail: the legacy counter reproduces the defect, each negative
+    removes one ingredient (the idle time, the window mismatch, the defective sweep)
+    and must make the loss disappear."""
     out: list = []
 
     def add(name, ok, detail=""):
         out.append((name, bool(ok), detail))
     prim = f1_primitive()
-    add("N1 F1 primitive, positive: the long-window state is swept by short-window noise", prim["state_lost"], str(prim))
-    same = f1_primitive(noise_delay_ms=30_000)
-    add("N2 negative: the same noise while the key is idle for less than the noise window leaves the state intact",
+    add("N1 F1 fixed: the shipped counter keeps the 300 s state under 60 s noise", not prim["state_lost"], str(prim))
+    legacy = f1_primitive(LegacyGlobalSweepCounter)
+    add("N1b negative control: re-introducing the global sweep (LegacyGlobalSweepCounter) loses the state again "
+        "-- the instrument can still go red", legacy["state_lost"], str(legacy))
+    same = f1_primitive(LegacyGlobalSweepCounter, noise_delay_ms=30_000)
+    add("N2 negative: even the legacy sweep leaves the state intact while the key is idle for less than the noise window",
         not same["state_lost"], str(same))
     # no-noise control: nothing between the two hits -> 2
     c = DequeWindowCounter()
     c.hit_distinct("long", 1_000_000, 300_000, "h1")
     add("N3 negative: with no noise the second value counts 2", c.hit_distinct("long", 1_100_000, 300_000, "h2") == 2)
-    fixed = f1_primitive(PerKeyWindowCounter)
-    add("N4 the instrument can turn green: a per-key sweep (the product fix) keeps the state", not fixed["state_lost"], str(fixed))
+    short = DequeWindowCounter()
+    short.hit("short", 1_000_000, 60_000, "a")
+    for i in range(SWEEP_EVERY):
+        short.hit(f"n{i}", 1_100_000, 60_000, f"m{i}")
+    add("N4 the fix keeps the memory bound: an idle key past ITS OWN window is still reclaimed",
+        "short" not in short._w and "short" not in short._last, "the sweep must not become a no-op")
     sets = sets or ax.build_rule_sets()
     probe = probe or ps.FastProbe(strict_clock=True)
     w = shortest_window_ms(sets)
@@ -408,28 +464,38 @@ def run_controls(sets: dict | None = None, *, probe: ps.FastProbe | None = None,
     lab = ax.Lab(probe, sets[key], burst)
     calib = calibrate_noise()
     res = state_exhaustion(lab, w, calib=calib)
-    add(f"N5 end to end ({key}): a pause plus noise makes the set forget; measured == predicted",
-        res.get("searched") and res["agree"] and isinstance(res["noise_events"], int), str(res))
-    n = res["noise_events"]
+    add(f"N5 end to end ({key}), shipped counter: no amount of noise (up to the cap) makes the set forget; "
+        "measured == predicted (both immune)",
+        res.get("searched") and res["agree"] and res["noise_events"] == "immune" and res["predicted_noise_events"] == "immune",
+        str(res))
     base = build_stream(lab, w, 0)
     add("N6 negative: with no noise the split burst is detected", lab.detected(base["payloads"]))
-    add("N7 negative: N*-1 noise events keep it detected (the loss starts exactly at the prediction)",
-        not _lost(lab, w, n - 1) and _lost(lab, w, n), f"N*={n}")
-    add("N8 negative: the same noise while the key is NOT idle past the short window is detected (cause = sweep)",
-        res["not_idle_control_detected"] is True)
-    # a defective-sweep-free detector keeps detecting under the SAME stream
-    fixed_probe = ps.FastProbe(strict_clock=True, counter_factory=PerKeyWindowCounter)
-    fixed_lab = ax.Lab(fixed_probe, sets[key], burst)
-    add("N9 the product fix turns the end-to-end result green (N* noise events no longer hide the burst)",
-        not _lost(fixed_lab, w, n) and not _lost(fixed_lab, w, _NOISE_CAP))
-    # the prediction tracks the counter's phase
+    # ---- the negative control: the same stream through the re-introduced defect --------------
+    legacy_probe = ps.FastProbe(strict_clock=True, counter_factory=LegacyGlobalSweepCounter)
+    legacy_lab = ax.Lab(legacy_probe, sets[key], burst)
+    lres = state_exhaustion(legacy_lab, w, calib=calib, sweep="global")
+    n = lres.get("noise_events")
+    add(f"N5b negative control ({key}), LegacyGlobalSweepCounter: the old defect makes the set forget after N* noise "
+        "events; measured == predicted",
+        lres.get("searched") and lres["agree"] and isinstance(n, int), str(lres))
+    n = n if isinstance(n, int) else _NOISE_CAP
+    add("N7 negative: against the legacy counter N*-1 noise events keep it detected (the loss starts exactly at the prediction)",
+        not _lost(legacy_lab, w, n - 1) and _lost(legacy_lab, w, n), f"N*={n}")
+    add("N8 negative: the same noise while the key is NOT idle past the short window is detected even by the legacy "
+        "counter (cause = sweep)", lres.get("not_idle_control_detected") is True)
+    add("N9 the shipped counter is green on exactly the stream that blinds the legacy one (N* noise events and the cap)",
+        not _lost(lab, w, n) and not _lost(lab, w, _NOISE_CAP))
+    # the legacy prediction tracks the counter's phase
     shifts = []
     for pre in (17, 100):
-        built, phase, pred = noise_predict(lab, w, calib, prefix_noise=pre)
-        meas = ax._first_true(1, _NOISE_CAP, lambda k, pre=pre: _lost(lab, w, k, prefix_noise=pre))
+        built, phase, pred = noise_predict(legacy_lab, w, calib, prefix_noise=pre, sweep="global")
+        meas = ax._first_true(1, _NOISE_CAP, lambda k, pre=pre: _lost(legacy_lab, w, k, prefix_noise=pre))
         shifts.append((pre, phase, pred, meas))
-    add("N10 moving the sweep phase (events before the burst) moves N* exactly as predicted",
+    add("N10 moving the sweep phase (events before the burst) moves the legacy N* exactly as predicted",
         all(pred == meas for _p, _ph, pred, meas in shifts) and len({x[3] for x in shifts} | {n}) > 1, str(shifts))
+    # the shipped counter ignores the phase entirely
+    add("N10b ... and the same phase shifts do nothing to the shipped counter",
+        all(not _lost(lab, w, n, prefix_noise=pre) for pre in (17, 100)))
     # parity on THIS noise stream
     add("N11 FastProbe == the slow per-probe Detector on the noise stream itself", parity_on_noise_stream(lab, w, n))
     leaky = ps.FastProbe(strict_clock=True, reset_counter=False)
@@ -501,9 +567,15 @@ def alert_flood_cost(probe: ps.FastProbe | None = None) -> dict:
 # ---------------------------------------------------------------------------
 # Driver
 # ---------------------------------------------------------------------------
-def measure_all(seed: int = 7, rules_dir=None, *, probe: ps.FastProbe | None = None, only: list | None = None) -> dict:
+def measure_all(seed: int = 7, rules_dir=None, *, probe: ps.FastProbe | None = None, only: list | None = None,
+                legacy: bool = False) -> dict:
+    """``legacy=True`` measures the historical F1 cost on ``LegacyGlobalSweepCounter``
+    (informational: what the attacker used to pay); the default measures the product."""
     sets = ax.build_rule_sets(rules_dir)
     w_short = shortest_window_ms(sets)
+    sweep = "global" if legacy else "per_key"
+    if legacy:
+        probe = ps.FastProbe(rules_dir=rules_dir, strict_clock=True, counter_factory=LegacyGlobalSweepCounter)
     probe = probe or ps.FastProbe(rules_dir=rules_dir, strict_clock=True)
     calib = calibrate_noise(rules_dir)
     out: dict = {}
@@ -513,8 +585,8 @@ def measure_all(seed: int = 7, rules_dir=None, *, probe: ps.FastProbe | None = N
         burst = ax.reference_burst(key, seed)
         if burst is None:
             continue
-        out[key] = state_exhaustion(ax.Lab(probe, rs, burst), w_short, calib=calib)
-    return {"seed": seed, "basis": "harness-measured", "backend": "deque", "sweep_every": SWEEP_EVERY,
+        out[key] = state_exhaustion(ax.Lab(probe, rs, burst), w_short, calib=calib, sweep=sweep)
+    return {"seed": seed, "basis": "harness-measured", "backend": "deque", "sweep_every": SWEEP_EVERY, "sweep": sweep,
             "shortest_window_seconds": w_short / 1000.0, "noise": calib, "rule_sets": out}
 
 
@@ -530,6 +602,8 @@ def main(argv: list | None = None) -> int:
     ap.add_argument("--rule-set", action="append", default=None)
     ap.add_argument("--blocking-subset", action="store_true",
                     help="the CI lane: every control plus two rule-sets (the full table is --full / default)")
+    ap.add_argument("--legacy-global-sweep", action="store_true",
+                    help="informational: measure the historical F1 cost on the re-introduced defect")
     args = ap.parse_args(argv)
     if args.blocking_subset:
         failed = 0
@@ -537,9 +611,10 @@ def main(argv: list | None = None) -> int:
             print(f"[{'OK' if ok else 'FAIL'}] {name}" + (f" -- {detail}" if detail and not ok else ""))
             failed += 0 if ok else 1
         args.rule_set = args.rule_set or BLOCKING_SETS
-    res = measure_all(args.seed, only=args.rule_set)
+    res = measure_all(args.seed, only=args.rule_set, legacy=args.legacy_global_sweep)
     res["alert_flood_cost"] = alert_flood_cost()
-    print(f"== state exhaustion (F1, deque backend; sweep every {SWEEP_EVERY} hits; shortest window "
+    print(f"== state exhaustion (F1 {'LEGACY global sweep, historical cost' if args.legacy_global_sweep else 'fixed'}, "
+          f"deque backend; sweep every {SWEEP_EVERY} hits; shortest window "
           f"{res['shortest_window_seconds']:g}s; one noise event = {res['noise']['hits_per_event']} counter hits) ==")
     ok = True
     for key, r in res["rule_sets"].items():
@@ -551,8 +626,13 @@ def main(argv: list | None = None) -> int:
             ok = False
             continue
         flag = "ok " if r["agree"] else "MISMATCH"
-        print(f"  {key:<34} [{flag}] forgets after {r['noise_events']} noise events "
-              f"({r['counter_hits']} hits, predicted {r['predicted_noise_events']}), pause >= {r['min_pause_seconds']}s")
+        if r["noise_events"] == "immune":
+            print(f"  {key:<34} [{flag}] immune: {_NOISE_CAP} noise events do not make it forget "
+                  f"(predicted {r['predicted_noise_events']}, sweep={r['sweep']})")
+        else:
+            print(f"  {key:<34} [{flag}] forgets after {r['noise_events']} noise events "
+                  f"({r['counter_hits']} hits, predicted {r['predicted_noise_events']}), pause >= {r['min_pause_seconds']}s "
+                  f"(sweep={r['sweep']})")
         ok = ok and r["agree"]
     args.out.parent.mkdir(parents=True, exist_ok=True)
     with open(args.out, "w", encoding="utf-8") as fh:

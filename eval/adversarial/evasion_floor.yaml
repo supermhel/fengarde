@@ -137,8 +137,7 @@ rule_sets:
       forgery_evades:
         basis: harness-measured
         better: min
-        open_finding: F3-attribution-forgery
-        value: true
+        value: false
       forgone_events:
         basis: harness-measured
         better: max

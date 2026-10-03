@@ -176,7 +176,7 @@ Harness-measured on the bundled reference bursts (seed 7, deque counter backend)
 | `agent_tool_call_burst` | `agent_tool_call_burst` | 51 | 70.503 | 0.824979 | session=3 | n/a | no | no | forgeable | yes |
 | `bank_mass_card_read` | `bank_mass_card_read` | 21 | 522.003 | 0.065 | db_object=3 | n/a | no | no | forgeable | yes |
 | `common_beaconing` | `common_beaconing` | 2 | 4620.011 | 0.001389 | ip=3 | n/a | no | no | no | yes |
-| `common_bruteforce` | `common_bruteforce`, `common_bruteforce_by_account` | 3 | 27.003 | 0.183324 | account=immune, ip=immune | (2,2) | no | evades | no | yes |
+| `common_bruteforce` | `common_bruteforce`, `common_bruteforce_by_account` | 3 | 27.003 | 0.183324 | account=immune, ip=immune | (2,2) | no | no | no | yes |
 | `common_bruteforce_sourceless` | `common_bruteforce_sourceless` | 6 | 222.003 | 0.0375 | host=3 | n/a | no | no | forgeable | yes |
 | `common_dns_exfil` | `common_dns_exfil`, `common_dns_tunnel_by_domain` | 13 | 9.013 | 0.849816 | ip=immune, parent_domain=immune | (2,2) | no | no | no | yes |
 | `common_impossible_travel` | `common_impossible_travel` | 2 | 9000.003 | 0.000278 | account=4 | n/a | no | no | no | NO (sample map) |
