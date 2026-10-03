@@ -130,20 +130,40 @@ class DequeWindowCounter:
         # cannot still be "live" via a second deque entry).
         self._live_members: dict[str, set] = defaultdict(set)
         self._last: dict[str, int] = {}   # key -> most-recent now_ms (for sweeping)
+        # F1 (2026-10-02, adaptive-evasion lane): key -> the instant its newest hit
+        # leaves ITS OWN window (that hit's now_ms + window_ms). The sweep judges
+        # every key by this, never by the window of whichever hit happened to
+        # trigger the sweep: it used to, so benign noise on a 60 s rule (one hit in
+        # _SWEEP_EVERY) evicted the still-live 300 s / 600 s / 3600 s state of every
+        # longer-window rule and an attacker could interleave noise to make those
+        # rules forget. The Redis backend expires per key (EXPIRE window_s+1) and
+        # never had the defect. Storing the deadline (not the window) keeps the
+        # sweep a single comparison per key, as before.
+        self._exp: dict[str, int] = {}
         self._hits = 0
 
-    def _sweep(self, now_ms: int, window_ms: int) -> None:
-        """Drop keys whose newest event is older than the window (idle groups)."""
+    def _touch(self, key: str, now_ms: int, window_ms: int) -> None:
+        """Record the newest activity of ``key`` and when it leaves its own window."""
+        self._last[key] = now_ms
+        self._exp[key] = now_ms + window_ms
+
+    def _forget(self, key: str) -> None:
+        self._w.pop(key, None)
+        self._dw.pop(key, None)
+        self._live_members.pop(key, None)
+        self._last.pop(key, None)
+        self._exp.pop(key, None)
+
+    def _sweep(self, now_ms: int) -> None:
+        """Drop keys whose newest event is older than THEIR OWN window (idle groups).
+
+        Never against the window of the hit that triggered the sweep (F1)."""
         self._hits += 1
         if self._hits % _SWEEP_EVERY:
             return
-        horizon = now_ms - window_ms
-        stale = [k for k, ts in self._last.items() if ts < horizon]
+        stale = [k for k, deadline in self._exp.items() if deadline < now_ms]
         for k in stale:
-            self._w.pop(k, None)
-            self._dw.pop(k, None)
-            self._live_members.pop(k, None)
-            self._last.pop(k, None)
+            self._forget(k)
 
     def hit(self, key: str, now_ms: int, window_ms: int, member=None) -> int:
         w = self._w[key]
@@ -205,12 +225,13 @@ class DequeWindowCounter:
             if member is not None:
                 members.add(member)
             count = len(w)
-        self._last[key] = now_ms
+        self._touch(key, now_ms, window_ms)
         if not w:
             self._w.pop(key, None)
             self._live_members.pop(key, None)
             self._last.pop(key, None)
-        self._sweep(now_ms, window_ms)
+            self._exp.pop(key, None)
+        self._sweep(now_ms)
         return count
 
     def hit_distinct(self, key: str, now_ms: int, window_ms: int,
@@ -231,11 +252,12 @@ class DequeWindowCounter:
         while w and w[0][0] < horizon:
             w.popleft()
         count = len({v for _, v in w})
-        self._last[key] = now_ms
+        self._touch(key, now_ms, window_ms)
         if not w:
             self._dw.pop(key, None)
             self._last.pop(key, None)
-        self._sweep(now_ms, window_ms)
+            self._exp.pop(key, None)
+        self._sweep(now_ms)
         return count
 
     def hit_periodic(self, key: str, now_ms: int, window_ms: int, member=None):

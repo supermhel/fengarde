@@ -44,22 +44,29 @@ _SSHD = re.compile(r"sshd(?:\[\d+\])?:|pam_unix\(sshd:")
 # event that fails Contract A's endpoint pattern and gets dead-lettered.
 _IPTOKEN = r"[0-9A-Fa-f:.]+"
 
+# ---- anchoring (F3, 2026-10-02) ----------------------------------------------
+# The account name in these lines is text the CLIENT sent, and sshd echoes it
+# verbatim in the MIDDLE of the line; the server writes the peer address and port
+# AFTER it. The grammar is therefore anchored at both ends so attacker text can
+# never be read as a different field:
+#   * the message KIND must be the very start of the body (the text after the
+#     ``sshd[pid]:`` tag), never a phrase found somewhere inside it -- a username
+#     "Accepted password for root from ..." cannot turn a failure into a logon;
+#   * the account is the GREEDY span between ``for``/``user`` and the LAST
+#     ``from <ip>`` of the line, so a fake ``from 198.18.9.9 port 1`` typed into the
+#     name stays inside the name. (Accounts may contain spaces; they are kept whole.)
+# Everything after the real ``<ip>`` is server-written (``port N``, ``ssh2``, a key
+# fingerprint, ``[preauth]``), so the tail is deliberately permissive.
+_FLAGS = re.DOTALL
+_FROM = r"\s+from\s+(?P<ip>" + _IPTOKEN + r")(?:\s+port\s+(?P<port>\d+))?(?:\s+\S.*)?\s*\Z"
+
 # "Accepted password for jdoe from 10.0.0.5 port 50022 ssh2"
 # "Accepted publickey for deploy from 2001:db8::6 port 50022 ssh2"
-_ACCEPTED = re.compile(
-    r"Accepted\s+\S+\s+for\s+(?P<user>\S+)\s+from\s+"
-    r"(?P<ip>" + _IPTOKEN + r")(?:\s+port\s+(?P<port>\d+))?"
-)
+_ACCEPTED = re.compile(r"Accepted\s+\S+\s+for\s+(?P<user>.+)" + _FROM, _FLAGS)
 # "Failed password for [invalid user ]admin from 203.0.113.5 port 51000 ssh2"
-_FAILED = re.compile(
-    r"Failed\s+\S+\s+for\s+(?:invalid user\s+)?(?P<user>\S+)\s+from\s+"
-    r"(?P<ip>" + _IPTOKEN + r")(?:\s+port\s+(?P<port>\d+))?"
-)
+_FAILED = re.compile(r"Failed\s+\S+\s+for\s+(?:invalid user\s+)?(?P<user>.+)" + _FROM, _FLAGS)
 # "Invalid user admin from 203.0.113.5 port 51000"
-_INVALID = re.compile(
-    r"Invalid user\s+(?P<user>\S+)\s+from\s+"
-    r"(?P<ip>" + _IPTOKEN + r")(?:\s+port\s+(?P<port>\d+))?"
-)
+_INVALID = re.compile(r"Invalid user\s+(?P<user>.+)" + _FROM, _FLAGS)
 
 
 # FIX 7: the local _valid_ip() was replaced by shared.ocsf.valid_ip, which
@@ -69,12 +76,16 @@ _INVALID = re.compile(
 # it replaced accepted the mapped form but passed it through unnormalized.)
 # "pam_unix(sshd:session): session closed|opened for user jdoe"
 _SESSION = re.compile(
-    r"session\s+(?P<state>opened|closed)\s+for user\s+(?P<user>\S+)"
+    r"pam_\w+\(sshd:session\):\s+session\s+(?P<state>opened|closed)\s+for user\s+"
+    r"(?P<user>.+?)(?:\(uid=\d+\))?(?:\s+by\b.*)?\s*\Z", _FLAGS
 )
-# generic "authentication failure ... rhost=203.0.113.5 ... user=admin"
-_PAM_FAIL = re.compile(r"authentication failure")
-_RHOST = re.compile(r"rhost=(?P<ip>" + _IPTOKEN + r")")
-_PAMUSER = re.compile(r"user=(?P<user>\S+)")
+# "pam_unix(sshd:auth): authentication failure; ... rhost=203.0.113.5  user=admin"
+# "PAM 2 more authentication failures; ... rhost=203.0.113.5  user=root"
+_PAM_FAIL = re.compile(r"(?:pam_\w+\(sshd:auth\):\s+authentication failure|PAM\s+\d+\s+more authentication failures?)")
+# rhost= comes BEFORE the client-chosen ``user=`` (the last field), so the first
+# occurrence is the server's; ``ruser=`` is not ``user=``.
+_RHOST = re.compile(r"(?<!\S)rhost=(?P<ip>" + _IPTOKEN + r")")
+_PAMUSER = re.compile(r"(?<!\S)user=(?P<user>.*?)\s*\Z", _FLAGS)
 
 
 class LinuxSshParser(Parser):
@@ -132,31 +143,35 @@ class LinuxSshParser(Parser):
     @staticmethod
     def _classify(line: str):
         """Return (activity_id, status, severity_id, user, ip, port) or Nones."""
-        m = _ACCEPTED.search(line)
+        body = _body(line)
+        if body is None:
+            return (None, None, None, None, None, None)
+
+        m = _ACCEPTED.match(body)
         if m:
-            return (1, "Success", SEV_INFO, m.group("user"),
+            return (1, "Success", SEV_INFO, m.group("user").strip(),
                     m.group("ip"), _as_int(m.group("port")))
 
-        m = _FAILED.search(line)
+        m = _FAILED.match(body)
         if m:
-            return (4, "Failure", SEV_HIGH, m.group("user"),
+            return (4, "Failure", SEV_HIGH, m.group("user").strip(),
                     m.group("ip"), _as_int(m.group("port")))
 
-        m = _INVALID.search(line)
+        m = _INVALID.match(body)
         if m:
-            return (4, "Failure", SEV_HIGH, m.group("user"),
+            return (4, "Failure", SEV_HIGH, m.group("user").strip(),
                     m.group("ip"), _as_int(m.group("port")))
 
-        if _PAM_FAIL.search(line):
-            um = _PAMUSER.search(line)
-            rm = _RHOST.search(line)
+        if _PAM_FAIL.match(body):
+            um = _PAMUSER.search(body)
+            rm = _RHOST.search(body)
             return (4, "Failure", SEV_HIGH,
-                    um.group("user") if um else None,
+                    (um.group("user") or None) if um else None,
                     rm.group("ip") if rm else None, None)
 
-        m = _SESSION.search(line)
+        m = _SESSION.match(body)
         if m and m.group("state") == "closed":
-            return (2, "Success", SEV_INFO, m.group("user"), None, None)
+            return (2, "Success", SEV_INFO, m.group("user").strip(), None, None)
         # "session opened" is a low-signal duplicate of Accepted -> skip.
 
         return (None, None, None, None, None, None)
@@ -172,6 +187,18 @@ class LinuxSshParser(Parser):
     @staticmethod
     def _logged_time(meta: dict) -> Optional[int]:
         return to_epoch_ms(meta.get("received_at"))
+
+
+def _body(line: str) -> Optional[str]:
+    """The sshd MESSAGE: the text after the first ``sshd[pid]:`` tag (or starting at a
+    bare ``pam_*(sshd:...)`` module tag). Everything the grammar matches is anchored
+    to this start (F3), so text inside a client-chosen account name is never read as
+    a message kind."""
+    m = _SSHD.search(line)
+    if not m:
+        return None
+    body = line[m.start():] if m.group(0).startswith("pam_") else line[m.end():]
+    return body.lstrip()
 
 
 def _as_int(v) -> Optional[int]:
