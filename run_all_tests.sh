@@ -509,6 +509,18 @@ echo
 echo "== Phase 4 reversed-order metric control (mirror/swap/shift: order metrics must say no, legacy join metrics must not move) =="; LAST_HEADER="== Phase 4 reversed-order metric control (mirror/swap/shift: order metrics must say no, legacy join metrics must not move) =="
 $PY eval/adversarial/test_order_controls.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
+echo "== Phase 4 wave 2: mutation adapters move the PARSED field; business-hours / night / period-jitter / hostname-rotation variants pass their controls =="; LAST_HEADER="== Phase 4 wave 2: mutation adapters move the PARSED field; business-hours / night / period-jitter / hostname-rotation variants pass their controls =="
+$PY eval/adversarial/test_mutation_adapters.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
+echo "== Phase 4 wave 2: storyline registry, oracle provenance, reconciler kinds, negative twins, step dependencies, phishing_bec =="; LAST_HEADER="== Phase 4 wave 2: storyline registry, oracle provenance, reconciler kinds, negative twins, step dependencies, phishing_bec =="
+$PY eval/twin/test_storylines_wide.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
+echo "== Phase 4 wave 2: ATT&CK technique matrix logic (cells, gate branches, register) =="; LAST_HEADER="== Phase 4 wave 2: ATT&CK technique matrix logic (cells, gate branches, register) =="
+$PY eval/adversarial/test_technique_matrix.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
+echo "== Phase 4 wave 2: ATT&CK technique matrix gate (every rule exercised by a storyline or dated-waived; runs AFTER scenario_matrix) =="; LAST_HEADER="== Phase 4 wave 2: ATT&CK technique matrix gate (every rule exercised by a storyline or dated-waived; runs AFTER scenario_matrix) =="
+$PY eval/adversarial/technique_matrix.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
 echo "== Phase 4 evasion-boundary search: measured boundary of each volume rule == its declared threshold/window/group_by =="; LAST_HEADER="== Phase 4 evasion-boundary search =="
 $PY eval/adversarial/evasion_search.py --seed 7 || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
