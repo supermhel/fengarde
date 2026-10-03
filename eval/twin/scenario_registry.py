@@ -2,7 +2,8 @@
 twin / reconciler / mutation harness runs over.
 
 Adding a storyline = define a ``scenario.ScenarioDef`` (steps + deterministic
-raw-payload builder + oracle path) and append it to ``ALL``. Every consumer
+raw-payload builder + oracle path) in ``eval/twin/storyline_<name>.py`` exporting ``STORYLINE``;
+``_discover`` registers it (no shared file is edited). Every consumer
 that iterates this registry -- ``oracle_consistency`` (answer key vs reality)
 and ``eval/adversarial/scenario_matrix`` (mutation robustness) -- then covers
 it with no further wiring, and a scenario whose oracle disagrees with what its
@@ -17,14 +18,44 @@ TWIN = Path(__file__).resolve().parent
 if str(TWIN) not in sys.path:
     sys.path.insert(0, str(TWIN))
 
+import importlib  # noqa: E402
+
 import scenario  # noqa: E402
 import scenarios_extra  # noqa: E402
 
-ALL: tuple = (
+#: The three storylines that predate auto-discovery, in their historical order. Every
+#: published per-scenario number keys on these names, so their order never moves.
+BUILTIN: tuple = (
     scenario.AI_TO_OT,
     scenarios_extra.IT_INTRUSION,
     scenarios_extra.INFRA_TAKEOVER,
 )
+
+
+def _discover() -> tuple:
+    """Storylines contributed as ``eval/twin/storyline_<name>.py``, each exporting ONE
+    ``STORYLINE`` (a ``scenario.ScenarioDef``). Adding a storyline is therefore adding files
+    (the module, its ``oracle_<name>.yaml``) and editing nothing shared, so several can land in
+    parallel without touching this registry. Order is the sorted module name -- deterministic and
+    independent of the filesystem. A module that fails to import, exports no ``STORYLINE`` or
+    reuses a name FAILS LOUDLY here: a registry that silently skipped a broken storyline would
+    report robustness over fewer attack shapes than it claims."""
+    found: list = []
+    for path in sorted(TWIN.glob("storyline_*.py")):
+        mod = importlib.import_module(path.stem)
+        sdef = getattr(mod, "STORYLINE", None)
+        if not isinstance(sdef, scenario.ScenarioDef):
+            raise RuntimeError(f"{path.name} must export STORYLINE: scenario.ScenarioDef "
+                               f"(got {type(sdef).__name__})")
+        found.append(sdef)
+    return tuple(found)
+
+
+ALL: tuple = BUILTIN + _discover()
+
+_names = [s.name for s in ALL]
+if len(set(_names)) != len(_names):
+    raise RuntimeError(f"duplicate storyline names registered: {sorted(_names)}")
 
 BY_NAME: dict = {s.name: s for s in ALL}
 

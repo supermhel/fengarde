@@ -179,6 +179,30 @@ CHAIN_LABELS: tuple[str, ...] = tuple(s.label for s in CHAIN_STEPS)
 
 
 @dataclass(frozen=True)
+class NegativeTwin:
+    """A boundary control that differs from the attack by EXACTLY ONE asserted attribute.
+
+    ``build(seed, restored)`` is ONE builder with ONE switch. ``restored=False`` is the
+    NEGATIVE twin (the attribute sits just below what the rule needs: 7 distinct source
+    addresses against a threshold of 8, 5 beats against 6, an irregular interval against a
+    periodicity bound) and the rules in ``rule_ids`` must NOT fire at ``step``.
+    ``restored=True`` is the POSITIVE twin (the SAME code path with the attribute put back)
+    and those rules MUST fire there. Both halves are required: a negative that stays silent
+    proves nothing unless the identical stream with the attribute restored is seen to fire,
+    otherwise a harness that is deaf to the rule would pass every negative twin.
+
+    Consumed by ``eval/adversarial/scenario_matrix.run_negative_twins`` (and gated by its
+    self-check). ``attribute`` states, in words, the single thing that differs.
+    """
+
+    name: str
+    step: str
+    rule_ids: tuple
+    attribute: str
+    build: Callable[[int, bool], tuple]
+
+
+@dataclass(frozen=True)
 class ScenarioDef:
     """One attack storyline: its ordered step specs, the deterministic raw
     payload builder, and the grading oracle that states what the chain is
@@ -206,6 +230,9 @@ class ScenarioDef:
     # not-applicable rather than silently passing).
     decoy: Optional[Callable[[int], list]] = None
     decoy_steps: tuple = ()
+    # Boundary controls (``NegativeTwin``): one per rule threshold the storyline's oracle
+    # leans on, each with its "attribute restored" positive twin on the same builder path.
+    negatives: tuple = ()
 
 
 # ---------------------------------------------------------------------------
