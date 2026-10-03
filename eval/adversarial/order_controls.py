@@ -118,10 +118,16 @@ def pick_swap_pair(sdef, base_grade: dict):
     graded = {(r["from"], r["to"]) for r in base_grade.get("causal_order", {}).get("per_pair", [])
               if r.get("graded")}
     seq = list(reg.load_oracle(sdef).get("expected_sequence") or [])
-    for x, y in zip(seq, seq[1:]):
-        if (x, y) in graded:
+    pairs = [(x, y) for x, y in zip(seq, seq[1:]) if (x, y) in graded]
+    # 2026-10-03: prefer a pair whose BOTH steps raise an alert in the identity run. Swapping the start
+    # times of a step with no alert (a gap or a rule-less step) cannot change the order of ALERTS, so
+    # the swap row's alert_order_ok would stay True and the control would look broken on a storyline
+    # that opens with such a step. For the three older storylines the first graded pair already is one.
+    alerting = {a.get("step") for a in base_grade.get("fired", [])}
+    for x, y in pairs:
+        if x in alerting and y in alerting:
             return x, y
-    return None
+    return pairs[0] if pairs else None
 
 
 def validity_reason(changed: int, span, identity_incidents, mirror_incidents):

@@ -92,7 +92,8 @@ def _lab(key: str, probe: ps.FastProbe | None = None) -> ax.Lab:
 def test_fast_probe() -> None:
     for sdef in reg.ALL:
         bad = ps.verify_parity(sdef, SEED)
-        _check(f"A1 parity {sdef.name}: FastProbe == report._real_detection on baseline + 3 perturbed streams",
+        _check(f"A1 parity {sdef.name}: FastProbe == report._real_detection on baseline + the perturbed streams "
+               "(loss, spread, stretch, jitter)",
                not bad, str(bad) if bad else "")
         _check(f"A1 state-leak {sdef.name}: A, B, A on one session gives identical A", ps.state_leak_check(sdef, SEED))
 

@@ -71,6 +71,94 @@ _FIDELITY_FLOOR = layer_a._FIDELITY_FLOOR
 _FCR_CEILING = layer_a._FCR_CEILING
 
 
+# Everything whose change can change a matrix cell. ``technique_matrix`` refuses an artefact whose
+# fingerprint differs from the live tree: ``out/`` is gitignored, so without this a stale file from an
+# earlier checkout (or a run restricted to one scenario / another seed) would be read as current.
+_FINGERPRINT_GLOBS = (
+    "contracts/rules/*.yml", "contracts/allowlists/*", "contracts/enrichment/*", "contracts/scoring.yaml",
+    "eval/twin/*.py", "eval/twin/*.yaml",
+    "eval/adversarial/mutate_generic.py", "eval/adversarial/scenario_matrix.py",
+    "eval/adversarial/layer_a.py", "eval/adversarial/probe_session.py",
+    "services/ws2-normalization/*.py", "services/ws2-normalization/parsers/*.py",
+    "services/ws2-normalization/enrichment/*.py",
+    "services/ws4-detection/*.py", "services/shared/*.py", "services/ws8-correlation/*.py",
+)
+
+
+def inputs_fingerprint(root: Path = ROOT) -> str:
+    """sha256 over the files in ``_FINGERPRINT_GLOBS`` (path + content, CRLF folded to LF so a
+    Windows checkout and a Linux one agree). Test files are excluded: editing a test cannot change
+    what the matrix measures."""
+    import hashlib  # noqa: PLC0415
+    h = hashlib.sha256()
+    files: set = set()
+    for pattern in _FINGERPRINT_GLOBS:
+        files.update(p for p in root.glob(pattern) if p.is_file())
+    for p in sorted(files):
+        rel = p.relative_to(root).as_posix()
+        if "/__pycache__/" in rel or p.name.startswith("test_") or p.suffix in (".pyc", ".json"):
+            continue
+        h.update(rel.encode())
+        h.update(b"\0")
+        h.update(p.read_bytes().replace(b"\r\n", b"\n"))
+        h.update(b"\0")
+    return h.hexdigest()
+
+
+def _fired_pairs(grade: dict) -> list:
+    """Sorted ``[step, rule_id]`` pairs the run fired (the unit the technique matrix reads)."""
+    return sorted({(a.get("step"), a.get("rule_id")) for a in grade.get("fired", [])})
+
+
+def _dependents(oracle: dict, step: str) -> set:
+    """Steps whose detection legitimately depends on ``step``'s telemetry (oracle
+    ``step_dependencies``: ``{dependent: [context steps]}``). Dropping a context step blinds its
+    dependents by design (no victim login, no impossible travel), which is the lane's negative
+    control for the CONTEXT step, not collateral damage."""
+    deps = oracle.get("step_dependencies") or {}
+    return {dep for dep, needs in deps.items() if step in (needs or [])}
+
+
+def _reattribute_displaced(row: dict, oracle: dict, base: dict, grade: dict) -> None:
+    """A detection that needs TWO steps' telemetry fires on whichever event arrives (or sorts) LAST.
+
+    Impossible travel is the case: the alert is raised by the second country's login. Deliver the
+    stream backwards and the second country is the account's own earlier session, so the same
+    rule fires, on the same account, one step away -- on the CONTEXT step the oracle declares in
+    ``step_dependencies``. ``layer_a.cmp_result`` reads "no alert at the step's own events" as
+    "step lost", which would score a still-working detection as a failure of the product.
+
+    For a step the oracle says depends on context steps, an expected rule that fired at a
+    DEPENDENCY step of the mutated run counts as the step's detection (reported in
+    ``steps_displaced``, never silent). ``steps_lost`` / ``tactic_lost`` / ``detection_retained`` /
+    ``pass`` are recomputed from that. A storyline with no ``step_dependencies`` never reaches this
+    code, so every pre-existing number is untouched."""
+    deps_of = oracle.get("step_dependencies") or {}
+    if not deps_of or not row.get("steps_lost"):
+        return
+    dp = oracle.get("detection_points") or {}
+    displaced = []
+    for step in list(row["steps_lost"]):
+        deps = set(deps_of.get(step) or [])
+        exp = {r.get("rule_id") for r in ((dp.get(step) or {}).get("expected_rules") or [])}
+        if deps and any(a.get("step") in deps and a.get("rule_id") in exp for a in grade.get("fired", [])):
+            displaced.append(step)
+    if not displaced:
+        return
+    row["steps_displaced"] = sorted(displaced)
+    row["steps_lost"] = [s for s in row["steps_lost"] if s not in displaced]
+    row["tactic_lost"] = [s for s in row.get("tactic_lost", []) if s not in displaced]
+    row["expected_rule_lost_steps"] = [s for s in row.get("expected_rule_lost_steps", []) if s not in displaced]
+    b_cov = set(base.get("tactic_covered_steps") or [])
+    coverage_ok = (not row["tactic_lost"]) if b_cov else (base.get("tpr") == row.get("tpr"))
+    row["detection_retained"] = bool(base.get("tpr") is not None and coverage_ok and not row["steps_lost"])
+    row["pass"] = bool(row["detection_retained"] and row["fidelity_retained"] and row["fcr_unchanged"]
+                       and row["order_retained"] and row["decoy_clean"])
+    row["causal_join_broken"] = bool(
+        row["detection_retained"] and base.get("chain_fidelity") is not None
+        and row.get("chain_fidelity") is not None and row["chain_fidelity"] < base["chain_fidelity"])
+
+
 def _scenario_baseline_quality(base: dict) -> dict:
     """Same standard as layer_a._baseline_quality, applied per scenario."""
     return layer_a._baseline_quality(base)
@@ -92,6 +180,36 @@ def _expected_lost(oracle: dict, base: dict, mut: dict) -> list:
         if b and not m:
             lost.append(step)
     return sorted(lost)
+
+
+def run_negative_twins(sdef, seed: int = 7) -> list:
+    """Run every ``NegativeTwin`` the storyline declares (detection leg only: WS-2 -> WS-4 through
+    ``probe_session.FastProbe``, whose parity with the slow path is proven in ``probe_session``).
+
+    For each twin the SAME builder is run twice: ``restored=False`` (one attribute just below what
+    the rule needs -- the rules in ``rule_ids`` must stay SILENT at the twin's step) and
+    ``restored=True`` (the attribute put back -- they must FIRE). The pair is the control: a
+    silent negative means something only because its restored twin is seen to fire, so a deaf
+    harness cannot pass. ``ok`` needs both halves."""
+    import probe_session  # noqa: PLC0415 - imports the engine; keep it off module import
+    probe = probe_session.default_probe()
+    out = []
+    for tw in sdef.negatives:
+        fired: dict = {}
+        for restored in (False, True):
+            payloads = tw.build(seed, restored)[0]
+            alerts = probe.detect(probe_session.payloads_to_pairs(payloads))
+            fired[restored] = sorted({a["rule_id"] for a in alerts if a.get("step") == tw.step}
+                                     & set(tw.rule_ids))
+        out.append({
+            "name": tw.name, "step": tw.step, "attribute": tw.attribute,
+            "rule_ids": sorted(tw.rule_ids),
+            "negative_fired": fired[False], "restored_fired": fired[True],
+            "negative_silent": not fired[False],
+            "restored_fires": set(fired[True]) == set(tw.rule_ids),
+            "ok": (not fired[False]) and set(fired[True]) == set(tw.rule_ids),
+        })
+    return out
 
 
 def run_scenario(sdef, seed: int = 7) -> dict:
@@ -116,13 +234,19 @@ def run_scenario(sdef, seed: int = 7) -> dict:
         row["applicable"] = True
         row["changed_events"] = changed
         row["expected_rule_lost_steps"] = _expected_lost(oracle, base, grade)
+        row["fired_pairs"] = [list(p) for p in _fired_pairs(grade)]
+        _reattribute_displaced(row, oracle, base, grade)
         if axis == "loss":
             # A log source going dark cannot be "detected through", so losing
             # the dropped step's own detection is not a product failure -- it
             # is the lane's NEGATIVE CONTROL. What IS a failure is COLLATERAL:
-            # any OTHER step going dark because one source vanished.
+            # any OTHER step going dark because one source vanished. A step that
+            # DEPENDS on the dropped one by the oracle's own declaration
+            # (``step_dependencies``: impossible travel needs the victim's earlier
+            # login) goes dark with it by design, so it is not collateral either.
             dropped = variant[len("drop_"):]
-            row["collateral_lost_steps"] = [s for s in row["steps_lost"] if s != dropped]
+            expected_dark = {dropped} | _dependents(oracle, dropped)
+            row["collateral_lost_steps"] = [s for s in row["steps_lost"] if s not in expected_dark]
             row["pass"] = bool(not row["collateral_lost_steps"]
                                and row["order_retained"] and row["decoy_clean"])
         rows.append(row)
@@ -153,8 +277,12 @@ def run_scenario(sdef, seed: int = 7) -> dict:
             "incident_membership_ok": base.get("incident_membership_ok"),
             "fired_alerts": base.get("fired_alerts"),
             "mttd_seconds": base.get("mttd_seconds"),
+            "campaign_count": base.get("campaign_count"),
+            "campaign_full_coverage": base.get("campaign_full_coverage"),
+            "fired_pairs": [list(p) for p in _fired_pairs(base)],
         },
         "baseline_quality": _scenario_baseline_quality(base),
+        "negative_twins": run_negative_twins(sdef, seed),
         "rows": rows,
         "per_axis": per_axis,
         "overall": {
@@ -175,6 +303,11 @@ def run_all(seed: int = 7, scenarios: list | None = None) -> dict:
     return {
         "seed": seed,
         "basis": "harness-measured",
+        # What this artefact covers. ``technique_matrix`` asserts seed == 7 and
+        # scenario_list == the whole registry: ``--scenario X`` and ``--seed 11`` write the same
+        # default path, and ``out/`` is gitignored, so the file alone cannot say what it is.
+        "scenario_list": [s.name for s in sdefs],
+        "inputs_fingerprint": inputs_fingerprint(),
         "scenarios": per,
         "pooled": {
             "applicable": tot_ap,
@@ -257,6 +390,16 @@ def _selfcheck(result: dict) -> bool:
         if m["overall"]["applicable"] == 0:
             print(f"[FAIL] {name}: zero applicable variants -- nothing was tested")
             ok = False
+        for tw in m.get("negative_twins", []):
+            if not tw["negative_silent"]:
+                print(f"[FAIL] {name}: negative twin {tw['name']!r} ({tw['attribute']}) fired "
+                      f"{tw['negative_fired']} at {tw['step']} -- the boundary is not where the oracle says")
+                ok = False
+            if not tw["restored_fires"]:
+                print(f"[FAIL] {name}: positive twin of {tw['name']!r} (attribute restored) fired "
+                      f"{tw['restored_fired']} at {tw['step']}, wanted {tw['rule_ids']} -- the harness "
+                      "is deaf to this rule, so the silent negative twin proves nothing")
+                ok = False
     return ok
 
 
@@ -314,6 +457,10 @@ def main(argv: list | None = None) -> int:
                 if r.get("collateral_lost_steps"):
                     extra += f" (COLLATERAL steps lost: {', '.join(r['collateral_lost_steps'])})"
                 print(f"    [FAIL] {r['axis']}/{r['variant']}: failed on {', '.join(why) or 'collateral loss'}{extra}")
+        for tw in m.get("negative_twins", []):
+            print(f"    [{'OK' if tw['ok'] else 'FAIL'}] negative twin {tw['name']} @ {tw['step']}: "
+                  f"{tw['attribute']} -> fired {tw['negative_fired'] or 'nothing'}; restored -> "
+                  f"fired {len(tw['restored_fired'])}/{len(tw['rule_ids'])} of its rules")
         bq = m["baseline_quality"]
         if not bq["sound_reference"]:
             print("  [BASELINE CAVEATS]")

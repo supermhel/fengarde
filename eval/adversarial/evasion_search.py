@@ -90,6 +90,7 @@ def _rule_params() -> dict:
                 "window_seconds": siem.get("window_seconds"),
                 "group_by": siem.get("group_by"),
                 "distinct_field": siem.get("distinct_field"),
+                "periodicity": siem.get("periodicity"),
             }
     return out
 
@@ -118,13 +119,23 @@ def _step_fires(fired: list, step: str, expected: set) -> bool:
     return any(a.get("step") == step and a.get("rule_id") in expected for a in fired)
 
 
-def _detects(payloads, step, expected):
-    """Does ``step``'s expected rule fire? Scored on the step's OWN events: the
-    rules searched here are stateful per group key and the other steps use
-    different sources, accounts and rules, so replaying the whole 95-event
-    stream per probe only costs time. ``verify_subset_equivalence`` proves the
-    two agree on the unperturbed stream."""
-    sub = [x for x in payloads if x[0].label == step]
+def step_dependencies(oracle: dict, step: str) -> tuple:
+    """The CONTEXT steps ``step``'s detection needs in the stream (oracle ``step_dependencies``,
+    e.g. ``foreign_login: [victim_session]``: impossible travel needs the account's earlier
+    login in the other country). Their events are replayed UNPERTURBED beside the step under
+    test; without them a single-event step that depends on earlier telemetry is scored on a
+    stream in which its rule cannot fire at all."""
+    return tuple((oracle.get("step_dependencies") or {}).get(step) or ())
+
+
+def _detects(payloads, step, expected, deps=()):
+    """Does ``step``'s expected rule fire? Scored on the step's OWN events (plus its declared
+    context-step ``deps``): the rules searched here are stateful per group key and the other steps
+    use different sources, accounts and rules, so replaying the whole 95-event stream per probe
+    only costs time. ``verify_subset_equivalence`` proves the two agree on the unperturbed
+    stream."""
+    keep = {step, *deps}
+    sub = [x for x in payloads if x[0].label in keep]
     return _step_fires(_fired(sub), step, expected)
 
 
@@ -137,7 +148,8 @@ def verify_subset_equivalence(sdef, seed: int = 7) -> list:
     bad = []
     for step, pt in (oracle.get("detection_points") or {}).items():
         exp = {r["rule_id"] for r in pt.get("expected_rules") or []}
-        if exp and _step_fires(full, step, exp) != _detects(payloads, step, exp):
+        deps = step_dependencies(oracle, step)
+        if exp and _step_fires(full, step, exp) != _detects(payloads, step, exp, deps):
             bad.append(step)
     return bad
 
@@ -198,39 +210,71 @@ def _first_true(lo, hi, pred):
     return lo
 
 
-def _search_loss(payloads, step, expected, n):
+def _search_loss(payloads, step, expected, n, deps=()):
     """Largest number of events removable with the step still detected.
     Monotone in the number removed (more loss never helps a count rule), so
     bisect: the smallest r at which the step goes dark, minus one."""
     def dark(r):
-        return not _detects(_thin_step(payloads, step, r), step, expected)
+        return not _detects(_thin_step(payloads, step, r), step, expected, deps)
     if dark(0):
         return None                                   # not detected even untouched
     return _first_true(1, n, dark) - 1
 
 
-def _search_stretch(payloads, step, expected):
+def _search_stretch(payloads, step, expected, deps=()):
     """Largest integer-percent stretch with the step still detected (bisect)."""
-    if not _detects(_stretch_step(payloads, step, 100), step, expected):
+    if not _detects(_stretch_step(payloads, step, 100), step, expected, deps):
         return None
-    if _detects(_stretch_step(payloads, step, _STRETCH_CAP_PCT), step, expected):
+    if _detects(_stretch_step(payloads, step, _STRETCH_CAP_PCT), step, expected, deps):
         return _STRETCH_CAP_PCT                       # never evaded within the cap
     lo, hi = 100, _STRETCH_CAP_PCT                    # lo fires, hi does not
     while hi - lo > 1:
         mid = (lo + hi) // 2
-        if _detects(_stretch_step(payloads, step, mid), step, expected):
+        if _detects(_stretch_step(payloads, step, mid), step, expected, deps):
             lo = mid
         else:
             hi = mid
     return lo
 
 
-def _search_spread(payloads, step, expected, n, kind):
+def spread_vacuity(payloads, step, kind):
+    """Did the spread operator actually TOUCH this step's events, and if not, why?
+
+    ``mutate_generic.set_src_ip`` / ``set_actor`` return False for a source with no adapter, and a
+    spread that changed nothing leaves the rule firing -- which reads as "immune on this axis",
+    indistinguishable from a rule that really is. Returns
+
+      None               the operator changed events (the axis was genuinely probed);
+      "field-absent"     it changed nothing because the PARSED events carry no such field (a port
+                         scan has no account), so "immune" is true by construction;
+      "adapter-missing"  it changed nothing although the parsed events DO carry the field: the
+                         harness has no adapter for this source and every "immune" verdict on this
+                         axis is vacuous. A failure of the instrument, reported as one.
+    """
+    import copy  # noqa: PLC0415
+    import probe_session  # noqa: PLC0415
+    idxs = _idx(payloads, step)
+    before = [copy.deepcopy(payloads[i][1]) for i in idxs]
+    after_all = _spread_step(payloads, step, 2, kind)
+    if any(before[j] != after_all[i][1] for j, i in enumerate(idxs)):
+        return None
+    field = "src_endpoint" if kind == "ip" else "actor"
+    sub = [x for x in payloads if x[0].label == step]
+    pairs = probe_session.payloads_to_pairs(sub)
+    for ev in probe_session.default_probe().normalized(pairs):
+        if kind == "ip" and ((ev.get(field) or {}).get("ip")):
+            return "adapter-missing"
+        if kind != "ip" and (((ev.get(field) or {}).get("user") or {}).get("name")):
+            return "adapter-missing"
+    return "field-absent"
+
+
+def _search_spread(payloads, step, expected, n, kind, deps=()):
     """Fewest addresses/accounts k at which the step stops being detected.
     Dispersion only grows with k, so test the extreme first: if one key per
     event still fires, the rule is immune on this axis (None)."""
     def dark(k):
-        return not _detects(_spread_step(payloads, step, k, kind), step, expected)
+        return not _detects(_spread_step(payloads, step, k, kind), step, expected, deps)
     if not dark(n):
         return None
     return _first_true(2, n, dark)
@@ -319,6 +363,19 @@ def search_scenario(sdef, seed: int = 7) -> dict:
                          "reason": ("single-event step" if n < mg._BURST_MIN else "no expected rule (oracle gap)")})
             continue
         expected = set(exp)
+        if any((rules.get(r) or {}).get("periodicity") for r in exp):
+            # A periodic rule (beaconing) fires on the REGULARITY of the schedule, not only its
+            # count: thinning evenly spaced beats leaves a double gap and a coefficient of
+            # variation above the bound long before the count threshold is reached, so the
+            # threshold/window prediction (``n - T``) is wrong BY CONSTRUCTION for the loss axis
+            # (measured tolerated loss 0, predicted 2). Marked unsearched rather than reported as
+            # a disagreement the model was never able to get right. The periodicity bound itself
+            # is exercised by the pacing/jitter_100pct variant in scenario_matrix and by the
+            # beacon negative twins.
+            rows.append({"step": step, "events": n, "searched": False, "reason": "periodic rule",
+                         "note": "thinning or stretching a schedule changes its coefficient of "
+                                 "variation; the count/window model does not describe that"})
+            continue
         # every expected rule with a declared threshold contributes to the prediction
         decls = [rules[r] for r in exp if r in rules and rules[r]["threshold"]]
         if not decls or len(decls) < len([r for r in exp if r in rules]):
@@ -327,17 +384,24 @@ def search_scenario(sdef, seed: int = 7) -> dict:
             continue
         times = [mg.get_time(payloads[i][1]) for i in idxs]
         pred = _combine([_predict(d, times, n) for d in decls])
+        deps = step_dependencies(oracle, step)
         measured = {
-            "loss": _search_loss(payloads, step, expected, n),
-            "stretch_pct": _search_stretch(payloads, step, expected),
-            "ip_k": _search_spread(payloads, step, expected, n, "ip"),
-            "account_k": _search_spread(payloads, step, expected, n, "account"),
+            "loss": _search_loss(payloads, step, expected, n, deps),
+            "stretch_pct": _search_stretch(payloads, step, expected, deps),
+            "ip_k": _search_spread(payloads, step, expected, n, "ip", deps),
+            "account_k": _search_spread(payloads, step, expected, n, "account", deps),
         }
-        # an axis the rule is declared immune to must also be immune in practice
+        vacuity = {k: spread_vacuity(payloads, step, kind)
+                   for k, kind in (("ip_k", "ip"), ("account_k", "account"))}
+        vacuity = {k: v for k, v in vacuity.items() if v}
+        # an axis the rule is declared immune to must also be immune in practice -- and the probe
+        # must have actually perturbed something, or "immune" only means "untouched"
         verdict = {}
         for key in ("loss", "stretch_pct", "ip_k", "account_k"):
             p = pred[key]
-            if p == "immune":
+            if vacuity.get(key) == "adapter-missing":
+                verdict[key] = False
+            elif p == "immune":
                 verdict[key] = (measured[key] is None)
             else:
                 verdict[key] = _agree(measured[key], p, key)
@@ -348,6 +412,7 @@ def search_scenario(sdef, seed: int = 7) -> dict:
             "window_seconds": "/".join(str(d["window_seconds"]) for d in decls),
             "group_by": " | ".join(str(d["group_by"]) for d in decls),
             "measured": measured, "predicted": pred, "agree": verdict,
+            "vacuous_axes": dict(sorted(vacuity.items())),
             "all_agree": all(v in (True, None) for v in verdict.values()),
             "margin_over_threshold": n - min(d["threshold"] for d in decls),
         })
@@ -399,6 +464,11 @@ def main(argv: list | None = None) -> int:
                 print(f"      tolerates slowdown  {_fmt(m['stretch_pct'], p['stretch_pct'], 'stretch_pct')}")
                 print(f"      evaded by IPs       {_fmt(m['ip_k'], p['ip_k'], 'ip_k')}")
                 print(f"      evaded by accounts  {_fmt(m['account_k'], p['account_k'], 'account_k')}")
+                for axis, why in r.get("vacuous_axes", {}).items():
+                    print(f"      (axis {axis}: {why} -- "
+                          + ("the spread changed nothing because the parsed events carry no such field)"
+                             if why == "field-absent" else
+                             "NO ADAPTER for this source, so the verdict above is vacuous)"))
                 if not r["all_agree"]:
                     all_ok = False
                     bad = [k for k, v in r["agree"].items() if v is False]
