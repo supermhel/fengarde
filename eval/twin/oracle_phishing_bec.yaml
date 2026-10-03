@@ -1,0 +1,208 @@
+# =============================================================================
+# FENGARDE eval/twin/oracle_phishing_bec.yaml
+# Grading ground truth for the phishing -> account takeover -> business-email-
+# compromise storyline (storyline_phishing_bec.py):
+#   phish_delivery -> user_execution -> c2_beacon -> victim_session
+#     -> proxy_pool_logins -> foreign_login -> inbox_rule -> payment_redirect
+#
+# AUTHORING RULES (written 2026-10-03 BEFORE the storyline builder existed and before the
+# pipeline was run against it -- this file was committed first, the builder second):
+#   1. A step is expected to fire a rule only where a shipped rule's DOCUMENTED intent covers
+#      the behaviour. Nothing here was tuned to observed output. eval/twin/oracle_consistency.py
+#      reconciles the two afterwards; every disagreement is either fixed or recorded in its
+#      accepted list, never edited away here.
+#   2. The rules this oracle leans on are pinned in `provenance` by a digest of their
+#      description + detection + siem blocks (eval/twin/oracle_provenance.py). A rule edit fails
+#      the check until a human re-reads the rule and re-pins. LIMIT, stated plainly: nothing can
+#      prove an oracle was authored before a run; the commit order and the pin are what reduce
+#      self-authoring bias, they do not remove it. A third-party labelled corpus is the remedy.
+#   3. NO RULE WAS INVENTED. Where no shipped rule covers a step it is declared an honest gap,
+#      carrying the ATT&CK technique the step demonstrates and the reason (the technique matrix
+#      lists these as "demonstrated but undetected"). ATT&CK ids were checked against the v14
+#      technique list from the author's knowledge; the repository vendors no ATT&CK dataset, so
+#      this is NOT mechanically verified (only the id's shape is).
+#   4. incident_count follows the convention for all oracles (2026-10-03, owner decision): the
+#      number of FULL-CHAIN incidents WS-8 actually produces for the storyline. WS-8 tracks never
+#      merge (ADR-009/010), so it is 1 only if one entity is carried by EVERY alert-raising step.
+#      Here it is: the compromised account is the actor on the beacon, the credential-stuffing
+#      burst and the foreign login, so one actor track can span them. (it_intrusion's aspirational
+#      1 stays a flagged known membership_ok=False; it is not retargeted here.)
+#   5. campaign_membership is REPORTED, never gated (owner decision 2026-10-03).
+#   6. HONESTY NOTE on identities: a real Sysmon `User` is `DOMAIN\name` and an IdP `suser` is a
+#      UPN. WS-8 compares actor strings verbatim (ADR-009's canonical actor), so a realistic mix
+#      would split the account across tracks. The storyline uses ONE spelling of the account on
+#      every source so the entity is shared; that is a simplification of the telemetry, and the
+#      oracle does not claim WS-8 would bridge the real spellings.
+# =============================================================================
+schema_version: 1
+oracle_id: "phishing-bec-v1"
+kind: "attack-chain-grading-oracle"
+scope: "phishing-bec"
+
+provenance:
+  authored: "2026-10-03"
+  pipeline_run_before_authoring: false
+  basis: "rule description/detection/siem blocks and parser docstrings only"
+  rules_read:
+    common_beaconing: "1cd8e24c569a4cda5d2394bf659281c8a3cd5c03fd07b513576bb261e256ac6b"
+    common_bruteforce: "f685feb7ab0efe2e0cd9ed3427a2e0466c3a0de785cc28deef3c53a0b585919b"
+    common_bruteforce_by_account: "71734317dfda0c8ecfbb1c62e786df21a6e9c81c1d3c53901a3822cb1079df20"
+    common_impossible_travel: "78864cbe016a52317b8a4d00ce78ac1d8d83d90f5fb9d4c975f13f86e6b97bbb"
+    common_password_spray: "c565b58f392c8e85ac08049c49d1ab119846540d7bcbea86f0ea2f4e30d1a089"
+
+expected_sequence:
+  - phish_delivery
+  - user_execution
+  - c2_beacon
+  - victim_session
+  - proxy_pool_logins
+  - foreign_login
+  - inbox_rule
+  - payment_redirect
+
+sequence_constraints:
+  strict_order: true
+  allow_extra_steps: false
+  max_clock_span_seconds: 3600
+
+# A relationship is declared only where the telemetry carries a SHARED OBSERVABLE at both ends
+# (authoring rule 2 of the other oracles). phish_delivery and inbox_rule have no parser, so no
+# event, so no entity: no edge is claimed to or from them. victim_session is benign context.
+allowed_relationships:
+  - {from: user_execution,     to: c2_beacon,          allowed: true, causal_kind: execution}          # same workstation + account
+  - {from: c2_beacon,          to: proxy_pool_logins,  allowed: true, causal_kind: credential_access}  # same account
+  - {from: proxy_pool_logins,  to: foreign_login,      allowed: true, causal_kind: credential_reuse}   # same account
+  - {from: foreign_login,      to: payment_redirect,   allowed: true, causal_kind: impact}             # same account
+  # Anti-causal non-edges (the fraud never precedes the access that enabled it):
+  - {from: payment_redirect,   to: proxy_pool_logins,  allowed: false, causal_kind: none}
+  - {from: foreign_login,      to: user_execution,     allowed: false, causal_kind: none}
+
+detection_points:
+  phish_delivery:
+    step: phish_delivery
+    role: "spear-phishing mail with a malicious attachment is delivered"
+    expected_event_source: "mail gateway (no parser by design -- `mail_gateway` is a placeholder source type)"
+    expected_rules: []
+    gap:
+      no_rule_exists: true
+      attack_technique: "T1566.001"      # Phishing: Spearphishing Attachment
+      reason: >
+        There is no mail-gateway parser and no rule over mail telemetry. The raw record is
+        still emitted in its native shape and dead-letters at the parser lookup, exactly like
+        ai_to_ot.external_content; the scenario never claims a type_uid for it.
+
+  user_execution:
+    step: user_execution
+    role: "the user opens the attachment: the office app spawns an encoded PowerShell"
+    expected_event_source: "sysmon EventID 1 (class 1002, activity 1)"
+    expected_rules: []
+    gap:
+      no_rule_exists: true
+      attack_technique: "T1204.002"      # User Execution: Malicious File
+      reason: >
+        Process-launch anomaly detection (suspicious parent/child, encoded command line) is
+        unbuilt: contracts/detection-coverage.md lists class 1002 activity 1 as under-covered;
+        only privilege use (4672) has a rule.
+
+  c2_beacon:
+    step: c2_beacon
+    role: "6+ outbound connections at a regular interval from the infected workstation"
+    expected_event_source: "sysmon EventID 3 (class 4001, activity 7)"
+    expected_rules:
+      - {rule_id: "f6071829-a3b4-4c53-9d6e-7f8091a2b526", title: "Regular-interval outbound connections from one source (beaconing)", level: medium, role: command-and-control detection}
+    gap: {no_rule_exists: false}
+
+  victim_session:
+    step: victim_session
+    role: "the account's own, benign, earlier login from its home country (enabling telemetry)"
+    expected_event_source: "cef authentication success (class 3002, activity 1)"
+    context: true
+    expected_rules: []
+    must_not_fire:
+      - "7081a2b3-c405-4de3-be5f-6a7b8c9d0e12"    # a single-country login is not impossible travel
+    gap:
+      no_rule_exists: true
+      reason: >
+        Not an attack step: ordinary telemetry that the foreign login is judged against
+        (impossible travel needs two countries). Declared so a rule that starts firing on a
+        lone home-country login is reported as a stale gap.
+
+  proxy_pool_logins:
+    step: proxy_pool_logins
+    role: "one account failing authentication from 8+ distinct source addresses in 300 s"
+    expected_event_source: "cef authentication failure (class 3002, activity 4)"
+    expected_rules:
+      - {rule_id: "4f8a2c61-9e3d-4b57-8a1c-6d2e5f7a8b90", title: "Credential stuffing (one account attempted from many distinct source IPs)", level: high, role: distributed credential-stuffing detection}
+    must_not_fire:
+      - "d83b71c3-93eb-439f-86f9-5985ebcc38cb"    # 15 s apart: nowhere near 10 failures in 60 s
+      - "6f1c8a2e-0d3b-4c11-9a21-7b5e2f9a1c01"    # one failure per address: far under the per-IP threshold
+    gap: {no_rule_exists: false}
+
+  foreign_login:
+    step: foreign_login
+    role: "the same account logs in successfully from a second country within the hour"
+    expected_event_source: "cef authentication success (class 3002, activity 1) + geo enrichment"
+    expected_rules:
+      - {rule_id: "7081a2b3-c405-4de3-be5f-6a7b8c9d0e12", title: "Impossible travel (same account, distinct countries in a short window)", level: high, role: account-takeover detection}
+    gap: {no_rule_exists: false}
+
+  inbox_rule:
+    step: inbox_rule
+    role: "the attacker creates a mailbox rule that forwards and hides replies"
+    expected_event_source: "M365 audit (no parser by design -- `m365_audit` is a placeholder source type)"
+    expected_rules: []
+    gap:
+      no_rule_exists: true
+      attack_technique: "T1114.003"      # Email Collection: Email Forwarding Rule
+      reason: >
+        No Microsoft 365 / mail-audit parser and no rule over mailbox-rule changes. Chained gap,
+        same mechanism as phish_delivery.
+
+  payment_redirect:
+    step: payment_redirect
+    role: "the vendor's bank account is changed in the finance application"
+    expected_event_source: "db_audit UPDATE (class 6005, activity 3)"
+    expected_rules: []
+    gap:
+      no_rule_exists: true
+      attack_technique: "T1565.001"      # Data Manipulation: Stored Data Manipulation
+      reason: >
+        The banking-DB rules cover activity 5 (privileged operation: bank_db_priv_esc) and
+        activity 1 (distinct-object reads: bank_mass_card_read). A plain UPDATE (activity 3) on a
+        payment-details table has no rule.
+
+# Step dependencies (read by oracle_consistency / scenario_matrix / evasion_search): a step that is
+# only detectable BECAUSE of an earlier context step. Dropping the context step blinds the
+# dependent by design (no home-country login, no impossible travel); that is a negative control
+# for the context step, not collateral damage.
+step_dependencies:
+  foreign_login: [victim_session]
+
+severity_band:
+  score: {min: 40, max: 100}
+  severity_id: {min: 3, max: 6}
+  dominant_band: "high"
+
+evidence:
+  correlation_key: [actor.user.name]
+  per_step:
+    user_execution:    {fields: [actor.user.name, actor.process.name, src_endpoint.hostname]}
+    c2_beacon:         {fields: [src_endpoint.ip, dst_endpoint.ip, actor.user.name]}
+    victim_session:    {fields: [actor.user.name, src_endpoint.ip]}
+    proxy_pool_logins: {fields: [actor.user.name, src_endpoint.ip]}
+    foreign_login:     {fields: [actor.user.name, src_endpoint.ip, src_endpoint.location.country]}
+    payment_redirect:  {fields: [actor.user.name, dst_endpoint.hostname, unmapped.db.object]}
+
+incident_membership:
+  incident_count: 1          # full-chain incidents WS-8 produces: one actor track spans every alerting step
+  incident_key: "phishing-bec"
+  include: [phish_delivery, user_execution, c2_beacon, victim_session, proxy_pool_logins, foreign_login, inbox_rule, payment_redirect]
+  cross_step_rule_ids:
+    - "f6071829-a3b4-4c53-9d6e-7f8091a2b526"
+    - "4f8a2c61-9e3d-4b57-8a1c-6d2e5f7a8b90"
+    - "7081a2b3-c405-4de3-be5f-6a7b8c9d0e12"
+
+# Read-side campaign view (links incidents sharing a member alert). REPORTED, never gated.
+campaign_membership:
+  campaign_count: 1
+  full_coverage: true
