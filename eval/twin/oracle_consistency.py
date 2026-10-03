@@ -44,7 +44,23 @@ WHAT IT CHECKS (all against a real WS-2 -> WS-4 -> WS-8 run, nothing mocked)
                            edge carries. It now reads the grader's own
                            ``per_forbidden_pair`` (``joined=True``).)
 
-    None of these can be fixed by editing this file: each is a genuine
+    5. FORBIDDEN RULE   -- a rule listed in a step's ``must_not_fire`` that fires there
+                           (2026-10-03). The oracle's built-in negative control: it states what
+                           a step must stay SILENT on (a slow spray must not trip the per-IP
+                           brute force; a single-country login must not trip impossible travel).
+                           An id in ``must_not_fire`` that is not a shipped rule is itself a
+                           finding (a typo would make the control vacuous).
+    6. GAP WITHOUT TECHNIQUE -- a ``no_rule_exists`` gap that names no ``attack_technique`` and is
+                           not a ``context`` step. The technique matrix's "demonstrated but
+                           undetected" table is built from these, so an untagged gap would be a
+                           silent hole in it. The two oldest oracles pre-date the key and are on a
+                           closed, dated waiver list.
+    7. CAMPAIGN MISMATCH -- the oracle's ``campaign_membership`` (count / full coverage over the
+                           read-side campaign view) differs from the graded run. REPORTED, never
+                           gated (owner decision 2026-10-03: ADR-009/010 are untouched, so whether
+                           a pivoting attack is ONE campaign is a measurement, not a pass/fail).
+
+    None of the gating ones can be fixed by editing this file: each is a genuine
     disagreement between the answer key and the system, and the repair is to
     change whichever one is wrong -- deliberately, because both feed frozen
     baseline numbers.
@@ -122,6 +138,18 @@ _ACCEPTED: dict = {
 # ignored. The five entries above (2026-10-02) are the only ones, and they are accepted
 # because the correlator cannot do better today, not because the oracle is wrong.
 
+# Gaps that pre-date the ``attack_technique`` key. A closed list: new oracles must tag every
+# non-context gap. ``(scenario, step) -> "YYYY-MM-DD reason"``. Tagging these would edit oracle
+# files that the step-4 oracle-strength ratchet hashes, so it is left to that step's owner.
+_GAP_TECHNIQUE_WAIVED: dict = {
+    ("ai_to_ot", "external_content"):
+        "2026-10-03 oracle.yaml pre-dates the attack_technique key (pre-log ingress content)",
+    ("ai_to_ot", "plc_state_change"):
+        "2026-10-03 oracle.yaml pre-dates the attack_technique key (post-write process-side state change)",
+    ("it_intrusion", "initial_access"):
+        "2026-10-03 oracle_it_intrusion.yaml pre-dates the attack_technique key (T1078 candidate)",
+}
+
 # Three-way (hand / derived / observed) differences that are known: (scenario, step, rule_id) -> reason.
 # EMPTY: derived and observed agree on every step of every storyline. A reason must be dated.
 _TRIANGULATION_WAIVED: dict = {}
@@ -147,12 +175,51 @@ def _companion_sibling(rule_id: str):
 
 
 def _key(scenario_name: str, kind: str, item: dict) -> tuple:
+    """The identity of a finding in ``_ACCEPTED``: ``(scenario, kind, a, b)``. Every kind maps to
+    two item fields so the waiver table has one shape. An unknown kind raises: it used to fall
+    through to ``item['from'], item['to']`` and KeyError on the first kind that had no such fields."""
     if kind == "stale_gap":
         return (scenario_name, kind, item["step"],
                 item["observed_rules"][0] if item["observed_rules"] else "")
-    if kind in ("decorative", "unexpected"):
+    if kind in ("decorative", "unexpected", "forbidden_rule", "unknown_rule"):
         return (scenario_name, kind, item["step"], item["rule_id"])
-    return (scenario_name, kind, item["from"], item["to"])
+    if kind == "gap_technique":
+        return (scenario_name, kind, item["step"], "")
+    if kind == "forbidden":
+        return (scenario_name, kind, item["from"], item["to"])
+    raise KeyError(f"unknown finding kind {kind!r}")
+
+
+_RULE_IDS: set = set()
+
+
+def _known_rule_ids() -> set:
+    if not _RULE_IDS:
+        import yaml  # noqa: PLC0415
+        for f in sorted((ROOT / "contracts" / "rules").glob("*.yml")):
+            try:
+                d = yaml.safe_load(f.read_text(encoding="utf-8")) or {}
+            except Exception:  # noqa: BLE001 - validate_rules.py owns broken rule files
+                continue
+            if d.get("id"):
+                _RULE_IDS.add(d["id"])
+    return _RULE_IDS
+
+
+def _campaign_report(oracle: dict, grade: dict) -> list:
+    """``campaign_membership`` vs the graded run. REPORTED ONLY (see the module docstring)."""
+    want = oracle.get("campaign_membership")
+    if not want:
+        return []
+    out = []
+    if want.get("campaign_count") is not None and grade.get("campaign_count") != want["campaign_count"]:
+        out.append({"field": "campaign_count", "expected": want["campaign_count"],
+                    "observed": grade.get("campaign_count")})
+    if want.get("full_coverage") is not None \
+            and bool(grade.get("campaign_full_coverage")) != bool(want["full_coverage"]):
+        out.append({"field": "full_coverage", "expected": bool(want["full_coverage"]),
+                    "observed": bool(grade.get("campaign_full_coverage"))})
+    return out
 
 
 def reconcile(seed: int = 7, sdef=None, *, oracle: dict | None = None, grade: dict | None = None) -> dict:
@@ -173,6 +240,7 @@ def reconcile(seed: int = 7, sdef=None, *, oracle: dict | None = None, grade: di
 
     detection_points = oracle.get("detection_points") or {}
     stale_gaps, decorative, unexpected = [], [], []
+    forbidden_rules, unknown_rules, gaps_untagged = [], [], []
 
     for step in oracle.get("expected_sequence") or []:
         entry = detection_points.get(step) or {}
@@ -207,6 +275,23 @@ def reconcile(seed: int = 7, sdef=None, *, oracle: dict | None = None, grade: di
             for rule_id in sorted(observed - expected):
                 unexpected.append({"step": step, "rule_id": rule_id,
                                     "why_it_matters": "fires but is not declared at this step"})
+        # the oracle's built-in negative control (2026-10-03)
+        for rule_id in sorted(set(entry.get("must_not_fire") or [])):
+            if rule_id not in _known_rule_ids():
+                unknown_rules.append({"step": step, "rule_id": rule_id,
+                                      "why_it_matters": "must_not_fire names an id that is not a shipped "
+                                                         "rule, so the control could never fail"})
+            elif rule_id in observed:
+                forbidden_rules.append({"step": step, "rule_id": rule_id,
+                                        "why_it_matters": "the oracle says this step must stay silent on "
+                                                           "this rule, and it fired"})
+        if declared_gap and not entry.get("context") \
+                and not (entry.get("gap") or {}).get("attack_technique") \
+                and (sdef.name, step) not in _GAP_TECHNIQUE_WAIVED:
+            gaps_untagged.append({"step": step,
+                                  "why_it_matters": "a declared coverage gap names no ATT&CK technique, so "
+                                                     "the technique matrix cannot list it as demonstrated "
+                                                     "but undetected"})
 
     forbidden_claimed = []
     forbidden = {(r.get("from"), r.get("to"))
@@ -239,6 +324,11 @@ def reconcile(seed: int = 7, sdef=None, *, oracle: dict | None = None, grade: di
         "decorative_expectations": decorative,
         "unexpected_firings": unexpected,
         "forbidden_edges_claimed": forbidden_claimed,
+        "forbidden_rules_fired": forbidden_rules,
+        "unknown_must_not_fire": unknown_rules,
+        "gaps_without_technique": gaps_untagged,
+        # REPORTED, never gated (owner decision 2026-10-03; ADR-009/010 untouched)
+        "campaign_report": _campaign_report(oracle, grade),
         "tpr_semantics": (
             "report.py counts a step matched when ANY expected rule fires "
             "(step_fired & expected_ids), so TPR is step COVERAGE, not "
@@ -246,15 +336,17 @@ def reconcile(seed: int = 7, sdef=None, *, oracle: dict | None = None, grade: di
             "rule fired."
         ),
     }
-    findings["total"] = (len(stale_gaps) + len(decorative)
-                         + len(unexpected) + len(forbidden_claimed))
+    findings["total"] = (len(stale_gaps) + len(decorative) + len(unexpected) + len(forbidden_claimed)
+                         + len(forbidden_rules) + len(unknown_rules) + len(gaps_untagged))
 
     # Split every finding into accepted (on the frozen list) vs NEW. Only new
     # ones gate -- and a stale allowlist entry is itself reported, so the list
     # cannot quietly outlive the disagreement it was written for.
     seen, new = set(), []
     for kind, items in (("stale_gap", stale_gaps), ("decorative", decorative),
-                        ("unexpected", unexpected), ("forbidden", forbidden_claimed)):
+                        ("unexpected", unexpected), ("forbidden", forbidden_claimed),
+                        ("forbidden_rule", forbidden_rules), ("unknown_rule", unknown_rules),
+                        ("gap_technique", gaps_untagged)):
         for item in items:
             k = _key(sdef.name, kind, item)
             seen.add(k)
@@ -268,6 +360,16 @@ def reconcile(seed: int = 7, sdef=None, *, oracle: dict | None = None, grade: di
     findings["stale_allowlist_entries"] = [
         {"key": list(k), "reason": _ACCEPTED[k]} for k in sorted(mine - seen)
     ]
+    # a gap-technique waiver is stale once its step is tagged (or stops being a gap): the table is closed
+    for (sc, step), reason in sorted(_GAP_TECHNIQUE_WAIVED.items()):
+        if sc != sdef.name:
+            continue
+        entry = detection_points.get(step) or {}
+        still_untagged = (bool((entry.get("gap") or {}).get("no_rule_exists")) and not entry.get("context")
+                          and not (entry.get("gap") or {}).get("attack_technique"))
+        if not still_untagged:
+            findings["stale_allowlist_entries"].append(
+                {"key": ["gap_technique_waiver", sc, step], "reason": reason})
     findings["finding_keys"] = sorted("|".join(map(str, k)) for k in seen)
     return findings
 
@@ -330,6 +432,15 @@ def _report_one(f: dict, warn_only: bool) -> int:
         print(f"  [UNEXPECTED]  {item['step']}: {item['rule_id']} fires but is not declared")
     for item in f["forbidden_edges_claimed"]:
         print(f"  [FORBIDDEN]   graph claims {item['from']} -> {item['to']}, oracle forbids it")
+    for item in f["forbidden_rules_fired"]:
+        print(f"  [MUST-NOT-FIRE] {item['step']}: {item['rule_id']} fired, the oracle forbids it")
+    for item in f["unknown_must_not_fire"]:
+        print(f"  [UNKNOWN RULE] {item['step']}: must_not_fire names {item['rule_id']}, not a shipped rule")
+    for item in f["gaps_without_technique"]:
+        print(f"  [GAP NO TECHNIQUE] {item['step']}: no_rule_exists gap without attack_technique")
+    for item in f["campaign_report"]:
+        print(f"  [REPORTED campaign_membership] {item['field']}: oracle expects {item['expected']}, "
+              f"run produced {item['observed']} (not gated)")
     for entry in f["stale_allowlist_entries"]:
         print(f"  [STALE WAIVER] {entry['key']} is on the accepted list but no longer "
               "reproduces -- delete the entry, the disagreement is gone")

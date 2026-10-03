@@ -82,8 +82,25 @@ def test_registry_and_integrity() -> None:
                not r1.check_failures and all(e.parsed == expect[e.step] for e in r1.events),
                f"events={len(r1.events)} failures={r1.check_failures[:2]}")
         _check(f"(a) {sd.name}: same seed -> byte-identical chain", _canon(r1) == _canon(r2))
-    # seed varies STRUCTURE for the new storylines (it does NOT for ai_to_ot --
-    # that limitation is disclosed in layer_a.run_multi_seed, not hidden here)
+    # seed varies STRUCTURE for every registered storyline except ai_to_ot (the seed varies only
+    # identifiers there -- that limitation is disclosed in layer_a.run_multi_seed, not hidden here).
+    # Stated as an EXACT SET so a new storyline whose seed only renames things fails this check
+    # instead of silently joining the exempt list.
+    def _structure(sd, seed):
+        pl = sd.build(seed)[0]
+        out = []
+        for s in sd.steps:
+            evs = [p for sp, p in pl if sp.label == s.label]
+            out.append((s.label, len(evs),
+                        len({mg.get_src_ip(p) for p in evs} - {None}),
+                        len({mg.get_actor(p) for p in evs} - {None})))
+        return tuple(out)
+
+    fixed = sorted(sd.name for sd in reg.ALL
+                   if len({_structure(sd, k) for k in (7, 11, 13, 17)}) == 1)
+    _check("(a) the seed varies attack STRUCTURE (event counts, distinct addresses / accounts per step) "
+           "on every storyline except the documented identifiers-only ai_to_ot",
+           fixed == ["ai_to_ot"], f"structure-invariant storylines: {fixed}")
     it = reg.BY_NAME["it_intrusion"]
     shapes = {tuple(sorted({s.label: sum(1 for x, _ in it.build(sd)[0] if x.label == s.label)
                             for s in it.steps}.items())) for sd in (7, 11, 13, 17)}
@@ -143,7 +160,18 @@ def test_campaign_view() -> None:
            f"campaigns={it['campaign_count']}")
     for sd in reg.ALL:
         g = reg.grade(sd, SEED)
-        _check(f"(k) {sd.name}: a campaign covers the full attack", g["campaign_full_coverage"] is True)
+        want = reg.load_oracle(sd).get("campaign_membership")
+        if want is None:
+            # the three storylines that pre-date ``campaign_membership``: a regression pin
+            _check(f"(k) {sd.name}: a campaign covers the full attack", g["campaign_full_coverage"] is True)
+        else:
+            # Owner decision 2026-10-03: a storyline that DECLARES campaign_membership is REPORTED,
+            # never gated (ADR-009/010 are untouched, so "is a pivoting attack one campaign" is a
+            # measurement). The grade must still be MEASURED (an int, a bool), never absent.
+            _check(f"(k) {sd.name}: campaign grade is measured (reported, not gated)",
+                   isinstance(g["campaign_count"], int) and isinstance(g["campaign_full_coverage"], bool),
+                   f"expected {want}, observed count={g['campaign_count']} "
+                   f"full_coverage={g['campaign_full_coverage']}")
 
 
 def test_alert_order() -> None:
@@ -173,7 +201,10 @@ def _with_decoys(sd, retarget_ip=None):
 
 
 def test_decoy_contamination() -> None:
-    for name in ("it_intrusion", "infra_takeover"):
+    with_decoys = [sd.name for sd in reg.ALL if sd.decoy is not None]
+    _check("(e) the storylines that define decoys include the two that pre-date this list",
+           {"it_intrusion", "infra_takeover"} <= set(with_decoys), f"{with_decoys}")
+    for name in with_decoys:
         sd = reg.BY_NAME[name]
         g = reg.grade(sd, SEED, payload_source=_with_decoys(sd))
         _check(f"(e) {name}: benign decoys FIRED alerts (the test has something to contaminate)",
@@ -209,7 +240,7 @@ def test_decoy_contamination() -> None:
            (gt["decoy_contamination"] or 0) > 0, f"contamination={gt['decoy_contamination']}")
     _check("(e) CONTROL: ...and the campaign view absorbs it too (campaign-level contamination > 0)",
            (g["campaign_decoy_contamination"] or 0) > 0, f"{g['campaign_decoy_contamination']}")
-    for name in ("it_intrusion", "infra_takeover"):
+    for name in with_decoys:
         sdx = reg.BY_NAME[name]
         gx = reg.grade(sdx, SEED, payload_source=_with_decoys(sdx))
         _check(f"(e) {name}: disjoint decoys stay out of the CAMPAIGN as well",
