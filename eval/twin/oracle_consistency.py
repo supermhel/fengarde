@@ -126,6 +126,12 @@ _ACCEPTED: dict = {
     ("it_intrusion", "forbidden", "dns_exfil", "initial_access"): _ORDER_BLIND,
     ("it_intrusion", "forbidden", "priv_grant", "ssh_bruteforce"): _ORDER_BLIND,
     ("infra_takeover", "forbidden", "mass_vm_delete", "cloud_root_login"): _ORDER_BLIND,
+    # 2026-10-03 phishing_bec: the same class on a fourth storyline. Both anti-causal pairs share the
+    # compromised account with the steps they must not precede, so the actor track joins them in
+    # both directions. Measured on the first run, not tuned: the rules all fired as the
+    # intent-first oracle said they would; only this known order-blind channel disagreed.
+    ("phishing_bec", "forbidden", "payment_redirect", "proxy_pool_logins"): _ORDER_BLIND,
+    ("phishing_bec", "forbidden", "foreign_login", "user_execution"): _ORDER_BLIND,
 }
 # History. The map was EMPTY from 2026-10-01: the three AI-to-OT disagreements that used to live here
 # (a stale process_anomaly gap; agent_tool_call_burst and agent_destructive_command

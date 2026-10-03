@@ -174,8 +174,11 @@ def test_derive_clean_tree() -> None:
     for seed in (7, 11):
         for sd in reg.ALL:
             res = _run(sd, _oracle(sd), seed)
+            # 2026-10-03: the periodic beacon rule is NOT modelled by the static reader, so a storyline
+            # that exercises it has exactly the capped number of UNDECIDED steps (od._F2_CAP: 0 elsewhere).
             _check(f"DER-NEG-1 clean tree, {sd.name} seed {seed}: no unwaived finding, no stale waiver, "
-                   f"0 undecided", res["ok"] and res["f2_count"] == 0,
+                   f"undecided == its declared cap ({od._F2_CAP.get(sd.name, 0)})",
+                   res["ok"] and res["f2_count"] == od._F2_CAP.get(sd.name, 0),
                    f"unwaived={[(f['kind'], f['item'][:8]) for f in res['unwaived']]} "
                    f"waived={[f['kind'] for f in res['findings'] if f['waived']]}")
     it = _run(IT, _oracle(IT), 7)

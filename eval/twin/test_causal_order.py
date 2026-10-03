@@ -317,7 +317,8 @@ def _test_real() -> dict:
         b = json.dumps(report._grade_chain(reg.run(sdef, SEED), oracle)["causal_order"], sort_keys=True)
         _check(f"(c) {sdef.name}: same seed -> byte-identical causal_order output, no wall-clock field",
                a == b and "elapsed" not in a and "wall" not in a)
-    expect = {"ai_to_ot": (5, 1.0), "it_intrusion": (6, 0.8333), "infra_takeover": (2, 1.0)}
+    expect = {"ai_to_ot": (5, 1.0), "it_intrusion": (6, 0.8333), "infra_takeover": (2, 1.0),
+              "phishing_bec": (4, 1.0)}      # 2026-10-03: measured on the first run of the 4th storyline
     got = {n: (g["causal_order"]["graded"], g["causal_order"]["causal_order_fidelity"]) for n, g in out.items()}
     _check("(c) identity causal_order_fidelity / graded-pair counts (seed 7) match the measured values",
            got == expect, f"{got}")

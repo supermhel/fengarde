@@ -72,7 +72,28 @@ LEGACY_EXPECT = {
                      "directional_discrimination": 0.0, "incident_count": 3},
     "infra_takeover": {"tpr": 1.0, "chain_fidelity": 0.5, "false_correlation_rate": 1.0,
                        "directional_discrimination": 0.0, "incident_count": 1},
+    # 2026-10-03: measured on the first run of the 4th storyline
+    "phishing_bec": {"tpr": 1.0, "chain_fidelity": 0.5, "false_correlation_rate": 1.0,
+                     "directional_discrimination": 0.0, "incident_count": 1},
 }
+
+
+def _mirror_displaced(sdef) -> list:
+    """Steps whose expected rule still fires in the TIME-MIRRORED run, but at a CONTEXT step the oracle
+    declares in ``step_dependencies`` (impossible travel is raised by whichever of the two logins sorts
+    last, and mirrored the account's own earlier login is the last one)."""
+    oracle = reg.load_oracle(sdef)
+    deps = oracle.get("step_dependencies") or {}
+    mirrored, _ = oc.mirror_event_time(sdef.build(SEED)[0])
+    g = oc._grade(sdef, SEED, mirrored)
+    out = []
+    for step, needs in deps.items():
+        exp = {r["rule_id"] for r in oracle["detection_points"][step].get("expected_rules") or []}
+        at_step = any(a["step"] == step and a["rule_id"] in exp for a in g["fired"])
+        at_dep = any(a["step"] in needs and a["rule_id"] in exp for a in g["fired"])
+        if at_dep and not at_step:
+            out.append(step)
+    return sorted(out)
 
 
 def _check(name: str, ok: bool, detail: str = "") -> None:
@@ -145,9 +166,22 @@ def test_storylines() -> dict:
                and mir["temporal_discrimination"] == 0.0 and mir["story_order_ok"] is False,
                str({k: mir[k] for k in oc.ORDER_KEYS}))
         diff = {k: (ident[k], mir[k]) for k in oc.LEGACY_KEYS if ident[k] != mir[k]}
-        _check(f"(b) {sdef.name}: LEGACY join metrics on the mirrored chain EQUAL the identity run "
-               "(tpr, chain_fidelity, FCR, directional_discrimination, incident_count, incident_membership_ok)",
-               not diff and ctl["legacy_equal_under_mirror"] is True, f"differences: {diff}")
+        if not reg.load_oracle(sdef).get("step_dependencies"):
+            _check(f"(b) {sdef.name}: LEGACY join metrics on the mirrored chain EQUAL the identity run "
+                   "(tpr, chain_fidelity, FCR, directional_discrimination, incident_count, incident_membership_ok)",
+                   not diff and ctl["legacy_equal_under_mirror"] is True, f"differences: {diff}")
+        else:
+            # FINDING (2026-10-03, phishing_bec): the legacy metrics are order-blind only while each
+            # step's detection is independent of the ORDER of other steps. Impossible travel is raised by
+            # the second country's login, so mirrored the alert moves to the account's own (context) step
+            # and the dependent step reads as lost: tpr (and with it the graph) changes. The difference is
+            # therefore REQUIRED to be explained by displacement, not waved through.
+            displaced = _mirror_displaced(sdef)
+            _check(f"(b) {sdef.name}: legacy metrics on the mirrored chain differ ONLY because a dependent "
+                   "step's detection is displaced onto its context step (an explained difference, not an "
+                   "order-sensitive metric)",
+                   bool(diff) and bool(displaced) and ctl["legacy_equal_under_mirror"] is False,
+                   f"displaced={displaced} differences={diff}")
         _check(f"(b) {sdef.name}: legacy identity values are the measured ones "
                f"{LEGACY_EXPECT[sdef.name]}",
                all(ident[k] == v for k, v in LEGACY_EXPECT[sdef.name].items()),
