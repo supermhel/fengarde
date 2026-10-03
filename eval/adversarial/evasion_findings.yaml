@@ -20,21 +20,6 @@
 # and schedules are owner decisions, not made here.
 version: 1
 findings:
-  - id: F1-cross-window-sweep
-    class: BUG
-    status: open
-    first_seen: "2026-10-02"
-    summary: >
-      services/shared/window.py DequeWindowCounter._sweep() evicts every idle key against the
-      CURRENT hit's window, not the key's own. Benign noise on a 60 s rule (one hit in 256)
-      therefore wipes the live 300 s / 600 s / 3600 s state of every longer-window rule.
-      Deque backend only (Redis expires per key), so the two backends disagree.
-    repro: {kind: noise_primitive, module: noise_dilution, function: f1_reproduces}
-    end_to_end: noise_dilution.py --blocking-subset (N5, N8, N9; measured == predicted on every rule-set)
-    cost: ~124 noise events (248 counter hits) plus a >60 s pause on lateral_movement; see noise_dilution.py
-    rule_sets: []
-    decision: "owner decision 3 of step 5: who fixes F1 and when (proposed: store each key's own window_ms, or sweep per key)"
-
   - id: F2-identity-canonicalisation
     class: BUG
     status: open
@@ -48,20 +33,6 @@ findings:
     repro: {kind: row_flag, flag: respelling_evades, module: evasion_axes, function: respelling_axis}
     rule_sets: [common_lateral_movement, dc_mass_vm_delete]
     decision: "owner decision 2 of step 5: canonicalise WS-4 group keys with strip+casefold (consistent with ADR-009, churns alert_key); stripping DOMAIN\\ / UPN would AMEND ADR-009"
-
-  - id: F3-attribution-forgery
-    class: BUG
-    status: open
-    first_seen: "2026-10-02"
-    summary: >
-      The linux_ssh parser takes the FIRST ' from <ip>' in the line. An attacker-chosen username
-      containing 'x from 198.18.9.9 port 1 ssh2 Failed password for ...' moves src_endpoint.ip
-      (field isolation violated), so one real source looks like two and both common_bruteforce
-      and its by-account companion go dark. Whether OpenSSH escapes such usernames is
-      version-dependent (ASSUMED in evasion_tables.yaml).
-    repro: {kind: row_flag, flag: forgery_evades, module: evasion_axes, function: forgery_axis}
-    rule_sets: [common_bruteforce]
-    decision: "owner decision 3 of step 5: who fixes the parser (anchor on the sshd prefix) and when"
 
   - id: F4-record-clock-trust
     class: TRUST_MODEL

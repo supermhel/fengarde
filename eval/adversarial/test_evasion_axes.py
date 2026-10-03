@@ -20,12 +20,15 @@ Every NEW measuring instrument is tested with a POSITIVE and a NEGATIVE control
                            matches the independent prediction cell by cell
   E  obfuscation           identity respelling (F2) classified by table; the search
                            can FAIL (a canonicalising counter makes it detected);
-                           attribution forgery (F3) flagged by field isolation and
-                           NOT flagged by a plain rename
+                           attribution forgery (F3, FIXED 2026-10-03) isolated on the shipped
+                           parser; the pre-fix grammar re-installed is flagged (negative
+                           control); a plain rename is never flagged
   F  clock authority       record vs receipt clock measured, not read (F4)
-  G  noise / state         the F1 counter primitive (positive, idle-time negative, no-noise
-                           negative, per-key-sweep fix turns it green); end to end on the
-                           password-spray burst (the tick lands inside the first post-pause event)
+  G  noise / state         F1 (FIXED 2026-10-03): the shipped counter keeps the long-window key;
+                           the re-introduced global sweep (negative control) loses it, idle-time
+                           and no-noise negatives; end to end on the password-spray burst
+                           (immune on the shipped counter; on the legacy counter the tick lands
+                           inside the first post-pause event)
   H  cost vector / floor   the floor is met on the current tree; companion removed, raised
                            threshold and an uncovered stateful rule each FAIL, naming rule, axis,
                            measured value and floor; the ratchet refuses lowering; the findings
@@ -299,6 +302,25 @@ class _CanonicalCounter(DequeWindowCounter):
         return super().hit_distinct(self._canon(key), now_ms, window_ms, value, member)
 
 
+def _legacy_ssh_classify(line: str):
+    """The linux_ssh grammar BEFORE the F3 fix: unanchored ``.search`` for the first
+    ``Accepted``/``Failed``/``Invalid user`` phrase anywhere and the first
+    ``from <ip>`` after a whitespace-free name. Re-installed only as the negative control."""
+    import re  # noqa: PLC0415
+    ip = r"(?P<ip>[0-9A-Fa-f:.]+)(?:\s+port\s+(?P<port>\d+))?"
+    failed = re.compile(r"Failed\s+\S+\s+for\s+(?:invalid user\s+)?(?P<user>\S+)\s+from\s+" + ip)
+    accepted = re.compile(r"Accepted\s+\S+\s+for\s+(?P<user>\S+)\s+from\s+" + ip)
+    invalid = re.compile(r"Invalid user\s+(?P<user>\S+)\s+from\s+" + ip)
+    from parsers.base import SEV_HIGH, SEV_INFO  # noqa: PLC0415
+    for rx, act, status, sev in ((accepted, 1, "Success", SEV_INFO), (failed, 4, "Failure", SEV_HIGH),
+                                 (invalid, 4, "Failure", SEV_HIGH)):
+        m = rx.search(line)
+        if m:
+            port = m.group("port")
+            return (act, status, sev, m.group("user"), m.group("ip"), int(port) if port else None)
+    return (None, None, None, None, None, None)
+
+
 def test_obfuscation() -> None:
     tables = ax.load_tables()
     _check("E0 every table row is ratified: false (security-judgement inputs await the owner)",
@@ -343,16 +365,36 @@ def test_obfuscation() -> None:
     _check("E7 a field the table says the attacker cannot influence is NOT_REACHABLE: no ops, listed with its reason",
            not nr["ops"] and any(x.get("class") == "NOT_REACHABLE" for x in nr["not_searched"]))
 
-    # F3: attribution forgery
+    # F3: attribution forgery -- FIXED 2026-10-03 (the sshd grammar is anchored at both ends).
     sshlab = _lab("common_bruteforce")
     fg = ax.forgery_axis(sshlab, tables)
-    _check("E8 F3 positive: the ssh username-injection variant moves src_endpoint.ip (field isolation violated)",
-           fg["isolation"]["isolated"] is False and "src_endpoint.ip" in fg["isolation"]["violations"], str(fg["isolation"]))
+    _check("E8 F3 fixed: the ssh username-injection variant no longer moves src_endpoint.ip (field isolation holds)",
+           fg["applicable"] and fg["isolation"]["isolated"] is True and not fg["isolation"]["violations"], str(fg["isolation"]))
+    _check("E8 F3 fixed: the forgery axis reports no evasion", fg["forgery_evades"] is False, str(fg))
     _check("E8 F3 negative: renaming deploy -> deploy2 changes ONLY actor.user.name and is NOT flagged",
            fg["isolation_control_rename"]["isolated"] is True and fg["isolation_control_rename"]["moved"] == ["actor.user.name"])
-    _check("E8 F3 end to end: forging the address from one real source evades; the unforged burst is detected",
-           fg["forgery_evades"] and fg["honest_unsplit_detected"] and fg["agree"], str({k: fg[k] for k in
-                                                                                  ("forged_detected", "honest_unsplit_detected")}))
+    # end to end on the shipped parser: the forged burst (every odd event carries a fake `from <ip>`) is still detected
+    pl = copy.deepcopy(sshlab.burst.payloads)
+    for rank, (_s, p) in enumerate(pl):
+        if rank % 2:
+            ax.forge_ssh_username(p, "198.18.9.9", "x")
+    _check("E8 F3 end to end (shipped parser): the forged burst from one real source is detected, like the honest one",
+           sshlab.detected(pl) and sshlab.detected(copy.deepcopy(sshlab.burst.payloads)))
+    # the instrument can still go red: put the OLD first-match grammar back and the same forgery evades again
+    import parsers.linux_ssh as _ssh_mod  # noqa: PLC0415
+    saved = _ssh_mod.LinuxSshParser.__dict__["_classify"]
+    _ssh_mod.LinuxSshParser._classify = staticmethod(_legacy_ssh_classify)
+    try:
+        # a FRESH probe: the shared one memoises normalisation, so it would replay the fixed parser's answers
+        # (and a legacy parse must never be cached into the shared probe either)
+        lg = ax.forgery_axis(ax.Lab(ps.FastProbe(strict_clock=True), sshlab.rs, sshlab.burst), tables)
+    finally:
+        _ssh_mod.LinuxSshParser._classify = saved
+    _check("E8 F3 NEGATIVE CONTROL: with the pre-fix first-match grammar re-introduced the forgery moves the source "
+           "and evades (the instrument still goes red)",
+           lg["isolation"]["isolated"] is False and "src_endpoint.ip" in lg["isolation"]["violations"]
+           and lg["forgery_evades"] and lg["honest_unsplit_detected"] and lg["agree"],
+           str({k: lg.get(k) for k in ("forged_detected", "honest_unsplit_detected", "forgery_evades")}))
     nf = ax.forgery_axis(lat, tables)
     _check("E9 forgery is reported not applicable (with a reason) where no source has an injectable field",
            not nf["applicable"] and nf["reason"])
@@ -382,22 +424,30 @@ def test_clock() -> None:
 def test_noise() -> None:
     import noise_dilution as nd  # noqa: PLC0415
     prim = nd.f1_primitive()
-    _check("G1 F1 primitive, positive: short-window noise sweeps the long-window key (an open BUG today)",
-           prim["state_lost"] and nd.f1_reproduces(), str(prim))
-    _check("G2 F1 negative: noise while the key is idle for less than the noise window leaves it intact",
-           not nd.f1_primitive(noise_delay_ms=30_000)["state_lost"])
+    _check("G1 F1 fixed: short-window noise no longer sweeps the long-window key on the shipped counter",
+           not prim["state_lost"] and not nd.f1_reproduces(), str(prim))
+    leg = nd.f1_primitive(nd.LegacyGlobalSweepCounter)
+    _check("G1 NEGATIVE CONTROL: the re-introduced global sweep (LegacyGlobalSweepCounter) loses the state "
+           "(the instrument still goes red)", leg["state_lost"], str(leg))
+    _check("G2 negative: even the legacy sweep leaves the key intact while it is idle for less than the noise window",
+           not nd.f1_primitive(nd.LegacyGlobalSweepCounter, noise_delay_ms=30_000)["state_lost"])
     c = DequeWindowCounter()
     c.hit_distinct("long", 1_000_000, 300_000, "h1")
-    _check("G3 F1 negative: no noise -> the second value counts 2", c.hit_distinct("long", 1_100_000, 300_000, "h2") == 2)
-    _check("G4 the instrument can turn green: a per-key sweep (the product fix) keeps the state",
-           not nd.f1_primitive(nd.PerKeyWindowCounter)["state_lost"])
+    _check("G3 negative: no noise -> the second value counts 2", c.hit_distinct("long", 1_100_000, 300_000, "h2") == 2)
     sets = ax.build_rule_sets()
     w = nd.shortest_window_ms(sets)
-    lab = ax.Lab(_probe(), sets["common_password_spray"], ax.reference_burst("common_password_spray", SEED))
+    burst = ax.reference_burst("common_password_spray", SEED)
+    lab = ax.Lab(_probe(), sets["common_password_spray"], burst)
     res = nd.state_exhaustion(lab, w)
-    _check("G5 end to end: the password-spray burst is forgotten after the predicted number of noise events "
-           "(the tick can land INSIDE the first post-pause event: 4 hits per event)",
-           res.get("searched") and res["agree"] and isinstance(res["noise_events"], int), str(res))
+    _check("G4 end to end, shipped counter: the password-spray burst cannot be made to forget by noise "
+           "(measured == predicted == immune)",
+           res.get("searched") and res["agree"] and res["noise_events"] == "immune"
+           and res["predicted_noise_events"] == "immune", str(res))
+    lprobe = ps.FastProbe(strict_clock=True, counter_factory=nd.LegacyGlobalSweepCounter)
+    lres = nd.state_exhaustion(ax.Lab(lprobe, sets["common_password_spray"], burst), w, sweep="global")
+    _check("G5 NEGATIVE CONTROL end to end: on the legacy counter the burst IS forgotten after the predicted number of "
+           "noise events (the tick can land INSIDE the first post-pause event: 4 hits per event)",
+           lres.get("searched") and lres["agree"] and isinstance(lres["noise_events"], int), str(lres))
 
 
 # ---------------------------------------------------------------------------
