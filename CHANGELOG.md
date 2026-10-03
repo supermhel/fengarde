@@ -25,6 +25,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **F3, `services/ws2-normalization/parsers/linux_ssh.py`**: the grammar took the first `from <ip>` and matched message kinds anywhere in the line, so an attacker-chosen username could forge the source address or turn a failure into a logon. Anchored: the kind must start the sshd body and the account is the greedy span to the last `from <ip>`. Side effect: usernames containing spaces now parse whole (such lines were previously dropped). F2 (identity canonicalisation) stays open by decision.
 - The evasion instruments now assert the fixed behaviour; the old global sweep is kept as a negative control that must still go red.
 
+### Fixed (2026-10-03 -- found by the live verification run)
+
+- `infra/docker-compose.yml`: `FENGARDE_OPT_IN_RULES` was documented as the way to opt a default-off rule in, but neither `ws4-detection` (which evaluates it) nor `ws3-indexer` (whose `/rules` view reports it) received it, so the shipped Docker deployment had no working opt-in. Both services now get `FENGARDE_OPT_IN_RULES=${FENGARDE_OPT_IN_RULES:-}` (empty = no opt-in; keep the two values identical); the HA overlay inherits it. Verified on the live stack: default -> `ot_opcua_write_unauthorized_node` does not alert while `ot_config_change` does; with the variable set -> it alerts.
+
 ### Added (2026-10-03 -- harness build-out wave 2 core: scenario registry, technique matrix, `phishing_bec`)
 
 - **Scenario registry** auto-discovers `eval/twin/storyline_NAME.py` (new storylines edit no shared file); `ScenarioDef.negatives` (negative twins with an attribute-restored positive twin, gated in `scenario_matrix`); `oracle_consistency` gains `must_not_fire`, unknown-rule and untagged-gap findings (gating) and a `campaign_membership` finding (reported, never gated; grading stays per track, ADR-009/010 untouched).
