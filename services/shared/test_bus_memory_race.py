@@ -22,7 +22,7 @@ from __future__ import annotations
 import sys
 import threading
 import time
-from collections import Counter
+from collections import Counter, deque
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -104,6 +104,129 @@ def run_consume_concurrency():
           f"messages consumed MORE than once by concurrent consumers: {dupes}")
 
 
+class _RacingDeque(deque):
+    """Makes the produce-vs-read race DETERMINISTIC. A producer thread is parked INSIDE its
+    ``append`` (it has already allocated its id; exactly the reviewer's "taken its seq and is
+    about to append" window) until a reader has created its iterator over this stream, then the
+    producer is let go and given 0.3s to land its append.
+
+    A bus whose produce() appends WITHOUT the lock its readers hold lets that append complete
+    mid-iteration, and CPython raises ``RuntimeError: deque mutated during iteration`` in the
+    reader. A bus that appends under the same lock the readers take can never have the append land
+    inside a snapshot: the reader waits for the lock (the producer's park simply times out)."""
+
+    def __init__(self, *a, **kw):
+        super().__init__(*a, **kw)
+        self.park_next_append = False
+        self.parked = threading.Event()        # a producer is inside append()
+        self.reader_ready = threading.Event()  # a reader holds a live iterator
+        self.producer = None
+        self.race_armed = 0
+
+    def append(self, entry):
+        if self.park_next_append:
+            self.park_next_append = False
+            self.race_armed += 1
+            self.parked.set()
+            self.reader_ready.wait(timeout=0.5)
+        super().append(entry)
+
+    def _reader_iter(self, it):
+        self.reader_ready.set()                # the real deque iterator exists BEFORE the append lands
+        if self.producer is not None:
+            self.producer.join(timeout=0.3)
+        yield from it                          # a mid-iteration mutation is detected here
+
+    def __iter__(self):
+        return self._reader_iter(super().__iter__())
+
+    def __reversed__(self):
+        return self._reader_iter(super().__reversed__())
+
+
+def run_produce_vs_read_race():
+    """A produce() racing consume()/drain() must never kill the reader (islice over a live deque
+    raised RuntimeError) and must neither lose nor duplicate the racing message."""
+    for reader in ("consume", "drain"):
+        bus = _MemoryBus()
+        q = _RacingDeque()
+        bus._streams["rt"] = q
+        for i in range(5):
+            bus.produce("rt", None, {"i": i})
+        q.park_next_append = True
+        q.producer = threading.Thread(target=lambda: bus.produce("rt", None, {"late": True}), daemon=True)
+        q.producer.start()
+        q.parked.wait(timeout=2)
+        read = (lambda: [m.payload for m in bus.consume("rt", group="g")]) if reader == "consume" \
+            else (lambda: [m.payload for m in bus.drain("rt")])
+        try:
+            first = read()
+        except RuntimeError as exc:
+            check(False, f"{reader}() raised while a producer appended concurrently: {exc}")
+            q.producer.join(timeout=5)
+            continue
+        q.producer.join(timeout=5)
+        check(q.race_armed == 1, f"{reader}: the race was not armed (positive control)")
+        check(first[:5] == [{"i": i} for i in range(5)],
+              f"{reader}(): must return the 5 messages produced before it started, got {first}")
+        if reader == "consume":      # cursor advanced: the racer arrives exactly once, now or next
+            late = first[5:] + read()
+            check(late == [{"late": True}],
+                  f"consume(): the racing message must arrive exactly once, got {late}")
+        else:                        # drain() does not advance anything: the next read has all six
+            again = read()
+            check(again == [{"i": i} for i in range(5)] + [{"late": True}],
+                  f"drain(): the racing message must be visible on the next read, got {again}")
+
+
+class _CountingDeque(deque):
+    """Counts every element a reader walks past (forward or reversed iteration)."""
+
+    def __init__(self, *a, **kw):
+        super().__init__(*a, **kw)
+        self.walked = 0
+
+    def __iter__(self):
+        for e in super().__iter__():
+            self.walked += 1
+            yield e
+
+    def __reversed__(self):
+        for e in super().__reversed__():
+            self.walked += 1
+            yield e
+
+
+def run_tail_read_cost():
+    """consume()/drain() must cost O(undelivered tail), not O(stream length). A lockstep
+    produce-1/consume-1/ack run over a never-trimmed stream walked the whole already-consumed
+    prefix on every call (islice(q, cursor, None)): quadratic. Counted in elements walked, so
+    deterministic (no timing)."""
+    n = 1500
+    bus = _MemoryBus()
+    q = _CountingDeque()
+    bus._streams["lock"] = q
+    for i in range(n):
+        bus.produce("lock", "k", {"i": i})
+        got = [m.payload["i"] for m in bus.consume("lock", group="g")]
+        if got != [i]:
+            check(False, f"lockstep delivery wrong at {i}: {got}")
+            break
+    check(q.walked <= 3 * n,
+          f"consume() walked {q.walked} stream entries for {n} one-message polls "
+          f"(~{n} expected; the quadratic pattern is ~{n * n // 2})")
+    q.walked = 0
+    for i in range(n):
+        bus.produce("lock", "k", {"i": n + i})
+        d = bus.drain("lock")
+        if len(d) != 1:
+            check(False, f"drain() must return exactly the undelivered tail, got {len(d)} at {i}")
+            break
+        list(bus.consume("lock", group="g"))
+    check(q.walked <= 6 * n,
+          f"drain()+consume() walked {q.walked} entries for {n} rounds (~{2 * n} expected)")
+
+
 def run():
     bus = _MemoryBus()
     bus._seq = SlowInt(0)  # force the widened window on the real class
@@ -131,6 +254,8 @@ def run():
 def main():
     run()
     run_consume_concurrency()
+    run_produce_vs_read_race()
+    run_tail_read_cost()
     if FAILS:
         print(f"[FAIL] bus memory race: {len(FAILS)} problem(s)")
         for f in FAILS:
