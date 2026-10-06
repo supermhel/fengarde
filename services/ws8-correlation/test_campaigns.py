@@ -163,6 +163,82 @@ def run():
     ids = {c["campaign_id"] for c in link_campaigns([inc("u1", tenant=None), inc("u2", tenant=None)])}
     check(len(ids) == 2, "tenant-less singletons still get distinct campaign ids")
 
+    # 13. FINDING 3 (claim): campaign_id is the hash of the SMALLEST member incident_id, so it is unchanged
+    #     ONLY while no joining incident sorts below the current smallest one. Real WS-8 ids are
+    #     '<tenant>:<entity_type>:<entity_value>:<bucket>', so a pivot to a different entity type/value
+    #     routinely sorts below the root. The docstring must say exactly that (it used to call the
+    #     id-preserving case "the common case"), and the behaviour behind it is pinned with real-format ids.
+    import campaigns as _campaigns
+    doc = _campaigns.__doc__ or ""
+    check("common case" not in doc,
+          "the module docstring must not claim the id usually survives a join (it only does for larger-sorting ids)")
+    check("sorts below" in doc and "smallest" in doc,
+          "the module docstring must state the exact condition under which the id moves")
+    root = "acme:ip:203.0.113.21:488"
+    base = [inc(root, members=["a1", "a2"])]
+    prev13 = link_campaigns(base)
+    later = link_campaigns(base + [inc("acme:ip:203.0.113.99:488", members=["a2", "a3"])], previous=prev13)
+    check(later[0]["campaign_id"] == prev13[0]["campaign_id"] and later[0]["merged_from"] == [],
+          "a joiner sorting ABOVE the root keeps the id")
+    pivot13 = link_campaigns(base + [inc("acme:actor:deploy:488", members=["a2", "a3"])], previous=prev13)
+    check(pivot13[0]["campaign_id"] != prev13[0]["campaign_id"],
+          "a joiner sorting BELOW the root ('actor' < 'ip') moves the id")
+    check(pivot13[0]["merged_from"] == [prev13[0]["campaign_id"]],
+          "...and the lineage names the old id so a persisted handle can be re-pointed")
+
+    # 14. FINDING 5: `previous` lineage never crosses a tenant, even when two tenants (or a tenant and a
+    #     tenant-less record) share an incident_id.
+    prev_acme = link_campaigns([inc("i1", "acme", ["a"])])
+    cross = link_campaigns([inc("i1", "globex", ["a"])], previous=prev_acme)
+    check(cross[0]["merged_from"] == [], f"globex's campaign must not name acme's campaign, got {cross[0]['merged_from']}")
+    cross_none = link_campaigns([inc("i1", None, ["a"])], previous=prev_acme)
+    check(cross_none[0]["merged_from"] == [] and cross_none[0]["untenanted"] is True,
+          f"a tenant-less incident must not name a tenanted campaign, got {cross_none[0]['merged_from']}")
+    both = link_campaigns([inc("i1", "acme", ["a"]), inc("i2", "acme", ["a"]),
+                           inc("i1", "globex", ["a"]), inc("i2", "globex", ["a"])])
+    old_by_tenant = {c["tenant_id"]: c["campaign_id"] for c in both}
+    check(len(both) == 2 and len(set(old_by_tenant.values())) == 2,
+          "positive control: two tenants sharing incident ids are two campaigns")
+    grown = link_campaigns([inc("i0", "acme", ["a"]), inc("i1", "acme", ["a"]), inc("i2", "acme", ["a"]),
+                            inc("i1", "globex", ["a"]), inc("i2", "globex", ["a"])], previous=both)
+    by_t = {c["tenant_id"]: c for c in grown}
+    check(by_t["acme"]["merged_from"] == [old_by_tenant["acme"]] and by_t["acme"]["campaign_id"] != old_by_tenant["acme"],
+          f"acme's lineage names exactly acme's old campaign (negative control), got {by_t['acme']['merged_from']}")
+    check(by_t["globex"]["campaign_id"] == old_by_tenant["globex"] and by_t["globex"]["merged_from"] == [],
+          f"globex is unchanged and names nothing, got {by_t['globex']['merged_from']}")
+    # a tenant whose name contains ':' cannot be spoofed by a prefix-sharing tenant
+    colon = link_campaigns([inc("i1", "acme:eu", ["a"])])
+    spoof = link_campaigns([inc("i1", "acme", ["a"])], previous=colon)
+    check(spoof[0]["merged_from"] == [], "tenant 'acme' must not match the campaign of tenant 'acme:eu'")
+
+    # 15. FINDING 6: a duplicated incident_id must not make the result depend on input order. The kept version
+    #     is the one with the larger member_alert_ids set, ties broken by a hash of the payload, and the
+    #     number of discarded duplicates is reported on the campaign instead of vanishing silently.
+    import itertools
+    d_small = inc("d", members=["A"])
+    d_big = inc("d", members=["A", "B"])
+    other = inc("o", members=["B"])
+    outs = [link_campaigns(list(p)) for p in itertools.permutations([d_small, d_big, other])]
+    check(all(o == outs[0] for o in outs), "duplicate incident_ids: result must not depend on input order")
+    check(len(outs[0]) == 1 and outs[0][0]["incident_ids"] == ["d", "o"] and outs[0][0]["member_alert_ids"] == ["A", "B"],
+          f"the version with the larger alert set is kept (and so links o), got {outs[0]}")
+    check(outs[0][0].get("duplicate_incidents_dropped") == 1,
+          f"the discarded duplicate is counted, got {outs[0][0].get('duplicate_incidents_dropped')}")
+    v1, v2 = inc("e", members=["A"]), inc("e", members=["B"])      # equal size: payload-hash tie-break
+    o_a = inc("p", members=["A"])
+    o_b = inc("q", members=["B"])
+    tie = [link_campaigns(list(p)) for p in itertools.permutations([v1, v2, o_a, o_b])]
+    check(all(t == tie[0] for t in tie), "equal-size duplicates: still order-independent (payload-hash tie-break)")
+    check(sum(c.get("duplicate_incidents_dropped", 0) for c in tie[0]) == 1, "the tie-broken duplicate is counted once")
+    exact = link_campaigns([d_small, dict(d_small), dict(d_small)])
+    check(len(exact) == 1 and exact[0].get("duplicate_incidents_dropped") == 2,
+          f"byte-identical re-emissions are counted too, got {exact}")
+    check(all(c.get("duplicate_incidents_dropped") == 0 for c in link_campaigns(pivot)),
+          "negative control: input without duplicates reports 0")
+    same_id_two_tenants = link_campaigns([inc("x", "acme", ["a"]), inc("x", "globex", ["a"])])
+    check(len(same_id_two_tenants) == 2 and all(c.get("duplicate_incidents_dropped") == 0 for c in same_id_two_tenants),
+          "the same incident_id in two tenants is not a duplicate")
+
 
 def main():
     run()

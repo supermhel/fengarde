@@ -38,12 +38,21 @@ TENANCY
 
 NO SILENT CAPS
     Every well-formed incident handed in is processed and appears in exactly
-    one returned campaign. There is deliberately no input cap: union-find with
+    one returned campaign (one exception, below: a re-emitted DUPLICATE of an
+    ``incident_id``). There is deliberately no input cap: union-find with
     an alert->owner inverted index is near-linear, so a cap would guard nothing
     and could only drop evidence without a signal (which is what the previous
     50_000 slice did). Callers that must bound work should bound the input.
     The only incidents omitted are the malformed ones (no usable string
-    ``incident_id``), which are skipped rather than fabricated.
+    ``incident_id``), which are skipped rather than fabricated, and DUPLICATES:
+    the same ``incident_id`` (within a tenant) handed in more than once is ONE
+    incident, as the correlator re-emits it under the same id as it grows. Exactly
+    one version is kept and the choice does not depend on input order: the version
+    with the larger ``member_alert_ids`` set wins, ties go to the greater SHA-256 of
+    the version's canonical JSON. Each discarded version is counted in the
+    ``duplicate_incidents_dropped`` field of the campaign that holds the kept one,
+    so it is reported, not silent. (Callers that want the union of versions should
+    merge them before calling.)
 
 CAMPAIGN ID (a persistable handle -- read this before storing one)
     ``campaign_id = "campaign:<tenant>:<sha256(root incident_id)[:16]>"`` where
@@ -51,12 +60,17 @@ CAMPAIGN ID (a persistable handle -- read this before storing one)
     union-find root, chosen deterministically). It does NOT depend on the other
     members, so:
 
-      * the id is UNCHANGED when an incident joins a campaign whose current
-        smallest incident id is not beaten by the newcomer (the common case:
-        a pivoting attack gains a later incident), and
+      * the id is UNCHANGED when an incident joins a campaign ONLY IF the
+        newcomer's ``incident_id`` is not smaller than the current smallest
+        member id. How often that holds depends entirely on the id scheme: real
+        WS-8 ids are ``<tenant>:<entity_type>:<entity_value>:<bucket>``, so a pivot
+        to an incident of a different entity type or value sorts below the current
+        root as readily as above it (in a simulation of random pivot chains it moved
+        on roughly a third of the joins). Do not assume the id survives growth; use
+        ``previous=`` below to follow it, and
       * the id is independent of input order.
 
-    Two residual cases move the id, and both are reported rather than hidden:
+    Two cases move the id, and both are reported rather than hidden:
 
       1. two campaigns MERGE (a new incident bridges them): the survivor keeps
          the id of the smaller root; the other campaign's id disappears.
@@ -67,7 +81,9 @@ CAMPAIGN ID (a persistable handle -- read this before storing one)
     caller saw last time: pass ``previous=`` (an earlier ``link_campaigns``
     result, or any list of dicts with ``campaign_id`` + ``incident_ids``) and
     each returned campaign carries ``merged_from`` = the sorted previous
-    campaign ids that now live inside it (excluding its own id). A persisted
+    campaign ids OF THE SAME TENANT that now live inside it (excluding its own
+    id; a previous campaign of another tenant, or an untenanted one, is never
+    named even if it shares an incident_id). A persisted
     handle can then be re-pointed. Without ``previous`` ``merged_from`` is
     ``[]``. ``previous`` is lineage only; it never influences the id.
 
@@ -82,6 +98,7 @@ result; the campaign id is derived from its smallest member incident id.
 from __future__ import annotations
 
 import hashlib
+import json
 from typing import Iterable, Optional
 
 
@@ -96,8 +113,18 @@ def _tenant(incident: dict) -> str:
     return t if isinstance(t, str) and t.strip() else ""
 
 
+def _cid_tenant(cid: str) -> Optional[str]:
+    """The tenant segment of ``campaign:<tenant>:<digest>`` (the tenant may itself contain ':',
+    the digest never does), or None when ``cid`` is not in that shape."""
+    if not cid.startswith("campaign:") or cid.rfind(":") < len("campaign:"):
+        return None
+    return cid[len("campaign:"):cid.rindex(":")]
+
+
 def _previous_index(previous: Optional[Iterable]) -> dict:
-    """incident_id -> set of previous campaign ids that contained it (malformed entries ignored)."""
+    """(tenant, incident_id) -> set of previous campaign ids that contained it (malformed entries
+    ignored). Scoped by tenant so lineage can never name another tenant's campaign: the tenant is read
+    from the campaign id itself, and an entry whose ``tenant_id`` field disagrees with it is dropped."""
     idx: dict = {}
     for camp in previous or ():
         if not isinstance(camp, dict):
@@ -105,10 +132,33 @@ def _previous_index(previous: Optional[Iterable]) -> dict:
         cid, iids = camp.get("campaign_id"), camp.get("incident_ids")
         if not isinstance(cid, str) or not cid or not isinstance(iids, list):
             continue
+        tenant = _cid_tenant(cid)
+        if tenant is None:
+            continue
+        declared = camp.get("tenant_id")
+        if isinstance(declared, str) and declared != tenant:
+            continue
         for iid in iids:
             if isinstance(iid, str) and iid:
-                idx.setdefault(iid, set()).add(cid)
+                idx.setdefault((tenant, iid), set()).add(cid)
     return idx
+
+
+def _digest(inc: dict) -> str:
+    """Canonical-JSON SHA-256 of an incident: the order-independent tie-break between duplicates."""
+    try:
+        blob = json.dumps(inc, sort_keys=True, default=repr)
+    except (TypeError, ValueError):
+        blob = repr(sorted(inc.items(), key=lambda kv: str(kv[0])))
+    return hashlib.sha256(blob.encode("utf-8", "replace")).hexdigest()
+
+
+def _prefer(a: dict, b: dict) -> dict:
+    """Of two versions of one incident_id keep the larger ``member_alert_ids`` set, then the greater
+    payload digest. A total order on content, so the winner does not depend on which came first."""
+    ka = (len(set(_members(a))), _digest(a))
+    kb = (len(set(_members(b))), _digest(b))
+    return a if ka >= kb else b
 
 
 def link_campaigns(incidents: Iterable[dict], previous: Optional[Iterable] = None) -> list:
@@ -124,7 +174,8 @@ def link_campaigns(incidents: Iterable[dict], previous: Optional[Iterable] = Non
          "member_alert_ids": [sorted ...],
          "tactics": [sorted ...],
          "incident_count": int,
-         "merged_from": [sorted previous campaign ids absorbed ...]}
+         "merged_from": [sorted previous campaign ids absorbed ...],
+         "duplicate_incidents_dropped": int}   # re-emitted versions of a member incident_id discarded
 
     Incidents with no usable ``incident_id`` are skipped (not fabricated).
     Singletons are returned too: a campaign of one is the ordinary case, and
@@ -134,6 +185,7 @@ def link_campaigns(incidents: Iterable[dict], previous: Optional[Iterable] = Non
     # key = tenant for tenanted incidents; ("", incident_id) pseudo-tenant for untenanted ones,
     # so each of those is alone in its own group and can never link to anything.
     groups: dict = {}
+    dups: dict = {}     # (group key, incident_id) -> number of discarded duplicate versions
     for inc in incidents:
         if not isinstance(inc, dict):
             continue
@@ -142,7 +194,12 @@ def link_campaigns(incidents: Iterable[dict], previous: Optional[Iterable] = Non
             continue
         tenant = _tenant(inc)
         key = (0, tenant, "") if tenant else (1, "", iid)
-        groups.setdefault(key, {})[iid] = inc
+        slot = groups.setdefault(key, {})
+        if iid in slot:
+            slot[iid] = _prefer(slot[iid], inc)
+            dups[(key, iid)] = dups.get((key, iid), 0) + 1
+        else:
+            slot[iid] = inc
 
     prev_idx = _previous_index(previous)
     out: list = []
@@ -182,7 +239,7 @@ def link_campaigns(incidents: Iterable[dict], previous: Optional[Iterable] = Non
                                for i in members})
             digest = hashlib.sha256(members[0].encode("utf-8")).hexdigest()[:16]
             campaign_id = f"campaign:{tenant}:{digest}"
-            lineage = sorted({p for i in members for p in prev_idx.get(i, ())} - {campaign_id})
+            lineage = sorted({p for i in members for p in prev_idx.get((tenant, i), ())} - {campaign_id})
             out.append({
                 "campaign_id": campaign_id,
                 "tenant_id": tenant,
@@ -193,6 +250,7 @@ def link_campaigns(incidents: Iterable[dict], previous: Optional[Iterable] = Non
                 "tactics": tactics,
                 "incident_count": len(members),
                 "merged_from": lineage,
+                "duplicate_incidents_dropped": sum(dups.get((key, i), 0) for i in members),
             })
     out.sort(key=lambda c: (c["tenant_id"], c["incident_ids"][0]))
     return out
