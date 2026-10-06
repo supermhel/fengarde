@@ -40,10 +40,13 @@ The two backends stay consistent the same way the COUNT pair does:
   value just appends a fresher tuple, so an actively-recurring value never ages out
   while it keeps appearing.
 - ``RedisWindowCounter`` stores the *value itself* as the sorted-set member, scored
-  by time. ZADD on an already-present value updates its score (refreshes its
-  recency) instead of adding a row, so the set naturally holds one entry per distinct
-  value; ZREMRANGEBYSCORE ages values out and ZCARD is the distinct count. This is
-  exactly the COUNT path with member := value, which is why both backends agree.
+  by time. ``ZADD ... GT`` on an already-present value RAISES its score (refreshes
+  its recency) but never lowers it, instead of adding a row, so the set holds one
+  entry per distinct value, scored by the NEWEST time it was seen -- exactly what the
+  deque's "fresher tuple wins" gives. ZREMRANGEBYSCORE ages values out and ZCARD is
+  the distinct count. (A plain ZADD let a repeat stamped in the PAST drag a live
+  value's score backwards so it aged out at once -- see ``hit_distinct``.) GT needs
+  Redis >= 6.2 (the stack runs redis:7) and redis-py >= 3.5.
 
 Periodicity design (v0.5 A3, docs/superpowers/specs/2026-07-21-periodicity-
 primitive.md has the full rationale)
@@ -67,6 +70,7 @@ storage or new redelivery-dedup semantics on top of what already works.
 """
 from __future__ import annotations
 
+import heapq
 import math
 
 from collections import defaultdict, deque
@@ -78,7 +82,8 @@ from collections import defaultdict, deque
 # would live forever. On an internet-facing sensor grouping by src_endpoint.ip
 # that is effectively unbounded and an attacker can force OOM by spraying random
 # source IPs/usernames. The Redis backend self-cleans via EXPIRE; this sweep is
-# the deque equivalent. Amortized O(1): a full scan every _SWEEP_EVERY hits.
+# the deque equivalent. Runs every _SWEEP_EVERY hits over a deadline min-heap, so
+# it touches only keys whose recorded deadline passed (see DequeWindowCounter._sweep).
 _SWEEP_EVERY = 256
 
 
@@ -110,25 +115,30 @@ class DequeWindowCounter:
       appended blindly, so a redelivered event double-counted on memory but not on
       Redis (ZADD dedups by member) -- the two backends disagreed and thresholds
       tripped with fewer real events on the backend the test-gate uses.
-    - **Key eviction.** Empty group deques are dropped inline and idle keys are
-      swept periodically, so the key set stays bounded (see ``_SWEEP_EVERY``).
+    - **Key eviction.** Idle keys are swept periodically, so the key set stays
+      bounded (see ``_SWEEP_EVERY`` and ``_sweep``); a deque emptied by a call is also
+      dropped inline (only reachable with a non-positive ``window_ms``).
     """
 
     def __init__(self) -> None:
         self._w: dict[str, deque] = defaultdict(deque)
         self._dw: dict[str, deque] = defaultdict(deque)
-        # P1-5 (2026-07-21 audit): mirrors _w's non-None members for O(1)
-        # dedup lookup. Live-proven finding: `any(m == member for _, m in w)`
-        # was an O(window-size) scan on EVERY hit, making a single-source
-        # burst -- the exact traffic common_bruteforce.yml targets -- O(n^2)
-        # over the burst (e.g. ~60k comparisons/event at 1k EPS into a 60s
+        # P1-5 (2026-07-21 audit): mirrors _w's non-None members -> their CURRENT
+        # timestamp, for O(1) dedup lookup. Live-proven finding: `any(m == member
+        # for _, m in w)` was an O(window-size) scan on EVERY hit, making a
+        # single-source burst -- the exact traffic common_bruteforce.yml targets --
+        # O(n^2) over the burst (e.g. ~60k comparisons/event at 1k EPS into a 60s
         # window), collapsing detection throughput under real attack load.
-        # Invariant this set relies on: because hit() already skips
-        # re-appending an already-live member, a given non-None member value
-        # appears in `_w[key]` AT MOST ONCE at any time -- so popping an
-        # entry's member out of this set on eviction is always safe (it
-        # cannot still be "live" via a second deque entry).
-        self._live_members: dict[str, set] = defaultdict(set)
+        # Cost model (the honest scope of the "O(1)" claim, review finding 4): a
+        # FRESH member and a redelivery stamped with the member's current timestamp
+        # are O(1) (the stored timestamp is what lets the latter skip the work);
+        # only a redelivery at a DIFFERENT timestamp (the R3-#61 refresh) still pays
+        # an O(n) scan + re-sort, because the deque has to move that entry.
+        # Invariant this relies on: because hit() already skips re-appending an
+        # already-live member, a given non-None member value appears in `_w[key]` AT
+        # MOST ONCE at any time -- so popping an entry's member out of this map on
+        # eviction is always safe (it cannot still be "live" via a second entry).
+        self._live_members: dict[str, dict] = defaultdict(dict)
         self._last: dict[str, int] = {}   # key -> most-recent now_ms (for sweeping)
         # F1 (2026-10-02, adaptive-evasion lane): key -> the instant its newest hit
         # leaves ITS OWN window (that hit's now_ms + window_ms). The sweep judges
@@ -140,12 +150,35 @@ class DequeWindowCounter:
         # never had the defect. Storing the deadline (not the window) keeps the
         # sweep a single comparison per key, as before.
         self._exp: dict[str, int] = {}
+        # Min-heap of (deadline, key) over _exp so the sweep is not a full scan
+        # (review finding 5); see _touch / _sweep.
+        self._heap: list[tuple[int, str]] = []
         self._hits = 0
 
     def _touch(self, key: str, now_ms: int, window_ms: int) -> None:
-        """Record the newest activity of ``key`` and when it leaves its own window."""
-        self._last[key] = now_ms
-        self._exp[key] = now_ms + window_ms
+        """Record the newest activity of ``key`` and when it leaves its own window.
+
+        ``_last`` / ``_exp`` follow the NEWEST hit time and never move backwards
+        (review finding 1): hit() trims by the call's own time and the bus delivers
+        late/replayed/stale-stamped events (past timestamps are always accepted
+        upstream), so an event OLDER than the key's newest one used to overwrite the
+        deadline with ``old_ts + window`` -- one such event let the next sweep forget
+        every live hit of the key (a brute-force/spray/scan evasion; the pre-F1 code
+        had the same flaw via ``_last``). A late event does not make the key's newest
+        hit any older. ``window_ms`` is still the latest hit's (rule reload)."""
+        last = self._last.get(key)
+        if last is None or now_ms > last:
+            last = self._last[key] = now_ms
+        deadline = last + window_ms
+        prev = self._exp.get(key)
+        self._exp[key] = deadline
+        # Sweep index invariant: every key in _exp has a heap entry whose deadline
+        # is <= its real one (so the sweep can never miss it). A key's deadline
+        # normally only grows, so one entry per key suffices (the sweep reschedules
+        # it); a NEW key, or a deadline that SHRANK (rule reload to a shorter window)
+        # needs a fresh, earlier entry.
+        if prev is None or deadline < prev:
+            heapq.heappush(self._heap, (deadline, key))
 
     def _forget(self, key: str) -> None:
         self._w.pop(key, None)
@@ -157,13 +190,41 @@ class DequeWindowCounter:
     def _sweep(self, now_ms: int) -> None:
         """Drop keys whose newest event is older than THEIR OWN window (idle groups).
 
-        Never against the window of the hit that triggered the sweep (F1)."""
+        Never against the window of the hit that triggered the sweep (F1).
+
+        Clock (review finding 2, decided): ``now_ms`` is the triggering hit's own
+        event time -- the engine clamps it to ``min(event, wall)`` -- and is
+        deliberately NOT a monotone watermark: a watermark (max time seen) can only
+        make the sweep MORE eager, so a hit that lags the rest of the traffic judges
+        keys by its own clock and never evicts what is live for it. What remains is
+        an inherent limit of event-time sweeping, not something a watermark fixes:
+        a key whose source lags the traffic that triggers the sweep by more than the
+        key's window loses its state at the next sweep (the Redis backend tolerates
+        this because its EXPIRE is wall-clock per key). The pre-F1 code had the same
+        limit for equal windows.
+
+        Cost (review finding 5): the sweep used to scan EVERY live key each
+        ``_SWEEP_EVERY`` hits, so per-hit cost grew linearly with the key count
+        (measured 233 us/hit at 400k live keys). It now pops a min-heap of
+        ``(deadline, key)`` instead: only entries whose recorded deadline has passed
+        are touched, so a sweep over a large, still-live key set is O(1). A popped
+        entry is either stale (the key's real deadline also passed -> forget) or
+        outdated (the key was hit since -> reschedule at its real deadline, at most
+        once per hit), i.e. O(log n) amortised per hit. Reclaim latency is unchanged
+        (<= ``_SWEEP_EVERY`` hits after a key goes idle)."""
         self._hits += 1
         if self._hits % _SWEEP_EVERY:
             return
-        stale = [k for k, deadline in self._exp.items() if deadline < now_ms]
-        for k in stale:
-            self._forget(k)
+        heap = self._heap
+        while heap and heap[0][0] < now_ms:
+            deadline, k = heapq.heappop(heap)
+            cur = self._exp.get(k)
+            if cur is None:
+                continue                        # already forgotten (orphan entry)
+            if cur < now_ms:
+                self._forget(k)
+            else:
+                heapq.heappush(heap, (cur, k))  # hit since this entry was queued
 
     def hit(self, key: str, now_ms: int, window_ms: int, member=None) -> int:
         w = self._w[key]
@@ -182,7 +243,7 @@ class DequeWindowCounter:
         while w and w[0][0] < horizon:
             _, evicted_member = w.popleft()
             if evicted_member is not None:
-                members.discard(evicted_member)
+                members.pop(evicted_member, None)
         # Redelivery guard: a member already alive in the window counts once,
         # but its timestamp is REFRESHED to now_ms (R3-#61, 2026-08-27) --
         # parity with RedisWindowCounter, where ZADD on an already-present
@@ -192,22 +253,31 @@ class DequeWindowCounter:
         # it alive -- the two backends disagreed on when a recurring value
         # expires.
         if member is not None and member in members:
-            for i, (_t, _m) in enumerate(w):
-                if _m == member:
-                    w[i] = (now_ms, member)
-                    break
-            # keep the deque time-sorted (C1): the refreshed entry may no
-            # longer be at its old position relative to its neighbours.
-            items = list(w)
-            items.sort(key=lambda e: e[0])
-            w = deque(items)
-            self._w[key] = w
-            while w and w[0][0] < horizon:
-                _, evicted_member = w.popleft()
-                if evicted_member is not None:
-                    members.discard(evicted_member)
-            count = len(w)
+            if members[member] == now_ms:
+                # Same event redelivered (same timestamp): there is nothing to
+                # refresh, so skip the O(n) scan + re-sort + rebuild (review
+                # finding 4) -- the dominant at-least-once redelivery shape.
+                count = len(w)
+            else:
+                for i, (_t, _m) in enumerate(w):
+                    if _m == member:
+                        w[i] = (now_ms, member)
+                        break
+                members[member] = now_ms
+                # keep the deque time-sorted (C1): the refreshed entry may no
+                # longer be at its old position relative to its neighbours.
+                items = list(w)
+                items.sort(key=lambda e: e[0])
+                w = deque(items)
+                self._w[key] = w
+                while w and w[0][0] < horizon:
+                    _, evicted_member = w.popleft()
+                    if evicted_member is not None:
+                        members.pop(evicted_member, None)
+                count = len(w)
         else:
+            if member is not None:
+                members[member] = now_ms
             if w and now_ms < w[-1][0]:
                 items = list(w)
                 items.append((now_ms, member))
@@ -215,18 +285,21 @@ class DequeWindowCounter:
                 w = deque(items)
                 self._w[key] = w
                 # Sorting may have surfaced a newly-stale entry at the front
-                # (the out-of-order insert could sit anywhere) -- re-evict.
+                # (the out-of-order insert could sit anywhere) -- re-evict. The
+                # mirror entry is written BEFORE this so that evicting the
+                # just-inserted member (negative window) also drops it.
                 while w and w[0][0] < horizon:
                     _, evicted_member = w.popleft()
                     if evicted_member is not None:
-                        members.discard(evicted_member)
+                        members.pop(evicted_member, None)
             else:
                 w.append((now_ms, member))
-            if member is not None:
-                members.add(member)
             count = len(w)
         self._touch(key, now_ms, window_ms)
         if not w:
+            # Only reachable with a non-positive window (the deque always holds
+            # the entry just appended/refreshed otherwise); kept as the inline
+            # reclaim for that case, covered by test_nonpositive_window_*.
             self._w.pop(key, None)
             self._live_members.pop(key, None)
             self._last.pop(key, None)
@@ -323,12 +396,19 @@ class RedisWindowCounter:
         only refreshes its score (ZADD updates), keeping one entry per distinct
         value. ZCARD is then the distinct count. ``member`` is ignored on purpose:
         deduplication here is by value, not by event id.
+
+        ``GT`` (review finding 3): a repeat of an already-seen value stamped OLDER
+        than its stored score must not LOWER it -- with a plain ZADD one forged or
+        lagging repeat dragged a live value's score into the past, the next
+        ZREMRANGEBYSCORE aged it out at once and the distinct count fell below the
+        threshold (the deque backend always kept the fresher tuple). New members are
+        still added; only an update to a not-greater score is skipped. Needs Redis >= 6.2.
         """
         zkey = f"{self.ns}:d:{key}"
         m = str(value) if value is not None else str(now_ms)
         horizon = now_ms - window_ms
         pipe = self.r.pipeline()
-        pipe.zadd(zkey, {m: now_ms})
+        pipe.zadd(zkey, {m: now_ms}, gt=True)
         pipe.zremrangebyscore(zkey, 0, horizon - 1)
         pipe.zcard(zkey)
         pipe.expire(zkey, max(1, window_ms // 1000 + 1))

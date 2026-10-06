@@ -149,8 +149,8 @@ class _FakePipe:
         self.store = store
         self.ops = []
 
-    def zadd(self, key, mapping):
-        self.ops.append(("zadd", key, mapping)); return self
+    def zadd(self, key, mapping, gt=False):
+        self.ops.append(("zadd", key, mapping, gt)); return self
 
     def zremrangebyscore(self, key, lo, hi):
         self.ops.append(("zremrangebyscore", key, lo, hi)); return self
@@ -167,6 +167,8 @@ class _FakePipe:
             d = self.store.setdefault(key, {})
             if op == "zadd":
                 for member, score in rest[0].items():
+                    if rest[1] and str(member) in d and score <= d[str(member)]:
+                        continue  # ZADD GT: never lower an existing score
                     d[str(member)] = score
                 results.append(len(rest[0]))
             elif op == "zremrangebyscore":
