@@ -505,6 +505,27 @@ class TestSshGrammarPinned(unittest.TestCase):
         # no user= at all: the first rhost= is the server's
         ev = _ssh(f"PAM 3 more authentication failures; {_PAM_PFX}rhost={REAL}  rhost=198.18.9.9")
         self.assertEqual(_facts(ev), (4, "Failure", REAL, None, None))
+        # rhost= only counts as a whole field: 'xrhost=' inside another field is not it ...
+        ev = _ssh(f"pam_unix(sshd:auth): authentication failure; logname= uid=0 euid=0 tty=ssh "
+                  f"ruser=xrhost=198.18.9.9 rhost={REAL}  user=a")
+        self.assertEqual(_facts(ev), (4, "Failure", REAL, None, "a"))
+        # ... and an rhost= that only occurs AFTER user= (client text) is never the source
+        ev = _ssh(f"pam_unix(sshd:auth): authentication failure; {_PAM_PFX}user=bob rhost=198.18.9.9")
+        self.assertEqual(_facts(ev), (4, "Failure", None, None, "bob rhost=198.18.9.9"))
+
+    def test_session_account_cuts_only_the_servers_trailing_fields(self):
+        for tail, want in (("jdoe", "jdoe"), ("jdoe(uid=1000)", "jdoe"), ("jdoe by (uid=0)", "jdoe"),
+                           ("jdoe(uid=1000) by (uid=0)", "jdoe"), ("jdoe(uid=1000) by root(uid=0)", "jdoe"),
+                           ("a by b", "a by b"), ("x(uid=1)y", "x(uid=1)y"), ("x(uid=)", "x(uid=)")):
+            with self.subTest(tail=tail):
+                ev = _ssh(f"pam_unix(sshd:session): session closed for user {tail}")
+                self.assertEqual(_facts(ev), (2, "Success", None, None, want))
+
+    def test_a_session_or_failure_line_without_an_account_is_not_a_logoff(self):
+        self.assertIsNone(_ssh("pam_unix(sshd:session): session closed for user "))
+        self.assertIsNone(_ssh("pam_unix(sshd:session): session closed for user"))
+        self.assertIsNone(_ssh("Failed password for from 203.0.113.5 port 5 ssh2"))
+        self.assertIsNone(_ssh("Invalid user from 203.0.113.5"))
 
     def test_message_kind_must_start_the_body(self):
         for body in ("Connection closed Accepted password for root from 198.18.9.9 port 1 ssh2",
