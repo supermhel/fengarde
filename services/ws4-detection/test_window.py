@@ -36,8 +36,10 @@ class _FakePipe:
         self.store = store
         self.ops = []
 
-    def zadd(self, key, mapping):
-        self.ops.append(("zadd", key, mapping)); return self
+    def zadd(self, key, mapping, gt=False):
+        # `gt` mirrors redis-py/ZADD GT (Redis >= 6.2): only UPDATE an existing
+        # member when the new score is greater; new members are always added.
+        self.ops.append(("zadd", key, mapping, gt)); return self
 
     def zremrangebyscore(self, key, lo, hi):
         self.ops.append(("zrem", key, lo, hi)); return self
@@ -52,10 +54,13 @@ class _FakePipe:
         res = []
         for op in self.ops:
             if op[0] == "zadd":
-                _, k, mapping = op
+                _, k, mapping, gt = op
                 d = self.store.setdefault(k, {})
                 added = sum(1 for m in mapping if m not in d)
-                d.update(mapping)
+                for m, sc in mapping.items():
+                    if gt and m in d and sc <= d[m]:
+                        continue
+                    d[m] = sc
                 res.append(added)
             elif op[0] == "zrem":
                 _, k, lo, hi = op
