@@ -126,6 +126,23 @@ def run(kind="memory"):
     bus.produce(T("t7"), None, {"n": 1})
     _keys[kind] = consume(bus, T("t7"), G("g"))[0].key
 
+    # every key type: Redis does xadd({"key": key or ""}) through redis-py's encoder, so falsy keys
+    # (0, False, 0.0, "", None) read back as "", int/float/bytes keys read back as their str form,
+    # and keys redis-py cannot encode (True, tuple, dict) are REJECTED at produce. The memory
+    # backend used to hand the original Python object (5 -> int 5) or accept the unencodable.
+    for n, key in enumerate(_KEY_CASES):
+        bus = Bus()
+        topic = T(f"key{n}")
+        try:
+            bus.produce(topic, key, {"n": 1})
+            outcome = consume(bus, topic, G("g"))[0].key
+        except Exception:  # redis.exceptions.DataError on Redis, TypeError on memory
+            outcome = _RAISES
+        _key_outcomes.setdefault(kind, {})[repr(key)] = outcome
+        want = _KEY_EXPECT[n]
+        check(outcome == want and type(outcome) is type(want),
+              f"key {key!r}: expected {want!r} (what Redis returns), got {outcome!r}")
+
     # at-least-once is intact: an unacked message is redelivered, an acked one is not
     bus = Bus()
     bus.produce(T("t8"), "k", {"n": 1})
@@ -164,6 +181,11 @@ def run(kind="memory"):
 
 
 _keys: dict = {}
+_key_outcomes: dict = {}
+_RAISES = "<raises>"
+# key -> what a real Redis (decode_responses=True) hands the consumer, observed against redis:7 + redis-py 8
+_KEY_CASES = [None, "", 0, False, 0.0, (), "k", 5, 1.5, b"b", True, ("t",), {"a": 1}, 10 ** 30]
+_KEY_EXPECT = ["", "", "", "", "", "", "k", "5", "1.5", "b", _RAISES, _RAISES, _RAISES, str(10 ** 30)]
 
 
 def _real_bus():
@@ -177,6 +199,9 @@ def main():
         check(_keys.get("memory") == _keys.get("redis"),
               f"a None key must read back identically on both backends: memory={_keys.get('memory')!r} "
               f"redis={_keys.get('redis')!r}")
+        check(_key_outcomes.get("memory") == _key_outcomes.get("redis"),
+              f"key handling differs between backends: memory={_key_outcomes.get('memory')} "
+              f"redis={_key_outcomes.get('redis')}")
     else:
         print("[SKIP] real-Redis half of the parity test: set BUS_PARITY_REDIS_URL to run it")
     if FAILS:

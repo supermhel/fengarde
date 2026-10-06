@@ -76,6 +76,42 @@ class _Entry:
         return Message(self.topic, self.key, json.loads(self.wire), self.id)
 
 
+def _tail(q: deque, start: int) -> list:
+    """``q[start:]`` as a list in O(len(q) - start), NOT O(len(q)).
+
+    A deque iterator (and so ``islice(q, start, None)``) walks from the LEFT, paying for
+    the whole already-consumed prefix on every call -- quadratic over a long never-trimmed
+    stream. Reading from the right end touches only the undelivered tail. The caller holds
+    the bus lock, so the deque cannot be appended to while this iterates."""
+    n = len(q) - start
+    if n <= 0:
+        return []
+    tail = list(islice(reversed(q), n))
+    tail.reverse()
+    return tail
+
+
+def _wire_key(key) -> str:
+    """The stream key exactly as a real Redis hands it back to a consumer.
+
+    _RedisBus does ``xadd({"key": key or ""})`` and reads with decode_responses=True, so:
+    any falsy key (None, "", 0, False, 0.0, ()) arrives as ""; str stays; int/float are
+    stringified by redis-py's encoder (repr); bytes/memoryview are decoded; and a key that
+    encoder rejects (bool True, tuple, dict, ...) raises (redis-py DataError -> TypeError here).
+    """
+    if not key:
+        return ""
+    if isinstance(key, (bytes, memoryview)):
+        return bytes(key).decode("utf-8")
+    if isinstance(key, bool):
+        raise TypeError(f"Invalid bus key of type bool (Redis would reject it): {key!r}")
+    if isinstance(key, (int, float)):
+        return repr(key) if isinstance(key, float) else int.__repr__(key)
+    if isinstance(key, str):
+        return str.__str__(key)
+    raise TypeError(f"Invalid bus key of type {type(key).__name__!r} (Redis would reject it): {key!r}")
+
+
 def _stream_id_lt(a: str, b: str) -> bool:
     """True if Redis stream id ``a`` sorts before ``b``. IDs are
     "<ms>-<seq>"; compare numerically on both parts (a lexicographic string
@@ -171,11 +207,14 @@ class _MemoryBus:
         # Serialising here (once) and parsing a fresh copy per delivery (see
         # ``_Entry.to_message``) restores all three.
         wire = json.dumps(payload)   # raises TypeError on non-JSON, before any state changes
+        wire_key = _wire_key(key)    # raises TypeError on a key redis-py cannot encode
         with self._seq_lock:
+            # Allocate the id AND append under the lock readers take for their snapshot:
+            # a reader can then never iterate the stream while an append lands in it
+            # (CPython raises "deque mutated during iteration" otherwise), and stream
+            # order is id order.
             self._seq += 1
-            seq = self._seq
-        # Redis does xadd({"key": key or ""}), so a None key reads back as "" there.
-        self._streams[topic].append(_Entry(topic, key or "", wire, str(seq)))
+            self._streams[topic].append(_Entry(topic, wire_key, wire, str(self._seq)))
 
     def consume(self, topic, group=None, block_ms=0) -> Iterator[Message]:
         group_key = self._group_key(group)
@@ -202,7 +241,7 @@ class _MemoryBus:
             cursor = self._cursors[topic].get(group_key, 0)
             if cursor >= len(q):
                 return
-            batch = list(islice(q, cursor, None))
+            batch = _tail(q, cursor)
             self._cursors[topic][group_key] = len(q)
         with self._pel_lock:
             pel = self._pel[topic].setdefault(group_key, {})
@@ -288,7 +327,7 @@ class _MemoryBus:
             q = self._streams[topic]
             cursors = self._cursors.get(topic, {})
             done = max(cursors.values()) if cursors else 0
-            entries = list(islice(q, done, None))   # only the undelivered tail, not the backlog
+            entries = _tail(q, done)   # only the undelivered tail, not the backlog
         # Parse outside the lock: every returned Message needs its own independent dict.
         return [e.to_message() for e in entries]
 
