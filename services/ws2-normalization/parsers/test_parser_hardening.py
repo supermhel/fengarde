@@ -298,5 +298,303 @@ class TestSshdAttributionForgery(unittest.TestCase):
         self.assertNotIn("src_endpoint", ev)
 
 
+# ---- F3 follow-up (ssh-differential review): the grammar is PINNED here ----------------
+# The reviewer found 10 of 19 semantic mutants of linux_ssh.py surviving every parser
+# suite. Everything below is literal expected output, so a mutant that changes any
+# kind / source / port / account for any of these lines dies.
+
+REAL = "203.0.113.5"
+# every spelling of the real sshd tag (OpenSSH 9.8+ splits sshd into sshd-session / sshd-auth)
+TAGS = ("sshd[7]", "sshd-session[7]", "sshd-auth[7]", "sshd")
+
+
+def _line(tag: str, body: str) -> str:
+    return f"Nov  1 10:00:00 h {tag}: {body}"
+
+
+def _parse(line: str):
+    return LinuxSshParser().parse(_raw(line, st="linux_ssh"))
+
+
+_PAM_PFX = "logname= uid=0 euid=0 tty=ssh ruser= "
+
+# (message body, (activity_id, status, ip, port, account)); None = deliberately unmodelled.
+# Each row was ALSO checked against the e18e3f2 parser (the last one before the F3
+# anchoring) -- the facts are identical there, except where the comment says otherwise.
+LEGIT_CORPUS = (
+    ("Failed password for invalid user admin from 203.0.113.5 port 51000 ssh2",
+     (4, "Failure", "203.0.113.5", 51000, "admin")),
+    ("Failed password for jdoe from 203.0.113.5 port 51514 ssh2",
+     (4, "Failure", "203.0.113.5", 51514, "jdoe")),
+    ("Failed password for root from 203.0.113.5",
+     (4, "Failure", "203.0.113.5", None, "root")),
+    ("Failed publickey for deploy from 10.0.0.6 port 22 ssh2",
+     (4, "Failure", "10.0.0.6", 22, "deploy")),
+    ("Failed keyboard-interactive/pam for invalid user guest from 10.0.0.7 port 40000 ssh2",
+     (4, "Failure", "10.0.0.7", 40000, "guest")),
+    ("Failed password for root from 203.0.113.5 port 51000 ssh2 [preauth]",
+     (4, "Failure", "203.0.113.5", 51000, "root")),
+    ("Accepted password for jdoe from 10.0.0.5 port 50022 ssh2",
+     (1, "Success", "10.0.0.5", 50022, "jdoe")),
+    ("Accepted publickey for deploy from 10.0.0.6 port 50022 ssh2: RSA SHA256:abcDEF/123",
+     (1, "Success", "10.0.0.6", 50022, "deploy")),
+    ("Accepted keyboard-interactive/pam for root from 10.0.0.8 port 1 ssh2",
+     (1, "Success", "10.0.0.8", 1, "root")),
+    ("Accepted publickey for ops from 10.0.0.9 port 22 ssh2: RSA-CERT SHA256:aaa ID ops-cert (serial 0) CA RSA SHA256:bbb",
+     (1, "Success", "10.0.0.9", 22, "ops")),
+    ("Invalid user admin from 203.0.113.5 port 51000",
+     (4, "Failure", "203.0.113.5", 51000, "admin")),
+    ("Invalid user admin from 203.0.113.5",
+     (4, "Failure", "203.0.113.5", None, "admin")),
+    # accounts with spaces / unicode are kept whole (e18e3f2 took only the first word: intended difference)
+    ("Failed password for invalid user john smith from 203.0.113.5 port 51000 ssh2",
+     (4, "Failure", "203.0.113.5", 51000, "john smith")),
+    ("Invalid user Müller 张伟 from 203.0.113.5 port 51000",
+     (4, "Failure", "203.0.113.5", 51000, "Müller 张伟")),
+    ("Accepted password for domain admin from 10.0.0.5 port 50022 ssh2",
+     (1, "Success", "10.0.0.5", 50022, "domain admin")),
+    # IPv6, canonicalised by valid_ip; v4-mapped collapses to the dotted quad
+    ("Failed password for invalid user admin from 2001:db8::1 port 5 ssh2",
+     (4, "Failure", "2001:db8::1", 5, "admin")),
+    ("Accepted publickey for deploy from 2001:DB8::6 port 50022 ssh2",
+     (1, "Success", "2001:db8::6", 50022, "deploy")),
+    ("Failed password for root from ::ffff:10.0.0.5 port 22 ssh2",
+     (4, "Failure", "10.0.0.5", 22, "root")),
+    # IPv6 zone id: kept OUT of the stored ip (e18e3f2 matched the address but lost the
+    # port behind the '%eth0'; the port is now parsed after the zone: intended difference)
+    ("Failed password for root from fe80::a00:27ff:fe4a:b1c2%eth0 port 51000 ssh2",
+     (4, "Failure", "fe80::a00:27ff:fe4a:b1c2", 51000, "root")),
+    ("Invalid user bob from fe80::1%en0",
+     (4, "Failure", "fe80::1", None, "bob")),
+    # Solaris / illumos decoration between the tag and the message
+    ("[ID 800047 auth.info] Failed password for root from 203.0.113.5 port 51000 ssh2",
+     (4, "Failure", "203.0.113.5", 51000, "root")),
+    ("[ID 800047 auth.info] Accepted password for jdoe from 10.0.0.5 port 50022 ssh2",
+     (1, "Success", "10.0.0.5", 50022, "jdoe")),
+    # PAM: any module, rhost before user=
+    ("pam_unix(sshd:auth): authentication failure; " + _PAM_PFX + "rhost=203.0.113.5  user=admin",
+     (4, "Failure", "203.0.113.5", None, "admin")),
+    ("pam_sss(sshd:auth): authentication failure; " + _PAM_PFX + "rhost=203.0.113.5 user=bob",
+     (4, "Failure", "203.0.113.5", None, "bob")),
+    ("pam_ldap(sshd:auth): authentication failure; " + _PAM_PFX + "rhost=2001:db8::5 user=carol",
+     (4, "Failure", "2001:db8::5", None, "carol")),
+    ("PAM 2 more authentication failures; " + _PAM_PFX + "rhost=203.0.113.5  user=root",
+     (4, "Failure", "203.0.113.5", None, "root")),
+    ("PAM 1 more authentication failure; " + _PAM_PFX + "rhost=203.0.113.5  user=root",
+     (4, "Failure", "203.0.113.5", None, "root")),
+    ("pam_unix(sshd:auth): authentication failure; " + _PAM_PFX + "rhost=203.0.113.5  user=john smith",
+     (4, "Failure", "203.0.113.5", None, "john smith")),
+    ("pam_unix(sshd:auth): authentication failure; " + _PAM_PFX + "rhost=203.0.113.5",
+     (4, "Failure", "203.0.113.5", None, None)),
+    ("pam_unix(sshd:auth): authentication failure; " + _PAM_PFX + "rhost=  user=bob",
+     (4, "Failure", None, None, "bob")),
+    ("pam_unix(sshd:auth): authentication failure; " + _PAM_PFX + "rhost=fe80::1%eth0  user=bob",
+     (4, "Failure", "fe80::1", None, "bob")),
+    # "ruser=" is not "user="
+    ("pam_unix(sshd:auth): authentication failure; logname= uid=0 euid=0 tty=ssh ruser=eve "
+     "rhost=203.0.113.5  user=admin",
+     (4, "Failure", "203.0.113.5", None, "admin")),
+    # sessions: only "closed" is a Logoff; "opened" is a duplicate of Accepted and is skipped
+    ("pam_unix(sshd:session): session closed for user jdoe",
+     (2, "Success", None, None, "jdoe")),
+    ("pam_systemd(sshd:session): session closed for user john smith",
+     (2, "Success", None, None, "john smith")),
+    ("pam_unix(sshd:session): session closed for user jdoe(uid=1000)",
+     (2, "Success", None, None, "jdoe")),
+    ("pam_unix(sshd:session): session opened for user jdoe(uid=1000) by (uid=0)", None),
+    # not modelled
+    ("Connection closed by 203.0.113.5 port 51000 [preauth]", None),
+    ("Server listening on 0.0.0.0 port 22.", None),
+    ("Received disconnect from 203.0.113.5 port 51000:11: Bye Bye [preauth]", None),
+    # a real address that is garbage is dropped, the event survives (P0.6)
+    ("Failed password for admin from 999.999.999.999 port 5", (4, "Failure", None, None, "admin")),
+)
+
+# Attacker-chosen account names: every one tries to move the kind, the source or the account.
+HOSTILE_NAMES = (
+    "x sshd: Accepted password for root from 198.18.9.9 port 1 ssh2",
+    "x sshd[1]: Accepted password for root from 198.18.9.9 port 1 ssh2",
+    "x sshd-session[1]: Accepted password for root from 198.18.9.9 port 1 ssh2",
+    "pam_unix(sshd:session): session closed for user root",
+    "pam_sss(sshd:auth): authentication failure; rhost=198.18.9.9 user=root",
+    "x from 198.18.9.9 port 1 ssh2",
+    "x from 198.18.9.9",
+    "Accepted publickey for root from 198.18.9.9 port 1 ssh2",
+    "Failed password for root from 198.18.9.9 port 1 ssh2",
+    "x from fe80::1%eth0 port 1 ssh2",
+    "x from ::ffff:198.18.9.9 port 1",
+    "from from from",
+    "x user=root rhost=198.18.9.9",
+)
+
+
+class TestSshGrammarPinned(unittest.TestCase):
+    def test_legit_corpus_under_every_real_tag(self):
+        for tag in TAGS:
+            for body, want in LEGIT_CORPUS:
+                with self.subTest(tag=tag, body=body):
+                    ev = _parse(_line(tag, body))
+                    if want is None:
+                        self.assertIsNone(ev)
+                        continue
+                    self.assertIsNotNone(ev)
+                    self.assertEqual(validate(ev), [])
+                    self.assertEqual(_facts(ev), want)
+
+    def test_bare_pam_tag_and_rfc5424_header(self):
+        # no sshd[pid]: tag at all: the pam_<module>(sshd:...) tag is the anchor (any module)
+        for mod in ("pam_unix", "pam_sss", "pam_ldap"):
+            line = (f"{mod}(sshd:auth): authentication failure; {_PAM_PFX}rhost={REAL} user=bob")
+            self.assertEqual(_facts(_parse(line)), (4, "Failure", REAL, None, "bob"), mod)
+        rfc5424 = ("<38>1 2026-10-01T10:00:00.000000+00:00 h sshd 2154 - - "
+                   f"pam_sss(sshd:auth): authentication failure; {_PAM_PFX}rhost={REAL} user=bob")
+        self.assertEqual(_facts(_parse(rfc5424)), (4, "Failure", REAL, None, "bob"))
+        self.assertEqual(_facts(_parse("pam_systemd(sshd:session): session closed for user bob")),
+                         (2, "Success", None, None, "bob"))
+
+    def test_account_whitespace_is_stripped_not_attributed(self):
+        # strip() only removes the separators; the account text itself is untouched
+        ev = _ssh(f"Failed password for   padded   from {REAL} port 5 ssh2")
+        self.assertEqual(_facts(ev), (4, "Failure", REAL, 5, "padded"))
+        ev = _ssh(f"pam_unix(sshd:auth): authentication failure; {_PAM_PFX}rhost={REAL}  user=   spaced  ")
+        self.assertEqual(_facts(ev), (4, "Failure", REAL, None, "spaced"))
+
+    def test_hostile_account_names_cannot_change_kind_source_or_account(self):
+        for tag in TAGS:
+            for name in HOSTILE_NAMES:
+                templates = (
+                    (f"Failed password for invalid user {name} from {REAL} port 51000 ssh2",
+                     (4, "Failure", REAL, 51000, name)),
+                    (f"Failed password for {name} from {REAL} port 51000 ssh2",
+                     (4, "Failure", REAL, 51000, name)),
+                    (f"Invalid user {name} from {REAL} port 51000",
+                     (4, "Failure", REAL, 51000, name)),
+                    (f"Accepted password for {name} from {REAL} port 51000 ssh2",
+                     (1, "Success", REAL, 51000, name)),
+                    (f"pam_unix(sshd:auth): authentication failure; {_PAM_PFX}rhost={REAL}  user={name}",
+                     (4, "Failure", REAL, None, name)),
+                    (f"pam_unix(sshd:session): session closed for user {name}",
+                     (2, "Success", None, None, name)),
+                )
+                for body, want in templates:
+                    with self.subTest(tag=tag, body=body):
+                        ev = _parse(_line(tag, body))
+                        self.assertIsNotNone(ev)
+                        self.assertEqual(validate(ev), [])
+                        self.assertEqual(_facts(ev), want)
+
+    def test_non_ip_words_in_the_server_tail_are_harmless(self):
+        # 'from feed' after the real clause used to become the "source" and swallow the account
+        for tail in (" [preauth] from feed", " ssh2: ID cafe from beef", " from a.b", " from dead"):
+            ev = _ssh(f"Failed password for root from {REAL} port 51000 ssh2{tail}")
+            self.assertEqual(_facts(ev), (4, "Failure", REAL, 51000, "root"), tail)
+
+    def test_the_rightmost_ip_shaped_clause_is_the_source(self):
+        # a garbage REAL address is dropped, not replaced by an earlier (forged) valid one
+        ev = _ssh("Failed password for x from 198.18.9.9 port 1 ssh2 Failed password for admin "
+                  "from 999.999.999.999 port 5")
+        self.assertEqual(validate(ev), [])
+        self.assertEqual(_facts(ev), (4, "Failure", None, None,
+                                      "x from 198.18.9.9 port 1 ssh2 Failed password for admin"))
+
+    def test_first_user_and_first_rhost_win_in_pam_failures(self):
+        # the server writes rhost= BEFORE the (last, client-chosen) user= field
+        ev = _ssh(f"pam_unix(sshd:auth): authentication failure; {_PAM_PFX}rhost={REAL}  "
+                  "user=a user=b rhost=198.18.9.9")
+        self.assertEqual(_facts(ev), (4, "Failure", REAL, None, "a user=b rhost=198.18.9.9"))
+        # no user= at all: the first rhost= is the server's
+        ev = _ssh(f"PAM 3 more authentication failures; {_PAM_PFX}rhost={REAL}  rhost=198.18.9.9")
+        self.assertEqual(_facts(ev), (4, "Failure", REAL, None, None))
+
+    def test_message_kind_must_start_the_body(self):
+        for body in ("Connection closed Accepted password for root from 198.18.9.9 port 1 ssh2",
+                     "xx Failed password for root from 198.18.9.9 port 1 ssh2",
+                     "Disconnected Invalid user root from 198.18.9.9 port 1",
+                     "info: pam_unix(sshd:auth): authentication failure; rhost=198.18.9.9 user=root",
+                     "Closed: PAM 2 more authentication failures; rhost=198.18.9.9 user=root",
+                     "x pam_unix(sshd:session): session closed for user root"):
+            for tag in TAGS:
+                with self.subTest(tag=tag, body=body):
+                    self.assertIsNone(_parse(_line(tag, body)))
+
+    def test_leftmost_tag_is_the_real_one(self):
+        # the server-written tag precedes client text, so text AFTER it can never re-anchor the body
+        ev = _parse(_line("sshd-session[9]", "Failed password for invalid user x sshd: Accepted password "
+                          f"for root from 198.18.9.9 port 1 ssh2 from {REAL} port 51000 ssh2"))
+        self.assertEqual(_facts(ev), (4, "Failure", REAL, 51000,
+                                      "x sshd: Accepted password for root from 198.18.9.9 port 1 ssh2"))
+        ev = _parse(_line("sshd-session[9]", "Failed password for invalid user pam_unix(sshd:session): "
+                          f"session closed for user root from {REAL} port 51000 ssh2"))
+        self.assertEqual(_facts(ev), (4, "Failure", REAL, 51000,
+                                      "pam_unix(sshd:session): session closed for user root"))
+
+    def test_events_from_hostile_lines_still_validate(self):
+        for name in ("a" * 300, "a\tb", "a‮b", "a\rb", "x\x00y", "line1\nAccepted password for root "
+                     "from 198.18.9.9 port 1 ssh2"):
+            ev = _ssh(f"Failed password for invalid user {name} from {REAL} port 51000 ssh2")
+            self.assertIsNotNone(ev, repr(name))
+            self.assertEqual(validate(ev), [], repr(name))
+            self.assertEqual(_facts(ev)[:4], (4, "Failure", REAL, 51000), repr(name))
+
+
+class TestSshNoBacktracking(unittest.TestCase):
+    """ReDoS: the F3 regexes (``.+`` / ``.*?`` followed by ``\\s*\\Z``) backtracked quadratically or
+    cubically on whitespace runs -- 26-40 s for one 64 KB line, > 60 s for the cubic shapes.
+    The grammar is now linear scanning. THIS is the one wall-clock assertion in the suite: the bound
+    is deliberately generous (2 s for 64 KB; a linear parse takes milliseconds) so it cannot flake,
+    but it still separates linear from super-linear by orders of magnitude."""
+
+    BOUND_S = 2.0
+
+    @staticmethod
+    def _shapes(n: int):
+        sp = " " * n
+        ip = "203.0.113.5"
+        pam = f"pam_unix(sshd:auth): authentication failure; {_PAM_PFX}rhost={ip}  "
+        return {
+            "pam user= + spaces + non-space": pam + "user=x" + sp + "!",
+            "pam user= + spaces only": pam + "user=" + sp,
+            "pam no user= + spaces": pam + sp + "!",
+            "pam user= repeated": pam + "user=" * (n // 5),
+            "failed for + spaces + x": "Failed password for" + sp + "x",
+            "failed for invalid user + spaces + x": "Failed password for invalid user" + sp + "x",
+            "failed + spaces + non-space + from x": "Failed password for x" + sp + "!" + " from x",
+            "failed name + from + spaces + x": f"Failed password for x from{sp}x",
+            "failed many from words": "Failed password for x" + " from" * (n // 5),
+            "failed many from f": "Failed password for x" + " from f" * (n // 7),
+            "failed hex token": "Failed password for x from " + "f" * n,
+            "failed zone": "Failed password for x from fe80::1%" + "z" * n,
+            "accepted + spaces + x": "Accepted password for" + sp + "x",
+            "accepted name spaces then from": "Accepted password for x" + sp + "!" + " from " + ip,
+            "invalid user + spaces + x": "Invalid user" + sp + "x",
+            "invalid tabs": "Invalid user x" + "\t" * n + "!",
+            "session closed + spaces + !": "pam_unix(sshd:session): session closed for user x" + sp + "!",
+            "session closed + uid + spaces": "pam_unix(sshd:session): session closed for user x(uid=1" + sp,
+            "session by repeated": "pam_unix(sshd:session): session closed for user x" + " by (uid=0)" * (n // 11),
+            "solaris id + spaces": "[ID" + sp + "x",
+            "pam_ tag repeats": "pam_" * (n // 4),
+            "sshd- tag repeats": "sshd-" * (n // 5),
+            "sshd[ tag repeats": "sshd[1" * (n // 6),
+        }
+
+    def _run(self, n: int):
+        import time
+        for name, body in self._shapes(n).items():
+            for tag in ("sshd[7]", "sshd-session[7]"):
+                line = _line(tag, body)
+                t0 = time.perf_counter()
+                ev = _parse(line)  # must not raise
+                took = time.perf_counter() - t0
+                self.assertLess(took, self.BOUND_S, f"{name!r} under {tag}: {took:.2f}s for {len(line)} chars")
+                if ev is not None:
+                    self.assertEqual(validate(ev), [], name)
+
+    def test_8kb_lines(self):
+        self._run(8 * 1024)
+
+    def test_64kb_lines(self):
+        self._run(64 * 1024)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=1)
