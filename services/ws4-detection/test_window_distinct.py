@@ -92,8 +92,45 @@ def run():
               f"(expected [1, 2, 3, 3, 3])")
 
 
+def test_stale_repeat_never_lowers_a_values_recency():
+    """Review finding (window-property #3): RedisWindowCounter.hit_distinct used a
+    plain ZADD, so a repeat of an already-seen value stamped in the PAST overwrote
+    its newer score; the next ZREMRANGEBYSCORE then aged the value out immediately
+    and the distinct count fell below threshold (one forged/lagging repeat per N-1
+    probes evaded every port-scan / spray rule on the production backend). The
+    deque backend always kept the fresher tuple. ZADD GT (Redis >= 6.2) makes the
+    two agree. Positive control: the old plain ZADD gives 14 here, not 15."""
+    base = 1_750_000_000_000
+    for name, c in _backends():
+        for i in range(14):
+            c.hit_distinct("ps:forge", base + i * 1000, 60_000, value=1000 + i)
+        # forged repeat of port 1000 (first seen at `base`), stamped 1 h in the past
+        c.hit_distinct("ps:forge", base - 3_600_000, 60_000, value=1000)
+        # 15th distinct port: all 15 are still live (port 1000 was last seen at `base`)
+        n = c.hit_distinct("ps:forge", base + 14_000, 60_000, value=1014)
+        check(n == 15, f"{name}: a stale repeat must not age a live value out, got {n} (want 15)")
+    # negative control: a value that genuinely aged out IS gone, even if it recurs stale
+    for name, c in _backends():
+        c.hit_distinct("ps:age2", base, 60_000, value=80)
+        n = c.hit_distinct("ps:age2", base + 120_000, 60_000, value=443)
+        check(n == 1, f"{name}: a genuinely aged-out value must not count, got {n}")
+    # backends agree on a randomised mix of fresh and stale repeats
+    import random
+    rng = random.Random(61)
+    d, r = DequeWindowCounter(), RedisWindowCounter(_FakeRedis())
+    for i in range(400):
+        t = base + rng.randrange(0, 200_000)       # arbitrary order (backwards allowed)
+        v = rng.randrange(12)
+        dd = d.hit_distinct("g", t, 60_000, value=v)
+        rr = r.hit_distinct("g", t, 60_000, value=v)
+        check(dd == rr, f"op {i} t={t - base} v={v}: deque={dd} redis-fake={rr}")
+        if dd != rr:
+            break
+
+
 def main():
     run()
+    test_stale_repeat_never_lowers_a_values_recency()
     if FAILS:
         print(f"[FAIL] distinct window: {len(FAILS)} problem(s)")
         for f in FAILS:
