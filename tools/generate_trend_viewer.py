@@ -91,8 +91,14 @@ def _twin_table(rows: list[dict]) -> str:
     rows = sorted(rows, key=lambda r: r.get("date", ""), reverse=True)
     if not rows:
         return "<p class=\"empty\">No twin scorecard rows yet.</p>"
+    # The causal-order co-metrics (2026-10-02) are APPENDED, not leading: which metric
+    # headlines the scorecard is an owner decision. order_concordance is a timestamp
+    # invariant (1.0 by construction on the harness's own chain). Rows written before
+    # these keys existed render them as n/a -- eval/trend.jsonl is append-only and
+    # _append_trend writes every report metric, so new keys appear without a schema bump.
     cols = ["tpr", "fpr", "chain_fidelity", "evidence_completeness", "mtti",
-            "false_correlation_rate", "alert_reduction_ratio", "mutation_robustness"]
+            "false_correlation_rate", "alert_reduction_ratio", "mutation_robustness",
+            "causal_order_fidelity", "order_concordance", "alert_order_ok"]
     head = "".join(f"<th>{c}</th>" for c in cols)
     body = ""
     for r in rows:

@@ -385,6 +385,34 @@ class Rule:
         siem = raw.get("siem", {})
         self.sector = siem.get("sector", "common")
         self.score_weight = int(siem.get("score_weight", 0))
+        # COMPANION LINK (2026-10-01). A companion restates its sibling's behaviour
+        # on a different key (e.g. brute force keyed on the account instead of the
+        # address) so a split attack cannot slip under the sibling's threshold.
+        # Tenant disablement is by rule id, so disabling the sibling must also
+        # disable its companions -- otherwise "brute-force detection off for this
+        # tenant" silently keeps alerting through the companion. None for every
+        # ordinary rule.
+        _co = siem.get("companion_of")
+        self.companion_of = _co if isinstance(_co, str) and _co else None
+        # DEFAULT-OFF RULES (2026-10-02). `siem.default_enabled: false` ships a rule
+        # that is NOT evaluated for a tenant until that tenant opts in
+        # (contracts/tenants/<tenant>.yml `enabled_rules`, or Detector
+        # opt_in_rules / FENGARDE_OPT_IN_RULES for every tenant). The gate lives in
+        # Detector.process(), not here: load_rules()/evaluate() still see the rule,
+        # so tooling that evaluates a rule directly is unaffected. Absent -> True.
+        # Only a literal False switches a rule off (`is not False`, the llm_gate
+        # convention): a typo'd "false" string keeps the rule ON -- tools/
+        # validate_rules.py rejects a non-bool at the gate -- but we also say so.
+        _de = siem.get("default_enabled", True)
+        if not isinstance(_de, bool):
+            _log.warn(f"rule {self.id}: siem.default_enabled must be a bool, got {_de!r}; "
+                      f"treating the rule as default-ENABLED")
+        self.default_enabled = _de is not False
+        # Effective opt-in requirement. Starts as the rule's own flag; the Detector
+        # widens it after loading (a companion of a default-off sibling is
+        # default-off too -- see Detector._load / tenants.py). True = this rule runs
+        # only for a tenant (or Detector) that opted in.
+        self.opt_in_required = not self.default_enabled
         # Design-B (2026-07-29 audit): `severity_floor` (scoring.yaml) floors
         # a high/critical rule's score to 70/80, which is always >= llm_min
         # (60) -- so today EVERY high/critical rule always pays for an LLM
@@ -818,6 +846,16 @@ class Rule:
                     f"stateful window"
                 )
             return False
+        # WINDOW-POISONING GUARD (2026-10-01). The eviction horizon is
+        # ``now - window``, so an event stamped ``wall + 299 s`` -- inside the
+        # 5-minute skew allowance above -- moved the horizon to ``wall + 239 s``
+        # and evicted every real hit in the window; one such event per N-1
+        # probes kept a port scan / distinct-count rule below threshold
+        # forever (reproduced in test_window_poisoning.py). A "future" event
+        # inside the allowance is therefore treated as happening NOW: the
+        # window is driven by ``min(event_time, wall_clock)``. Past timestamps
+        # (historical replay, fixed-epoch test fixtures) are unaffected.
+        now = min(now, int(time.time() * 1000))
         member = (event.get("siem") or {}).get("ingest_id") or str(now)
         # Namespace the window by rule id AND tenant so two rules (or two
         # tenants) grouping on the same field don't share a counter. Without

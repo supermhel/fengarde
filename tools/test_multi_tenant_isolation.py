@@ -87,7 +87,9 @@ def run():
     # rejects a stateful rule's window count on any event timestamped
     # implausibly far from actual "now" -- a fixed distant-past/future base_s
     # would silently zero out every match here, not raise.
-    base_s = int(time.time())
+    # anchored in the PAST: a "future" stamp inside the skew allowance is clamped to
+    # wall-clock (window-poisoning guard)
+    base_s = int(time.time()) - 1000
 
     # tenant "acme" gets brute-force DISABLED via a real tenant config file;
     # tenant "globex" has no config at all (fail-open: every global rule applies).
@@ -181,7 +183,9 @@ def run_shared_group_key_isolation():
     their own -- attributed to whichever tenant's event crossed the line.
     """
     bus = Bus()
-    base_s = int(time.time())
+    # anchored in the PAST: a "future" stamp inside the skew allowance is clamped to
+    # wall-clock (window-poisoning guard)
+    base_s = int(time.time()) - 1000
     shared_ip = "198.51.100.99"
 
     # Neither tenant alone reaches the threshold (10); pooled, they would.
@@ -228,7 +232,9 @@ def run_shared_bucket_alert_id_collision():
     OWN alert_id resolves to THEIR OWN doc via find_alert().
     """
     bus = Bus()
-    base_s = int(time.time())
+    # anchored in the PAST: a "future" stamp inside the skew allowance is clamped to
+    # wall-clock (window-poisoning guard)
+    base_s = int(time.time()) - 1000
     shared_ip = "198.51.100.77"
 
     # Same base_s, same per-event offsets for both tenants -> both bursts
@@ -276,10 +282,50 @@ def run_shared_bucket_alert_id_collision():
           f"find_alert(globex's id) must resolve to globex's own doc, got {found_globex}")
 
 
+def run_default_off_rule_opt_in_isolation():
+    """Default-off rule (ot_opcua_write_unauthorized_node, siem.default_enabled:
+    false) through the full bus path: acme opts in via its tenant file, globex does
+    not. The SAME in-hours OPC UA write fires for acme ONLY, and a stock default
+    tenant gets nothing -- proving the opt-in is per tenant, not global."""
+    opcua_id = "e7a14b6d-3c52-4d90-8f1b-5a9c0d2e6b47"
+    bus = Bus()
+    in_hours_ms = 1_751_536_800_000          # Thu 2025-07-03 10:00:00 UTC (no time-based OT rule sees it)
+    for tenant in ("acme", "globex"):
+        bus.produce("raw.events", key=tenant, payload={
+            "source_type": "opcua_audit",
+            "raw": {"eventType": "AuditWriteUpdateEventType", "clientUserId": "ot-engineer",
+                    "clientAddress": "10.20.0.50", "serverId": "opcua-line3",
+                    "nodeId": "ns=2;s=Line3/PumpEnable", "status": "Success", "time": in_hours_ms},
+            "meta": {"received_at": in_hours_ms, "ingest_id": f"mt-opcua-{tenant}",
+                     "tenant_id": tenant, "trace_id": f"trace-opcua-{tenant}"},
+        })
+    tenants_dir = Path(tempfile.mkdtemp())
+    (tenants_dir / "acme.yml").write_text(f"enabled_rules:\n  - {opcua_id}\n", encoding="utf-8")
+
+    ws2 = _import("ws2-normalization")
+    c2 = ws2.run(bus)
+    check(c2["normalized"] == 2, f"expected 2 OPC UA events normalized, got {c2['normalized']}")
+    ws4 = _import("ws4-detection")
+    ws4.run(bus, ws4.Detector(tenants_dir=tenants_dir, plugin_rule_dirs=[]))
+    ws3 = _import("ws3-indexer")
+    store = ws3.make_store()
+    ws3.run(bus, store)
+
+    def opcua_alerts(prefix):
+        return [d for i in store.indices() if i.startswith(prefix)
+                for d in store.all_docs(i) if d.get("rule_id") == opcua_id]
+
+    check(len(opcua_alerts("alerts-acme-")) == 1,
+          f"acme opted in: its OPC UA write must alert, got {opcua_alerts('alerts-acme-')}")
+    check(opcua_alerts("alerts-globex-") == [],
+          "globex did NOT opt in: the identical write must raise no OPC UA alert")
+
+
 def main():
     run()
     run_shared_group_key_isolation()
     run_shared_bucket_alert_id_collision()
+    run_default_off_rule_opt_in_isolation()
     if FAILS:
         print(f"[FAIL] multi-tenant isolation: {len(FAILS)} problem(s)")
         for f in FAILS:

@@ -1,0 +1,51 @@
+{
+  "_schema": "1",
+  "_comment": "Third-party corpora for the detection-accuracy lanes. NOTHING listed here is vendored: fetch_corpora.py fetches each into its gitignored dest dir. 'pin' is the commit the numbers in SSOT.md were measured on; null means 'not pinned yet -- the first fetch records the HEAD it got and blind_recall_results.json reports it'. Sizes/file counts of EVTX-to-MITRE-Attack are deliberately absent until the first real fetch measures them.",
+  "corpora": {
+    "splunk-attack-data": {
+      "url": "https://github.com/splunk/attack_data",
+      "dest": "splunk-attack-data",
+      "pin": "800ef65739e6d2ed61043ccb313623441a3778ae",
+      "license_spdx": "Apache-2.0",
+      "redistributable": true,
+      "vendored": false,
+      "lanes": ["blind_recall", "splunk_eval"],
+      "label_source": "datasets/attack_techniques/**/<scenario>.yml 'mitre_technique' list (dataset author); the technique directory name is a recorded cross-check and the only label for old-style YAMLs that carry a 'dataset:' URL list.",
+      "sparse_paths": ["datasets/attack_techniques", "LICENSE"],
+      "lfs": true,
+      "lfs_note": "Data files (*.log, *.json, *.ndjson) are git-lfs objects. The checkout runs with GIT_LFS_SKIP_SMUDGE=1 (pointers only); only the files named by the pre-registered selection predicate are pulled. A full pull is > 9 GB and is never done.",
+      "selection": {
+        "predicate": "scenarios whose YAML source is XmlWinEventLog:* and whose label shares a parent technique with an enterprise-ATT&CK rule in contracts/rules; per parent technique the N smallest scenarios (known-size LFS pointers first, then absent files whose size is unknown) by total declared LFS size, tie-break dataset_id ascending. Uses only dataset metadata and rule families, never outcomes.",
+        "per_technique": 3,
+        "max_files": 60,
+        "max_bytes": 314572800
+      }
+    },
+    "evtx-to-mitre": {
+      "url": "https://github.com/mdecrevoisier/EVTX-to-MITRE-Attack",
+      "dest": "evtx-to-mitre",
+      "pin": null,
+      "license_spdx": "CC0-1.0",
+      "redistributable": true,
+      "vendored": false,
+      "lanes": ["blind_recall"],
+      "label_source": "directory layout TAxxxx-<Tactic>/Txxxx[.yyy|.xxx]-<name>/<file>.evtx (dataset author). '.xxx' is a family-level placeholder: the sub-technique is never invented. Top-level non-technique folders (e.g. Antivirus, EVTX_full_APT_attack_steps) are UNLABELLED.",
+      "sparse_paths": [],
+      "lfs": false,
+      "licence_note": "GitHub API reports CC0-1.0; the raw /master/LICENSE path returned 404 when the design was written. Confirm the licence file on first fetch."
+    },
+    "evtx-attack-samples": {
+      "url": "https://github.com/sbousseaden/EVTX-ATTACK-SAMPLES",
+      "dest": "evtx-samples",
+      "pin": "4ceed2f4706daf601c212a8f91c113dd85349a2c",
+      "license_spdx": "GPL-3.0",
+      "redistributable": false,
+      "vendored": false,
+      "lanes": ["evtx_eval"],
+      "label_source": "tactic folder only (technique ids appear in 3 of 278 file names); NOT used by blind_recall.py (no technique-level label).",
+      "sparse_paths": [],
+      "lfs": false,
+      "licence_note": "GPL-3.0 into an Apache-2.0 repo: fetch-on-demand only, never committed anywhere."
+    }
+  }
+}

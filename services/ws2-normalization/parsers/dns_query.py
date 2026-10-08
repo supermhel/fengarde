@@ -36,6 +36,61 @@ _QUERY = re.compile(
 )
 
 
+# Second-level labels that, under a two-letter country code, make the REGISTERED
+# domain three labels long (example.co.uk, example.com.au). A real public-suffix
+# list is the right tool; this is the deliberately small, dependency-free
+# approximation, and its failure mode is benign: an unlisted multi-part suffix
+# groups one label too high (everything under ".xx.yy" pools together), which can
+# only OVER-count a window, never hide one.
+_SLD = frozenset({"co", "com", "org", "net", "gov", "edu", "ac"})
+# Country-specific second-level labels (2026-10-02). These are real public suffixes
+# ONLY under the named country code, so they are scoped to it instead of being added
+# to _SLD: a global "ne"/"or"/"go" would also turn an ordinary registered domain such
+# as "go.example" or "or.example" under some other two-letter TLD into a bogus
+# suffix, and an attacker who owns such a name could then vary the label in front of
+# it to scatter one tunnel across many "parents" (under-pooling HIDES a window --
+# the one failure direction the note above rules out). Missing entries still fail
+# benign (over-pooling), which is why this stays a short table of the common ones
+# rather than a vendored public-suffix list.
+_CC_SLD = {
+    "jp": frozenset({"ne", "or", "go", "ad", "gr", "lg", "ed"}),   # example.ne.jp, example.or.jp
+    "kr": frozenset({"ne", "or", "go", "re", "pe"}),
+    "uk": frozenset({"ltd", "plc", "sch", "me"}),
+    "au": frozenset({"id", "asn"}),
+    "nz": frozenset({"govt", "school"}),
+    "in": frozenset({"res", "nic"}),
+    "br": frozenset({"mil"}),
+    "mx": frozenset({"gob"}),
+    "ar": frozenset({"gob"}),
+    "tw": frozenset({"idv"}),
+    "fr": frozenset({"gouv", "asso"}),
+}
+_REVERSE_ZONES = (".in-addr.arpa", ".ip6.arpa")
+_MAX_NAME = 253
+
+
+def parent_domain(name: str) -> Optional[str]:
+    """The registered-domain-ish parent of a queried name, lower-cased, or None.
+
+    ``chunk007.t3.exfil.example.invalid`` -> ``example.invalid``;
+    ``a.b.example.co.uk`` -> ``example.co.uk``. None for names that must not be
+    pooled: a bare label, an over-long name, an IP literal, and reverse-lookup
+    zones (``*.in-addr.arpa`` / ``*.ip6.arpa``) -- every PTR query for every
+    address would otherwise pool under one parent and look like a tunnel."""
+    n = name.strip().rstrip(".").lower()
+    if not n or len(n) > _MAX_NAME or valid_ip(n) is not None:
+        return None
+    if any(n.endswith(z) for z in _REVERSE_ZONES):
+        return None
+    labels = n.split(".")
+    if len(labels) < 2 or any(not lab for lab in labels):
+        return None
+    if len(labels) >= 3 and len(labels[-1]) == 2 and (
+            labels[-2] in _SLD or labels[-2] in _CC_SLD.get(labels[-1], ())):
+        return ".".join(labels[-3:])
+    return ".".join(labels[-2:])
+
+
 class DnsQueryParser(Parser):
     SOURCE_TYPE = "dns_query"
     SECTOR = "common"
@@ -77,6 +132,12 @@ class DnsQueryParser(Parser):
         if ip:
             event["src_endpoint"] = {"ip": ip}
         event["dst_endpoint"] = {"hostname": name}
+        # Parent-domain grouping key for common_dns_tunnel_by_domain.yml: the
+        # grammar has no "group by parent domain" primitive, so the parser
+        # derives one. Omitted (not null) when the name must not be pooled.
+        parent = parent_domain(name)
+        if parent:
+            event["unmapped"] = {"dns": {"parent_domain": parent}}
         return event
 
     @staticmethod

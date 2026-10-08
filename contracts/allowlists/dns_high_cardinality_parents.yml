@@ -1,0 +1,76 @@
+# High-cardinality DNS parent domains (common_dns_tunnel_by_domain.yml).
+#
+# common_dns_tunnel_by_domain pools 40+ DISTINCT queried names under ONE parent
+# domain across every client. A handful of vendor-operated zones legitimately
+# produce exactly that shape on any busy network -- CDN edge hostnames,
+# content-addressed hostnames, DNS-based reputation lookups -- and, because the
+# rule pools across clients, one such zone looks like a tunnel the moment two
+# browsers touch it. Listing the parent here suppresses the rule for that parent.
+#
+# MATCHING: exact string equality on unmapped.dns.parent_domain, which the
+# dns_query parser derives and LOWER-CASES (services/ws2-normalization/parsers/
+# dns_query.py::parent_domain: the last two labels, or three under a known
+# two-label suffix such as co.uk). So an entry must be a lower-case REGISTERED
+# domain exactly as the parser emits it -- "akamaiedge.net", not "*.akamaiedge.net",
+# not "edge.akamaiedge.net", not "Akamaiedge.NET". An entry the parser can never
+# produce silently never matches; test_v04_new_rules.py checks every entry against
+# parent_domain() for that reason. Matching is by registered domain only: an
+# allowlisted name used as a SUB-label of someone else's domain
+# (akamaiedge.net.attacker.example) groups under attacker.example and is NOT
+# suppressed.
+#
+# WHAT BELONGS HERE (the admission test, read before extending): DNS tunnelling
+# needs the attacker to run the AUTHORITATIVE server for the parent, because the
+# payload is carried in the query name and only the zone's own name server sees
+# it. A parent is therefore safe to list only if (a) it is registered to and
+# operated by a vendor, so an attacker cannot be its authoritative server, AND
+# (b) the vendor does not hand out NS delegations for its subdomains. A zone where
+# customers can delegate a subdomain to their own name server (free subdomain /
+# dynamic-DNS / "bring your own DNS" services) must NEVER be listed: it would
+# blind the rule to exactly the attacker it exists for. Never list a parent you
+# merely saw in your logs without checking both conditions; never list a bare
+# public suffix.
+#
+# HOW TO EXTEND: observe the alert for a legitimate parent, confirm (a) and (b),
+# add one line below, keep the list alphabetical. The rule's loader re-reads
+# allowlists on hot reload. A missing or malformed file FAILS OPEN (the rule keeps
+# alerting) -- the safe direction.
+#
+# STATUS: UNVERIFIED. This is a STARTER set of widely deployed CDN / update / lookup
+# zones, chosen from general knowledge of what such zones look like. It has NOT been
+# checked against real traffic, and it is not a vetted baseline of your network.
+# Trim anything you do not expect to see, and extend it only from measurement.
+#
+# HOW TO VALIDATE AND EXTEND IT ON YOUR OWN TRAFFIC:
+#   python tools/dns_cardinality_report.py <resolver-query-log | ->  [--json]
+# (Zeek dns.log, BIND query log, dnsmasq, CSV or JSON lines; the format is detected.)
+# The tool replays the log through the rule's own window (threshold and window are read
+# from common_dns_tunnel_by_domain.yml) and lists every parent that WOULD trip the rule,
+# with the maximum distinct names in any window, client count, first/last seen, and
+# whether it is already listed here. It NEVER edits this file: it prints suggested
+# entries commented out. Review procedure for each parent it reports:
+#   1. A parent that is high-cardinality is exactly what the rule exists to catch; it
+#      may be a tunnel. Look at the sample names and which clients query it first.
+#   2. Apply the admission test above ((a) vendor-operated, (b) no NS delegation).
+#      Dynamic-DNS / free-subdomain / tunnel-service zones are flagged by the tool and
+#      must never be listed.
+#   3. Only then un-comment ONE line into `entries` below, alphabetically, in its own
+#      reviewed change. A log without timestamps is measured as one window (an upper
+#      bound): do not decide anything from it.
+entries:
+  # CDN edge hostnames (per-customer / per-object names under one vendor zone)
+  - "akamai.net"
+  - "akamaiedge.net"
+  - "akadns.net"
+  - "azureedge.net"
+  - "cloudfront.net"
+  - "edgekey.net"
+  - "edgesuite.net"
+  # Per-session / per-user content hostnames
+  - "googlevideo.com"
+  - "googleusercontent.com"
+  # Operating-system update delivery
+  - "windowsupdate.com"
+  # DNS-based reputation lookups (one name per looked-up address or hash)
+  - "sophosxl.net"
+  - "spamhaus.org"

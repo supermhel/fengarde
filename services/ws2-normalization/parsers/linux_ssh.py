@@ -34,8 +34,16 @@ from shared.ocsf import valid_ip
 
 _CLASS = 3002  # Authentication
 
-# Only act on sshd / pam_unix(sshd:...) lines.
-_SSHD = re.compile(r"sshd(?:\[\d+\])?:|pam_unix\(sshd:")
+# The server-written tag. OpenSSH 9.8+ splits the daemon into ``sshd-session`` /
+# ``sshd-auth`` (and some distros ship other ``sshd-<x>`` helpers), each optionally
+# ``[pid]``-suffixed; a PAM line may also arrive WITHOUT any sshd tag
+# (``pam_sss(sshd:auth): ...``, RFC 5424 forwarders), so ANY ``pam_<module>(sshd:``
+# counts. The bounded ``{1,N}`` quantifiers keep the scan linear on adversarial runs
+# such as ``pam_pam_pam_...``.
+_SSHD = re.compile(r"sshd(?:-[a-z]{1,16})?(?:\[\d{1,10}\])?:|pam_\w{1,40}\(sshd:")
+
+# Solaris / illumos decorate the message: ``sshd[7]: [ID 800047 auth.info] Failed ...``.
+_SOLARIS_ID = re.compile(r"\[ID\s+\d+\s+\w+\.\w+\]\s*")
 
 # IP token: hex, dots and colons only -> captures BOTH IPv4 (10.0.0.5) and IPv6
 # (2001:db8::1). Captured loosely so a line with a malformed address still MATCHES
@@ -44,22 +52,37 @@ _SSHD = re.compile(r"sshd(?:\[\d+\])?:|pam_unix\(sshd:")
 # event that fails Contract A's endpoint pattern and gets dead-lettered.
 _IPTOKEN = r"[0-9A-Fa-f:.]+"
 
-# "Accepted password for jdoe from 10.0.0.5 port 50022 ssh2"
-# "Accepted publickey for deploy from 2001:db8::6 port 50022 ssh2"
-_ACCEPTED = re.compile(
-    r"Accepted\s+\S+\s+for\s+(?P<user>\S+)\s+from\s+"
-    r"(?P<ip>" + _IPTOKEN + r")(?:\s+port\s+(?P<port>\d+))?"
-)
-# "Failed password for [invalid user ]admin from 203.0.113.5 port 51000 ssh2"
-_FAILED = re.compile(
-    r"Failed\s+\S+\s+for\s+(?:invalid user\s+)?(?P<user>\S+)\s+from\s+"
-    r"(?P<ip>" + _IPTOKEN + r")(?:\s+port\s+(?P<port>\d+))?"
-)
-# "Invalid user admin from 203.0.113.5 port 51000"
-_INVALID = re.compile(
-    r"Invalid user\s+(?P<user>\S+)\s+from\s+"
-    r"(?P<ip>" + _IPTOKEN + r")(?:\s+port\s+(?P<port>\d+))?"
-)
+# ---- grammar (F3 2026-10-02, rewritten after the ssh-differential review) -----------------
+# The account name in these lines is text the CLIENT sent, and sshd echoes it verbatim in
+# the MIDDLE of the line; the server writes the peer address and port AFTER it. So:
+#   * the TAG is the LEFTMOST match of _SSHD (the server-written tag always precedes
+#     client-chosen text) and the message KIND must be the very start of the body after
+#     it -- never a phrase found somewhere inside it;
+#   * the account is the text between the kind prefix and the real source, and the real
+#     source is the RIGHTMOST ``from <ip>`` clause, so a ``from 198.18.9.9 port 1`` typed
+#     into the name stays in the name;
+#   * PAM failures: ``rhost=`` precedes ``user=`` (the client-chosen, LAST field), so the
+#     first ``user=`` starts the account (the whole remainder) and the source is the
+#     ``rhost=`` BEFORE it.
+# NO regex here backtracks on client-controlled text: each kind prefix is a short anchored
+# regex, and everything after it is a linear scan (finditer / search / rfind). The previous
+# ``(?P<user>.+) from <ip> ... \s*\Z`` forms were quadratic-to-cubic on whitespace runs
+# (26-40 s for one 64 KB line).
+#
+# Residual ambiguity that no grammar can remove: text the SERVER echoes AFTER the real
+# source and that a client can influence (the key ID of an SSH certificate login) could
+# itself contain an IP-shaped ``from <ip>``; and a username that itself begins with
+# ``invalid user `` is indistinguishable from the server's own marker.
+_ACCEPTED = re.compile(r"Accepted\s+\S+\s+for\s+")
+_FAILED = re.compile(r"Failed\s+\S+\s+for\s+(?:invalid user\s+)?")
+_INVALID = re.compile(r"Invalid user\s+")
+# one candidate source clause; the optional ``%zone`` of an IPv6 link-local peer is
+# consumed but kept out of the stored address.
+_FROM = re.compile(r"\sfrom\s+(?P<ip>" + _IPTOKEN + r")(?:%\S*)?")
+_PORT = re.compile(r"\s+port\s+(\d+)")
+# "IP-shaped": a digit next to a dot (IPv4, including 999.999.999.999) or two colons
+# (IPv6). A hex WORD such as ``feed`` or ``a.b`` after a ``from`` is not a source clause.
+_IPSHAPE = re.compile(r"\d\.|\.\d|:[^:]*:")
 
 
 # FIX 7: the local _valid_ip() was replaced by shared.ocsf.valid_ip, which
@@ -69,12 +92,16 @@ _INVALID = re.compile(
 # it replaced accepted the mapped form but passed it through unnormalized.)
 # "pam_unix(sshd:session): session closed|opened for user jdoe"
 _SESSION = re.compile(
-    r"session\s+(?P<state>opened|closed)\s+for user\s+(?P<user>\S+)"
+    r"pam_\w{1,40}\(sshd:session\):\s+session\s+(?P<state>opened|closed)\s+for user\s+"
 )
-# generic "authentication failure ... rhost=203.0.113.5 ... user=admin"
-_PAM_FAIL = re.compile(r"authentication failure")
-_RHOST = re.compile(r"rhost=(?P<ip>" + _IPTOKEN + r")")
-_PAMUSER = re.compile(r"user=(?P<user>\S+)")
+# "pam_unix(sshd:auth): authentication failure; ... rhost=203.0.113.5  user=admin"
+# "PAM 2 more authentication failures; ... rhost=203.0.113.5  user=root"
+_PAM_FAIL = re.compile(
+    r"(?:pam_\w{1,40}\(sshd:auth\):\s+authentication failure|PAM\s+\d+\s+more authentication failures?)"
+)
+# ``ruser=`` is not ``user=``; the lookbehind keeps it out.
+_PAMUSER = re.compile(r"(?<!\S)user=")
+_RHOST = re.compile(r"(?<!\S)rhost=(?P<ip>" + _IPTOKEN + r")(?:%\S*)?")
 
 
 class LinuxSshParser(Parser):
@@ -132,31 +159,34 @@ class LinuxSshParser(Parser):
     @staticmethod
     def _classify(line: str):
         """Return (activity_id, status, severity_id, user, ip, port) or Nones."""
-        m = _ACCEPTED.search(line)
-        if m:
-            return (1, "Success", SEV_INFO, m.group("user"),
-                    m.group("ip"), _as_int(m.group("port")))
+        body = _body(line)
+        if body is None:
+            return (None, None, None, None, None, None)
 
-        m = _FAILED.search(line)
-        if m:
-            return (4, "Failure", SEV_HIGH, m.group("user"),
-                    m.group("ip"), _as_int(m.group("port")))
+        for rx, activity_id, status, severity in (
+            (_ACCEPTED, 1, "Success", SEV_INFO),
+            (_FAILED, 4, "Failure", SEV_HIGH),
+            (_INVALID, 4, "Failure", SEV_HIGH),
+        ):
+            m = rx.match(body)
+            if m:
+                parts = _account_and_source(body[m.end():])
+                if parts:
+                    return (activity_id, status, severity, *parts)
 
-        m = _INVALID.search(line)
-        if m:
-            return (4, "Failure", SEV_HIGH, m.group("user"),
-                    m.group("ip"), _as_int(m.group("port")))
-
-        if _PAM_FAIL.search(line):
-            um = _PAMUSER.search(line)
-            rm = _RHOST.search(line)
-            return (4, "Failure", SEV_HIGH,
-                    um.group("user") if um else None,
+        if _PAM_FAIL.match(body):
+            um = _PAMUSER.search(body)
+            # the server writes rhost= BEFORE user=; only the account can carry client text
+            rm = _RHOST.search(body, 0, um.start() if um else len(body))
+            user = body[um.end():].strip() if um else ""
+            return (4, "Failure", SEV_HIGH, user or None,
                     rm.group("ip") if rm else None, None)
 
-        m = _SESSION.search(line)
+        m = _SESSION.match(body)
         if m and m.group("state") == "closed":
-            return (2, "Success", SEV_INFO, m.group("user"), None, None)
+            user = _session_account(body[m.end():])
+            if user:
+                return (2, "Success", SEV_INFO, user, None, None)
         # "session opened" is a low-signal duplicate of Accepted -> skip.
 
         return (None, None, None, None, None, None)
@@ -172,6 +202,56 @@ class LinuxSshParser(Parser):
     @staticmethod
     def _logged_time(meta: dict) -> Optional[int]:
         return to_epoch_ms(meta.get("received_at"))
+
+
+def _body(line: str) -> Optional[str]:
+    """The sshd MESSAGE: the text after the LEFTMOST ``sshd[pid]:`` tag (or starting at a
+    bare ``pam_*(sshd:...)`` module tag), minus an optional Solaris ``[ID n fac.lvl]``
+    decoration. The server writes the tag before any client-chosen text, so the leftmost
+    match is the real one; everything the grammar matches is anchored to this start, so
+    text inside a client-chosen account name is never read as a message kind."""
+    m = _SSHD.search(line)
+    if not m:
+        return None
+    body = line[m.start():] if m.group(0).startswith("pam_") else line[m.end():]
+    body = body.lstrip()
+    sid = _SOLARIS_ID.match(body)
+    return body[sid.end():] if sid else body
+
+
+def _account_and_source(rest: str):
+    """``<account> from <ip>[%zone] [port N] ...`` -> (account, ip, port), or None.
+
+    The real source is the RIGHTMOST IP-shaped ``from`` clause (the server writes it after
+    the client-chosen account); non-IP words after it (``from feed``) are skipped. If that
+    clause is IP-shaped but not a valid address (``999.999.999.999``), it still decides --
+    parse() then drops the address -- so an earlier, forged, valid-looking clause can
+    never take its place. Linear: one finditer pass, no backtracking on client text."""
+    for c in reversed(list(_FROM.finditer(rest))):
+        tok = c.group("ip")
+        if not _IPSHAPE.search(tok):
+            continue
+        account = rest[:c.start()].strip()
+        if not account:
+            return None
+        pm = _PORT.match(rest, c.end())
+        return account, tok, _as_int(pm.group(1)) if pm else None
+    return None
+
+
+def _session_account(rest: str) -> str:
+    """Account of a ``session closed for user <name>[(uid=N)] [by ...(uid=N)]`` line: cut a
+    TRAILING ``by ...(uid=N)`` and ``(uid=N)`` with rfind (no lazy regex on client text)."""
+    s = rest.strip()
+    if s.endswith(")"):
+        b = s.rfind(" by ")
+        if b > 0 and "(uid=" in s[b:]:
+            s = s[:b].rstrip()
+    if s.endswith(")"):
+        j = s.rfind("(uid=")
+        if j > 0 and s[j + 5:-1].isdigit():
+            s = s[:j].rstrip()
+    return s
 
 
 def _as_int(v) -> Optional[int]:

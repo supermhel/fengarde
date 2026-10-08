@@ -56,6 +56,9 @@ eval/attack/out/
 eval/detection_accuracy/evtx-samples/
 eval/detection_accuracy/splunk-attack-data/
 eval/detection_accuracy/*_eval_results.json
+eval/detection_accuracy/blind_recall_results.json
+eval/detection_accuracy/evtx-to-mitre/
+eval/detection_accuracy/otrf-security-datasets/
 
 # twin scorecard LAST-RUN output (PR #80 finding 10): the gate writes here so
 # it never dirties the committed eval/twin/report.json checkpoint; that file

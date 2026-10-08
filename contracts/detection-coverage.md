@@ -13,7 +13,7 @@ detection rules. Update this file in the same PR as any parser or rule change.
 > two tools as the source of truth for "is a rule dormant", not this doc.
 >
 > **Rule filename convention (R3-#47, 2026-08-27):** the `<sector>_<name>.yml`
-> naming is a strong convention, not a validator-enforced invariant. 14 of the 29
+> naming is a strong convention, not a validator-enforced invariant. 14 of the 33
 > shipped files use a rule-family prefix instead (`agent_*`, `cloud_*`, `n8n_*`,
 > `ot_*`) -- that's deliberate: the sector is DECLARED inside each file
 > (`siem.sector`), never inferred from the filename, so the prefix is a grouping
@@ -69,14 +69,18 @@ this is now a rule gap, not a parser gap.
 | Rule | Fields required | Producer exists? | MITRE |
 |---|---|---|---|
 | common_bruteforce | class 3002, activity 4 (Failure) | yes (linux_ssh, active_directory) | ATT&CK T1110 / TA0006 |
+| common_bruteforce_by_account | class 3002, activity 4 (Failure), group_by actor.user.name (immune to source-address rotation; added 2026-10-01; level medium since 2026-10-02 -- it pools every source, so ambient spraying must not queue LLM triage on its own) | yes (linux_ssh, active_directory) | ATT&CK T1110 / TA0006 |
 | common_password_spray | class 3002, activity 4, distinct src_endpoint.ip | yes (linux_ssh, active_directory) | ATT&CK T1110.004 / TA0006 |
 | common_bruteforce_sourceless | class 3002, activity 4, distinct actor.user.name per src_endpoint.hostname | yes (active_directory, added P0-2, 2026-07-21 audit fix plan) | ATT&CK T1110 / TA0006 |
 | common_lateral_movement | class 3002, activity 1, status Success, dst_endpoint.hostname | yes (windows_eventlog 4624) | ATT&CK T1021 / TA0008 |
+| common_lateral_movement_by_source | class 3002, activity 1, status Success, group_by src_endpoint.ip, distinct dst_endpoint.hostname (immune to credential rotation; added 2026-10-01) | yes (windows_eventlog 4624) | ATT&CK T1021 / TA0008 |
 | common_port_scan | class 4001, activity 6 (Deny), dst_endpoint.port | yes (cisco_asa) | ATT&CK T1046 / TA0007 |
+| common_port_scan_by_target | class 4001, activity 6 (Deny), group_by dst_endpoint.ip, distinct dst_endpoint.port, threshold 15, level low (distributed scan; noisy on internet-edge deny logs -- see rule; added 2026-10-01) | yes (cisco_asa) | ATT&CK T1046 / TA0007 |
 | common_priv_grant | class 3003, activity 5 | yes (windows_eventlog 4728/4732) | ATT&CK T1098 / TA0003 |
 | common_after_hours_admin | class 1002, activity 2, outside_hours | yes (windows_eventlog 4672) | ATT&CK T1078 / TA0004 |
 | common_impossible_travel | class 3002, activity 1, distinct src_endpoint.location.country | yes (linux_ssh + A5 geo enrichment, added v0.4 -- see A5's note below: `check_rule_producers.py` now runs the real enrich() step too, not just parsers) | ATT&CK T1078 / TA0001 |
 | dc_mass_vm_delete | class 6003, activity 4, siem.sector=datacenter | yes (vmware_vsphere) | ATT&CK T1485 / TA0040 |
+| dc_mass_vm_delete_by_source | class 6003, activity 4, siem.sector=datacenter, group_by src_endpoint.ip (immune to account rotation; added 2026-10-01) | yes (vmware_vsphere) | ATT&CK T1485 / TA0040 |
 | bank_db_priv_esc | class 6005, activity 5, siem.sector=bank | yes (db_audit, added v0.3) | ATT&CK T1548 / TA0004 |
 | agent_credential_file_access | class 6003, unmapped.mcp.credential_path_access=true | yes (mcp_agent, added v0.4) | ATT&CK T1552 / TA0006 |
 | agent_destructive_command | class 6003, unmapped.mcp.destructive_command_indicator=true | yes (mcp_agent, added v0.4) | ATT&CK T1485 / TA0040 |
@@ -86,10 +90,12 @@ this is now a rule gap, not a parser gap.
 | ot_write_outside_maintenance | class 6003, activity 3, time outside_hours | yes (opcua_audit, added v0.4) | ATT&CK-ICS T0836 / TA0106 |
 | ot_new_engineering_connection | class 3002, activity 1, distinct src_endpoint.ip per unmapped.ot.server_id | yes (opcua_audit, added v0.4) | ATT&CK-ICS T0864 / TA0108 |
 | ot_config_change | class 6003, unmapped.ot.is_config_node=true | yes (opcua_audit, added v0.4) | ATT&CK-ICS T0836 / TA0106 |
+| ot_opcua_write_unauthorized_node | class 6003, activity 3, siem.source_type=opcua_audit, unmapped.ot.node_id not_in opcua_authorized_nodes (allowlist-first; ships empty = alerts on every write until populated; added 2026-10-01; status experimental and score_weight 0 since 2026-10-02 so it does not inflate the two older OT-write rules it overlaps; **OFF by default since 2026-10-02** (`siem.default_enabled: false`) -- opt in per tenant with `enabled_rules` in contracts/tenants/<tenant>.yml or FENGARDE_OPT_IN_RULES, after populating the allowlist) | yes (opcua_audit) | ATT&CK-ICS T0855 / TA0106 |
 | ot_new_device_on_segment | class 4001, activity 1, siem.source_type=inventory_diff, siem.sector=datacenter, unmapped.ot.sector=ot | yes, zero-infra proven end to end (inventory_diff, WS-6 bus_consumer.py added M7 Track Y follow-up 2026-08-05 -- not yet live-verified against a real Docker/Redis stack, see SSOT.md) | ATT&CK-ICS T0864 / TA0108 |
 | n8n_new_webhook_exposed | class 6003, activity 1, api.operation=webhook.created | yes (n8n_audit, added v0.4) | ATT&CK T1133 / TA0003 |
 | n8n_workflow_modified_after_hours | class 6003, siem.source_type=n8n_audit, time outside_hours | yes (n8n_audit, added v0.4) | ATT&CK T1078 / TA0004 |
 | common_dns_exfil | class 4002, activity 1, distinct dst_endpoint.hostname | yes (dns_query, added v0.5) | ATT&CK T1071.004 / TA0011 |
+| common_dns_tunnel_by_domain | class 4002, activity 1, group_by unmapped.dns.parent_domain, distinct dst_endpoint.hostname (parser-derived parent domain; immune to spreading across clients; added 2026-10-01; suppresses vendor-operated CDN/update/lookup parents listed in allowlists/dns_high_cardinality_parents.yml since 2026-10-02) | yes (dns_query) | ATT&CK T1071.004 / TA0011 |
 | dc_privileged_container | class 6003, activity 1, siem.source_type=k8s_audit, unmapped.k8s.is_privileged=true | yes (k8s_audit, added v0.5) | ATT&CK T1610 / TA0002 |
 | cloud_root_console_login | class 3002, activity 1, siem.source_type=cloudtrail, unmapped.cloud.identity_type=Root, unmapped.cloud.mfa_used=No | yes (cloudtrail, added v0.5) | ATT&CK T1078.004 / TA0001 |
 | bank_mass_card_read | class 6005, activity 1, siem.sector=bank, distinct unmapped.db.object | yes (db_audit, object field added v0.5) | ATT&CK T1005 / TA0009 |
@@ -159,3 +165,63 @@ any CEF-emitting appliance, a real but rule-count-invisible contribution.
 
 Remaining open items, not v0.5 scope: SNMP, NetFlow (binary format), and a
 class-1001 (File System Activity) auditd/FIM producer.
+
+## Missing-rule register (storyline-demonstrated, 2026-10-03)
+
+<!-- gap-register:begin (generated by eval/adversarial/technique_matrix.py --write-doc; do not edit) -->
+Techniques a storyline demonstrates for which its oracle declares `no_rule_exists` (the honest missing-rule register). Harness-observed: the step's raw record is emitted, parsed where a parser exists, and NO shipped rule fires. No rule was invented to close any of these; they are product backlog, not harness defects. A row disappears when a rule starts firing there (the reconciler reports the stale gap).
+
+| Missing rule (ATT&CK technique) | Demonstrated by | Why nothing fires today |
+|---|---|---|
+| T1114.003 Email Collection: Email Forwarding Rule | `phishing_bec`: `inbox_rule` | No Microsoft 365 / mail-audit parser and no rule over mailbox-rule changes. Chained gap, same mechanism as phish_delivery. |
+| T1204.002 User Execution: Malicious File | `phishing_bec`: `user_execution` | Process-launch anomaly detection (suspicious parent/child, encoded command line) is unbuilt: contracts/detection-coverage.md lists class 1002 activity 1 as under-covered; only privilege use (4672) has a rule. |
+| T1565.001 Data Manipulation: Stored Data Manipulation | `phishing_bec`: `payment_redirect` | The banking-DB rules cover activity 5 (privileged operation: bank_db_priv_esc) and activity 1 (distinct-object reads: bank_mass_card_read). A plain UPDATE (activity 3) on a payment-details table has no rule. |
+| T1566.001 Phishing: Spearphishing Attachment | `phishing_bec`: `phish_delivery` | There is no mail-gateway parser and no rule over mail telemetry. The raw record is still emitted in its native shape and dead-letters at the parser lookup, exactly like ai_to_ot.external_content; the scenario never claims a type_uid for it. |
+<!-- gap-register:end -->
+
+How to read it: a row means a storyline performs that technique end to end on the real parsers and the
+shipped rules stay silent. It is a product backlog, not a claim that FENGARDE detects the technique. Each
+row is also a self-updating tripwire: when a rule starts firing there, `oracle_consistency` reports a stale
+gap and the row has to go. Storylines still being added (ransomware, insider exfiltration, cloud IAM abuse,
+supply-chain CI, OPC UA sabotage) contribute their rows when they land; `technique_matrix.py` fails the gate
+while this block is out of date.
+
+Weaknesses of the detection or of the harness that the same instruments measured on `phishing_bec`, kept here
+because they are NOT missing rules (nothing was invented or changed to address any of them):
+
+- **A client-controlled value is a grouping key.** `common_bruteforce_sourceless` pools failed logons by
+  `src_endpoint.hostname`, which for Windows logons is the workstation name the CLIENT reports. Giving every
+  attempt its own name bypasses it (`distribution/hostname_rotate_all`, measured in
+  `eval/adversarial/test_mutation_adapters.py`). The rule's own `group_by` predicts this; it is listed so the
+  trade-off is visible, not because the rule is wrong.
+- **Impossible travel is raised by whichever login sorts last.** The alert carries only that event's address,
+  so delivering the stream backwards moves the alert onto the account's own earlier login and changes the
+  incident graph (`delivery/reverse_arrival` fails `chain_fidelity` on `phishing_bec`). Detection is retained;
+  the attribution and the graph are not.
+- **Replayed duplicates evade the beacon rule in the harness.** `delivery/duplicate_all` makes
+  `common_beaconing` go dark because each replayed copy is stamped with a fresh ingest id; a true redelivery
+  keeps its id and the window counter dedups on it. Whether production redelivery keeps the id is NOT measured.
+- **The static oracle reader cannot decide a periodic rule.** `oracle_derive.py` reports `common_beaconing`
+  UNDECIDED (capped at 1 for `phishing_bec`); the engine and the beacon negative twins cover it instead.
+
+## Evasion cost (generated)
+
+<!-- evasion-cost:begin (generated by eval/adversarial/evasion_cost.py --write-doc; do not edit) -->
+Harness-measured on the bundled reference bursts (seed 7, deque counter backend). A vector, never a scalar: "min keys" is the fewest distinct keys of that kind that evade (`immune` = a companion rule on another kind still detects); the frontier is the Pareto-minimal joint key counts over a grid. `Respelling` / `Forgery` / `Clock` are open findings (see `eval/adversarial/evasion_findings.yaml`); they rest on security-judgement tables that are not yet ratified.
+
+| Rule-set (key) | Rules | Forgone events | Extra seconds | Stealth ev/s | Min keys | Joint frontier | Respelling | Forgery | Clock | Production reachable |
+|---|---|---|---|---|---|---|---|---|---|---|
+| `agent_tool_call_burst` | `agent_tool_call_burst` | 51 | 70.503 | 0.824979 | session=3 | n/a | no | no | forgeable | yes |
+| `bank_mass_card_read` | `bank_mass_card_read` | 21 | 522.003 | 0.065 | db_object=3 | n/a | no | no | forgeable | yes |
+| `common_beaconing` | `common_beaconing` | 2 | 4620.011 | 0.001389 | ip=3 | n/a | no | no | no | yes |
+| `common_bruteforce` | `common_bruteforce`, `common_bruteforce_by_account` | 3 | 27.003 | 0.183324 | account=immune, ip=immune | (2,2) | no | no | no | yes |
+| `common_bruteforce_sourceless` | `common_bruteforce_sourceless` | 6 | 222.003 | 0.0375 | host=3 | n/a | no | no | forgeable | yes |
+| `common_dns_exfil` | `common_dns_exfil`, `common_dns_tunnel_by_domain` | 13 | 9.013 | 0.849816 | ip=immune, parent_domain=immune | (2,2) | no | no | no | yes |
+| `common_impossible_travel` | `common_impossible_travel` | 2 | 9000.003 | 0.000278 | account=4 | n/a | no | no | no | NO (sample map) |
+| `common_lateral_movement` | `common_lateral_movement`, `common_lateral_movement_by_source` | 3 | 150.003 | 0.02 | account=immune, ip=immune | (2,2) | evades | no | forgeable | yes |
+| `common_password_spray` | `common_password_spray` | 9 | 525.003 | 0.025 | account=3 | n/a | no | no | forgeable | yes |
+| `common_port_scan` | `common_port_scan`, `common_port_scan_by_target` | 8 | 18.008 | 0.349953 | dst_ip=immune, ip=immune | (2,2) | no | no | no | yes |
+| `common_rapid_account_lifecycle` | `common_rapid_account_lifecycle` | 3 | 10620.003 | 0.000278 | target_account=4 | n/a | no | no | forgeable | yes |
+| `dc_mass_vm_delete` | `dc_mass_vm_delete`, `dc_mass_vm_delete_by_source` | 3 | 72.003 | 0.049999 | account=immune, ip=immune | (2,2) | evades | no | forgeable | yes |
+| `ot_new_engineering_connection` | `ot_new_engineering_connection` | 3 | 1770.003 | 0.001667 | ot_server=4 | n/a | no | no | forgeable | yes |
+<!-- evasion-cost:end -->

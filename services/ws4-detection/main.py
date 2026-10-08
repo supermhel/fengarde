@@ -28,7 +28,7 @@ from shared.bus import Bus  # noqa: E402
 from engine import load_rules  # noqa: E402
 from shared.window import DequeWindowCounter  # noqa: E402
 from scoring import Scorer  # noqa: E402
-from tenants import tenant_of, load_disabled_rules  # noqa: E402
+from tenants import tenant_of, load_disabled_rules, load_enabled_rules  # noqa: E402
 from plugins import discover_rule_pack_dirs  # noqa: E402
 
 # contracts/ lives at repo/contracts (host) or /app/contracts (container). HERE.parent
@@ -52,7 +52,8 @@ class Detector:
                  rules_dir: Path | None = None,
                  allowlists_dir: Path | None = None,
                  plugin_rule_dirs: list[Path] | None = None,
-                 force_linear_scan: bool = False):
+                 force_linear_scan: bool = False,
+                 opt_in_rules=()):
         """``plugin_rule_dirs``: directories of extra rule YAML to merge in,
         same shape as ``contracts/rules/*.yml``. Defaults to whatever
         ``plugins.discover_rule_pack_dirs()`` finds installed via the
@@ -68,8 +69,20 @@ class Detector:
         ``tools/fengarde_bench.py --compare-prefilter`` -- the "before"
         side of the before/after number the bench module's own docstring
         used to list as a still-open TODO (2026-08-19). Never set true in
-        a real deployment path (main()/reload() never pass it)."""
+        a real deployment path (main()/reload() never pass it).
+
+        ``opt_in_rules`` (iterable of rule ids, default empty): opts the named
+        default-off rules (``siem.default_enabled: false``) in for ALL tenants.
+        Used by tests and the eval harness. The env var
+        ``FENGARDE_OPT_IN_RULES`` (comma-separated ids) is merged in here for
+        single-tenant installs. Multi-tenant installs opt a rule in per tenant
+        with ``enabled_rules`` in contracts/tenants/<tenant>.yml. ``disabled_rules``
+        always wins over every opt-in."""
         self._force_linear_scan = force_linear_scan
+        self._opt_in_rules = frozenset(
+            i.strip() for i in (list(opt_in_rules or ())
+                                + os.environ.get("FENGARDE_OPT_IN_RULES", "").split(","))
+            if isinstance(i, str) and i.strip())
         self._plugin_rule_dirs = (
             [d for _name, d in discover_rule_pack_dirs()]
             if plugin_rule_dirs is None else plugin_rule_dirs)
@@ -150,6 +163,12 @@ class Detector:
                for r in self.rules if r.id in self.rule_last_fired}
         for r in self.rules:
             if r.id not in self.rule_last_fired:
+                # A default-off rule nobody opted in to (Detector kwarg / env var)
+                # is off BY DESIGN, not dead. Per-tenant opt-ins live in tenant
+                # files this gauge does not scan; such a rule is reported from its
+                # first fire (rule_last_fired_timestamp) instead.
+                if r.opt_in_required and r.id not in self._opt_in_rules:
+                    continue
                 out[f"rule_never_fired:{r.id}"] = 1
         return out
 
@@ -183,6 +202,16 @@ class Detector:
                     continue
                 rules.append(rule)
                 seen_ids.add(rule.id)
+        # A companion of a default-off sibling is default-off too: it is a
+        # variant of an attack detector the operator has not switched on, and
+        # firing it alone would deliver half the rule the owner decided to
+        # ship OFF. It runs only once opted in ITSELF (opting in the sibling
+        # does not opt the companion in, nor the reverse). One level only:
+        # tools/validate_rules.py forbids companion_of chains.
+        _off_ids = {r.id for r in rules if not r.default_enabled}
+        for r in rules:
+            if r.companion_of in _off_ids:
+                r.opt_in_required = True
         if self._window_counter is not None:
             for r in rules:
                 if r.stateful:
@@ -257,8 +286,37 @@ class Detector:
         tenant = tenant_of(event)
         disabled = load_disabled_rules(self.tenants_dir, tenant)
         if disabled:
-            candidates = [r for r in candidates if r.id not in disabled]
+            # a companion rule follows its sibling: disabling the sibling disables both
+            candidates = [r for r in candidates
+                          if r.id not in disabled and r.companion_of not in disabled]
+        # Default-off rules (siem.default_enabled: false, and companions of such
+        # a rule) run only for a tenant that opted in (`enabled_rules` in its
+        # tenant file) or when the Detector opted them in for everyone
+        # (opt_in_rules kwarg / FENGARDE_OPT_IN_RULES). Opt-in is explicit: a
+        # missing or broken tenant file yields an empty enabled set, so it can
+        # never switch such a rule ON. `disabled` was applied above, so it wins.
+        if any(r.opt_in_required for r in candidates):
+            opted = self._opt_in_rules | load_enabled_rules(self.tenants_dir, tenant)
+            candidates = [r for r in candidates if not r.opt_in_required or r.id in opted]
         matched = [r for r in candidates if r.evaluate(event)]
+        # A companion exists to catch the attack its sibling cannot see (same
+        # behaviour, other key). When the sibling ALSO matched this event, it has
+        # already raised the alert: emitting the companion too would double the
+        # analyst's volume for every ordinary attack. Every rule above was
+        # evaluated first, so the companion's window state is still updated.
+        #
+        # INVARIANT this relies on (review finding, 2026-10-02): "sibling in
+        # `matched`" == "a sibling alert WILL be emitted". It holds because
+        # _emit() raises an alert for EVERY rule left in `matched`, with no
+        # score floor, rate limit or mute list in between (a produce failure
+        # raises, the message stays unacked, and the redelivery re-matches the
+        # sibling -- window membership is idempotent on ingest_id). If you add
+        # ANY filter between this line and bus.produce("alerts"), move this
+        # suppression behind it, or the companion's alert is deleted in favour
+        # of a sibling alert that never exists. test_companion_rules.py
+        # (run_suppression_invariant) fails when that happens.
+        _matched_ids = {r.id for r in matched}
+        matched = [r for r in matched if r.companion_of not in _matched_ids]
         score = self.scorer.score(matched, event)
         # R4-28 (2026-08-27): the old `event.setdefault("siem", {})["score"]`
         # raised TypeError on a `siem: null` event -- setdefault returns the

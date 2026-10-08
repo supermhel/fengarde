@@ -399,6 +399,10 @@ jobs:
         env:
           FENGARDE_E2E_STRICT: "1"
         run: python tools/container_smoke.py
+      - name: Companion rules live e2e (split attacks alert via the companion only; ordinary attack alerts once)
+        env:
+          FENGARDE_E2E_STRICT: "1"
+        run: python tools/live_companion_e2e.py
       - name: Dump service logs on failure
         if: failure()
         run: docker compose -f infra/docker-compose.yml logs --tail=200

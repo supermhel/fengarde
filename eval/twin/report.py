@@ -36,6 +36,31 @@ fabricated one:
                                        discriminate direction): fidelity =
                                        (5 correct - 2 forbidden) / 5 = 0.6,
                                        with the breakdown reported in context.
+  * causal_order_fidelity /
+    order_concordance /
+    alert_order_ok             = CO-METRICS (2026-10-02), reported BESIDE the
+                                       legacy pair above, never instead of it.
+                                       chain_fidelity and false_correlation_rate
+                                       never read a clock: a time-MIRRORED copy
+                                       of every storyline scores identically on
+                                       both (measured, eval/adversarial/
+                                       order_controls.py). eval/twin/
+                                       causal_order.py grades the oracle's
+                                       allowed_relationships on EVENT TIME
+                                       (order_concordance, edge-free) and on
+                                       the time already carried by the WS-8 v2
+                                       edges (causal_order_fidelity). READ THE
+                                       LABEL: order_concordance is a TIMESTAMP
+                                       INVARIANT, 1.0 BY CONSTRUCTION on the
+                                       harness's own chains -- it records that
+                                       the ingested clock agrees with the
+                                       oracle, it is NOT evidence that WS-8
+                                       reconstructs causal order (an edge is
+                                       evidenced by ONE alert, its direction
+                                       comes from entity type). Which metric
+                                       LEADS the report is an owner decision
+                                       (Stage 3, not applied): chain_fidelity
+                                       keeps its name, value and position.
   * fpr                        = 0.0 (measured: an INCIDENT count, i.e.,
                                        medium+ alerts only — see
                                        negative_controls.is_incident(). The
@@ -145,6 +170,7 @@ sys.path.insert(0, str(APPROOT_SERVICES))
 import importlib.util  # noqa: E402
 import yaml  # noqa: E402
 
+import causal_order  # noqa: E402  (stdlib-only + import-pure: cannot collide on sys.modules['main'])
 import degradation  # noqa: E402
 import scenario  # noqa: E402
 
@@ -382,6 +408,12 @@ def _evidence_reconstruction(alerts_by_step: list[dict], by_id: dict,
     failures = evpkg.verify_evidence_package(pkg) if pkg is not None else ["no package"]
     provenance = (pkg or {}).get("provenance") or []
     unresolved = sum(len(p.get("unresolved_event_ids") or []) for p in provenance)
+    # The order the WS-3 package PRESENTS the attack in (its alert blocks), as
+    # (oracle step, alert time) -- graded by causal_order.story_order_ok.
+    step_of = {a["alert"].get("alert_id"): a.get("step") for a in alerts_by_step}
+    package_alert_order = [
+        [step_of.get((b.get("content") or {}).get("alert_id")), (b.get("content") or {}).get("time")]
+        for b in ((pkg or {}).get("blocks") or []) if b.get("type") == "alert"]
     return {
         "basis": "harness-measured (wall-clock, informational like date)",
         "package_id": (pkg or {}).get("package_id"),
@@ -392,6 +424,7 @@ def _evidence_reconstruction(alerts_by_step: list[dict], by_id: dict,
         "assembly_median_ms": median_ms,
         "assembly_samples_ms": samples,
         "provenance_unresolved_event_ids": unresolved,
+        "package_alert_order": package_alert_order,
     }
 
 
@@ -523,13 +556,23 @@ def _event_ts(ev: "scenario.ChainEvent") -> Optional[int]:
     """Epoch-ms this chain step's RAW payload was emitted at (works for gapped
     steps too, since raw_payload is always recorded -- see scenario.ChainEvent).
     """
-    raw = (ev.raw_payload or {}).get("raw") or {}
-    ts = raw.get("ts")
-    return ts if ts is not None else raw.get("time")
+    payload = ev.raw_payload or {}
+    raw = payload.get("raw")
+    if isinstance(raw, dict):
+        ts = raw.get("ts")
+        ts = ts if ts is not None else raw.get("time")
+        if ts is not None:
+            return ts
+    # Syslog-style sources (cisco_asa, linux_ssh, dns_query) carry their raw
+    # record as a STRING with no structured timestamp; the envelope's
+    # ``received_at`` is the clock the parser itself uses for them.
+    return (payload.get("meta") or {}).get("received_at")
 
 
-def _load_oracle() -> dict:
-    with open(ORACLE_PATH, "r", encoding="utf-8") as fh:
+def _load_oracle(path: Optional[Path] = None) -> dict:
+    """Load a grading oracle. Default: the AI-to-OT chain's ``oracle.yaml``;
+    other storylines (``scenario_registry``) pass their own path."""
+    with open(path or ORACLE_PATH, "r", encoding="utf-8") as fh:
         oracle = yaml.safe_load(fh)
     return oracle
 
@@ -558,6 +601,55 @@ def _run_negatives(seed: int) -> tuple[dict, dict]:
         per_scenario[name] = sum(1 for a in alerts if negative_controls.is_incident(a))
         explained[name] = sum(1 for a in alerts if not negative_controls.is_incident(a))
     return per_scenario, explained
+
+
+_TACTIC_CACHE: dict = {}
+
+
+def _rule_tactic(rule_id: str) -> Optional[str]:
+    """The ATT&CK tactic a rule declares in its ``mitre:`` block (``TA0106``), or
+    None. Read from contracts/rules/*.yml -- the engine itself does not carry it."""
+    if not _TACTIC_CACHE:
+        for f in sorted((ROOT / "contracts" / "rules").glob("*.yml")):
+            try:
+                d = yaml.safe_load(f.read_text(encoding="utf-8")) or {}
+            except Exception:  # noqa: BLE001 - a broken rule file is validate_rules.py's job
+                continue
+            if d.get("id"):
+                tac = (d.get("mitre") or {}).get("tactic")
+                _TACTIC_CACHE[d["id"]] = str(tac) if tac else None
+    return _TACTIC_CACHE.get(rule_id)
+
+
+def _tactic_covered_steps(oracle: dict, fired: list) -> list:
+    """Steps whose ORACLE-EXPECTED detection is still delivered, judged by ATT&CK
+    TACTIC rather than rule identity.
+
+    Why (2026-10-01). "Did the expected RULE fire" fails a mutation that
+    legitimately moves the same behaviour onto a different source: re-shape a
+    Modbus write as an OPC UA write and ``ot_modbus_unauthorized_write`` (T0855)
+    can never fire -- a different parser feeds a different rule
+    (``ot_write_outside_maintenance``, T0836) -- though the attack is caught, by a
+    rule for the same tactic (TA0106, Impair Process Control). "Did ANY alert fire
+    at the step" is too lenient the other way: an incidental unrelated rule
+    (impossible-travel, TA0001, on a lateral-movement pivot, TA0008) kept a step
+    looking detected after its real detection was evaded. A step counts as covered
+    when a rule declaring the SAME TACTIC as one of its expected rules fires there;
+    an expected rule that declares no tactic falls back to rule identity."""
+    out = []
+    for step, pt in (oracle.get("detection_points") or {}).items():
+        exp = [r.get("rule_id") for r in (pt.get("expected_rules") or [])]
+        if not exp:
+            continue
+        want_tac = {_rule_tactic(r) for r in exp} - {None}
+        want_ids = {r for r in exp if _rule_tactic(r) is None}
+        for a in fired:
+            if a.get("step") != step:
+                continue
+            if a.get("rule_id") in want_ids or _rule_tactic(a.get("rule_id")) in want_tac:
+                out.append(step)
+                break
+    return sorted(out)
 
 
 def _grade_chain(result: scenario.ChainResult, oracle: dict) -> dict:
@@ -593,7 +685,15 @@ def _grade_chain(result: scenario.ChainResult, oracle: dict) -> dict:
     # the earliest), for an honest, sourced MTTD (see run()).
     matched_steps = 0
     first_matched_ts: Optional[int] = None
+    # A step may own SEVERAL events (a burst -- stateful volume rules need
+    # one). TPR is per STEP, so each step is graded once, at its first event.
+    seen_steps: set = set()
+    step_first_events: list = []
     for ev in parsed:
+        if ev.step not in seen_steps:
+            seen_steps.add(ev.step)
+            step_first_events.append(ev)
+    for ev in step_first_events:
         pt = (oracle.get("detection_points") or {}).get(ev.step) or {}
         expected_ids = {r.get("rule_id") for r in (pt.get("expected_rules") or [])}
         if not expected_ids:
@@ -605,11 +705,20 @@ def _grade_chain(result: scenario.ChainResult, oracle: dict) -> dict:
         step_fired = {a["rule_id"] for a in fired if a.get("step") == ev.step}
         if step_fired & expected_ids:
             matched_steps += 1
-            if first_matched_ts is None:
-                first_matched_ts = _event_ts(ev)
+            # MTTD is to the event the expected rule actually FIRED on. For a
+            # single-event step that is the step's own event; for a volume
+            # (burst) step it is the threshold-crossing event, not the first
+            # one -- using the step's first event reported 0.0s to detect a
+            # port scan that is only visible on its 15th denied connection.
+            fire_times = [a["time"] for a in fired
+                          if a.get("step") == ev.step and a.get("rule_id") in expected_ids
+                          and isinstance(a.get("time"), (int, float))]
+            this_ts = min(fire_times) if fire_times else _event_ts(ev)
+            if this_ts is not None and (first_matched_ts is None or this_ts < first_matched_ts):
+                first_matched_ts = this_ts
     tpr_numer = matched_steps
     tpr_denom = sum(
-        1 for ev in parsed if (oracle.get("detection_points") or {}).get(ev.step, {})
+        1 for ev in step_first_events if (oracle.get("detection_points") or {}).get(ev.step, {})
         .get("expected_rules")
     )
     # No denominator (every parsed step is an oracle gap) -> null, not a
@@ -635,7 +744,11 @@ def _grade_chain(result: scenario.ChainResult, oracle: dict) -> dict:
             present_fields += 1 if _dot_get(the_event, f) is not None else 0
     evidence_completeness = present_fields / total_fields if total_fields else None
 
-    chain_start_ts = _event_ts(result.events[0]) if result.events else None
+    # Earliest event time -- NOT ``events[0]``: arrival order is not event
+    # order once a mutation scrambles delivery (the ``delivery`` axis), and a
+    # list-order "start" would report a negative time-to-detect.
+    _ts_all = [t for t in (_event_ts(e) for e in result.events) if t is not None]
+    chain_start_ts = min(_ts_all) if _ts_all else None
     mttd_seconds = (
         round((first_matched_ts - chain_start_ts) / 1000.0, 3)
         if first_matched_ts is not None and chain_start_ts is not None
@@ -660,6 +773,7 @@ def _grade_chain(result: scenario.ChainResult, oracle: dict) -> dict:
         "gap_steps": len(gaps),
         "fired_alerts": len(fired),
         "fired": fired,  # the real fired-alert dicts, so run() need not re-detect
+        "tactic_covered_steps": _tactic_covered_steps(oracle, fired),
         "mttd_seconds": mttd_seconds,
         "evidence_completeness": (
             round(evidence_completeness, 4) if evidence_completeness is not None else None
@@ -669,6 +783,17 @@ def _grade_chain(result: scenario.ChainResult, oracle: dict) -> dict:
         # numerator / forbidden-join breakdown reported in context; None only
         # when no incident promoted (no graph evidence) or no denominator.
         "chain_fidelity": ws8_grade["chain_fidelity"],
+        "directional_discrimination": ws8_grade["directional_discrimination"],
+        "alert_order_ok": ws8_grade["alert_order_ok"],
+        "causal_order": ws8_grade["causal_order"],
+        "causal_order_fidelity": ws8_grade["causal_order_fidelity"],
+        "order_concordance": ws8_grade["order_concordance"],
+        "campaign_count": ws8_grade["campaign_count"],
+        "campaign_full_coverage": ws8_grade["campaign_full_coverage"],
+        "campaign_decoy_contamination": ws8_grade["campaign_decoy_contamination"],
+        "decoy_alert_count": ws8_grade["decoy_alert_count"],
+        "decoy_absorbed_count": ws8_grade["decoy_absorbed_count"],
+        "decoy_contamination": ws8_grade["decoy_contamination"],
         "fidelity_numerator": ws8_grade["fidelity_numerator"],
         "forbidden_joins": ws8_grade["forbidden_joins"],
         "forbidden_denominator": ws8_grade["forbidden_denominator"],
@@ -737,12 +862,20 @@ def _build_chain_alerts(parsed: list["scenario.ChainEvent"]) -> list[dict]:
     _evidence_reconstruction's provenance join. Deterministic: a fresh
     detector per call + all chain timestamps fixed in the past.
     """
-    detector = _WS4_MOD.Detector(plugin_rule_dirs=[])
+    detector = _WS4_MOD.Detector(plugin_rule_dirs=[], opt_in_rules=['e7a14b6d-3c52-4d90-8f1b-5a9c0d2e6b47'])
     out: list[dict] = []
+    per_step_n: dict = {}
     for ev in parsed:
         event = copy.deepcopy(ev.event or {})
         siem = event.setdefault("siem", {})
-        siem.update({"tenant": _CHAIN_TENANT, "ingest_id": f"twin:{ev.step}"})
+        # Window dedup is keyed on ingest_id, so a BURST step (many events,
+        # one label) needs a distinct id per event. The FIRST event of a step
+        # keeps the historical ``twin:<step>`` id, so every single-event
+        # chain's alert ids -- and the frozen baseline -- are unchanged.
+        n = per_step_n.get(ev.step, 0)
+        per_step_n[ev.step] = n + 1
+        ingest = f"twin:{ev.step}" if n == 0 else f"twin:{ev.step}:{n}"
+        siem.update({"tenant": _CHAIN_TENANT, "ingest_id": ingest})
         siem["twin_step"] = ev.step
         event, alerts = _fire_alerts(detector, event)
         for alert in alerts:
@@ -785,7 +918,7 @@ def _step_entity_ids(result: "scenario.ChainResult", tenant: str) -> dict:
             eid = ws8.canonical_entity_id(tenant, "device", str(device))
             if eid:
                 ids.add(eid)
-        out[ev.step] = ids
+        out.setdefault(ev.step, set()).update(ids)
     return out
 
 
@@ -855,7 +988,17 @@ def _grade_chain_fidelity(edges: list[dict], step_entities: dict,
         denominator += 1
         joined = _fidelity_join(edges, _earlier_side(f), to_set)
         correct += 1 if joined else 0
-        per_pair.append({"from": f, "to": t, "graded": True, "joined": bool(joined)})
+        # ORDER-REVERSAL CONTROL (2026-10-01). A grader that says "joined" is
+        # only measuring causal order if it would NOT say "joined" for the
+        # same two steps in the opposite order. When the entity sets overlap
+        # (one actor and one IP across the whole chain -- exactly the AI-to-OT
+        # storyline) a single edge satisfies BOTH directions, so "joined"
+        # carries no ordering information at all. Recorded per pair and
+        # summarised as ``directional_discrimination``; the legacy
+        # ``chain_fidelity`` is deliberately left as it was.
+        reverse = _fidelity_join(edges, _earlier_side(t), from_set)
+        per_pair.append({"from": f, "to": t, "graded": True, "joined": bool(joined),
+                         "reverse_joined": bool(reverse)})
 
     forbidden = 0
     forbidden_denominator = 0
@@ -881,7 +1024,13 @@ def _grade_chain_fidelity(edges: list[dict], step_entities: dict,
         fidelity = None  # nothing promoted / no graded joins -> honest null
     else:
         fidelity = (correct - forbidden) / denominator
+    graded_pairs = [p for p in per_pair if p.get("graded")]
+    directional = (
+        round(sum(1 for p in graded_pairs if p["joined"] and not p["reverse_joined"])
+              / len(graded_pairs), 4)
+        if graded_pairs and edges else None)
     return {
+        "directional_discrimination": directional,
         "chain_fidelity": round(fidelity, 4) if fidelity is not None else None,
         "fidelity_numerator": correct,
         "forbidden_joins": forbidden,
@@ -951,6 +1100,55 @@ def _incident_membership_grade(alerts_by_step: list[dict], incidents: list[dict]
     }
 
 
+_CAMPAIGNS_MOD_NAME = "ws8_campaigns_mod"
+
+
+def _ensure_campaigns():
+    """Load WS-8's read-side campaign linker (stdlib-only; unique module name,
+    same discipline as the correlator)."""
+    mod = sys.modules.get(_CAMPAIGNS_MOD_NAME)
+    if mod is not None:
+        return mod
+    path = APPROOT_SERVICES / "ws8-correlation" / "campaigns.py"
+    spec = importlib.util.spec_from_file_location(_CAMPAIGNS_MOD_NAME, path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot locate {path}")
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[_CAMPAIGNS_MOD_NAME] = mod
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _alert_order_ok(alerts_by_step: list[dict], expected_seq: list) -> Optional[bool]:
+    """Do the ATTACK alerts, ordered by their own event time, follow the
+    oracle's ``expected_sequence``?
+
+    The oracle has always declared ``strict_order: true`` ("a later step's
+    first evidence must not predate an earlier step's"), and nothing ever
+    enforced it: ``sequence_present`` only checks that every LABEL exists.
+    A mutation that reorders telemetry therefore could not fail on order. This
+    grades the order of the chain as the detector actually saw it.
+
+    Per step the first alert time is used; steps are then sorted by that time
+    (ties broken by oracle position, so simultaneous steps never read as
+    out-of-order) and the oracle ranks of that sequence must be non-decreasing.
+    ``None`` when fewer than two steps raised an alert -- no order to grade.
+    """
+    idx = {label: i for i, label in enumerate(expected_seq)}
+    first: dict = {}
+    for item in alerts_by_step:
+        t = (item.get("alert") or {}).get("time")
+        step = item.get("step")
+        if t is None or step not in idx:
+            continue
+        first[step] = t if step not in first else min(first[step], t)
+    if len(first) < 2:
+        return None
+    ordered = sorted(first, key=lambda st: (first[st], idx[st]))
+    ranks = [idx[st] for st in ordered]
+    return ranks == sorted(ranks)
+
+
 def _grade_ws8(result: "scenario.ChainResult", oracle: dict, alerts_total: int) -> dict:
     """Run the chain's real alerts through the REAL WS-8 Correlator and grade
     chain_fidelity + incident membership against the REAL v2 incident graphs.
@@ -970,13 +1168,24 @@ def _grade_ws8(result: "scenario.ChainResult", oracle: dict, alerts_total: int) 
     """
     ws8 = _ensure_ws8()
     parsed = [e for e in result.events if e.parsed]
-    alerts_by_step = _build_chain_alerts(parsed)
-    last_ts = max((a["alert"].get("time") or 0) for a in alerts_by_step) if alerts_by_step else 0
+    all_items = _build_chain_alerts(parsed)
+    # DECOYS (2026-10-01). Events whose step label is NOT in the oracle's
+    # expected_sequence are benign look-alike activity injected by the
+    # ``noise`` mutation axis (a different admin, a different scanner). They
+    # go through the correlator like everything else -- a real SOC does not
+    # get a pre-filtered feed -- but they are NOT part of the attack: they are
+    # graded separately, below, as FALSE-CORRELATION evidence. With no decoys
+    # (every pre-existing run) this split is a no-op.
+    attack_steps = set(oracle.get("expected_sequence") or [])
+    alerts_by_step = ([i for i in all_items if i["step"] in attack_steps]
+                      if attack_steps else all_items)
+    decoy_items = [i for i in all_items if i["step"] not in attack_steps] if attack_steps else []
+    last_ts = max((a["alert"].get("time") or 0) for a in all_items) if all_items else 0
     now_ms = last_ts + 3_600_000  # fixed seed-derived "now" (see above)
     corr = ws8.Correlator(now_fn=lambda: now_ms / 1000.0)
 
     incidents: list[dict] = []
-    for item in alerts_by_step:
+    for item in all_items:
         incidents.extend(corr.ingest_alert(item["alert"]))
     by_id: dict[str, dict] = {inc["incident_id"]: inc for inc in incidents}
 
@@ -1007,6 +1216,15 @@ def _grade_ws8(result: "scenario.ChainResult", oracle: dict, alerts_total: int) 
     membership = _incident_membership_grade(
         alerts_by_step, list(by_id.values()),
         oracle.get("incident_membership") or {})
+    # CAUSAL ORDER (2026-10-02). Graded from the PER-INCIDENT graphs (not the
+    # deduped union above: two incidents can carry different ts_ms for the same
+    # pair, and an incident-id sort must not decide credit) on the ATTACK
+    # alerts only, with the SAME direction predicate chain_fidelity uses.
+    causal = causal_order.grade_causal_order(
+        [graphs_by_id[iid] for iid in sorted(graphs_by_id)],
+        step_entities, oracle.get("allowed_relationships") or [],
+        oracle.get("expected_sequence") or list(step_entities),
+        causal_order.step_times(parsed), alerts_by_step, join_fn=_fidelity_join)
 
     chain_alerts = [a["alert"]["alert_id"] for a in alerts_by_step]
     chain_set = set(chain_alerts)
@@ -1053,6 +1271,12 @@ def _grade_ws8(result: "scenario.ChainResult", oracle: dict, alerts_total: int) 
     #    deterministic. None when no incident promoted.
     reconstruction = _evidence_reconstruction(
         alerts_by_step, by_id, graphs_by_id.get, now_ms)
+    alert_order = _alert_order_ok(alerts_by_step, oracle.get("expected_sequence") or [])
+    causal["story_order_ok"] = causal_order.story_order_ok(
+        (reconstruction or {}).get("package_alert_order") or [],
+        oracle.get("expected_sequence") or [])
+    causal["parser_time_agreement"] = causal_order.parser_time_agreement(parsed, _event_ts)
+    causal["reporting_policy"] = causal_order.reporting_policy(fidelity["directional_discrimination"])
     # 4) Analyst investigation time (MTTI): scripted walk over the picked
     #    incident's OWN graph (graphs_by_id.get, never the cross-incident
     #    union), counting steps + API round-trips; seconds = steps x the
@@ -1062,7 +1286,45 @@ def _grade_ws8(result: "scenario.ChainResult", oracle: dict, alerts_total: int) 
     #    oracle detection_points vs actual fired-alert level).
     severity_confusion = _severity_confusion(oracle, alerts_by_step)
 
+    # 6) DECOY CONTAMINATION -- the real false-correlation test. Of the benign
+    #    decoy alerts, how many ended up inside an incident that also contains
+    #    attack alerts? (An analyst triaging that incident would be handed
+    #    unrelated activity as part of the attack.) None when no decoy alert
+    #    fired -- there is nothing to measure, and 0.0 would be a claim.
+    attack_ids = {a["alert"]["alert_id"] for a in alerts_by_step}
+    decoy_ids = {d["alert"]["alert_id"] for d in decoy_items}
+    attack_incident_members: set = set()
+    for inc in by_id.values():
+        if attack_ids & set(inc["member_alert_ids"]):
+            attack_incident_members |= set(inc["member_alert_ids"])
+    absorbed = sorted(decoy_ids & attack_incident_members)
+    decoy_contamination = (round(len(absorbed) / len(decoy_ids), 4) if decoy_ids else None)
+
+    # 7) CAMPAIGN VIEW. Incidents are per entity track by ratified design, so a
+    #    pivoting attack is several incidents. The read-side campaign view links
+    #    incidents that share a MEMBER ALERT (direct evidence). Graded here:
+    #    does ONE campaign cover the whole attack, and did a decoy get dragged
+    #    into it? Reported next to -- never instead of -- the per-incident grade.
+    campaigns = _ensure_campaigns().link_campaigns(list(by_id.values()))
+    attack_set = set(attack_ids)
+    covering = [c for c in campaigns if attack_set <= set(c["member_alert_ids"])]
+    campaign_absorbed = sorted(decoy_ids & {a for c in campaigns
+                                            if attack_set & set(c["member_alert_ids"])
+                                            for a in c["member_alert_ids"]})
+
     return {
+        "campaign_count": len(campaigns),
+        "campaign_full_coverage": bool(covering),
+        "campaign_decoy_contamination": (round(len(campaign_absorbed) / len(decoy_ids), 4)
+                                         if decoy_ids else None),
+        "alert_order_ok": alert_order,
+        "causal_order": causal,
+        "causal_order_fidelity": causal["causal_order_fidelity"],
+        "order_concordance": causal["order_concordance"],
+        "decoy_alert_count": len(decoy_ids),
+        "decoy_absorbed_count": len(absorbed),
+        "decoy_contamination": decoy_contamination,
+        "directional_discrimination": fidelity["directional_discrimination"],
         "chain_fidelity": fidelity["chain_fidelity"],
         "fidelity_numerator": fidelity["fidelity_numerator"],
         "forbidden_joins": fidelity["forbidden_joins"],
@@ -1192,9 +1454,12 @@ def _baseline_delta(metrics: dict, path: Path = BASELINE_PATH) -> Optional[dict]
     Honest null-vs-0.0 handling: only keys present in BOTH are compared; a
     null on either side means "no denominator / not measured", reported as
     ``"n/a"``, never coerced into a numeric 0.0 that would read as
-    "measured and zero" (same discipline as the metrics themselves -- e.g.
-    chain_fidelity is null on both sides today: WS-8 has no causal-edge
-    graph, so 0.0 would be fabricated). Non-numeric values (bools, the
+    "measured and zero" (same discipline as the metrics themselves -- the frozen baseline
+    holds chain_fidelity, false_correlation_rate and mutation_robustness as
+    null, so they compare as "n/a" although the live run now measures them).
+    A metric that is NEW since the freeze (causal_order_fidelity,
+    order_concordance, alert_order_ok) is absent from the baseline and is
+    never compared: it appears in the report and the trend row only. Non-numeric values (bools, the
     degradation_behavior dict) that are byte-equal get delta 0.0 ("no change");
     if they ever differ they are reported as ``"n/a"`` rather than given a
     made-up numeric. Returns None when no baseline file exists.
@@ -1289,6 +1554,15 @@ def run(seed: int = 7) -> dict:
             # graph (see _grade_chain_fidelity); None only when no incident
             # promoted or no denominator exists -- never a fabricated number.
             "chain_fidelity": grade["chain_fidelity"],
+            # CO-METRICS (2026-10-02), co-reported beside chain_fidelity. NOT in
+            # eval/twin/baseline.json (frozen before they existed), so they never
+            # enter delta_vs_baseline. order_concordance is a TIMESTAMP INVARIANT
+            # (1.0 by construction on this harness's own chain); see
+            # context.causal_order_details.order_concordance_basis. alert_order_ok
+            # was graded (and forwarded) before but never emitted as a metric.
+            "causal_order_fidelity": grade["causal_order_fidelity"],
+            "order_concordance": grade["order_concordance"],
+            "alert_order_ok": grade["alert_order_ok"],
             "evidence_completeness": evidence,  # already rounded (or None) by _grade_chain
             # WP-3.5-A: real ratio of oracle-forbidden relationships that a
             # real graph edge joined (the negative-control half of chain
@@ -1344,6 +1618,11 @@ def run(seed: int = 7) -> dict:
                 "per_allowed_pair": grade["per_allowed_pair"],
                 "per_forbidden_pair": grade["per_forbidden_pair"],
             },
+            # Per-pair breakdown, forbidden_order_realised_rate, temporal_discrimination,
+            # edge attribution stats, story_order_ok (WS-3 package presents the attack in
+            # order) and parser_time_agreement (WS-2 time normalisation). Co-reported:
+            # reporting_policy.mode == "co_reported" (headline switch is owner-gated).
+            "causal_order_details": grade["causal_order"],
             "chain_graph_edges": [
                 {"from": e["from"], "to": e["to"], "kind": e["kind"],
                  "event_id": e["event_id"], "ts_ms": e["ts_ms"]}
@@ -1426,6 +1705,12 @@ def run(seed: int = 7) -> dict:
                    if grade["incident_summary"] else "no incident")
                 + ")."
             )
+            + (  # CO-metrics: co-reported, with the invariant labelled as such
+                " Causal order (co-reported, timestamp-based): order_concordance="
+                + str(grade["order_concordance"]) + " [" + causal_order.ORDER_BASIS + "]"
+                + ", causal_order_fidelity=" + str(grade["causal_order_fidelity"])
+                + ", alert_order_ok=" + str(grade["alert_order_ok"]) + "."
+            )
         ),
         "elapsed_seconds": round(time.time() - started, 3),
     }
@@ -1489,6 +1774,16 @@ def main(argv: list[str] | None = None) -> int:
             f"{negative_controls._MAINTENANCE_NAME} produced 0 LOW explained "
             "alerts -- the ticketed downgrade mechanism has silently regressed "
             "to suppression (see negative_controls.py / SECURITY.md 12)")
+    # Order floors (2026-10-02). Both are timestamp invariants on this
+    # deterministic chain: they trip on a mutation/parser/WS-3 clock bug, not on
+    # a correlator regression. causal_order_fidelity gets NO floor (an owner call:
+    # it would block PRs on an edge-timing change).
+    if m["alert_order_ok"] is not True:
+        floor_failures.append(f"alert_order_ok == {m['alert_order_ok']!r}, expected True (the chain's "
+                              "alerts no longer follow the oracle's expected_sequence in time)")
+    if m["order_concordance"] != 1.0:
+        floor_failures.append(f"order_concordance == {m['order_concordance']!r}, expected 1.0 "
+                              "(timestamp invariant on the harness's own chain)")
     if floor_failures:
         for f in floor_failures:
             print(f"[FAIL] twin report floor assertion: {f}")
@@ -1503,6 +1798,8 @@ def main(argv: list[str] | None = None) -> int:
     # print a human summary line for the gate
     summary = (f"[OK] twin report (seed={args.seed}): TPR={m['tpr']} FPR={m['fpr']} "
                f"chain_fidelity={m['chain_fidelity']} "
+               f"causal_order_fidelity={m['causal_order_fidelity']} "
+               f"order_concordance={m['order_concordance']}(timestamp invariant) "
                f"evidence={m['evidence_completeness']} "
                f"fcr={m['false_correlation_rate']} "
                f"arr={m['alert_reduction_ratio']} "

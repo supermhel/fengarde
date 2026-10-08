@@ -31,6 +31,7 @@ import threading
 import urllib.parse
 from dataclasses import dataclass
 from collections import defaultdict, deque
+from itertools import islice
 from typing import Iterator, Optional
 
 from shared.log import get_logger
@@ -44,6 +45,71 @@ class Message:
     key: Optional[str]
     payload: dict
     id: str
+
+
+class _Entry:
+    """One stored stream entry of the memory bus: the Redis-equivalent of an
+    XADD record -- topic, key, the serialised ``wire`` string and the id.
+
+    The payload is kept ONLY as its JSON wire string (serialised once, at
+    produce()), exactly as Redis keeps it. Each delivery parses it anew with a
+    single ``json.loads`` (:meth:`to_message`), so no two consumers, redeliveries
+    or drain() calls ever share a dict, with one dumps at produce and one loads
+    per delivery instead of dumps+loads at produce plus dumps+loads per delivery.
+
+    ``payload`` is a convenience view (a fresh parse per access) so internal
+    readers of the PEL/stream (tests poking ``_pel``) can still read it.
+    """
+    __slots__ = ("topic", "key", "wire", "id")
+
+    def __init__(self, topic: str, key: str, wire: str, id: str):
+        self.topic = topic
+        self.key = key
+        self.wire = wire
+        self.id = id
+
+    @property
+    def payload(self) -> dict:
+        return json.loads(self.wire)
+
+    def to_message(self) -> Message:
+        return Message(self.topic, self.key, json.loads(self.wire), self.id)
+
+
+def _tail(q: deque, start: int) -> list:
+    """``q[start:]`` as a list in O(len(q) - start), NOT O(len(q)).
+
+    A deque iterator (and so ``islice(q, start, None)``) walks from the LEFT, paying for
+    the whole already-consumed prefix on every call -- quadratic over a long never-trimmed
+    stream. Reading from the right end touches only the undelivered tail. The caller holds
+    the bus lock, so the deque cannot be appended to while this iterates."""
+    n = len(q) - start
+    if n <= 0:
+        return []
+    tail = list(islice(reversed(q), n))
+    tail.reverse()
+    return tail
+
+
+def _wire_key(key) -> str:
+    """The stream key exactly as a real Redis hands it back to a consumer.
+
+    _RedisBus does ``xadd({"key": key or ""})`` and reads with decode_responses=True, so:
+    any falsy key (None, "", 0, False, 0.0, ()) arrives as ""; str stays; int/float are
+    stringified by redis-py's encoder (repr); bytes/memoryview are decoded; and a key that
+    encoder rejects (bool True, tuple, dict, ...) raises (redis-py DataError -> TypeError here).
+    """
+    if not key:
+        return ""
+    if isinstance(key, (bytes, memoryview)):
+        return bytes(key).decode("utf-8")
+    if isinstance(key, bool):
+        raise TypeError(f"Invalid bus key of type bool (Redis would reject it): {key!r}")
+    if isinstance(key, (int, float)):
+        return repr(key) if isinstance(key, float) else int.__repr__(key)
+    if isinstance(key, str):
+        return str.__str__(key)
+    raise TypeError(f"Invalid bus key of type {type(key).__name__!r} (Redis would reject it): {key!r}")
 
 
 def _stream_id_lt(a: str, b: str) -> bool:
@@ -127,10 +193,28 @@ class _MemoryBus:
         return group or "cg-default"
 
     def produce(self, topic, key, payload):
+        # WIRE PARITY WITH _RedisBus (2026-10-01). Redis does
+        # ``json.dumps(payload)`` on produce and ``json.loads`` on every
+        # delivery, which means three things this backend used to silently NOT do
+        # -- and every zero-infra test in the repo runs on this backend:
+        #   * a payload JSON cannot encode (bytes, set, datetime...) RAISES on
+        #     Redis but was accepted here, so such a bug passed every test and
+        #     first appeared in production;
+        #   * the producer keeps no handle on the stored message: mutating the dict
+        #     after produce() changed what consumers received;
+        #   * each consumer group receives its OWN parsed copy: one group mutating
+        #     msg.payload (WS-2 sanitises in place) leaked into the next group's view.
+        # Serialising here (once) and parsing a fresh copy per delivery (see
+        # ``_Entry.to_message``) restores all three.
+        wire = json.dumps(payload)   # raises TypeError on non-JSON, before any state changes
+        wire_key = _wire_key(key)    # raises TypeError on a key redis-py cannot encode
         with self._seq_lock:
+            # Allocate the id AND append under the lock readers take for their snapshot:
+            # a reader can then never iterate the stream while an append lands in it
+            # (CPython raises "deque mutated during iteration" otherwise), and stream
+            # order is id order.
             self._seq += 1
-            seq = self._seq
-        self._streams[topic].append(Message(topic, key, payload, str(seq)))
+            self._streams[topic].append(_Entry(topic, wire_key, wire, str(self._seq)))
 
     def consume(self, topic, group=None, block_ms=0) -> Iterator[Message]:
         group_key = self._group_key(group)
@@ -157,7 +241,7 @@ class _MemoryBus:
             cursor = self._cursors[topic].get(group_key, 0)
             if cursor >= len(q):
                 return
-            batch = [q[i] for i in range(cursor, len(q))]
+            batch = _tail(q, cursor)
             self._cursors[topic][group_key] = len(q)
         with self._pel_lock:
             pel = self._pel[topic].setdefault(group_key, {})
@@ -187,7 +271,7 @@ class _MemoryBus:
                         topic=topic, group=group_key, cap=self._pel_cap,
                         pel_size=len(pel))
         for msg in batch:
-            yield msg
+            yield msg.to_message()
 
     def ack(self, msg, group=None):
         group_key = self._group_key(group)
@@ -229,7 +313,7 @@ class _MemoryBus:
                     pel[mid] = (msg, now, new_count)
                     claimed.append((msg, new_count))
         for msg, times in claimed:
-            yield msg, times
+            yield msg.to_message(), times
 
     def drain(self, topic):
         """Messages not yet delivered to ANY consumer group (the remainder
@@ -243,7 +327,9 @@ class _MemoryBus:
             q = self._streams[topic]
             cursors = self._cursors.get(topic, {})
             done = max(cursors.values()) if cursors else 0
-            return list(q)[done:]
+            entries = _tail(q, done)   # only the undelivered tail, not the backlog
+        # Parse outside the lock: every returned Message needs its own independent dict.
+        return [e.to_message() for e in entries]
 
     def depth(self, topic) -> int:
         """B2/gap-hunt #53: messages not yet delivered to ANY consumer group --

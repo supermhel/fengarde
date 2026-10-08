@@ -1,0 +1,50 @@
+# evasion_findings.yaml -- the CLOSED register of known evasions (adaptive-evasion lane).
+#
+# Same pattern as eval/twin/oracle_consistency._ACCEPTED: nothing is tolerated unless it is
+# listed here with a class, a reproduction and a decision reference.
+#
+#   class   BUG          the detector keys on something the attack can change for free
+#                        (identity respelling, forged attribution, cross-window state loss)
+#           TRUST_MODEL  holds because the pipeline trusts an attacker-influenced input
+#                        (the record's own clock); reported, owner decides the policy
+#           INHERENT     (never listed) thinning, slowing, spreading across truly distinct
+#                        entities -- the price of ANY threshold rule; reported as cost, never
+#                        as a "fix" item
+#   status  open         the only status allowed to stay in the file. A FIXED finding must be
+#                        DELETED: an entry that no longer reproduces fails the gate as STALE.
+#   repro   how evasion_cost.py re-derives the finding every run
+#   rule_sets  where it reproduces today; a listed set that stops reproducing, or a new set
+#              that starts to, FAILS (a new evasion must be a deliberate registration).
+#
+# PRODUCT FIXES ARE OUT OF SCOPE for the lane that wrote this file (it measures). Fix owners
+# and schedules are owner decisions, not made here.
+version: 1
+findings:
+  - id: F2-identity-canonicalisation
+    class: BUG
+    status: open
+    first_seen: "2026-10-02"
+    summary: >
+      WS-4 groups on the raw str(actor.user.name); WS-8 canonicalises with strip().casefold()
+      (ADR-009). Splitting a burst over two source addresses AND respelling one Windows account
+      (case, trailing space, DOMAIN\ prefix) evades the rule and its by-source companion. Windows
+      accounts are case-insensitive, so the respelling is free. dc_mass_vm_delete rests on an
+      ASSUMED evasion_tables.yaml row (vCenter SSO case-insensitivity not verified).
+    repro: {kind: row_flag, flag: respelling_evades, module: evasion_axes, function: respelling_axis}
+    rule_sets: [common_lateral_movement, dc_mass_vm_delete]
+    decision: "owner decision 2 of step 5: canonicalise WS-4 group keys with strip+casefold (consistent with ADR-009, churns alert_key); stripping DOMAIN\\ / UPN would AMEND ADR-009"
+
+  - id: F4-record-clock-trust
+    class: TRUST_MODEL
+    status: open
+    first_seen: "2026-10-02"
+    summary: >
+      mcp_agent, db_audit, active_directory, windows_eventlog, vmware_vsphere and opcua_audit take event time
+      from the record's own timestamp and ignore meta.received_at (measured; linux_ssh, cisco_asa and dns_query
+      do the reverse). Forging ONLY the record clock stretches a burst past any window for free wherever the
+      emitting host is attacker-influenced. Inherent to the trust model; the existing timing axes
+      move both clocks together and cannot see it.
+    repro: {kind: row_flag, flag: clock_forgeable, module: evasion_axes, function: clock_forgeable}
+    rule_sets: [agent_tool_call_burst, bank_mass_card_read, common_bruteforce_sourceless, common_lateral_movement,
+                common_password_spray, common_rapid_account_lifecycle, dc_mass_vm_delete, ot_new_engineering_connection]
+    decision: "owner decision 6 of step 5: add a source-clock-versus-receipt skew guard, or accept the trust model"
