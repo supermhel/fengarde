@@ -14,6 +14,46 @@ that is not tied to the gate or to a command I ran as a claim.
 
 ---
 
+## 0. The harness was not the whole PR — read this first
+
+The title of PR #93 is *"fix: R3 injection-evasion hardening + 2 mutation-harness bugs (mutation_robustness
+0.61->0.86)"*. The evaluation-harness build-out that fills the rest of this document came **after** that, in the same
+branch, and it is now the larger part of the diff. Against `origin/main` the branch is 65 commits, 124 files,
++26,206/−290 lines, of which **40 files / +4,509 / −170 are product code and contracts** (`services/`, `contracts/`)
+and 77 files / +21,520 are `eval/`, `tools/` and `docs/`.
+
+What the PR was originally for (commits `4070939`, `ec80b10`, `a8fadec`, all before the harness work):
+- Closing the prompt-injection encoding-evasion gap Phase 4 disclosed: a bounded, deterministic normalisation pass in
+  `services/ws2-normalization/parsers/mcp_agent.py` (NFKC, Cyrillic/Greek homoglyph fold, percent-decoding, bounded
+  base64, whitespace collapse) shared by R1/R3/R5, plus a second bug in the same path (`json.dumps` with
+  `ensure_ascii=True` escaped homoglyphs before the fold saw them) and a broadened R1 credential-path pattern.
+- Two real bugs in the mutation harness itself (`eval/adversarial/mutate.py`).
+- Then, still in the PR: Layer A made to measure the right thing (`5fd8952`), the **core-stones hardening**
+  (`759ee8c`: `entity_id` collision-safety enforced locally, dormant-test guard `a9b9313`), and the oracle reconciliation
+  (`b43a3e0`). I did not re-verify any of those during this part of the session beyond the full gate passing.
+
+What has crept into the PR since, none of it mentioned in the title or body, and **all of it changes detection or
+runtime behaviour, not just measurement**: six new detection rules (five companion rules, one OPC UA rule that now
+ships default-off), the default-off rule state with per-tenant opt-in (engine, tenants, `/rules` view, compose), the
+WS-4 window-poisoning guard, the window counter rewrite (per-key deadlines, deadline-heap sweep, Redis `ZADD GT`
+requiring Redis ≥ 6.2), the `linux_ssh` parser rewrite, `dns_query.parent_domain`, the memory-bus wire-parity and
+tail-read rewrite, the WS-8 `campaigns.py` read view, and the impossible-travel `ZZ` fix.
+
+Consequences you should weigh:
+1. **The PR description is stale.** It still says mutation_robustness 0.6111→0.8611 (31/36) with five remaining
+   failures; Layer A is now 34/37 (0.9189) and the body mentions none of the above. I have not edited it (that is
+   public text under your control); a corrected summary should say what is product, what is measurement, and what
+   is proposal.
+2. **It is too big to review as one unit**, and it mixes low-risk measurement code with changes to the live detection
+   path. A split would be: (a) R3 normalisation + `mutate.py` bugs + Layer A, (b) core-stones hardening,
+   (c) detection/runtime changes (rules, window, parser, bus, tenants, compose), (d) eval build-out and docs. This is
+   your call; the commits are mostly topical, so a stacked-branch split is feasible but not free.
+3. **README distillation** (the other task in this conversation) is already on `main` (`d8d10be`, 541→334 lines); it
+   is not outstanding on this branch.
+4. I only know this session's objectives through a compacted summary plus the commit log. If there was another goal
+   that is neither R3 hardening, the core-stones audit, the harness, nor the README distill, it is not in this
+   document — tell me and I will add it.
+
 ## 1. Where things stand, in one paragraph
 
 The harness is materially stronger than it was a week ago, but it is not yet "the best", and the honest reasons are
