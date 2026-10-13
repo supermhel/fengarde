@@ -1,0 +1,117 @@
+{
+  "caveats": [
+    "macro_f1 is engine-vs-oracle agreement on a hand-labeled quality canary (10 events, 4 scored rules), not field detection fidelity; see docs/detection-quality.md.",
+    "per-rule confusion counts are graded per corpus FILE, not per event.",
+    "per-rule expected-positives are corpus-composition-dependent (the corpora are fetched at clone time, not version-pinned): on this snapshot's run the volume-shaped rules bruteforce, lateral_movement, bruteforce_sourceless had zero expected-positives in EITHER corpus (reported as untested) -- splunk/attack_data's brute-force/spray volume lives in non-XML exports this lane's extractor documents as unread; eval/attack/fire_check.py proves all 28 MITRE-tagged rules still fire on their real producer fixtures.",
+    "parser_coverage_pct is a corpus-shape measurement: the EVTX corpus is Security/Sysmon-centric, so the published value (see README.md) means 'that share of THE RECORDS IN THIS CORPUS parse', not 'that share of all log formats FENGARDE can ingest'; the 17 shipped parsers cover IT/OT formats the corpora do not contain.",
+    "twin metrics are harness-measured on a deterministic in-process plc simulator replay (seed 7) with basis=harness-measured; null fields were not measured in that run, not zero.",
+    "ci-clone contamination: GitHub clone counts are inflated by authenticated Actions checkouts and are NOT published here as traction evidence."
+  ],
+  "detection_quality": {
+    "corpora": [
+      "evtx",
+      "quality",
+      "splunk"
+    ],
+    "corpus_records": 14663,
+    "macro_f1": 0.875,
+    "parser_coverage_pct": 43.2,
+    "per_rule_confusion": {
+      "2e3d4c5b-6f70-4819-9b02-1c2d3e4f5061": {
+        "fn": 0,
+        "fp": 0,
+        "tn": 222,
+        "tp": 0
+      },
+      "4f8a2c61-9e3d-4b57-8a1c-6d2e5f7a8b90": {
+        "fn": 0,
+        "fp": 0,
+        "tn": 220,
+        "tp": 2
+      },
+      "6f1c8a2e-0d3b-4c11-9a21-7b5e2f9a1c01": {
+        "fn": 0,
+        "fp": 0,
+        "tn": 222,
+        "tp": 0
+      },
+      "7d3e9a52-1f6c-4a88-9b3d-2e5c8f1a6d40": {
+        "fn": 0,
+        "fp": 0,
+        "tn": 221,
+        "tp": 1
+      },
+      "8c2f5a91-4d16-4e8b-9c3a-1f6b2e7d5a83": {
+        "fn": 0,
+        "fp": 0,
+        "tn": 222,
+        "tp": 0
+      },
+      "9b5f2d18-3c7a-4e61-8f24-5a1d7c3e9b06": {
+        "fn": 0,
+        "fp": 0,
+        "tn": 218,
+        "tp": 4
+      }
+    },
+    "quality_corpus_events": 10,
+    "rule_id_to_name": {
+      "2e3d4c5b-6f70-4819-9b02-1c2d3e4f5061": "lateral_movement",
+      "4f8a2c61-9e3d-4b57-8a1c-6d2e5f7a8b90": "password_spray",
+      "6f1c8a2e-0d3b-4c11-9a21-7b5e2f9a1c01": "bruteforce",
+      "7d3e9a52-1f6c-4a88-9b3d-2e5c8f1a6d40": "priv_grant",
+      "8c2f5a91-4d16-4e8b-9c3a-1f6b2e7d5a83": "bruteforce_sourceless",
+      "9b5f2d18-3c7a-4e61-8f24-5a1d7c3e9b06": "after_hours_admin"
+    },
+    "untested_rules": [
+      "bruteforce",
+      "lateral_movement",
+      "bruteforce_sourceless"
+    ]
+  },
+  "generated_at": "2026-10-13T23:25:11+00:00",
+  "schema_version": "1.0",
+  "source": {
+    "corpus_row_date": "2026-10-13",
+    "file": "eval/trend.jsonl",
+    "twin_row_date": "2026-09-04T07:51:40+00:00"
+  },
+  "twin": {
+    "alert_reduction_ratio": 0.7143,
+    "attribution_accuracy": 1.0,
+    "chain_fidelity": 0.6,
+    "evidence_completeness": 0.9375,
+    "false_correlation_rate": 1.0,
+    "fpr": 0.0,
+    "incident_reconstruction_time_ms": 0.6087,
+    "mttd_seconds": 60.0,
+    "mtti_seconds": 360.0,
+    "mttr_seconds": null,
+    "scenario_summary": {
+      "chain_steps": [],
+      "gap_count": null,
+      "negative_controls": {},
+      "parsed_count": null
+    },
+    "severity_calibration_error": 0.0,
+    "tpr": 1.0
+  },
+  "units": {
+    "alert_reduction_ratio": "dimensionless [0,1]; (alerts-raw - alerts-correlated)/alerts-raw",
+    "attribution_accuracy": "dimensionless [0,1]; share of incident attributions matching the scenario's ground truth",
+    "chain_fidelity": "dimensionless [0,1]; fraction of the scenario's causal chain the correlation layer reproduced in its incident graph",
+    "evidence_completeness": "dimensionless [0,1]; fraction of expected evidence items present in the evidence package",
+    "false_correlation_rate": "dimensionless; false correlations per true incident (1.0 = every positive had one genuine link)",
+    "fpr": "dimensionless [0,1]; false-positive rate on the twin's benign/negative-control replay",
+    "incident_reconstruction_time_ms": "milliseconds; wall time to rebuild an incident from its member alerts",
+    "macro_f1": "dimensionless, [0,1]; unweighted mean of per-rule F1 (engine-vs-oracle agreement on the hand-labeled detection-quality canary, tools/detection_quality_eval.py) -- NOT field detection fidelity",
+    "mttd_seconds": "mean time to detect, seconds, scenario replay",
+    "mtti_seconds": "mean time to investigate, seconds, scenario replay (null when the run did not produce an incident)",
+    "mttr_seconds": "mean time to respond, seconds (null when not exercised by the run)",
+    "parser_coverage_pct": "percent; share of Security+Sysmon records in the EVTX corpus (records_supported / (records_security + records_sysmon)) that a shipped parser can normalize at all -- corpus-shape-limited, see methodology.md",
+    "per_rule_confusion": "absolute event counts (tp/fp/fn/tn) per rule, graded per corpus FILE by replaying supported records through the real WS-2->WS-4 pipeline against an independent oracle",
+    "severity_calibration_error": "dimensionless; |predicted_severity - true_severity| averaged over scored alerts",
+    "tpr": "dimensionless [0,1]; true-positive rate on the twin's intrusion scenario replay",
+    "untested_rules": "rule names with zero expected-positive events (tp+fn == 0) in the latest corpus run -- surfaced, never implied passing"
+  }
+}

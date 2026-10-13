@@ -98,6 +98,28 @@ The grown file is also published as a per-run `detection-accuracy-trend`
 artifact; the job does not push back to `main` (least-privilege
 `contents: read`, no-auto-commit convention), so local runs append in place.
 
+## Committed synthetic attack fixtures (2026-10-14)
+
+`attack_fixtures.py` is the deliberate complement to the third-party corpora:
+a rule with zero attack-shaped positives in BOTH corpora is reported as
+`untested` (tp+fn == 0) and surfaced on every trend row — the right default,
+but one that can special-case a shape the two public corpora happen never to
+contain. `password_spray` was exactly that: the last residual `untested_rules`
+entry (`["password_spray"]` on the 2026-09-04 row), because neither EVTX-
+ATTACK-SAMPLES nor splunk/attack_data contains a single account failed from
+8+ distinct source IPs within 300 s.
+
+`attack_fixtures.password_spray_records()` provides exactly that shape (10
+failed 4625 logons, one account `carla`, 10 distinct `203.0.113.x` sources,
+~100 s span). Both lanes run **all** entries of `attack_fixtures.ALL` through
+their normal `replay_file()` + `oracle()` path (see `run_fixtures()` in
+`evtx_eval.py`), so the fixture must trip the INDEPENDENT oracle AND the real
+engine — a fixture that only satisfies one of the two fails the lane like any
+other mismatch. Pseudo-files appear as `fixture:<name>` in `per_file` /
+`mismatches` output and are NEVER counted in `records_supported`,
+`records_security`, or the parser-coverage denominator — percentages keep
+measuring the real corpora, and the benchmark's methodology.md states that.
+
 ## Real numbers observed (2026-08-19)
 
 First actual run of both harnesses on record for this project — both were

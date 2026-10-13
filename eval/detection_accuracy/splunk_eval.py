@@ -155,6 +155,12 @@ def main():
                 mismatches.append({"file": fp.parent.name + "/" + fp.name,
                                    "rule": E.RULE_NAMES[rid], "expected": e, "fired": f})
 
+    # Same committed synthetic attack fixtures as the EVTX lane (see
+    # evtx_eval.run_fixtures), so a rule neither corpus exercises is still
+    # graded on attack-shaped events -- folded into the same confusion matrix,
+    # labeled fixture:<name> in per_file, never counted in corpus totals.
+    E.run_fixtures(confusion, per_file, mismatches, deadletters)
+
     out = {"files": len(files), "supported_records": tot_supported,
            "security_records": tot_security, "sysmon_records": tot_sysmon,
            "eventid_hist": dict(sorted(eid_hist.items(), key=lambda kv: -kv[1])),

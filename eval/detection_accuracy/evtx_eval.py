@@ -36,6 +36,8 @@ REPO = HERE.parents[1]
 SAMPLES = HERE / "evtx-samples"
 OUT_JSON = HERE / "evtx_eval_results.json"
 
+import attack_fixtures  # noqa: E402  (committed synthetic attack fixtures)
+
 os.environ.setdefault("BUS_BACKEND", "memory")
 SERVICES = REPO / "services"
 sys.path.insert(0, str(SERVICES))
@@ -294,6 +296,45 @@ def replay_file(records):
     return c2, c4, alerts, dead
 
 
+def run_fixtures(confusion: dict, per_file: list, mismatches: list,
+                 parse_drops: list) -> None:
+    """Replay the committed synthetic attack fixtures (attack_fixtures.py)
+    through the REAL pipeline and fold them into this lane's structures.
+
+    Used by BOTH corpus lanes (evtx_eval + splunk_eval) so a rule the
+    third-party corpora never exercise still gets honest expected-positive
+    coverage. Each fixture is graded like a corpus file (independent oracle +
+    real WS-2 -> WS-4 replay, fresh window counters), labeled
+    ``fixture:<name>`` in every per_file / mismatch / deadletter row, and
+    NEVER counted in corpus_* / records_supported totals -- parser-coverage
+    percentages therefore stay honest measurements of the real corpora.
+    """
+    for fx_name, records in attack_fixtures.ALL.items():
+        records = sorted(records, key=lambda r: r["TimeCreated"])
+        exp = oracle(records)
+        c2, c4, alerts, dead = replay_file(records)
+        fired = {a["rule_id"] for a in alerts}
+        per_file.append({
+            "file": f"fixture:{fx_name}", "supported": len(records),
+            "normalized": c2["normalized"], "dropped": c2["dropped"],
+            "alerts": len(alerts),
+            "fired": sorted(RULE_NAMES.get(r, r) for r in fired),
+            "expected": sorted(RULE_NAMES[r] for r, v in exp.items() if v),
+        })
+        if dead:
+            parse_drops.append({"file": f"fixture:{fx_name}", "count": len(dead),
+                                "sample_error": dead[0].get("errors")})
+        for rid in ORACLE_RULES:
+            e, f = exp[rid], rid in fired
+            k = "tp" if (e and f) else "fn" if (e and not f) else \
+                "fp" if (not e and f) else "tn"
+            confusion[rid][k] += 1
+            if e != f:
+                mismatches.append({"file": f"fixture:{fx_name}",
+                                   "rule": RULE_NAMES[rid],
+                                   "expected": e, "fired": f})
+
+
 def main():
     if not SAMPLES.is_dir():
         print(f"[SKIP] evtx_eval: dataset dir not found at {SAMPLES} -- see "
@@ -384,6 +425,11 @@ def main():
             if e != f:
                 mismatches.append({"file": fp.name, "rule": RULE_NAMES[rid],
                                    "expected": e, "fired": f})
+
+    # Committed synthetic attack fixtures (attack_fixtures.py): replay them
+    # through the SAME pipeline + oracle and fold them into this lane's output
+    # so a rule the third-party corpora never exercise is tested, not skipped.
+    run_fixtures(confusion, per_file, mismatches, parse_drops)
 
     out = {"corpus": corpus,
            "eventid_histogram": dict(sorted(eventid_hist.items(),

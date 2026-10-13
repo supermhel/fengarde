@@ -168,6 +168,13 @@ eval-detection:
 	@$(PYTHON) eval/detection_accuracy/splunk_eval.py
 	@$(PYTHON) eval/detection_accuracy/test_evtx_eval.py
 
+# Phase 5 item 8 (2026-10-14): package the latest trend rows into the public
+# benchmark/results.json (see benchmark/methodology.md). After a fresh
+# eval-detection + twin run, this regenerates the committed results.json seed.
+benchmark:
+	@$(PYTHON) tools/generate_benchmark.py
+	@$(PYTHON) tools/test_generate_benchmark.py
+
 # M2 mutation-testing gate (see pyproject.toml [tool.mutmut]). Scoped narrow
 # for its first pass (services/shared/sessions.py only) -- informational in
 # CI, not blocking, until a real number exists to gate against. Native
