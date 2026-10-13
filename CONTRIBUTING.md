@@ -137,6 +137,12 @@ this repo's working tree — see SSOT.md §4.
   impressiveness is a core project value — especially for a security tool.
 - **License.** By contributing, you agree your contribution is licensed under the
   project's [Apache-2.0 License](LICENSE).
+- **Developer Certificate of Origin (DCO).** Every commit in a PR must carry a
+  `Signed-off-by:` trailer (checked by the `DCO` workflow — PR-gated only, never
+  retroactive on merged history). The trailer certifies the
+  [Developer Certificate of Origin v1.1](https://developercertificate.org/) —
+  that you have the right to submit the contribution under the project's license.
+  Add it with `git commit -s`; amend a missed one with `git commit --amend -s`.
 - **Security.** If you found a vulnerability, do **not** open a public PR/issue —
   follow [SECURITY.md](SECURITY.md). Remember the detection engine executes rule
   files, so review any contributed rule's `condition` carefully.

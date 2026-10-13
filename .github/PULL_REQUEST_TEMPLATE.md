@@ -46,3 +46,5 @@ paste the relevant passing test output here
 - [ ] If this adds/changes a rule: I understand the engine executes rule files
       (SECURITY.md) and the `condition` is safe.
 - [ ] By submitting, I agree my contribution is licensed under Apache-2.0 (LICENSE).
+- [ ] Every commit in this PR carries a `Signed-off-by:` trailer
+      (DCO v1.1 — `git commit -s`); the `DCO` workflow enforces this on PRs.
