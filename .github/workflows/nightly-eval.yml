@@ -249,6 +249,16 @@ jobs:
       - name: Regenerate eval/trend_viewer.html
         run: python tools/generate_trend_viewer.py
 
+      # ---- Phase 5 item 8 (2026-10-14): public benchmark packaging ---------
+      # Reads the latest corpus + twin rows from the trend file (including the
+      # row this run just appended) and rewrites benchmark/results.json in the
+      # public schema. Same commit convention as trend_viewer: this job does
+      # NOT push back to main -- the regenerated file rides the per-run
+      # artifact (below) and lands in git when whoever runs the lane commits
+      # it locally (the committed seed is the deliverable).
+      - name: Regenerate benchmark/results.json (public packaging of latest rows)
+        run: python tools/generate_benchmark.py
+
       - name: Upload detection-accuracy trend artifact
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
@@ -257,6 +267,7 @@ jobs:
             eval/trend.jsonl
             eval/twin/report.json
             eval/trend_viewer.html
+            benchmark/results.json
           if-no-files-found: error
 
       - name: Upload blind-recall results (corpus lane)

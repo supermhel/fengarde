@@ -20,7 +20,11 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(SERVICES / "ws4-detection"))
 
-from evtx_eval import in_business_hours, _verdict, _real_host  # noqa: E402
+from evtx_eval import (in_business_hours, _verdict, _real_host, oracle,  # noqa: E402
+                       run_fixtures, RULE_SPRAY, RULE_BRUTE, RULE_LATERAL,
+                       RULE_PRIV, RULE_AFTERHRS, RULE_BRUTE_SOURCELESS,
+                       ORACLE_RULES)
+import attack_fixtures  # noqa: E402
 from engine import _time_outside_hours  # noqa: E402  -- reuse the engine's own predicate
 
 
@@ -137,6 +141,52 @@ class TestVerdictExitCode(unittest.TestCase):
 
     def test_multiple_mismatches_still_failure(self):
         self.assertEqual(_verdict([{"a": 1}, {"b": 2}, {"c": 3}]), 1)
+
+
+class TestAttackFixtures(unittest.TestCase):
+    """Phase 5 item 8 (2026-10-14): password_spray had zero attack-shaped
+    test events in either corpus (it sat as the last residual untested_rules
+    entry on every trend row). attack_fixtures.py adds a committed synthetic
+    credential-stuffing shape; these tests pin that it trips ONLY the oracle
+    rule it is meant to, that the REAL engine agrees (no mismatch), and that
+    the fixtures stay deterministic."""
+
+    def _records(self):
+        return sorted(attack_fixtures.ALL["password_spray"],
+                      key=lambda r: r["TimeCreated"])
+
+    def test_oracle_labels_only_password_spray(self):
+        exp = oracle(self._records())
+        expected = {RULE_BRUTE: False, RULE_SPRAY: True, RULE_LATERAL: False,
+                    RULE_PRIV: False, RULE_AFTERHRS: False,
+                    RULE_BRUTE_SOURCELESS: False}
+        self.assertEqual(exp, expected)
+
+    def test_shape_is_attack_shaped(self):
+        recs = attack_fixtures.ALL["password_spray"]
+        self.assertEqual({r["EventID"] for r in recs}, {4625})
+        self.assertEqual({r["TargetUserName"] for r in recs}, {"carla"})
+        self.assertEqual(len({r["IpAddress"] for r in recs}), len(recs))
+        times = sorted(r["TimeCreated"] for r in recs)
+        self.assertLessEqual(times[-1] - times[0], 300_000)
+
+    def test_deterministic_across_calls(self):
+        self.assertEqual(attack_fixtures.ALL["password_spray"],
+                         attack_fixtures.ALL["password_spray"])
+
+    def test_run_fixtures_folds_tp_without_mismatch(self):
+        confusion = {rid: {"tp": 0, "fn": 0, "fp": 0, "tn": 0}
+                     for rid in ORACLE_RULES}
+        per_file, mismatches, drops = [], [], []
+        run_fixtures(confusion, per_file, mismatches, drops)
+        self.assertEqual(confusion[RULE_SPRAY]["tp"], 1)
+        self.assertEqual(confusion[RULE_SPRAY]["fn"], 0)
+        self.assertEqual(mismatches, [])
+        self.assertEqual(drops, [])
+        row = per_file[0]
+        self.assertEqual(row["file"], "fixture:password_spray")
+        self.assertIn("password_spray", row["expected"])
+        self.assertIn("password_spray", row["fired"])
 
 
 if __name__ == "__main__":
