@@ -218,6 +218,39 @@ A differential/property review in sandbox copies found real defects in code that
   - **Stale docstring**: `eval/adversarial/corpus_b.py`'s module docstring claimed documented evasions are "reported in `rule_evasions`" — no such field exists in `main()`'s `result` dict (only `per_case`, `incidents_promoted`, etc.). Corrected to name the real mechanism.
   - Re-measured after all 3 fixes: mutation_robustness unchanged at **0.8611** (31/36) — these were review-caught quality/precision issues, not mutation-catalogue misses. Full `run_all_tests.sh`, ruff, mypy green; both product-side fixes mutation-verified independently.
 
+### Added (2026-10-14, Phase 5 items 8–11 — the credibility pack)
+
+- **Public detection benchmark** (`benchmark/`): machine-readable `results.json`
+  (schema v1.0 with documented units) packaged from the latest measured rows of
+  `eval/trend.jsonl` by `tools/generate_benchmark.py`, plus `README.md`,
+  `methodology.md` (the 43.2% parser-coverage number stated plainly rather than
+  hidden) and `reproduction.md`. Regenerated nightly (`.github/workflows/
+  nightly-eval.yml` step + artifact) and via `make benchmark`; generator +
+  schema pinned by tests wired into the zero-infra gate. Snapshot 2026-10-13:
+  macro-F1 0.875, 14,663 corpus records replayed, 0 FP / 0 FN, twin
+  TPR 1.0 / FPR 0.0, chain fidelity 0.6.
+- **`password_spray` now has attack-shaped test events**
+  (`eval/detection_accuracy/attack_fixtures.py`): a committed synthetic
+  credential-stuffing shape (one account, 10 distinct source IPs, ~100 s) run
+  through the INDEPENDENT oracle and the real WS-2→WS-4 pipeline by both corpus
+  lanes (`evtx_eval.run_fixtures`, also used by `splunk_eval.py`), labeled
+  `fixture:*` in every output and never counted in corpus / parser-coverage
+  stats. It was the last `untested_rules` entry on every prior trend row.
+- **OpenSSF Best Practices code gaps closed**: `SECURITY-INSIGHTS.yml`
+  (spec v2.2.0) at repo root, every field sourced from `SECURITY.md`,
+  `SSOT.md` and the live Scorecard API (8.5/10, 2026-10-07); DCO adopted —
+  `Signed-off-by:` now required on every PR commit (`.github/workflows/dco.yml`,
+  PR-gated only, never retroactive on merged history), documented in
+  CONTRIBUTING.md + the PR template; per-service statement coverage re-measured
+  and published honestly via the benchmark methodology (the gate keeps its
+  measured floors; the higher badge tiers' 80%/90% statement/branch criterion
+  is marked not-met, not claimed).
+- **Distribution-funnel CTAs**: the README quickstart gains a post-success
+  "next steps" block (star / rule request / add a parser / MSSP) and the Pages
+  tour (`docs/index.html`) gains a closing "Finished the quickstart?" CTA row.
+  - Corrected stale README wording that still described Phase 5 (PR #92) as
+    "not yet merged" — it merged 2026-09-04.
+
 ### Added (2026-09-04/05, Phase 5 — analyst read path for the entity/causal/evidence plane, PR #92, merged to `main` 2026-09-10 as `285ca72`)
 
 - WS-3 persists `incident.graph` and `entity.updates` (produced since Phase 2/3, previously reaper-trimmed with no storage or read route) and serves `GET /entities/{id}`, `GET /incidents/{id}/graph`, `GET /incidents/{id}/evidence` (the latter builds `evidence_package.py`'s package on demand and verifies it before any 200 — a failure is 409, never a silent unverified serve), all tenant-gated.
