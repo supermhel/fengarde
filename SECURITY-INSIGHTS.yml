@@ -1,0 +1,119 @@
+# Security Insights (v2.2.0) — machine-readable security posture for FENGARDE.
+#
+# Every claim here is sourced from the public repository itself (SECURITY.md,
+# CONTRIBUTING.md, .github/workflows/, SSOT.md §2 proven-vs-claim discipline).
+# Kept in sync BY HAND with those files — same convention as the OpenSSF badge
+# form: this file is a point-in-time self-report, not an auto-generated one.
+# Bump header.last-updated/last-reviewed whenever a sourced fact changes.
+header:
+  schema-version: 2.2.0
+  last-updated: "2026-10-14"
+  last-reviewed: "2026-10-14"
+  url: https://raw.githubusercontent.com/supermhel/fengarde/main/security-insights.yml
+
+project:
+  name: FENGARDE
+  homepage: https://supermhel.github.io/fengarde/
+  documentation:
+    quickstart-guide: https://github.com/supermhel/fengarde#quickstart
+    release-process: https://github.com/supermhel/fengarde/blob/main/CHANGELOG.md
+  administrators:
+    - name: Mel Dylan Djomou
+      email: dylandjomou@yahoo.de
+      social: https://github.com/supermhel
+      primary: true
+  repositories:
+    - name: fengarde
+      url: https://github.com/supermhel/fengarde
+      comment: |
+        Open-core IT/AI/OT SIEM pipeline (raw security logs -> OCSF ->
+        correlation rules -> alerts -> incidents), Apache-2.0. fengarde-sec,
+        the paid LLM layer, is a separate private repository and is not part
+        of this file.
+  vulnerability-reporting:
+    reports-accepted: true
+    bug-bounty-available: false
+    contact:
+      name: Mel Dylan Djomou
+      email: dylandjomou@yahoo.de
+      primary: true
+    policy: https://github.com/supermhel/fengarde/blob/main/SECURITY.md
+    comment: |
+      Reporting process per SECURITY.md. Private reports are accepted via
+      GitHub's Security -> "Report a vulnerability" (private disclosure);
+      acknowledgement within a few business days, coordinated disclosure
+      timeline for confirmed vulnerabilities. No bug bounty is offered.
+
+repository:
+  url: https://github.com/supermhel/fengarde
+  status: active
+  bug-fixes-only: false
+  accepts-change-request: true
+  accepts-automated-change-request: true
+  core-team:
+    - name: Mel Dylan Djomou
+      email: dylandjomou@yahoo.de
+      social: https://github.com/supermhel
+      primary: true
+  documentation:
+    contributing-guide: https://github.com/supermhel/fengarde/blob/main/CONTRIBUTING.md
+    security-policy: https://github.com/supermhel/fengarde/blob/main/SECURITY.md
+  license:
+    expression: Apache-2.0
+    url: https://github.com/supermhel/fengarde/blob/main/LICENSE
+  release:
+    automated-pipeline: true
+    changelog: https://github.com/supermhel/fengarde/blob/main/CHANGELOG.md
+    distribution-points:
+      - uri: https://github.com/supermhel/fengarde/releases
+        comment: GitHub Releases (signed source/blobs + container image set)
+      - uri: https://ghcr.io/supermhel
+        comment: Container images, one per workstream service, pushed and signed keyless
+    attestations:
+      - name: SLSA v1 provenance (generator-generic) + keyless cosign signature
+        predicate-uri: https://slsa.dev/provenance/v1
+        location: https://github.com/supermhel/fengarde/releases
+        comment: |
+          Every release runs .github/workflows/release.yml: cosign KEYLESS
+          (OIDC) signing of the tarball and each image, SLSA v1 provenance
+          produced by the official SLSA generator's generic generate-provenance
+          reusable workflow, SBOM freshness gated in the same pipeline. No
+          private key or secret is used.
+  security:
+    assessments:
+      self:
+        evidence: https://github.com/supermhel/fengarde/blob/main/SSOT.md
+        date: "2026-10-14"
+        name: SSOT.md section 2 (proven vs. claim)
+        comment: |
+          The repo's own honesty discipline: every gate/measurement is marked
+          proven-by-execution or claim, and fabricated history is labeled
+          (eval/trend.jsonl keeps its pre-fix fabricated pilot row with its
+          own comment block rather than deleting it).
+      third-party:
+        - evidence: https://api.securityscorecards.dev/projects/github.com/supermhel/fengarde
+          date: "2026-10-07"
+          name: OpenSSF Scorecard (live API)
+          comment: |
+            Score 8.5/10 at commit 285ca72. Strong: Security-Policy, Token-
+            Permissions (least-privilege on all 7 workflows), SAST (CodeQL on
+            every commit), Fuzzing (17 Atheris targets nightly), Vulnerabilities
+            (0 in pinned-deps audit), CI-Tests, Maintained. Weak: Code-Review
+            (0/2 approved changesets — by choice, single maintainer), Pinned-
+            Dependencies 7/10 (actions + images all SHA/digest-pinned; 8/20 pip
+            commands hash-pinned, remainder version-pinned with a pip-audit CVE
+            gate), CII-Best-Practices 2/10 (badge in progress). OpenSSF Best
+            Practices badge: 52%, owner-only form entry pending.
+    champions:
+      - name: Mel Dylan Djomou
+        email: dylandjomou@yahoo.de
+        primary: true
+    comment: |
+      Security tooling runs in CI but publishes no in-toto attestation
+      artifacts, so it is documented here instead of as schema `tools`
+      entries: CodeQL (codeql.yml, every push), gitleaks secret scan
+      (ci.yml), pip-audit CVE gate (ci.yml, all pinned requirements),
+      actionlint + tools/verify_action_pins.py (SHA-pin integrity of every
+      workflow), coverage_gate.py (per-service measured floors), Hypothesis
+      property tests + nightly Atheris fuzzing (17 parser targets, fuzz.yml),
+      Dependabot (pip per-directory weekly + GitHub Actions update type).

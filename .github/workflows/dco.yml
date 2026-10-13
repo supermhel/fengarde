@@ -1,0 +1,59 @@
+# DCO (Developer Certificate of Origin) check — Phase 5 item 10 (2026-10-14).
+#
+# PR-gated ONLY, never retroactive: every commit a PR would merge must carry a
+# `Signed-off-by:` trailer certifying DCO v1.1. Existing history (which has no
+# trailers) is deliberately untouched — the check only inspects
+# `base.sha..HEAD`. Implemented with the local git toolchain, so there is no
+# third-party action to SHA-pin and nothing new to trust; the semantics match
+# the dcoapp approach (a commit without the trailer is a hard fail) with a
+# visible `commits=X signed_off=Y` summary in the log.
+#
+# Action pins verified by tools/verify_action_pins.py (runs in ci.yml).
+name: DCO
+
+on:
+  pull_request:
+
+# Least-privilege default (mirrors every other workflow): read-only contents.
+permissions:
+  contents: read
+
+jobs:
+  dco:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          fetch-depth: 0
+      - name: Every commit signed off (DCO v1.1)
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          if [ -z "${BASE_SHA:-}" ]; then
+            echo "[SKIP] no base sha in event (manual dispatch) -- nothing to check"
+            exit 0
+          fi
+          if ! git rev-parse --quiet --verify "${BASE_SHA}" >/dev/null; then
+            echo "[SKIP] base sha ${BASE_SHA} not present in this checkout"
+            exit 0
+          fi
+          commits="$(git rev-list "${BASE_SHA}"..HEAD)"
+          if [ -z "${commits}" ]; then
+            echo "[OK] no new commits to check"
+            exit 0
+          fi
+          total="$(printf '%s\n' "${commits}" | grep -c .)"
+          signed="$( { printf '%s\n' "${commits}" \
+                       | while read -r c; do git show -s --format=%B "$c"; done \
+                       | grep -c '^Signed-off-by: .* <.*@.*>' || true; } )"
+          echo "commits=${total} signed_off=${signed}"
+          if [ "${signed}" -lt "${total}" ]; then
+            echo "[FAIL] ${signed}/${total} commits carry a Signed-off-by trailer."
+            echo "Every commit must be signed off (Developer Certificate of Origin v1.1)."
+            echo "  git commit -s                          # for new commits"
+            echo "  git commit --amend -s                  # for a missed commit"
+            echo "See CONTRIBUTING.md -> Pull request expectations -> DCO."
+            exit 1
+          fi
+          echo "[OK] every new commit is signed off (DCO v1.1)"
