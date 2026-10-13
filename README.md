@@ -114,6 +114,19 @@ make ha-down  # stop the HA profile, remove its volumes
 
 `make preflight` checks the published ports are free before you start.
 
+**Just saw your first alert land in the dashboard? Here's where to go next:**
+
+- **Star the repo** — with 12 stars, every one is measurable; it's the cheapest
+  signal an early-stage OSS security tool can get. [⭐ Star FENGARDE](https://github.com/supermhel/fengarde)
+- **Seen something it missed?** Open a
+  [detection-rule request](.github/ISSUE_TEMPLATE/rule_request.md) — new rules
+  review and merge like parsers (wrong/absent-false-negative reports are a
+  feature, see `SSOT.md` §2).
+- **Contribute a parser (~30 min):** [CONTRIBUTING.md](CONTRIBUTING.md) +
+  [docs/adding-a-parser.md](docs/adding-a-parser.md).
+- **Running it for customers?** See [docs/mssp-quickstart.md](docs/mssp-quickstart.md)
+  or apply for the [partner listing](https://github.com/supermhel/fengarde/issues/new?template=mssp_partner_registration.md).
+
 ---
 
 ## What's real
@@ -123,10 +136,13 @@ release: `v0.10.0`) — for the itemized history see [CHANGELOG.md](CHANGELOG.md
 for the continuously-updated authoritative status see [SSOT.md](SSOT.md); this
 table is a summary, that file is the source of truth. Product tour with real
 screenshots: [supermhel.github.io/fengarde](https://supermhel.github.io/fengarde/).
+Measured, externally-usable detection numbers (macro-F1, per-rule
+TP/FP/FN/TN, twin scorecard — with units, methodology and the honest
+limits): **[`benchmark/`](benchmark/)**.
 
-**Phase 5 (analyst read path) is code-complete on
-[PR #92](https://github.com/supermhel/fengarde/pull/92), not yet merged** —
-rows marked **(PR #92)** describe that branch, not `main`.
+**Phase 5 (analyst read path) shipped in
+[PR #92](https://github.com/supermhel/fengarde/pull/92) (merged).**
+Rows marked **(PR #92)** are live on `main`.
 
 | Capability | Status | Notes |
 |---|---|---|
