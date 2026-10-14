@@ -1,0 +1,6 @@
+# Phase 6 ratchet changes affect the published evaluation claim.
+/eval/twin/baseline_scenarios.json @supermhel
+/eval/twin/ratchet_waivers.json @supermhel
+/eval/twin/ratchet.py @supermhel
+/eval/twin/ratchet_measure.py @supermhel
+/eval/twin/fingerprint.py @supermhel

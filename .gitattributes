@@ -8,6 +8,8 @@
 *.yaml  text eol=lf
 Dockerfile text eol=lf
 
+eval/twin/ratchet_history.jsonl merge=union
+
 # Binary assets (don't touch)
 *.png binary
 *.jpg binary

@@ -113,6 +113,7 @@ sys.path.insert(0, str(SERVICES / "ws2-normalization"))
 sys.path.insert(0, str(SERVICES / "ws4-detection"))
 sys.path.insert(0, str(SERVICES))
 sys.path.insert(0, str(ROOT / "tools"))
+sys.path.insert(0, str(ROOT / "eval" / "twin"))
 
 from parsers import _REGISTRY  # noqa: E402
 from enrichment import enrich  # noqa: E402
@@ -132,8 +133,22 @@ from engine import (  # noqa: E402
     Rule,
 )
 import check_rule_producers as crp  # noqa: E402  -- reuse the same FIXTURES
+from fingerprint import system_fingerprint  # noqa: E402
 
 OUT_DIR = Path(__file__).resolve().parent / "out"
+
+
+def _write_fingerprint() -> None:
+    """Stamp the legacy list-shaped artifact via a sidecar.
+
+    The list shape is consumed by the attack scorecard and is intentionally
+    preserved; the sidecar closes the freshness gap without changing that
+    existing contract.
+    """
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+    (OUT_DIR / "fire_check.fingerprint.json").write_text(
+        json.dumps({"system_fingerprint": system_fingerprint(ROOT)}, indent=2),
+        encoding="utf-8")
 
 # Gap-hunt fix (2026-08-26): which distinct values a rule's replays were
 # stamped with, per rule id -- "real" (the distinct values really produced by
@@ -1006,6 +1021,7 @@ def main() -> int:
         OUT_DIR.mkdir(parents=True, exist_ok=True)
         (OUT_DIR / "fire_check.json").write_text(json.dumps(
             {"harness_ok": False, "reason": canary_note, "results": []}, indent=2))
+        _write_fingerprint()
         return 1
     print()
 
@@ -1073,6 +1089,7 @@ def main() -> int:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     out_path = OUT_DIR / "fire_check.json"
     out_path.write_text(json.dumps(results, indent=2))
+    _write_fingerprint()
     print(f"\nwrote {out_path}")
 
     # The actual "the suite silently stopped testing anything" failure, and

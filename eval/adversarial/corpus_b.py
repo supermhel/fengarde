@@ -64,6 +64,7 @@ for p in (str(TWIN), str(SERVICES)):
         sys.path.insert(0, p)
 
 import report  # noqa: E402  (module-collision discipline: pre-seeds sys.modules['main'] with ws4, loads ws8 lazily)
+from fingerprint import system_fingerprint  # noqa: E402
 
 OUT_DIR = ADVERSARIAL / "out"
 DEFAULT_OUT = OUT_DIR / "corpus.latest.json"
@@ -309,6 +310,7 @@ def run_corpus(out: Path = DEFAULT_OUT) -> dict:
         "schema": "layer-b-corpus-v1",
         "basis": "harness-measured",
         "seed": 7,
+        "system_fingerprint": system_fingerprint(ROOT),
         "per_case": summaries,
         "incidents_promoted": len(by_id),
         "cross_case_incidents": wrong_merges,

@@ -22,6 +22,12 @@ A short description of the change.
 ## Verification
 
 - [ ] `make test` (i.e. `./run_all_tests.sh`) passes locally.
+- [ ] If evaluation inputs or atom values changed: `python eval/twin/ratchet.py refresh --reason "..."`
+      was run from a clean, full-gate artifact set; no baseline number was edited by hand.
+- [ ] Any accepted drop uses `eval/twin/ratchet_waivers.json` with an owner,
+      issue/PR evidence, a reason, and an expiry no more than 45 days away.
+- [ ] `python eval/twin/ratchet.py guard --base origin/main` and
+      `python eval/twin/test_ratchet.py` pass for Phase 6 changes.
 - [ ] For a parser: `cd services/ws2-normalization && python test_contract.py` passes,
       and I added a sample + an `expected` entry that exercises it.
 - [ ] New behavior is covered by a contract test or sample.

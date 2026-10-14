@@ -45,6 +45,25 @@ jobs:
       - name: Full zero-infra gate
         run: PYTHON=python3 bash run_all_tests.sh
 
+  # Phase 6 integrity is deliberately separate from the long zero-infra
+  # matrix: it has full history for the PR-time baseline guard and exercises
+  # the acceptance controls even when no evaluation artifacts are cached.
+  ratchet-integrity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Install ratchet dependencies
+        run: pip install pyyaml
+      - name: Phase 6 acceptance controls
+        run: python eval/twin/test_ratchet.py
+      - name: Phase 6 PR baseline guard
+        run: python eval/twin/ratchet.py guard --base origin/main
+
   # Integration gate: the Redis-path mechanisms (runner ack/redelivery/DLQ) against a
   # REAL broker. This is the tier that catches anything the memory bus can't model.
   redis-integration:

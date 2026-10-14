@@ -85,6 +85,7 @@ for p in (str(TWIN), str(SERVICES)):
 import mutate  # noqa: E402  (the mutation engine; same dir as this module)
 import report  # noqa: E402  (the twin scorecard machinery: _grade_chain etc.)
 import scenario  # noqa: E402  (via report; kept explicit for run_chain)
+from fingerprint import system_fingerprint  # noqa: E402
 
 OUT_DIR = ADVERSARIAL / "out"
 DEFAULT_OUT = OUT_DIR / "matrix.latest.json"
@@ -151,6 +152,25 @@ def grade_variant(mutated: list, seed: int, oracle: dict,
 def cmp_result(axis: str, variant: str, base: dict, mut: dict) -> dict:
     """Public wrapper for _cmp -- see module note above."""
     return _cmp(axis, variant, base, mut)
+
+
+def _expected_rule_lost(oracle: dict, base: dict, mut: dict) -> list[str]:
+    """Steps whose oracle-expected rule fired on base but not on the mutation.
+
+    Tactic coverage is intentionally weaker than expected-rule attribution;
+    this separate field prevents a sibling rule from masking a lost expected
+    rule in the Phase-6 technique cells.
+    """
+    lost = []
+    for step, point in (oracle.get("detection_points") or {}).items():
+        expected = {r.get("rule_id") for r in (point.get("expected_rules") or [])}
+        if not expected:
+            continue
+        base_rules = {a.get("rule_id") for a in base.get("fired", []) if a.get("step") == step} & expected
+        mut_rules = {a.get("rule_id") for a in mut.get("fired", []) if a.get("step") == step} & expected
+        if base_rules and not mut_rules:
+            lost.append(step)
+    return sorted(lost)
 
 
 def _cmp(axis: str, variant: str, base: dict, mut: dict) -> dict:
@@ -364,7 +384,9 @@ def run_matrix(seed: int = 7, out: Path = DEFAULT_OUT) -> dict:
             base_payloads, spec["axis"], spec["variant"], seed,
             composition=spec.get("composition"))
         m_grade = _grade_variant(mutated, seed, oracle, base_build=base_build)
-        rows.append(_cmp(spec["axis"], spec["variant"], base, m_grade))
+        row = _cmp(spec["axis"], spec["variant"], base, m_grade)
+        row["expected_rule_lost_steps"] = _expected_rule_lost(oracle, base, m_grade)
+        rows.append(row)
 
     # per-axis summary (composition is its own bucket)
     axes = sorted({r["axis"] for r in rows})
@@ -393,7 +415,10 @@ def run_matrix(seed: int = 7, out: Path = DEFAULT_OUT) -> dict:
             "false_correlation_rate": base.get("false_correlation_rate"),
             "fired_count": len(base.get("fired", [])),
             "incident_count": base.get("incident_count"),
+            "tactic_covered_steps": base.get("tactic_covered_steps"),
+            "fired_pairs": sorted([[a.get("step"), a.get("rule_id")] for a in base.get("fired", [])]),
         },
+        "system_fingerprint": system_fingerprint(ROOT),
         "baseline_quality": _baseline_quality(base),
         "rows": rows,
         "per_axis": per_axis,
@@ -510,6 +535,7 @@ _ROW_KEYS = frozenset({
     "alert_order_ok", "order_retained", "causal_order_fidelity", "causal_order_retained",
     "decoy_contamination", "campaign_decoy_contamination", "decoy_clean",
     "pass", "causal_join_broken",
+    "expected_rule_lost_steps",
 })
 
 

@@ -550,6 +550,20 @@ echo
 echo "== WP-3.5-A: twin Phase 3.5 operational outcome metrics (alert reduction, false correlation, reconstruction, investigation, severity confusion -- determinism + mutation-soundness) =="; LAST_HEADER="== WP-3.5-A: twin Phase 3.5 operational outcome metrics (alert reduction, false correlation, reconstruction, investigation, severity confusion -- determinism + mutation-soundness) =="
 $PY eval/twin/test_phase3_5.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
+echo "== Phase 6: atom-level ratchet acceptance tests (positive/negative controls, masking, fingerprints) =="; LAST_HEADER="== Phase 6: atom-level ratchet acceptance tests =="
+$PY eval/twin/test_ratchet.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
+echo "== Phase 6: deterministic baseline/current ratchet gate =="; LAST_HEADER="== Phase 6: deterministic baseline/current ratchet gate =="
+$PY eval/twin/ratchet.py check || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
+echo "== Phase 6: baseline tamper/weakening guard =="; LAST_HEADER="== Phase 6: baseline tamper/weakening guard =="
+RATCHET_BASE="${RATCHET_GUARD_BASE:-origin/main}"
+if git rev-parse --verify "$RATCHET_BASE" >/dev/null 2>&1; then
+  $PY eval/twin/ratchet.py guard --base "$RATCHET_BASE" || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+else
+  echo "[NOTICE] ratchet guard base $RATCHET_BASE is unavailable in this shallow/local checkout; CI integrity job supplies it."
+fi
+echo
 echo "== scorecard: eval/SCORECARD.md must match a render of the artifacts THIS run produced =="; LAST_HEADER="== scorecard: eval/SCORECARD.md must match a render of the artifacts THIS run produced =="
 # MUST run AFTER every instrument stanza above (report.py, scenario_matrix,
 # evasion_search, layer_a, corpus_b, oracle_consistency, fire_check): it renders

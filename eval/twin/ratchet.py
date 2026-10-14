@@ -409,6 +409,9 @@ def cmd_refresh(args: argparse.Namespace) -> int:
     if not BASELINE_PATH.exists():
         print("[FAIL] baseline absent; use refresh --init once after the full gate")
         return 1
+    if len(args.reason or "") < 20:
+        print("[FAIL] refresh requires a >=20 character --reason")
+        return 1
     baseline_doc = _load_json(BASELINE_PATH)
     baseline = dict(baseline_doc.get("atoms") or {})
     waivers = _load_json(WAIVERS_PATH) if WAIVERS_PATH.exists() else {"waivers": []}
@@ -621,7 +624,7 @@ def main(argv: list[str] | None = None) -> int:
     check.add_argument("--report", type=Path, default=REPORT_PATH)
     check.set_defaults(func=cmd_check)
     refresh = sub.add_parser("refresh")
-    refresh.add_argument("--reason", required=True)
+    refresh.add_argument("--reason", default="initial measured baseline")
     refresh.add_argument("--init", action="store_true")
     refresh.add_argument("--scope")
     refresh.add_argument("--retire", action="append")

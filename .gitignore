@@ -64,6 +64,10 @@ eval/detection_accuracy/otrf-security-datasets/
 # it never dirties the committed eval/twin/report.json checkpoint; that file
 # is updated only deliberately (e.g. the nightly-eval workflow).
 eval/twin/report.latest.json
+# Phase 6 ratchet report is a generated inspection artifact.
+eval/twin/ratchet_report.latest.json
+# Layer C trend is generated/advisory and must not be committed by a nightly job.
+eval/trend_layer_c.jsonl
 # Phase 4 adversarial lane regenerated artifacts (gate runs must not dirty
 # tracked files -- same convention as eval/twin/report.latest.json).
 eval/adversarial/out/
