@@ -1,0 +1,7 @@
+# Owner decisions on rows of the P4 blind-oracle register (eval/twin/blind_grader.py).
+# Keyed by blind oracle_id, then step. A step not listed here reads OPEN in the register.
+# Only decisions the owner actually made are recorded; nothing here is inferred.
+decisions:
+  blind-phish-to-bec-8step-v1:
+    c2_beacon: "Q15 2026-10-14: common_beaconing threshold raised 6 -> 20 beats (the blind pass's noise-floor sample size)"
+    proxy_pool_logins: "Q16 2026-10-14: a 24 h sustained tier added beside the 300 s burst rule (common_credential_stuffing_sustained)"
