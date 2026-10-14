@@ -277,7 +277,11 @@ A differential/property review in sandbox copies found real defects in code that
   count (one double-signed commit let an unsigned one through), matched body
   lines, and skipped green on a missing base sha.
 - `SECURITY-INSIGHTS.yml` `header.url` pointed at a lowercase filename (404);
-  SBOM/CodeQL wording corrected to where those gates actually run.
+  SBOM/CodeQL wording corrected to where those gates actually run; the
+  free-text `repository.security.comment` (not allowed by the closed v2.2.0
+  `SecurityPosture`) became schema-valid `tools` entries.
+- splunk lane fails loudly on tracked `.log` files missing from the checkout
+  (partial clone or antivirus quarantine) instead of silently grading fewer files.
 
 ### Added (2026-09-04/05, Phase 5 — analyst read path for the entity/causal/evidence plane, PR #92 on `feat/phase-4`, merged 2026-09-10)
 

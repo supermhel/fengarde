@@ -50,6 +50,20 @@ SA = HERE / "splunk-attack-data" / "datasets" / "attack_techniques"
 OUT = HERE / "splunk_eval_results.json"
 
 
+def _missing_tracked_logs() -> list[str]:
+    """Tracked attack_techniques/*.log paths absent on disk; [] when the corpus
+    is not a git checkout (nothing to compare against)."""
+    import subprocess
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(SA.parents[1]), "ls-files", "--deleted", "--",
+             "datasets/attack_techniques"],
+            capture_output=True, text=True, check=True).stdout
+    except (OSError, subprocess.CalledProcessError):
+        return []
+    return [p for p in out.splitlines() if p.endswith(".log")]
+
+
 def iter_xml_events(text: str):
     """Yield each <Event ...>...</Event> block from a concatenated/one-per-line
     Splunk windows-security.log."""
@@ -121,6 +135,15 @@ def main():
     if lfs_pointers:
         print(f"[FAIL] splunk_eval: {lfs_pointers} .log files are un-fetched Git LFS "
               f"pointers -- install git-lfs and run 'git lfs pull' in {SA.parents[1]}")
+        return 1
+    # Tracked .log files missing from the working tree (sparse/partial checkout,
+    # or antivirus quarantining attack samples -- seen on Windows Defender,
+    # 23 files, 2026-10-14) shrink the corpus just as silently.
+    missing = _missing_tracked_logs()
+    if missing:
+        print(f"[FAIL] splunk_eval: {len(missing)} tracked .log file(s) missing from the "
+              f"checkout (e.g. {missing[0]}) -- partial checkout or antivirus quarantine; "
+              f"numbers would not be comparable to a full clone")
         return 1
 
     if not files:
