@@ -149,7 +149,24 @@ workflow regenerates it after every run and publishes the fresh file as an
 artifact, which lands in git when someone commits it locally — same
 convention as `eval/trend.jsonl` itself.
 
-## 6. What is deliberately NOT in this benchmark
+## 6. Code coverage (as reported for the OpenSSF Best Practices badge)
+
+Measured 2026-10-14 across the full gate suite set (118 suite invocations,
+0 suite failures; `coverage.py --branch`, data combined over every suite the
+M2 coverage gate runs):
+
+- **Statement coverage: 79.25%** (6,407 / 7,883 statements)
+- **Branch coverage: 79.73%** (2,042 fully covered + 346 partial / 2,778)
+
+The repo's own gate (`tools/coverage_gate.py`) does not block on a fixed
+80%: it enforces per-service measured floors (WS-2 88%, WS-3 65%,
+services-shared 42%, WS-4 40%, WS-6 60%, WS-8 60%, WS-9 68%) as regression
+guards. The higher OpenSSF badge tiers ask for published 80% statement and
+90% branch coverage; with the honest numbers above, **that criterion is
+stated as not-met** — the published value is the measured one, and raising
+it toward the tier is a per-service test-writing program, not a gate edit.
+
+## 7. What is deliberately NOT in this benchmark
 
 - No field-deployment detection rates, no vendor-comparative claims.
 - No latency/throughput/HA numbers (those live in `tools/fengarde_bench*.py`
