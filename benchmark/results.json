@@ -117,12 +117,12 @@
       "password_spray"
     ]
   },
-  "generated_at": "2026-10-14T19:08:21+00:00",
+  "generated_at": "2026-10-14T19:11:30+00:00",
   "schema_version": "1.0",
   "source": {
     "corpus_row_date": "2026-10-14",
     "file": "eval/trend.jsonl",
-    "twin_row_date": "2026-10-14T09:29:18+00:00"
+    "twin_row_date": "2026-10-14T19:06:34+00:00"
   },
   "twin": {
     "alert_reduction_ratio": 0.7143,
@@ -131,7 +131,7 @@
     "evidence_completeness": 0.9375,
     "false_correlation_rate": 1.0,
     "fpr": 0.0,
-    "incident_reconstruction_time_ms": 0.7212,
+    "incident_reconstruction_time_ms": 0.768,
     "mttd_seconds": 60.0,
     "mtti_seconds": 360.0,
     "mttr_seconds": null,

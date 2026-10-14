@@ -10,7 +10,7 @@ limitations in [`methodology.md`](methodology.md).
 > hand-labeled corpora*, not a field-trial detection rate. The benchmark's
 > credibility is exactly this boundary being stated, not blurred.
 
-## Current snapshot (corpus run **2026-10-14**, nightly CI run 38619447630, pinned corpora EVTX `4ceed2f` / splunk `eac2f8f`; twin run **2026-10-14T09:29Z**, run 38541350947)
+## Current snapshot (corpus run **2026-10-14**, nightly CI run 38619447630, pinned corpora EVTX `4ceed2f` / splunk `eac2f8f`; twin run **2026-10-14T19:06Z**, same run)
 
 | Metric | Value | Meaning (see methodology.md) |
 |---|---|---|
