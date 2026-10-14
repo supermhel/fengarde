@@ -154,6 +154,24 @@ bus topic — returns the v2 payload.
   alert-level member id; `ts_ms` = the alert's sanitized `time` (same
   `_valid_window_time` basis); the wall-clock-fallback digest path for
   time-less alerts is inherited verbatim.
+- **What `ts_ms` means — and does not** (owner decision WS-8 option A,
+  2026-10-14; pinned by `test_incident_graph_v2.py::test_ts_ms_semantics_contract`):
+  1. `ts_ms` is the time of the ONE alert that evidenced the WINNING kind,
+     and the winner is chosen by kind rank BEFORE time. A typed kind that
+     arrives later displaces an earlier field-pair edge, and `ts_ms` moves
+     LATER with it. It is not "when the pair first co-occurred".
+  2. The same canonical pair can carry different `ts_ms` in two incidents:
+     tracks key on the raw spelling (`actor:Lee` and `actor:lee` are two
+     tracks), so one track can hold an earlier evidencing alert the other
+     lacks. A consumer that needs one time per pair takes the MINIMUM over
+     the incidents' attributed edges, never the first edge it happens to see
+     (`eval/twin/causal_order.attribute_edges` does exactly that).
+  3. A time-less alert yields `ts_ms = int(sha256(member_id)[:12], 16)`, a
+     stable digest that is far outside any real epoch-ms range and so can
+     never equal an alert's time; treat it as "no time", not as an instant.
+  One edge has one instant and its direction comes from the entity types,
+  so the graph cannot say "A happened before B". For the attack's order use
+  the read-side `timeline.py` (below), which sorts the member alerts.
 - **`tactic_sources`** — identical to v1: tactic → live member alert ids
   carrying it, mirroring the incident's `member_alert_ids` attribution.
 - **Deterministic + idempotent under redelivery**: rebuilt from the track's
@@ -180,6 +198,19 @@ callable byte-for-byte for the byte-compat test only. The bus wiring
 (main.py) pairs each incident it publishes with this payload on the
 `incident.graph` topic (unchanged — it emits whatever the accessor
 returns); the `incidents` emission itself is byte-for-byte unchanged.
+
+### Read-side timeline (`timeline.py`, owner decision WS-8 option B, 2026-10-14)
+
+`build_timeline(incident, alerts)` orders an incident's OWN member alerts by
+time, groups simultaneous alerts into one step (a tie is never ordered by an
+arbitrary key), lists alerts without a usable time under `untimed` instead of
+sorting them to the start, and drops (and counts) alerts of another tenant.
+Pure and deterministic, computed on read: no promotion, id, topic or mapping
+changes, no cross-alert inference -- the same posture as `campaigns.py`.
+Graded by `eval/twin/test_timeline_order.py` (timeline_order_ok on every
+storyline, with a mirrored-clock negative control). Time order is necessary
+for causation, not sufficient; the graph's `directional_discrimination` is
+unchanged by this view.
 
 ## Correlation model
 
