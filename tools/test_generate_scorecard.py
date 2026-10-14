@@ -157,12 +157,15 @@ def test_check_detects_a_changed_artifact() -> None:
         rc, out = run_main(["--check"])
         check(rc == 0, f"--check on an unchanged card exited {rc}: {out[:400]}")
 
-        # mutate ONE number in a copied artifact
+        # mutate ONE number in a copied artifact (read the live value, so the
+        # test does not break every time the real metric legitimately moves)
         bad = copy.deepcopy(arts)
-        bad["twin"]["metrics"]["mutation_robustness"] = 0.9459
+        live = bad["twin"]["metrics"]["mutation_robustness"]
+        moved = round(live - 0.0271, 4) if live > 0.5 else round(live + 0.0271, 4)
+        bad["twin"]["metrics"]["mutation_robustness"] = moved
         rc, out = run_main(["--check"], arts=bad)
         check(rc == 1, "a changed artifact number did NOT make --check exit non-zero")
-        check("0.9189" in out and "0.9459" in out,
+        check(repr(live) in out and repr(moved) in out,
               f"--check output does not name both committed and fresh values: {out[:600]}")
         check("mutation_robustness" in out,
               "--check output does not name the changed metric")
@@ -183,7 +186,9 @@ def test_hand_edit_and_crlf() -> None:
     saved_card = gs.CARD
     gs.CARD = card
     try:
-        edited = text.replace("| tpr | 1.0 ", "| tpr | 0.9 ", 1)
+        # edit whatever the first tpr cell holds (not a hard-coded live value)
+        edited = re.sub(r"(\| tpr \| )([\d.]+)", lambda m: m.group(1) + (
+            "0.9" if m.group(2) != "0.9" else "0.8"), text, count=1)
         check(edited != text, "could not construct a hand edit to the card")
         card.write_text(edited, encoding="utf-8", newline="\n")
         rc, out = run_main(["--check"])
@@ -237,19 +242,24 @@ def test_provenance_and_freshness() -> None:
     check(probs and all("stale artifact, rerun the gate" in p for p in probs),
           f"an old artifact mtime was not rejected: {probs[:2]}")
 
-    # fire_check holding {harness_ok: false} -- wrong shape AND wrong content
+    # fire_check holding {harness_ok: false} (what fire_check.py writes when its
+    # canary fails) -- the LOADER must refuse it. The first version of this check
+    # wrote the file to a temp dir, loaded from ROOT instead, and then asserted the
+    # dict it had just assigned itself (external review 2026-10-14).
     d = tempfile.mkdtemp(prefix="scorecard_badfire_")
     try:
-        p = Path(d) / reg.ARTIFACTS_BY_KEY["fire_check"].path
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(json.dumps({"harness_ok": False}), encoding="utf-8")
-        got, probs = gs.load_artifacts(ROOT)
-        check(not probs, "sanity: the real set loaded fine")
-        arts_bad = copy.deepcopy(arts)
-        arts_bad["fire_check"] = {"harness_ok": False}
-        probs = gs.validate_provenance(arts_bad, inputs_mtime=0.0)
-        check(isinstance(arts_bad["fire_check"], dict),
-              "fire_check must be a LIST -- a dict is the wrong shape")
+        for spec in reg.ARTIFACTS:
+            dst = Path(d) / spec.path
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(ROOT / spec.path, dst)
+        (Path(d) / reg.ARTIFACTS_BY_KEY["fire_check"].path).write_text(
+            json.dumps({"harness_ok": False, "results": []}), encoding="utf-8")
+        got, probs = gs.load_artifacts(Path(d))
+        check(any(p.startswith("[SHAPE] fire_check") and "expected a list" in p for p in probs),
+              f"a dict-shaped fire_check was not rejected by the loader: {probs}")
+        check("fire_check" not in got, "a wrong-shape fire_check was loaded anyway")
+        _, ok_probs = gs.load_artifacts(ROOT)
+        check(not ok_probs, f"control: the real set loads cleanly: {ok_probs}")
     finally:
         shutil.rmtree(d, ignore_errors=True)
 
@@ -315,6 +325,48 @@ def test_control_verification_and_none_register() -> None:
         check(any("not invoked" in p for p in probs),
               f"a control in an unwired test file was accepted: {probs}")
 
+        # (d) external review 2026-10-14: a test called ONLY from another
+        #     never-called function is dormant (it used to pass, because every
+        #     expression-statement call anywhere counted)
+        f2 = Path(d) / "tools" / "test_chain_control.py"
+        f2.write_text(
+            "def test_dormant():\n    return 1\n\n\n"
+            "def never_called():\n    test_dormant()\n\n\n"
+            "def test_listed():\n    return 1\n\n\n"
+            "def main():\n    for t in [test_listed]:\n        t()\n\n\n"
+            "if __name__ == '__main__':\n    main()\n", encoding="utf-8")
+        gate_chain = gate + "\n$PY tools/test_chain_control.py\n"
+        probs = gs.check_one_control(reg.ControlRef("tools/test_chain_control.py",
+                                                    "def test_dormant", "y"),
+                                     Path(d), gate_text=gate_chain)
+        check(any("never CALLED" in p for p in probs),
+              f"a test reachable only from a dormant function was accepted: {probs}")
+        probs = gs.check_one_control(reg.ControlRef("tools/test_chain_control.py",
+                                                    "def test_listed", "y"),
+                                     Path(d), gate_text=gate_chain)
+        check(probs == [], f"control: a test main() runs from a list must verify: {probs}")
+
+        # (e) a COMMENTED-OUT gate line is not wiring, and a basename is not a path
+        probs = gs.check_one_control(ok_ref, Path(d), gate_text=gate + f"\n# $PY {wiring}\n")
+        check(any("not invoked" in p for p in probs),
+              f"a commented-out gate line counted as wiring: {probs}")
+        probs = gs.check_one_control(ok_ref, Path(d),
+                                     gate_text=gate + "\n$PY other/test_ghost_control.py\n")
+        check(any("not invoked" in p for p in probs),
+              f"a same-named file elsewhere counted as wiring: {probs}")
+        probs = gs.check_one_control(ok_ref, Path(d),
+                                     gate_text=gate + "\n(cd tools && $PY test_ghost_control.py)\n")
+        check(probs == [], f"control: a `cd DIR && $PY NAME` stanza is wiring: {probs}")
+
+        # (f) a needle on two lines is ambiguous
+        f3 = Path(d) / "tools" / "test_dup_control.py"
+        f3.write_text("def test_x():\n    return 1\n\n\ndef test_x_more():\n    return 1\n\n\n"
+                      "if __name__ == '__main__':\n    test_x()\n    test_x_more()\n",
+                      encoding="utf-8")
+        probs = gs.check_one_control(reg.ControlRef("tools/test_dup_control.py", "def test_x", "y"),
+                                     Path(d), gate_text=gate + "\n$PY tools/test_dup_control.py\n")
+        check(any("must be unique" in p for p in probs), f"an ambiguous needle was accepted: {probs}")
+
         # every REAL control verifies against the real tree
         probs = gs.verify_controls(ROOT)
         check(probs == [], f"a registry control does not verify: {probs}")
@@ -334,8 +386,16 @@ def test_control_verification_and_none_register() -> None:
           "ai_to_ot/fpr is not in the NONE register (the spec requires it there)")
     check("attribution_accuracy" in reg_section,
           "attribution_accuracy is not in the NONE register")
-    check(f"{len(model['none_register'])} of " in text,
+    check(f"{model['none_rendered']} of {gs._total_cells(model)} rendered metric cells" in text,
           "the register does not print its own NONE count")
+    # external review 2026-10-14: the count must be of RENDERED cells only; the
+    # twin-only 'not measured' entries are not rendered in any table
+    above = text.split("## Register: metric cells with NO control", 1)[0]
+    rendered_none = sum(1 for ln in above.splitlines() if ln.endswith("| **NONE** |"))
+    check(model["none_rendered"] == rendered_none,
+          f"none_rendered={model['none_rendered']} but {rendered_none} NONE rows are rendered")
+    check(model["none_rendered"] < len(model["none_register"]),
+          "vacuity guard: the register must also list not-measured entries")
     # the twin-only metrics are 'not measured' for the other three storylines
     for s in reg.STORYLINES:
         if s == reg.TWIN_STORYLINE:
@@ -387,17 +447,62 @@ def test_limits_expire() -> None:
     check(got["fire_check_is_own_fixture"][0] is False,
           "a non-firing rule did NOT expire the own-fixture caveat")
 
-    # the ratchet floor appearing expires 'no ratchet yet'
-    d = tempfile.mkdtemp(prefix="scorecard_floor_")
+    # ratchet scope: a missing baseline, a stale prefix, and full coverage each
+    # expire the bullet (the other guards need the real tree, so call it directly)
+    d = tempfile.mkdtemp(prefix="scorecard_ratchet_")
     try:
-        (Path(d) / reg.RATCHET_FLOOR_FILE).parent.mkdir(parents=True, exist_ok=True)
-        (Path(d) / reg.RATCHET_FLOOR_FILE).write_text("{}", encoding="utf-8")
-        # the other guards need the real tree, so check this one directly
-        ok, ev = reg._g_no_ratchet(arts, Path(d))
-        check(ok is False, "the ratchet floor file did NOT expire 'no ratchet yet'")
-        check(reg.RATCHET_FLOOR_FILE in ev, "the evidence did not name the floor constant")
+        ok, ev = reg._g_ratchet_scope(arts, Path(d))
+        check(ok is False and "missing" in ev, f"no baseline did not expire the bullet: {ev}")
+        bl = Path(d) / reg.RATCHET_BASELINE_FILE
+        bl.parent.mkdir(parents=True, exist_ok=True)
+        real_atoms = json.loads((ROOT / reg.RATCHET_BASELINE_FILE).read_text(encoding="utf-8"))["atoms"]
+        bl.write_text(json.dumps({"atoms": {k: v for k, v in real_atoms.items()
+                                            if not k.startswith("twin/")}}), encoding="utf-8")
+        ok, ev = reg._g_ratchet_scope(arts, Path(d))
+        check(ok is False and "fpr->twin/fpr" in ev,
+              f"a RATCHET_ATOMS prefix with no atom did not expire the bullet: {ev}")
+        saved = dict(reg.RATCHET_ATOMS)
+        try:
+            for m in reg.METRICS:
+                reg.RATCHET_ATOMS.setdefault(m.key, "corpus_b/")
+            bl.write_text(json.dumps({"atoms": real_atoms}), encoding="utf-8")
+            ok, ev = reg._g_ratchet_scope(arts, Path(d))
+            check(ok is False and "every card metric" in ev,
+                  f"full ratchet coverage did not expire the bullet: {ev}")
+        finally:
+            reg.RATCHET_ATOMS.clear()
+            reg.RATCHET_ATOMS.update(saved)
     finally:
         shutil.rmtree(d, ignore_errors=True)
+
+    # external review 2026-10-14: the two guards that could never fail now can
+    nodecoy = copy.deepcopy(arts)
+    for node in nodecoy["scenario_matrix"]["scenarios"].values():
+        for r in node.get("rows", []):
+            r["decoy_contamination"] = None
+    ok, ev = reg._g_decision(nodecoy, ROOT)
+    check(ok is False, f"no measured decoy anywhere did not expire decoy_scope: {ev}")
+    single = copy.deepcopy(arts)
+    single["__oracle_index_rules__"] = {k: {**v, "rule_ids": v["rule_ids"][:1]}
+                                        for k, v in arts["__oracle_index_rules__"].items()}
+    ok, ev = reg._g_two_rule_steps(single, ROOT)
+    check(ok is False, f"no multi-rule step did not expire attribution_is_per_step: {ev}")
+
+    # the list-valued oracle-consistency metrics count their entries
+    oc = copy.deepcopy(arts["oracle_consistency"])
+    first = sorted(oc)[0]
+    oc[first]["decorative_expectations"] = [{"x": 1}, {"y": 2}]
+    oc[first]["new"] = [{"z": 3}]
+    check(reg._oracle_consistency(oc, "decorative_expectations") == 2 + sum(
+              len(v.get("decorative_expectations") or []) for k, v in oc.items() if k != first),
+          "decorative_expectations does not count list entries")
+    check(reg._oracle_consistency(oc, "new") >= 1, "a non-empty `new` list rendered as 0")
+    oc[first]["accepted_count"] = "two"
+    try:
+        reg._oracle_consistency(oc, "accepted_count")
+        check(False, "an unreadable accepted_count was silently counted")
+    except TypeError:
+        pass
 
     # ANCHORED evtx/splunk guard: the real line must NOT trip it, a direct
     # evtx_eval.py invocation MUST.
@@ -469,6 +574,8 @@ def test_per_technique_math() -> None:
     check(den["it_intrusion"][:2] == (5, 6), f"it_intrusion wrong: {den['it_intrusion']}")
     check(den["infra_takeover"][:2] == (3, 3), f"infra_takeover wrong: {den['infra_takeover']}")
     check(den["phishing_bec"][:2] == (3, 8), f"phishing_bec wrong: {den['phishing_bec']}")
+    check(den["ot_opcua_sabotage"][:2] == (5, 5),
+          f"ot_opcua_sabotage wrong: {den['ot_opcua_sabotage']}")
 
     # (d) 2 of 12 applicable variants lose a technique's step; N/A excluded
     fix = copy.deepcopy(arts)
@@ -520,23 +627,35 @@ def test_doc_lint() -> None:
     arts = real_arts()
     model = gs.build_model(copy.deepcopy(arts))
     q = model["quotable"]
+    live = arts["twin"]["metrics"]["mutation_robustness"]     # not a hard-coded number
     check("mutation_robustness" in q, "mutation_robustness is not in the quotable block")
-    check(any(abs(v - 0.9189) < 1e-9 for v in q["mutation_robustness"].values()),
-          "the quotable block does not hold 0.9189 for mutation_robustness")
+    check(any(abs(v - live) < 1e-9 for v in q["mutation_robustness"].values()),
+          f"the quotable block does not hold {live} for mutation_robustness")
+    stale = 0.6111 if abs(live - 0.6111) > 1e-9 else 0.6222
 
     d = tempfile.mkdtemp(prefix="scorecard_lint_")
     try:
         (Path(d) / "README.md").write_text(
-            "# R\n\nmutation_robustness 0.9189 is the Layer A number.\n", encoding="utf-8")
+            f"# R\n\nmutation_robustness {live} is the Layer A number.\n", encoding="utf-8")
         (Path(d) / "SSOT.md").write_text("## 2. Proven\n\nnope\n", encoding="utf-8")
         probs = gs.lint_docs(Path(d), quotable=q)
         check(probs == [], f"a correct README number was rejected: {probs}")
 
         (Path(d) / "README.md").write_text(
-            "# R\n\nmutation_robustness 0.6111 is the Layer A number.\n", encoding="utf-8")
+            f"# R\n\nmutation_robustness {stale} is the Layer A number.\n", encoding="utf-8")
         probs = gs.lint_docs(Path(d), quotable=q)
         check(len(probs) == 1 and "README.md:3" in probs[0],
               f"a stale README number was not named file:line: {probs}")
+
+        # external review 2026-10-14: a number ending a sentence escaped the lint
+        (Path(d) / "README.md").write_text(
+            f"# R\n\nLayer A says mutation_robustness {stale}.\nAnd tpr=0.42.\n", encoding="utf-8")
+        probs = gs.lint_docs(Path(d), quotable=q)
+        check(len(probs) == 2, f"numbers at the end of a sentence were not linted: {probs}")
+        (Path(d) / "README.md").write_text(
+            f"# R\n\nLayer A says mutation_robustness {live}.\n", encoding="utf-8")
+        check(gs.lint_docs(Path(d), quotable=q) == [],
+              "control: a correct number before a full stop must pass")
 
         # the coincidence control: FCR 1.0 is only accepted when the CARD holds it
         (Path(d) / "README.md").write_text("# R\n\nFCR 1.0 here\n", encoding="utf-8")
@@ -589,6 +708,13 @@ def test_gate_wiring() -> None:
     check(probs and "does not invoke" in probs[0],
           f"a gate without the stanza passed: {probs}")
 
+    # external review 2026-10-14: commenting every stanza out used to pass
+    commented = "\n".join(("# " + ln) if ("$PY" in ln or reg.CHECK_STANZA in ln) else ln
+                          for ln in gate.splitlines())
+    probs = gs.assert_gate_wiring(commented)
+    check(probs and "does not invoke" in probs[0],
+          f"a gate with every stanza commented out passed the wiring check: {probs}")
+
     # move the check BEFORE the last instrument
     lines = gate.splitlines()
     idx = next(i for i, ln in enumerate(lines) if reg.CHECK_STANZA in ln)
@@ -617,7 +743,9 @@ def test_regressions_on_write() -> None:
     joined = "\n".join(lines)
     check("mutation_robustness" in joined, f"a falling higher-better metric was not listed: {joined}")
     check("fpr" in joined, "a rising lower-better metric was not listed")
-    check("0.9189" in joined and "0.5" in joined, "the regression line has no old->new values")
+    live = arts["twin"]["metrics"]["mutation_robustness"]
+    check(str(float(live)) in joined and "0.5" in joined,
+          "the regression line has no old->new values")
     check(not any("chain_fidelity" in x for x in lines),
           f"an unchanged metric was reported: {lines}")
 
@@ -724,7 +852,7 @@ def test_oracle_shapes_and_storyline_registry() -> None:
 
     import yaml
     for f in ("oracle.yaml", "oracle_it_intrusion.yaml", "oracle_infra_takeover.yaml",
-              "oracle_phishing_bec.yaml"):
+              "oracle_phishing_bec.yaml", "oracle_ot_opcua_sabotage.yaml"):
         o = yaml.safe_load((ROOT / "eval/twin" / f).read_text(encoding="utf-8"))
         for step, node in o["detection_points"].items():
             er = node.get("expected_rules") or []
