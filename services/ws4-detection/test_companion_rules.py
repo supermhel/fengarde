@@ -320,19 +320,31 @@ def run_suppression_invariant():
         check(SSH_COMPANION in ids6,
               f"(6) the per-account alert of the split attack must survive the loud sibling, got {ids6}")
 
-        # (7) a distinct-count companion cannot name its events, so it is never
-        #     dropped: one resolver address both trips the per-source DNS rule and
-        #     carries a tunnel under one parent -> both alerts are emitted.
-        det7 = _detector(Path(tmp) / "open")
-        dns_ids: set = set()
-        for i in range(45):
-            ev = _event("dns_query", f"query[A] c{i:03d}.t9.exfil.example.invalid from 10.9.9.9",
-                        200 + i, BASE + 300_000 + i * 500)
-            _m, alerts = _emit_one(det7, ev)
-            dns_ids.update(a["rule_id"] for a in alerts)
-        check({"a1b2c3d4-5e6f-4708-9a1b-2c3d4e5f6071",
-               "5f3c9d18-72a4-4e0b-b6d1-8c2e7a4f1b93"} <= dns_ids,
+        # (7) one resolver address carries the site's ordinary lookups AND a
+        #     tunnel under one parent: the per-source window holds MORE names
+        #     than the tunnel's, so the per-parent alert is not a duplicate and
+        #     both alerts are emitted.
+        DNS_SIB, DNS_COMP = "a1b2c3d4-5e6f-4708-9a1b-2c3d4e5f6071", "5f3c9d18-72a4-4e0b-b6d1-8c2e7a4f1b93"
+
+        def dns_run(names):
+            det = _detector(Path(tmp) / "open")
+            seen: list = []
+            for i, name in enumerate(names):
+                ev = _event("dns_query", f"query[A] {name} from 10.9.9.9", 200 + i, BASE + 300_000 + i * 500)
+                _m, alerts = _emit_one(det, ev)
+                seen += [a["rule_id"] for a in alerts]
+            return seen
+
+        tunnel = [f"c{i:03d}.t9.exfil.example.invalid" for i in range(45)]
+        dns_ids = set(dns_run([f"site{i}.benign{i}.example.org" for i in range(30)] + tunnel))
+        check({DNS_SIB, DNS_COMP} <= dns_ids,
               f"(7) resolver-borne tunnel must alert per source AND per parent domain, got {sorted(dns_ids)}")
+        # (8) control: one host that ONLY tunnels -- the per-source and per-parent
+        #     windows hold the same names, so the companion is the same alert
+        #     seen from the other key and is dropped (no duplicate per event)
+        ids8 = dns_run(tunnel)
+        check(DNS_SIB in ids8 and DNS_COMP not in ids8,
+              f"(8) a pure tunnel host must alert once (sibling), not twice, got {sorted(set(ids8))}")
 
 
 def main():
