@@ -290,6 +290,12 @@ def _reference(grade: dict, result, oracle: dict) -> dict:
             "causal_order_fidelity": round(both / n, 4) if n and grade["graph_edges"] else None}
 
 
+#: Storylines with ONE alert-raising step (cloud_iam_abuse, 2026-10-14: only impossible travel can
+#: fire on the cloud control plane). There is no alert order to grade and no incident, hence no graph:
+#: the checks below assert exactly that (None / zero edges) instead of skipping the storyline.
+_SINGLE_ALERT = frozenset({"cloud_iam_abuse"})
+
+
 def _test_real() -> dict:
     out = {}
     for sdef in reg.ALL:
@@ -303,22 +309,29 @@ def _test_real() -> dict:
                ref["graded"] == c["graded"] and ref["order_concordance"] == c["order_concordance"]
                and ref["causal_order_fidelity"] == c["causal_order_fidelity"],
                f"ref={ref} module=({c['graded']}, {c['order_concordance']}, {c['causal_order_fidelity']})")
-        _check(f"(c) {sdef.name}: identity run - concordance 1.0, alert_order_ok True, forbidden realised 0.0, "
-               "WS-3 story order ok, parser time agreement 1.0",
-               c["order_concordance"] == 1.0 and g["alert_order_ok"] is True
-               and c["forbidden_order_realised_rate"] == 0.0 and c["story_order_ok"] is True
+        single = sdef.name in _SINGLE_ALERT
+        want = None if single else True
+        _check(f"(c) {sdef.name}: identity run - concordance 1.0, alert_order_ok {want}, forbidden realised 0.0, "
+               f"WS-3 story order {want}, parser time agreement 1.0",
+               c["order_concordance"] == 1.0 and g["alert_order_ok"] is want
+               and c["forbidden_order_realised_rate"] == 0.0 and c["story_order_ok"] is want
                and c["parser_time_agreement"] == 1.0,
                f"concordance={c['order_concordance']} forbidden={c['forbidden_order_realised_rate']} "
                f"story={c['story_order_ok']} parser={c['parser_time_agreement']}")
-        _check(f"(c) {sdef.name}: every graph edge is attributed to an attack alert (0 unattributed/ambiguous)",
+        _check(f"(c) {sdef.name}: every graph edge is attributed to an attack alert (0 unattributed/ambiguous)"
+               + (" -- single-alert storyline: no incident, so no edge at all" if single else ""),
                c["edge_stats"]["unattributed"] == 0 and c["edge_stats"]["ambiguous"] == 0
-               and c["edge_stats"]["edges_in"] > 0, str(c["edge_stats"]))
+               and (c["edge_stats"]["edges_in"] == 0 if single else c["edge_stats"]["edges_in"] > 0),
+               str(c["edge_stats"]))
         a = json.dumps(c, sort_keys=True)
         b = json.dumps(report._grade_chain(reg.run(sdef, SEED), oracle)["causal_order"], sort_keys=True)
         _check(f"(c) {sdef.name}: same seed -> byte-identical causal_order output, no wall-clock field",
                a == b and "elapsed" not in a and "wall" not in a)
     expect = {"ai_to_ot": (5, 1.0), "it_intrusion": (6, 0.8333), "infra_takeover": (2, 1.0),
-              "phishing_bec": (4, 1.0), "ot_opcua_sabotage": (4, 1.0)}
+              "phishing_bec": (4, 1.0), "ot_opcua_sabotage": (4, 1.0),
+              # 2026-10-14, first run of P1 storylines 6-9 (measured, not tuned)
+              "ransomware": (6, 0.8333), "insider_exfil": (5, 0.8), "cloud_iam_abuse": (6, None),
+              "supply_chain_ci": (3, 1.0)}
     # 2026-10-03: measured on the first run of the 4th storyline; 2026-10-14: the 5th (ot_opcua_sabotage)
     got = {n: (g["causal_order"]["graded"], g["causal_order"]["causal_order_fidelity"]) for n, g in out.items()}
     _check("(c) identity causal_order_fidelity / graded-pair counts (seed 7) match the measured values",

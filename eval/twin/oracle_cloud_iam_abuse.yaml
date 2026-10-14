@@ -1,0 +1,173 @@
+# =============================================================================
+# FENGARDE eval/twin/oracle_cloud_iam_abuse.yaml
+# Grading ground truth for the cloud IAM abuse storyline (storyline_cloud_iam_abuse.py):
+#   console_stuffing -> victim_session -> attacker_console_login -> account_discovery
+#     -> create_backdoor_user -> attach_admin_policy -> create_access_key -> log_tampering
+#
+# AUTHORING RULES (written 2026-10-14 BEFORE the builder was run through the pipeline; same
+# discipline as oracle_phishing_bec.yaml; design-specs/step2 section 2.4 with the critic's
+# correction that IAM persistence is split one technique per step). NO RULE WAS INVENTED: one
+# step can fire a shipped rule, six are honest gaps, one is benign context. This oracle is the
+# inventory of cloud control-plane coverage debt, stated as such.
+#   incident_count: the only alert-raising step raises ONE alert with ONE tactic; WS-8 promotes a
+#   track on two distinct tactics, so no full-chain incident is produced: 0.
+# =============================================================================
+schema_version: 1
+oracle_id: "cloud-iam-abuse-v1"
+kind: "attack-chain-grading-oracle"
+scope: "cloud-iam-abuse"
+
+provenance:
+  authored: "2026-10-14"
+  pipeline_run_before_authoring: false
+  basis: "rule description/detection/siem blocks and parser docstrings only"
+  rules_read: 
+    common_impossible_travel: "78864cbe016a52317b8a4d00ce78ac1d8d83d90f5fb9d4c975f13f86e6b97bbb"
+    common_password_spray: "c565b58f392c8e85ac08049c49d1ab119846540d7bcbea86f0ea2f4e30d1a089"
+    common_bruteforce_by_account: "71734317dfda0c8ecfbb1c62e786df21a6e9c81c1d3c53901a3822cb1079df20"
+    cloud_root_console_login: "3bf3fe9bb9b8f44e872d210d8cbd627bae0d8d9b1dba51cbe4c072edd76baaec"
+    dc_mass_vm_delete: "38a2fca1e662c6e63775da687c95780852ce7f5d280a160009e166756ba0dd51"
+
+expected_sequence:
+  - console_stuffing
+  - victim_session
+  - attacker_console_login
+  - account_discovery
+  - create_backdoor_user
+  - attach_admin_policy
+  - create_access_key
+  - log_tampering
+
+sequence_constraints:
+  strict_order: true
+  allow_extra_steps: false
+  max_clock_span_seconds: 3600
+
+allowed_relationships:
+  - {from: console_stuffing,       to: attacker_console_login, allowed: true, causal_kind: credential_access}  # same IAM user
+  - {from: attacker_console_login, to: account_discovery,      allowed: true, causal_kind: discovery}          # same user + address
+  - {from: account_discovery,      to: create_backdoor_user,   allowed: true, causal_kind: persistence}        # same user + address
+  - {from: create_backdoor_user,   to: attach_admin_policy,    allowed: true, causal_kind: privilege}          # same user + address
+  - {from: attach_admin_policy,    to: create_access_key,      allowed: true, causal_kind: persistence}        # same user + address
+  - {from: create_access_key,      to: log_tampering,          allowed: true, causal_kind: defense_evasion}    # same user + address
+  - {from: log_tampering,          to: console_stuffing,       allowed: false, causal_kind: none}
+
+detection_points:
+  console_stuffing:
+    step: console_stuffing
+    role: "9-12 failed console logins for one IAM user from 9-12 distinct addresses"
+    expected_event_source: "cloudtrail ConsoleLogin, responseElements Failure (class 3002, activity 1, status Failure)"
+    expected_rules: []
+    must_not_fire:
+      - "4f8a2c61-9e3d-4b57-8a1c-6d2e5f7a8b90"        # selects activity 4; cloudtrail emits activity 1
+    gap:
+      no_rule_exists: true
+      attack_technique: "T1110.004"       # Brute Force: Credential Stuffing
+      reason: >
+        CROSS-SOURCE BLIND SPOT, derived from the docs before any run: cloudtrail.py maps every
+        ConsoleLogin to activity 1 and carries a failure only in `status`, while every failed-
+        authentication rule (common_bruteforce, _by_account, common_password_spray, _sourceless)
+        selects activity 4. The shape is the credential-stuffing rule's own, but it cannot see
+        it from this source. A parser or rule fix flips this step to a stale-gap finding.
+
+  victim_session:
+    step: victim_session
+    role: "the user's own console login from the home country (enabling telemetry)"
+    expected_event_source: "cloudtrail ConsoleLogin Success (class 3002, activity 1)"
+    context: true
+    expected_rules: []
+    must_not_fire:
+      - "7081a2b3-c405-4de3-be5f-6a7b8c9d0e12"     # one country so far
+    gap:
+      no_rule_exists: true
+      reason: "Not an attack step: the login the foreign login is judged against."
+
+  attacker_console_login:
+    step: attacker_console_login
+    role: "the same user logs in from a second country within the hour"
+    expected_event_source: "cloudtrail ConsoleLogin Success + geo enrichment"
+    expected_rules:
+      - {rule_id: "7081a2b3-c405-4de3-be5f-6a7b8c9d0e12", title: "Impossible travel (same account, distinct countries in a short window)", level: high, role: account-takeover detection}
+    must_not_fire:
+      - "c3d4e5f6-7081-4920-9a3b-4c5d6e7f8093"     # an IAM user, not the root account
+    gap: {no_rule_exists: false}
+
+  account_discovery:
+    step: account_discovery
+    role: "25-35 List*/Describe* calls"
+    expected_event_source: "cloudtrail API calls (class 6003, activity 2)"
+    expected_rules: []
+    gap:
+      no_rule_exists: true
+      attack_technique: "T1087.004"       # Account Discovery: Cloud Account
+      reason: "No shipped rule counts cloud API reads per identity."
+
+  create_backdoor_user:
+    step: create_backdoor_user
+    role: "CreateUser"
+    expected_event_source: "cloudtrail CreateUser (class 6003, activity 1)"
+    expected_rules: []
+    gap:
+      no_rule_exists: true
+      attack_technique: "T1136.003"       # Create Account: Cloud Account
+      reason: "No shipped rule reads cloud IAM changes (the account-lifecycle rule reads Windows 3003 events)."
+
+  attach_admin_policy:
+    step: attach_admin_policy
+    role: "AttachUserPolicy AdministratorAccess"
+    expected_event_source: "cloudtrail AttachUserPolicy (class 6003, activity 3)"
+    expected_rules: []
+    gap:
+      no_rule_exists: true
+      attack_technique: "T1098.003"       # Account Manipulation: Additional Cloud Roles
+      reason: "No shipped rule reads cloud IAM policy attachment."
+
+  create_access_key:
+    step: create_access_key
+    role: "CreateAccessKey for the new user"
+    expected_event_source: "cloudtrail CreateAccessKey (class 6003, activity 1)"
+    expected_rules: []
+    gap:
+      no_rule_exists: true
+      attack_technique: "T1098.001"       # Account Manipulation: Additional Cloud Credentials
+      reason: "No shipped rule reads cloud credential creation."
+
+  log_tampering:
+    step: log_tampering
+    role: "DeleteTrail"
+    expected_event_source: "cloudtrail DeleteTrail (class 6003, activity 4)"
+    expected_rules: []
+    must_not_fire:
+      - "8c4e1f90-7a2b-4d33-9e55-6f1b2c3a4d03"            # scoped to vmware_vsphere deletes
+    gap:
+      no_rule_exists: true
+      attack_technique: "T1562.008"       # Impair Defenses: Disable or Modify Cloud Logs
+      reason: "No shipped rule reads audit-trail configuration changes."
+
+step_dependencies:
+  attacker_console_login: [victim_session]
+
+severity_band:
+  score: {min: 40, max: 100}
+  severity_id: {min: 3, max: 6}
+  dominant_band: "high"
+
+evidence:
+  correlation_key: [actor.user.name]
+  per_step:
+    console_stuffing:       {fields: [actor.user.name, src_endpoint.ip]}
+    victim_session:         {fields: [actor.user.name, src_endpoint.ip]}
+    attacker_console_login: {fields: [actor.user.name, src_endpoint.ip, src_endpoint.location.country]}
+    account_discovery:      {fields: [actor.user.name, api.operation]}
+    log_tampering:          {fields: [actor.user.name, api.operation]}
+
+incident_membership:
+  incident_count: 0          # one alert, one tactic: no track reaches WS-8's two-tactic promotion
+  incident_key: "cloud-iam-abuse"
+  include: [console_stuffing, victim_session, attacker_console_login, account_discovery, create_backdoor_user, attach_admin_policy, create_access_key, log_tampering]
+  cross_step_rule_ids:
+    - "7081a2b3-c405-4de3-be5f-6a7b8c9d0e12"
+
+campaign_membership:
+  campaign_count: 0
+  full_coverage: false

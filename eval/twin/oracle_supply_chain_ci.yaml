@@ -1,0 +1,125 @@
+# =============================================================================
+# FENGARDE eval/twin/oracle_supply_chain_ci.yaml
+# Grading ground truth for the CI supply-chain storyline (storyline_supply_chain_ci.py):
+#   malicious_dependency -> ci_secret_read -> agent_runaway -> artifact_exfil
+#     -> pipeline_sabotage -> privileged_runner
+#
+# AUTHORING RULES (written 2026-10-14 BEFORE the builder was run through the pipeline; same
+# discipline as oracle_phishing_bec.yaml; design-specs/step2 section 2.5). NO RULE WAS INVENTED:
+# one honest gap (the poisoned install). incident_count: every alert-raising step comes from the
+# CI runner's one address (agent client_ip, pod sourceIPs), so one ip track can span them: 1.
+# =============================================================================
+schema_version: 1
+oracle_id: "supply-chain-ci-v1"
+kind: "attack-chain-grading-oracle"
+scope: "supply-chain-ci"
+
+provenance:
+  authored: "2026-10-14"
+  pipeline_run_before_authoring: false
+  basis: "rule description/detection/siem blocks and parser docstrings only"
+  rules_read: 
+    agent_credential_file_access: "637afec32d45498bd8a711a4eceb0c558d42d1512096eae05321ee355fdcf61c"
+    agent_tool_call_burst: "db5c2d02211d5b52c6630593c2a92984192efa16398c9c5ddc17cd8228053f5b"
+    agent_egress_non_allowlisted_domain: "039182013fb63db1e79b01dc4380949ad8822b0b49bc135ab8c7e3d79625bd92"
+    agent_destructive_command: "e88e34a5b94e61c3735beb4f0b2dfbb73b59f3a1ece63219d93b1dec0f9634fe"
+    dc_privileged_container: "ea6c15972b263d17fdedae8d3297be3bb800c0b6c6b51c4a3f15a61eba48d3a1"
+
+expected_sequence:
+  - malicious_dependency
+  - ci_secret_read
+  - agent_runaway
+  - artifact_exfil
+  - pipeline_sabotage
+  - privileged_runner
+
+sequence_constraints:
+  strict_order: true
+  allow_extra_steps: false
+  max_clock_span_seconds: 3600
+
+allowed_relationships:
+  - {from: ci_secret_read,    to: artifact_exfil,    allowed: true, causal_kind: exfiltration}  # same agent + runner address
+  - {from: artifact_exfil,    to: pipeline_sabotage, allowed: true, causal_kind: impact}        # same agent + runner address
+  - {from: pipeline_sabotage, to: privileged_runner, allowed: true, causal_kind: execution}     # same runner address
+  - {from: privileged_runner, to: ci_secret_read,    allowed: false, causal_kind: none}
+
+detection_points:
+  malicious_dependency:
+    step: malicious_dependency
+    role: "a poisoned package's install script runs on the runner"
+    expected_event_source: "sysmon EventID 1 (class 1002, activity 1)"
+    expected_rules: []
+    gap:
+      no_rule_exists: true
+      attack_technique: "T1195.001"       # Supply Chain Compromise: Software Dependencies
+      reason: "Process-launch content has no rule; no rule knows a package manager's lifecycle scripts."
+
+  ci_secret_read:
+    step: ci_secret_read
+    role: "the agent reads a cloud credential file"
+    expected_event_source: "mcp_agent read_file (class 6003, unmapped.mcp.credential_path_access)"
+    expected_rules:
+      - {rule_id: "1a2b3c4d-5e6f-4788-9a0b-1c2d3e4f5a6b", title: "AI agent tool call accessed credential material", level: high, role: credential access}
+    gap: {no_rule_exists: false}
+
+  agent_runaway:
+    step: agent_runaway
+    role: "50+ tool calls in one agent session within 60 s"
+    expected_event_source: "mcp_agent tool calls (class 6003)"
+    expected_rules:
+      - {rule_id: "2b3c4d5e-6f70-4899-8a1b-2c3d4e5f6a7c", title: "AI agent tool-call burst (runaway/abused agent session)", level: medium, role: runaway agent}
+    gap: {no_rule_exists: false}
+
+  artifact_exfil:
+    step: artifact_exfil
+    role: "egress to a domain the agent allowlist does not name (it ships empty)"
+    expected_event_source: "mcp_agent http_post (class 6003, unmapped.mcp.egress_domain)"
+    expected_rules:
+      - {rule_id: "6f708192-a3b4-4cd5-be3f-5a6b7c8d9e0f", title: "AI agent tool call reached a non-allowlisted domain", level: high, role: exfiltration / C2 egress}
+    gap: {no_rule_exists: false}
+
+  pipeline_sabotage:
+    step: pipeline_sabotage
+    role: "a destructive shell command"
+    expected_event_source: "mcp_agent run_shell (class 6003, unmapped.mcp.destructive_command_indicator)"
+    expected_rules:
+      - {rule_id: "5e6f7081-92a3-4bc4-ad2e-4f5a6b7c8d9e", title: "AI agent tool call carries a destructive command pattern", level: critical, role: destruction}
+    gap: {no_rule_exists: false}
+
+  privileged_runner:
+    step: privileged_runner
+    role: "a privileged pod is created"
+    expected_event_source: "k8s_audit create pod (class 6003, activity 1, unmapped.k8s.is_privileged)"
+    expected_rules:
+      - {rule_id: "b2c3d4e5-6f70-4819-8a2b-3c4d5e6f7082", title: "Privileged container created via the Kubernetes API", level: high, role: container escape vector}
+    gap: {no_rule_exists: false}
+
+severity_band:
+  score: {min: 40, max: 100}
+  severity_id: {min: 3, max: 6}
+  dominant_band: "high"
+
+evidence:
+  correlation_key: [src_endpoint.ip]
+  per_step:
+    ci_secret_read:    {fields: [src_endpoint.ip, api.operation, unmapped.mcp.session_id]}
+    agent_runaway:     {fields: [src_endpoint.ip, unmapped.mcp.session_id]}
+    artifact_exfil:    {fields: [src_endpoint.ip, unmapped.mcp.egress_domain]}
+    pipeline_sabotage: {fields: [src_endpoint.ip, api.operation]}
+    privileged_runner: {fields: [actor.user.name, src_endpoint.ip, unmapped.k8s.namespace]}
+
+incident_membership:
+  incident_count: 1          # the runner address is carried by every alert-raising step
+  incident_key: "supply-chain-ci"
+  include: [malicious_dependency, ci_secret_read, agent_runaway, artifact_exfil, pipeline_sabotage, privileged_runner]
+  cross_step_rule_ids:
+    - "1a2b3c4d-5e6f-4788-9a0b-1c2d3e4f5a6b"
+    - "2b3c4d5e-6f70-4899-8a1b-2c3d4e5f6a7c"
+    - "6f708192-a3b4-4cd5-be3f-5a6b7c8d9e0f"
+    - "5e6f7081-92a3-4bc4-ad2e-4f5a6b7c8d9e"
+    - "b2c3d4e5-6f70-4819-8a2b-3c4d5e6f7082"
+
+campaign_membership:
+  campaign_count: 1
+  full_coverage: true

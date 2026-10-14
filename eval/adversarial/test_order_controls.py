@@ -81,7 +81,26 @@ LEGACY_EXPECT = {
     # ai_to_ot. chain_fidelity 0.75 = 4 allowed joins - 1 forbidden join over 4 allowed pairs.
     "ot_opcua_sabotage": {"tpr": 1.0, "chain_fidelity": 0.75, "false_correlation_rate": 1.0,
                           "directional_discrimination": 0.0, "incident_count": 2},
+    # 2026-10-14: measured on the first run of P1 storylines 6-9 (seed 7, not tuned). insider_exfil's
+    # 0.2 is the first non-zero directional_discrimination: one allowed pair joins in one direction only.
+    "ransomware": {"tpr": 1.0, "chain_fidelity": 0.5, "false_correlation_rate": 1.0,
+                   "directional_discrimination": 0.0, "incident_count": 3},
+    "insider_exfil": {"tpr": 1.0, "chain_fidelity": 0.4, "false_correlation_rate": 1.0,
+                      "directional_discrimination": 0.2, "incident_count": 2},
+    "cloud_iam_abuse": {"tpr": 1.0, "chain_fidelity": None, "false_correlation_rate": 0.0,
+                        "directional_discrimination": None, "incident_count": 0},
+    "supply_chain_ci": {"tpr": 1.0, "chain_fidelity": 0.6667, "false_correlation_rate": 1.0,
+                        "directional_discrimination": 0.0, "incident_count": 2},
 }
+
+#: ONE alert-raising step (cloud_iam_abuse): no alert order exists to grade, so the order checks
+#: assert None on BOTH runs; order_concordance (event clocks) still goes 1.0 -> 0.0.
+_SINGLE_ALERT = frozenset({"cloud_iam_abuse"})
+#: FINDING (2026-10-14, ransomware): a distinct-count burst alert carries the ACTOR of the event that
+#: crosses the threshold. Mirrored, a different sprayed account crosses it, so the account track no
+#: longer spans the chain and incident_membership_ok flips -- an explained order sensitivity of WHICH
+#: entity an alert names, not of the join metrics. Only that key may differ.
+_CROSSING_ACTOR = frozenset({"ransomware"})
 
 
 def _mirror_displaced(sdef) -> list:
@@ -164,15 +183,22 @@ def test_storylines() -> dict:
         ident, mir, sh = r["identity"], r["mirror"], r["shift_1h"]
         _check(f"(b) {sdef.name}: the mirror is a VALID control (moved events, span far below the horizon, "
                "incident count unchanged)", ctl["mirror_valid"] is True, str(ctl["mirror_invalid_reason"]))
-        _check(f"(b) {sdef.name}: mirrored chain -> order_concordance 0.0, causal_order_fidelity 0.0, "
-               "alert_order_ok False, forbidden order realised 1.0, temporal_discrimination 0.0, "
-               "WS-3 story order False",
-               mir["order_concordance"] == 0.0 and mir["causal_order_fidelity"] == 0.0
-               and mir["alert_order_ok"] is False and mir["forbidden_order_realised_rate"] == 1.0
-               and mir["temporal_discrimination"] == 0.0 and mir["story_order_ok"] is False,
+        single = sdef.name in _SINGLE_ALERT
+        no_ord = None if single else False
+        _check(f"(b) {sdef.name}: mirrored chain -> order_concordance 0.0, causal_order_fidelity "
+               f"{None if single else 0.0}, alert_order_ok {no_ord}, forbidden order realised 1.0, "
+               f"temporal_discrimination {None if single else 0.0}, WS-3 story order {no_ord}",
+               mir["order_concordance"] == 0.0
+               and mir["causal_order_fidelity"] == (None if single else 0.0)
+               and mir["alert_order_ok"] is no_ord and mir["forbidden_order_realised_rate"] == 1.0
+               and (single or mir["temporal_discrimination"] == 0.0) and mir["story_order_ok"] is no_ord,
                str({k: mir[k] for k in oc.ORDER_KEYS}))
         diff = {k: (ident[k], mir[k]) for k in oc.LEGACY_KEYS if ident[k] != mir[k]}
-        if not reg.load_oracle(sdef).get("step_dependencies"):
+        if sdef.name in _CROSSING_ACTOR:
+            _check(f"(b) {sdef.name}: legacy metrics on the mirrored chain differ ONLY in incident_membership_ok "
+                   "(the threshold-crossing event, and so the alert actor, changes under mirror)",
+                   set(diff) == {"incident_membership_ok"}, f"differences: {diff}")
+        elif not reg.load_oracle(sdef).get("step_dependencies"):
             _check(f"(b) {sdef.name}: LEGACY join metrics on the mirrored chain EQUAL the identity run "
                    "(tpr, chain_fidelity, FCR, directional_discrimination, incident_count, incident_membership_ok)",
                    not diff and ctl["legacy_equal_under_mirror"] is True, f"differences: {diff}")
@@ -192,10 +218,11 @@ def test_storylines() -> dict:
                f"{LEGACY_EXPECT[sdef.name]}",
                all(ident[k] == v for k, v in LEGACY_EXPECT[sdef.name].items()),
                str({k: ident[k] for k in LEGACY_EXPECT[sdef.name]}))
-        _check(f"(c) {sdef.name}: identity says YES (concordance 1.0, alert_order_ok True, forbidden "
-               "order realised 0.0, story order True)",
-               ident["order_concordance"] == 1.0 and ident["alert_order_ok"] is True
-               and ident["forbidden_order_realised_rate"] == 0.0 and ident["story_order_ok"] is True)
+        yes = None if single else True
+        _check(f"(c) {sdef.name}: identity says YES (concordance 1.0, alert_order_ok {yes}, forbidden "
+               f"order realised 0.0, story order {yes})",
+               ident["order_concordance"] == 1.0 and ident["alert_order_ok"] is yes
+               and ident["forbidden_order_realised_rate"] == 0.0 and ident["story_order_ok"] is yes)
         _check(f"(c) {sdef.name}: positive control shift_1h (pure replay offset) moves no order metric",
                all(sh[k] == ident[k] for k in oc.ORDER_KEYS + ("forbidden_order_realised_rate",
                                                                "temporal_discrimination", "story_order_ok"))
@@ -221,7 +248,8 @@ def test_graded_swap(tables: dict) -> None:
         got = ctl["rows"]["swap"]["order_concordance"]
         _check(f"(d) {sdef.name}: swapping {pair[0]}/{pair[1]} gives a GRADED concordance strictly between "
                "0 and 1, equal to an independent reference",
-               0.0 < got < 1.0 and got == ref and ctl["rows"]["swap"]["alert_order_ok"] is False,
+               0.0 < got < 1.0 and got == ref
+               and ctl["rows"]["swap"]["alert_order_ok"] is (None if sdef.name in _SINGLE_ALERT else False),
                f"module={got} reference={ref} ({ok_pairs}/{len(graded)})")
 
 

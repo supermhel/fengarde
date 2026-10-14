@@ -576,6 +576,10 @@ def test_per_technique_math() -> None:
     check(den["phishing_bec"][:2] == (3, 8), f"phishing_bec wrong: {den['phishing_bec']}")
     check(den["ot_opcua_sabotage"][:2] == (5, 5),
           f"ot_opcua_sabotage wrong: {den['ot_opcua_sabotage']}")
+    # P1 storylines 6-9 (2026-10-14): non-gap steps / declared steps, from the oracles
+    for s, want in (("ransomware", (5, 9)), ("insider_exfil", (2, 7)),
+                    ("cloud_iam_abuse", (1, 8)), ("supply_chain_ci", (5, 6))):
+        check(den[s][:2] == want, f"{s} wrong: {den[s]} (want {want})")
 
     # (d) 2 of 12 applicable variants lose a technique's step; N/A excluded
     fix = copy.deepcopy(arts)
@@ -851,8 +855,8 @@ def test_oracle_shapes_and_storyline_registry() -> None:
           "None/empty expected_rules must resolve to []")
 
     import yaml
-    for f in ("oracle.yaml", "oracle_it_intrusion.yaml", "oracle_infra_takeover.yaml",
-              "oracle_phishing_bec.yaml", "oracle_ot_opcua_sabotage.yaml"):
+    # every committed oracle, not a hand list (a 6th-9th storyline used to slip past this check)
+    for f in sorted(x.name for x in (ROOT / "eval/twin").glob("oracle*.yaml")):
         o = yaml.safe_load((ROOT / "eval/twin" / f).read_text(encoding="utf-8"))
         for step, node in o["detection_points"].items():
             er = node.get("expected_rules") or []
@@ -871,7 +875,7 @@ def test_oracle_shapes_and_storyline_registry() -> None:
     arts = real_arts()
     check("phishing_bec" in reg.STORYLINES,
           "phishing_bec is not a registered storyline")
-    check(len(reg.STORYLINES) == 5, f"expected 5 storylines, got {reg.STORYLINES}")
+    check(len(reg.STORYLINES) == 9, f"expected 9 storylines, got {reg.STORYLINES}")
     check(gs._check_storylines(arts) == [],
           f"the storyline cross-check failed on the real tree: {gs._check_storylines(arts)}")
     bad = copy.deepcopy(arts)

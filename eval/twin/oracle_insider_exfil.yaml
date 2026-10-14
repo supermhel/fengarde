@@ -1,0 +1,159 @@
+# =============================================================================
+# FENGARDE eval/twin/oracle_insider_exfil.yaml
+# Grading ground truth for the insider-exfiltration storyline (storyline_insider_exfil.py):
+#   elevated_in_hours -> grant_self_access -> bulk_table_read -> stage_archive -> stage_files
+#     -> exfil_upload -> cover_tracks
+#
+# AUTHORING RULES (written 2026-10-14 BEFORE the builder was run through the pipeline; same
+# discipline as oracle_phishing_bec.yaml): expectations come from the rule texts and parser
+# docstrings only (design-specs/step2_storyline-coverage.json section 2.2, with the critic's
+# correction that the beacon negative must be over the count so it exercises the CV bound);
+# rules leaned on are pinned in `provenance`; NO RULE WAS INVENTED -- five steps are honest gaps
+# (one of them benign context). incident_count: see the corrected note at incident_membership.
+# campaign_membership is reported, never gated.
+# =============================================================================
+schema_version: 1
+oracle_id: "insider-exfil-v1"
+kind: "attack-chain-grading-oracle"
+scope: "insider-exfil"
+
+provenance:
+  authored: "2026-10-14"
+  pipeline_run_before_authoring: false
+  basis: "rule description/detection/siem blocks and parser docstrings only"
+  rules_read: 
+    common_after_hours_admin: "86e9e88065420ea32c6cd361466709802d0583515ae6c22296a474ffe23df529"
+    bank_db_priv_esc: "a07f43c40654dc106a8ea7f255f72b170b5e9a02665ccc1ac2b14d0499d1e02f"
+    bank_mass_card_read: "b8b570808d3fb1ebe4055809c316ed9b39a07113523d3d95cc93e1f522ef0383"
+    common_beaconing: "b83ae4d66ca4e8634540c5efeb8d35f21b595d2e4426793d76eb4115a7dd8b5e"
+
+expected_sequence:
+  - elevated_in_hours
+  - grant_self_access
+  - bulk_table_read
+  - stage_archive
+  - stage_files
+  - exfil_upload
+  - cover_tracks
+
+sequence_constraints:
+  strict_order: true
+  allow_extra_steps: false
+  max_clock_span_seconds: 3600
+
+allowed_relationships:
+  - {from: elevated_in_hours, to: grant_self_access, allowed: true, causal_kind: privilege}     # same account
+  - {from: grant_self_access, to: bulk_table_read,   allowed: true, causal_kind: collection}    # same account + address
+  - {from: bulk_table_read,   to: stage_archive,     allowed: true, causal_kind: staging}       # same account
+  - {from: stage_files,       to: exfil_upload,      allowed: true, causal_kind: exfiltration}  # same account + workstation
+  - {from: exfil_upload,      to: cover_tracks,      allowed: true, causal_kind: defense_evasion}  # same account
+  # Anti-causal non-edges:
+  - {from: cover_tracks,      to: grant_self_access, allowed: false, causal_kind: none}
+  - {from: exfil_upload,      to: bulk_table_read,   allowed: false, causal_kind: none}
+
+detection_points:
+  elevated_in_hours:
+    step: elevated_in_hours
+    role: "the insider's privileged logon on a Tuesday at 10:30 (ordinary in-hours work)"
+    expected_event_source: "windows_eventlog 4672 (class 1002, activity 2)"
+    context: true
+    expected_rules: []
+    must_not_fire:
+      - "9b5f2d18-3c7a-4e61-8f24-5a1d7c3e9b06"   # in hours: the time-of-day rule must stay silent
+    gap:
+      no_rule_exists: true
+      attack_technique: "T1078"           # Valid Accounts
+      reason: >
+        The negative time control: an insider working in business hours is invisible to every
+        time-of-day rule. Declared as a gap so a rule that starts firing on an in-hours
+        privileged logon is reported as a stale gap.
+
+  grant_self_access:
+    step: grant_self_access
+    role: "a privileged DB operation (GRANT) in the bank sector"
+    expected_event_source: "db_audit GRANT (class 6005, activity 5)"
+    expected_rules:
+      - {rule_id: "2a9d7b41-5e6c-4f88-bb12-3c0a1e7d4f02", title: "Privileged database operation on a banking DB", level: critical, role: privileged DB operation}
+    gap: {no_rule_exists: false}
+
+  bulk_table_read:
+    step: bulk_table_read
+    role: "20+ reads of one table in 300 s"
+    expected_event_source: "db_audit SELECT (class 6005, activity 1)"
+    expected_rules:
+      - {rule_id: "d4e5f607-8192-4a31-8b4c-5d6e7f809104", title: "Mass cardholder-data read (one database object hammered, bank)", level: high, role: bulk card-data read}
+    gap: {no_rule_exists: false}
+
+  stage_archive:
+    step: stage_archive
+    role: "the export is packed into an encrypted archive"
+    expected_event_source: "sysmon EventID 1 (class 1002, activity 1)"
+    expected_rules: []
+    gap:
+      no_rule_exists: true
+      attack_technique: "T1560.001"       # Archive Collected Data: Archive via Utility
+      reason: "Process-launch content (command line) has no rule (class 1002 activity 1 under-covered)."
+
+  stage_files:
+    step: stage_files
+    role: "archive parts written to a temp folder"
+    expected_event_source: "sysmon EventID 11 (class 1001)"
+    expected_rules: []
+    gap:
+      no_rule_exists: true
+      attack_technique: "T1074.001"       # Data Staged: Local Data Staging
+      reason: "Class 1001 (File System Activity) has no shipped rule."
+
+  exfil_upload:
+    step: exfil_upload
+    role: "22 uploads to one external address at IRREGULAR intervals"
+    expected_event_source: "sysmon EventID 3 (class 4001, activity 7)"
+    expected_rules: []
+    must_not_fire:
+      - "f6071829-a3b4-4c53-9d6e-7f8091a2b526"           # over the 20-event count, far over the 0.25 CV bound
+    gap:
+      no_rule_exists: true
+      attack_technique: "T1567"           # Exfiltration Over Web Service
+      reason: >
+        No shipped rule measures outbound volume or a new external destination per host. The
+        beacon rule is the only network rule that could match and it requires regularity; the
+        step is its periodicity negative on real traffic.
+
+  cover_tracks:
+    step: cover_tracks
+    role: "rows deleted from the audit table"
+    expected_event_source: "db_audit DELETE (class 6005, activity 4)"
+    expected_rules: []
+    gap:
+      no_rule_exists: true
+      attack_technique: "T1070"           # Indicator Removal
+      reason: "The bank DB rules cover activity 5 (privileged op) and 1 (reads); a DELETE (activity 4) has no rule."
+
+severity_band:
+  score: {min: 40, max: 100}
+  severity_id: {min: 3, max: 6}
+  dominant_band: "high"
+
+evidence:
+  correlation_key: [actor.user.name]
+  per_step:
+    elevated_in_hours: {fields: [actor.user.name]}
+    grant_self_access: {fields: [actor.user.name, unmapped.db.object, src_endpoint.ip]}
+    bulk_table_read:   {fields: [actor.user.name, unmapped.db.object]}
+    exfil_upload:      {fields: [src_endpoint.ip, dst_endpoint.ip, actor.user.name]}
+    cover_tracks:      {fields: [actor.user.name, unmapped.db.object]}
+
+incident_membership:
+  # CORRECTED after the first run (2026-10-14, recorded, not tuned): both alert-raising steps carry
+  # the insider account AND the workstation address, so the actor track and the ip track each span
+  # the chain -- WS-8 produces TWO full-chain incidents (tracks never merge).
+  incident_count: 2
+  incident_key: "insider-exfil"
+  include: [elevated_in_hours, grant_self_access, bulk_table_read, stage_archive, stage_files, exfil_upload, cover_tracks]
+  cross_step_rule_ids:
+    - "2a9d7b41-5e6c-4f88-bb12-3c0a1e7d4f02"
+    - "d4e5f607-8192-4a31-8b4c-5d6e7f809104"
+
+campaign_membership:
+  campaign_count: 1
+  full_coverage: true

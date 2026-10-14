@@ -25,14 +25,15 @@ findings:
     status: open
     first_seen: "2026-10-02"
     summary: >
-      WS-4 groups on the raw str(actor.user.name); WS-8 canonicalises with strip().casefold()
-      (ADR-009). Splitting a burst over two source addresses AND respelling one Windows account
-      (case, trailing space, DOMAIN\ prefix) evades the rule and its by-source companion. Windows
-      accounts are case-insensitive, so the respelling is free. dc_mass_vm_delete rests on an
-      ASSUMED evasion_tables.yaml row (vCenter SSO case-insensitivity not verified).
+      RESIDUAL after the F2 fix (owner decision: strip+casefold). WS-4 account group keys are now the ADR-009 canonical
+      actor (strip().casefold(), engine.Rule._group_of), so case and whitespace respellings no
+      longer split a burst. What still evades: the DOMAIN\ prefix and the UPN suffix. A Windows
+      source treats DOMAIN\name, name@upn and name as one principal, ADR-009 does not, so a burst
+      split over two source addresses AND two of those forms stays under threshold.
+      dc_mass_vm_delete rests on an ASSUMED evasion_tables.yaml row (vCenter SSO not verified).
     repro: {kind: row_flag, flag: respelling_evades, module: evasion_axes, function: respelling_axis}
     rule_sets: [common_lateral_movement, dc_mass_vm_delete]
-    decision: "owner decision 2 of step 5: canonicalise WS-4 group keys with strip+casefold (consistent with ADR-009, churns alert_key); stripping DOMAIN\\ / UPN would AMEND ADR-009"
+    decision: "owner decision 2026-10-14: strip+casefold implemented (ADR-009 as ratified); folding DOMAIN\\ / UPN would AMEND ADR-009 and was not chosen -- the residual stays open"
 
   - id: F4-record-clock-trust
     class: TRUST_MODEL

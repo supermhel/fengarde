@@ -359,6 +359,12 @@ def _cv(times: list):
     return math.sqrt(var) / mean
 
 
+#: group_by paths the product canonicalises as an ACCOUNT before keying a window
+#: (ADR-009 strip+casefold; F2 owner decision 2026-10-14). Declared here from the
+#: decision, not imported from the engine, so the predictor stays independent.
+_ACCOUNT_GROUP_KEYS = frozenset({"actor.user.name", "unmapped.target_user.name"})
+
+
 def predict_rule(rule: RuleParams, events: list) -> bool:
     """Would ``rule`` fire on ``events`` (normalised OCSF, arrival order)?
 
@@ -377,7 +383,8 @@ def predict_rule(rule: RuleParams, events: list) -> bool:
             dv = _dig(ev, rule.distinct_field)
             if dv is None:
                 continue
-        lst = groups[str(g)]
+        key = g.strip().casefold() if rule.group_by in _ACCOUNT_GROUP_KEYS and isinstance(g, str) else str(g)
+        lst = groups[key]
         lst.append((t, dv))
         live = [(tt, v) for tt, v in lst if tt >= t - window]
         count = len({v for _, v in live}) if rule.distinct_field else len(live)
@@ -492,7 +499,13 @@ def regular_slow_offsets(n: int, constraints: list, *, slack: int = 1) -> list:
     window below its threshold. For a PERIODICITY rule the cheapest slow
     schedule must stay regular -- a clumped one would evade through the
     coefficient of variation instead and would not measure the window."""
-    gap = max(math.ceil((w + slack) / (t - 1)) for t, w in constraints if t >= 2)
+    if slack:
+        gap = max(math.ceil((w + slack) / (t - 1)) for t, w in constraints if t >= 2)
+    else:
+        # the boundary control: the LARGEST spacing that still puts t events inside the window.
+        # ceil() here overshot whenever (t - 1) does not divide w (threshold 20 over 3600 s,
+        # 2026-10-14), so the "1 ms faster" schedule evaded too and proved nothing.
+        gap = max(w // (t - 1) for t, w in constraints if t >= 2)
     return [i * gap for i in range(n)]
 
 

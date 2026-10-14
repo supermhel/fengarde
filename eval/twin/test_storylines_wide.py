@@ -211,8 +211,8 @@ def _by_step(payloads, label):
 def test_negative_twins() -> None:
     twins = SD.negatives
     _check("(d) phishing_bec declares a twin for each rule threshold its oracle leans on "
-           "(spray 8 addresses, beacon 6 beats, beacon periodicity, impossible travel countries)",
-           {t.name for t in twins} == {"spray_7_of_8_addresses", "beacon_5_of_6_beats", "beacon_irregular_interval",
+           "(spray 8 addresses, beacon 20 beats, beacon periodicity, impossible travel countries)",
+           {t.name for t in twins} == {"spray_7_of_8_addresses", "beacon_19_of_20_beats", "beacon_irregular_interval",
                                        "login_same_country"}, str([t.name for t in twins]))
     res = scenario_matrix.run_negative_twins(SD, SEED)
     for r in res:
@@ -334,12 +334,14 @@ def test_phishing_bec() -> None:
     r1, r2 = reg.run(SD, SEED), reg.run(SD, SEED)
     expect = {s.label: s.parse_expected for s in SD.steps}
     gaps = sorted(s for s, ok in expect.items() if not ok)
-    _check("(h) every parse_expected step parses on its REAL parser; exactly the two chained gaps are the "
-           "no-parser steps", not r1.check_failures and all(e.parsed == expect[e.step] for e in r1.events)
-           and gaps == ["inbox_rule", "phish_delivery"], f"gaps={gaps} failures={r1.check_failures[:2]}")
+    # 2026-10-14: the mail_gateway and m365_audit parsers landed, so EVERY step now parses (the two
+    # former chained gaps stay oracle gaps -- no rule reads that telemetry -- but they are not dropped)
+    _check("(h) every step parses on its REAL parser (no chained no-parser gaps since the mail/M365 parsers)",
+           not r1.check_failures and all(e.parsed == expect[e.step] for e in r1.events) and gaps == [],
+           f"gaps={gaps} failures={r1.check_failures[:2]}")
     _check("(h) same seed -> byte-identical chain", r1.canonical() == r2.canonical())
-    _check("(h) the dead-letter integrity: exactly the two unparseable records dead-letter",
-           r1.stats.get("dropped") == 2, str(r1.stats))
+    _check("(h) the dead-letter integrity: nothing dead-letters",
+           r1.stats.get("dropped") == 0, str(r1.stats))
     sigs = []
     for seed in (7, 11, 13, 17):
         pl = SD.build(seed)[0]

@@ -139,6 +139,15 @@ _ACCEPTED: dict = {
     # NO forbidden relationship the mutation lane's `fcr_unchanged` criterion is unsatisfiable (its
     # baseline is None), so every scenario_matrix row would fail for a reason unrelated to detection.
     ("ot_opcua_sabotage", "forbidden", "forged_ticket_write", "rogue_device"): _ORDER_BLIND,
+    # 2026-10-14 P1 storylines 6-9, measured on the first run of each (seed 7), not tuned: every rule
+    # fired as the intent-first oracles said; only this known order-blind channel disagreed. Each
+    # anti-causal pair shares the account or the address with the step it must not precede.
+    # cloud_iam_abuse has none: its only alert promotes no incident, so no edge exists at all.
+    ("ransomware", "forbidden", "mass_vm_delete", "cred_spray"): _ORDER_BLIND,
+    ("ransomware", "forbidden", "backdoor_account", "foothold_logon"): _ORDER_BLIND,
+    ("insider_exfil", "forbidden", "cover_tracks", "grant_self_access"): _ORDER_BLIND,
+    ("insider_exfil", "forbidden", "exfil_upload", "bulk_table_read"): _ORDER_BLIND,
+    ("supply_chain_ci", "forbidden", "privileged_runner", "ci_secret_read"): _ORDER_BLIND,
 }
 # History. The map was EMPTY from 2026-10-01: the three AI-to-OT disagreements that used to live here
 # (a stale process_anomaly gap; agent_tool_call_burst and agent_destructive_command

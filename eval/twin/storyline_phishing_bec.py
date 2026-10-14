@@ -15,13 +15,13 @@ WHAT IT CAN SHOW THAT THE OTHER STORYLINES CANNOT
     * honest gaps on four of eight steps with the ATT&CK technique each one demonstrates, and NO
       rule invented to make them pass (see ``oracle_phishing_bec.yaml``).
 
-TELEMETRY. Real parsers throughout (sysmon, cef, db_audit). ``mail_gateway`` and ``m365_audit`` are
-PLACEHOLDER source types with no parser BY DESIGN: their records dead-letter at the parser lookup
-exactly like ai_to_ot's ``web_access``, are declared ``parse_expected=False`` and never claim a
-type_uid. They are not planned parsers.
+TELEMETRY. Real parsers throughout (sysmon, cef, db_audit, and since 2026-10-14 mail_gateway and
+m365_audit -- owner decision to build the two parsers this storyline used to declare as placeholders).
+Both steps now parse (``parse_expected=True``); no shipped rule reads mail or mailbox-rule telemetry,
+so both stay honest gaps in the oracle.
 
 STRUCTURE VARIES WITH THE SEED (not only identifiers): the proxy-pool size (9-12 addresses), the
-number of beacon beats (7-9), the beacon jitter, the victim account, the workstation, and every
+number of beacon beats (20-24), the beacon jitter, the victim account, the workstation, and every
 address.
 
 SAFETY. Simulation only: documentation-range addresses (RFC 5737), ``.invalid`` / ``example``
@@ -42,27 +42,31 @@ from scenario import ChainStepSpec, NegativeTwin, ScenarioDef  # noqa: E402
 from scenario_kit import BASE_MS, meta  # noqa: E402
 
 STEPS: tuple[ChainStepSpec, ...] = (
-    ChainStepSpec("phish_delivery", "mail_gateway", False,
-                  "spear-phishing mail with a macro attachment is delivered (no mail parser by design)"),
+    ChainStepSpec("phish_delivery", "mail_gateway", True,
+                  "spear-phishing mail with a macro attachment is delivered (parsed; no rule reads mail)"),
     ChainStepSpec("user_execution", "sysmon", True,
                   "the user opens the attachment: the office app spawns an encoded PowerShell"),
     ChainStepSpec("c2_beacon", "sysmon", True,
-                  "the implant calls home at a regular interval (6+ outbound connections)"),
+                  "the implant calls home at a regular interval (20+ outbound connections)"),
     ChainStepSpec("victim_session", "cef", True,
                   "the account's own earlier login from its home country (benign enabling telemetry)"),
     ChainStepSpec("proxy_pool_logins", "cef", True,
                   "credential stuffing of the account through a pool of proxy addresses"),
     ChainStepSpec("foreign_login", "cef", True,
                   "the attacker logs in successfully from a second country within the hour"),
-    ChainStepSpec("inbox_rule", "m365_audit", False,
-                  "a mailbox rule forwards and hides replies (no M365 parser by design)"),
+    ChainStepSpec("inbox_rule", "m365_audit", True,
+                  "a mailbox rule forwards and hides replies (parsed; no rule reads it)"),
     ChainStepSpec("payment_redirect", "db_audit", True,
                   "the vendor's bank account is changed in the finance application"),
 )
 
 _VICTIMS = ("m.rossi", "j.keller", "a.nguyen", "p.dubois")
 _HOSTS = ("wks-fin-04", "wks-fin-11", "wks-ap-02", "wks-ap-09")
-_IRREGULAR_GAPS_MS = (30_000, 95_000, 45_000, 130_000, 20_000, 110_000, 60_000, 25_000)
+# 23 gaps (enough for 24 beats), mean ~21 s like the regular 20 s cadence, CV ~0.6: the count is
+# met and only the periodicity is not. All beats still end before victim_session (+620 s).
+_IRREGULAR_GAPS_MS = (8_000, 35_000, 12_000, 40_000, 6_000, 30_000, 15_000, 38_000, 9_000, 33_000,
+                      7_000, 36_000, 11_000, 29_000, 10_000, 34_000, 5_000, 31_000, 14_000, 37_000,
+                      8_000, 26_000, 12_000)
 
 #: rule ids (contracts/rules/*.yml) the negative twins are about
 _BEACONING = "f6071829-a3b4-4c53-9d6e-7f8091a2b526"
@@ -84,8 +88,8 @@ def _build(seed: int, *, n_pool: int | None = None, n_beats: int | None = None,
     host = rng.choice(_HOSTS)
     wks_ip = f"10.9.0.{rng.randint(20, 60)}"
     drawn_pool = rng.randint(9, 12)               # rule threshold: 8 distinct source addresses / 300 s
-    drawn_beats = rng.randint(7, 9)               # rule threshold: 6 regular connections
-    jitter = [rng.randint(-3_000, 3_000) for _ in range(9)]
+    drawn_beats = rng.randint(20, 24)             # rule threshold: 20 regular connections (Q15)
+    jitter = [rng.randint(-3_000, 3_000) for _ in range(24)]
     home_ip = f"192.0.2.{rng.randint(10, 60)}"            # US
     away_ip = f"203.0.113.{rng.randint(30, 90)}"          # RU
     same_ip = f"192.0.2.{rng.randint(100, 140)}"          # US (the same-country twin)
@@ -113,7 +117,7 @@ def _build(seed: int, *, n_pool: int | None = None, n_beats: int | None = None,
         {"from": "billing@vendor-update.example.invalid", "to": f"{victim}@corp.example",
          "subject": "Updated remittance details", "attachment": "Invoice_4471.docm",
          "verdict": "delivered", "ts": t}, t, "203.0.113.200")
-    notes["phish_delivery"] = "macro attachment delivered by the mail gateway; no parser by design -> chained gap"
+    notes["phish_delivery"] = "macro attachment delivered by the mail gateway; parsed (4009), no rule -> gap"
 
     t = BASE_MS + 45_000
     add("user_execution", "sysmon",
@@ -129,7 +133,7 @@ def _build(seed: int, *, n_pool: int | None = None, n_beats: int | None = None,
         for g in _IRREGULAR_GAPS_MS[:max(0, n_beats - 1)]:
             times.append(times[-1] + g)
     else:
-        times = [BASE_MS + 90_000 + i * 60_000 + jitter[i] for i in range(n_beats)]
+        times = [BASE_MS + 90_000 + i * 20_000 + jitter[i] for i in range(n_beats)]
     for i, tb in enumerate(times):
         add("c2_beacon", "sysmon",
             {"EventID": 3, "TimeCreated": tb, "Computer": host, "Image": "C:\\Users\\Public\\svc.exe",
@@ -137,7 +141,7 @@ def _build(seed: int, *, n_pool: int | None = None, n_beats: int | None = None,
              "DestinationIp": c2_ip, "DestinationPort": "443",
              "DestinationHostname": "cdn-sync.example.invalid"}, tb, wks_ip)
     notes["c2_beacon"] = (f"{n_beats} outbound connections from {wks_ip} to {c2_ip}:443 "
-                          + ("at irregular intervals" if irregular else "about every 60 s (+/-3 s)"))
+                          + ("at irregular intervals" if irregular else "about every 20 s (+/-3 s)"))
 
     t = BASE_MS + 620_000                                     # after the beacon run: spans never overlap
     add("victim_session", "cef", _cef(home_ip, victim, "success", "User login"), t, home_ip)
@@ -159,7 +163,7 @@ def _build(seed: int, *, n_pool: int | None = None, n_beats: int | None = None,
         {"Operation": "New-InboxRule", "UserId": f"{victim}@corp.example", "ClientIP": away_ip,
          "Parameters": {"ForwardTo": "ap-desk@vendor-update.example.invalid", "DeleteMessage": True},
          "CreationTime": t}, t, away_ip)
-    notes["inbox_rule"] = "forward-and-delete mailbox rule; no M365 parser by design -> chained gap"
+    notes["inbox_rule"] = "forward-and-delete mailbox rule; parsed (m365_audit), no rule -> gap"
 
     t = BASE_MS + 1_500_000
     add("payment_redirect", "db_audit",
@@ -206,14 +210,14 @@ NEGATIVES: tuple[NegativeTwin, ...] = (
         attribute="distinct source addresses in the stuffing burst: 7, one under the rule's 8",
         build=lambda seed, restored: _build(seed, n_pool=8 if restored else 7)),
     NegativeTwin(
-        name="beacon_5_of_6_beats", step="c2_beacon", rule_ids=(_BEACONING,),
-        attribute="beacon connections: 5, one under the rule's 6",
-        build=lambda seed, restored: _build(seed, n_beats=6 if restored else 5)),
+        name="beacon_19_of_20_beats", step="c2_beacon", rule_ids=(_BEACONING,),
+        attribute="beacon connections: 19, one under the rule's 20",
+        build=lambda seed, restored: _build(seed, n_beats=20 if restored else 19)),
     NegativeTwin(
         name="beacon_irregular_interval", step="c2_beacon", rule_ids=(_BEACONING,),
-        attribute="the same 8 connections at IRREGULAR intervals (coefficient of variation far above 0.25), "
+        attribute="the same 22 connections at IRREGULAR intervals (coefficient of variation far above 0.25), "
                   "so the count is met and only the periodicity is not",
-        build=lambda seed, restored: _build(seed, n_beats=8, irregular=not restored)),
+        build=lambda seed, restored: _build(seed, n_beats=22, irregular=not restored)),
     NegativeTwin(
         name="login_same_country", step="foreign_login", rule_ids=(_TRAVEL,),
         attribute="the second successful login comes from the SAME country as the first",

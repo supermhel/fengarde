@@ -231,8 +231,11 @@ def controls_ok(ctl: dict) -> list:
                    "expected 0.0 (the control cannot say no)")
     if r["mirror"]["causal_order_fidelity"] not in (0.0, None):
         bad.append(f"{name}: mirrored causal_order_fidelity={r['mirror']['causal_order_fidelity']!r}")
-    if r["mirror"]["alert_order_ok"] is not False:
-        bad.append(f"{name}: mirrored alert_order_ok={r['mirror']['alert_order_ok']!r}, expected False")
+    # A storyline with ONE alert-raising step has no alert order to grade (identity None,
+    # cloud_iam_abuse): the mirror must then say None too, never a fabricated False/True.
+    want = None if r["identity"]["alert_order_ok"] is None else False
+    if r["mirror"]["alert_order_ok"] is not want:
+        bad.append(f"{name}: mirrored alert_order_ok={r['mirror']['alert_order_ok']!r}, expected {want}")
     for k in ("order_concordance", "causal_order_fidelity", "alert_order_ok"):
         if r["shift_1h"][k] != r["identity"][k]:
             bad.append(f"{name}: positive control shift_1h moved {k}: "

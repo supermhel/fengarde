@@ -238,7 +238,10 @@ def _cmp(axis: str, variant: str, base: dict, mut: dict) -> dict:
                            if b_fired else None)
 
     b_fid, m_fid = base.get("chain_fidelity"), mut.get("chain_fidelity")
-    fidelity_retained = (b_fid is not None and b_fid == m_fid)
+    # None on BOTH sides (2026-10-14, cloud_iam_abuse: one alert, no incident, no graph) is "no join
+    # to lose", like order/causal order below -- not a failure. A graph that appears or vanishes
+    # under the mutation is still a change.
+    fidelity_retained = (b_fid == m_fid)
 
     b_fcr, m_fcr = base.get("false_correlation_rate"), mut.get("false_correlation_rate")
     fcr_unchanged = (b_fcr is not None and b_fcr == m_fcr)
@@ -327,6 +330,13 @@ def _baseline_quality(base: dict) -> dict:
     fcr = base.get("false_correlation_rate")
     dd = base.get("directional_discrimination")
     caveats = []
+    if fid is None:
+        # no incident promoted, so no graph (cloud_iam_abuse: one alert, one tactic). An absent
+        # join is not a sound one: the matrix grades detection only, never reconstruction.
+        caveats.append(
+            "chain_fidelity=None: no incident promoted, so there is no graph to grade; "
+            "'fidelity_retained' / 'fcr_unchanged' only say the graph is still absent, and "
+            "mutation_robustness here measures detection, not reconstruction")
     if dd is not None and dd < 0.5:
         caveats.append(
             f"directional_discrimination={dd} (< 0.5): the join predicate answers 'joined' for "
