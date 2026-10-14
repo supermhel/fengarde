@@ -18,7 +18,7 @@ from pathlib import Path
 
 import yaml
 
-from shared.envelope import valid_tenant_id
+from shared.envelope import default_tenant, valid_tenant_id
 
 _HERE = Path(__file__).resolve().parent
 _SERVICES = _HERE.parent
@@ -59,8 +59,11 @@ def _tenant_rule_lists(tenant_id: str | None) -> tuple[frozenset, frozenset]:
     # makes the /rules report agree with the Detector for that path (review
     # finding 2026-10-13: the None branch used to read NO tenant file, so a
     # default.yml opt-in fired in the engine while /rules said enabled=False).
+    # The default tenant is default_tenant() (TENANT_ID, else "default"), the
+    # same function WS-2 stamps siem.tenant from -- a literal "default" read the
+    # wrong file whenever TENANT_ID was set (external review 2026-10-14).
     if tenant_id is None:
-        tenant_id = "default"
+        tenant_id = default_tenant()
     # The request-controlled tenant_id NEVER becomes part of a path
     # expression. Instead of building `TENANTS_DIR / f"{tenant_id}.yml"`
     # (a path-traversal primitive -- CodeQL py/path-injection; two earlier
@@ -162,7 +165,10 @@ def list_rule_summaries(tenant_id: str | None = None) -> list[dict]:
         for path in sorted(Path(d).glob("*.yml")):
             try:
                 raw = yaml.safe_load(path.read_text(encoding="utf-8"))
-            except yaml.YAMLError:
+            except Exception:  # YAMLError, UnicodeDecodeError, PermissionError, OSError
+                # one unreadable rule file (a plugin pack in a wrong encoding, a
+                # permission flip) must not 500 the whole listing -- same contract
+                # as the tenant-file read above
                 continue
             if not isinstance(raw, dict):
                 continue

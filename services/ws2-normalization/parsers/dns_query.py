@@ -42,28 +42,38 @@ _QUERY = re.compile(
 # approximation, and its failure mode is benign: an unlisted multi-part suffix
 # groups one label too high (everything under ".xx.yy" pools together), which can
 # only OVER-count a window, never hide one.
-_SLD = frozenset({"co", "com", "org", "net", "gov", "edu", "ac"})
-# Country-specific second-level labels (2026-10-02). These are real public suffixes
-# ONLY under the named country code, so they are scoped to it instead of being added
-# to _SLD: a global "ne"/"or"/"go" would also turn an ordinary registered domain such
-# as "go.example" or "or.example" under some other two-letter TLD into a bogus
-# suffix, and an attacker who owns such a name could then vary the label in front of
-# it to scatter one tunnel across many "parents" (under-pooling HIDES a window --
-# the one failure direction the note above rules out). Missing entries still fail
-# benign (over-pooling), which is why this stays a short table of the common ones
-# rather than a vendored public-suffix list.
+#
+# That claim holds only because EVERY entry is scoped to its country code. Until
+# 2026-10-14 the generic labels (co/com/org/net/gov/edu/ac) applied under ANY
+# two-letter TLD, so "net.io" -- an ordinary registrable name in .io -- counted as a
+# suffix: its owner could put the payload in the third label and scatter one tunnel
+# across as many "parents" as queries, each one name deep (under-pooling HIDES a
+# window; external review of PR #93). A (country, label) pair belongs here only if
+# it is a registry-run public suffix that nobody can register as a domain; anything
+# not listed falls back to two labels, the benign direction. Not a vendored public
+# suffix list on purpose: the common ones, nothing speculative.
+_GENERIC = frozenset({"com", "net", "org", "gov", "edu"})
 _CC_SLD = {
-    "jp": frozenset({"ne", "or", "go", "ad", "gr", "lg", "ed"}),   # example.ne.jp, example.or.jp
-    "kr": frozenset({"ne", "or", "go", "re", "pe"}),
-    "uk": frozenset({"ltd", "plc", "sch", "me"}),
-    "au": frozenset({"id", "asn"}),
-    "nz": frozenset({"govt", "school"}),
-    "in": frozenset({"res", "nic"}),
-    "br": frozenset({"mil"}),
-    "mx": frozenset({"gob"}),
-    "ar": frozenset({"gob"}),
-    "tw": frozenset({"idv"}),
+    "uk": frozenset({"co", "org", "net", "gov", "ac", "ltd", "plc", "sch", "me", "nhs", "police"}),
+    "au": frozenset({"com", "net", "org", "edu", "gov", "id", "asn"}),
+    "nz": frozenset({"co", "org", "net", "ac", "govt", "school"}),
+    "jp": frozenset({"co", "ne", "or", "go", "ac", "ad", "gr", "lg", "ed"}),
+    "kr": frozenset({"co", "ne", "or", "go", "ac", "re", "pe"}),
+    "in": frozenset({"co", "net", "org", "gov", "ac", "edu", "res", "nic"}),
+    "za": frozenset({"co", "org", "net", "gov", "ac", "edu"}),
+    "il": frozenset({"co", "org", "net", "ac", "gov"}),
+    "id": frozenset({"co", "ac", "or", "go", "net", "web"}),
+    "th": frozenset({"co", "ac", "or", "go", "net", "in"}),
+    "ke": frozenset({"co", "or", "ac", "go", "ne"}),
+    "br": _GENERIC | {"mil"},
+    "mx": _GENERIC | {"gob"},
+    "ar": _GENERIC | {"gob"},
+    "tw": _GENERIC | {"idv"},
+    "cn": _GENERIC | {"ac"},
     "fr": frozenset({"gouv", "asso"}),
+    **{cc: _GENERIC for cc in ("tr", "hk", "sg", "my", "ph", "pk", "ng", "eg", "sa",
+                               "ua", "vn", "pe", "ve", "uy", "ec", "co", "bd", "lk",
+                               "np", "kw", "qa", "om", "bh", "jo", "lb")},
 }
 _REVERSE_ZONES = (".in-addr.arpa", ".ip6.arpa")
 _MAX_NAME = 253
@@ -85,8 +95,7 @@ def parent_domain(name: str) -> Optional[str]:
     labels = n.split(".")
     if len(labels) < 2 or any(not lab for lab in labels):
         return None
-    if len(labels) >= 3 and len(labels[-1]) == 2 and (
-            labels[-2] in _SLD or labels[-2] in _CC_SLD.get(labels[-1], ())):
+    if len(labels) >= 3 and labels[-2] in _CC_SLD.get(labels[-1], ()):
         return ".".join(labels[-3:])
     return ".".join(labels[-2:])
 

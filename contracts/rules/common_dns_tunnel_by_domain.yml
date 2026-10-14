@@ -55,8 +55,9 @@ fields:
 siem:
   sector: common
   # Adds NO weight of its own: this rule restates its sibling's behaviour on the other key, so
-  # when both fire the score must not double-count one attack (a plain brute force went 70 -> 100
-  # in the demo e2e when this carried a weight). Its `level` still guarantees the right floor
+  # when both fire the score must not double-count one attack (measured on the brute-force pair:
+  # 70 -> 100 in the demo e2e while the companion carried a weight). Its `level` still guarantees
+  # the right floor
   # when it fires ALONE, which is the only case it exists for.
   score_weight: 0
   companion_of: a1b2c3d4-5e6f-4708-9a1b-2c3d4e5f6071   # tenant-disabling the sibling disables this too

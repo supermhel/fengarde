@@ -295,6 +295,45 @@ def run_suppression_invariant():
         check(SSH_SIBLING not in seen3 and SSH_COMPANION not in seen3,
               f"tenant that disabled the sibling must get neither alert, got {sorted(set(seen3))}")
 
+        # (6) external review 2026-10-14: a LOUD address already firing the sibling
+        #     must not hide a two-address attack on ANOTHER account whose
+        #     threshold-crossing event happens to come from the loud address. The
+        #     sibling's alert (per address) does not carry the other address's
+        #     events, so the companion's alert must still be emitted.
+        loud, other = "203.0.113.21", "192.0.2.44"
+        det6 = _detector(Path(tmp) / "open")
+
+        def fail(i, account, ip):
+            return _event("linux_ssh",
+                          f"Jun 10 13:56:{i:02d} db01 sshd[{3000 + i}]: Failed password for {account} "
+                          f"from {ip} port {52000 + i} ssh2", 100 + i, BASE + 120_000 + i * 1_000)
+        stream = [fail(i, f"user{i}", loud) for i in range(10)]           # loud: sibling fires
+        stream += [fail(10 + j, "victim", other if j % 2 == 0 else loud)  # split attack on victim,
+                   for j in range(10)]                                   # 10th event from loud
+        last = None
+        for ev in stream:
+            last = _emit_one(det6, ev)
+        matched6, alerts6 = last
+        ids6 = [a["rule_id"] for a in alerts6]
+        check(SSH_SIBLING in ids6,
+              f"vacuity guard (6): the loud address must fire the sibling on the last event, got {ids6}")
+        check(SSH_COMPANION in ids6,
+              f"(6) the per-account alert of the split attack must survive the loud sibling, got {ids6}")
+
+        # (7) a distinct-count companion cannot name its events, so it is never
+        #     dropped: one resolver address both trips the per-source DNS rule and
+        #     carries a tunnel under one parent -> both alerts are emitted.
+        det7 = _detector(Path(tmp) / "open")
+        dns_ids: set = set()
+        for i in range(45):
+            ev = _event("dns_query", f"query[A] c{i:03d}.t9.exfil.example.invalid from 10.9.9.9",
+                        200 + i, BASE + 300_000 + i * 500)
+            _m, alerts = _emit_one(det7, ev)
+            dns_ids.update(a["rule_id"] for a in alerts)
+        check({"a1b2c3d4-5e6f-4708-9a1b-2c3d4e5f6071",
+               "5f3c9d18-72a4-4e0b-b6d1-8c2e7a4f1b93"} <= dns_ids,
+              f"(7) resolver-borne tunnel must alert per source AND per parent domain, got {sorted(dns_ids)}")
+
 
 def main():
     run()

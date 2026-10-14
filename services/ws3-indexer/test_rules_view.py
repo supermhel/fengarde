@@ -233,7 +233,49 @@ def test_default_off_and_opt_in_per_tenant():
     check(env_view["off"]["enabled"] is True, "FENGARDE_OPT_IN_RULES opts the rule in for the view too")
 
 
+def test_default_tenant_follows_tenant_id_env_and_bad_files_do_not_500():
+    """External review 2026-10-14: (1) with TENANT_ID set, WS-2 stamps events with
+    that tenant, so the no-tenant /rules view must read THAT tenant's file, not a
+    literal default.yml; (2) one rule file in a wrong encoding must be skipped,
+    not raise out of the listing."""
+    import os
+    import tempfile
+    off = "55555555-5555-4555-8555-555555555555"
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        (root / "rules").mkdir()
+        (root / "tenants").mkdir()
+        (root / "rules" / "off.yml").write_text(
+            f"id: {off}\ntitle: r-off\nlevel: high\nsiem:\n  sector: common\n  default_enabled: false\n",
+            encoding="utf-8")
+        (root / "rules" / "latin1.yml").write_bytes("title: caf\xe9\n".encode("latin-1"))
+        (root / "tenants" / "acme.yml").write_text(f"enabled_rules: [{off}]\n", encoding="utf-8")
+        save = (rules_view.RULES_DIR, rules_view.TENANTS_DIR)
+        saved_env = os.environ.get("TENANT_ID")
+        try:
+            rules_view.RULES_DIR = root / "rules"
+            rules_view.TENANTS_DIR = root / "tenants"
+            os.environ["TENANT_ID"] = "acme"
+            try:
+                with_env = {s["title"]: s for s in rules_view.list_rule_summaries()}
+            except Exception as exc:  # noqa: BLE001 -- the crash IS the finding
+                check(False, f"an undecodable rule file crashed the listing: {exc!r}")
+                return
+            os.environ.pop("TENANT_ID")
+            without = {s["title"]: s for s in rules_view.list_rule_summaries()}
+        finally:
+            rules_view.RULES_DIR, rules_view.TENANTS_DIR = save
+            os.environ.pop("TENANT_ID", None)
+            if saved_env is not None:
+                os.environ["TENANT_ID"] = saved_env
+    check(with_env["r-off"]["enabled"] is True,
+          f"TENANT_ID=acme: the no-tenant view must apply acme.yml's opt-in, got {with_env['r-off']}")
+    check(without["r-off"]["enabled"] is False,
+          "control: without TENANT_ID the default tenant has no opt-in")
+
+
 def main():
+    test_default_tenant_follows_tenant_id_env_and_bad_files_do_not_500()
     test_default_off_and_opt_in_per_tenant()
     test_companion_of_must_be_a_str_to_participate()
     test_contracts_dir_resolves_to_a_real_rules_dir()
