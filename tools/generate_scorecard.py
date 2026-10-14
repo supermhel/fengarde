@@ -223,8 +223,16 @@ def check_freshness(arts: dict, root: Path = ROOT, *,
 # Controls
 # ==========================================================================
 def _gate_references(gate_text: str) -> set[str]:
+    """Repo-relative test files the gate runs, read from its ACTIVE
+    (uncommented) lines; ``(cd DIR && $PY NAME.py)`` resolves to
+    ``DIR/NAME.py``. A commented-out line used to count as wired, and a bare
+    basename matched any file of that name (every service has a
+    ``test_contract.py``) -- external review 2026-10-14."""
+    text = reg.active_gate_text(gate_text)
     refs = set()
-    for m in re.finditer(r"\$PY\s+([\w./-]+\.py)", gate_text):
+    for m in re.finditer(r"cd\s+([\w./-]+)\s*&&\s*\$PY\s+([\w./-]+\.py)", text):
+        refs.add(f"{m.group(1).rstrip('/')}/{m.group(2)}")
+    for m in re.finditer(r"\$PY\s+([\w./-]+\.py)", text):
         refs.add(m.group(1))
     return refs
 
@@ -256,29 +264,46 @@ def _enclosing_function(tree: ast.AST, needle: str, lines: list[str]):
     return best
 
 
+def _names_in(node: ast.AST) -> set[str]:
+    return {n.id for n in ast.walk(node) if isinstance(n, ast.Name)}
+
+
 def _called_from_entry(tree: ast.AST) -> set[str]:
-    """Names CALLED from a module-level ``main`` function or from the
-    ``if __name__ == "__main__":`` block. A needle can exist and the file can be
-    gate-wired while the enclosing function is never executed -- the dormant-test
-    class this repo already fixed (a9b9313); this is what catches it."""
-    called: set[str] = set()
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == "main":
-            for sub in ast.walk(node):
-                if isinstance(sub, ast.Call) and isinstance(sub.func, ast.Name):
-                    called.add(sub.func.id)
-        if isinstance(node, ast.If):
-            test = node.test
-            if (isinstance(test, ast.Compare) and
-                    isinstance(test.left, ast.Name) and test.left.id == "__name__"):
-                for sub in ast.walk(node):
-                    if isinstance(sub, ast.Call) and isinstance(sub.func, ast.Name):
-                        called.add(sub.func.id)
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Expr) and isinstance(node.value, ast.Call) and \
-                isinstance(node.value.func, ast.Name):
-            called.add(node.value.func.id)
-    return called
+    """Module-level functions REACHABLE from the ``if __name__ == "__main__":``
+    block: named there (called, or listed -- ``tests = [test_a, ...]`` counts),
+    then transitively through every reachable function's body. A needle can
+    exist and the file can be gate-wired while the enclosing function is never
+    executed -- the dormant-test class this repo already fixed (a9b9313).
+
+    External review 2026-10-14: the first version also counted every
+    expression-statement call ANYWHERE in the module, so a test called only from
+    another never-called function passed as "called from main()". Only
+    reachability from the entry block counts now. ``unittest.main()`` in the
+    entry block makes every ``test*`` method of the module's classes reachable."""
+    defs = {n.name: n for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+    entry: list[ast.AST] = [
+        n for n in tree.body
+        if isinstance(n, ast.If) and isinstance(n.test, ast.Compare)
+        and isinstance(n.test.left, ast.Name) and n.test.left.id == "__name__"]
+    reach: set[str] = set()
+    todo = set().union(*(_names_in(e) for e in entry)) if entry else set()
+    while todo:
+        name = todo.pop()
+        if name in reach:
+            continue
+        reach.add(name)
+        if name in defs:
+            todo |= _names_in(defs[name]) - reach
+    scopes = entry + [defs[n] for n in reach if n in defs]
+    runs_unittest = any(isinstance(a, ast.Attribute) and a.attr == "main"
+                        and isinstance(a.value, ast.Name) and a.value.id == "unittest"
+                        for s in scopes for a in ast.walk(s))
+    if runs_unittest:
+        for cls in (n for n in tree.body if isinstance(n, ast.ClassDef)):
+            reach |= {m.name for m in cls.body
+                      if isinstance(m, (ast.FunctionDef, ast.AsyncFunctionDef))
+                      and m.name.startswith("test")}
+    return reach
 
 
 def check_one_control(ref: "reg.ControlRef", root: Path = ROOT,
@@ -290,13 +315,19 @@ def check_one_control(ref: "reg.ControlRef", root: Path = ROOT,
     src = p.read_text(encoding="utf-8")
     if gate_text is None:
         gate_text = GATE.read_text(encoding="utf-8") if GATE.exists() else ""
-    if ref.test_file not in _gate_references(gate_text) and \
-            Path(ref.test_file).name not in _gate_references(gate_text):
+    if ref.test_file not in _gate_references(gate_text):
         problems.append(f"[CONTROL] {ref.test_file}: not invoked by {reg.GATE_SH} "
                         f"via `$PY` -- a control in an unwired file proves nothing")
     lines = src.splitlines()
-    if not any(ref.needle in ln for ln in lines):
+    hits = sum(1 for ln in lines if ref.needle in ln)
+    if not hits:
         problems.append(f"[CONTROL] {ref.test_file}: needle {ref.needle!r} not found")
+        return problems
+    if hits > 1:
+        # "def test_x" is also a prefix of "def test_x_more": the first match
+        # would silently decide which function the control means
+        problems.append(f"[CONTROL] {ref.test_file}: needle {ref.needle!r} is on {hits} "
+                        f"lines -- it must be unique")
         return problems
     try:
         tree = ast.parse(src)
@@ -349,7 +380,9 @@ LAST_INSTRUMENT = reg.INSTRUMENTS_RUN_BEFORE_CHECK[-1][1][0]
 
 def assert_gate_wiring(gate_text: str) -> list[str]:
     """``--check`` must run AFTER the last instrument stanza, or it renders a
-    card from the PREVIOUS run's artifacts and passes."""
+    card from the PREVIOUS run's artifacts and passes. Reads the gate's ACTIVE
+    lines only (a commented-out stanza is not a stanza)."""
+    gate_text = reg.active_gate_text(gate_text)
     if reg.CHECK_STANZA not in gate_text:
         return [f"[WIRING] {reg.GATE_SH} does not invoke {reg.CHECK_STANZA!r} -- the "
                 f"scorecard is checked by nobody"]
@@ -393,21 +426,36 @@ def _value_cell(m: "reg.MetricSpec", raw) -> str:
     return reg._f(raw)
 
 
-def _storyline_rows(arts: dict) -> dict[str, list[tuple]]:
+def _extract(m: "reg.MetricSpec", arts: dict, storyline: str, errors: list[str]):
+    """One cell's raw value. An extractor that RAISES is a shape the card cannot
+    read: it is recorded in ``errors`` (main() then refuses to render) instead of
+    being rendered as ``null`` -- which read exactly like a measured null, and
+    ``--write`` would have committed it (external review 2026-10-14)."""
+    try:
+        return m.extract(arts[m.source], storyline)
+    except Exception as exc:  # noqa: BLE001 -- every failure is reported, none is hidden
+        errors.append(f"[EXTRACT] {m.key} ({storyline or 'global'}): "
+                      f"{type(exc).__name__}: {exc}")
+        return None
+
+
+def _storyline_rows(arts: dict, errors: list[str] | None = None) -> dict[str, list[tuple]]:
+    errors = [] if errors is None else errors
     rows: dict[str, list[tuple]] = {s: [] for s in reg.STORYLINES}
     denominator = arts.get("__denominator__", {})
     for m in reg.METRICS:
         if m.scope != "storyline":
             continue
         for s in reg.STORYLINES:
-            try:
-                raw = m.extract(arts[m.source], s)
-            except Exception:
-                raw = None
+            raw = _extract(m, arts, s, errors)
             val = _value_cell(m, raw)
             if m.key == "tpr":
                 non_gap, n_steps, n_gaps = denominator.get(s, (0, 0, 0))
-                val = (f"{val} (non-gap steps {non_gap}/{non_gap}; oracle declares "
+                # the numerator is the measured TPR times the non-gap denominator;
+                # printing "{non_gap}/{non_gap}" claimed full coverage whatever TPR was
+                hit = round(raw * non_gap) if isinstance(raw, (int, float)) and not \
+                    isinstance(raw, bool) else "?"
+                val = (f"{val} (non-gap steps detected {hit}/{non_gap}; oracle declares "
                        f"{n_steps} step(s) and {n_gaps} gap(s))")
             rows[s].append((m, val))
     return rows
@@ -499,26 +547,21 @@ def build_model(arts: dict, root: Path = ROOT) -> dict:
     digest = hashlib.sha256(REGISTRY_PATH.read_bytes()).hexdigest()
     gate_text = (root / reg.GATE_SH).read_text(encoding="utf-8")
     limits = verify_limits(arts, root)
+    extract_errors: list[str] = []
 
     twin_rows = []
     global_rows = []
     for m in reg.METRICS:
         if m.scope == "twin_only":
-            try:
-                raw = m.extract(arts[m.source], reg.TWIN_STORYLINE)
-            except Exception:
-                raw = None
+            raw = _extract(m, arts, reg.TWIN_STORYLINE, extract_errors)
             twin_rows.append((m, _value_cell(m, raw)))
         elif m.scope == "global":
-            try:
-                raw = m.extract(arts[m.source], "")
-            except Exception:
-                raw = None
+            raw = _extract(m, arts, "", extract_errors)
             global_rows.append((m, _value_cell(m, raw)))
 
     stories = []
     sm = arts.get("scenario_matrix") or {}
-    per_story = _storyline_rows(arts)
+    per_story = _storyline_rows(arts, extract_errors)
     for s in reg.STORYLINES:
         node = (sm.get("scenarios") or {}).get(s) or {}
         non_gap, steps, gaps = arts.get("__denominator__", {}).get(s, (0, 0, 0))
@@ -542,7 +585,11 @@ def build_model(arts: dict, root: Path = ROOT) -> dict:
                 none_register.append((f"{reg.TWIN_STORYLINE}/{m.label}", m.blind_spot))
             else:
                 none_register.append((m.label, m.blind_spot))
-    # twin-only metrics are 'not measured' for the other three storylines
+    # Rendered cells with no control, counted BEFORE the 'not measured' entries:
+    # those cells are not rendered anywhere, and the old sentence counted them as
+    # "rendered metric cells" (70 of 91, when 10 rendered cells lacked a control).
+    none_rendered = len(none_register)
+    # twin-only metrics are 'not measured' for the other storylines
     for m in reg.METRICS:
         if m.scope == "twin_only":
             for s in reg.STORYLINES:
@@ -566,6 +613,8 @@ def build_model(arts: dict, root: Path = ROOT) -> dict:
         "global_rows": global_rows,
         "techniques": techniques,
         "none_register": none_register,
+        "none_rendered": none_rendered,
+        "extract_errors": extract_errors,
         "gaps": gaps,
         "limits": limits,
         "pooled": (arts.get("scenario_matrix") or {}).get("pooled", {}),
@@ -786,9 +835,11 @@ def render(model: dict) -> str:
 
     a("## Register: metric cells with NO control")
     a("")
-    a(f"{len(model['none_register'])} of "
-      f"{_total_cells(model)} rendered metric cells have no control that can move them "
-      f"today. Each is a gap in the harness, not a clean bill of health.")
+    not_measured = len(model["none_register"]) - model["none_rendered"]
+    a(f"{model['none_rendered']} of {_total_cells(model)} rendered metric cells have no "
+      f"control that can move them today, and {not_measured} more cells are not measured "
+      f"at all (twin-only metrics for the other storylines; listed below, not rendered "
+      f"above). Each is a gap in the harness, not a clean bill of health.")
     a("")
     a("| cell | why there is no control |")
     a("|---|---|")
@@ -879,7 +930,11 @@ def cell_summary(committed: str, fresh: str) -> list[str]:
 def _alias_regex() -> re.Pattern:
     toks = sorted(reg.ALIASES, key=len, reverse=True)
     alt = "|".join(re.escape(t) for t in toks)
-    return re.compile(rf"(?<![\w.])({alt})(?:\s*[:=]\s*|\s+)(-?\d+(?:\.\d+)?)(?![\d.])",
+    # The number may be followed by a sentence-ending "." -- the old lookahead
+    # (?![\d.]) rejected "tpr 0.42." outright, so any quote at the end of a
+    # sentence escaped the lint (external review 2026-10-14). Only a further
+    # digit, or a "." that continues the number, disqualifies the match.
+    return re.compile(rf"(?<![\w.])({alt})(?:\s*[:=]\s*|\s+)(-?\d+(?:\.\d+)?)(?!\d|\.\d)",
                       re.IGNORECASE)
 
 
@@ -1073,6 +1128,13 @@ def _check_storylines(arts: dict) -> list[str]:
     for s in sorted(want):
         if s not in (sm.get("scenarios") or {}):
             return [f"[STORYLINES] {s} is registered but has no scenario block"]
+    # The evasion artifact feeds two per-storyline rows too. A storyline missing
+    # there rendered "0 searched" -- which the blind spot explains as a scope
+    # limit, not as "the lane never ran" (external review 2026-10-14).
+    ev = set(((arts.get("evasion") or {}).get("scenarios") or {}))
+    if ev and ev != want:
+        return [f"[STORYLINES] evasion_search covers {sorted(ev)} but the registry lists "
+                f"{sorted(want)}"]
     return []
 
 
@@ -1147,8 +1209,11 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
 
     rc = 0
-    if args.run:
-        rc |= run_instruments()
+    if args.run and run_instruments():
+        # its own message, not the "limit EXPIRED" one below (they used to share rc)
+        print("[FAIL] an instrument failed during --run; refusing to render from its "
+              "artifacts.")
+        return 1
 
     arts, problems, _ = _prepare()
     if problems:
@@ -1158,6 +1223,12 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     model = build_model(arts)
+    if model["extract_errors"]:
+        for e in model["extract_errors"]:
+            print(e)
+        print(f"[FAIL] scorecard: {len(model['extract_errors'])} cell(s) could not be read "
+              f"from the artifacts; refusing to render them as null.")
+        return 1
     for key, ok, evidence, static in model["limits"]:
         flag = "static" if static else ("OK" if ok else "FAILED")
         print(f"[limit] {key}: {flag} -- {evidence}")

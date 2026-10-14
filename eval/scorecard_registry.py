@@ -34,11 +34,14 @@ What lives here
                       CALLED from the module's ``main()``/``__main__`` block
                       (the dormant-test class this repo already fixed once, in
                       a9b9313 / tools/check_lane_coverage.py).
-``RATCHET_FLOOR_FILE`` the ratchet step's future floor filename, named ONCE here
-                      so that step cannot silently pick a different name and
-                      make limit #12 ("this card does not block a regression")
-                      true forever. The guard for limit #12 fails the moment the
-                      file appears, which is exactly when the sentence expires.
+``RATCHET_BASELINE_FILE`` the step-6 atom baseline. (Its predecessor named a
+                      FUTURE file, ``eval/scorecard.floor.json``, so the guard of
+                      "this card does not block a regression" would expire when
+                      the ratchet landed. The ratchet landed under a different
+                      name and the sentence stayed "OK" while false -- exactly
+                      the failure the constant existed to prevent; external
+                      review 2026-10-14. The limit is now about what the landed
+                      ratchet does NOT cover, see ``RATCHET_ATOMS``.)
 
 Maintenance note (ordering coupling)
 ------------------------------------
@@ -58,8 +61,35 @@ from typing import Any, Callable
 # --------------------------------------------------------------------------
 # Repository-relative inputs
 # --------------------------------------------------------------------------
-#: The single name of the ratchet step's floor file (see the module docstring).
-RATCHET_FLOOR_FILE = "eval/scorecard.floor.json"
+#: The committed atom baseline of eval/twin/ratchet.py (see the module docstring).
+RATCHET_BASELINE_FILE = "eval/twin/baseline_scenarios.json"
+
+#: metric key -> the ratchet atom prefix that freezes it (``{s}`` = storyline).
+#: A metric absent here is rendered on the card but NOT ratcheted; the
+#: ``ratchet_scope`` limit lists those, and its guard fails if a prefix below
+#: matches no committed atom (a stale claim that something is ratcheted).
+RATCHET_ATOMS: dict[str, str] = {
+    "tpr": "scn/{s}/base/tpr",
+    "chain_fidelity": "scn/{s}/base/chain_fidelity",
+    "false_correlation_rate": "scn/{s}/base/false_correlation_rate",
+    "directional_discrimination": "scn/{s}/base/directional_discrimination",
+    "alert_order_ok": "scn/{s}/base/alert_order_ok",
+    "incident_membership_ok": "scn/{s}/base/incident_membership_ok",
+    "mutation_robustness": "scn/{s}/mut/",
+    "mutation_variants": "scn/{s}/mut/",
+    "fpr": "twin/fpr",
+    "mttd_seconds": "twin/mttd_seconds",
+    "mtti": "twin/mtti",
+    "evidence_completeness": "twin/evidence_completeness",
+    "alert_reduction_ratio": "twin/alert_reduction_ratio",
+    "severity_calibration_error": "twin/severity_calibration_error",
+    "attribution_accuracy": "twin/attribution_accuracy",
+    "mutation_robustness_twin": "lane_a/mut/",
+    "layer_a_mutation_robustness": "lane_a/mut/",
+    "corpus_cases_matched": "corpus_b/",
+    "evasion_rows_searched": "scn/{s}/evasion/",
+    "evasion_boundary_agreement": "scn/{s}/evasion/",
+}
 
 #: The card itself.
 CARD_PATH = "eval/SCORECARD.md"
@@ -122,6 +152,11 @@ FRESHNESS_INPUT_GLOBS: tuple[str, ...] = (
     "eval/twin/oracle_*.yaml",
     "eval/adversarial/*.yaml",
     "eval/attack/coverage_layer.py",
+    # tools/ modules an instrument imports (the rest of tools/ is excluded on
+    # purpose): fire_check replays check_rule_producers' FIXTURES, and every
+    # load_rules() call validates through validate_rules (2026-10-14 review).
+    "tools/check_rule_producers.py",
+    "tools/validate_rules.py",
 )
 
 #: ws4-detection's contract roots, asserted covered by FRESHNESS_INPUT_GLOBS.
@@ -453,12 +488,24 @@ def _evas(d: dict, storyline: str, field: str) -> Any:
 
 
 def _oracle_consistency(d: dict, field: str) -> Any:
+    """Sum one field over every scenario. ``new``, ``stale_allowlist_entries``
+    and ``decorative_expectations`` are LISTS (one entry per finding) and count
+    by length; ``accepted_count`` is an int. Anything else is a shape the card
+    cannot read, and it raises rather than counting as 0: ``int(list)`` used to
+    raise TypeError, which was swallowed, so the three list metrics rendered 0
+    whatever the artifact held (external review 2026-10-14)."""
     total = 0
     for sc, f in d.items():
-        try:
-            total += int(f.get(field) or 0)
-        except (TypeError, ValueError):
-            pass
+        v = f.get(field)
+        if v is None:
+            continue
+        if isinstance(v, (list, tuple)):
+            total += len(v)
+        elif isinstance(v, int) and not isinstance(v, bool):
+            total += v
+        else:
+            raise TypeError(f"oracle_consistency.{sc}.{field} is a {type(v).__name__}, "
+                            f"expected a list or an int")
     return total
 
 
@@ -874,8 +921,16 @@ class LimitSpec:
     static: bool = False
 
 
+def active_gate_text(text: str) -> str:
+    """``run_all_tests.sh`` without its comment lines. Every wiring check reads
+    this: on the raw text a commented-out ``# $PY eval/...`` line counted as a
+    wired stanza, so a gate with every instrument disabled passed (external
+    review 2026-10-14)."""
+    return "\n".join(ln for ln in text.splitlines() if not ln.lstrip().startswith("#"))
+
+
 def _gate_problem(root, pipe: str) -> str | None:
-    m = re.finditer(pipe, (root / GATE_SH).read_text(encoding="utf-8"))
+    m = re.finditer(pipe, active_gate_text((root / GATE_SH).read_text(encoding="utf-8")))
     hits = [x.group(0) for x in m]
     if hits:
         return f"{GATE_SH} runs {hits[0]!r}"
@@ -959,16 +1014,31 @@ def _g_alert_order(arts, root):
 
 
 def _g_decision(arts, root):
+    """Evidence for "null when no decoys; a measured value otherwise".
+
+    The first version returned OK unconditionally (external review 2026-10-14).
+    It now fails when no storyline measures decoys at all (the sentence would
+    describe nothing) or when a measured value is not a fraction in [0, 1]. The
+    pooling half of the sentence is the ``decoy_contamination`` CONTROL's job
+    (a decoy on the attacker's own entity IS absorbed), not this guard's."""
     sm = arts.get("scenario_matrix")
     if not sm:
         return False, "no scenario_matrix artifact"
-    with_decoys = []
+    with_decoys, bad = [], []
     for sc, node in sorted(sm["scenarios"].items()):
-        rows = node.get("rows", [])
-        if any(r.get("decoy_contamination") is not None for r in rows):
-            with_decoys.append(sc)
-    return True, ("storylines with a decoy-contamination denominator: "
-                  + (", ".join(with_decoys) or "none (every storyline reports null)"))
+        vals = [r.get("decoy_contamination") for r in node.get("rows", [])
+                if r.get("decoy_contamination") is not None]
+        if vals:
+            with_decoys.append(f"{sc}(max {max(vals)})")
+            bad += [f"{sc}={v}" for v in vals
+                    if not isinstance(v, (int, float)) or isinstance(v, bool) or not 0 <= v <= 1]
+    if not with_decoys:
+        return False, "no storyline measures decoy contamination -- the bullet describes nothing"
+    if bad:
+        return False, "decoy_contamination outside [0, 1]: " + ", ".join(bad)
+    nulls = sorted(set(sm["scenarios"]) - {w.split("(")[0] for w in with_decoys})
+    return True, ("measured on " + ", ".join(with_decoys) + "; null on "
+                  + (", ".join(nulls) or "none"))
 
 
 def _g_relative_baseline(arts, root):
@@ -1045,20 +1115,39 @@ def _g_two_rule_steps(arts, root):
         return False, "no oracle step index (oracles unreadable) -- cannot measure " \
                       "multi-rule steps"
     multi = {k: v["rule_ids"] for k, v in sorted(idx.items()) if len(v["rule_ids"]) > 1}
+    if not multi:
+        # the bullet is about multi-rule steps; with none it describes nothing
+        return False, "no oracle step carries more than one expected rule -- rewrite the bullet"
     detail = ", ".join(f"{k} ({len(v)})" for k, v in list(multi.items())[:4])
     return True, (f"{len(multi)} oracle step(s) carry >1 expected rule and are credited "
-                  f"to every one of them: {detail or 'none'}")
+                  f"to every one of them: {detail}")
 
 
-def _g_no_ratchet(arts, root):
-    p = root / RATCHET_FLOOR_FILE
-    if p.exists():
-        return False, (f"{RATCHET_FLOOR_FILE} now exists -- the ratchet step changed the "
-                       f"contract, so 'this card does not block a regression' must be "
-                       f"rewritten (and this guard renamed)")
-    return True, (f"no floor file at {RATCHET_FLOOR_FILE} (single registry constant "
-                  f"RATCHET_FLOOR_FILE); the ratchet step must edit this constant, not "
-                  f"invent a name")
+def _g_ratchet_scope(arts, root):
+    """Evidence for "the ratchet freezes atoms; these card metrics have none".
+
+    Fails when the baseline is missing (then NOTHING is ratcheted and the
+    sentence is wrong the other way), when a RATCHET_ATOMS prefix matches no
+    committed atom (a stale "this is ratcheted" claim), and when every card
+    metric is ratcheted (the sentence has expired)."""
+    import json
+    p = root / RATCHET_BASELINE_FILE
+    if not p.exists():
+        return False, f"{RATCHET_BASELINE_FILE} is missing -- no metric is ratcheted at all"
+    atoms = (json.loads(p.read_text(encoding="utf-8")).get("atoms") or {})
+    stale = []
+    for key, prefix in sorted(RATCHET_ATOMS.items()):
+        wanted = [prefix.format(s=s) for s in STORYLINES] if "{s}" in prefix else [prefix]
+        if not any(a.startswith(w) for a in atoms for w in wanted):
+            stale.append(f"{key}->{prefix}")
+    if stale:
+        return False, "RATCHET_ATOMS names prefixes with no committed atom: " + ", ".join(stale)
+    loose = [m.key for m in METRICS if m.key not in RATCHET_ATOMS]
+    if not loose:
+        return False, "every card metric is ratcheted now -- rewrite the bullet"
+    return True, (f"{len(atoms)} atoms in {RATCHET_BASELINE_FILE}; "
+                  f"{len(METRICS) - len(loose)} of {len(METRICS)} card metrics ratcheted; "
+                  f"not ratcheted: {', '.join(loose)}")
 
 
 LIMITS: tuple[LimitSpec, ...] = (
@@ -1126,11 +1215,13 @@ LIMITS: tuple[LimitSpec, ...] = (
         "overstate one technique.",
         _g_two_rule_steps),
     LimitSpec(
-        "no_ratchet_yet",
-        "`--check` proves the committed card matches a fresh render of the artifacts. It "
-        "does not BLOCK a regression: accepting a worse number is a one-line card edit "
-        "plus a commit. A per-technique ratchet is a separate step.",
-        _g_no_ratchet),
+        "ratchet_scope",
+        "`--check` proves the committed card matches a fresh render; it blocks nothing by "
+        "itself. The atom ratchet (`eval/twin/ratchet.py check`, a gate stanza) blocks an "
+        "unwaived drop of every atom it measures, but several card metrics have no atom "
+        "behind them, and for those accepting a worse number is still a card regeneration "
+        "plus a commit.",
+        _g_ratchet_scope),
 )
 
 
