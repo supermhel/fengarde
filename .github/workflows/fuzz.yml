@@ -42,7 +42,8 @@ jobs:
         target: [linux_ssh, cisco_asa, windows_eventlog, db_audit, vmware_vsphere,
                  generic_syslog, dns_query, cef, sysmon, active_directory,
                  opcua_audit, n8n_audit, mcp_agent,
-                 k8s_audit, cloudtrail, modbus_anomaly, inventory_diff]
+                 k8s_audit, cloudtrail, modbus_anomaly, inventory_diff,
+                 mail_gateway, m365_audit]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0

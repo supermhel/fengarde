@@ -17,6 +17,7 @@ The contract validator rejects any event where this does not hold.
 | 3 (IAM)      | 3003      | Account Change          | role/permission change, user create/delete |
 | 4 (Network)  | 4001      | Network Activity        | NetFlow/IPFIX flows, firewall accept/deny  |
 | 4 (Network)  | 4002      | DNS / HTTP Activity     | proxy, WAF, DNS logs                        |
+| 4 (Network)  | 4009      | Email Activity          | secure-email-gateway message log (2026-10-14) |
 | 6 (App)      | 6003      | API Activity            | hypervisor API, k8s API, REST              |
 | 6 (App)      | 6005      | Datastore Activity      | DB query/audit (Oracle, DB2, Postgres)     |
 
@@ -25,6 +26,7 @@ The contract validator rejects any event where this does not hold.
 Authentication (3002): `1` Logon, `2` Logoff, `3` Auth Ticket, `4` Failure
 Account Change (3003): `1` Create, `2` Enable, `3` Password Change, `4` Delete, `5` Privilege Grant
 Network Activity (4001): `1` Open, `2` Close, `6` Deny, `7` Accept
+Email Activity (4009): `1` Send, `2` Receive, `3` Scan
 API Activity (6003): `1` Create, `2` Read, `3` Update, `4` Delete
 Datastore (6005): `1` Query, `2` Write, `3` Update, `4` Delete, `5` Privileged Op
 

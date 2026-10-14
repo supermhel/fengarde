@@ -186,6 +186,22 @@ FIXTURES: dict[str, list[dict]] = {
                  "TargetFilename": r"C:\Users\jdoe\AppData\Local\Temp\payload.exe",
                  "User": "CORP\\jdoe"}, "meta": {}},
     ],
+    "mail_gateway": [
+        {"raw": {"from": "billing@vendor.example.invalid", "to": "jdoe@corp.example",
+                 "subject": "Invoice", "attachment": "Invoice.docm", "verdict": "delivered",
+                 "ts": 1750000000000, "src_ip": "203.0.113.200"}, "meta": {}},
+        {"raw": {"from": "a@corp.example", "to": "b@x.example", "direction": "outbound",
+                 "verdict": "quarantined", "ts": 1750000001000}, "meta": {}},
+    ],
+    "m365_audit": [
+        {"raw": {"Operation": "New-InboxRule", "Workload": "Exchange", "UserId": "jdoe@corp.example",
+                 "ClientIP": "203.0.113.51:50432", "CreationTime": "2026-07-20T10:00:00Z",
+                 "Parameters": [{"Name": "ForwardTo", "Value": "x@evil.example"},
+                                {"Name": "DeleteMessage", "Value": "True"}]}, "meta": {}},
+        {"raw": {"Operation": "UserLoginFailed", "Workload": "AzureActiveDirectory",
+                 "UserId": "jdoe@corp.example", "ClientIP": "203.0.113.52",
+                 "CreationTime": "2026-07-20T10:00:01Z"}, "meta": {}},
+    ],
 }
 
 

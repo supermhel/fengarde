@@ -38,7 +38,7 @@
     "class_uid": {
       "type": "integer",
       "description": "OCSF class. See ocsf-classes.md.",
-      "enum": [3002, 3003, 4001, 4002, 6003, 6005, 1001, 1002]
+      "enum": [3002, 3003, 4001, 4002, 4009, 6003, 6005, 1001, 1002]
     },
     "category_uid": {
       "type": "integer",
@@ -95,7 +95,8 @@
         "ingest_id": { "type": "string", "description": "uuid assigned by collector. THE per-event dedup key (Envelope v1) -- consumers must be idempotent on this, not on stream/message id." },
         "tenant": { "type": "string", "description": "Envelope v1 tenant_id. Stamped by WS-1 from TENANT_ID env (default \"default\") and carried unchanged through every downstream stage. See shared.envelope.default_tenant()." },
         "trace_id": { "type": "string", "description": "Envelope v1: one value per source event's journey collector -> alert, generated once at WS-1 ingest (shared.envelope.new_trace_id()) and carried through unchanged. Absent on pre-v1 events / events built without going through a WS-1 collector (falls back to a fresh id at normalize time)." },
-        "score": { "type": "integer", "minimum": 0, "maximum": 100, "description": "set by WS-4 detection, absent at ingest" }
+        "score": { "type": "integer", "minimum": 0, "maximum": 100, "description": "set by WS-4 detection, absent at ingest" },
+        "clock_skew_ms": { "type": "integer", "description": "F4 (2026-10-14, additive, flag only): record time minus meta.received_at, set by WS-2 ONLY when |skew| > 300000 ms. Absent = within tolerance or not measurable. Nothing changes behaviour on it; it makes a forged or drifting record clock visible." }
       }
     }
   },

@@ -14,6 +14,7 @@ _CATEGORY = {
     3003: "account_change",
     4001: "network",
     4002: "web_dns",
+    4009: "email",
     6003: "api",
     6005: "datastore",
     1001: "file",

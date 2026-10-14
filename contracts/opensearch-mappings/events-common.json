@@ -6,7 +6,7 @@
       "number_of_replicas": 1
     },
     "mappings": {
-      "_meta": { "mapping_version": 2 },
+      "_meta": { "mapping_version": 3 },
       "dynamic": "false",
       "properties": {
         "time": { "type": "date", "format": "epoch_millis" },
@@ -26,6 +26,7 @@
         },
         "src_endpoint": { "properties": { "ip": { "type": "ip" }, "mac": { "type": "keyword" }, "hostname": { "type": "keyword" }, "port": { "type": "integer" }, "reputation": { "properties": { "score": { "type": "integer" }, "categories": { "type": "keyword" }, "source": { "type": "keyword" } } }, "location": { "properties": { "country": { "type": "keyword" }, "source": { "type": "keyword" } } } } },
         "dst_endpoint": { "properties": { "ip": { "type": "ip" }, "mac": { "type": "keyword" }, "hostname": { "type": "keyword" }, "port": { "type": "integer" } } },
+        "email": { "properties": { "from": { "type": "keyword" }, "to": { "type": "keyword" }, "subject": { "type": "keyword", "ignore_above": 512 } } },
         "actor": { "properties": { "user": { "properties": { "name": { "type": "keyword" }, "uid": { "type": "keyword" }, "domain": { "type": "keyword" } } } } },
         "siem": {
           "properties": {
@@ -33,7 +34,8 @@
             "source_type": { "type": "keyword" },
             "ingest_id": { "type": "keyword" },
             "tenant": { "type": "keyword" },
-            "score": { "type": "integer" }
+            "score": { "type": "integer" },
+            "clock_skew_ms": { "type": "long" }
           }
         }
       }

@@ -21,6 +21,7 @@ from shared.bus import Bus  # noqa: E402
 from shared.ocsf import validate  # noqa: E402
 from shared.sanitize import strip_ansi_and_control  # noqa: E402
 from parsers import resolve  # noqa: E402
+from parsers.timeutil import to_epoch_ms  # noqa: E402
 from enrichment import enrich  # noqa: E402
 
 
@@ -72,7 +73,16 @@ _FREE_TEXT_PATHS = (
     # unmapped field it shares with api.request.data, so it needs an explicit
     # path of its own (WP-2-G: was reaching downstream unsanitized).
     ("api", "operation"),
+    # email.{from,to,subject} (mail_gateway, 2026-10-14) are sender-chosen bytes
+    ("email", "*"),
 )
+
+#: F4 (owner decision 2026-10-14, flag only): a record clock further than this from
+#: the receipt time is stamped ``siem.clock_skew_ms`` (record time - received_at).
+#: Behaviour is unchanged -- WS-4 still windows on ``time`` -- the stamp makes the
+#: trust-model gap (evasion_findings F4: a forged record clock stretches a burst)
+#: visible and queryable instead of silent. Same 5 min as WS-4's future-skew guard.
+_CLOCK_SKEW_FLAG_MS = 300_000
 
 
 def _sanitize_tree(value: Any) -> Any:
@@ -170,8 +180,25 @@ def normalize_one(raw_payload: dict):
     if event is None:
         return None, ["parser returned None"]
     event = _sanitize_free_text(event)
+    _stamp_clock_skew(event, raw_payload)
     event = enrich(event)
     return event, validate(event)
+
+
+def _stamp_clock_skew(event: dict, raw_payload: dict) -> None:
+    """Stamp ``siem.clock_skew_ms`` when the parsed record time and the receipt
+    time (``meta.received_at``) disagree by more than ``_CLOCK_SKEW_FLAG_MS``.
+    Absent stamp == within tolerance or not measurable (no usable receipt time).
+    Parsers that take ``time`` FROM received_at can never be stamped."""
+    meta = raw_payload.get("meta") if isinstance(raw_payload, dict) else None
+    received = to_epoch_ms(meta.get("received_at")) if isinstance(meta, dict) else None
+    t = event.get("time")
+    siem = event.get("siem")
+    if received is None or isinstance(t, bool) or not isinstance(t, int) or not isinstance(siem, dict):
+        return
+    skew = t - received
+    if abs(skew) > _CLOCK_SKEW_FLAG_MS:
+        siem["clock_skew_ms"] = skew
 
 
 def _deadletter_key(payload: dict, msg_key: Any = None) -> Any:
