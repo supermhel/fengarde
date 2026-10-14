@@ -169,6 +169,17 @@ def measure_set(probe: ps.FastProbe, rs: ax.RuleSet, burst: ax.Burst, tables: di
     row["clock"] = clk
     row["clock_forgeable"] = bool(clk["clock_forgeable"])
     row["clock_forgeable_ratified"] = False      # no table row exists for the clock-trust question yet
+    row["classifications"] = {
+        "forgone_events": loss.get("classification"),
+        "timing": sched.get("classification"),
+        "min_keys": {kind: "INHERENT" for kind, value in row["min_keys"].items()
+                      if value["value"] != IMMUNE},
+        "joint_frontier": ((row["joint_frontier"] or {}).get("classification")
+                            if row["joint_frontier"] is not None else None),
+        "respelling": {o["op"]: o["class"] for o in resp["ops"]},
+        "forgery": forg.get("classification"),
+        "clock": clk.get("classification"),
+    }
     row["agree"] = bool(agree)
     return row
 
