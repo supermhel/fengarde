@@ -40,7 +40,11 @@ Rules of the road:
   `FENGARDE_OPT_IN_RULES=<rule id>[,<rule id>...]` on the WS-4 detection service to
   opt those rules in for every tenant. (`Detector(opt_in_rules=[...])` does the
   same in tests and the eval harness.)
-- Edits to a tenant file are picked up by the hot-reload watcher, no restart.
+- Edits to a tenant file are picked up by the hot-reload watcher **when it is
+  enabled** (`RULES_RELOAD_INTERVAL_S > 0` on the WS-4 detection service; it is
+  OFF by default for byte-identical load-once behavior). On a stock install a
+  tenant-file edit requires a WS-4 restart to take effect (the per-tenant config
+  is cached; see `services/ws4-detection/tenants.py::invalidate_cache`).
 - `GET /rules` (WS-3) reports `default_enabled`, `opt_in` and the resulting
   `enabled` per tenant so the dashboard can say why a rule is off.
 

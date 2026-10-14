@@ -53,6 +53,29 @@ DEFAULT_TENANT = "default"
 _CACHE_MAXSIZE = 1000
 _CACHE: "OrderedDict[str, tuple[frozenset, frozenset]]" = OrderedDict()
 
+# Path(tenants_dir).resolve() inside _load_config was computed on EVERY call,
+# including cache hits -- one filesystem realpath syscall per event on the
+# detection hot path (review finding 2026-10-13, measured +0.8-1.3 ms/event for
+# events whose class bucket holds a default-off rule on Windows hosts). The
+# resolved string is memoized per distinct input path (bounded LRU, same cap
+# convention as _CACHE -- a caller cannot grow it without bound).
+_RESOLVE_MAXSIZE = 256
+_RESOLVED: "OrderedDict[str, str]" = OrderedDict()
+
+
+def _resolved_str(tenants_dir: Path) -> str:
+    key = str(tenants_dir)
+    got = _RESOLVED.get(key)
+    if got is not None:
+        _RESOLVED.move_to_end(key)
+        return got
+    out = str(Path(tenants_dir).resolve())
+    _RESOLVED[key] = out
+    _RESOLVED.move_to_end(key)
+    while len(_RESOLVED) > _RESOLVE_MAXSIZE:
+        _RESOLVED.popitem(last=False)
+    return out
+
 
 def _cache_get(key: str):
     if key not in _CACHE:
@@ -110,7 +133,7 @@ def _load_config(tenants_dir: Path, tenant_id: str) -> "tuple[frozenset, frozens
     bad YAML, wrong shape): BOTH sets empty. Empty `disabled` means a
     default-on rule is never turned off by a broken config; empty `enabled`
     means a default-off rule is never turned ON by one (opt-in is explicit)."""
-    cache_key = f"{Path(tenants_dir).resolve()}::{tenant_id}"
+    cache_key = f"{_resolved_str(tenants_dir)}::{tenant_id}"
     cached = _cache_get(cache_key)
     if cached is not None:
         return cached

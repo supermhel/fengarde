@@ -503,16 +503,43 @@ _EQUIVALENT: dict = {
         + _ORDER_BLIND_M)},
     ("infra_takeover", "reverse_relationship", "SURVIVED"): {"max": 2, "reason": "2026-10-02 " + _ORDER_BLIND_M},
     ("infra_takeover", "shift_level", "SURVIVED"): {"max": 1, "reason": "2026-10-02 " + _COMPANION},
+    # phishing_bec (2026-10-13, measured on seeds 7/11; all five classes reproduce there):
+    # the storyline is deliberately gap-heavy (phish_delivery / inbox_rule / payment_redirect are
+    # no-parser pre-post-log "no_rule_exists" gaps, user_execution has no rule, victim_session is
+    # benign context), so the same mechanics the earlier storylines waived for apply here in bulk.
+    ("phishing_bec", "drop_step", "SURVIVED"): {"max": 3, "reason": (
+        "2026-10-13 no rule fires at phish_delivery / victim_session / inbox_rule (two no-parser gaps, "
+        "one context step): dropping them from the sequence changes no emitted alert and no graded output")},
+    ("phishing_bec", "flip_gap_to_false", "SURVIVED"): {"max": 5, "reason": (
+        "2026-10-13 the five gap steps declare no expected rule and no rule fires there, so nothing reads "
+        "the gap flag; a flip is only observable where a rule fires (same mechanism as ai_to_ot's waived "
+        "flip_gap_to_false)")},
+    ("phishing_bec", "flip_relationship", "IMPROVED"): {"max": 2, "reason": (
+        "2026-10-13 'payment_redirect->proxy_pool_logins' and 'foreign_login->user_execution': a forbidden->"
+        "allowed flip on pairs the graph JOINED in both directions (per_forbidden_pair joined=True, the "
+        "shared account bridges both ends), so re-labelling removes a falling forbidden_joins count and the "
+        "wrong oracle scores BETTER because " + _ORDER_BLIND_M)},
+    ("phishing_bec", "reverse_relationship", "SURVIVED"): {"max": 4, "reason": (
+        "2026-10-13 " + _ORDER_BLIND_M)},
+    ("phishing_bec", "swap_adjacent_steps", "SURVIVED"): {"max": 6, "reason": (
+        "2026-10-13 " + _NO_ALERT_STEP)},
 }
 
 # normalised oracle key path -> "label: YYYY-MM-DD reason". ``declared-but-unenforced``: the oracle states it as a
 # requirement and no grader reads it (owner decision pending: enforce, delete, or keep documented-inert).
-# ``doc-only``: prose / identifiers that were never meant to be graded. ``cross_step_rule_ids`` is NOT here: it is
-# read (report._incident_membership_grade) and the probe proves it.
+# ``doc-only``: prose / identifiers that were never meant to be graded. ``cross-instrument``: read by a DEDICATED
+# lane other than the mutation grader (the provenance pin, the reconciler's REPORTED campaign channel, the
+# step-dependency readers in evasion_search / scenario_matrix), so perturbing it here changes no graded output
+# while another instrument DOES watch it -- the key is not unread, it is read elsewhere. ``cross_step_rule_ids`` is
+# NOT here: it is read (report._incident_membership_grade) and the probe proves it.
 _UNENFORCED = ("declared-but-unenforced: 2026-10-02 stated as a requirement by the oracle, read by no grader "
                "(measured: perturbing every occurrence changes no graded output); enforce it, delete it, or keep it "
                "as documented-inert -- an owner decision, not made here")
 _DOC = "doc-only: 2026-10-02 prose or an identifier; no grader is meant to read it"
+_CROSS = "cross-instrument: 2026-10-13 read only by a dedicated lane (named in the entry), not by the mutation " \
+         "grader -- this table records graders that never move; the owning instrument keeps its own teeth"
+_PROV_PIN = ("cross-instrument: 2026-10-13 digest-pinned by eval/twin/oracle_provenance.py (a rule-text edit "
+             "fails the pin); the mutation grader never reads it")
 _INERT_KEYS: dict = {
     "sequence_constraints.strict_order": _UNENFORCED,
     "sequence_constraints.allow_extra_steps": _UNENFORCED,
@@ -532,6 +559,25 @@ _INERT_KEYS: dict = {
     "detection_points.*.step": _DOC, "detection_points.*.gap.reason": _DOC,
     "detection_points.*.resolved_inconsistency": _DOC, "evidence.per_step.*.note": _DOC,
     "severity_band.rationale": _DOC,
+    # phishing_bec oracle (2026-10-13, all measured inert to the mutation grader on seeds 7/11):
+    "campaign_membership.campaign_count": ("cross-instrument: 2026-10-13 read by oracle_consistency's "
+        "REPORTED-only campaign channel (owner decision 2026-10-03: campaign membership is measured, never "
+        "gated); the mutation grader never moves on it"),
+    "campaign_membership.full_coverage": ("cross-instrument: 2026-10-13 read by oracle_consistency's "
+        "REPORTED-only campaign channel (owner decision 2026-10-03); the mutation grader never moves on it"),
+    "provenance.authored": ("cross-instrument: 2026-10-13 checked by eval/twin/oracle_provenance.py's pin "
+        "(authored must be present); the mutation grader never reads it"),
+    "provenance.basis": "doc-only: 2026-10-13 authoring statement; no grader is meant to read it",
+    "provenance.pipeline_run_before_authoring": ("cross-instrument: 2026-10-13 checked by "
+        "eval/twin/oracle_provenance.py's pin (must be explicitly false); the mutation grader never reads it"),
+    "provenance.rules_read.common_beaconing": _PROV_PIN,
+    "provenance.rules_read.common_bruteforce": _PROV_PIN,
+    "provenance.rules_read.common_bruteforce_by_account": _PROV_PIN,
+    "provenance.rules_read.common_impossible_travel": _PROV_PIN,
+    "provenance.rules_read.common_password_spray": _PROV_PIN,
+    "step_dependencies.foreign_login[]": ("cross-instrument: 2026-10-13 read by "
+        "evasion_search.verify_subset_equivalence and scenario_matrix._dependents (the foreign_login "
+        "context-step displacement control); the mutation grader never moves on it"),
 }
 
 
@@ -725,21 +771,37 @@ def baseline_section(runs: dict, inert: dict) -> dict:
     }
 
 
-def evaluate_inert(inert: dict, inert_keys: dict | None = None) -> dict:
+def _oracle_key_paths(sdef) -> set[str]:
+    """Every normalised key path the oracle declares (used to scope staleness to
+    the JSON keys that the runs actually carried -- see evaluate_inert)."""
+    oracle = oracle_derive.yaml.safe_load(Path(sdef.oracle_path).read_text(encoding="utf-8"))
+    return {normalise_path(p) for p, _ in _leaves(oracle)}
+
+
+def evaluate_inert(inert: dict, inert_keys: dict | None = None, *,
+                   present: set[str] | None = None) -> dict:
     """Closed table of oracle keys no grader reads. Unknown inert key -> FAIL; a table entry that is READ
-    in every storyline carrying it (or in none) -> stale FAIL."""
+    in every storyline carrying it (or in none) -> stale FAIL.
+
+    ``present`` scopes the stale check to the keys the CURRENT run's storylines actually declare: a
+    ``--scenario`` subset run would otherwise report every doc-only key owned by a storylines it did NOT
+    run as "no longer inert" (false stale -- finding F3, 2026-10-13). When a key's carrier storylines were
+    all run and none of them reports it inert anymore, THAT is the real stale signal."""
     inert_keys = _INERT_KEYS if inert_keys is None else inert_keys
     all_read = {k for v in inert.values() for k in v["read"]}
     # inert in one storyline but read in another (incident_count on it_intrusion, where membership is already
     # False) is a SATURATED read, not an unread key
     all_inert = {k for v in inert.values() for k in v["inert"]} - all_read
     unknown = sorted(k for k in all_inert if k not in inert_keys)
-    stale = sorted(k for k in inert_keys if k not in all_inert)
+    stale = sorted(k for k in inert_keys if k not in all_inert
+                   and (present is None or k in present))
     bad = sorted(k for k, v in inert_keys.items()
-                 if not re.match(r"^(declared-but-unenforced|doc-only): \d{4}-\d{2}-\d{2} \S", v or ""))
+                 if not re.match(r"^(declared-but-unenforced|doc-only|cross-instrument): "
+                                 r"\d{4}-\d{2}-\d{2} \S", v or ""))
     return {"unknown": unknown, "stale": stale, "bad_labels": bad,
             "declared_unenforced": sorted(k for k in all_inert if (inert_keys.get(k) or "").startswith("declared")),
             "doc_only": sorted(k for k in all_inert if (inert_keys.get(k) or "").startswith("doc-only")),
+            "cross_instrument": sorted(k for k in all_inert if (inert_keys.get(k) or "").startswith("cross-instrument")),
             "read_somewhere": sorted(all_read), "ok": not (unknown or stale or bad)}
 
 
@@ -815,10 +877,12 @@ def main(argv: list | None = None) -> int:
             print(f"   [FAIL] waiver {k} needs an int max and a 'YYYY-MM-DD <reason>' string")
         if not ev["ok"]:
             rc = 1
-    ei = evaluate_inert(inert)
+    present = set().union(*(_oracle_key_paths(sd) for sd in scenarios))
+    ei = evaluate_inert(inert, present=present)
     print("-- oracle keys no grader reads (perturbing every occurrence changes nothing) --")
     print(f"   declared-but-unenforced ({len(ei['declared_unenforced'])}): {ei['declared_unenforced']}")
     print(f"   doc-only ({len(ei['doc_only'])}): {ei['doc_only']}")
+    print(f"   cross-instrument ({len(ei['cross_instrument'])}): {ei['cross_instrument']}")
     for k in ei["unknown"]:
         print(f"   [FAIL] inert key {k!r} is not in _INERT_KEYS -- wire it, delete it, or label it (dated)")
     for k in ei["stale"]:

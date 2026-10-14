@@ -50,7 +50,17 @@ RULES_DIR = _CONTRACTS / "rules"
 TENANTS_DIR = _CONTRACTS / "tenants"
 
 
-def _tenant_rule_lists(tenant_id: str) -> tuple[frozenset, frozenset]:
+def _tenant_rule_lists(tenant_id: str | None) -> tuple[frozenset, frozenset]:
+    # Explicitly resolve the None case up-front, before the fail-open path:
+    # WS-7's getRules() and triage_api's route send NO tenant_id precisely for
+    # the single-tenant admin session that owns the DEFAULT tenant's events, and
+    # WS-4's Detector processes every event without siem.tenant against
+    # DEFAULT_TENANT ("default"). Reading the default.yml opt-in here is what
+    # makes the /rules report agree with the Detector for that path (review
+    # finding 2026-10-13: the None branch used to read NO tenant file, so a
+    # default.yml opt-in fired in the engine while /rules said enabled=False).
+    if tenant_id is None:
+        tenant_id = "default"
     # The request-controlled tenant_id NEVER becomes part of a path
     # expression. Instead of building `TENANTS_DIR / f"{tenant_id}.yml"`
     # (a path-traversal primitive -- CodeQL py/path-injection; two earlier
@@ -77,7 +87,10 @@ def _tenant_rule_lists(tenant_id: str) -> tuple[frozenset, frozenset]:
         return empty
     try:
         raw = yaml.safe_load(path.read_text(encoding="utf-8"))
-    except yaml.YAMLError:
+    except Exception:  # YAMLError, UnicodeDecodeError (wrong encoding), PermissionError, OSError...
+        # Fail-open contract (matching ws4-detection/tenants.py::_load_config):
+        # an unreadable/invalid tenant file must not 500 GET /rules nor silently
+        # change any rule's effective state -- it reports like a missing file.
         return empty
 
     def ids(key: str) -> frozenset:
@@ -101,39 +114,70 @@ def _env_opt_in() -> frozenset:
                      if i.strip())
 
 
+def _plugin_dirs() -> list[Path]:
+    """Plugin rule-pack dirs WS-3 should list alongside RULES_DIR.
+
+    WS-4 discovers rule packs via the ``fengarde.rule_packs`` entry-point group
+    (services/ws4-detection/plugins.py). WS-3 must not import WS-4 modules, so
+    the /rules view gets them from ``FENGARDE_PLUGIN_RULE_DIRS`` (path-separator
+    separated, same variable name a compose overlay can set on both services) --
+    the operator keeps the two in sync, exactly like FENGARDE_OPT_IN_RULES."""
+    raw = os.environ.get("FENGARDE_PLUGIN_RULE_DIRS", "")
+    out: list[Path] = []
+    for part in raw.split(os.pathsep):
+        part = part.strip()
+        if part:
+            out.append(Path(part))
+    return out
+
+
 def list_rule_summaries(tenant_id: str | None = None) -> list[dict]:
     """One summary dict per rule file in RULES_DIR, sorted by id.
 
-    ``tenant_id=None`` reports every default-ON rule as enabled (no tenant
-    context -- the global rule set); a default-off rule
+    ``tenant_id=None`` reads the DEFAULT tenant config (contracts/tenants/
+    default.yml) -- the exact config WS-4 applies to every event without a
+    ``siem.tenant`` -- so the report agrees with the Detector for the
+    single-tenant admin path that sends no tenant_id. A default-off rule
     (``siem.default_enabled: false``) is reported enabled only when it is
-    opted in: by the tenant's enabled_rules, or by FENGARDE_OPT_IN_RULES.
+    opted in: by that tenant's enabled_rules, or by FENGARDE_OPT_IN_RULES.
     ``default_enabled`` / ``opt_in`` explain why a rule is off. As in WS-4,
     disabled_rules wins over every opt-in. A real tenant id applies that tenant's
     disabled-rules list (contracts/tenants/<id>.yml; missing file or key ->
     nothing disabled, same fail-open convention as ws4-detection/tenants.py).
+    Rules shipped in plugin packs (FENGARDE_PLUGIN_RULE_DIRS) are listed too,
+    deduplicated by id with the built-in dir winning (same as Detector._load).
     """
-    disabled, enabled = _tenant_rule_lists(tenant_id) if tenant_id else (frozenset(), frozenset())
+    disabled, enabled = _tenant_rule_lists(tenant_id)
     opted_in = enabled | _env_opt_in()
     summaries: list[dict] = []
     if not RULES_DIR.is_dir():
         return summaries
     parsed: list[tuple[dict, dict]] = []
     default_off_ids: set[str] = set()
-    for path in sorted(RULES_DIR.glob("*.yml")):
-        try:
-            raw = yaml.safe_load(path.read_text(encoding="utf-8"))
-        except yaml.YAMLError:
+    seen_ids: set[str] = set()
+    rule_dirs = [RULES_DIR] + _plugin_dirs()
+    for d in rule_dirs:
+        if not Path(d).is_dir():
             continue
-        if not isinstance(raw, dict):
-            continue
-        rule_id = raw.get("id")
-        if not isinstance(rule_id, str):
-            continue
-        siem = raw.get("siem", {}) if isinstance(raw.get("siem"), dict) else {}
-        if siem.get("default_enabled", True) is False:   # same literal-False rule as the engine
-            default_off_ids.add(rule_id)
-        parsed.append((raw, siem))
+        for path in sorted(Path(d).glob("*.yml")):
+            try:
+                raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+            except yaml.YAMLError:
+                continue
+            if not isinstance(raw, dict):
+                continue
+            rule_id = raw.get("id")
+            if not isinstance(rule_id, str):
+                continue
+            # same dedup as ws4 Detector._load: first-loaded id wins, a plugin
+            # can extend the set but never silently replace a built-in rule.
+            if rule_id in seen_ids:
+                continue
+            seen_ids.add(rule_id)
+            siem = raw.get("siem", {}) if isinstance(raw.get("siem"), dict) else {}
+            if siem.get("default_enabled", True) is False:   # same literal-False rule as the engine
+                default_off_ids.add(rule_id)
+            parsed.append((raw, siem))
     for raw, siem in parsed:
         rule_id = raw["id"]
         # Only a non-empty str can name a sibling. A list/dict value (a typo the

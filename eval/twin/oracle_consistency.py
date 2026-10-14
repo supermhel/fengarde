@@ -277,7 +277,14 @@ def reconcile(seed: int = 7, sdef=None, *, oracle: dict | None = None, grade: di
                                    "rule makes this invisible, so the oracle can overstate "
                                    "coverage at no cost to the headline",
             })
-        if not declared_gap and expected:
+        # UNEXPECTED: a rule fires at a step whose entry neither expects it nor declares a gap.
+        # ``expected`` may be EMPTY (a step whose last expected rule was removed, or one that never
+        # declared rules and is not a declared gap): the step is then a silent hole and every firing
+        # rule here is unexpected. Scope out the false positives: context steps and declared gaps are
+        # handled by their own channels (a context step's telemetry is the staircase the dependent
+        # step is judged against -- e.g. victim_session for impossible travel -- so it is tracked by
+        # must_not_fire, not by expected_rules).
+        if not declared_gap:
             for rule_id in sorted(observed - expected):
                 unexpected.append({"step": step, "rule_id": rule_id,
                                     "why_it_matters": "fires but is not declared at this step"})

@@ -32,7 +32,7 @@ rule_sets:
         basis: harness-measured
         better: min
         value: 0.824979
-    fingerprint: 91fed600e4b242d17f6c9dc146c09444957d6efe981b85247deb4745ac211b31
+    fingerprint: 9748c28f88f2072354042e02b7d24967b6625ec082603812ee18caf2c18ff8a8
     params:
       agent_tool_call_burst:
         companion_of: null
@@ -73,7 +73,7 @@ rule_sets:
         basis: harness-measured
         better: min
         value: 0.065
-    fingerprint: 6098ccf6d8e474290db8fcea280eec1deebc38d4b2313df51218eba1443b8940
+    fingerprint: e21858f96d4f4a6cc77b303e584b6e44b6a7391d1f0c37a81562aac1b5acc83f
     params:
       bank_mass_card_read:
         companion_of: null
@@ -113,7 +113,7 @@ rule_sets:
         basis: harness-measured
         better: min
         value: 0.001389
-    fingerprint: 28ee52bf959eb4baa364029d473319a98d35a8189f894fcba6984285e8774705
+    fingerprint: e9ff1d2d62f6bf118caa97a4b6799040d6712ecf0c04f09cc341fb2cba4abc88
     params:
       common_beaconing:
         companion_of: null
@@ -158,7 +158,7 @@ rule_sets:
         basis: harness-measured
         better: min
         value: 0.183324
-    fingerprint: 6c776b9116b6872da7982c4f06d8e844169631a8ea229c2261d56ea6a406f892
+    fingerprint: d9810f7f05577cd6311ef8a8eea2b105b009dbd8aa789ae8c823d80fc131d15d
     joint_frontier:
       basis: harness-measured
       frontier:
@@ -215,7 +215,7 @@ rule_sets:
         basis: harness-measured
         better: min
         value: 0.0375
-    fingerprint: ce94c8dc46543bf867806123a7c4acb37d5facfd66e523d92b89dcc284ba806c
+    fingerprint: 4466da2993554da3a7e8b8bbf49218c23b85d7ada002d38f17ea63ac881d7f04
     params:
       common_bruteforce_sourceless:
         companion_of: null
@@ -259,7 +259,7 @@ rule_sets:
         basis: harness-measured
         better: min
         value: 0.849816
-    fingerprint: 5522e13c166066b467edf0baebbbc4f2e52811dfb4883a8c2bfa8e38e6f720d5
+    fingerprint: 1691a55370e963c03c70b1c3f732e05530de6247d4916ea8707bcef3618d0885
     joint_frontier:
       basis: harness-measured
       frontier:
@@ -315,7 +315,7 @@ rule_sets:
         basis: harness-measured
         better: min
         value: 0.000278
-    fingerprint: 6b118f8b63b31a1fe4d65473cb0c88aca253882fa92ec0318eccb3f60d40ba66
+    fingerprint: 5511ce1db82a48a55c1dd30b13a02849a6678fde891231383e9a926cbc4c0991
     params:
       common_impossible_travel:
         companion_of: null
@@ -361,7 +361,7 @@ rule_sets:
         basis: harness-measured
         better: min
         value: 0.02
-    fingerprint: db89e42121004af2a723c4790a063f6eaebe92ce8a5d94d99b6a0941075882a4
+    fingerprint: 4123f990655221f0bbbe4674cf3b45785947cc81afc7157b0d5dcd8e26f8bbcb
     joint_frontier:
       basis: harness-measured
       frontier:
@@ -418,7 +418,7 @@ rule_sets:
         basis: harness-measured
         better: min
         value: 0.025
-    fingerprint: bf2ad9624d22976044391e93384c4f7f935833500ff9ba12c5fc0d15dcfa836d
+    fingerprint: eb6a3272e61a1449c648b37ad57ab264e9a9241a401dc96ff059e3e40fbe0c0d
     params:
       common_password_spray:
         companion_of: null
@@ -462,7 +462,7 @@ rule_sets:
         basis: harness-measured
         better: min
         value: 0.349953
-    fingerprint: 8b429714cdd1477de10b165cfebeaf400d3d35b76939d576a4178a86abf18e02
+    fingerprint: 1b134478ebb2f02c7ca2283f43d825db5ed6b7296d60481630eeb90f869098dd
     joint_frontier:
       basis: harness-measured
       frontier:
@@ -519,7 +519,7 @@ rule_sets:
         basis: harness-measured
         better: min
         value: 0.000278
-    fingerprint: fe0c2590d88572843f92a9cd1564cb1f728e152c563298b990c06f61f6e0e761
+    fingerprint: 40a6e0cd38fba02092ca4a2ff242df5435a5ca1a1edb697cd18538b5f213a1c3
     params:
       common_rapid_account_lifecycle:
         companion_of: null
@@ -565,7 +565,7 @@ rule_sets:
         basis: harness-measured
         better: min
         value: 0.049999
-    fingerprint: f4b4902780bd3fda022276788884b946e5206ef7a6aae8beefd56f37a4e23850
+    fingerprint: 54dcb2facfe5f7abef81b9eb297fd591f6e8db526c9a97ea86905ea0efb3c355
     joint_frontier:
       basis: harness-measured
       frontier:
@@ -622,7 +622,7 @@ rule_sets:
         basis: harness-measured
         better: min
         value: 0.001667
-    fingerprint: bc5f36321d3f817926bfb158ec8c7b4a9f263898b800ff11f2f83fd548ab4654
+    fingerprint: e63b3bf5a1cce54ef063702a4f72a53bea82990c1c147dff6d86e6aa3e417bbe
     params:
       ot_new_engineering_connection:
         companion_of: null

@@ -315,8 +315,21 @@ def verify_parity_pairs(pairs: list, probe: FastProbe | None = None) -> bool:
 
 
 def state_leak_check(sdef, seed: int = 7, probe: FastProbe | None = None) -> bool:
-    """Run stream A, then B, then A again on ONE session: both A answers must be
-    identical. False == window state leaks between probes."""
+    """Run stream A, then B, then A again on ONE session; both A answers must be
+    identical AND equal to A on a brand-new session.
+
+    False == something a probe left behind changes a later probe's answer.
+
+    Review finding 2026-10-13 (F5): with the default ``reset_counter=True`` a
+    fresh ``DequeWindowCounter`` is installed per ``detect()``, so "A == A on the
+    reused session" held by construction and could never fail for the leak the
+    docstring named -- it re-derived "each detect starts clean". The comparison
+    against a FRESH session restores falsifiability: it fails if the
+    normalization cache (or any other session state outside the counter) ever
+    leaks a previous probe's stream into this one's verdict. The explicit
+    persistent-counter probe (``reset_counter=False``) used by the negative
+    control still goes False, because a genuinely shared window does carry state
+    across probes."""
     import mutate_generic as mg  # noqa: PLC0415
     probe = probe or FastProbe(strict_clock=False)
     a = sdef.build(seed)[0]
@@ -324,7 +337,8 @@ def state_leak_check(sdef, seed: int = 7, probe: FastProbe | None = None) -> boo
     first = probe.detect(payloads_to_pairs(a))
     probe.detect(payloads_to_pairs(b))
     again = probe.detect(payloads_to_pairs(a))
-    return first == again
+    fresh = FastProbe(rules_dir=getattr(probe, "rules_dir", None), strict_clock=False).detect(payloads_to_pairs(a))
+    return first == again == fresh
 
 
 def main(argv: list | None = None) -> int:

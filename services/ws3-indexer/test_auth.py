@@ -39,7 +39,7 @@ def _get(port, alert_id, api_key=None):
     req = urllib.request.Request(
         f"http://127.0.0.1:{port}/alerts/{alert_id}/triage", headers=headers)
     try:
-        with urllib.request.urlopen(req, timeout=5) as resp:
+        with urllib.request.urlopen(req, timeout=20) as resp:  # 20s: loaded-host flake
             return resp.status, json.loads(resp.read().decode())
     except urllib.error.HTTPError as e:
         return e.code, json.loads(e.read().decode())

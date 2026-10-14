@@ -18,6 +18,8 @@ import threading
 import time
 from pathlib import Path
 
+import yaml  # noqa: E402 (stdlib-adjacent; needed by rule_health_metrics' tenant scan)
+
 HERE = Path(__file__).resolve().parent
 SERVICES = HERE.parent
 ROOT = SERVICES.parent
@@ -161,13 +163,34 @@ class Detector:
         """
         out = {f"rule_last_fired_timestamp:{r.id}": self.rule_last_fired[r.id]
                for r in self.rules if r.id in self.rule_last_fired}
+        # Per-tenant file opt-ins (contracts/tenants/<id>.yml enabled_rules):
+        # the gauge is a low-frequency scrape surface, so scanning the tenant
+        # dir here is fine, and without it a default-off rule opted in ONLY via
+        # a tenant file (the shipped per-tenant path) that never fires was
+        # reported in NO series at all -- invisible to the dead-rule watchdog
+        # (review finding 2026-10-13). Scan the enabled_rules of every tenant
+        # config, same fail-open shape as tenants.py (a broken file opts
+        # nothing in).
+        tenant_opted: set[str] = set()
+        td = Path(self.tenants_dir)
+        if td.is_dir():
+            for path in td.glob("*.yml"):
+                try:
+                    raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+                except Exception:
+                    continue
+                if not isinstance(raw, dict):
+                    continue
+                entries = raw.get("enabled_rules")
+                if not isinstance(entries, (list, tuple)):
+                    continue
+                tenant_opted |= {e for e in entries if isinstance(e, str)}
         for r in self.rules:
             if r.id not in self.rule_last_fired:
-                # A default-off rule nobody opted in to (Detector kwarg / env var)
-                # is off BY DESIGN, not dead. Per-tenant opt-ins live in tenant
-                # files this gauge does not scan; such a rule is reported from its
-                # first fire (rule_last_fired_timestamp) instead.
-                if r.opt_in_required and r.id not in self._opt_in_rules:
+                # A default-off rule nobody opted in to (Detector kwarg / env
+                # var / any tenant file) is off BY DESIGN, not dead.
+                if r.opt_in_required and r.id not in self._opt_in_rules \
+                        and r.id not in tenant_opted:
                     continue
                 out[f"rule_never_fired:{r.id}"] = 1
         return out

@@ -784,9 +784,11 @@ def test_waiver_hygiene() -> None:
 
 def test_committed_artifact_and_inert_probe() -> None:
     strength = om.load_strength()
-    _check("eval/twin/oracle_strength.json is committed with seeds 7 and 11 and all three storylines",
+    _check("eval/twin/oracle_strength.json is committed with seeds 7 and 11 and EVERY registered storyline "
+           "(a storyline missing here is outside the ratchet -- the 2026-10-13 review found phishing_bec "
+           "absent while the gate stayed green)",
            bool(strength) and sorted(strength["seeds"]) == ["11", "7"]
-           and all(sorted(s["outcomes"]) == ["ai_to_ot", "infra_takeover", "it_intrusion"]
+           and all(sorted(s["outcomes"]) == sorted(sd.name for sd in reg.ALL)
                    for s in strength["seeds"].values()))
     text = om.STRENGTH_PATH.read_text(encoding="utf-8")
     # structural, not a substring grep: an oracle KEY NAME such as ``max_clock_span_seconds`` (a string value

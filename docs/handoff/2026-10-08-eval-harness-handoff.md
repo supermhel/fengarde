@@ -289,3 +289,48 @@ check needs `FENGARDE_OPT_IN_RULES` on `ws3` and `ws4`).
 Next three actions, in order: (1) re-run the five unrun review areas; (2) author the five storylines (P1);
 (3) steps 6 and 7 (P3). Specs for 2 and 3 are in `docs/handoff/design-specs/`; read the critic verdict in each file
 first, because it overrides the spec.
+
+---
+
+## 11. Update 2026-10-13 — the five remaining review areas are done, and what they found is fixed
+
+§5 said three of eight review areas had run (`parser`, `window`, `bus+campaigns`) and §7 listed the rest as
+outstanding. The other five (`tenant-defaultoff`, `harness-validity`, `evasion-ratchet`, `blindrecall-tools`,
+`claims-audit`) were run against the CURRENT code (`7205945`; the two commits after it are docs-only), each in its
+own sandbox worktree, with experiments rather than reading (differential tests against the old code, property
+tests, sabotage of every control, adversarial configs, recomputation of every published number). Every finding was
+re-run by the author before being accepted; the confirmed ones are fixed and the CHANGELOG carries the full list.
+
+**The headline one:** the oracle-mutation instrument was RED on the shipped tree and nothing noticed. The ratchet
+(`eval/twin/oracle_strength.json`) held seeds 7/11 for the three original storylines only, so `phishing_bec` -- and
+13 inert keys, and its survivor classes -- were outside it, while `run_all_tests.sh` ran only
+`test_oracle_crosscheck.py`, which asserted that three-storyline state. Fixed: the ratchet now covers every
+registered storyline on seeds 7 and 11, the survivor classes sit in the closed/capped/dated waiver table (explained
+by the measured join facts, not asserted), the inert-key table labels the new keys honestly (a new
+`cross-instrument:` category), `test_oracle_crosscheck.py` asserts `reg.ALL`, and the instrument itself is now a
+gate stanza. **The "oracle cross-check is DONE" line in §2 should now be read as covering all four storylines.**
+
+**Also fixed:** the evasion floor fingerprint did not cover the reference burst (a probe-template edit moved every
+measured cost with a byte-identical fingerprint, so `--update-floor` could ratchet UP silently) -- the burst digest
+is in it now; the findings register had no closure for the noise class; `/rules` without `tenant_id` disagreed with
+the Detector for the default tenant, could 500 on an unreadable tenant file, and could not see plugin rule packs; a
+per-event `Path.resolve()` in the tenant cache key; the dead-rule gauge was blind to per-tenant file opt-ins; the
+live companion e2e's `settle()` treated a successful empty poll as stability; the DNS cardinality tool dropped late
+records the engine counts; `fetch_corpora` accepted `sparse_paths` that git reads as an option or that escape the
+repo; `oracle_consistency`'s UNEXPECTED channel was dead for a step with no declared rules; `state_leak_check`
+proved nothing; technique-waiver dates accepted impossible dates.
+
+**Doc claims corrected by re-derivation** (the claims-audit area recomputed every published number): `linux_ssh`
+pinned corpus 43 -> **40 rows**, `fire_check` 28 -> **34/34** (already stale in the 2026-10-01 rows), oracle
+catalogue "about 223" -> **293**, and the "legacy metrics are provably order-blind" claim is now scoped to
+storylines whose detections are order-independent (`phishing_bec` refutes it as a general statement).
+
+**What is still NOT proven, unchanged by this round:** the oracles remain self-authored (the derived oracle shares
+the rule YAML, so it detects skew, not original error); no third-party labelled corpus and no real resolver log
+have been measured; the causal-order metrics are still co-reported, not gating; step 6 (ratchet) and step 7
+(scorecard) still do not exist; and **this review is a SAME-project pass**, so it is a claim set, not the external
+review §7 asked for. A single hand-lowered floor value also remains detectable only by diff review (the tool says so
+itself).
+
+Resume commands in §10 still hold; add
+`python eval/twin/oracle_mutate.py --seed 7` (now a gate stanza) to the list.

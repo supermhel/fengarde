@@ -503,6 +503,9 @@ echo
 echo "== twin: oracle cross-check (mutation testing + independent derived oracle + triangulation) =="; LAST_HEADER="== twin: oracle cross-check (mutation testing + independent derived oracle + triangulation) =="
 $PY eval/twin/test_oracle_crosscheck.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
+echo "== twin: the oracle mutation instrument ITSELF (waiver table + inert-key table + ratchet over every storyline) =="; LAST_HEADER="== twin: the oracle mutation instrument itself =="
+$PY eval/twin/oracle_mutate.py --seed 7 || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
 echo "== Phase 4 multi-storyline: mutation lane over EVERY attack shape (AI-to-OT, IT intrusion, infra takeover) =="; LAST_HEADER="== Phase 4 multi-storyline: mutation lane over every attack shape =="
 $PY eval/adversarial/scenario_matrix.py --seed 7 || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
