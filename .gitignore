@@ -66,8 +66,8 @@ eval/detection_accuracy/otrf-security-datasets/
 eval/twin/report.latest.json
 # Phase 6 ratchet report is a generated inspection artifact.
 eval/twin/ratchet_report.latest.json
-# Layer C trend is generated/advisory and must not be committed by a nightly job.
-eval/trend_layer_c.jsonl
+# eval/trend_layer_c.jsonl is TRACKED (header only); the nightly job appends rows in its
+# own checkout and uploads them as an artifact -- it never commits them.
 # Phase 4 adversarial lane regenerated artifacts (gate runs must not dirty
 # tracked files -- same convention as eval/twin/report.latest.json).
 eval/adversarial/out/
