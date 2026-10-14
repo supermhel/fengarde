@@ -44,7 +44,7 @@ provenance:
   pipeline_run_before_authoring: false
   basis: "rule description/detection/siem blocks and parser docstrings only"
   rules_read:
-    common_beaconing: "1cd8e24c569a4cda5d2394bf659281c8a3cd5c03fd07b513576bb261e256ac6b"
+    common_beaconing: "b83ae4d66ca4e8634540c5efeb8d35f21b595d2e4426793d76eb4115a7dd8b5e"   # re-read + re-pinned 2026-10-14 (Q15: threshold 6 -> 20)
     common_bruteforce: "f685feb7ab0efe2e0cd9ed3427a2e0466c3a0de785cc28deef3c53a0b585919b"
     common_bruteforce_by_account: "71734317dfda0c8ecfbb1c62e786df21a6e9c81c1d3c53901a3822cb1079df20"
     common_impossible_travel: "78864cbe016a52317b8a4d00ce78ac1d8d83d90f5fb9d4c975f13f86e6b97bbb"
@@ -81,15 +81,16 @@ detection_points:
   phish_delivery:
     step: phish_delivery
     role: "spear-phishing mail with a malicious attachment is delivered"
-    expected_event_source: "mail gateway (no parser by design -- `mail_gateway` is a placeholder source type)"
+    expected_event_source: "mail_gateway message log (class 4009 Email Activity, activity 2 Receive; parser added 2026-10-14)"
     expected_rules: []
     gap:
       no_rule_exists: true
       attack_technique: "T1566.001"      # Phishing: Spearphishing Attachment
       reason: >
-        There is no mail-gateway parser and no rule over mail telemetry. The raw record is
-        still emitted in its native shape and dead-letters at the parser lookup, exactly like
-        ai_to_ot.external_content; the scenario never claims a type_uid for it.
+        The mail_gateway parser now normalises the delivery to class 4009 with the
+        attachment summary (unmapped.email.has_macro_attachment), but NO rule reads mail
+        telemetry. Updated from "no parser" when the parser landed; the step stays an honest gap
+        until a rule exists, and a rule that starts firing turns it into a stale-gap finding.
 
   user_execution:
     step: user_execution
@@ -106,7 +107,7 @@ detection_points:
 
   c2_beacon:
     step: c2_beacon
-    role: "6+ outbound connections at a regular interval from the infected workstation"
+    role: "20+ outbound connections at a regular interval from the infected workstation"
     expected_event_source: "sysmon EventID 3 (class 4001, activity 7)"
     expected_rules:
       - {rule_id: "f6071829-a3b4-4c53-9d6e-7f8091a2b526", title: "Regular-interval outbound connections from one source (beaconing)", level: medium, role: command-and-control detection}
@@ -149,14 +150,15 @@ detection_points:
   inbox_rule:
     step: inbox_rule
     role: "the attacker creates a mailbox rule that forwards and hides replies"
-    expected_event_source: "M365 audit (no parser by design -- `m365_audit` is a placeholder source type)"
+    expected_event_source: "m365_audit New-InboxRule (class 6003, activity 1; parser added 2026-10-14)"
     expected_rules: []
     gap:
       no_rule_exists: true
       attack_technique: "T1114.003"      # Email Collection: Email Forwarding Rule
       reason: >
-        No Microsoft 365 / mail-audit parser and no rule over mailbox-rule changes. Chained gap,
-        same mechanism as phish_delivery.
+        The m365_audit parser reports the rule's effect (unmapped.m365.inbox_rule:
+        forward_to, forwards_external, hides_mail), but no rule reads it. Same honest-gap
+        status as phish_delivery.
 
   payment_redirect:
     step: payment_redirect

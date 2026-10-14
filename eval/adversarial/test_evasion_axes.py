@@ -324,22 +324,31 @@ def _legacy_ssh_classify(line: str):
 
 def test_obfuscation() -> None:
     tables = ax.load_tables()
-    _check("E0 every table row is ratified: false (security-judgement inputs await the owner)",
-           all(not r.get("ratified", False) for sec in ("attacker_control", "identity")
-               for r in tables[sec].values()))
+    # Q3 owner decision 2026-10-14: verified rows ratified, the two ASSUMED rows are not
+    rows = {k: r for sec in ("attacker_control", "identity") for k, r in tables[sec].items()}
+    assumed = {k for k, r in rows.items() if "ASSUMED" in str(r.get("basis", ""))}
+    _check("E0 exactly the ASSUMED rows stay ratified: false; every verified row is ratified",
+           assumed == {"linux_ssh.username", "vmware_vsphere.account"}
+           and all(bool(r.get("ratified")) == (k not in assumed) for k, r in rows.items()),
+           str({k: r.get("ratified") for k, r in rows.items()}))
     lat = _lab("common_lateral_movement")
     res = ax.respelling_axis(lat, tables)
     by_op = {o["op"]: o for o in res["ops"]}
-    _check("E1 lateral_movement: ip-split + Windows case respelling EVADES and is classified BUG (identity-preserving)",
-           by_op["casefold"]["evades"] and by_op["casefold"]["class"] == "BUG" and res["respelling_evades"],
-           str({k: v["class"] for k, v in by_op.items()}))
+    # F2 fixed 2026-10-14 (account keys strip+casefold): case and whitespace are ROBUST now;
+    # the DOMAIN\ / UPN residual (not folded by ADR-009) still evades and stays a BUG
+    _check("E1 lateral_movement: case/space respellings are ROBUST after F2, DOMAIN\ and UPN still evade as BUG",
+           {k: v["class"] for k, v in by_op.items()}
+           == {"casefold": "ROBUST", "strip": "ROBUST", "domain_prefix": "BUG", "upn_suffix": "BUG"}
+           and res["respelling_evades"], str({k: v["class"] for k, v in by_op.items()}))
     _check("E1 ... and the same split WITHOUT a respelling is detected (the control the claim rests on)",
            all(o["control_split_without_respelling_detected"] for o in res["ops"]))
     _check("E1 ... measured == predicted on every respelling", all(o["agree"] for o in res["ops"]))
     ssh = ax.respelling_axis(_lab("common_bruteforce"), tables)
-    _check("E2 NEGATIVE class: ssh case-split evades but is INHERENT (POSIX names are distinct), not BUG",
-           ssh["ops"] and all(o["class"] == "INHERENT" for o in ssh["ops"]) and not ssh["respelling_evades"]
-           and ssh["respelling_inherent"], str([o["class"] for o in ssh["ops"]]))
+    # POSIX names are case-sensitive, so the F2 fold over-merges "Deploy"/"deploy" into one
+    # window: the split is detected (ROBUST), never a BUG -- the conservative side of the fold
+    _check("E2 ssh case-split: the account fold keeps it detected (ROBUST), and it is never a BUG",
+           ssh["ops"] and all(o["class"] == "ROBUST" for o in ssh["ops"]) and not ssh["respelling_evades"],
+           str([o["class"] for o in ssh["ops"]]))
     dns = ax.respelling_axis(_lab("common_dns_exfil"), tables)
     _check("E3 ROBUST control: DNS case / trailing-dot respelling of the parent domain stays detected",
            dns["ops"] and all(o["class"] == "ROBUST" for o in dns["ops"]) and not dns["respelling_evades"],
@@ -358,7 +367,8 @@ def test_obfuscation() -> None:
            "evade (stripping them would AMEND ADR-009 -- an owner decision)",
            fixed_ops["domain_prefix"] and fixed_ops["upn_suffix"], str(fixed_ops))
     # unratified rows never gate: nothing in the result is a hard failure by itself
-    _check("E6 unratified rows are flagged ratified: false in the result", all(not o["ratified"] for o in res["ops"]))
+    _check("E6 each result op carries its row's ratification (windows_eventlog.account is ratified)",
+           res["ops"] and all(o["ratified"] is True for o in res["ops"]), str([o["ratified"] for o in res["ops"]]))
     # a not-attacker-controlled field is NOT_REACHABLE and never searched
     forced = copy.deepcopy(tables)
     forced["identity"]["windows_eventlog.account"]["attacker_controlled"] = "no"

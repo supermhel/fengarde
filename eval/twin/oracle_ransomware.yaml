@@ -1,0 +1,206 @@
+# =============================================================================
+# FENGARDE eval/twin/oracle_ransomware.yaml
+# Grading ground truth for the ransomware storyline (storyline_ransomware.py):
+#   cred_spray -> foothold_logon -> admin_privilege_use -> lateral_spread -> backdoor_account
+#     -> inhibit_recovery -> backup_wipe_cloud -> mass_vm_delete -> encrypt_files
+#
+# AUTHORING RULES (written 2026-10-14 BEFORE the storyline builder was run through the
+# pipeline; same discipline as oracle_phishing_bec.yaml):
+#   1. A step is expected to fire a rule only where a shipped rule's DOCUMENTED intent covers
+#      the behaviour (the rule's description/detection/siem blocks and the parser docstrings,
+#      design-specs/step2_storyline-coverage.json section 2.1). Nothing was tuned to output.
+#      oracle_consistency.py reconciles afterwards; a disagreement is fixed or recorded, never
+#      edited away here.
+#   2. The rules leaned on are pinned in `provenance` (oracle_provenance.py digests).
+#   3. NO RULE WAS INVENTED. Four steps are honest gaps with the ATT&CK technique each
+#      demonstrates (ids from the author's knowledge of ATT&CK v14; not mechanically verified).
+#   4. incident_count follows the all-oracles convention: the FULL-CHAIN incidents WS-8 really
+#      produces (see the corrected note at incident_membership).
+#   5. campaign_membership is REPORTED, never gated.
+# =============================================================================
+schema_version: 1
+oracle_id: "ransomware-v1"
+kind: "attack-chain-grading-oracle"
+scope: "ransomware"
+
+provenance:
+  authored: "2026-10-14"
+  pipeline_run_before_authoring: false
+  basis: "rule description/detection/siem blocks and parser docstrings only"
+  rules_read: 
+    common_bruteforce_sourceless: "e160cff6cc27e7155c055dfce91158e9e41587c0639f2add7127217f4a0fc9d6"
+    common_bruteforce: "f685feb7ab0efe2e0cd9ed3427a2e0466c3a0de785cc28deef3c53a0b585919b"
+    common_bruteforce_by_account: "71734317dfda0c8ecfbb1c62e786df21a6e9c81c1d3c53901a3822cb1079df20"
+    common_password_spray: "c565b58f392c8e85ac08049c49d1ab119846540d7bcbea86f0ea2f4e30d1a089"
+    common_impossible_travel: "78864cbe016a52317b8a4d00ce78ac1d8d83d90f5fb9d4c975f13f86e6b97bbb"
+    common_after_hours_admin: "86e9e88065420ea32c6cd361466709802d0583515ae6c22296a474ffe23df529"
+    common_lateral_movement: "49683690a92d8d1609906947063ccb8a6da2ceb2ccbdf2c9f43a7f0047af75a4"
+    common_lateral_movement_by_source: "5c97a629f62aef6211d2b9ab47826dcc90a49ea8c0eb3bf9dd74dd0009fc2f14"
+    common_rapid_account_lifecycle: "5e3f99f11fd658621fc411e0777e39089937dee33285ba3c4c99f43f0416227a"
+    dc_mass_vm_delete: "38a2fca1e662c6e63775da687c95780852ce7f5d280a160009e166756ba0dd51"
+    dc_mass_vm_delete_by_source: "c884e075f4c1d7bbdf6355eef232975985567d9483df43311109e8b6826cdc73"
+
+expected_sequence:
+  - cred_spray
+  - foothold_logon
+  - admin_privilege_use
+  - lateral_spread
+  - backdoor_account
+  - inhibit_recovery
+  - backup_wipe_cloud
+  - mass_vm_delete
+  - encrypt_files
+
+sequence_constraints:
+  strict_order: true
+  allow_extra_steps: false
+  max_clock_span_seconds: 3600
+
+# Declared only where both ends carry a SHARED OBSERVABLE (the foothold address / the account).
+# backup_wipe_cloud is done with a cloud key from a cloud address: no observable is shared with
+# the on-premise steps, so no edge is claimed to or from it.
+allowed_relationships:
+  - {from: cred_spray,          to: foothold_logon,      allowed: true, causal_kind: credential_access}  # same workstation + address
+  - {from: foothold_logon,      to: admin_privilege_use, allowed: true, causal_kind: privilege}          # same account
+  - {from: admin_privilege_use, to: lateral_spread,      allowed: true, causal_kind: lateral}            # same account + address
+  - {from: lateral_spread,      to: backdoor_account,    allowed: true, causal_kind: persistence}        # same account (acting admin)
+  - {from: lateral_spread,      to: mass_vm_delete,      allowed: true, causal_kind: impact}             # same account + address
+  - {from: mass_vm_delete,      to: encrypt_files,       allowed: true, causal_kind: impact}             # same account
+  # Anti-causal non-edges (the impact never precedes the access that enabled it):
+  - {from: mass_vm_delete,      to: cred_spray,          allowed: false, causal_kind: none}
+  - {from: backdoor_account,    to: foothold_logon,      allowed: false, causal_kind: none}
+
+detection_points:
+  cred_spray:
+    step: cred_spray
+    role: "one workstation fails a logon for 5+ distinct accounts in 120 s"
+    expected_event_source: "active_directory 4625 (class 3002, activity 4)"
+    expected_rules:
+      - {rule_id: "8c2f5a91-4d16-4e8b-9c3a-1f6b2e7d5a83", title: "Authentication brute-force against one host (source IP not recorded)", level: high, role: one-host many-account spray detection}
+    must_not_fire:
+      - "6f1c8a2e-0d3b-4c11-9a21-7b5e2f9a1c01"              # <=9 failures, at most 5 in any 60 s: under the per-address 10
+      - "d83b71c3-93eb-439f-86f9-5985ebcc38cb"   # one failure per account
+      - "4f8a2c61-9e3d-4b57-8a1c-6d2e5f7a8b90"          # one address per account
+    gap:
+      no_rule_exists: false
+      partial: >
+        True one-source-many-accounts password spraying (T1110.003) has no purpose-built rule
+        (common_password_spray's own text names it a known gap); the source-HOSTNAME keyed
+        rule covers this shape because the spray comes from one named workstation.
+
+  foothold_logon:
+    step: foothold_logon
+    role: "a sprayed account logs on successfully with valid credentials"
+    expected_event_source: "active_directory 4624 (class 3002, activity 1)"
+    expected_rules: []
+    must_not_fire:
+      - "7081a2b3-c405-4de3-be5f-6a7b8c9d0e12"       # one internal (RFC1918, non-geographic) login
+    gap:
+      no_rule_exists: true
+      attack_technique: "T1078"           # Valid Accounts
+      reason: >
+        A successful logon with valid credentials is ordinary telemetry; no shipped rule
+        correlates "succeeded after a spray from the same workstation".
+
+  admin_privilege_use:
+    step: admin_privilege_use
+    role: "special privileges assigned to the account outside 08:00-18:00 Mon-Fri"
+    expected_event_source: "windows_eventlog 4672 (class 1002, activity 2)"
+    expected_rules:
+      - {rule_id: "9b5f2d18-3c7a-4e61-8f24-5a1d7c3e9b06", title: "Privileged logon outside business hours", level: high, role: off-hours privileged logon}
+    gap: {no_rule_exists: false}
+
+  lateral_spread:
+    step: lateral_spread
+    role: "one account logs on to 5+ distinct hosts in 300 s"
+    expected_event_source: "windows_eventlog 4624 (class 3002, activity 1)"
+    expected_rules:
+      - {rule_id: "2e3d4c5b-6f70-4819-9b02-1c2d3e4f5061", title: "Lateral movement (one account auth success to many distinct hosts)", level: high, role: lateral movement detection}
+      - {rule_id: "90561d27-ace4-4138-8cc4-c74569a439c6", title: "Lateral movement from one source host (any number of accounts)", level: high, role: companion (silent at baseline by design -- same host set as the sibling)}
+    gap: {no_rule_exists: false}
+
+  backdoor_account:
+    step: backdoor_account
+    role: "an account is created and deleted again within the hour"
+    expected_event_source: "windows_eventlog 4720 + 4726 (class 3003, activity 1 then 4)"
+    expected_rules:
+      - {rule_id: "e5f60718-92a3-4b42-9c5d-6e7f80910415", title: "Rapid account create-then-delete (same target account)", level: high, role: account-lifecycle persistence}
+    gap: {no_rule_exists: false}
+
+  inhibit_recovery:
+    step: inhibit_recovery
+    role: "vssadmin deletes the volume shadow copies"
+    expected_event_source: "sysmon EventID 1 (class 1002, activity 1)"
+    expected_rules: []
+    gap:
+      no_rule_exists: true
+      attack_technique: "T1490"           # Inhibit System Recovery
+      reason: >
+        Process-launch content (command line) has no rule; contracts/detection-coverage.md
+        lists class 1002 activity 1 as under-covered.
+
+  backup_wipe_cloud:
+    step: backup_wipe_cloud
+    role: "the cloud backup snapshots are deleted"
+    expected_event_source: "cloudtrail DeleteSnapshot (class 6003, activity 4)"
+    expected_rules: []
+    gap:
+      no_rule_exists: true
+      attack_technique: "T1490"           # Inhibit System Recovery
+      reason: >
+        dc_mass_vm_delete is scoped to siem.source_type vmware_vsphere (its detection block),
+        so cloud snapshot deletion is not covered by any shipped rule.
+
+  mass_vm_delete:
+    step: mass_vm_delete
+    role: "one account deletes 5+ virtual machines in 120 s"
+    expected_event_source: "vmware_vsphere VM.Delete (class 6003, activity 4)"
+    expected_rules:
+      - {rule_id: "8c4e1f90-7a2b-4d33-9e55-6f1b2c3a4d03", title: "Mass VM deletion via hypervisor API (ransomware / sabotage pattern)", level: critical, role: data destruction detection}
+      - {rule_id: "9c86195a-8cd6-4b73-b526-a708bbb5299e", title: "Mass VM deletion from one source address (any number of accounts)", level: critical, role: companion (silent at baseline by design -- same events as the sibling)}
+    gap: {no_rule_exists: false}
+
+  encrypt_files:
+    step: encrypt_files
+    role: "dozens of files rewritten with a ransomware extension"
+    expected_event_source: "sysmon EventID 11 (class 1001)"
+    expected_rules: []
+    gap:
+      no_rule_exists: true
+      attack_technique: "T1486"           # Data Encrypted for Impact
+      reason: >
+        Class 1001 (File System Activity) has no shipped rule at all.
+
+severity_band:
+  score: {min: 40, max: 100}
+  severity_id: {min: 3, max: 6}
+  dominant_band: "high"
+
+evidence:
+  correlation_key: [src_endpoint.ip, actor.user.name]
+  per_step:
+    cred_spray:          {fields: [actor.user.name, src_endpoint.ip, src_endpoint.hostname]}
+    foothold_logon:      {fields: [actor.user.name, src_endpoint.ip]}
+    admin_privilege_use: {fields: [actor.user.name]}
+    lateral_spread:      {fields: [actor.user.name, src_endpoint.ip, dst_endpoint.hostname]}
+    backdoor_account:    {fields: [actor.user.name, unmapped.target_user.name]}
+    mass_vm_delete:      {fields: [actor.user.name, src_endpoint.ip]}
+
+incident_membership:
+  # CORRECTED after the first run (2026-10-14, recorded, not tuned): the authoring note counted only
+  # the address track. The compromised account is ALSO the actor on every alert-raising step (the
+  # spray's crossing event is its own failed logon), so the actor track spans the chain as well:
+  # WS-8 really produces TWO full-chain incidents (tracks never merge, ADR-009/010).
+  incident_count: 2
+  incident_key: "ransomware"
+  include: [cred_spray, foothold_logon, admin_privilege_use, lateral_spread, backdoor_account, inhibit_recovery, backup_wipe_cloud, mass_vm_delete, encrypt_files]
+  cross_step_rule_ids:
+    - "8c2f5a91-4d16-4e8b-9c3a-1f6b2e7d5a83"
+    - "9b5f2d18-3c7a-4e61-8f24-5a1d7c3e9b06"
+    - "2e3d4c5b-6f70-4819-9b02-1c2d3e4f5061"
+    - "e5f60718-92a3-4b42-9c5d-6e7f80910415"
+    - "8c4e1f90-7a2b-4d33-9e55-6f1b2c3a4d03"
+
+campaign_membership:
+  campaign_count: 1
+  full_coverage: true

@@ -310,14 +310,14 @@ def test_time_of_day_variants(probe) -> None:
 def test_jitter_period(probe) -> None:
     beats = [{"EventID": 3, "TimeCreated": T0 + i * 60_000, "Computer": "wks-1", "Image": "C:\\beacon.exe",
               "User": "m.rossi", "SourceIp": "10.9.0.5", "SourceHostname": "wks-1",
-              "DestinationIp": "203.0.113.9", "DestinationPort": "443"} for i in range(8)]
+              "DestinationIp": "203.0.113.9", "DestinationPort": "443"} for i in range(24)]
     stream = _burst("beacon", "sysmon", beats, T0, 60_000, "10.9.0.5")
     stream += [(_spec("single"), {"source_type": "sysmon",
                                   "raw": {"EventID": 1, "TimeCreated": T0, "Computer": "wks-1",
                                           "Image": "C:\\w.exe", "User": "m.rossi"},
                                   "meta": _meta(T0)})]
     sd = _Sd(["beacon", "single"])
-    _check("(e) NEGATIVE control: the un-jittered 8-beat, 60 s schedule FIRES the periodic rule "
+    _check("(e) NEGATIVE control: the un-jittered 24-beat, 60 s schedule FIRES the periodic rule "
            "(so a jittered stream going silent means something)", _fires(probe, stream, "beaconing", "beacon"))
     a, ch = mg.apply(stream, "pacing", "jitter_100pct", seed=7, sdef=sd)
     b, _ = mg.apply(stream, "pacing", "jitter_100pct", seed=7, sdef=sd)

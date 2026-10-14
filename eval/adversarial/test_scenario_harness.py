@@ -138,6 +138,13 @@ def test_directional_discrimination() -> None:
            out["chain_fidelity"] == 1.0, f"chain_fidelity={out['chain_fidelity']}")
     for sd in reg.ALL:
         g = reg.grade(sd, SEED)
+        if g["incident_count"] == 0:
+            # one alert-raising step, nothing promotes (cloud_iam_abuse, 2026-10-14): there is no
+            # graph, so nothing to discriminate -- reported None, never a fabricated number
+            _check(f"(c) {sd.name}: no incident promotes, so directional_discrimination is None (no graph)",
+                   g["directional_discrimination"] is None and g["chain_fidelity"] is None,
+                   f"{g['directional_discrimination']}")
+            continue
         _check(f"(c) {sd.name}: real graph's directional_discrimination is measured and < 0.5 "
                "(fidelity/FCR are entity-bridge checks here, and the baseline says so)",
                g["directional_discrimination"] is not None and g["directional_discrimination"] < 0.5,

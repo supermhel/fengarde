@@ -44,7 +44,7 @@ WHAT IT CHECKS (findings; FAIL unless waived with a dated reason)
     F13 level_mismatch        hand level differs from the rule YAML level.
     F14 membership_unattainable_under_track_model  no single canonical entity appears at EVERY step
                               that raises an alert, so no single entity track (tracks never merge:
-                              services/ws8-correlation/INTERFACE.md:186, campaigns.py header) can
+                              services/ws8-correlation/INTERFACE.md:217, campaigns.py header) can
                               carry the whole chain while the oracle demands incident_count >= 1.
     (F11, "rule siem.sector must match the event sector", was DROPPED: no event carries a sector
     value and the engine never filters on it, so there is nothing to compare.)
@@ -123,6 +123,11 @@ _WAIVED: dict = {
         "`incident_count: 1` that this correlator cannot meet. Owner decision pending (retarget "
         "onto campaign_full_coverage, lower the target, or keep as a flagged gap); the WS-8 "
         "invariant is not touched."),
+    ("supply_chain_ci", "F6", "agent_runaway", "2b3c4d5e-6f70-4899-8a1b-2c3d4e5f6a7c"): (
+        "2026-10-14 agent_tool_call_burst carries no mitre block BY DESIGN (no single ATT&CK technique "
+        "fits a generic tool-call-volume burst; technique_waivers.yaml no_technique), and supply_chain_ci "
+        "is the storyline written to exercise it, so its expectation is tactic-less on purpose: "
+        "tactic coverage falls back to rule identity at this one step."),
 }
 # F2 (rule undecidable by the static model) is a WARN, but capped per scenario so it cannot grow.
 # 2026-10-03 phishing_bec: 1 -- common_beaconing's periodicity bound (coefficient of variation of the
@@ -426,6 +431,11 @@ def _raw_ms(payload: dict) -> int | None:
     return int(r) if r is not None and _is_num(r) else None
 
 
+#: group_by paths the product folds as an ACCOUNT (canonical actor, strip+casefold; F2 owner decision
+#: 2026-10-14). Declared from the decision, not imported from the engine (DER-NEG-3).
+_ACCOUNT_GROUP_KEYS = frozenset({"actor.user.name", "unmapped.target_user.name"})
+
+
 def derive(sdef, seed: int = 7, *, rules: dict | None = None, result=None,
            allowlists_dir: Path | None = None) -> dict:
     """Derive, per step of ``sdef``, what the rule files say fires -- without running the detector."""
@@ -454,6 +464,7 @@ def derive(sdef, seed: int = 7, *, rules: dict | None = None, result=None,
         st["parsed_events"] += 1
         st["entities"] |= entities_of(event)
         matched: set = set()
+        evidence: dict = {}  # rid -> (kind, frozenset) the alert would cite (the companion coverage test)
         for rid in order:
             rule = rules[rid]
             cond = eval_condition(rule, event, allowlists_dir)
@@ -464,11 +475,14 @@ def derive(sdef, seed: int = 7, *, rules: dict | None = None, result=None,
                 continue
             if not rule.stateful:
                 matched.add(rid)
+                evidence[rid] = ("event", frozenset([ordinal]))
                 continue
             if rule.periodicity:
                 st["undecided"].add(rid)  # periodicity (CV over inter-arrival times) is not modelled
                 continue
             group = _get(event, rule.group_by)
+            if rule.group_by in _ACCOUNT_GROUP_KEYS and isinstance(group, str):
+                group = group.strip().casefold()   # F2 2026-10-14: account keys are the canonical actor
             now = _num_time(event)
             if group is None or now is None:
                 continue
@@ -487,9 +501,21 @@ def derive(sdef, seed: int = 7, *, rules: dict | None = None, result=None,
             count = len({m for _, m in buf}) if rule.distinct_field else len(buf)
             if count >= rule.threshold:
                 matched.add(rid)
-        # per-EVENT companion suppression (services/ws4-detection/main.py): a companion is dropped only
-        # when its sibling matched THIS event; on a burst it can still fire on an earlier/later event.
-        kept = {r for r in matched if rules[r].companion_of not in matched}
+                evidence[rid] = ((f"values:{rule.distinct_field}", frozenset(str(m) for _, m in buf))
+                                 if rule.distinct_field else ("events", frozenset(m for _, m in buf)))
+        # per-EVENT companion suppression (services/ws4-detection/main.py, coverage condition of
+        # 2026-10-14): a companion is dropped only when its sibling matched THIS event AND the sibling's
+        # window already holds everything the companion's alert would cite -- a subset of the events
+        # for count windows, the SAME value set for distinct-count windows.
+        def _covered(r: str) -> bool:
+            sib = rules[r].companion_of
+            if sib not in matched or r not in evidence or sib not in evidence:
+                return False
+            (mk, mine), (tk, theirs) = evidence[r], evidence[sib]
+            if mk != tk:
+                return False
+            return mine == theirs if mk.startswith("values:") else mine <= theirs
+        kept = {r for r in matched if not _covered(r)}
         for rid in sorted(matched):
             bucket = st["fires"] if rid in kept else st["suppressed"]
             bucket.setdefault(rid, []).append(ordinal)

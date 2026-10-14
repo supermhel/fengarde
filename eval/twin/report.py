@@ -1064,8 +1064,12 @@ def _incident_membership_grade(alerts_by_step: list[dict], incidents: list[dict]
     chain_set = set(chain_ids)
     by_id: dict[str, dict] = {inc["incident_id"]: inc for inc in incidents}
 
+    _expected_raw = membership.get("incident_count", 1)
+    expected = int(_expected_raw) if _expected_raw is not None else 1
     if not by_id or not chain_set:
-        return {"incident_count": 0, "incident_membership_ok": False,
+        # an oracle that EXPECTS zero full-chain incidents (one alert, one tactic: nothing can
+        # reach the two-tactic promotion -- cloud_iam_abuse) is met when nothing promotes
+        return {"incident_count": 0, "incident_membership_ok": bool(chain_set) and expected == 0,
                 "full_coverage_incident_ids": [],
                 # Phase-4 seam: a MUTATED chain can legitimately promote
                 # nothing (a mutation that destroys detection is a measured
@@ -1091,8 +1095,6 @@ def _incident_membership_grade(alerts_by_step: list[dict], incidents: list[dict]
         cross_details[rule_id] = bool(co_located)
         cross_ok = cross_ok and co_located
 
-    _expected_raw = membership.get("incident_count", 1)
-    expected = int(_expected_raw) if _expected_raw is not None else 1
     ok = len(full_coverage) == expected and cross_ok
     return {
         "incident_count": len(by_id),

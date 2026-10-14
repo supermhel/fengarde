@@ -171,8 +171,8 @@ def _run(sdef, oracle, seed=7, **kw):
 
 def test_derive_clean_tree() -> None:
     glob = od.apply_waivers(od.lint_rules(_RULES), "*")
-    _check("DER-NEG-1 the 35 rule files pass the static OCSF logsource lint (F10)",
-           len(_RULES) == 35 and not glob["unwaived"], f"rules={len(_RULES)} bad={[f['item'] for f in glob['unwaived']]}")
+    _check("DER-NEG-1 the 36 rule files pass the static OCSF logsource lint (F10)",
+           len(_RULES) == 36 and not glob["unwaived"], f"rules={len(_RULES)} bad={[f['item'] for f in glob['unwaived']]}")
     for seed in (7, 11):
         for sd in reg.ALL:
             res = _run(sd, _oracle(sd), seed)
@@ -196,8 +196,8 @@ def test_derive_clean_tree() -> None:
            all(_kinds(_run(IT, _oracle(IT), s)["findings"], "F14") for s in (7, 11)))
     # F14 cites the right document
     src = (TWIN / "oracle_derive.py").read_text(encoding="utf-8")
-    _check("F14 cites services/ws8-correlation/INTERFACE.md:186 (the 'tracks never merge' line), not ADR-009/010",
-           "INTERFACE.md:186" in src and "ADR-009" not in src)
+    _check("F14 cites services/ws8-correlation/INTERFACE.md:217 (the 'tracks never merge' line), not ADR-009/010",
+           "INTERFACE.md:217" in src and "ADR-009" not in src)
     _check("the amended it_intrusion oracle keeps evidence_completeness == 1.0 (F12 fix is not a loosening)",
            report._grade_chain(reg.run(IT, 7), _oracle(IT))["evidence_completeness"] == 1.0)
 
@@ -267,8 +267,13 @@ def test_derive_hand_skew() -> None:
     o["detection_points"]["agent_mcp_tool_call"]["expected_rules"].append({"rule_id": no_tactic[0], "level": "medium"})
     _check("DER-POS-2 F6: an expected rule carrying no mitre.tactic is flagged (agent_tool_call_burst is the only one)",
            len(no_tactic) == 1 and bool(_kinds(_run(AI, o)["findings"], "F6", no_tactic[0])), f"{no_tactic}")
-    _check("DER-NEG-2 F6: the shipped oracles expect no tactic-less rule",
-           all(not _kinds(_run(sd, _oracle(sd))["findings"], "F6") for sd in reg.ALL))
+    # 2026-10-14: exactly one dated exception -- supply_chain_ci exercises agent_tool_call_burst, the
+    # rule that has no mitre block on purpose; its F6 is WAIVED, never unwaived
+    f6 = {sd.name: [f for f in _run(sd, _oracle(sd))["findings"] if f["kind"] == "F6"] for sd in reg.ALL}
+    _check("DER-NEG-2 F6: the shipped oracles expect no tactic-less rule, except supply_chain_ci's waived one",
+           all(not v for n, v in f6.items() if n != "supply_chain_ci")
+           and len(f6.get("supply_chain_ci", [])) == 1 and all(f["waived"] for f in f6["supply_chain_ci"]),
+           str({n: [(f["item"][:8], f["waived"]) for f in v] for n, v in f6.items() if v}))
 
 
 def test_derive_rule_skew() -> None:
@@ -503,10 +508,19 @@ def test_companion_per_event() -> None:
         derived = od.derive(sd, 7, rules=drules, result=SimpleNamespace(events=evs))
         st = derived["steps"]["s1"]
         _check("DER-POS companion: the companion that crosses its threshold on EARLIER events than its sibling "
-               "is NOT suppressed there", st["fires"].get(comp) == [1, 2], f"fires={st['fires']}")
-        _check("DER-POS companion: ...and IS suppressed on the event where the sibling also matched",
-               st["suppressed_events"].get(comp) == [3] and st["fires"].get(sib) == [3],
-               f"suppressed={st['suppressed_events']}")
+               "is NOT suppressed there", {1, 2} <= set(st["fires"].get(comp) or []), f"fires={st['fires']}")
+        # coverage condition (2026-10-14): at event 3 the companion's window holds event 1 (address
+        # b) that the sibling's (address a) does not, so it is NOT a duplicate and is kept
+        _check("DER-POS companion: ...and is KEPT where the sibling matched but does not cover its events",
+               st["fires"].get(comp) == [1, 2, 3] and st["fires"].get(sib) == [3]
+               and not st["suppressed_events"].get(comp), f"fires={st['fires']} suppressed={st['suppressed_events']}")
+        cov = [SimpleNamespace(step="s1", parsed=True, raw_payload={}, event={
+            "class_uid": 3002, "activity_id": 4, "time": t0 + n * 1000, "src_endpoint": {"ip": "a"},
+            "actor": {"user": {"name": "u"}}}) for n in range(3)]
+        st2 = od.derive(sd, 7, rules=drules, result=SimpleNamespace(events=cov))["steps"]["s1"]
+        _check("DER-POS companion: ...and IS suppressed where the sibling's window holds every event it would cite",
+               st2["suppressed_events"].get(comp) == [2] and st2["fires"].get(sib) == [2],
+               f"fires={st2['fires']} suppressed={st2['suppressed_events']}")
         # the same events through the real Detector: per-event matched ids must be identical
         det = report._WS4_MOD.Detector(rules_dir=rules_dir, allowlists_dir=tmp / "allowlists", plugin_rule_dirs=[])
         real = []
@@ -842,11 +856,13 @@ def test_catalogue_size_and_read_only() -> None:
     # The bound tracks the REGISTRY, not an era: the catalogue is one mutant set per storyline, so it
     # grows with every storyline that lands (measured seed 7, 2026-10-14: ai_to_ot 92, it_intrusion 92,
     # infra_takeover 39, phishing_bec 70, ot_opcua_sabotage 74 -- 367 total; the old ceiling of 300 was
-    # already 98% consumed by the first four). Both bounds stay real: a collapsed catalogue (a builder
-    # that stopped generating mutants) or an explosion (a duplicate-emitting one) still fails.
+    # already 98% consumed by the first four). P1 storylines 6-9 (2026-10-14) took it to 649 over nine.
+    # Both bounds stay real, scaled per storyline: a collapsed catalogue (a builder that stopped
+    # generating mutants) or an explosion (a duplicate-emitting one) still fails.
+    k = len(reg.ALL)
     _check("the catalogue holds the expected number of mutants over every registered storyline "
            "(WRONG + WEAKER, identity excluded)",
-           200 <= n <= 450, f"{n}")
+           40 * k <= n <= 90 * k, f"{n} over {k} storylines")
     before = {p.name: _sha(p) for p in ORACLE_FILES}
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):

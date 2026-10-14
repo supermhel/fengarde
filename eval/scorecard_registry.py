@@ -189,9 +189,11 @@ VOLATILE: tuple[str, ...] = (
 #: ``scenario_list`` and refuses to render if they disagree, so a new storyline
 #: cannot silently disappear from the card. It is a deliberate snapshot: every
 #: storyline that lands must extend this list in the same commit (5th storyline
-#: ``ot_opcua_sabotage``, 2026-10-14).
+#: ``ot_opcua_sabotage``, 2026-10-14; P1 storylines 6-9 ``ransomware``, ``insider_exfil``,
+#: ``cloud_iam_abuse``, ``supply_chain_ci``, 2026-10-14).
 STORYLINES: tuple[str, ...] = ("ai_to_ot", "it_intrusion", "infra_takeover",
-                               "phishing_bec", "ot_opcua_sabotage")
+                               "phishing_bec", "ot_opcua_sabotage", "ransomware",
+                               "insider_exfil", "cloud_iam_abuse", "supply_chain_ci")
 
 #: ``eval/twin/report.latest.json`` and ``matrix.latest.json`` cover this
 #: storyline only; every twin-only metric reads ``twin_only``.

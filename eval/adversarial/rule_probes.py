@@ -118,13 +118,13 @@ def _common_beaconing() -> Probe:
         return "cisco_asa", (f"%ASA-6-302013: Built outbound TCP connection {i} for "
                              f"outside:203.0.113.5/{40000 + i} (203.0.113.5/{40000 + i}) to "
                              f"inside:10.0.0.10/443 (10.0.0.10/443)")
-    # 12 callbacks exactly 300 s apart: CV == 0, threshold 6 in 3600 s.
+    # 24 callbacks exactly 150 s apart (3450 s span): CV == 0, threshold 20 in 3600 s (Q15).
     def set_ip(p, j):
         p["raw"] = re.sub(r"(for \w+:)(\d{1,3}(?:\.\d{1,3}){3})(/\d+ \()(\d{1,3}(?:\.\d{1,3}){3})",
                           lambda m: f"{m.group(1)}198.18.77.{j + 10}{m.group(3)}198.18.77.{j + 10}",
                           p["raw"], count=1)
         return True
-    return Probe("common_beaconing", "c2_beacon", "cisco_asa", 12, 300_000, build, {"ip": set_ip})
+    return Probe("common_beaconing", "c2_beacon", "cisco_asa", 24, 150_000, build, {"ip": set_ip})
 
 
 def _common_bruteforce_sourceless() -> Probe:
@@ -154,7 +154,9 @@ def _common_password_spray() -> Probe:
         return "active_directory", {"EventID": 4625, "TimeCreated": t, "TargetUserName": "victim",
                                     "Computer": "dc-probe-0", "WorkstationName": f"wks-{i}",
                                     "IpAddress": f"198.18.5.{i + 10}"}
-    return Probe("common_password_spray", "credential_stuffing", "active_directory", 16, 5_000, build,
+    # 24 addresses (Q16, 2026-10-14): the set now includes the 24 h tier (threshold 20), and a
+    # burst must exceed every threshold in the set to be split around a pause
+    return Probe("common_password_spray", "credential_stuffing", "active_directory", 24, 5_000, build,
                  {"account": _dict_setter("TargetUserName", "victim{j}")})
 
 

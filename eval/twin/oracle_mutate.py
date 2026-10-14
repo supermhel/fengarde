@@ -460,9 +460,11 @@ _NO_EVENT = ("the edge starts at external_content, a step with no parsed event (
 _ORDER_BLIND_M = ("directional_discrimination=0.0 (SSOT 2026-10-01): the pair is graded and joined, and the "
                   "reverse direction is joined too (reverse_joined=True), so the legacy join predicate cannot tell a "
                   "relation from its reverse; the WS-8 tracks never merge and share entities at both ends")
-_COMPANION = ("the rule is a suppressed companion (siem.companion_of): WS-4 drops it whenever its sibling matched the "
-              "same event, so it never raises an alert here; TPR's any-intersection rule, the reconciler's "
-              "companion exemption and the severity matrix (one row per fired alert) all ignore it")
+_COMPANION = ("the rule is a suppressed companion (siem.companion_of): WS-4 drops it when its sibling matched the "
+              "same event and already holds every event it would cite (the coverage condition, 2026-10-14) -- on "
+              "these single-source bursts it always does -- so it never raises an alert here; TPR's "
+              "any-intersection rule, the reconciler's companion exemption and the severity matrix (one row per "
+              "fired alert) all ignore it")
 _NO_ALERT_STEP = ("one of the two swapped steps raises no alert (and the entities are shared across the chain), so "
                   "neither alert order nor the entity-bridge fidelity predicate has anything to disagree about")
 _EQUIVALENT: dict = {
@@ -536,6 +538,63 @@ _EQUIVALENT: dict = {
         "rogue_device): the graph JOINED it in both directions (per_forbidden_pair joined=True, the "
         "pair shares the device address), so re-labelling it removes a falling forbidden_joins count "
         "and the wrong oracle scores BETTER because " + _ORDER_BLIND_M)},
+    # P1 storylines 6-9 (2026-10-14, measured on seed 7 on their first run -- every class below is one of
+    # the mechanisms already waived for the older storylines; nothing new was tuned to fit):
+    ("ransomware", "drop_expected_rule", "SURVIVED"): {"max": 2, "reason": "2026-10-14 " + _COMPANION},
+    ("ransomware", "shift_level", "SURVIVED"): {"max": 3, "reason": "2026-10-14 " + _COMPANION},
+    ("ransomware", "drop_step", "SURVIVED"): {"max": 2, "reason": (
+        "2026-10-14 inhibit_recovery and backup_wipe_cloud raise no alert (declared gaps), so dropping them "
+        "from the sequence changes no emitted alert and no graded output")},
+    ("ransomware", "flip_gap_to_false", "SURVIVED"): {"max": 4, "reason": (
+        "2026-10-14 the four gap steps declare no expected rule and no rule fires there, so nothing reads the "
+        "gap flag (same mechanism as phishing_bec's waived flip_gap_to_false)")},
+    ("ransomware", "flip_relationship", "IMPROVED"): {"max": 3, "reason": (
+        "2026-10-14 two forbidden->allowed flips on pairs the graph joins in both directions (" + _ORDER_BLIND_M
+        + "), and the allowed->forbidden flip of mass_vm_delete->encrypt_files, an allowed pair the graph "
+        "does NOT join (encrypt_files raises no alert): re-labelling an unmet requirement as a met non-edge "
+        "raises chain_fidelity")},
+    ("ransomware", "reverse_relationship", "IMPROVED"): {"max": 1, "reason": (
+        "2026-10-14 mass_vm_delete->encrypt_files is unmet forward and met in reverse (the account evidenced "
+        "at encrypt_files reaches back to the VM-delete alert), so reversing it makes the requirement MET -- "
+        "the it_intrusion recon->brute-force class")},
+    ("ransomware", "reverse_relationship", "SURVIVED"): {"max": 5, "reason": "2026-10-14 " + _ORDER_BLIND_M},
+    ("ransomware", "swap_adjacent_steps", "SURVIVED"): {"max": 6, "reason": "2026-10-14 " + _NO_ALERT_STEP},
+    ("insider_exfil", "flip_gap_to_false", "SURVIVED"): {"max": 5, "reason": (
+        "2026-10-14 the five gap/context steps declare no expected rule and no rule fires there, so nothing "
+        "reads the gap flag")},
+    ("insider_exfil", "flip_relationship", "IMPROVED"): {"max": 1, "reason": (
+        "2026-10-14 bulk_table_read->stage_archive is the one allowed pair the graph does NOT join "
+        "(stage_archive raises no alert); re-labelling the unmet requirement as a met non-edge raises "
+        "chain_fidelity")},
+    ("insider_exfil", "reverse_relationship", "IMPROVED"): {"max": 1, "reason": (
+        "2026-10-14 the same pair, joined=False forward and True in reverse (it is why this storyline's "
+        "directional_discrimination is 0.2, not 0.0): reversing it makes the requirement MET")},
+    ("insider_exfil", "reverse_relationship", "SURVIVED"): {"max": 3, "reason": "2026-10-14 " + _ORDER_BLIND_M},
+    ("insider_exfil", "swap_adjacent_steps", "SURVIVED"): {"max": 5, "reason": "2026-10-14 " + _NO_ALERT_STEP},
+    ("supply_chain_ci", "drop_step", "SURVIVED"): {"max": 1, "reason": (
+        "2026-10-14 malicious_dependency raises no alert (a declared gap), so dropping it changes nothing graded")},
+    ("supply_chain_ci", "flip_gap_to_false", "SURVIVED"): {"max": 1, "reason": (
+        "2026-10-14 malicious_dependency declares no expected rule and no rule fires there")},
+    ("supply_chain_ci", "flip_relationship", "IMPROVED"): {"max": 1, "reason": (
+        "2026-10-14 forbidden->allowed flip on privileged_runner->ci_secret_read, joined in both directions "
+        "through the runner address: the wrong oracle scores BETTER because " + _ORDER_BLIND_M)},
+    ("supply_chain_ci", "reverse_relationship", "SURVIVED"): {"max": 3, "reason": "2026-10-14 " + _ORDER_BLIND_M},
+    ("supply_chain_ci", "swap_adjacent_steps", "SURVIVED"): {"max": 1, "reason": "2026-10-14 " + _NO_ALERT_STEP},
+    # cloud_iam_abuse has ONE alert-raising step and no incident promotes, so there is NO graph: every
+    # relationship is unjoined in both directions and no alert order exists to disagree about.
+    ("cloud_iam_abuse", "flip_gap_to_false", "SURVIVED"): {"max": 7, "reason": (
+        "2026-10-14 the seven non-alerting steps declare no expected rule and no rule fires there")},
+    ("cloud_iam_abuse", "flip_relationship", "SURVIVED"): {"max": 6, "reason": (
+        "2026-10-14 no incident promotes (one alert, one tactic), so no graph exists and a flipped allowed "
+        "pair is as unjoined as the original")},
+    ("cloud_iam_abuse", "flip_relationship", "IMPROVED"): {"max": 1, "reason": (
+        "2026-10-14 the sole forbidden pair (log_tampering->console_stuffing) flipped to allowed: with no "
+        "graph it is unjoined either way, and removing the only forbidden pair empties the false-correlation "
+        "denominator, which the comparison reads as a gain")},
+    ("cloud_iam_abuse", "reverse_relationship", "SURVIVED"): {"max": 7, "reason": (
+        "2026-10-14 no graph exists (no incident promotes), so a reversed pair is as unjoined as the original")},
+    ("cloud_iam_abuse", "swap_adjacent_steps", "SURVIVED"): {"max": 7, "reason": (
+        "2026-10-14 one alert-raising step only: no alert order exists to disagree about")},
 }
 
 # normalised oracle key path -> "label: YYYY-MM-DD reason". ``declared-but-unenforced``: the oracle states it as a
@@ -599,6 +658,26 @@ _INERT_KEYS: dict = {
     "provenance.rules_read.ot_opcua_write_unauthorized_node": _PROV_PIN,
     "provenance.rules_read.ot_modbus_unauthorized_write": _PROV_PIN,
     "provenance.rules_read.ot_modbus_unauthorized_write_ticketed": _PROV_PIN,
+    # P1 storylines 6-9 oracles (2026-10-14, measured inert to the mutation grader at seed 7):
+    "provenance.rules_read.agent_credential_file_access": _PROV_PIN,
+    "provenance.rules_read.agent_destructive_command": _PROV_PIN,
+    "provenance.rules_read.agent_egress_non_allowlisted_domain": _PROV_PIN,
+    "provenance.rules_read.agent_tool_call_burst": _PROV_PIN,
+    "provenance.rules_read.bank_db_priv_esc": _PROV_PIN,
+    "provenance.rules_read.bank_mass_card_read": _PROV_PIN,
+    "provenance.rules_read.cloud_root_console_login": _PROV_PIN,
+    "provenance.rules_read.common_after_hours_admin": _PROV_PIN,
+    "provenance.rules_read.common_bruteforce_sourceless": _PROV_PIN,
+    "provenance.rules_read.common_lateral_movement": _PROV_PIN,
+    "provenance.rules_read.common_lateral_movement_by_source": _PROV_PIN,
+    "provenance.rules_read.common_rapid_account_lifecycle": _PROV_PIN,
+    "provenance.rules_read.dc_mass_vm_delete": _PROV_PIN,
+    "provenance.rules_read.dc_mass_vm_delete_by_source": _PROV_PIN,
+    "provenance.rules_read.dc_privileged_container": _PROV_PIN,
+    "step_dependencies.attacker_console_login[]": ("cross-instrument: 2026-10-14 read by "
+        "evasion_search.verify_subset_equivalence and scenario_matrix._dependents (cloud_iam_abuse's "
+        "victim_session -> attacker_console_login displacement control); the mutation grader never moves on it"),
+    "detection_points.*.gap.partial": _DOC,
 }
 
 
