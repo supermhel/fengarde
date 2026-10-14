@@ -799,24 +799,25 @@ class Rule:
         return ids, omitted
 
     def window_evidence(self, event: dict):
-        """``(kind, frozenset of event ids)`` this rule's alert for ``event`` would
-        cite, read from the window counter WITHOUT the contributing-id cap; None
-        when the rule cannot name its events.
+        """``(kind, frozenset)`` this rule's alert for ``event`` would cite, read
+        from the window counter WITHOUT the contributing-id cap; None when the
+        rule cannot name its evidence.
 
         Used by Detector.process to decide whether a companion's alert adds
-        anything its sibling's alert does not already carry. A distinct-count
-        window stores the distinct VALUES (ports, host names), not the events, so
-        it cannot say which events stand behind it: None, and the caller must then
-        keep the companion's alert."""
+        anything its sibling's alert does not already carry. kind is "event"
+        (stateless: the event itself), "events" (count window: its ingest ids)
+        or "values:<distinct_field>" (distinct-count window: it stores the
+        distinct VALUES -- ports, host names -- not the events)."""
         own = (event.get("siem") or {}).get("ingest_id")
         if not self.stateful:
             return ("event", frozenset([str(own)])) if own else None
-        if self.distinct_field:
-            return None
         group_value = _get_path_parts(event, self._group_by_parts)
         if group_value is None:
             return None
         window_key = f"{self.id}:{self._namespaced_group(_event_tenant(event), str(group_value))}"
+        if self.distinct_field:
+            vals = frozenset(str(v) for v in self._counter.distinct_members(window_key))
+            return (f"values:{self.distinct_field}", vals) if vals else None
         ids = frozenset(str(i) for i in self._counter.members(window_key))
         # events without an ingest_id are not listed by members(): an empty set
         # names nothing, it does not prove "nothing new"

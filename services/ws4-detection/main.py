@@ -349,10 +349,13 @@ class Detector:
         # crossing event came from the loud address, and the per-domain DNS
         # tunnel alert vanished behind every per-resolver alert. The companion is
         # now dropped only when the sibling's window already holds every event
-        # the companion's alert would cite (Rule.window_evidence). A rule that
-        # cannot name its events (distinct-count windows) is never dropped: its
-        # alert is emitted beside the sibling's, adds no score (score_weight 0)
-        # and dedups per window bucket like any stateful alert.
+        # the companion's alert would cite (Rule.window_evidence). Distinct-count
+        # windows hold VALUES, not events, and a value superset is exactly the
+        # loud-resolver case (its window holds every tunnel name AND the rest of
+        # the site's lookups), so there the sets must be EQUAL: same values =
+        # same activity seen from two keys (one scanner, one target) -> one
+        # alert. Evidence that cannot be named never counts as covered: the
+        # companion's alert is emitted (score_weight 0, dedups per window bucket).
         _by_id = {r.id: r for r in matched}
 
         def _covered(rule) -> bool:
@@ -360,8 +363,9 @@ class Detector:
             if sibling is None:
                 return False
             mine, theirs = rule.window_evidence(event), sibling.window_evidence(event)
-            return (mine is not None and theirs is not None
-                    and mine[0] == theirs[0] and mine[1] <= theirs[1])
+            if mine is None or theirs is None or mine[0] != theirs[0]:
+                return False
+            return mine[1] == theirs[1] if mine[0].startswith("values:") else mine[1] <= theirs[1]
 
         matched = [r for r in matched if not _covered(r)]
         score = self.scorer.score(matched, event)
