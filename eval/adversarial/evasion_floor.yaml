@@ -92,7 +92,7 @@ rule_sets:
       extra_seconds:
         basis: harness-measured
         better: max
-        value: 4620.011
+        value: 907.902
       forgery_evades:
         basis: harness-measured
         better: min
@@ -104,7 +104,7 @@ rule_sets:
       min_keys.ip:
         basis: harness-measured
         better: max
-        value: 3
+        value: 2
       respelling_evades:
         basis: harness-measured
         better: min
@@ -112,8 +112,33 @@ rule_sets:
       stealth_rate:
         basis: harness-measured
         better: min
-        value: 0.001389
-    fingerprint: e9ff1d2d62f6bf118caa97a4b6799040d6712ecf0c04f09cc341fb2cba4abc88
+        value: 0.005278
+    fingerprint: 6e35938ca68e6b3a08953b911df20d7af5ca20053e9a0a13e9328ef4e7cff54e
+    lowered:
+    - date: '2026-10-14'
+      field: extra_seconds
+      from: 4620.011
+      reason: 'Q15 owner decision 2026-10-14: common_beaconing threshold 6 -> 20 beats,
+        so a slower regular beacon now evades (the declared cost of the noise-floor
+        fix, docs/handoff/2026-10-14-q15-q16-measurements.md); Q16 adds the 24 h tier
+        to the password-spray set'
+      to: 907.902
+    - date: '2026-10-14'
+      field: stealth_rate
+      from: 0.001389
+      reason: 'Q15 owner decision 2026-10-14: common_beaconing threshold 6 -> 20 beats,
+        so a slower regular beacon now evades (the declared cost of the noise-floor
+        fix, docs/handoff/2026-10-14-q15-q16-measurements.md); Q16 adds the 24 h tier
+        to the password-spray set'
+      to: 0.005278
+    - date: '2026-10-14'
+      field: min_keys.ip
+      from: 3
+      reason: 'Q15 owner decision 2026-10-14: common_beaconing threshold 6 -> 20 beats,
+        so a slower regular beacon now evades (the declared cost of the noise-floor
+        fix, docs/handoff/2026-10-14-q15-q16-measurements.md); Q16 adds the 24 h tier
+        to the password-spray set'
+      to: 2
     params:
       common_beaconing:
         companion_of: null
@@ -121,7 +146,7 @@ rule_sets:
         group_by: src_endpoint.ip
         periodicity:
           max_cv: 0.25
-        threshold: 6
+        threshold: 20
         window_seconds: 3600
     production_reachable: true
   common_bruteforce:
@@ -397,7 +422,7 @@ rule_sets:
       extra_seconds:
         basis: harness-measured
         better: max
-        value: 525.003
+        value: 86285.005
       forgery_evades:
         basis: harness-measured
         better: min
@@ -405,11 +430,11 @@ rule_sets:
       forgone_events:
         basis: harness-measured
         better: max
-        value: 9
+        value: 17
       min_keys.account:
         basis: harness-measured
         better: max
-        value: 3
+        value: 4
       respelling_evades:
         basis: harness-measured
         better: min
@@ -417,9 +442,16 @@ rule_sets:
       stealth_rate:
         basis: harness-measured
         better: min
-        value: 0.025
-    fingerprint: eb6a3272e61a1449c648b37ad57ab264e9a9241a401dc96ff059e3e40fbe0c0d
+        value: 0.000266
+    fingerprint: b863e85bf08937bc49dea37c624e6e8a7e2435a19483d24a852c07401f383c8e
     params:
+      common_credential_stuffing_sustained:
+        companion_of: 4f8a2c61-9e3d-4b57-8a1c-6d2e5f7a8b90
+        distinct_field: src_endpoint.ip
+        group_by: actor.user.name
+        periodicity: null
+        threshold: 20
+        window_seconds: 86400
       common_password_spray:
         companion_of: null
         distinct_field: src_endpoint.ip

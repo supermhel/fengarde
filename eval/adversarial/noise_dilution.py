@@ -202,7 +202,10 @@ def plan_split(rs: ax.RuleSet, burst: ax.Burst) -> tuple:
     t_max = max(r.threshold for r in rs.rules)
     m = min(burst.n, 2 * t_min - 2 if t_min > 2 else t_min)
     j = t_min - 1
-    if m < t_max or m - j > t_min - 1 or j < 1:
+    # the no-noise control needs only ONE rule of the set to fire (m >= t_min); requiring t_max made a
+    # set with a slower tier unsplittable (the 24 h stuffing tier, threshold 20, beside the 300 s
+    # burst rule's 8, 2026-10-14) although the burst rule alone is what the experiment measures
+    if m < t_min or m - j > t_min - 1 or j < 1:
         raise ValueError(f"{rs.key}: burst of {burst.n} cannot be split around a pause (T={t_min}..{t_max})")
     return m, j
 
