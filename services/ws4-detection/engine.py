@@ -86,6 +86,8 @@ def _event_tenant(event: dict) -> str:
 # window. Past timestamps are always fine (that IS replay), so this never impedes
 # legitimate historical processing.
 _MAX_CLOCK_SKEW_MS = 300_000  # 5 minutes of tolerated source clock drift
+# group_by paths that name an account; their window key is the ADR-009 canonical actor (F2)
+_ACCOUNT_GROUP_FIELDS = frozenset({"actor.user.name", "unmapped.target_user.name"})
 
 
 def _get_path_parts(doc: dict, parts: tuple):
@@ -560,6 +562,23 @@ class Rule:
         """
         return f"{tenant}:{len(group)}:{group}"
 
+    def _group_of(self, event: dict) -> str | None:
+        """The window group for ``event``: ``str(group_by value)``, None if absent.
+
+        F2 (owner decision 2026-10-14, ADR-009 as ratified): an ACCOUNT group key
+        is canonicalised with ``strip().casefold()``, the same canonical actor
+        WS-8 uses. A raw key let one Windows account respelled "Admin" /
+        "admin " (the same principal to the source) split one burst into two
+        windows that each stay under threshold. DOMAIN\\ / UPN forms are NOT
+        stripped (that would amend ADR-009); evasion_findings.yaml carries the
+        residual. Every alert_key of an account-grouped rule changes once."""
+        value = _get_path_parts(event, self._group_by_parts)
+        if value is None:
+            return None
+        if self.group_by in _ACCOUNT_GROUP_FIELDS and isinstance(value, str):
+            return value.strip().casefold()
+        return str(value)
+
     def _selection_matches(self, compiled_sel: list, event: dict) -> bool:
         for parts, expected in compiled_sel:
             actual = _get_path_parts(event, parts)
@@ -685,7 +704,7 @@ class Rule:
             # evaluate() gates on group_by being present, so a fired stateful
             # alert always has a real group here -- str() of None can only
             # appear if alert_key is called for an event evaluate() rejected.
-            group = str(_get_path_parts(event, self._group_by_parts))
+            group = str(self._group_of(event))
             now = int(event.get("time", 0) or 0)
             window_ms = int(self.window_seconds) * 1000
             bucket = now // window_ms if window_ms else now
@@ -770,10 +789,10 @@ class Rule:
         # looked up a different window key for an invalid tenant, so the alert
         # cited only its own id.
         tenant = _event_tenant(event)
-        group_value = _get_path_parts(event, self._group_by_parts)
+        group_value = self._group_of(event)
         if group_value is None:
             return ([own_id] if own_id else []), 0
-        window_key = f"{self.id}:{self._namespaced_group(tenant, str(group_value))}"
+        window_key = f"{self.id}:{self._namespaced_group(tenant, group_value)}"
         if self.distinct_field:
             # The tracked "member" for a distinct-field window IS the field
             # value (e.g. distinct dst ports), not an event id -- still real
@@ -811,10 +830,10 @@ class Rule:
         own = (event.get("siem") or {}).get("ingest_id")
         if not self.stateful:
             return ("event", frozenset([str(own)])) if own else None
-        group_value = _get_path_parts(event, self._group_by_parts)
+        group_value = self._group_of(event)
         if group_value is None:
             return None
-        window_key = f"{self.id}:{self._namespaced_group(_event_tenant(event), str(group_value))}"
+        window_key = f"{self.id}:{self._namespaced_group(_event_tenant(event), group_value)}"
         if self.distinct_field:
             vals = frozenset(str(v) for v in self._counter.distinct_members(window_key))
             return (f"values:{self.distinct_field}", vals) if vals else None
@@ -844,7 +863,7 @@ class Rule:
     def _evaluate_stateful(self, event: dict) -> bool:
         """Stateful threshold path. Caller wraps this in a TypeError/ValueError
         guard (FIX 2(a)); f(n) must never let window arithmetic raise."""
-        group_value = _get_path_parts(event, self._group_by_parts)
+        group_value = self._group_of(event)
         if group_value is None:
             # An event without the group_by field cannot be attributed to any
             # group. Counting it anyway would pool ALL such events under one
@@ -853,7 +872,7 @@ class Rule:
             # correlation. Fail closed: no group, no count. (Same convention
             # as every other malformed-input path in this evaluator.)
             return False
-        group = str(group_value)
+        group = group_value
         now = _valid_window_time(event.get("time", 0))
         if now is None:
             # Non-numeric/NaN/inf time would crash the counter arithmetic

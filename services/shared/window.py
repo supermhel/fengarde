@@ -324,7 +324,14 @@ class DequeWindowCounter:
         horizon = now_ms - window_ms
         while w and w[0][0] < horizon:
             w.popleft()
-        count = len({v for _, v in w})
+        latest = {v: t for t, v in w}     # time-sorted: the last write per value is its newest
+        count = len(latest)
+        # Bound memory to ~2x the distinct count (2026-10-14, 24 h windows): a repeat of a
+        # value only refreshes it -- the Redis backend's one-member-per-value ZADD GT -- so
+        # older copies are dropped. Count and eviction are unchanged by the compaction.
+        if len(w) > 2 * count + 64:
+            w = deque(sorted(((t, v) for v, t in latest.items()), key=lambda e: e[0]))
+            self._dw[key] = w
         self._touch(key, now_ms, window_ms)
         if not w:
             self._dw.pop(key, None)
@@ -359,6 +366,20 @@ class DequeWindowCounter:
         return seen
 
 
+#: ZADD GT + trim + ZCARD + EXPIRE for Redis < 6.2 (no GT flag): atomic as one script.
+#: KEYS[1] zset; ARGV: member, score, trim-upper-bound, ttl seconds.
+_DISTINCT_LUA = """
+local cur = redis.call('ZSCORE', KEYS[1], ARGV[1])
+if (not cur) or tonumber(ARGV[2]) > tonumber(cur) then
+  redis.call('ZADD', KEYS[1], ARGV[2], ARGV[1])
+end
+redis.call('ZREMRANGEBYSCORE', KEYS[1], 0, ARGV[3])
+local n = redis.call('ZCARD', KEYS[1])
+redis.call('EXPIRE', KEYS[1], ARGV[4])
+return n
+"""
+
+
 class RedisWindowCounter:
     """Global sliding window in a Redis sorted set per (rule, group).
 
@@ -372,9 +393,22 @@ class RedisWindowCounter:
     would overwrite and undercount. Falls back to the timestamp if none given.
     """
 
-    def __init__(self, client, namespace: str = "ws4:win") -> None:
+    def __init__(self, client, namespace: str = "ws4:win", zadd_gt: bool | None = None) -> None:
         self.r = client
         self.ns = namespace
+        # ZADD GT needs Redis >= 6.2 (Q11, 2026-10-14). None = detect once from
+        # INFO server; False forces the Lua path (same semantics, any Redis >= 2.6).
+        self._zadd_gt = zadd_gt
+
+    def _gt_supported(self) -> bool:
+        if self._zadd_gt is None:
+            try:
+                version = str((self.r.info("server") or {}).get("redis_version", ""))
+                major, minor = (int(x) for x in version.split(".")[:2])
+                self._zadd_gt = (major, minor) >= (6, 2)
+            except Exception:  # noqa: BLE001 -- unknown server: the Lua path works everywhere
+                self._zadd_gt = False
+        return self._zadd_gt
 
     def hit(self, key: str, now_ms: int, window_ms: int, member=None) -> int:
         zkey = f"{self.ns}:{key}"
@@ -402,16 +436,20 @@ class RedisWindowCounter:
         lagging repeat dragged a live value's score into the past, the next
         ZREMRANGEBYSCORE aged it out at once and the distinct count fell below the
         threshold (the deque backend always kept the fresher tuple). New members are
-        still added; only an update to a not-greater score is skipped. Needs Redis >= 6.2.
+        still added; only an update to a not-greater score is skipped. Needs Redis >= 6.2;
+        older servers (Q11) run the same four steps as one Lua script (_DISTINCT_LUA).
         """
         zkey = f"{self.ns}:d:{key}"
         m = str(value) if value is not None else str(now_ms)
         horizon = now_ms - window_ms
+        ttl = max(1, window_ms // 1000 + 1)
+        if not self._gt_supported():
+            return int(self.r.eval(_DISTINCT_LUA, 1, zkey, m, now_ms, horizon - 1, ttl))
         pipe = self.r.pipeline()
         pipe.zadd(zkey, {m: now_ms}, gt=True)
         pipe.zremrangebyscore(zkey, 0, horizon - 1)
         pipe.zcard(zkey)
-        pipe.expire(zkey, max(1, window_ms // 1000 + 1))
+        pipe.expire(zkey, ttl)
         res = pipe.execute()
         return int(res[2])
 

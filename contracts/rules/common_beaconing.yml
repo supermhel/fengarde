@@ -2,7 +2,7 @@ title: Regular-interval outbound connections from one source (beaconing)
 id: f6071829-a3b4-4c53-9d6e-7f8091a2b526
 status: stable
 description: >
-  One source IP made 6+ accepted outbound connections (OCSF Network Activity,
+  One source IP made 20+ accepted outbound connections (OCSF Network Activity,
   class 4001, activity 7 Accept) within an hour at a REGULAR interval
   (coefficient of variation of inter-arrival times <= 0.25) -- the classic
   C2-beacon shape. This is a coarse proxy, not a robust beacon detector: it
@@ -13,6 +13,13 @@ description: >
   too). See docs/superpowers/specs/2026-07-21-periodicity-primitive.md for
   the full design rationale and limitations. Tune max_cv tighter (lower) to
   reduce false positives at the cost of missing jittered beacons.
+  Threshold 20, not 6 (owner decision Q15, 2026-10-14): with 6 events the
+  sample CV is computed over 5 intervals, and memoryless (Poisson) traffic
+  passes CV <= 0.25 often enough to fire on ordinary polling across a large
+  estate; 20 events (19 intervals) is the minimum sample the independent
+  review asked for. Cost, stated plainly: a beacon slower than one call per
+  3 minutes can no longer reach 20 inside the hour and is not detected
+  (docs/handoff/2026-10-14-q15-q16-measurements.md).
 level: medium
 logsource:
   category: network_activity
@@ -28,7 +35,7 @@ siem:
   sector: common
   score_weight: 40
   window_seconds: 3600
-  threshold: 6
+  threshold: 20
   group_by: src_endpoint.ip
   periodicity:
     max_cv: 0.25
