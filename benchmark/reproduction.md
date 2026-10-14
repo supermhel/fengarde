@@ -35,11 +35,14 @@ pip install python-evtx        # EVTX lane only
 ```
 
 splunk/attack_data stores its datasets in **Git LFS**. Without `git-lfs`
-the `.log` files are pointer stubs and `splunk_eval.py` fails loudly; a
-partial or sparse checkout is NOT detected by the lane, so compare the row's
-`lane_files` against the published snapshot (278 evtx / 1,055 splunk files
-in the 2026-10-14 nightly run) before trusting a local re-run. The published
-snapshot is the nightly CI run on `ubuntu-latest`.
+the `.log` files are pointer stubs, and `splunk_eval.py` fails loudly on
+them. It also fails loudly when tracked `.log` files are missing from the
+checkout (sparse/partial clone, or **antivirus quarantine**: Windows Defender
+removed 23 attack-sample `.log` files from a local clone on 2026-10-14). The
+row's `lane_files` should match the published snapshot (278 evtx / 1,055
+splunk files). The published snapshot is the nightly CI run on
+`ubuntu-latest`; on Windows, run the lanes in WSL or let CI produce the row
+rather than weakening antivirus settings.
 
 A lane whose dataset is missing prints `[SKIP]` and exits 0 — it proves
 nothing that run, and `parser_coverage_pct` / `per_rule_confusion` will be

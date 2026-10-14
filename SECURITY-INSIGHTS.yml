@@ -110,12 +110,43 @@ repository:
       - name: Mel Dylan Djomou
         email: dylandjomou@yahoo.de
         primary: true
-    comment: |
-      Security tooling runs in CI but publishes no in-toto attestation
-      artifacts, so it is documented here instead of as schema `tools`
-      entries: CodeQL (codeql.yml, every PR + push to main + weekly), gitleaks secret scan
-      (ci.yml), pip-audit CVE gate (ci.yml, all pinned requirements),
-      actionlint + tools/verify_action_pins.py (SHA-pin integrity of every
-      workflow), coverage_gate.py (per-service measured floors), Hypothesis
-      property tests + nightly Atheris fuzzing (17 parser targets, fuzz.yml),
-      Dependabot (pip per-directory weekly + GitHub Actions update type).
+    # Schema v2.2.0's SecurityPosture is closed (assessments / champions /
+    # tools only): the tooling is listed as `tools` entries. None of them
+    # publishes an in-toto attestation, so every `results` is empty.
+    tools:
+      - name: CodeQL
+        type: SAST
+        rulesets: [security-extended]
+        integration: {adhoc: false, ci: true, release: false}
+        results: {}
+        comment: codeql.yml, Python; every PR, every push to main, weekly.
+      - name: gitleaks
+        type: secret
+        rulesets: [.gitleaks.toml]
+        integration: {adhoc: false, ci: true, release: false}
+        results: {}
+        comment: ci.yml secret scan with the repo's .gitleaks.toml.
+      - name: pip-audit
+        type: SCA
+        rulesets: [default]
+        integration: {adhoc: false, ci: true, release: false}
+        results: {}
+        comment: ci.yml, --strict over every pinned services/*/requirements.txt.
+      - name: Dependabot
+        type: SCA
+        rulesets: [default]
+        integration: {adhoc: true, ci: false, release: false}
+        results: {}
+        comment: weekly pip updates per service directory plus GitHub Actions (.github/dependabot.yml).
+      - name: Atheris
+        type: fuzzing
+        rulesets: [default]
+        integration: {adhoc: false, ci: true, release: false}
+        results: {}
+        comment: fuzz.yml nightly, 17 parser targets; Hypothesis property tests run in the PR gate.
+      - name: actionlint + tools/verify_action_pins.py
+        type: other
+        rulesets: [default]
+        integration: {adhoc: false, ci: true, release: false}
+        results: {}
+        comment: workflow lint and SHA-pin integrity of every action reference (ci.yml).

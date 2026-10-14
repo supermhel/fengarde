@@ -10,7 +10,7 @@ limitations in [`methodology.md`](methodology.md).
 > hand-labeled corpora*, not a field-trial detection rate. The benchmark's
 > credibility is exactly this boundary being stated, not blurred.
 
-## Current snapshot (corpus run **2026-10-14**, nightly CI; twin run **2026-09-04T07:51Z**)
+## Current snapshot (corpus run **2026-10-14**, nightly CI on the PR branch, run 38541350947; twin run **2026-10-14T09:29Z**, same run)
 
 | Metric | Value | Meaning (see methodology.md) |
 |---|---|---|
@@ -39,9 +39,8 @@ Full machine-readable detail with per-metric units:
   contains the one-account-many-IPs shape. A committed synthetic fixture
   (`eval/detection_accuracy/attack_fixtures.py`) exercises that shape through
   the same oracle + real pipeline (TP, 0 mismatches — pinned by
-  `test_evtx_eval.py`); nightly rows from the next run on publish it
-  separately as `fixture_per_rule_confusion` / `fixture_tested_rules` (null in
-  this snapshot, whose CI row predates that field), never in the corpus
+  `test_evtx_eval.py`); published separately as `fixture_per_rule_confusion`
+  (`password_spray` TP=1) / `fixture_tested_rules`, never in the corpus
   confusion, record counts or coverage.
 - **False-correlation rate 1.0 is a real weakness, not a typo.** The WS-8
   entity-presence join cannot yet tell causal direction, so both forbidden
