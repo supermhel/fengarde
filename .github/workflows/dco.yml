@@ -22,9 +22,18 @@ jobs:
   dco:
     runs-on: ubuntu-latest
     steps:
+      # DCO grades ONLY the contributor's real commits, never GitHub's synthetic
+      # merge ref: the default checkout on a pull_request event is
+      # refs/pull/N/merge, an auto-created base+head merge commit that CANNOT
+      # carry a human Signed-off-by trailer -- grading that range made the gate
+      # count commits=6 signed_off=5 (commits=5 signed=5 against the true head)
+      # and block every PR despite all commits being fully signed (proven
+      # 2026-10-14, PR #96). Pin the checkout to the PR head so the gate grades
+      # exactly the commit list GitHub itself lists on the PR.
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
         with:
           fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
       - name: Every commit signed off (DCO v1.1)
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
