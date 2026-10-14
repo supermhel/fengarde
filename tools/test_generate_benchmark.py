@@ -126,5 +126,37 @@ class TestSelection(unittest.TestCase):
         self.assertEqual(json1, json2)
 
 
+class TestCheckMode(unittest.TestCase):
+    """--check must be able to go RED (a gate that can't fail protects
+    nothing): missing results.json, schema/selection drift, and a corrupt
+    file must all surface as stale."""
+
+    def test_check_detects_stale_and_accepts_fresh(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            old_trend, old_out = G.TREND, G.OUT
+            try:
+                G.TREND = Path(td) / "trend.jsonl"
+                G.OUT = Path(td) / "results.json"
+                G.TREND.write_text(
+                    json.dumps(CORPUS_NEW) + "\n" + json.dumps(REAL_TWIN) + "\n",
+                    encoding="utf-8")
+                rows = G.load_trend_rows(G.TREND)
+                # missing file -> stale
+                self.assertTrue(G.is_stale(rows)[0])
+                # fresh write -> fresh
+                G.OUT.write_text(G.render_document(rows), encoding="utf-8")
+                self.assertFalse(G.is_stale(rows)[0])
+                # drift in any real field -> stale (corrupt file)
+                G.OUT.write_text("{\"schema_version\": \"0\"}\n", encoding="utf-8")
+                self.assertTrue(G.is_stale(rows)[0])
+                # drift in the SELECTED ROW -> stale (slightly older corpus row)
+                G.OUT.write_text(G.render_document(rows), encoding="utf-8")
+                rows2 = [CORPUS_OLD, REAL_TWIN]
+                self.assertTrue(G.is_stale(rows2)[0])
+            finally:
+                G.TREND, G.OUT = old_trend, old_out
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
