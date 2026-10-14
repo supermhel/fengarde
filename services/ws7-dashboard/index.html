@@ -2075,7 +2075,12 @@ async function renderIncidents(){
   // Investigation-flow detail panel (same list-click-detail pattern as #assetDetail/
   // showAsset in the Inventory view) -- every field here is already on the incident
   // payload the table row reads, just laid out for reading rather than scanning.
-  showIncident(sorted[0]);
+  // Keep the analyst's selected incident open across the 10s poll refresh
+  // (falls back to the newest incident only on first render or when the
+  // selected one has aged out of the range filter). showIncident() itself
+  // skips the rebuild when the incident's data is unchanged, so an
+  // already-built evidence package / graph survives the refresh.
+  showIncident((_selectedIncidentId && sorted.find(i => i.incident_id === _selectedIncidentId)) || sorted[0]);
 }
 // ---- Phase 5 (2026-09-04): causal graph + evidence package -------------
 // GET /entities/{id} isn't fetched by showIncident() below -- incident.graph
@@ -2095,6 +2100,18 @@ const ENTITIES_API = (window.ENTITIES_API !== undefined) ? window.ENTITIES_API :
 // touching the DOM -- same guard shape for both call sites, not a
 // one-off patch on either.
 let _selectedIncidentId = null;
+// Poll-refresh guard (renderIncidents() runs every POLL_INTERVAL_MS and
+// re-calls showIncident()): signature of the incident data the detail pane
+// was last built from, and the causal graph's load state
+// ("loading" | "done" | "empty"). An unchanged signature means the pane --
+// including an analyst-built #evidencePanel -- is left alone.
+let _shownIncidentSig = null;
+let _graphState = "loading";
+
+function _incidentSig(inc){
+  return JSON.stringify([inc.incident_id, inc.last_seen, inc.member_count,
+    inc.severity, inc.truncated, inc.tactics, inc.member_alert_ids]);
+}
 
 async function getIncidentGraph(incidentId){
   if(!INCIDENTS_API) return null;
@@ -2248,7 +2265,18 @@ async function showEvidencePanel(incidentId, btn){
 
 function showIncident(inc){
   const detail = document.getElementById("incidentDetail");
-  if(!inc){ _selectedIncidentId = null; detail.innerHTML = ""; return; }
+  if(!inc){ _selectedIncidentId = null; _shownIncidentSig = null; detail.innerHTML = ""; return; }
+  const sig = _incidentSig(inc);
+  if(inc.incident_id && inc.incident_id === _selectedIncidentId && sig === _shownIncidentSig
+     && document.getElementById("evidencePanel")){
+    // Same incident, same data, pane still mounted: a poll refresh. Don't
+    // rebuild (that resets #evidencePanel to "Not requested yet." and
+    // blanks #incidentGraph); only retry a graph that hadn't loaded yet.
+    if(_graphState === "empty") loadIncidentGraph(inc.incident_id);
+    return;
+  }
+  _shownIncidentSig = sig;
+  _graphState = "loading";
   const tactics = (inc.tactics||[]).map(t => `<span class="tactic-chip">${esc(t)}</span>`).join("") || "<span class=\"muted\">—</span>";
   const members = (inc.member_alert_ids||[]).map(esc).join(", ") || "—";
   const incidentId = inc.incident_id;
@@ -2287,6 +2315,11 @@ function showIncident(inc){
   // build_evidence_package() does real work (WP-3-B) and an incident
   // detail panel opened for every row in a list would otherwise burn a
   // full package build per row with nobody looking at most of them.
+  loadIncidentGraph(incidentId);
+}
+
+function loadIncidentGraph(incidentId){
+  _graphState = "loading";
   getIncidentGraph(incidentId).then(graph => {
     // Review-fix (2026-09-04): `#incidentGraph` is recreated with the SAME
     // id on every showIncident() call, so getElementById alone can't tell
@@ -2297,9 +2330,11 @@ function showIncident(inc){
     const el = document.getElementById("incidentGraph");
     if(!el) return;
     if(!graph){
+      _graphState = "empty";
       el.innerHTML = `<p class="muted">No causal graph for this incident yet.</p>`;
       return;
     }
+    _graphState = "done";
     el.innerHTML = renderCausalGraphSvg(graph.nodes, graph.edges);
   });
 }
