@@ -64,10 +64,12 @@ jobs:
             echo "[SKIP] NIGHTLY_EVAL_MODE=quality-only -- corpus fetch + evtx/splunk lanes disabled; clean skip, not a failure."
             exit 0
           fi
-          echo "Cloning EVTX-ATTACK-SAMPLES (GPL-3.0, gitignored)..."
-          git clone --depth 1 https://github.com/sbousseaden/EVTX-ATTACK-SAMPLES eval/detection_accuracy/evtx-samples
-          echo "Cloning splunk/attack_data (gitignored)..."
-          git clone --depth 1 https://github.com/splunk/attack_data eval/detection_accuracy/splunk-attack-data
+          # Q13 (2026-10-14): fetched at the commits pinned in corpus_manifest.json (a plain
+          # --depth 1 clone measured whatever HEAD was that night), splunk/attack_data with
+          # GIT_LFS_SKIP_SMUDGE and only the pre-registered LFS subset pulled (a full clone is
+          # > 9 GB). fetch_corpora.py exits 1 on any failed fetch or pull -- never a silent skip.
+          git lfs install --skip-repo
+          python eval/detection_accuracy/fetch_corpora.py             --corpus evtx-attack-samples --corpus splunk-attack-data --corpus evtx-to-mitre
 
       # ---- eval entry points ----------------------------------------------
       - name: Detection-quality canary (macro-F1 floor, zero-infra)
@@ -85,6 +87,12 @@ jobs:
       - name: Splunk attack_data oracle replay (corpus lane)
         if: vars.NIGHTLY_EVAL_MODE != 'quality-only'
         run: python eval/detection_accuracy/splunk_eval.py
+
+      # Blind recall over third-party LABELLED datasets (labels by the dataset authors, not by
+      # this repo). --require-corpus: a missing corpus FAILS instead of reporting an empty pass.
+      - name: Blind recall on pinned third-party corpora (corpus lane)
+        if: vars.NIGHTLY_EVAL_MODE != 'quality-only'
+        run: python eval/detection_accuracy/blind_recall.py --require-corpus
 
       # ---- append ONE trend row ------------------------------------------
       # Reads the gitignored evtx/splunk result JSONs each lane just wrote,
@@ -249,4 +257,12 @@ jobs:
             eval/trend.jsonl
             eval/twin/report.json
             eval/trend_viewer.html
+          if-no-files-found: error
+
+      - name: Upload blind-recall results (corpus lane)
+        if: vars.NIGHTLY_EVAL_MODE != 'quality-only'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: blind-recall-results
+          path: eval/detection_accuracy/blind_recall_results.json
           if-no-files-found: error
