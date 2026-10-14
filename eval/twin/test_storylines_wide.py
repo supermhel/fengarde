@@ -357,7 +357,7 @@ def test_phishing_bec() -> None:
     _check("(h) every expected rule fires at its step and the order of alerts follows the oracle",
            g["tpr"] == 1.0 and g["alert_order_ok"] is True and g["incident_membership_ok"] is True
            and g["incident_count"] == 1, f"tpr={g['tpr']} order={g['alert_order_ok']} incidents={g['incident_count']}")
-    first = {}
+    first: dict = {}
     for a in g["fired"]:
         first.setdefault(a["step"], a["time"])
     seq = [s for s in reg.load_oracle(SD)["expected_sequence"] if s in first]

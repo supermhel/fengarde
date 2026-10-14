@@ -20,8 +20,10 @@ _FINGERPRINT_GLOBS = (
     "eval/twin/*.py",
     "eval/twin/oracle*.yaml",
     "eval/adversarial/*.py",
+    "eval/adversarial/*.yaml",            # evasion tables/findings classify search output
     "eval/attack/*.py",
     "tools/detection_quality_eval.py",
+    "tools/validate_contract.py",         # shared/ocsf.py validates every event through it
     "tools/check_rule_producers.py",      # fire_check replays its FIXTURES
     "tools/validate_rules.py",            # load_rules validates through it
     "services/**/*.py",

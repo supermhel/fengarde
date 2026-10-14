@@ -154,7 +154,7 @@ import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 ROOT = Path(__file__).resolve().parents[2]
 TWIN = ROOT / "eval" / "twin"
@@ -186,6 +186,7 @@ from fingerprint import system_fingerprint  # noqa: E402
 # exploration proved: run chain first; pre-seed sys.modules["main"] with ws4.
 _WS4_MAIN = (ROOT / "services" / "ws4-detection" / "main.py")
 _WS4_SPEC = importlib.util.spec_from_file_location("main", _WS4_MAIN)
+assert _WS4_SPEC is not None
 _WS4_MOD = importlib.util.module_from_spec(_WS4_SPEC)
 sys.modules["main"] = _WS4_MOD  # ws4's main must be what `from main import Detector` sees
 if _WS4_SPEC and _WS4_SPEC.loader:
@@ -904,7 +905,7 @@ def _step_entity_ids(result: "scenario.ChainResult", tenant: str) -> dict:
         event = ev.event or {}
         ids: set = set()
         actor = event.get("actor") or {}
-        user = actor.get("user") if isinstance(actor.get("user"), dict) else {}
+        user: dict = actor["user"] if isinstance(actor.get("user"), dict) else {}
         if user.get("name"):
             eid = ws8.canonical_entity_id(tenant, "actor", str(user["name"]))
             if eid:
@@ -964,7 +965,7 @@ def _grade_chain_fidelity(edges: list[dict], step_entities: dict,
     allowed = [r for r in allowed_rels if r.get("allowed")]
     forbidden_rels = [r for r in allowed_rels if not r.get("allowed")]
 
-    def _earlier_side(f: str) -> set:
+    def _earlier_side(f) -> set:
         side: set = set()
         if f not in idx:
             return side
@@ -1383,8 +1384,8 @@ def _attribution(parsed: list[scenario.ChainEvent]) -> Optional[float]:
             continue  # raw input declares no actor -> not attributable
         ocsf = ev.event or {}
         actor = ocsf.get("actor") or {}
-        user = actor.get("user") if isinstance(actor.get("user"), dict) else {}
-        process = actor.get("process") if isinstance(actor.get("process"), dict) else {}
+        user: dict = actor["user"] if isinstance(actor.get("user"), dict) else {}
+        process: dict = actor["process"] if isinstance(actor.get("process"), dict) else {}
         ident = user.get("name") or process.get("name")
         if not ident:
             continue  # actor dropped entirely -> not credited
@@ -1396,7 +1397,7 @@ def _attribution(parsed: list[scenario.ChainEvent]) -> Optional[float]:
 
 
 def _dot_get(d: dict, dotted: str):
-    cur = d
+    cur: Any = d
     for part in dotted.split("."):
         if not isinstance(cur, dict):
             return None
@@ -1413,7 +1414,7 @@ def _severity_band_check(oracle: dict, fired: list[dict]) -> dict:
     """
     band = (oracle.get("severity_band") or {}).get("score") or {}
     lo, hi = band.get("min"), band.get("max")
-    scores = [a.get("score_weight") for a in fired if a.get("score_weight") is not None]
+    scores = [s for s in (a.get("score_weight") for a in fired) if s is not None]
     peak_score = max(scores) if scores else None
     in_band = (
         peak_score is not None and lo is not None and hi is not None

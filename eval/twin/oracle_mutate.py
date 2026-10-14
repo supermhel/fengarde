@@ -206,7 +206,9 @@ def _num(x):
 
 def compare(base: dict, mut: dict) -> dict:
     """Component-wise comparison of two verdict vectors."""
-    worse, better, changed = [], [], []
+    worse: list = []
+    better: list = []
+    changed: list = []
     for name, (direction, channel) in COMPONENTS.items():
         a, b = base.get(name), mut.get(name)
         if a == b:
@@ -296,7 +298,7 @@ def catalogue(oracle: dict, derived: dict, base_grade: dict) -> list:
             decoy = oracle_derive.pick_decoy(derived, step, rid) if rid else None
             if not decoy:
                 continue
-            out.append(Mutant(f"swap_expected_rule:{step}:{rid[:8]}->{decoy[:8]}", "swap_expected_rule", "WRONG",
+            out.append(Mutant(f"swap_expected_rule:{step}:{str(rid)[:8]}->{decoy[:8]}", "swap_expected_rule", "WRONG",
                               (lambda m, s=step, i=i, d=decoy: m["detection_points"][s]["expected_rules"][i]
                                .update({"rule_id": d})), selector=step))
     # ---- WRONG: add a second, never-firing expected rule (TPR cannot see it)
@@ -659,7 +661,9 @@ def inert_probe(sdef, seed: int, *, grader=None) -> dict:
     groups: dict = {}
     for path, val in _leaves(oracle):
         groups.setdefault(normalise_path(path), []).append((path, val))
-    read, inert, crashed = [], [], []
+    read: list = []
+    inert: list = []
+    crashed: list = []
     for norm in sorted(groups):
         n_variants = max(len(_perturbations(val)) for _p, val in groups[norm])
         moved = False

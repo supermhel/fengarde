@@ -395,7 +395,7 @@ def eval_condition(rule: DRule, event: dict, allowlists_dir=None):
 # ---------------------------------------------------------------------------
 def _num_time(ev) -> int | None:
     t = (ev or {}).get("time")
-    return int(t) if _is_num(t) else None
+    return int(t) if t is not None and _is_num(t) else None
 
 
 def entities_of(event: dict) -> set:
@@ -404,7 +404,7 @@ def entities_of(event: dict) -> set:
     if not isinstance(event, dict):
         return out
     actor = event.get("actor") or {}
-    user = actor.get("user") if isinstance(actor.get("user"), dict) else {}
+    user: dict = actor["user"] if isinstance(actor.get("user"), dict) else {}
     if user.get("name"):
         out.add("actor:" + str(user["name"]).strip().lower())
     src = event.get("src_endpoint") or {}
@@ -420,10 +420,10 @@ def _raw_ms(payload: dict) -> int | None:
     raw = (payload or {}).get("raw")
     if isinstance(raw, dict):
         t = raw.get("ts") if raw.get("ts") is not None else raw.get("time")
-        if _is_num(t):
+        if t is not None and _is_num(t):
             return int(t)
     r = ((payload or {}).get("meta") or {}).get("received_at")
-    return int(r) if _is_num(r) else None
+    return int(r) if r is not None and _is_num(r) else None
 
 
 def derive(sdef, seed: int = 7, *, rules: dict | None = None, result=None,
@@ -590,7 +590,7 @@ def lint_rules(rules: dict) -> list:
                                 f"{rule.source}: logsource.category {rule.category!r} is not in the static OCSF map"))
         elif classes - allowed:
             out.append(_finding("*", "F10", "-", rid,
-                                f"{rule.source}: class_uid {sorted(classes - allowed)} is not valid for "
+                                f"{rule.source}: class_uid {sorted(classes - allowed, key=str)} is not valid for "
                                 f"category {rule.category!r} (allowed {sorted(allowed)})"))
     return out
 

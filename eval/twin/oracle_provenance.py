@@ -82,7 +82,7 @@ def rule_ids_named(oracle: dict) -> set:
     return out
 
 
-def check(oracle: dict, rules_dir: Path = RULES_DIR) -> list:
+def check(oracle: dict, rules_dir: Path = RULES_DIR) -> list | None:
     """Problems (empty == the oracle still matches the rule text it was authored from).
     An oracle with no ``provenance`` block has nothing to check and returns ``None``."""
     prov = oracle.get("provenance")

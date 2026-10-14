@@ -14,6 +14,8 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from collections.abc import Iterable
+from collections.abc import Iterable
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -151,7 +153,7 @@ def _valid_evidence(value: Any) -> bool:
     return (ROOT / text).is_file() if text and not Path(text).is_absolute() else False
 
 
-def validate_waivers(doc: dict, today: str, atoms: dict[str, Any] | None = None) -> list[str]:
+def validate_waivers(doc: dict, today: str, atoms: Iterable[str] | None = None) -> list[str]:
     errors: list[str] = []
     seen: set[str] = set()
     waivers = doc.get("waivers") or []
@@ -560,7 +562,7 @@ def cmd_guard(args: argparse.Namespace) -> int:
 
 
 def _trend_rows(path: Path) -> list[dict]:
-    rows = []
+    rows: list[dict] = []
     if not path.exists():
         return rows
     for line in path.read_text(encoding="utf-8").splitlines():

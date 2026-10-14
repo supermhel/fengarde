@@ -222,7 +222,7 @@ def selfcheck(seed: int = 7) -> int:
     print(f"source events: n={len(events)} ids={ids(events)}\n")
 
     # (a) Determinism: every injector, same seed twice -> byte-identical.
-    calls = {
+    calls: dict[str, dict[str, Any]] = {
         "delay": dict(delay=5.0),
         "duplicate": dict(factor=3),
         "reorder": dict(window=4),

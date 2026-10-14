@@ -157,6 +157,7 @@ FRESHNESS_INPUT_GLOBS: tuple[str, ...] = (
     # load_rules() call validates through validate_rules (2026-10-14 review).
     "tools/check_rule_producers.py",
     "tools/validate_rules.py",
+    "tools/validate_contract.py",         # shared/ocsf.py validates every event through it
 )
 
 #: ws4-detection's contract roots, asserted covered by FRESHNESS_INPUT_GLOBS.
