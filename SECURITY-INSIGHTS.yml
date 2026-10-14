@@ -9,7 +9,7 @@ header:
   schema-version: 2.2.0
   last-updated: "2026-10-14"
   last-reviewed: "2026-10-14"
-  url: https://raw.githubusercontent.com/supermhel/fengarde/main/security-insights.yml
+  url: https://raw.githubusercontent.com/supermhel/fengarde/main/SECURITY-INSIGHTS.yml
 
 project:
   name: FENGARDE
@@ -77,8 +77,9 @@ repository:
           Every release runs .github/workflows/release.yml: cosign KEYLESS
           (OIDC) signing of the tarball and each image, SLSA v1 provenance
           produced by the official SLSA generator's generic generate-provenance
-          reusable workflow, SBOM freshness gated in the same pipeline. No
-          private key or secret is used.
+          reusable workflow. No private key or secret is used. (SBOM freshness
+          -- sbom.json must match every requirements.txt -- is gated in ci.yml
+          on every PR, not in release.yml.)
   security:
     assessments:
       self:
@@ -96,8 +97,9 @@ repository:
           name: OpenSSF Scorecard (live API)
           comment: |
             Score 8.5/10 at commit 285ca72. Strong: Security-Policy, Token-
-            Permissions (least-privilege on all 7 workflows), SAST (CodeQL on
-            every commit), Fuzzing (17 Atheris targets nightly), Vulnerabilities
+            Permissions (least-privilege on all 7 workflows at that commit;
+            dco.yml, added since, is contents: read too), SAST (CodeQL on
+            every PR and push to main), Fuzzing (17 Atheris targets nightly), Vulnerabilities
             (0 in pinned-deps audit), CI-Tests, Maintained. Weak: Code-Review
             (0/2 approved changesets — by choice, single maintainer), Pinned-
             Dependencies 7/10 (actions + images all SHA/digest-pinned; 8/20 pip
@@ -111,7 +113,7 @@ repository:
     comment: |
       Security tooling runs in CI but publishes no in-toto attestation
       artifacts, so it is documented here instead of as schema `tools`
-      entries: CodeQL (codeql.yml, every push), gitleaks secret scan
+      entries: CodeQL (codeql.yml, every PR + push to main + weekly), gitleaks secret scan
       (ci.yml), pip-audit CVE gate (ci.yml, all pinned requirements),
       actionlint + tools/verify_action_pins.py (SHA-pin integrity of every
       workflow), coverage_gate.py (per-service measured floors), Hypothesis

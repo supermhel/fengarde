@@ -84,13 +84,46 @@ class TestSelection(unittest.TestCase):
             G.latest_corpus_row([REAL_TWIN])
 
     def test_corrupt_trend_row_is_loud(self):
-        p = ROOT / ".benchmark-test-trend.jsonl"
-        p.write_text("# comment\n{\"broken\":\n", encoding="utf-8")
-        try:
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            p = Path(td) / "trend.jsonl"
+            p.write_text("# comment\n{\"broken\":\n", encoding="utf-8")
             with self.assertRaises(SystemExit):
                 G.load_trend_rows(p)
-        finally:
-            p.unlink(missing_ok=True)
+
+    def test_quality_only_row_never_wins_corpus(self):
+        # NIGHTLY_EVAL_MODE=quality-only appends per_rule zeros + macro_f1 but
+        # no corpus; publishing it would show corpus_records=0.
+        quality_only = {"_schema": "1", "date": "2026-10-20", "corpora": ["quality"],
+                        "corpus_size": 0, "per_rule": {}, "macro_f1": 0.875}
+        self.assertIs(G.latest_corpus_row([CORPUS_NEW, quality_only]), CORPUS_NEW)
+        with self.assertRaises(SystemExit):
+            G.latest_corpus_row([quality_only])
+
+    def test_same_day_tie_picks_last_appended(self):
+        rerun = dict(CORPUS_NEW, macro_f1=0.9)
+        self.assertIs(G.latest_corpus_row([CORPUS_NEW, rerun]), rerun)
+        twin2 = dict(REAL_TWIN)
+        self.assertIs(G.latest_twin_row([REAL_TWIN, twin2]), twin2)
+
+    def test_caveats_are_derived_from_the_row(self):
+        row = dict(CORPUS_NEW, untested_rules=["bruteforce", "password_spray"],
+                   fixture_tested_rules=["password_spray"],
+                   fixture_per_rule={_SPRAY_ID: {"tp": 1, "fp": 0, "fn": 0, "tn": 0}},
+                   quality_corpus_events=10, quality_scored_rules=4)
+        doc = G.build_document(row, REAL_TWIN)
+        text = " ".join(doc["caveats"])
+        self.assertIn("bruteforce, password_spray had zero", text)
+        self.assertIn("password_spray: graded on committed synthetic fixtures", text)
+        self.assertIn("(10 events, 4 scored rules)", text)
+        self.assertIn("seed 7", text)
+        dq = doc["detection_quality"]
+        self.assertEqual(dq["fixture_per_rule_confusion"][_SPRAY_ID]["tp"], 1)
+        self.assertEqual(dq["fixture_tested_rules"], ["password_spray"])
+        # nothing untested -> no stale "had zero expected-positive" caveat
+        clean = " ".join(G.build_document(CORPUS_NEW, REAL_TWIN)["caveats"])
+        self.assertNotIn("had zero expected-positive", clean)
+        self.assertNotIn("synthetic fixtures", clean)
 
     def test_document_schema(self):
         doc = G.build_document(CORPUS_NEW, REAL_TWIN)
@@ -110,7 +143,8 @@ class TestSelection(unittest.TestCase):
         self.assertIn("chain_fidelity", doc["units"])
         self.assertTrue(doc["caveats"])
         # every unit-documented metric key has a units entry
-        for key in ["macro_f1", "per_rule_confusion", "parser_coverage_pct",
+        for key in ["macro_f1", "per_rule_confusion", "fixture_per_rule_confusion",
+                    "fixture_tested_rules", "corpus_files", "parser_coverage_pct",
                     "untested_rules", "tpr", "fpr", "mttd_seconds",
                     "mtti_seconds", "mttr_seconds", "chain_fidelity",
                     "evidence_completeness", "false_correlation_rate",

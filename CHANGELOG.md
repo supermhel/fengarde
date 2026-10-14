@@ -225,33 +225,61 @@ A differential/property review in sandbox copies found real defects in code that
   `eval/trend.jsonl` by `tools/generate_benchmark.py`, plus `README.md`,
   `methodology.md` (the 43.2% parser-coverage number stated plainly rather than
   hidden) and `reproduction.md`. Regenerated nightly (`.github/workflows/
-  nightly-eval.yml` step + artifact) and via `make benchmark`; generator +
-  schema pinned by tests wired into the zero-infra gate. Snapshot 2026-10-13:
-  macro-F1 0.875, 14,663 corpus records replayed, 0 FP / 0 FN, twin
-  TPR 1.0 / FPR 0.0, chain fidelity 0.6.
-- **`password_spray` now has attack-shaped test events**
+  nightly-eval.yml` step + artifact) and via `make benchmark`; `--check` mode in
+  the zero-infra gate fails on a stale committed snapshot. The nightly trend-row
+  logic moved out of inline workflow YAML into the tested
+  `tools/append_trend_row.py` (rows now carry `lane_files` provenance).
+  Snapshot = nightly CI run 2026-10-14: macro-F1 0.875, 265,404 corpus records
+  replayed (278 EVTX + 1,055 splunk files), 0 FP / 0 FN, only `password_spray`
+  untested by the corpora; twin TPR 1.0 / FPR 0.0, chain fidelity 0.6,
+  false-correlation rate 1.0 (the worst value — published as such).
+- **`password_spray` gets attack-shaped test events**
   (`eval/detection_accuracy/attack_fixtures.py`): a committed synthetic
   credential-stuffing shape (one account, 10 distinct source IPs, ~100 s) run
   through the INDEPENDENT oracle and the real WS-2→WS-4 pipeline by both corpus
-  lanes (`evtx_eval.run_fixtures`, also used by `splunk_eval.py`), labeled
-  `fixture:*` in every output and never counted in corpus / parser-coverage
-  stats. It was the last `untested_rules` entry on every prior trend row.
+  lanes, graded in a separate `fixture_confusion`, taken once into the trend
+  row's `fixture_per_rule` / `fixture_tested_rules`, and never counted in the
+  corpus confusion, `untested_rules`, record counts or parser coverage. It stays
+  `untested` by the corpora on every trend row; the fixture result is reported
+  beside that, not folded into it.
 - **OpenSSF Best Practices code gaps closed**: `SECURITY-INSIGHTS.yml`
   (spec v2.2.0) at repo root, every field sourced from `SECURITY.md`,
   `SSOT.md` and the live Scorecard API (8.5/10, 2026-10-07); DCO adopted —
-  `Signed-off-by:` now required on every PR commit (`.github/workflows/dco.yml`,
-  PR-gated only, never retroactive on merged history), documented in
-  CONTRIBUTING.md + the PR template; per-service statement coverage re-measured
-  and published honestly via the benchmark methodology (the gate keeps its
-  measured floors; the higher badge tiers' 80%/90% statement/branch criterion
-  is marked not-met, not claimed).
+  `Signed-off-by:` matching the commit author now required on every PR commit
+  (`.github/workflows/dco.yml` → `tools/check_dco.py`, per-commit,
+  fail-closed, PR-gated only, never retroactive on merged history), documented
+  in CONTRIBUTING.md + the PR template; repo-wide coverage measured by the new
+  `tools/coverage_summary.py` and published via the benchmark methodology:
+  statement 81.23% (meets Silver's 80% `test_statement_coverage80`), branch
+  73.47% (Gold's 80% branch / 90% statement criteria not met, not claimed).
+  `.github/dependabot.yml` gained the missing `services/ws9-resolver` entry.
 - **Distribution-funnel CTAs**: the README quickstart gains a post-success
   "next steps" block (star / rule request / add a parser / MSSP) and the Pages
   tour (`docs/index.html`) gains a closing "Finished the quickstart?" CTA row.
-  - Corrected stale README wording that still described Phase 5 (PR #92) as
-    "not yet merged" — it merged 2026-09-04.
+  Corrected stale README wording that still described Phase 5 (PR #92) as
+  "not yet merged" — it merged 2026-09-10.
 
-### Added (2026-09-04/05, Phase 5 — analyst read path for the entity/causal/evidence plane, PR #92, merged to `main` 2026-09-10 as `285ca72`)
+### Fixed (2026-10-14, review of PR #96 before merge)
+
+- Benchmark: one synthetic fixture was counted twice as corpus positives
+  (folded into both lanes' corpus matrices, then summed); the first snapshot
+  (trend row 2026-10-13, kept and labeled in-file) was also measured on a
+  partial local splunk checkout (57 of 1,055 files) and wrongly reported three
+  rules untested. Latest-row selection now skips quality-only rows and breaks
+  same-day ties by append order; caveats are derived from the selected rows.
+- Benchmark twin units: `false_correlation_rate` 1.0 was described as benign
+  (it means every forbidden pair was falsely joined), `severity_calibration_error`
+  as a mean error (it is a binary in-band check), and MTTI was not marked as
+  modeled. All now follow `eval/twin/report.py`'s own definitions.
+- Coverage: the first published "statement 79.25% / branch 79.73%" were
+  coverage.py's combined total and a half-credit-for-partials figure.
+- DCO: the first check compared an aggregate sign-off count with the commit
+  count (one double-signed commit let an unsigned one through), matched body
+  lines, and skipped green on a missing base sha.
+- `SECURITY-INSIGHTS.yml` `header.url` pointed at a lowercase filename (404);
+  SBOM/CodeQL wording corrected to where those gates actually run.
+
+### Added (2026-09-04/05, Phase 5 — analyst read path for the entity/causal/evidence plane, PR #92 on `feat/phase-4`, merged 2026-09-10)
 
 - WS-3 persists `incident.graph` and `entity.updates` (produced since Phase 2/3, previously reaper-trimmed with no storage or read route) and serves `GET /entities/{id}`, `GET /incidents/{id}/graph`, `GET /incidents/{id}/evidence` (the latter builds `evidence_package.py`'s package on demand and verifies it before any 200 — a failure is 409, never a silent unverified serve), all tenant-gated.
 - Dashboard incident detail renders WS-8's typed causal DAG as a from-scratch layered SVG (no chart library) and a build-on-click evidence panel (verified / tampered-409 / unavailable states), alongside the existing member-alert list.

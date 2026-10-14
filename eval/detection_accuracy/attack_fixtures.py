@@ -6,8 +6,9 @@ in BOTH third-party corpora reports an honest ``untested`` (tp+fn == 0), and
 ``untested`` rules are surfaced in the trend file, never implied passing.
 ``password_spray`` (common_password_spray.yml: ONE account failed from 8+
 DISTINCT source IPs within a 300 s window -- the T1110.004 credential-stuffing
-shape) had no such events in either corpus, so it was the last residual
-``untested_rules`` entry on every corpus trend row.
+shape) has no such events in either corpus: it is ``untested`` on every
+corpus trend row, and the ONLY untested rule on the full-corpus nightly rows
+(2026-09-04, 2026-10-14).
 
 Design constraints (each one is load-bearing):
 
@@ -21,8 +22,11 @@ Design constraints (each one is load-bearing):
   coverage from corpus coverage.
 * Never inflates corpus stats. Fixture records are NOT counted in
   ``records_total`` / ``records_supported`` / parser-coverage denominators,
-  so percentages (e.g. parser_coverage_pct) stay honest measurements of the
-  real corpora.
+  and are graded in each lane's separate ``fixture_confusion`` (never its
+  corpus ``confusion``); tools/append_trend_row.py takes them ONCE into
+  ``fixture_per_rule`` / ``fixture_tested_rules``. So ``password_spray``
+  stays in ``untested_rules`` -- the corpora still never exercise it -- and
+  the fixture coverage is reported next to it, never folded into it.
 * Deterministic. Fixed epoch-ms timestamps, fixed IPs, stable ordering --
   same-seed reruns produce identical confusion entries (the twin lanes'
   determinism discipline applies here too).

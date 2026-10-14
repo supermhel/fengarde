@@ -116,7 +116,7 @@ make ha-down  # stop the HA profile, remove its volumes
 
 **Just saw your first alert land in the dashboard? Here's where to go next:**
 
-- **Star the repo** — with 12 stars, every one is measurable; it's the cheapest
+- **Star the repo** — at this stage every star is measurable; it's the cheapest
   signal an early-stage OSS security tool can get. [⭐ Star FENGARDE](https://github.com/supermhel/fengarde)
 - **Seen something it missed?** Open a
   [detection-rule request](.github/ISSUE_TEMPLATE/rule_request.md) — new rules
@@ -141,7 +141,7 @@ TP/FP/FN/TN, twin scorecard — with units, methodology and the honest
 limits): **[`benchmark/`](benchmark/)**.
 
 **Phase 5 (analyst read path) shipped in
-[PR #92](https://github.com/supermhel/fengarde/pull/92) (merged).**
+[PR #92](https://github.com/supermhel/fengarde/pull/92) (merged 2026-09-10).**
 Rows marked **(PR #92)** are live on `main`.
 
 | Capability | Status | Notes |

@@ -174,6 +174,7 @@ eval-detection:
 benchmark:
 	@$(PYTHON) tools/generate_benchmark.py
 	@$(PYTHON) tools/test_generate_benchmark.py
+	@$(PYTHON) tools/test_append_trend_row.py
 
 # M2 mutation-testing gate (see pyproject.toml [tool.mutmut]). Scoped narrow
 # for its first pass (services/shared/sessions.py only) -- informational in

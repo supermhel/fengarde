@@ -308,6 +308,12 @@ def run_fixtures(confusion: dict, per_file: list, mismatches: list,
     ``fixture:<name>`` in every per_file / mismatch / deadletter row, and
     NEVER counted in corpus_* / records_supported totals -- parser-coverage
     percentages therefore stay honest measurements of the real corpora.
+
+    Callers pass a SEPARATE ``confusion`` dict (published as the lane's
+    ``fixture_confusion``), never the corpus one: both lanes run the same
+    fixtures, so folding them into the corpus matrix made the summed trend
+    row count one synthetic fixture twice as corpus positives (review of
+    PR #96, 2026-10-14: password_spray tp=2, both synthetic).
     """
     for fx_name, records in attack_fixtures.ALL.items():
         records = sorted(records, key=lambda r: r["TimeCreated"])
@@ -336,6 +342,9 @@ def run_fixtures(confusion: dict, per_file: list, mismatches: list,
 
 
 def main():
+    # A SKIP must never leave a previous run's results behind for the trend
+    # appender (tools/append_trend_row.py) to re-publish under today's date.
+    OUT_JSON.unlink(missing_ok=True)
     if not SAMPLES.is_dir():
         print(f"[SKIP] evtx_eval: dataset dir not found at {SAMPLES} -- see "
               f"eval/detection_accuracy/README.md to fetch EVTX-ATTACK-SAMPLES. "
@@ -427,14 +436,16 @@ def main():
                                    "expected": e, "fired": f})
 
     # Committed synthetic attack fixtures (attack_fixtures.py): replay them
-    # through the SAME pipeline + oracle and fold them into this lane's output
-    # so a rule the third-party corpora never exercise is tested, not skipped.
-    run_fixtures(confusion, per_file, mismatches, parse_drops)
+    # through the SAME pipeline + oracle, graded in their OWN matrix so the
+    # corpus confusion stays corpus-only (see run_fixtures docstring).
+    fixture_confusion = {rid: {"tp": 0, "fn": 0, "fp": 0, "tn": 0} for rid in ORACLE_RULES}
+    run_fixtures(fixture_confusion, per_file, mismatches, parse_drops)
 
     out = {"corpus": corpus,
            "eventid_histogram": dict(sorted(eventid_hist.items(),
                                             key=lambda kv: -kv[1])[:40]),
            "confusion": {RULE_NAMES[r]: c for r, c in confusion.items()},
+           "fixture_confusion": {RULE_NAMES[r]: c for r, c in fixture_confusion.items()},
            "mismatches": mismatches,
            "parser_dead_letters": parse_drops,
            "per_file": per_file}

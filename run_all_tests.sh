@@ -477,7 +477,12 @@ $PY tools/test_generate_trend_viewer.py || { fail=1; FAILED="${FAILED} ${LAST_HE
 echo
 echo "== Phase 5 item 8 (2026-10-14): public benchmark generator (latest-row selection + schema) =="; LAST_HEADER="== Phase 5 item 8 (2026-10-14): public benchmark generator (latest-row selection + schema) =="
 $PY tools/test_generate_benchmark.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+$PY tools/test_append_trend_row.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 $PY tools/generate_benchmark.py --check >/dev/null || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+
+echo
+echo "== Phase 5 item 10 (2026-10-14): DCO check (per-commit, author-matched, fail-closed) =="; LAST_HEADER="== Phase 5 item 10 (2026-10-14): DCO check (per-commit, author-matched, fail-closed) =="
+$PY tools/test_check_dco.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 
 # == AI-to-OT twin (WP-1-A..F): PLC sim, attack chain, degradation rig, FPR ==
 echo

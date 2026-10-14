@@ -90,6 +90,8 @@ def load_file(fp: Path):
 
 
 def main():
+    # Same as evtx_eval: a SKIP never leaves stale results for the appender.
+    OUT.unlink(missing_ok=True)
     if not SA.is_dir():
         print(f"[SKIP] splunk_eval: dataset dir not found at {SA} -- see "
               f"eval/detection_accuracy/README.md to fetch splunk/attack_data. "
@@ -102,6 +104,7 @@ def main():
     # dropped every windows-sysmon.log-named file even though its content
     # is byte-identical EVTX-XML shape).
     files = []
+    lfs_pointers = 0
     for fp in SA.rglob("*.log"):
         try:
             head = fp.open("r", encoding="utf-8", errors="replace").read(64)
@@ -109,7 +112,16 @@ def main():
             continue
         if head.lstrip().startswith("<Event"):
             files.append(fp)
+        elif head.startswith("version https://git-lfs"):
+            lfs_pointers += 1
     files.sort()
+    # The datasets are Git LFS objects: a clone without git-lfs leaves pointer
+    # stubs that silently look like "non-XML exports" and shrink the corpus.
+    # A degraded corpus must fail loudly, never publish smaller numbers.
+    if lfs_pointers:
+        print(f"[FAIL] splunk_eval: {lfs_pointers} .log files are un-fetched Git LFS "
+              f"pointers -- install git-lfs and run 'git lfs pull' in {SA.parents[1]}")
+        return 1
 
     if not files:
         print(f"[SKIP] splunk_eval: {SA} exists but contains no raw-XML .log files.")
@@ -157,14 +169,16 @@ def main():
 
     # Same committed synthetic attack fixtures as the EVTX lane (see
     # evtx_eval.run_fixtures), so a rule neither corpus exercises is still
-    # graded on attack-shaped events -- folded into the same confusion matrix,
-    # labeled fixture:<name> in per_file, never counted in corpus totals.
-    E.run_fixtures(confusion, per_file, mismatches, deadletters)
+    # graded on attack-shaped events -- in a SEPARATE fixture matrix (never the
+    # corpus one), labeled fixture:<name> in per_file, never in corpus totals.
+    fixture_confusion = {rid: {"tp": 0, "fn": 0, "fp": 0, "tn": 0} for rid in E.ORACLE_RULES}
+    E.run_fixtures(fixture_confusion, per_file, mismatches, deadletters)
 
     out = {"files": len(files), "supported_records": tot_supported,
            "security_records": tot_security, "sysmon_records": tot_sysmon,
            "eventid_hist": dict(sorted(eid_hist.items(), key=lambda kv: -kv[1])),
            "confusion": {E.RULE_NAMES[r]: c for r, c in confusion.items()},
+           "fixture_confusion": {E.RULE_NAMES[r]: c for r, c in fixture_confusion.items()},
            "mismatches": mismatches, "deadletters": deadletters,
            "per_file": per_file}
     OUT.write_text(json.dumps(out, indent=1))
