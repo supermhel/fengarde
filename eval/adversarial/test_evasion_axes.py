@@ -679,8 +679,49 @@ def test_cost_determinism_and_doc() -> None:
         shutil.rmtree(tmpd, ignore_errors=True)
 
 
+
+def test_evasion_classifications() -> None:
+    """Every measured evasion has an explicit policy class, not only a number."""
+    lab = _lab("common_lateral_movement")
+    loss = ax.search_loss(lab)
+    _check("I1 threshold loss is classified INHERENT when it evades",
+           loss.get("classification") == "INHERENT" and loss["forgone_events"] is not None,
+           str(loss))
+    sched = ax.search_schedule(lab)
+    _check("I1 timing evasion is classified INHERENT",
+           sched.get("classification") == "INHERENT" and sched["evades"], str(sched))
+    spread = ax.search_spread(_lab("common_password_spray"), "account")
+    _check("I1 key-spread evasion is classified INHERENT",
+           spread.get("classification") == "INHERENT" and spread["min_keys"] != "immune",
+           str(spread))
+    joint = ax.search_joint(lab, ["account", "ip"])
+    _check("I1 joint-frontier evasion is classified INHERENT",
+           joint.get("classification") == "INHERENT" and joint["frontier"], str(joint))
+
+    tables = ax.load_tables()
+    resp = ax.respelling_axis(lab, tables)
+    _check("I2 identity respellings carry table-derived classes",
+           all(o.get("class") in {"BUG", "INHERENT", "ROBUST"} for o in resp["ops"]), str(resp))
+    forg = ax.forgery_axis(_lab("common_bruteforce"), tables)
+    _check("I2 attribution forgery carries BUG when it evades",
+           forg.get("classification") in {None, "BUG"}
+           and (forg.get("classification") == "BUG") == bool(forg.get("forgery_evades")), str(forg))
+    clk = ax.clock_forgeable(lab)
+    _check("I2 record-clock evasion carries TRUST_MODEL",
+           clk.get("classification") == "TRUST_MODEL" and clk["clock_forgeable"], str(clk))
+
+    import evasion_cost as ec  # noqa: PLC0415
+    row = ec.measure_set(_probe(), lab.rs, lab.burst, tables)
+    classes = row.get("classifications") or {}
+    _check("I3 the cost vector publishes classes for each measured evasion axis",
+           classes.get("forgone_events") == "INHERENT"
+           and classes.get("timing") == "INHERENT"
+           and classes.get("clock") == "TRUST_MODEL",
+           str(classes))
+
+
 SECTIONS = (test_fast_probe, test_rule_probes, test_timing, test_spread, test_obfuscation, test_clock,
-            test_noise, test_cost, test_cost_determinism_and_doc)
+            test_noise, test_cost, test_cost_determinism_and_doc, test_evasion_classifications)
 
 
 def main(argv: list | None = None) -> int:

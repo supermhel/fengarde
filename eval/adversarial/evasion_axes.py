@@ -529,7 +529,10 @@ def search_loss(lab: Lab) -> dict:
             p = r
         if m is not None and p is not None:
             break
-    return {"forgone_events": m, "predicted": p, "agree": m == p}
+    out = {"forgone_events": m, "predicted": p, "agree": m == p}
+    if m is not None:
+        out["classification"] = "INHERENT"
+    return out
 
 
 def search_spread(lab: Lab, kind: str) -> dict:
@@ -558,8 +561,11 @@ def search_spread(lab: Lab, kind: str) -> dict:
             return next((x for x in range(2, n + 1) if dark(x)), None)
         return k
     m, p = solve(dark_m), solve(dark_p)
-    return {"min_keys": "immune" if m is None else m,
-            "predicted": "immune" if p is None else p, "agree": m == p}
+    out = {"min_keys": "immune" if m is None else m,
+           "predicted": "immune" if p is None else p, "agree": m == p}
+    if m is not None:
+        out["classification"] = "INHERENT"
+    return out
 
 
 def search_joint(lab: Lab, kinds: list) -> dict:
@@ -587,8 +593,11 @@ def search_joint(lab: Lab, kinds: list) -> dict:
         return sorted(g for g in dark
                       if not any(h != g and all(h[i] <= g[i] for i in range(len(g))) for h in dark))
     fm, fp = frontier(0), frontier(1)
-    return {"kinds": list(kinds), "grid_max": kmax, "frontier": [list(g) for g in fm],
-            "predicted": [list(g) for g in fp], "agree": fm == fp, "mismatched_cells": mism}
+    out = {"kinds": list(kinds), "grid_max": kmax, "frontier": [list(g) for g in fm],
+           "predicted": [list(g) for g in fp], "agree": fm == fp, "mismatched_cells": mism}
+    if fm:
+        out["classification"] = "INHERENT"
+    return out
 
 
 def search_schedule(lab: Lab) -> dict:
@@ -617,12 +626,15 @@ def search_schedule(lab: Lab) -> dict:
     leq = True if uni_extra is None else extra_ms <= uni_extra
     # sustained rate: events per second per key a stealthy attacker can keep up forever
     rate = round((n - 1) / (off[-1] / 1000.0), 6) if off[-1] > 0 else None
-    return {"schedule": "regular" if lab.rs.periodic else "optimal", "extra_seconds": round(extra_ms / 1000.0, 3),
+    out = {"schedule": "regular" if lab.rs.periodic else "optimal", "extra_seconds": round(extra_ms / 1000.0, 3),
             "evades": not ev_m, "predicted_evades": not ev_p,
             "one_ms_faster_detected": fa_m, "predicted_one_ms_faster_detected": fa_p,
             "uniform_extra_seconds": None if uni_extra is None else round(uni_extra / 1000.0, 3),
             "optimal_le_uniform": leq, "sustained_events_per_second": rate, "agree": ok and leq,
             "offsets_ms_tail": off[-3:]}
+    if not ev_m:
+        out["classification"] = "INHERENT"
+    return out
 
 
 def search_jitter(lab: Lab) -> dict:
@@ -896,9 +908,13 @@ def clock_forgeable(lab: Lab) -> dict:
     for (_s, p), o in zip(forged, off):
         moved += 1 if set_record_clock(p, t0 + o) else 0
     detected = lab.detected(forged) if moved else True
-    return {"authority": {k: v["authority"] for k, v in sorted(auth.items())},
-            "record_clock_only_evades": bool(moved) and not detected,
-            "clock_forgeable": bool(moved) and not detected}
+    forgeable = bool(moved) and not detected
+    out = {"authority": {k: v["authority"] for k, v in sorted(auth.items())},
+           "record_clock_only_evades": forgeable,
+           "clock_forgeable": forgeable}
+    if forgeable:
+        out["classification"] = "TRUST_MODEL"
+    return out
 
 
 # ===========================================================================
