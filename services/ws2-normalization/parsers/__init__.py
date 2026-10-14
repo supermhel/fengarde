@@ -29,6 +29,8 @@ from .cloudtrail import CloudTrailParser
 from .sysmon import SysmonParser
 from .modbus_anomaly import ModbusAnomalyParser
 from .inventory_diff import InventoryDiffParser
+from .mail_gateway import MailGatewayParser
+from .m365_audit import M365AuditParser
 from .plugins import discover_plugin_parsers
 
 _REGISTRY: dict[str, Parser] = {
@@ -37,7 +39,8 @@ _REGISTRY: dict[str, Parser] = {
               LinuxSshParser(), GenericSyslogParser(), WindowsEventLogParser(),
               DbAuditParser(), McpAgentParser(), OpcUaAuditParser(), N8nAuditParser(),
               DnsQueryParser(), K8sAuditParser(), CefParser(), CloudTrailParser(),
-              SysmonParser(), ModbusAnomalyParser(), InventoryDiffParser())
+              SysmonParser(), ModbusAnomalyParser(), InventoryDiffParser(),
+              MailGatewayParser(), M365AuditParser())
 }
 
 # Real Cisco ASA tag shape (mirrors cisco_asa.py's own _ASA_TAG): a bare "%ASA"
@@ -109,6 +112,11 @@ def _resolve_structured(rec: dict) -> Optional[Parser]:
     # AWS CloudTrail record: this exact field combo is CloudTrail-specific.
     if "eventName" in rec and "eventSource" in rec and "eventTime" in rec:
         return _REGISTRY["cloudtrail"]
+    # Office 365 Management Activity API common schema: Operation + Workload +
+    # CreationTime together are specific to it. (mail_gateway has no field set
+    # unique across gateway vendors, so it is routed by source_type only.)
+    if "Operation" in rec and "Workload" in rec and "CreationTime" in rec:
+        return _REGISTRY["m365_audit"]
     # Modbus/TCP observed frame: functionCode is unique to this parser's shape
     # (no other registered parser uses that field name).
     if "functionCode" in rec:

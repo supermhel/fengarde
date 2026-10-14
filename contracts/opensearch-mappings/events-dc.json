@@ -6,7 +6,7 @@
       "number_of_replicas": 1
     },
     "mappings": {
-      "_meta": { "mapping_version": 2, "_comment": "Same field mappings as events-common; data-center events, 90d retention via ISM (ism-events-90d.json attaches by index pattern, not by a template setting)." },
+      "_meta": { "mapping_version": 3, "_comment": "Same field mappings as events-common; data-center events, 90d retention via ISM (ism-events-90d.json attaches by index pattern, not by a template setting)." },
       "dynamic": "false",
       "properties": {
         "time": { "type": "date", "format": "epoch_millis" },
@@ -20,8 +20,9 @@
         "metadata": { "properties": { "version": { "type": "keyword" }, "original_format": { "type": "keyword" }, "product": { "properties": { "name": { "type": "keyword" }, "vendor_name": { "type": "keyword" } } } } },
         "src_endpoint": { "properties": { "ip": { "type": "ip" }, "mac": { "type": "keyword" }, "hostname": { "type": "keyword" }, "port": { "type": "integer" }, "reputation": { "properties": { "score": { "type": "integer" }, "categories": { "type": "keyword" }, "source": { "type": "keyword" } } }, "location": { "properties": { "country": { "type": "keyword" }, "source": { "type": "keyword" } } } } },
         "dst_endpoint": { "properties": { "ip": { "type": "ip" }, "mac": { "type": "keyword" }, "hostname": { "type": "keyword" }, "port": { "type": "integer" } } },
+        "email": { "properties": { "from": { "type": "keyword" }, "to": { "type": "keyword" }, "subject": { "type": "keyword", "ignore_above": 512 } } },
         "actor": { "properties": { "user": { "properties": { "name": { "type": "keyword" }, "uid": { "type": "keyword" }, "domain": { "type": "keyword" } } } } },
-        "siem": { "properties": { "sector": { "type": "keyword" }, "source_type": { "type": "keyword" }, "ingest_id": { "type": "keyword" }, "tenant": { "type": "keyword" }, "score": { "type": "integer" } } }
+        "siem": { "properties": { "sector": { "type": "keyword" }, "source_type": { "type": "keyword" }, "ingest_id": { "type": "keyword" }, "tenant": { "type": "keyword" }, "score": { "type": "integer" }, "clock_skew_ms": { "type": "long" } } }
       }
     }
   }
