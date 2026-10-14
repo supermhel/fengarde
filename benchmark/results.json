@@ -2,7 +2,7 @@
   "caveats": [
     "macro_f1 is engine-vs-oracle agreement on a hand-labeled quality canary (10 events, 4 scored rules), not field detection fidelity; see docs/detection-quality.md.",
     "per-rule confusion counts are graded per corpus FILE, not per event.",
-    "per-rule expected-positives are corpus-composition-dependent (this row predates commit recording; the corpus fetch is now pinned in eval/detection_accuracy/fetch_corpora.sh; a newer upstream corpus is a pin bump in a PR): on this snapshot's run password_spray had zero expected-positive files in every corpus (reported as untested); eval/attack/fire_check.py separately proves every MITRE-tagged rule fires on its own real producer fixture.",
+    "per-rule expected-positives are corpus-composition-dependent (this row read corpus commits {'evtx': '4ceed2f4706daf601c212a8f91c113dd85349a2c', 'splunk': 'eac2f8f675ec31a6618003399dcc53641524e673'}; a newer upstream corpus is a pin bump in a PR): on this snapshot's run password_spray had zero expected-positive files in every corpus (reported as untested); eval/attack/fire_check.py separately proves every MITRE-tagged rule fires on its own real producer fixture.",
     "password_spray: graded on committed synthetic fixtures (eval/detection_accuracy/attack_fixtures.py), published only in fixture_per_rule_confusion -- never in per_rule_confusion, corpus_records or parser_coverage_pct.",
     "parser_coverage_pct is a corpus-shape measurement: it means 'that share of THIS EVTX corpus's Security+Sysmon records parse', not 'that share of all log formats FENGARDE can ingest'; most of the 17 shipped parsers cover IT/OT formats these corpora do not contain.",
     "twin metrics are harness-measured on a deterministic in-process plc simulator replay (seed 7, basis=harness-measured); null fields were not measured in that run, not zero.",
@@ -14,7 +14,10 @@
       "quality",
       "splunk"
     ],
-    "corpus_commits": null,
+    "corpus_commits": {
+      "evtx": "4ceed2f4706daf601c212a8f91c113dd85349a2c",
+      "splunk": "eac2f8f675ec31a6618003399dcc53641524e673"
+    },
     "corpus_files": {
       "evtx": 278,
       "splunk": 1055
@@ -114,7 +117,7 @@
       "password_spray"
     ]
   },
-  "generated_at": "2026-10-14T14:23:00+00:00",
+  "generated_at": "2026-10-14T19:08:21+00:00",
   "schema_version": "1.0",
   "source": {
     "corpus_row_date": "2026-10-14",
