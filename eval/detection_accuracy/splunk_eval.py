@@ -52,14 +52,15 @@ OUT = HERE / "splunk_eval_results.json"
 
 def _missing_tracked_logs() -> list[str]:
     """Tracked attack_techniques/*.log paths absent on disk; [] when the corpus
-    is not a git checkout (nothing to compare against)."""
+    is not a git checkout (nothing to compare against). A missing git binary
+    raises instead: the guard must never silently pass."""
     import subprocess
     try:
         out = subprocess.run(
             ["git", "-C", str(SA.parents[1]), "ls-files", "--deleted", "--",
              "datasets/attack_techniques"],
             capture_output=True, text=True, check=True).stdout
-    except (OSError, subprocess.CalledProcessError):
+    except subprocess.CalledProcessError:
         return []
     return [p for p in out.splitlines() if p.endswith(".log")]
 

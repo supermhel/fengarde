@@ -159,7 +159,7 @@ simulation — a fast, repeatable signal, not a field deployment measurement.
 `benchmark/results.json` packages the **latest dated corpus row** (a row
 that actually replayed the evtx/splunk corpora — quality-only rows never
 win) and the **latest dated twin row** in `eval/trend.jsonl`; on a same-day
-tie the last-appended row wins. Every caveat that cites a number is derived
+tie the row with more corpus records wins, then the last-appended one. Every caveat that cites a number is derived
 from the selected rows, never typed in. The trend file is
 append-only; its one historically fabricated pilot row (labeled as such in a
 comment block) is excluded by date selection, and `tools/generate_benchmark.py`
@@ -171,7 +171,8 @@ convention as `eval/trend.jsonl` itself.
 
 ## 6. Code coverage (as reported for the OpenSSF Best Practices badge)
 
-Measured 2026-10-14 with `python tools/coverage_summary.py`: every suite the
+One-off measurement (no artifact committed; re-run to reproduce), 2026-10-14,
+with `python tools/coverage_summary.py`: every suite the
 M2 coverage gate runs (118 suite invocations, 0 failures), one combined
 `coverage.py --branch` data file:
 

@@ -103,6 +103,9 @@ class TestSelection(unittest.TestCase):
     def test_same_day_tie_picks_last_appended(self):
         rerun = dict(CORPUS_NEW, macro_f1=0.9)
         self.assertIs(G.latest_corpus_row([CORPUS_NEW, rerun]), rerun)
+        # ...but a smaller same-day (partial) run never displaces the full one
+        partial = dict(CORPUS_NEW, corpus_size=2082, corpora=["evtx", "quality"])
+        self.assertIs(G.latest_corpus_row([CORPUS_NEW, partial]), CORPUS_NEW)
         twin2 = dict(REAL_TWIN)
         self.assertIs(G.latest_twin_row([REAL_TWIN, twin2]), twin2)
 

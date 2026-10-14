@@ -11,7 +11,8 @@ Choice discipline:
 * Rows are append-only and some history is KNOWN-FABRICATED (the pre-fix
   pilot twin row dated 2026-08-28T12:07:10 is labeled as such in a comment in
   trend.jsonl). Selection therefore takes the MAX date per run-type (ties ->
-  the LAST-appended row, since corpus rows carry day-granular dates), with a
+  larger corpus_size, then the LAST-appended row, since corpus rows carry
+  day-granular dates), with a
   hard guard that the selected corpus row actually replayed a corpus
   (per_rule + macro_f1 present AND corpus_size > 0 from an evtx/splunk lane
   -- a quality-only nightly row must never publish corpus_records=0) and
@@ -69,9 +70,13 @@ def load_trend_rows(path: Path) -> list[dict]:
 
 
 def _latest(rows: list[dict]) -> dict:
-    """Max date; on a tie the LAST-appended row wins (max() alone returns the
-    first of equal keys, i.e. the older same-day row)."""
-    return max(enumerate(rows), key=lambda ir: (ir[1]["date"], ir[0]))[1]
+    """Max date; on a same-day tie the row that replayed MORE corpus records
+    wins, then the LAST-appended one (max() alone returns the first of equal
+    keys, i.e. the older row). Corpus-size first so a same-day partial run --
+    e.g. an evtx-only row after the splunk lane refused a partial checkout --
+    can never displace the full nightly row."""
+    return max(enumerate(rows),
+               key=lambda ir: (ir[1]["date"], ir[1].get("corpus_size") or 0, ir[0]))[1]
 
 
 def latest_corpus_row(rows: list[dict]) -> dict:
