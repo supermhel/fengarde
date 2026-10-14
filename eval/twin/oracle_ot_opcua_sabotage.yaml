@@ -1,0 +1,187 @@
+# =============================================================================
+# FENGARDE eval/twin/oracle_ot_opcua_sabotage.yaml
+# Grading ground truth for the OT/OPC-UA sabotage storyline (storyline_ot_opcua_sabotage.py):
+#   rogue_device -> engineering_sessions -> process_write_night -> setpoint_tamper
+#     -> forged_ticket_write
+#
+# AUTHORING RULES (written BEFORE the storyline builder existed and before the pipeline was run
+# against it -- this file was authored first, the builder second):
+#   1. A step is expected to fire a rule only where a shipped rule's DOCUMENTED intent covers the
+#      behaviour. Nothing here was tuned to observed output. eval/twin/oracle_consistency.py
+#      reconciles the two afterwards; every disagreement is either fixed or recorded in its
+#      accepted list, never edited away here.
+#   2. Every expectation below comes from the rule's own `description` + `detection` + `siem`
+#      blocks and the parser docstrings (opcua_audit.py, modbus_anomaly.py, inventory_diff.py).
+#      The rules are pinned in `provenance` by a digest of those blocks
+#      (eval/twin/oracle_provenance.py): a rule edit fails the check until a human re-reads the
+#      rule and re-pins. LIMIT, stated plainly: nothing can PROVE an oracle was authored before a
+#      run; commit order and the pin reduce self-authoring bias, they do not remove it.
+#   3. NO RULE WAS INVENTED, and this storyline declares NO MISSING-RULE GAP: section 3 of the
+#      design spec records "none missing; two partials declared". Both partials are stated in the
+#      step's `role`/`gap.reason` prose below (the rule exists and fires; what it cannot do is
+#      named). They are prose, not declarations, so they add no unread oracle key.
+#   4. THE DEFAULT-OFF RULE. `ot_opcua_write_unauthorized_node` ships `siem.default_enabled: false`
+#      (owner decision 2026-10-02: contracts/allowlists/opcua_authorized_nodes.yml ships EMPTY, so
+#      the rule is noise until a plant populates it). The harness's convention for opt-in rules is
+#      to pass the rule id to the graded Detector: report._build_chain_alerts, its
+#      negative_controls.run_pipeline, corpus_b and fire_check all construct
+#      `Detector(plugin_rule_dirs=[], opt_in_rules=['e7a14b6d-...'])`. This storyline therefore
+#      leans on the rule being opted in, and `probe_session.FastProbe` was aligned with that same
+#      convention (it previously built its Detector without the opt-in list, so the two
+#      "parity-proven" detection paths disagreed on any OPC UA write). With the rule OFF the
+#      process_write_night step would keep only the outside-hours detection -- the exact in-hours
+#      blind spot the rule was written to close (2026-10-01 finding).
+#   5. incident_count follows the convention for all oracles (2026-10-03, owner decision): the
+#      number of FULL-CHAIN incidents the chain SHOULD produce -- one incident carrying every alert
+#      of it. Here it is 1 and the MEASUREMENT agrees: WS-8 promotes TWO entity tracks for this
+#      chain (the rogue device's own OT address, and the client account), and the ADDRESS track
+#      carries every alert of the chain, so incident_membership_ok is True (the account track does
+#      not: the inventory-diff and Modbus sources record no account at all). The shared address is
+#      evidenced at every alert-raising step BECAUSE the device that the inventory watch sees appear
+#      is the same device that opens the sessions, writes both nodes and sends the Modbus frame.
+#      The read-side campaign view agrees (campaign_full_coverage True).
+#   6. campaign_membership is REPORTED, never gated (owner decision 2026-10-03).
+#   7. `step_dependencies` is declared EMPTY, honestly: no step's detection needs another step's
+#      telemetry. `ot_new_engineering_connection` is a concurrent-sources count whose 2+ distinct
+#      addresses all belong to its own step, so `evasion_search.verify_subset_equivalence` holds
+#      without a context step. (Contrast phishing_bec, where impossible travel needs the victim's
+#      earlier login.)
+#   8. ONE anti-causal non-edge is declared (forged_ticket_write -> rogue_device: the actuation
+#      cannot precede the device's arrival). This is deliberate and load-bearing: the mutation
+#      lane's `fcr_unchanged` criterion is `base false_correlation_rate is not None`, so an oracle
+#      with NO forbidden relationship would make every scenario_matrix row fail for a structural
+#      reason unrelated to detection. The correlator is order-blind (SSOT 2026-10-01), so the pair
+#      joins and is recorded in oracle_consistency's accepted list, like every other storyline's.
+#   9. SCOPE HONESTY on the two partials this storyline demonstrates:
+#        * `ot_new_engineering_connection` is a CONCURRENT-SOURCES signal, not novelty
+#          attribution -- it has no baseline memory, so it cannot say "a NEW workstation" (its own
+#          description says so). The engineering step exercises it in its positive direction
+#          (2+ distinct sources on one PLC in 10 min); the storyline does NOT claim it detects a
+#          new workstation.
+#        * `ot_modbus_unauthorized_write_ticketed` exists so a forged change ticket DOWNGRADES an
+#          out-of-range write from HIGH to LOW instead of silencing it. The forged-ticket step
+#          exercises exactly that downgrade, and the HIGH sibling is declared must_not_fire there.
+# =============================================================================
+schema_version: 1
+oracle_id: "ot-opcua-sabotage-v1"
+kind: "attack-chain-grading-oracle"
+scope: "ot-opcua-sabotage"
+
+provenance:
+  authored: "2026-10-14"
+  pipeline_run_before_authoring: false
+  basis: "rule description/detection/siem blocks and parser docstrings only"
+  rules_read:
+    ot_new_device_on_segment: "a8390702431f30d57e16f24ddc80425a3df5b0ddeb6ab4f985be3a2f60e11f8f"
+    ot_new_engineering_connection: "301445e068f3ffb33fd0c3785dba6a55759d7737e1dcd93175cfe714a4e1ff3c"
+    ot_config_change: "10e237ba5dffbce1b52e11887605fe4fdab5a2fa551fc6e20ec648dbd67e3d4d"
+    ot_write_outside_maintenance: "b74414fb33ff705a8e38eb6ce35693128c7309481b93cc89028b5fed4f592cb3"
+    ot_opcua_write_unauthorized_node: "6a0db93624aaa34e2c61aa6d3efee7f6740084d97fe595037996b97db307572d"
+    ot_modbus_unauthorized_write: "c92c51341da0075f04a4b3f861c77a0e3c99deb672534d4effc3f8e04f7c7514"
+    ot_modbus_unauthorized_write_ticketed: "89c6faef0893ead2a1289f83759000ce3f5b0eff9ea71a3998da4c92d71d258d"
+
+expected_sequence:
+  - rogue_device
+  - engineering_sessions
+  - process_write_night
+  - setpoint_tamper
+  - forged_ticket_write
+
+sequence_constraints:
+  strict_order: true
+  allow_extra_steps: false
+  max_clock_span_seconds: 3600
+
+# A relationship is declared only where the telemetry carries a SHARED OBSERVABLE at both ends
+# (authoring rule 2 of the older oracles). The shared observable here is the rogue device's own OT
+# source address, evidenced by the inventory watch, by every OPC UA session/write and by the Modbus
+# frame. The non-edge is anti-causal: the actuation never precedes the device that performed it.
+allowed_relationships:
+  - {from: rogue_device,         to: engineering_sessions, allowed: true,  causal_kind: initial_access}
+  - {from: engineering_sessions, to: process_write_night,  allowed: true,  causal_kind: execution}
+  - {from: process_write_night,  to: setpoint_tamper,      allowed: true,  causal_kind: impair_process_control}
+  - {from: setpoint_tamper,      to: forged_ticket_write,  allowed: true,  causal_kind: unauthorized_command}
+  - {from: forged_ticket_write,  to: rogue_device,         allowed: false, causal_kind: none}
+
+detection_points:
+  rogue_device:
+    step: rogue_device
+    role: "an inventory-diff worker reports a previously unknown device on the OT segment"
+    expected_event_source: "inventory_diff notification (class 4001, activity 1 Open; siem.source_type=inventory_diff, unmapped.ot.sector=ot)"
+    expected_rules:
+      - {rule_id: "7f8091a2-b3c4-4d53-9e6f-1a2b3c4d5e6f", title: "New OT device appeared on the OT inventory segment", level: high, role: initial-access detection on inventory state}
+    gap: {no_rule_exists: false}
+
+  engineering_sessions:
+    step: engineering_sessions
+    role: "the intruder opens OPC UA engineering sessions against one PLC from 2+ distinct client addresses inside 10 minutes. PARTIAL (documented in the rule): this is a concurrent-sources signal with no baseline memory, so the evaluation does NOT claim it identifies a genuinely new workstation -- only that 2+ sources hit one PLC in the window."
+    expected_event_source: "opcua_audit AuditCreateSessionEventType (class 3002, activity 1 Logon, status Success)"
+    expected_rules:
+      - {rule_id: "5e6f7081-9203-4bc1-9c3d-4e5f6a7b8c9f", title: "Multiple distinct sources connecting to the same PLC (concurrent)", level: medium, role: concurrent-source detection on one control-system node}
+    gap: {no_rule_exists: false}
+
+  process_write_night:
+    step: process_write_night
+    role: "an OPC UA write lands on an ORDINARY process node (no config/firmware/setpoint marker) outside the 08:00-18:00 Mon-Fri maintenance window"
+    expected_event_source: "opcua_audit AuditWriteUpdateEventType (class 6003, activity 3 Update)"
+    expected_rules:
+      - {rule_id: "4d5e6f70-8192-49b0-8b2c-3d4e5f6a7b8e", title: "OT control-system write outside the maintenance window", level: high, role: time-of-day detection}
+      - {rule_id: "e7a14b6d-3c52-4d90-8f1b-5a9c0d2e6b47", title: "OPC UA write to a node not on the authorised-node list", level: medium, role: "allowlist-first detection (ships default-OFF with a per-tenant opt-in; the graded Detectors opt it in -- see header rule 4)"}
+    must_not_fire:
+      - "6f708192-a314-4cd2-ad4e-5f6a7b8c9d01"   # the node carries no Config/Firmware/Setpoint/Parameter marker
+    gap: {no_rule_exists: false}
+
+  setpoint_tamper:
+    step: setpoint_tamper
+    role: "the same client rewrites a setpoint-named node -- the config-shaped write the naming heuristic (unmapped.ot.is_config_node) exists for"
+    expected_event_source: "opcua_audit AuditWriteUpdateEventType (class 6003, activity 3 Update)"
+    expected_rules:
+      - {rule_id: "6f708192-a314-4cd2-ad4e-5f6a7b8c9d01", title: "OT configuration/firmware node changed", level: high, role: "config-node detection (naming heuristic)"}
+      - {rule_id: "4d5e6f70-8192-49b0-8b2c-3d4e5f6a7b8e", title: "OT control-system write outside the maintenance window", level: high, role: time-of-day detection -- overlaps the config rule on this event by design}
+      - {rule_id: "e7a14b6d-3c52-4d90-8f1b-5a9c0d2e6b47", title: "OPC UA write to a node not on the authorised-node list", level: medium, role: "allowlist-first detection (opt-in -- see header rule 4)"}
+    gap: {no_rule_exists: false}
+
+  forged_ticket_write:
+    step: forged_ticket_write
+    role: "an out-of-range Modbus register write carries a change ticket on the transport META channel only. PARTIAL (documented in the rule): the ticket is an UNAUTHENTICATED claim -- nothing validates it against a ticketing system, so the write is DOWNGRADED from HIGH to LOW and stays indexed rather than being silently dropped. This step exercises the downgrade, which is why the HIGH sibling is declared must_not_fire here."
+    expected_event_source: "modbus_anomaly observed frame (class 4001, activity 6 Traffic) + envelope meta.changeTicketId"
+    expected_rules:
+      - {rule_id: "bc313d43-588a-47e5-9f79-a4984ae1922c", title: "Modbus/TCP write outside the expected address range, ticketed (authorized change)", level: low, role: downgrade-not-suppress detection}
+    must_not_fire:
+      - "9c1d2e3f-4a5b-4c6d-8e7f-1a2b3c4d5e6f"   # the ticket's presence steps the HIGH rule aside
+    gap: {no_rule_exists: false}
+
+# No step's detection needs another step's telemetry (header rule 7): declared EMPTY rather than
+# omitted, so a reader can see the absence was considered.
+step_dependencies: {}
+
+severity_band:
+  score: {min: 40, max: 100}
+  severity_id: {min: 3, max: 6}
+  dominant_band: "high"
+
+evidence:
+  correlation_key: [src_endpoint.ip]
+  per_step:
+    rogue_device:         {fields: [src_endpoint.ip, src_endpoint.mac, unmapped.ot.device_type, unmapped.ot.hostname]}
+    engineering_sessions: {fields: [src_endpoint.ip, actor.user.name, unmapped.ot.server_id]}
+    process_write_night:  {fields: [src_endpoint.ip, actor.user.name, unmapped.ot.server_id, unmapped.ot.node_id]}
+    setpoint_tamper:      {fields: [src_endpoint.ip, actor.user.name, unmapped.ot.server_id, unmapped.ot.node_id]}
+    forged_ticket_write:  {fields: [src_endpoint.ip, dst_endpoint.ip, unmapped.ot.function_code, unmapped.ot.address, unmapped.ot.change_ticket_id]}
+
+incident_membership:
+  incident_count: 1          # full-chain incidents: the shared OT address track carries every alert -- see header rule 5
+  incident_key: "ot-opcua-sabotage"
+  include: [rogue_device, engineering_sessions, process_write_night, setpoint_tamper, forged_ticket_write]
+  cross_step_rule_ids:
+    - "7f8091a2-b3c4-4d53-9e6f-1a2b3c4d5e6f"
+    - "5e6f7081-9203-4bc1-9c3d-4e5f6a7b8c9f"
+    - "4d5e6f70-8192-49b0-8b2c-3d4e5f6a7b8e"
+    - "e7a14b6d-3c52-4d90-8f1b-5a9c0d2e6b47"
+    - "6f708192-a314-4cd2-ad4e-5f6a7b8c9d01"
+    - "bc313d43-588a-47e5-9f79-a4984ae1922c"
+
+# Read-side campaign view (links incidents sharing a member alert). REPORTED, never gated.
+campaign_membership:
+  campaign_count: 1
+  full_coverage: true

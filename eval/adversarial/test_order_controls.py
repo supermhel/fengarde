@@ -75,6 +75,12 @@ LEGACY_EXPECT = {
     # 2026-10-03: measured on the first run of the 4th storyline
     "phishing_bec": {"tpr": 1.0, "chain_fidelity": 0.5, "false_correlation_rate": 1.0,
                      "directional_discrimination": 0.0, "incident_count": 1},
+    # 2026-10-14: measured on the first run of the 5th storyline. Two entity tracks promote (the
+    # shared OT address and the client account); the ADDRESS track carries every alert of the chain
+    # (incident_membership_ok True), and the 2 incident count is those two tracks, exactly like
+    # ai_to_ot. chain_fidelity 0.75 = 4 allowed joins - 1 forbidden join over 4 allowed pairs.
+    "ot_opcua_sabotage": {"tpr": 1.0, "chain_fidelity": 0.75, "false_correlation_rate": 1.0,
+                          "directional_discrimination": 0.0, "incident_count": 2},
 }
 
 

@@ -68,6 +68,15 @@ from shared.window import DequeWindowCounter  # noqa: E402
 #: tenant is part of every stateful window key.
 CHAIN_TENANT = "twin-chain"
 
+#: The DEFAULT-OFF rules every graded path explicitly opts in. This must equal the list
+#: ``negative_controls.run_pipeline`` and ``report._build_chain_alerts`` pass to their ``Detector``
+#: (2026-10-14): ``FastProbe`` is proven to return the SAME fired list as those two, so it has to
+#: build the same rule set. It did not, and the two "parity-proven" paths silently disagreed on any
+#: OPC UA write -- the default-off rule fired through the slow path and not through FastProbe. The
+#: parity check (``verify_parity``, ``test_evasion_axes.py``) is what caught it once a storyline
+#: exercised that rule (``ot_opcua_sabotage``).
+OPT_IN_RULES = ("e7a14b6d-3c52-4d90-8f1b-5a9c0d2e6b47",)  # ot_opcua_write_unauthorized_node
+
 # Two clearly different fake wall-clock values (seconds). Both are far from any
 # fixed-calendar fixture time, so a parser that falls back to "now" cannot
 # produce the same event under both.
@@ -139,7 +148,10 @@ class FastProbe:
         self.reset_counter = reset_counter
         self._ws2 = negative_controls._get_ws2()
         self.detector = negative_controls.Detector(
-            rules_dir=Path(rules_dir) if rules_dir is not None else None, plugin_rule_dirs=[])
+            rules_dir=Path(rules_dir) if rules_dir is not None else None, plugin_rule_dirs=[],
+            # Same opt-in set the slow path passes: the default-off rules are part of the graded
+            # rule set, so a probe without them is not the same detector (see OPT_IN_RULES).
+            opt_in_rules=OPT_IN_RULES)
         self._cache: dict = {}
         self.last_counter: DequeWindowCounter | None = None
         self.stats = {"probes": 0, "events": 0, "normalize_calls": 0, "cache_hits": 0,

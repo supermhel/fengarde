@@ -523,6 +523,17 @@ _EQUIVALENT: dict = {
         "2026-10-13 " + _ORDER_BLIND_M)},
     ("phishing_bec", "swap_adjacent_steps", "SURVIVED"): {"max": 6, "reason": (
         "2026-10-13 " + _NO_ALERT_STEP)},
+    # ot_opcua_sabotage (2026-10-14, measured on seed 7; the same three classes reproduce on seed 11):
+    ("ot_opcua_sabotage", "reverse_relationship", "SURVIVED"): {"max": 4, "reason": (
+        "2026-10-14 all four allowed pairs share one entity across the whole chain (the rogue device's "
+        "own OT address is evidenced at the rogue_device, engineering_sessions, both write and the "
+        "Modbus step), so the reverse direction is joined too and reversing a pair changes no graded "
+        "output -- " + _ORDER_BLIND_M)},
+    ("ot_opcua_sabotage", "flip_relationship", "IMPROVED"): {"max": 1, "reason": (
+        "2026-10-14 forbidden->allowed flip on the one anti-causal pair (forged_ticket_write -> "
+        "rogue_device): the graph JOINED it in both directions (per_forbidden_pair joined=True, the "
+        "pair shares the device address), so re-labelling it removes a falling forbidden_joins count "
+        "and the wrong oracle scores BETTER because " + _ORDER_BLIND_M)},
 }
 
 # normalised oracle key path -> "label: YYYY-MM-DD reason". ``declared-but-unenforced``: the oracle states it as a
@@ -578,6 +589,14 @@ _INERT_KEYS: dict = {
     "step_dependencies.foreign_login[]": ("cross-instrument: 2026-10-13 read by "
         "evasion_search.verify_subset_equivalence and scenario_matrix._dependents (the foreign_login "
         "context-step displacement control); the mutation grader never moves on it"),
+    # ot_opcua_sabotage oracle (2026-10-14, all measured inert to the mutation grader at seed 7):
+    "provenance.rules_read.ot_new_device_on_segment": _PROV_PIN,
+    "provenance.rules_read.ot_new_engineering_connection": _PROV_PIN,
+    "provenance.rules_read.ot_config_change": _PROV_PIN,
+    "provenance.rules_read.ot_write_outside_maintenance": _PROV_PIN,
+    "provenance.rules_read.ot_opcua_write_unauthorized_node": _PROV_PIN,
+    "provenance.rules_read.ot_modbus_unauthorized_write": _PROV_PIN,
+    "provenance.rules_read.ot_modbus_unauthorized_write_ticketed": _PROV_PIN,
 }
 
 

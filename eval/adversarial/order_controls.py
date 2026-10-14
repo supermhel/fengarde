@@ -112,9 +112,15 @@ def swap_adjacent_steps(payloads: list, a: str, b: str) -> tuple:
     return out, changed
 
 
-def pick_swap_pair(sdef, base_grade: dict):
-    """The first adjacent pair of the oracle's ``expected_sequence`` that is a
-    GRADED allowed pair in the identity run (so swapping it can move the metric)."""
+def pick_swap_pair(sdef, base_grade: dict, seed: int = 7, base_payloads: list | None = None):
+    """The first adjacent pair of the oracle's ``expected_sequence`` whose swap can
+    actually say NO: a GRADED allowed pair in the identity run, both steps raising an
+    alert, AND swapping the start times flips ``alert_order_ok`` with a graded
+    mid-concordance. Both-alerting is necessary but not sufficient -- two windowed
+    rules can keep their ALERT order even when their event slots swap (proven on
+    ``ot_opcua_sabotage`` 2026-10-14: the first graded pair kept alert_order_ok True
+    while concordance fell to 0.75). Fall back to the first candidate if none
+    validates, preserving the old behaviour on exotic chains."""
     graded = {(r["from"], r["to"]) for r in base_grade.get("causal_order", {}).get("per_pair", [])
               if r.get("graded")}
     seq = list(reg.load_oracle(sdef).get("expected_sequence") or [])
@@ -124,10 +130,15 @@ def pick_swap_pair(sdef, base_grade: dict):
     # the swap row's alert_order_ok would stay True and the control would look broken on a storyline
     # that opens with such a step. For the three older storylines the first graded pair already is one.
     alerting = {a.get("step") for a in base_grade.get("fired", [])}
-    for x, y in pairs:
-        if x in alerting and y in alerting:
-            return x, y
-    return pairs[0] if pairs else None
+    candidates = [p for p in pairs if p[0] in alerting and p[1] in alerting] or pairs
+    if base_payloads is not None:
+        for x, y in candidates:
+            swapped, _ = swap_adjacent_steps(copy.deepcopy(base_payloads), x, y)
+            g = _grade(sdef, seed, swapped)
+            co = g.get("order_concordance")
+            if g.get("alert_order_ok") is False and co is not None and 0.0 < co < 1.0:
+                return x, y
+    return candidates[0] if candidates else None
 
 
 def validity_reason(changed: int, span, identity_incidents, mirror_incidents):
@@ -179,7 +190,7 @@ def run_order_controls(sdef, seed: int = 7, swap: tuple | None = None) -> dict:
     m_grade = _grade(sdef, seed, mirrored)
     rows["mirror"] = _row("mirror", m_grade, m_changed)
 
-    pair = swap or pick_swap_pair(sdef, ident)
+    pair = swap or pick_swap_pair(sdef, ident, seed=seed, base_payloads=base_payloads)
     if pair:
         swapped, s_changed = swap_adjacent_steps(base_payloads, *pair)
         rows["swap"] = _row("swap", _grade(sdef, seed, swapped), s_changed)

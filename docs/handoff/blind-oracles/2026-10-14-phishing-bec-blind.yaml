@@ -1,0 +1,288 @@
+# I read no files and used no tools.
+#
+# BLIND ORACLE — ARCHIVED ANALYSIS ARTIFACT, NOT A GRADING ORACLE.
+# Authored 2026-10-14 by an isolated agent that had no access to this repository, to
+# eval/twin/oracle*.yaml, or to contracts/rules/**. It declares NO rule ids, because the
+# author could not know them; the harness cannot grade with it. It lives outside eval/ on
+# purpose: test_oracle_crosscheck.py globs `eval/twin/oracle*.yaml` and would treat this
+# file as a real grading oracle.
+# Intended use: the triangulation recorded in
+# docs/handoff/2026-10-14-p4-blind-oracle-triangulation.md — comparison of what an
+# independent author says SHOULD be detected against what this product declares it detects.
+schema_version: 1
+oracle_id: blind-phish-to-bec-8step-v1
+kind: blind-independent
+scope: >-
+  One attack chain, PHISHING to BUSINESS EMAIL COMPROMISE, eight observable steps
+  (phishing delivery, user execution, C2 beacon, a benign victim baseline session,
+  proxy-pool credential stuffing, foreign successful login, a mail forwarding-or-hiding
+  rule, and a bank-detail row update), specified as what a SIEM ought to detect given
+  only the supplied telemetry inventory.
+provenance:
+  author: 'an isolated agent with no access to the repository, the detection rules or the product oracle; written from the attack semantics and the telemetry list alone'
+  basis: 'authored from the ATT&CK techniques and the telemetry list, as a specification of what should be detected'
+  blind: true
+  rule_ids_known: false
+expected_sequence:
+  - phish_delivery
+  - user_execution
+  - c2_beacon
+  - victim_session
+  - proxy_pool_logins
+  - foreign_login
+  - inbox_rule
+  - payment_redirect
+detection_points:
+  phish_delivery:
+    attack_technique: T1566.001
+    expected_rule_semantics: |
+      none - this step must not fire a rule in this environment. The only sound delivery
+      condition is a mail-transport one: an inbound message whose sender domain fails
+      SPF, DKIM or DMARC alignment, or whose attachment hash is unknown, grouped by
+      recipient mailbox over a short window. No mail-gateway feed, no Exchange Online or
+      Microsoft 365 message trace and no mailbox audit exist in the supplied telemetry,
+      and Sysmon here exposes process create/terminate and network connect only - not
+      file creation - so the Zone.Identifier mark an emailed attachment leaves on disk is
+      not observable either. A rule written from what is present would be a proxy for
+      step 2 (for example an Office child process) mislabelled as delivery, which is
+      worse than no rule because it would take credit for detecting a step it never saw.
+    detectable_in_principle: no
+    boundary: 'not applicable'
+    boundary_detail: 'n/a'
+    confidence: high
+    gap: true
+    gap_reason: 'absent telemetry - the mail transport and mailbox audit feeds that carry sender, authentication result, attachment hash and recipient facts are not in this environment at all, so no field exists on which a delivery judgement could be made; the detection concept is well understood, so the cause is absent telemetry, not a missing concept.'
+  user_execution:
+    attack_technique: T1204.002
+    expected_rule_semantics: |
+      A process-creation event whose parent is a document or mail client (winword.exe,
+      excel.exe, powerpnt.exe, outlook.exe, a PDF reader, or the script host already
+      running a .js or .vbs attachment) and whose child is a script interpreter or loader
+      (cmd.exe, powershell.exe, wscript.exe, cscript.exe, mshta.exe, rundll32.exe,
+      regsvr32.exe, msiexec.exe) AND whose command line carries an obfuscation marker:
+      -enc, -EncodedCommand or -e with a base64-shaped blob, caret or character
+      substitution, a single very long argument, or a decoded URL or executable path.
+      Group and join on the parent process GUID plus host so the child is attributable to
+      the document that spawned it. There is no counting at this step: the boundary is
+      categorical. The obfuscation marker is what keeps benign traffic quiet, because
+      ordinary Office macro activity and mail-client helper processes spawn the same
+      interpreters without encoded, substituted command lines.
+    detectable_in_principle: yes
+    boundary: 'none'
+    boundary_detail: 'n/a - the gate is a categorical parent-child plus obfuscation-marker match, not a numeric boundary; the base64-shape and long-argument tests do the work a threshold would otherwise do.'
+    confidence: high
+    gap: false
+    gap_reason: 'none'
+  c2_beacon:
+    attack_technique: T1071.001
+    expected_rule_semantics: |
+      Group outbound network-connect events (Sysmon EID 3) with the DNS queries that
+      resolve their destinations, keyed by (process GUID, destination domain or /24),
+      and over a window of at least ten connections test the regularity of the
+      inter-arrival intervals: a coefficient of variation at or below roughly 0.25 with a
+      mean interval between about 30 seconds and 30 minutes, sent by the process that
+      step 2 launched, to a domain this host has not contacted in thirty days. The
+      discriminator is the metronome, not the volume: human browsing, software update
+      checks and CDN fetches are bursty and high-variance, while an implant checking in
+      on a timer is not, so the statistical test itself excludes nearly all benign
+      traffic. Requiring the step-2 process lineage removes the few genuinely periodic
+      benign agents (time sync, management agents, telemetry shippers) that would
+      otherwise be the only false positives of a pure periodicity rule.
+    detectable_in_principle: yes
+    boundary: 'statistical'
+    boundary_detail: '>=10 outbound connections to one destination group within 6 hours; coefficient of variation of inter-arrival times <=0.25; mean interval 30 s to 30 min; destination domain unseen for this host in the trailing 30 days.'
+    confidence: high
+    gap: false
+    gap_reason: 'none'
+  victim_session:
+    attack_technique: 'none - benign baseline step, no ATT&CK technique applies'
+    expected_rule_semantics: |
+      none - this step must not fire a rule. It is context, not an attack step: an
+      ordinary successful interactive logon by the victim from the country they always
+      log in from, at an hour they always log in at. It is perfectly detectable (a 4624
+      with the account usual source pattern) and that is precisely why alerting on it is
+      wrong; its only correct use is as retained state - the per-account set of countries,
+      source networks and logon hours for the trailing 30 days - that the foreign_login
+      rule reads. I choose the word context rather than gap: a gap means something that
+      should be detected and is not, whereas this step is deliberately excluded from
+      alerting by design and its non-detection is the correct outcome, so it is not
+      counted in steps_expected_gap either.
+    detectable_in_principle: yes
+    boundary: 'not applicable'
+    boundary_detail: 'n/a'
+    confidence: high
+    gap: false
+    gap_reason: 'none'
+  proxy_pool_logins:
+    attack_technique: 'T1110.003 (password spraying) / T1110.004 (credential stuffing)'
+    expected_rule_semantics: |
+      Group failed logon events (Windows 4625, and Linux SSH auth failures where they
+      bear on the same identity) by the TARGET account, not by the source, and count
+      DISTINCT public source addresses against that one account inside a short window.
+      The counting key is (target account) and the grouped dimension is source address,
+      because the signature of a commercial proxy pool is many addresses converging on
+      one identity; a single attacker hammering one address is a different, noisier
+      pattern. The false-positive argument for the boundary is concrete: a user
+      mistyping a password presents one or two source addresses, an office behind NAT
+      presents one, a stale credential cached on a phone presents one or two - none of
+      which reaches ten distinct routable sources for a single account inside fifteen
+      minutes, while a proxy pool routinely presents hundreds. Shared corporate egress
+      ranges are the realistic benign cause of many sources, so exempt RFC1918 and any
+      source that also succeeds against ten or more other accounts (normal shared NAT or
+      forward proxy), and require a near-total failure ratio so that a busy shared range
+      with normal successes does not qualify.
+    detectable_in_principle: yes
+    boundary: 'threshold'
+    boundary_detail: '>=10 distinct public source addresses failing against one account within 15 minutes; failure ratio >=0.8; at least 1 success for the same account within 60 minutes after the burst; sources exempted when RFC1918 or when they also succeed for >=10 other accounts.'
+    confidence: medium
+    gap: false
+    gap_reason: 'none'
+  foreign_login:
+    attack_technique: T1078
+    expected_rule_semantics: |
+      A successful logon (4624 type 2, 3 or 10) for an account whose resolved country,
+      taken from the coarse local CIDR-to-country map, has zero successful logons for
+      that account in the trailing 30 days, where the account already has a baseline of
+      at least three successful logons and the source is not a corporate VPN or egress
+      range. The boundary is a baseline of zero prior occurrences, not a rare country:
+      the comparison is always against the victim_session baseline for that same account.
+      The false-positive argument is why this rule must not stand alone at high severity:
+      travellers and new remote workers legitimately produce a first-time country, and a
+      holiday produces exactly one such event with nothing before it, whereas this chain
+      produces the foreign success within an hour after a proxy-pool stuffing burst aimed
+      at the same account. Require that correlation (or a subsequent mail-rule or payment
+      change) before escalating; the bare first-country event is corroboration, not
+      proof.
+    detectable_in_principle: yes
+    boundary: 'threshold'
+    boundary_detail: 'trailing 30-day baseline requires >=3 prior successful logons and 0 successful logons from the newly seen country; correlation window to the proxy burst 60 minutes; sources resolvable to a corporate VPN range are excluded.'
+    confidence: low
+    gap: false
+    gap_reason: 'none - recorded fidelity limit rather than a gap: the environment has no true GeoIP resolver, only a coarse local CIDR-to-country map, so some public ranges (VPN providers, freshly allocated blocks) resolve to no country. The map is present telemetry with reduced fidelity, so a rule can still be written and I mark this detectable in principle rather than a gap; the loss shows up as low confidence, and unattributable sources should be dropped rather than guessed at a country.'
+  inbox_rule:
+    attack_technique: T1114.003
+    expected_rule_semantics: |
+      none - this step must not fire a rule in this environment. The sound condition is a
+      mailbox-audit operation (New-InboxRule, Set-InboxRule or UpdateInboxRules) whose
+      forwarding or redirect target is an external domain, or whose action moves or hides
+      messages into an archive or deleted-items folder, authored from a session whose
+      login was foreign or proxied. That audit is not present: there is no Microsoft 365
+      or Exchange Online mail audit and no mail gateway. The adjacent signals that do
+      exist - an AWS CloudTrail or SaaS login from the proxy, a syslog entry from the
+      mail front end - record that someone authenticated, never that a rule was created,
+      so a rule written from them would simply duplicate foreign_login under a different
+      name and would claim coverage of a technique it cannot see.
+    detectable_in_principle: no
+    boundary: 'not applicable'
+    boundary_detail: 'n/a'
+    confidence: high
+    gap: true
+    gap_reason: 'absent telemetry - the forwarding or hiding rule is only observable in mail-service audit, which this environment does not have; the detection concept is well known, so the cause is the missing feed, not a missing concept.'
+  payment_redirect:
+    attack_technique: T1565.001
+    expected_rule_semantics: |
+      none - as specified, this step must not fire a rule. The sound condition would be
+      an UPDATE against the vendor, payment or beneficiary table in which the bank
+      account, IBAN or SWIFT attribute or the payee name actually changes, executed by a
+      principal that is not the finance change-management service account, outside the
+      approved change window, on a record whose previous values differ. The environment
+      supplies database audit for privileged operations and distinct-object reads, but
+      explicitly no row-level change-data-capture and no stored-value history, so the
+      audit record carries the object and the operation but not the before and after
+      column values. A bank-detail edit is therefore indistinguishable from any other
+      touch of that row, and a benign nightly ETL that rewrites the whole table fires the
+      same way. A rule could be written on UPDATE to the payment table by an unexpected
+      principal, but it would detect a different thing than the technique describes at a
+      false-positive rate that cannot be argued down, so I judge the technique itself not
+      detectable in principle here rather than pretend to cover it.
+    detectable_in_principle: no
+    boundary: 'not applicable'
+    boundary_detail: 'n/a'
+    confidence: medium
+    gap: true
+    gap_reason: 'missing fields inside present telemetry - the database audit feed exists but exposes neither column names nor a before-image, and no change-data-capture or stored-value store can supply them, so the mutation of bank details cannot be observed; the detection concept is sound and is the problem is not its absence but the granularity of the feed.'
+step_dependencies:
+  phish_delivery: []
+  user_execution:
+    - phish_delivery
+  c2_beacon:
+    - user_execution
+  victim_session: []
+  proxy_pool_logins:
+    - victim_session
+  foreign_login:
+    - victim_session
+    - proxy_pool_logins
+  inbox_rule:
+    - foreign_login
+  payment_redirect:
+    - foreign_login
+severity_band:
+  phish_delivery: 'medium'
+  user_execution: 'high'
+  c2_beacon: 'high'
+  victim_session: 'low'
+  proxy_pool_logins: 'medium'
+  foreign_login: 'high'
+  inbox_rule: 'critical'
+  payment_redirect: 'critical'
+evidence:
+  phish_delivery:
+    - 'smtp envelope sender and return-path'
+    - 'SPF, DKIM and DMARC result'
+    - 'attachment filename and hash'
+    - 'recipient mailbox'
+    - 'delivery timestamp (none of these are present in this environment)'
+  user_execution:
+    - 'Sysmon EID 1: ParentImage, ParentProcessGuid, Image, ProcessGuid'
+    - 'CommandLine and its entropy or base64 shape'
+    - 'User, UtcTime, host name'
+  c2_beacon:
+    - 'Sysmon EID 3: UtcTime, ProcessGuid, Image, DestinationIp, DestinationHostname, DestinationPort'
+    - 'DNS query log entries name and resolver answer for the destination'
+    - 'process lineage carried forward from user_execution'
+    - 'first-seen timestamp for the destination domain per host'
+  victim_session:
+    - 'Windows 4624: TargetUserName, LogonType, IpAddress, WorkstationName, UtcTime'
+    - 'coarse CIDR-to-country resolution of the source address'
+    - 'the per-account rolling baseline of countries, networks and logon hours'
+  proxy_pool_logins:
+    - 'Windows 4625: TargetUserName, IpAddress, Status and SubStatus, LogonType, UtcTime'
+    - 'Linux SSH auth failure lines where the same identity appears'
+    - 'the eventual 4624 success for the same account'
+    - 'exemption lists for RFC1918 ranges and shared corporate egress'
+  foreign_login:
+    - 'Windows 4624: TargetUserName, LogonType, IpAddress, UtcTime'
+    - 'coarse CIDR-to-country map value for the source address'
+    - 'the account 30-day country baseline built from victim_session events'
+    - 'corporate VPN and egress range list'
+  inbox_rule:
+    - 'mail service audit: actor, operation New-InboxRule or Set-InboxRule or UpdateInboxRules'
+    - 'rule parameters ForwardTo, RedirectTo, MoveToFolder, DeleteMessage'
+    - 'client IP and timestamp (none of these are present in this environment)'
+  payment_redirect:
+    - 'database audit: principal, operation, object or table name, timestamp, client host'
+    - 'needed but absent: column name, previous value, new value, transaction id'
+    - 'approved change window and change-management service account list'
+incident_membership: |
+  The chain can only be reported as one attack across the subset the telemetry can join.
+  user_execution and c2_beacon must belong to the same incident, keyed by the process GUID
+  and host, because the beacon is the child that step 2 launched and without that join a
+  periodic outbound connection is just periodic outbound traffic. proxy_pool_logins and
+  foreign_login must belong to the same incident, keyed by target account, with step 6
+  required to fall inside 60 minutes after the step-5 burst, because the stuffing is the
+  evidence that the credential was taken rather than legitimately carried abroad.
+  foreign_login and payment_redirect must be joined by actor identity (the account mapped to
+  the database principal) and by ordering inside the same working window, since the database
+  audit actor field alone does not prove the human was the same person. victim_session must
+  never be a member of the incident as an attack step: it is retained baseline state that
+  step 6 reads, and alerting on it would be a straightforward false positive. phish_delivery
+  and inbox_rule cannot be joined to anything here because no telemetry carries them, so the
+  reported incident is always an incomplete chain - at best steps 2, 3, 5, 6 and possibly 8.
+  Practical reporting rule: raise a single incident when at least three of {user_execution,
+  c2_beacon, proxy_pool_logins, foreign_login} co-occur for the same account or host inside
+  six hours, and label it a partial chain naming the steps that could not be observed.
+meta:
+  steps_total: 8
+  steps_with_rule_expected: 4
+  steps_expected_gap: 3
