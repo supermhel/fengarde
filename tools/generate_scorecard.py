@@ -268,7 +268,7 @@ def _names_in(node: ast.AST) -> set[str]:
     return {n.id for n in ast.walk(node) if isinstance(n, ast.Name)}
 
 
-def _called_from_entry(tree: ast.AST) -> set[str]:
+def _called_from_entry(tree: ast.Module) -> set[str]:
     """Module-level functions REACHABLE from the ``if __name__ == "__main__":``
     block: named there (called, or listed -- ``tests = [test_a, ...]`` counts),
     then transitively through every reachable function's body. A needle can

@@ -129,7 +129,7 @@ def atoms_from_fire_check(entries: list | dict) -> dict[str, Any]:
 
 
 def atoms_from_corpus(result: dict) -> dict[str, Any]:
-    out = {"corpus_b/cross_case_merge_clean": bool(result.get("cross_case_merge_clean"))}
+    out: dict[str, Any] = {"corpus_b/cross_case_merge_clean": bool(result.get("cross_case_merge_clean"))}
     for row in result.get("per_case") or []:
         case = row["id"]
         out[f"corpus_b/{case}/missed_n"] = len(row.get("missed") or [])
@@ -171,8 +171,8 @@ def _rule_catalogue() -> dict[str, dict]:
         data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
         if not isinstance(data, dict) or not data.get("id"):
             continue
-        mitre = data.get("mitre") if isinstance(data.get("mitre"), dict) else {}
-        siem = data.get("siem") if isinstance(data.get("siem"), dict) else {}
+        mitre: dict = data["mitre"] if isinstance(data.get("mitre"), dict) else {}
+        siem: dict = data["siem"] if isinstance(data.get("siem"), dict) else {}
         out[str(data["id"])] = {
             "stem": path.stem,
             "framework": mitre.get("framework", "attack"),

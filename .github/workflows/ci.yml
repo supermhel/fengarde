@@ -315,7 +315,8 @@ jobs:
         run: |
           for ws in services/ws1-collectors services/ws2-normalization services/ws3-indexer \
                     services/ws4-detection services/ws5-ai services/ws6-inventory \
-                    services/ws8-correlation services/ws9-resolver services/shared tools; do
+                    services/ws8-correlation services/ws9-resolver services/shared tools \
+                    eval/twin; do
             mypy "$ws" --explicit-package-bases --ignore-missing-imports
           done
       - name: coverage gate (ws2/ws3/shared/ws4/ws6/ws8/ws9, blocking at measured baseline)

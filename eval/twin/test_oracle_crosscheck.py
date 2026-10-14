@@ -30,6 +30,8 @@ seen to go red proves nothing:
 """
 from __future__ import annotations
 
+from typing import Any
+
 import contextlib
 import copy
 import hashlib
@@ -367,7 +369,7 @@ def _pool(rules: dict) -> dict:
 
 
 def _set_dotted(doc: dict, dotted: str, value) -> None:
-    cur = doc
+    cur: Any = doc
     parts = dotted.split(".")
     for p in parts[:-1]:
         nxt = cur.get(p)
@@ -379,7 +381,7 @@ def _set_dotted(doc: dict, dotted: str, value) -> None:
 
 
 def _del_dotted(doc: dict, dotted: str) -> None:
-    cur = doc
+    cur: Any = doc
     parts = dotted.split(".")
     for p in parts[:-1]:
         cur = cur.get(p)
@@ -518,7 +520,7 @@ def test_companion_per_event() -> None:
             mine.append(sorted([r for r, v in st["fires"].items() if n in v]))
         _check("DER-NEG-4 per-event firing set equals the REAL Detector's on the synthetic burst",
                real == mine, f"real={[[x[-1:] for x in m] for m in real]} derived={[[x[-1:] for x in m] for m in mine]}")
-        coarse = [[]] * len(evs)  # what a per-STEP "suppressed when the sibling fires at the step" model would say
+        coarse: list[list] = [[]] * len(evs)  # what a per-STEP "suppressed when the sibling fires at the step" model would say
         _check("DER-NEG-4 CONTROL: a per-step suppression model would have dropped the companion everywhere "
                "and disagrees with the real Detector", coarse != real)
     finally:

@@ -28,6 +28,8 @@ lazily under a unique name AFTER the chain has run -- never before.
 """
 from __future__ import annotations
 
+from typing import Any
+
 import inspect
 import sys
 from pathlib import Path
@@ -149,7 +151,7 @@ def _build_step_entities() -> tuple[dict, object]:
     return out, chain
 
 
-def _test_mutation_soundness(result: dict, step_entities: dict, chain: object) -> None:
+def _test_mutation_soundness(result: dict, step_entities: dict, chain: Any) -> None:
     """(c) the reference agrees with report.py, and the direction check is
     load-bearing: reversing from/to drops the real fidelity; deleting the
     direction check changes the answer where direction matters."""
