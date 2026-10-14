@@ -766,7 +766,10 @@ class Rule:
         own_id = (event.get("siem") or {}).get("ingest_id")
         if not self.stateful:
             return ([own_id] if own_id else []), 0
-        tenant = (event.get("siem") or {}).get("tenant") or "default"
+        # Same tenant normalisation as evaluate(): reading the raw siem.tenant here
+        # looked up a different window key for an invalid tenant, so the alert
+        # cited only its own id.
+        tenant = _event_tenant(event)
         group_value = _get_path_parts(event, self._group_by_parts)
         if group_value is None:
             return ([own_id] if own_id else []), 0
@@ -794,6 +797,30 @@ class Rule:
         if not ids and own_id:
             ids = [own_id]
         return ids, omitted
+
+    def window_evidence(self, event: dict):
+        """``(kind, frozenset of event ids)`` this rule's alert for ``event`` would
+        cite, read from the window counter WITHOUT the contributing-id cap; None
+        when the rule cannot name its events.
+
+        Used by Detector.process to decide whether a companion's alert adds
+        anything its sibling's alert does not already carry. A distinct-count
+        window stores the distinct VALUES (ports, host names), not the events, so
+        it cannot say which events stand behind it: None, and the caller must then
+        keep the companion's alert."""
+        own = (event.get("siem") or {}).get("ingest_id")
+        if not self.stateful:
+            return ("event", frozenset([str(own)])) if own else None
+        if self.distinct_field:
+            return None
+        group_value = _get_path_parts(event, self._group_by_parts)
+        if group_value is None:
+            return None
+        window_key = f"{self.id}:{self._namespaced_group(_event_tenant(event), str(group_value))}"
+        ids = frozenset(str(i) for i in self._counter.members(window_key))
+        # events without an ingest_id are not listed by members(): an empty set
+        # names nothing, it does not prove "nothing new"
+        return ("events", ids) if ids else None
 
     def evaluate(self, event: dict) -> bool:
         """Return True if this rule fires for the event (incl. stateful threshold)."""
@@ -855,7 +882,17 @@ class Rule:
         # inside the allowance is therefore treated as happening NOW: the
         # window is driven by ``min(event_time, wall_clock)``. Past timestamps
         # (historical replay, fixed-epoch test fixtures) are unaffected.
-        now = min(now, int(time.time() * 1000))
+        #
+        # NOT for a periodicity rule (external review 2026-10-14): its verdict is
+        # the regularity of the event TIMES themselves, and clamping a source
+        # whose clock runs a little ahead replaced those times with processing
+        # times -- a consumer catching up a short backlog stacked a 60 s beacon
+        # into one millisecond and the CV check could never pass. The poisoning
+        # above needs a forged event in the victim's group; for a beacon the group
+        # is the beaconing host, which the attacker already controls (and can
+        # simply jitter), so the clamp protected nothing there.
+        if not self.periodicity:
+            now = min(now, int(time.time() * 1000))
         member = (event.get("siem") or {}).get("ingest_id") or str(now)
         # Namespace the window by rule id AND tenant so two rules (or two
         # tenants) grouping on the same field don't share a counter. Without

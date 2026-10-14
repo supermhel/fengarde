@@ -420,6 +420,22 @@ def test_never_fired_gauge_skips_unopted_default_off_rules():
     opted = _detector(Path(tempfile.mkdtemp()), tdir, opt_in_rules=[OFF_RULE])
     check(opted.rule_health_metrics().get(off_gauge) == 1,
           "once opted in, a never-fired rule IS reported (control)")
+    # External review 2026-10-14: the gauge read tenant files itself and believed
+    # files the Detector never applies. A file whose stem is no valid tenant id,
+    # or a tenant that also DISABLES the rule, opts nothing in for the Detector,
+    # so it must not raise a dead-rule alarm either.
+    for name, body in (("Not_A_Tenant", f"enabled_rules: [{OFF_RULE}]\n"),
+                       ("acme", f"enabled_rules: [{OFF_RULE}]\ndisabled_rules: [{OFF_RULE}]\n")):
+        tfiles = Path(tempfile.mkdtemp())
+        (tfiles / f"{name}.yml").write_text(body, encoding="utf-8")
+        tenants._CACHE.clear()
+        check(off_gauge not in _detector(Path(tempfile.mkdtemp()), tfiles).rule_health_metrics(),
+              f"{name}.yml: an opt-in the Detector never applies must not report a dead rule")
+    tfiles = Path(tempfile.mkdtemp())
+    (tfiles / "acme.yml").write_text(f"enabled_rules: [{OFF_RULE}]\n", encoding="utf-8")
+    tenants._CACHE.clear()
+    check(_detector(Path(tempfile.mkdtemp()), tfiles).rule_health_metrics().get(off_gauge) == 1,
+          "control: a valid tenant file opt-in IS reported")
 
 
 def run():

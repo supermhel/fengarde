@@ -106,9 +106,13 @@ def _tokenize(tool: str) -> list:
 _CREDENTIAL_PATH_PATTERNS = re.compile(
     r"(\.env\b|id_rsa|id_ed25519|\.aws[/\\]credentials|\.ssh[/\\]|"
     r"secrets?\.(ya?ml|json|txt)|credentials\.(ya?ml|json)|\.pem$|\.key$|"
-    r"\.kube[/\\]config|\.netrc\b|\w*tokens?\.(ya?ml|json|txt)\b)",
+    r"\.kube[/\\]config|\.netrc\b|tokens?\.(ya?ml|json|txt)\b)",
     re.IGNORECASE,
 )
+# 2026-10-14: the token branch used to start with `\w*`. For a boolean search
+# that prefix changes nothing (the suffix matches wherever the prefixed form
+# does) but it made search() quadratic on a long word run: 4000 attacker-chosen
+# word characters in the arguments cost ~270 ms per event in WS-2.
 
 # Common prompt-injection phrasing seen in log-line/tool-arg content. A
 # heuristic string-match, not a classifier -- exactly what the rule's
@@ -151,6 +155,11 @@ _DESTRUCTIVE_COMMAND_PATTERNS = re.compile(
 )
 
 _MAX_ARGS_CHARS = 2000  # arguments are attacker-controlled -- cap, never eval.
+# The heuristic scan reads further than the stored excerpt: with the scan capped
+# at the same 2000 characters, 2000 characters of padding in front of the phrase
+# hid it (2026-10-14 review). Anything past this budget is still unscanned, and
+# the event says so (unmapped.mcp.args_truncated) instead of looking clean.
+_MAX_SCAN_CHARS = 16_000
 
 # 2026-09-10: bounded, deterministic normalization pass closing the encoding-
 # evasion gap eval/adversarial/mutate.py::mutate_prompt's "prompt" axis
@@ -189,15 +198,42 @@ _WHITESPACE_RUN_RE = re.compile(r"\s+")
 # _decoded_variants already tolerates (decode failure -> skipped, not
 # raised) but there is no reason to spend the cycles on tokens too short to
 # plausibly carry a wrapped phrase.
-_B64_TOKEN_RE = re.compile(r"[A-Za-z0-9+/]{16,}={0,2}")
+#
+# 2026-10-14 (external review of PR #93): the alphabet now includes the
+# base64url characters "-" and "_", and _b64_decodings() below tolerates a
+# missing "=" padding and a token whose real start is up to 3 characters
+# into the run (an attacker glues a letter onto the front so the strict
+# decode fails on alignment). All three were measured bypasses.
+_B64_TOKEN_RE = re.compile(r"[A-Za-z0-9+/_-]{16,}={0,2}")
+_B64URL_TO_STD = str.maketrans("-_", "+/")
+
+
+def _b64_decodings(token: str) -> list:
+    """Every UTF-8 reading of ``token`` as standard or url-safe base64, padded
+    or not, starting at offset 0..3. At most 4 decode attempts per token."""
+    core = token.rstrip("=").translate(_B64URL_TO_STD)
+    out = []
+    for offset in range(4):
+        part = core[offset:]
+        if len(part) < 16:
+            break
+        try:
+            out.append(base64.b64decode(part + "=" * (-len(part) % 4),
+                                        validate=True).decode("utf-8"))
+        except (ValueError, UnicodeDecodeError):
+            continue
+    return out
 
 
 def _fold(text: str) -> str:
-    """NFKC-normalize + homoglyph-fold + whitespace-collapse -- the single
-    unit both call sites below apply, so composing it (fold a decoded
-    variant, or decode a folded variant) is one call, not copy-pasted
-    logic."""
+    """NFKC-normalize + homoglyph-fold + format-char strip + whitespace-collapse
+    -- the single unit both call sites below apply, so composing it (fold a
+    decoded variant, or decode a folded variant) is one call, not copy-pasted
+    logic. Format characters (Unicode category Cf: zero-width space/joiner,
+    soft hyphen, bidi marks) are invisible and NFKC keeps them, so one inside
+    a word split the phrase for the regex (2026-10-14 review, measured)."""
     folded = unicodedata.normalize("NFKC", text).translate(_HOMOGLYPH_FOLD)
+    folded = "".join(ch for ch in folded if unicodedata.category(ch) != "Cf")
     return _WHITESPACE_RUN_RE.sub(" ", folded)
 
 
@@ -211,11 +247,32 @@ def _decode_layer(text: str) -> list:
     except (UnicodeDecodeError, ValueError):
         pass
     for token in _B64_TOKEN_RE.findall(text):
-        try:
-            out.append(base64.b64decode(token, validate=True).decode("utf-8"))
-        except (ValueError, UnicodeDecodeError):
-            continue
+        out.extend(_b64_decodings(token))
     return out
+
+
+def _leaf_strings(value, out: list, budget: int) -> int:
+    """Append every string key/value inside a JSON-shaped ``value`` to ``out``,
+    stopping once ``budget`` characters are collected; returns what is left.
+
+    The JSON serialisation the scan used to see writes a newline or tab INSIDE
+    a value as the two characters backslash-n, which the whitespace collapse
+    cannot touch, so {"q": "ignore all\\nprevious instructions"} slipped past
+    every pattern (2026-10-14 review, measured). The leaves carry the real
+    characters."""
+    if budget <= 0:
+        return 0
+    if isinstance(value, str):
+        out.append(value[:budget])
+        return budget - len(out[-1])
+    if isinstance(value, dict):
+        for k, v in value.items():
+            budget = _leaf_strings(k, out, budget)
+            budget = _leaf_strings(v, out, budget)
+    elif isinstance(value, (list, tuple)):
+        for v in value:
+            budget = _leaf_strings(v, out, budget)
+    return budget
 
 
 def _decoded_variants(text: str) -> list:
@@ -231,7 +288,7 @@ def _decoded_variants(text: str) -> list:
     passes individually. Now composes one level deep each way -- fold each
     decoded variant, and decode the folded variant -- covering both
     encode-then-obfuscate and obfuscate-then-encode without adding a new
-    transform, still bounded by the same _MAX_ARGS_CHARS-capped input."""
+    transform, still bounded by the _MAX_SCAN_CHARS-capped input."""
     variants = []
     folded = _fold(text)
     variants.append(folded)
@@ -288,7 +345,8 @@ class McpAgentParser(Parser):
         arguments = _pick(rec, "arguments", "args", "params") or {}
 
         activity_id, severity_id = self._classify(str(tool))
-        args_text = self._args_text(arguments)
+        args_full = self._args_full_text(arguments)
+        args_text = args_full[:_MAX_ARGS_CHARS]
 
         time_ms = self._time_ms(rec, meta)
         verb = {1: "created via", 2: "called (read)", 3: "updated via", 4: "deleted via"}[activity_id]
@@ -315,7 +373,12 @@ class McpAgentParser(Parser):
             event["src_endpoint"] = {"ip": src_ip}
 
         egress_domain = self._egress_domain(str(tool), arguments)
-        scan_text = _scan_text(args_text)
+        scan_parts = [_scan_text(args_full[:_MAX_SCAN_CHARS])]
+        if not isinstance(arguments, str):
+            leaves: list = []
+            _leaf_strings(arguments, leaves, _MAX_SCAN_CHARS)
+            scan_parts.append(_scan_text("\n".join(leaves)))
+        scan_text = "\n".join(scan_parts)
         unmapped: dict = {"mcp": {
             "session_id": session,
             "server": server,
@@ -323,6 +386,7 @@ class McpAgentParser(Parser):
             "injection_indicator": bool(_INJECTION_PATTERNS.search(scan_text)),
             "destructive_command_indicator": bool(_DESTRUCTIVE_COMMAND_PATTERNS.search(scan_text)),
             "is_egress_call": egress_domain is not None,
+            "args_truncated": len(args_full) > _MAX_SCAN_CHARS,
         }}
         if egress_domain is not None:
             unmapped["mcp"]["egress_domain"] = egress_domain
@@ -371,6 +435,10 @@ class McpAgentParser(Parser):
 
     @staticmethod
     def _args_text(arguments) -> str:
+        return McpAgentParser._args_full_text(arguments)[:_MAX_ARGS_CHARS]
+
+    @staticmethod
+    def _args_full_text(arguments) -> str:
         try:
             # ensure_ascii=False: the default True would \uXXXX-escape any
             # non-ASCII byte (a Cyrillic/Greek homoglyph included) into
@@ -384,7 +452,7 @@ class McpAgentParser(Parser):
                      if not isinstance(arguments, str) else arguments)
         except (TypeError, ValueError):
             text = str(arguments)
-        return text[:_MAX_ARGS_CHARS]
+        return text
 
     @staticmethod
     def _time_ms(rec: dict, meta: dict) -> int:

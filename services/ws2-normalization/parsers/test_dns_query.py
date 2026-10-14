@@ -121,6 +121,23 @@ class TestDnsQueryParser(unittest.TestCase):
         for name, want in cases.items():
             self.assertEqual(parent_domain(name), want, name)
 
+    def test_generic_labels_are_not_suffixes_under_unlisted_cctlds(self):
+        # External review 2026-10-14: co/com/org/net/... used to be suffixes under
+        # EVERY two-letter TLD, so the owner of an ordinary registrable name such
+        # as net.io could vary the label in front of it and give every tunnel
+        # query its own parent (one name per window -> never fires).
+        from parsers.dns_query import parent_domain
+        tunnel = {parent_domain(f"chunk{i}.payload{i}.net.io") for i in range(50)}
+        self.assertEqual(tunnel, {"net.io"})
+        for name, want in {"x.y.com.ai": "com.ai", "x.y.co.io": "co.io",
+                           "x.y.org.me": "org.me", "x.y.edu.tv": "edu.tv"}.items():
+            self.assertEqual(parent_domain(name), want, name)
+        # ...while the listed real suffixes keep three labels
+        for name, want in {"x.shop.example.com.br": "example.com.br",
+                           "a.example.co.za": "example.co.za",
+                           "a.example.com.tr": "example.com.tr"}.items():
+            self.assertEqual(parent_domain(name), want, name)
+
     def test_event_pools_a_jp_customer_under_its_own_registered_domain(self):
         # End to end through the parser: two different ne.jp customers must not
         # share a grouping key (they used to, both becoming "ne.jp").

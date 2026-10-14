@@ -45,6 +45,7 @@ from enrichment import enrich  # noqa: E402
 RULES_DIR = ROOT / "contracts" / "rules"
 PORT_SCAN = "1d2c3b4a-5e6f-4708-8a91-0b1c2d3e4f05"      # 15 distinct denied ports / 60 s, by source
 BRUTE = "6f1c8a2e-0d3b-4c11-9a21-7b5e2f9a1c01"          # 10 failures / 60 s, by source
+BEACON = "f6071829-a3b4-4c53-9d6e-7f8091a2b526"   # periodicity rule (common_beaconing)
 FAILS: list = []
 
 
@@ -118,6 +119,28 @@ def run():
     rule = _rule(PORT_SCAN)
     check(not rule.evaluate(_asa(1, 0, wall + 3_600_000)),
           "an event an hour in the future is still dropped by the 5-minute guard")
+
+    # External review 2026-10-14: the clamp must not apply to a PERIODICITY rule.
+    # A host whose clock runs 4 min ahead beacons regularly; WS-4 catches up the
+    # whole run in one burst at wall time, so every beat is stamped in the future.
+    # Clamping them to "now" stacked them into one instant and the regularity
+    # check could never pass. Sized from the rule's own threshold so the case
+    # stays valid if the threshold moves (Q15).
+    def beat(i, t):
+        return {"class_uid": 4001, "activity_id": 7, "time": t,
+                "src_endpoint": {"ip": "10.20.30.40"}, "dst_endpoint": {"ip": "198.51.100.7"},
+                "siem": {"ingest_id": f"beacon-{i}", "tenant": "acme"}}
+    beacon = _rule(BEACON)
+    skew, n = 240_000, beacon.threshold + 2
+    step = 200_000 // n                      # the whole run spans < skew, so all of it is "future"
+    stamps = [wall + skew - 200_000 + k * step for k in range(n)]
+    check(min(stamps) > wall, "sanity: every beat must be stamped in the future")
+    check(any([beacon.evaluate(beat(k, t)) for k, t in enumerate(stamps)]),
+          "a regular beacon from a source 4 min ahead must still fire after a catch-up burst")
+    clamped = _rule(BEACON)        # control: the same beats at the times the clamp produced
+    check(not any([clamped.evaluate(beat(k, min(t, wall))) for k, t in enumerate(stamps)]),
+          "control: with the stamps clamped to processing time the beacon must NOT fire "
+          "(otherwise the check above proves nothing)")
 
 
 def main():

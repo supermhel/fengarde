@@ -18,7 +18,6 @@ import threading
 import time
 from pathlib import Path
 
-import yaml  # noqa: E402 (stdlib-adjacent; needed by rule_health_metrics' tenant scan)
 
 HERE = Path(__file__).resolve().parent
 SERVICES = HERE.parent
@@ -27,6 +26,7 @@ sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(SERVICES))
 
 from shared.bus import Bus  # noqa: E402
+from shared.envelope import valid_tenant_id  # noqa: E402
 from engine import load_rules  # noqa: E402
 from shared.window import DequeWindowCounter  # noqa: E402
 from scoring import Scorer  # noqa: E402
@@ -171,20 +171,22 @@ class Detector:
         # (review finding 2026-10-13). Scan the enabled_rules of every tenant
         # config, same fail-open shape as tenants.py (a broken file opts
         # nothing in).
+        #
+        # Read through tenants.py's own loader (external review 2026-10-14), so
+        # the gauge sees exactly what Detector.process sees: a file whose stem is
+        # not a valid tenant id (never loaded by the Detector) opts nothing in, a
+        # rule the same tenant also DISABLES is off for it (disabled wins), and
+        # the answer comes from the same cache instead of a fresh read that can
+        # disagree with it until the next invalidate_cache().
         tenant_opted: set[str] = set()
         td = Path(self.tenants_dir)
         if td.is_dir():
             for path in td.glob("*.yml"):
-                try:
-                    raw = yaml.safe_load(path.read_text(encoding="utf-8"))
-                except Exception:
+                tenant = path.stem
+                if not valid_tenant_id(tenant):
                     continue
-                if not isinstance(raw, dict):
-                    continue
-                entries = raw.get("enabled_rules")
-                if not isinstance(entries, (list, tuple)):
-                    continue
-                tenant_opted |= {e for e in entries if isinstance(e, str)}
+                tenant_opted |= (load_enabled_rules(self.tenants_dir, tenant)
+                                 - load_disabled_rules(self.tenants_dir, tenant))
         for r in self.rules:
             if r.id not in self.rule_last_fired:
                 # A default-off rule nobody opted in to (Detector kwarg / env
@@ -338,8 +340,30 @@ class Detector:
         # suppression behind it, or the companion's alert is deleted in favour
         # of a sibling alert that never exists. test_companion_rules.py
         # (run_suppression_invariant) fails when that happens.
-        _matched_ids = {r.id for r in matched}
-        matched = [r for r in matched if r.companion_of not in _matched_ids]
+        #
+        # COVERAGE CONDITION (external review, 2026-10-14): "the sibling matched
+        # this event" is not enough. The sibling matched on ITS key, so its alert
+        # can be about a different entity and carry different events: a loud
+        # address firing the per-source brute-force rule hid the per-account
+        # alert of a two-address attack on another account whenever the
+        # crossing event came from the loud address, and the per-domain DNS
+        # tunnel alert vanished behind every per-resolver alert. The companion is
+        # now dropped only when the sibling's window already holds every event
+        # the companion's alert would cite (Rule.window_evidence). A rule that
+        # cannot name its events (distinct-count windows) is never dropped: its
+        # alert is emitted beside the sibling's, adds no score (score_weight 0)
+        # and dedups per window bucket like any stateful alert.
+        _by_id = {r.id: r for r in matched}
+
+        def _covered(rule) -> bool:
+            sibling = _by_id.get(rule.companion_of) if rule.companion_of else None
+            if sibling is None:
+                return False
+            mine, theirs = rule.window_evidence(event), sibling.window_evidence(event)
+            return (mine is not None and theirs is not None
+                    and mine[0] == theirs[0] and mine[1] <= theirs[1])
+
+        matched = [r for r in matched if not _covered(r)]
         score = self.scorer.score(matched, event)
         # R4-28 (2026-08-27): the old `event.setdefault("siem", {})["score"]`
         # raised TypeError on a `siem: null` event -- setdefault returns the
