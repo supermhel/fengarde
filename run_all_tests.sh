@@ -638,6 +638,9 @@ $PY services/ws7-dashboard/test_phase5_asset_detail.py || { fail=1; FAILED="${FA
 echo
 echo "== Phase 5 item 3 (2026-09-04): incident detail renders the causal graph + evidence package =="; LAST_HEADER="== Phase 5 item 3 (2026-09-04): incident detail renders the causal graph + evidence package =="
 $PY services/ws7-dashboard/test_phase5_incident_graph_evidence.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
+echo "== WS-7 (2026-10-14): 10s poll refresh keeps the open incident + its evidence panel =="; LAST_HEADER="== WS-7 (2026-10-14): 10s poll refresh keeps the open incident + its evidence panel =="
+$PY services/ws7-dashboard/test_incident_poll_keeps_selection.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 
 echo
 if [ "$fail" -eq 0 ]; then
