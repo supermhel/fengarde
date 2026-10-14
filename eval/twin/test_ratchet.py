@@ -81,9 +81,18 @@ def test_fingerprint_is_stable_and_sensitive() -> None:
     with tempfile.TemporaryDirectory() as td:
         tmp = Path(td) / "repo"
         shutil.copytree(ROOT, tmp, ignore=shutil.ignore_patterns(".git", "__pycache__", ".venv"))
+        # the ratchet's own code produces no artifact: editing it must NOT go stale
+        own = tmp / "eval" / "twin" / "ratchet.py"
+        own.write_bytes(own.read_bytes() + b"\n# touched\n")
+        _check("ratchet code edit leaves fingerprint unchanged", first == system_fingerprint(tmp))
+        # a storyline builder moves every scenario atom (it was outside the first glob list)
+        story = tmp / "eval" / "twin" / "storyline_phishing_bec.py"
+        story.write_bytes(story.read_bytes() + b"\n# touched\n")
+        after_story = system_fingerprint(tmp)
+        _check("storyline builder edit changes fingerprint", first != after_story)
         target = tmp / "contracts" / "rules" / "dc_mass_vm_delete.yml"
         target.write_bytes(target.read_bytes() + b"\n")
-        _check("rule edit changes fingerprint", first != system_fingerprint(tmp))
+        _check("rule edit changes fingerprint", after_story != system_fingerprint(tmp))
 
 
 def test_direction_table_completeness() -> None:

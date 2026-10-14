@@ -602,6 +602,11 @@ def trend_diff(path: Path = TREND_PATH, summary_path: Path | None = None) -> int
     rows = _trend_rows(path)
     warnings = []
     comparable = [r for r in rows if r.get("comparable") and r.get("producer") == "stub"]
+    if len(comparable) < 2:
+        # A fresh runner holds the committed header plus tonight's row: nothing is
+        # compared, and saying "no warnings" would read as "deterministic".
+        warnings.append(f"Layer C advisory: {len(comparable)} comparable stub row(s); "
+                        f"determinism NOT checked (needs >= 2)")
     for left, right in zip(comparable, comparable[1:]):
         if left.get("system_fingerprint") == right.get("system_fingerprint") and left.get("ratchet_snapshot") != right.get("ratchet_snapshot"):
             warnings.append("::error::Layer C stub determinism changed with an equal system fingerprint")

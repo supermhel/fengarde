@@ -12,27 +12,23 @@ _FINGERPRINT_GLOBS = (
     "contracts/**/*.yml",
     "contracts/**/*.yaml",
     "contracts/**/*.json",
-    "eval/twin/scenario.py",
-    "eval/twin/scenarios_extra.py",
-    "eval/twin/scenario_registry.py",
-    "eval/twin/report.py",
-    "eval/twin/negative_controls.py",
-    "eval/twin/plc_sim.py",
-    "eval/twin/degradation.py",
+    # Whole directories, not a hand-picked module list: the first version named
+    # eight eval/twin modules and missed the storyline builders
+    # (storyline_*.py, scenario_kit.py) and causal_order.py, so editing a
+    # storyline moved every scenario atom while an old artifact still carried a
+    # matching fingerprint (2026-10-14 review). Over-inclusion only forces a re-run.
+    "eval/twin/*.py",
     "eval/twin/oracle*.yaml",
-    "eval/adversarial/mutate.py",
-    "eval/adversarial/mutate_generic.py",
-    "eval/adversarial/layer_a.py",
-    "eval/adversarial/scenario_matrix.py",
-    "eval/adversarial/evasion_search.py",
-    "eval/adversarial/corpus_b.py",
-    "eval/attack/fire_check.py",
+    "eval/adversarial/*.py",
+    "eval/attack/*.py",
     "tools/detection_quality_eval.py",
-    "services/shared/**/*.py",
-    "services/ws2-normalization/**/*.py",
-    "services/ws4-detection/**/*.py",
-    "services/ws8-correlation/**/*.py",
+    "tools/check_rule_producers.py",      # fire_check replays its FIXTURES
+    "tools/validate_rules.py",            # load_rules validates through it
+    "services/**/*.py",
 )
+# The ratchet's own code reads artifacts, it does not produce them.
+_EXCLUDED = frozenset({"eval/twin/ratchet.py", "eval/twin/ratchet_measure.py",
+                       "eval/twin/fingerprint.py"})
 
 
 def fingerprint_files(root: Path = ROOT) -> list[Path]:
@@ -43,7 +39,7 @@ def fingerprint_files(root: Path = ROOT) -> list[Path]:
     out = []
     for path in sorted(files, key=lambda p: p.relative_to(root).as_posix()):
         rel = path.relative_to(root).as_posix()
-        if "__pycache__" in path.parts or path.name.startswith("test_"):
+        if "__pycache__" in path.parts or path.name.startswith("test_") or rel in _EXCLUDED:
             continue
         if path.suffix in {".pyc", ".json"} and not rel.startswith("contracts/"):
             continue
