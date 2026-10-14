@@ -149,3 +149,28 @@ The three hand-written oracles are checked two ways. `python eval/twin/oracle_mu
 - `noise_dilution.py --blocking-subset` turns F1 into an end-to-end instrument: benign noise on a 60 s rule sweeps the live state of every longer-window rule; the noise count is in counter hits (a companion makes one event two hits), found by bisection on full-stream replays, predicted independently from `_SWEEP_EVERY`, and the mandatory >60 s pause is part of the cost. Controls: no noise, key-not-idle, N*-1, per-key-sweep fix turns it green, phase shift, parity on the noise stream. Deque backend only (Redis expires per key).
 - The generated table in `contracts/detection-coverage.md` is bracketed by `evasion-cost` markers and its header is `| Rule-set (key) |`, deliberately not `| Rule |` (check_lane_coverage would read it as the rule scorecard). `evasion_cost.py --write-doc` regenerates it; the default run fails if it is stale.
 - Not covered: the WS-8 member-cap flood and the incident/triage metrics (need `reg.grade` and metrics that do not exist yet).
+
+### Phase 6 atom-level ratchet (step-6, current branch)
+
+`eval/twin/ratchet.py` compares a flat, per-atom map produced from the deterministic
+Phase 4/5 artifacts. The committed `baseline_scenarios.json` freezes the measured
+known gaps; it does not turn `it_intrusion` (13/19 in the original three-storyline
+slice), `infra_takeover` (12/16), Layer A (34/37), or the WS-8 join-class rows into
+absolute security claims. `chain_fidelity`, FCR, incident counts, and fired counts
+are pinned: any change requires an explicit history entry with reason and evidence.
+
+Each mutation has separate pass, detection, fidelity, FCR, order, decoy, causal-join,
+expected-rule-loss, tactic-loss, and collateral-loss atoms. Technique cells are
+step-level: `tactic_covered` and `expected_rule_fired` are separate, and techniques
+sharing a step share that step's outcome. A current artifact must carry the same
+`system_fingerprint` as the selected source inputs; missing or stale artifacts fail.
+
+`ratchet.py refresh --init` is the only baseline initializer; `refresh --reason ...`
+records improvements in append-only `ratchet_history.jsonl`. Dated waivers are capped
+at 45 days and require evidence. `ratchet.py guard --base origin/main` blocks a
+baseline drop without a waiver or evidenced history record. Layer C remains advisory:
+`trend-append` and `trend-diff` write/upload a separate `layer-c-trend-v1` stream and
+never turn an LLM grade into a blocking baseline result. The acceptance module also
+runs a temporary-rule-directory proof: weakening the mass-VM-delete thresholds turns
+`thin_25pct` red while the stock rule tree remains byte-identical.
+
