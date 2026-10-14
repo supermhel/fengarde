@@ -44,8 +44,10 @@ Without timestamps the window cannot be applied: the whole file is then treated 
 window (an upper bound), and the report says so loudly. Memory is bounded: per parent
 only the entries inside the window are kept; parents that fell out of the window are
 swept; per-parent totals use capped sets. The input should be roughly time-ordered:
-a record more than one window older than the newest timestamp is excluded from window
-counts and reported (``late_records``), never silently mixed in.
+a record more than one window older than the newest timestamp is reported as
+``late_records`` (a warning) but STILL counted -- the deployed rule's
+DequeWindowCounter evicts by each call's own horizon, so a late record is
+momentarily in-window and the report must match the rule, not a cleaned ideal.
 
 Stdlib plus the repo's own modules (PyYAML is already a repo dependency).
 """
@@ -485,9 +487,15 @@ class Analyzer:
     def _window_add(self, st: _Parent, ms: int, name: str) -> None:
         w = self.window_ms
         gh = self._global_hwm if self._global_hwm is not None else ms
+        # A record more than one window behind the newest timestamp is reported
+        # as late AND STILL COUNTED, exactly like the engine's
+        # DequeWindowCounter.hit_distinct treats it (review finding 2026-10-13:
+        # the tool used to DROP it before counting, so shuffled/out-of-order
+        # traffic was understated vs the deployed rule -- measured 29 vs 41 peak
+        # on one stream; the engine evicts by each call's own horizon, so a late
+        # record is momentarily in-window and the report must match the rule).
         if (st.hwm is not None and ms < st.hwm - w) or ms < gh - w:
             self.late += 1
-            return
         if st.dq and ms < st.dq[-1][0]:
             items = list(st.dq)
             bisect.insort(items, (ms, name))
@@ -497,7 +505,10 @@ class Analyzer:
         st.counts[name] = st.counts.get(name, 0) + 1
         if st.hwm is None or ms > st.hwm:
             st.hwm = ms
-        horizon = st.hwm - w
+        # Evict by THIS CALL's own horizon (ms - w), not st.hwm - w: that is the
+        # engine's rule, and the difference is exactly what makes a late-arriving
+        # record visible here the way the deployed rule sees it.
+        horizon = ms - w
         while st.dq and st.dq[0][0] < horizon:
             _, old = st.dq.popleft()
             left = st.counts[old] - 1
@@ -623,8 +634,9 @@ def build_report(an: Analyzer, *, threshold: int, window_seconds: int, allowlist
             "(they still count in the totals).")
     if an.late:
         warnings.append(
-            f"{an.late} record(s) were more than one window older than the newest timestamp seen (input "
-            "not time-ordered) and were EXCLUDED from the window counts; sort the log by time for exact results.")
+            f"{an.late} record(s) arrived more than one window behind the newest timestamp seen (input "
+            "not time-ordered) and were COUNTED like the deployed rule does (momentarily in-window); "
+            "sort the log by time for exact results.")
     if meta.get("malformed"):
         warnings.append(f"{meta['malformed']} malformed line(s) were counted and skipped.")
     if allowlist is None:

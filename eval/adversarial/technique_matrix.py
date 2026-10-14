@@ -56,6 +56,7 @@ import argparse
 import json
 import re
 import sys
+from datetime import datetime
 from pathlib import Path
 
 import yaml
@@ -92,7 +93,27 @@ TECHNIQUE_NAMES = {
     "T1195.001": "Supply Chain Compromise: Compromise Software Dependencies and Development Tools",
 }
 
-_DATED = re.compile(r"^\d{4}-\d{2}-\d{2} \S.{8,}")
+
+#: 'YYYY-MM-DD <reason>' with a REAL calendar date (review finding 2026-10-13:
+#: the old shape-only regex accepted '2020-99-99' / dates that cannot exist, so
+#: the "dated" discipline was decorative). The date is still convention, not
+#: expiry -- a waiver never auto-expires; stale is declared when the rule
+#: becomes exercised (G5). A future-dated reason is a diff-review item, exactly
+#: like a hand-lowered evasion floor.
+_DATED = re.compile(r"^(\d{4}-\d{2}-\d{2}) \S.{8,}")
+
+
+def _dated_ok(why: str) -> bool:
+    m = _DATED.match(str(why or ""))
+    if not m:
+        return False
+    try:
+        datetime.strptime(m.group(1), "%Y-%m-%d")
+    except ValueError:
+        return False
+    return True
+
+
 _TECH_SHAPE = re.compile(r"^(T\d{4}(\.\d{3})?|AML\.T\d{4}(\.\d{3})?)$")
 
 #: Cells whose cause is KNOWN and not a product behaviour. Shown next to the cell; the class is NOT
@@ -344,8 +365,9 @@ def gate(matrix: dict, waivers: dict, *, registry_names: list | None = None,
             problems.append(f"G5 waiver for {stem!r} names no shipped rule")
     for table, entries in (("unexercised", un), ("no_technique", nt)):
         for stem, why in sorted(entries.items()):
-            if not _DATED.match(str(why or "")):
-                problems.append(f"G5 {table} waiver for {stem!r} needs 'YYYY-MM-DD <reason>' (got {why!r})")
+            if not _dated_ok(why):
+                problems.append(f"G5 {table} waiver for {stem!r} needs 'YYYY-MM-DD <reason>' with a real "
+                                f"calendar date (got {why!r})")
     # G2 / G4 / G5 per rule
     for stem, rr in sorted(rules.items()):
         tech = rr["technique"]

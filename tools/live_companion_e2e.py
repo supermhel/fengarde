@@ -154,8 +154,12 @@ def settle(search, stable_polls, max_s, poll_s=_POLL_S, clock=time.monotonic, sl
     """Poll until the alert set is unchanged across `stable_polls` consecutive successful polls.
 
     Replaces a fixed sleep: a late co-emitted alert changes the set and restarts the count.
-    A failed query (None) also restarts the count. Returns (alerts, settled, elapsed_s);
-    settled is False if max_s ran out first.
+    A failed query (None) also restarts the count, and so does a SUCCESSFUL EMPTY result
+    (review finding 2026-10-13): by the time settle() runs, wait_for_anchor has already
+    observed the anchor alert indexed, so an empty hit set afterwards is a transient backend
+    artefact (index rollover, alias race, filter bug), not "stability" -- treating it as
+    stable let the negative assertions pass vacuously against an empty set. Returns
+    (alerts, settled, elapsed_s); settled is False if max_s ran out first.
     """
     t0 = clock()
     last = None
@@ -163,7 +167,7 @@ def settle(search, stable_polls, max_s, poll_s=_POLL_S, clock=time.monotonic, sl
     run = 0
     while True:
         a = search()
-        if a is not None:
+        if a is not None and a:
             sig = _signature(a)
             run = run + 1 if sig == last else 1
             last, alerts = sig, a
@@ -358,6 +362,15 @@ def selfcheck():
     _, settled, _ = settle(_seq_search([[_a("A")], None, [_a("A")], [_a("A")], [_a("A")]]), 3, 60, 3.0,
                            ft.clock, ft.sleep)
     expect(settled, "settle: a transient query error must restart the count, then still settle")
+    ft = _FakeTime()
+    alerts, settled, _ = settle(_seq_search([[_a("A")], [], [], [], [_a("A")], [_a("A")], [_a("A")]]),
+                                3, 60, 3.0, ft.clock, ft.sleep)
+    expect(settled and {x["rule_id"] for x in alerts} == {"A"},
+           "settle: a SUCCESSFUL EMPTY result must restart the count like a failed query (else the "
+           "negative assertions pass vacuously against an empty set)")
+    ft = _FakeTime()
+    _, settled, _ = settle(_seq_search([[_a("A")], [], [], [], []]), 3, 9, 3.0, ft.clock, ft.sleep)
+    expect(not settled, "settle: nothing but empties after the anchor must never count as stability")
 
     # evaluate: positive control (forbidden alert lands late -> caught), negative control (clean -> pass)
     fails, _, _ = run_eval([[_a("ANCHOR")], [_a("ANCHOR"), _a("BAD")], [_a("ANCHOR"), _a("BAD")],

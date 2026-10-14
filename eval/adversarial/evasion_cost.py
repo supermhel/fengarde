@@ -55,6 +55,7 @@ import argparse
 import copy
 import datetime
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -105,7 +106,7 @@ def measure_set(probe: ps.FastProbe, rs: ax.RuleSet, burst: ax.Burst, tables: di
     row: dict = {"key": rs.key, "rules": rs.names, "basis": "harness-measured", "burst_source": burst.source,
                  "burst_events": burst.n, "production_reachable": burst.production_reachable,
                  "reachability_basis": burst.reachability_basis, "orphan_companion": rs.orphan,
-                 "fingerprint": rs.fingerprint(), "params": rs.params()}
+                 "fingerprint": rs.fingerprint(burst=burst), "params": rs.params()}
     agree = True
 
     loss = ax.search_loss(lab)
@@ -277,6 +278,28 @@ def finding_reproduces(f: dict, res: dict) -> tuple:
     return bool(affected), affected
 
 
+_WAIVER_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def _waiver_ok(w: dict) -> tuple:
+    """(ok, detail) for a coverage waiver: 'reason' non-empty AND 'date' a real
+    YYYY-MM-DD (a parseable calendar date). Review finding 2026-10-13: the old
+    check was truthiness-only, so '2020-99-99' or '2999-01-01' exempted an
+    unmeasured rule-set forever -- the 'dated waiver' discipline was decorative.
+    Same shape validation the sibling lane (technique_matrix) enforces."""
+    reason = w.get("reason") if isinstance(w, dict) else None
+    date = w.get("date") if isinstance(w, dict) else None
+    if not isinstance(reason, str) or not reason.strip() or not isinstance(date, str):
+        return False, "needs a non-empty reason and a date"
+    if not _WAIVER_DATE.match(date):
+        return False, f"date {date!r} is not YYYY-MM-DD"
+    try:
+        datetime.datetime.strptime(date, "%Y-%m-%d")
+    except ValueError:
+        return False, f"date {date!r} is not a real calendar date"
+    return True, f"({date})"
+
+
 def check(res: dict, floor: dict, findings: list, *, strict_coverage: bool = True) -> Gate:
     g = Gate()
     rows = res["rule_sets"]
@@ -287,18 +310,21 @@ def check(res: dict, floor: dict, findings: list, *, strict_coverage: bool = Tru
         if key in rows:
             continue
         w = waivers.get(key)
-        if w and w.get("reason") and w.get("date"):
-            g.info.append(f"coverage: {key} waived ({w['date']}): {w['reason']}")
+        ok, detail = _waiver_ok(w) if w else (False, "no waiver")
+        if ok:
+            g.info.append(f"coverage: {key} waived {detail}: {w['reason']}")
         else:
             g.fail.append(f"COVERAGE {key}: stateful rule-set has neither a reference burst (storyline or "
-                          f"rule_probes template) nor a dated waiver in evasion_floor.yaml")
+                          f"rule_probes template) nor a dated waiver in evasion_floor.yaml ({detail})")
     for key, r in rows.items():
         for u in r["unsearchable_keys"]:
             w = waivers.get(f"{key}:{u['group_by']}")
-            if w and w.get("reason") and w.get("date"):
-                g.info.append(f"coverage: {key} key {u['group_by']} waived ({w['date']})")
+            ok, detail = _waiver_ok(w) if w else (False, "no waiver")
+            if ok:
+                g.info.append(f"coverage: {key} key {u['group_by']} waived {detail}")
             else:
-                g.fail.append(f"COVERAGE {key}: unsearchable key {u['group_by']} ({u['reason']}) and no waiver")
+                g.fail.append(f"COVERAGE {key}: unsearchable key {u['group_by']} ({u['reason']}) "
+                              f"and no dated waiver ({detail})")
 
     # -- prediction agreement --------------------------------------------------
     for key, r in rows.items():
@@ -341,6 +367,16 @@ def check(res: dict, floor: dict, findings: list, *, strict_coverage: bool = Tru
                 msg = f"UNLISTED {flag} on {key}: not in evasion_findings.yaml"
                 (g.fail if r.get(flag + "_ratified") else g.warn).append(
                     msg + ("" if r.get(flag + "_ratified") else " (rests on unratified table rows: not gating)"))
+    # noise-family (F1): the register kept no closure for it -- a regression of
+    # the counter that reproduces while no noise_primitive finding is registered
+    # sailed through (review finding 2026-10-13, F7). Close it the same way the
+    # boolean classes are closed: reproducing-but-unlisted is a failure, and the
+    # listed-but-fixed case is already handled by the STALE branch above.
+    noise_class = "noise_primitive"
+    noise_registered = any(f.get("repro", {}).get("kind") == noise_class for f in findings)
+    if nd.f1_reproduces() and not noise_registered:
+        g.fail.append(f"UNLISTED {noise_class}: the counter-sweep defect reproduces "
+                      "but no finding of this class is in evasion_findings.yaml")
 
     # -- floors ----------------------------------------------------------------
     floors = floor.get("rule_sets") or {}
@@ -357,6 +393,15 @@ def check(res: dict, floor: dict, findings: list, *, strict_coverage: bool = Tru
         fl = floors.get(key)
         if fl is None:
             g.fail.append(f"FLOOR {key}: no floor recorded -- run --update-floor once and commit evasion_floor.yaml")
+            continue
+        # A floor record for a MEASURED rule-set with no fields at all is a hand
+        # edit that deleted the ratchet (review finding 2026-10-13, F2: deleting
+        # the whole 'fields:' map used to slip past with INFO 'no floor field
+        # yet' lines). --update-floor always writes fields for a measured set,
+        # so an empty map here is corruption, not a fresh state.
+        if not (fl.get("fields") or {}):
+            g.fail.append(f"FLOOR {key}: the floor record has no fields (deleted by hand?); "
+                          "re-run --update-floor")
             continue
         if fl.get("fingerprint") != r["fingerprint"]:
             g.fail.append(f"FINGERPRINT {key}: the rule parameters / selection / allowlists changed since the floor "

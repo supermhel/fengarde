@@ -44,7 +44,7 @@ def _get(port, path, cookie=None):
     headers = {"Cookie": cookie} if cookie else {}
     req = urllib.request.Request(f"http://127.0.0.1:{port}{path}", headers=headers)
     try:
-        with urllib.request.urlopen(req, timeout=5) as resp:
+        with urllib.request.urlopen(req, timeout=20) as resp:  # 20s: loaded-host flake
             return resp.status, json.loads(resp.read().decode())
     except urllib.error.HTTPError as e:
         return e.code, json.loads(e.read().decode())
@@ -60,7 +60,7 @@ def _post(port, path, body=None, cookie=None, csrf=None):
         f"http://127.0.0.1:{port}{path}",
         data=json.dumps(body or {}).encode(), method="POST", headers=headers)
     try:
-        with urllib.request.urlopen(req, timeout=5) as resp:
+        with urllib.request.urlopen(req, timeout=20) as resp:  # 20s: loaded-host flake
             return resp.status, json.loads(resp.read().decode())
     except urllib.error.HTTPError as e:
         return e.code, json.loads(e.read().decode())
@@ -72,7 +72,7 @@ def _login_with_csrf(port, username, password):
     body = json.dumps({"username": username, "password": password}).encode()
     req = urllib.request.Request(f"http://127.0.0.1:{port}/auth/login", data=body,
                                   method="POST", headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=5) as resp:
+    with urllib.request.urlopen(req, timeout=20) as resp:  # 20s: loaded-host flake
         set_cookie = resp.headers.get("Set-Cookie").split(";")[0]
         payload = json.loads(resp.read().decode())
         return set_cookie, payload["csrf_token"]

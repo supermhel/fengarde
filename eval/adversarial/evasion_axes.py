@@ -196,11 +196,20 @@ class RuleSet:
                          "periodicity": r.periodicity, "companion_of": r.companion_of}
                 for r in self.rules}
 
-    def fingerprint(self, allowlists_dir=None) -> str:
+    def fingerprint(self, allowlists_dir=None, burst: "Burst | None" = None) -> str:
         """sha256 over everything that decides how evadable the set is: the YAML
         parameters, the companions' ids, the SELECTION clauses (a narrowed
         predicate or a ``not_in`` changes evasion cost as surely as a threshold)
-        and the content of every allowlist file a ``not_in`` references."""
+        and the content of every allowlist file a ``not_in`` references.
+
+        ``burst`` folds in the REFERENCE BURST the cost vector is measured on
+        (review finding 2026-10-13: the floor fingerprint previously covered the
+        rule but not its measurement input -- editing a rule_probes template
+        changed every measured cost while the fingerprint stayed byte-identical,
+        so the ratchet could be silently re-measured onto friendlier input and
+        ratcheted UP with no gate signal). Folding the burst digest in makes any
+        probe-template / storyline-burst edit a FINGERPRINT failure that must go
+        through --update-floor deliberately."""
         allowlists_dir = Path(allowlists_dir) if allowlists_dir is not None else ALLOWLISTS_DIR
         parts: list = []
         for r in sorted(self.rules, key=lambda x: x.name):
@@ -215,7 +224,21 @@ class RuleSet:
                           "distinct_field": r.distinct_field, "periodicity": r.periodicity,
                           "companion_of": r.companion_of, "detection": r.detection, "allowlists": shas})
         blob = json.dumps(parts, sort_keys=True, default=repr)
-        return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+        h = hashlib.sha256(blob.encode("utf-8")).hexdigest()
+        if burst is None:
+            return h
+        return hashlib.sha256(f"{h}::{burst_fingerprint(burst)}".encode("utf-8")).hexdigest()
+
+
+def burst_fingerprint(burst: "Burst") -> str:
+    """sha256 of the reference burst's payloads (source_type + raw + meta) in
+    arrival order. Editing a ``rule_probes`` template (count, spacing, fields)
+    or a storyline burst changes every measured cost; this digest is what pins
+    the floor to the input it was measured on (see ``RuleSet.fingerprint``)."""
+    parts = [{"source_type": p.get("source_type"), "raw": p.get("raw"), "meta": p.get("meta")}
+             for _s, p in burst.payloads]
+    return hashlib.sha256(
+        json.dumps(parts, sort_keys=True, default=repr).encode("utf-8")).hexdigest()
 
 
 def build_rule_sets(rules_dir=None) -> dict:

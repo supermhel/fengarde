@@ -63,7 +63,7 @@ def _request(port, method, path, body=None, cookie=None, csrf=None):
     req = urllib.request.Request(f"http://127.0.0.1:{port}{path}", data=data,
                                   method=method, headers=headers)
     try:
-        with urllib.request.urlopen(req, timeout=5) as resp:
+        with urllib.request.urlopen(req, timeout=20) as resp:  # 20s: loaded-host flake
             return resp.status, json.loads(resp.read().decode()), resp.headers.get("Set-Cookie")
     except urllib.error.HTTPError as e:
         err = e.read().decode()

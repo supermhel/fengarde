@@ -67,6 +67,22 @@ def validate_manifest(doc: dict) -> None:
         if (dest.startswith(("/", "\\")) or (len(dest) > 1 and dest[1] == ":")
                 or ".." in Path(dest).parts):
             raise ValueError(f"manifest[{name}]: dest must be a relative path inside the lane dir")
+        # sparse_paths are forwarded VERBATIM as git arguments to
+        # `git sparse-checkout set --no-cone <paths>` (review finding
+        # 2026-10-13): a value starting with '-' is parsed by git as an
+        # OPTION, not a path (e.g. '--cone', '--no-sparse-index' silently
+        # reshapes the sparse-checkout mode); an absolute path or '..'
+        # traversal would reach outside the repo. Reject all three shapes.
+        sparse = c.get("sparse_paths")
+        if sparse is not None:
+            if not isinstance(sparse, (list, tuple)) or not all(isinstance(p, str) for p in sparse):
+                raise ValueError(f"manifest[{name}]: sparse_paths must be a list of strings")
+            for p in sparse:
+                if (p.startswith("-") or p.startswith(("/", "\\"))
+                        or (len(p) > 1 and p[1] == ":") or ".." in Path(p).parts):
+                    raise ValueError(f"manifest[{name}]: sparse_paths entry {p!r} must be a relative, "
+                                     "non-option path (git would parse a leading '-' or absolute path "
+                                     "as an option/destination outside the repo)")
 
 
 # ------------------------------------------------------------------- git
