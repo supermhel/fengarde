@@ -128,9 +128,54 @@ def test_stale_repeat_never_lowers_a_values_recency():
             break
 
 
+def test_pre_62_redis_uses_lua_with_the_same_semantics():
+    """Q11 (2026-10-14): ZADD GT needs Redis >= 6.2. An older server must not lose
+    the stale-repeat guarantee (nor fail with a syntax error): the counter detects
+    the version once from INFO and runs the identical four steps as one Lua script."""
+    base = 1_750_000_000_000
+    old, new = _FakeRedis("6.0.16"), _FakeRedis("7.2.0")
+    lua, gt, d = RedisWindowCounter(old), RedisWindowCounter(new), DequeWindowCounter()
+    import random
+    rng = random.Random(62)
+    for i in range(400):
+        t = base + rng.randrange(0, 200_000)
+        v = rng.randrange(12)
+        a, b, c = (x.hit_distinct("g", t, 60_000, value=v) for x in (lua, gt, d))
+        check(a == b == c, f"op {i}: lua={a} gt={b} deque={c}")
+        if not a == b == c:
+            break
+    check(old.evals == 400 and new.evals == 0,
+          f"6.0 must take the Lua path and 7.2 the GT pipeline, evals={old.evals}/{new.evals}")
+
+    class _NoInfo(_FakeRedis):
+        def info(self, section=None):
+            raise ConnectionError("INFO disabled (rename-command)")
+    blind = _NoInfo()
+    RedisWindowCounter(blind).hit_distinct("g", base, 60_000, value=1)
+    check(blind.evals == 1, "an unknown server version must take the Lua path (works on every version)")
+    forced = _FakeRedis("7.2.0")
+    RedisWindowCounter(forced, zadd_gt=False).hit_distinct("g", base, 60_000, value=1)
+    check(forced.evals == 1, "zadd_gt=False must force the Lua path")
+
+
+def test_deque_distinct_memory_is_bounded_by_distinct_values():
+    """24 h distinct windows (common_credential_stuffing_sustained, 2026-10-14): a
+    repeat only refreshes its value, so one account hammered from 5 addresses a
+    million times holds ~5 entries, not a million. Count is unchanged."""
+    d = DequeWindowCounter()
+    base = 1_750_000_000_000
+    n = 0
+    for i in range(20_000):
+        n = d.hit_distinct("acct", base + i * 10, 86_400_000, value=f"198.51.100.{i % 5}")
+    check(n == 5, f"distinct count must stay 5, got {n}")
+    check(len(d._dw["acct"]) <= 2 * 5 + 64, f"deque holds {len(d._dw['acct'])} entries for 5 values")
+
+
 def main():
     run()
     test_stale_repeat_never_lowers_a_values_recency()
+    test_pre_62_redis_uses_lua_with_the_same_semantics()
+    test_deque_distinct_memory_is_bounded_by_distinct_values()
     if FAILS:
         print(f"[FAIL] distinct window: {len(FAILS)} problem(s)")
         for f in FAILS:

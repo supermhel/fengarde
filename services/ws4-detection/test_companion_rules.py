@@ -30,6 +30,8 @@ from parsers import _REGISTRY  # noqa: E402
 from enrichment import enrich  # noqa: E402
 
 RULES_DIR = ROOT / "contracts" / "rules"
+SPRAY = "4f8a2c61-9e3d-4b57-8a1c-6d2e5f7a8b90"        # credential stuffing, 8 sources / 300 s
+SPRAY_24H = "9cfa2df1-e480-4260-aefb-0e7a1701bb43"    # its sustained tier, 20 sources / 24 h
 BASE = 1_751_500_000_000
 FAILS: list[str] = []
 
@@ -127,6 +129,14 @@ def run():
                   i, BASE + i * 1_000) for i in range(60)]
     check(not _fires(_rule("5f3c9d18-72a4-4e0b-b6d1-8c2e7a4f1b93"), ptr),
           "dns_tunnel_by_domain: reverse-lookup zones must never pool into a tunnel alert")
+
+    # ---- Q16 (2026-10-14): slow stuffing -- 20 addresses, one every 30 minutes, ONE account ----
+    _case("credential_stuffing_sustained",
+          SPRAY, SPRAY_24H,
+          lambda i: _event("linux_ssh",
+                           f"Jun 10 13:55:00 db01 sshd[{4000 + i}]: Failed password for payroll "
+                           f"from 198.51.100.{10 + i} port {52000 + i} ssh2", i, BASE + i * 1_800_000),
+          n_fire=20, n_short=19)
 
 
 def run_opcua():
@@ -345,6 +355,28 @@ def run_suppression_invariant():
         ids8 = dns_run(tunnel)
         check(DNS_SIB in ids8 and DNS_COMP not in ids8,
               f"(8) a pure tunnel host must alert once (sibling), not twice, got {sorted(set(ids8))}")
+
+        # (9) Q16 tiers: a FAST burst of 20 addresses in 100 s fills both windows with the SAME
+        #     source set -> one alert (the burst tier); a slow trickle earlier in the day plus a
+        #     burst later leaves the 24 h window holding MORE addresses -> both alert.
+        def stuff_run(times_ips):
+            det = _detector(Path(tmp) / "open")
+            seen: list = []
+            for i, (t_ms, ip) in enumerate(times_ips):
+                ev = _event("linux_ssh", f"Jun 10 13:55:00 db01 sshd[{6000 + i}]: Failed password for payroll "
+                                         f"from {ip} port {53000 + i} ssh2", 700 + i, t_ms)
+                _m, alerts = _emit_one(det, ev)
+                seen += [a["rule_id"] for a in alerts]
+            return seen
+
+        burst = [(BASE + 400_000 + i * 5_000, f"198.51.100.{100 + i}") for i in range(20)]
+        ids9 = stuff_run(burst)
+        check(SPRAY in ids9 and SPRAY_24H not in ids9,
+              f"(9) a fast 20-address burst must alert once (burst tier), got {sorted(set(ids9))}")
+        trickle = [(BASE - 6 * 3_600_000 + i * 1_800_000, f"192.0.2.{20 + i}") for i in range(12)]
+        ids9b = stuff_run(trickle + burst[:8])
+        check(SPRAY in ids9b and SPRAY_24H in ids9b,
+              f"(9b) trickle + burst: the 24 h tier holds more sources and must alert too, got {sorted(set(ids9b))}")
 
 
 def main():

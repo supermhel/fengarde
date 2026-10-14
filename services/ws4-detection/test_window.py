@@ -79,11 +79,26 @@ class _FakePipe:
 
 
 class _FakeRedis:
-    def __init__(self):
-        self.store = {}
+    def __init__(self, version: str = "7.2.0"):
+        self.store: dict = {}
+        self.version = version
+        self.evals = 0
 
     def pipeline(self):
         return _FakePipe(self.store)
+
+    def info(self, section=None):
+        return {"redis_version": self.version}
+
+    def eval(self, script, numkeys, key, member, score, trim_hi, ttl):
+        """The Redis < 6.2 path (shared.window._DISTINCT_LUA), same semantics in Python."""
+        self.evals += 1
+        d = self.store.setdefault(key, {})
+        if member not in d or int(score) > d[member]:
+            d[member] = int(score)
+        for m in [m for m, sc in d.items() if 0 <= sc <= int(trim_hi)]:
+            del d[m]
+        return len(d)
 
 
 def _drive(counter, key="bf:1.2.3.4", window_ms=60_000):

@@ -134,6 +134,10 @@ jobs:
           BUS_BACKEND: redis
           REDIS_URL: redis://localhost:6379/0
         run: python services/ws4-detection/test_window.py
+      - name: hit_distinct Lua fallback (Redis < 6.2 path) on real Redis
+        env:
+          REDIS_URL: redis://localhost:6379/0
+        run: python services/ws4-detection/test_window_redis_live.py
 
   # FIX M26 (2026-08-06): live OpenSearch integration. ws3's storage layer and
   # the migration tool have live-cluster paths that no other CI job exercises

@@ -55,17 +55,25 @@ def run():
     check(rule.stateful and rule.periodicity == {"max_cv": 0.25},
           "beaconing rule should be stateful with periodicity.max_cv=0.25")
 
-    # --- regular 60s cadence: 6 events -> should fire on the 6th ---
+    # --- regular 60s cadence: 20 events -> should fire on the 20th (Q15: threshold 20) ---
     fired = False
-    for i in range(6):
+    for i in range(20):
         ev = asa.parse(_built(i, base + i * 60))
         ev["siem"]["ingest_id"] = f"reg{i}"
         fired = rule.evaluate(ev)
-    check(fired is True, "6 events at a perfectly regular 60s cadence must fire")
+    check(fired is True, "20 events at a perfectly regular 60s cadence must fire")
+    # ... and 19 must not (the new threshold is the boundary, not a lower bound)
+    rule19 = rule_by_id(load_rules(RULES_DIR), BEACONING_ID)
+    fired19 = False
+    for i in range(19):
+        ev = asa.parse(_built(300 + i, base + 50_000 + i * 60))
+        ev["siem"]["ingest_id"] = f"reg19-{i}"
+        fired19 = rule19.evaluate(ev)
+    check(fired19 is False, "19 regular events must NOT fire (threshold 20)")
 
-    # --- irregular cadence: 6 events, same count, wildly uneven spacing ---
+    # --- irregular cadence: 20 events, same count, wildly uneven spacing ---
     rule2 = rule_by_id(load_rules(RULES_DIR), BEACONING_ID)
-    deltas = [0, 5, 300, 12, 900, 40]  # seconds, deliberately erratic
+    deltas = [0, 5, 300, 12, 900, 40, 3, 120, 7, 60, 2, 200, 15, 9, 150, 4, 90, 6, 30, 1]  # erratic
     t = base + 100000  # different src-independent time range, same src IP though
     fired2 = False
     for i, d in enumerate(deltas):
@@ -73,7 +81,7 @@ def run():
         ev = asa.parse(_built(100 + i, t))
         ev["siem"]["ingest_id"] = f"irr{i}"
         fired2 = rule2.evaluate(ev)
-    check(fired2 is False, "6 events at an irregular cadence must NOT fire (high CV)")
+    check(fired2 is False, "20 events at an irregular cadence must NOT fire (high CV)")
 
     # --- fewer than 3 events: never fires, regardless of threshold ---
     rule3 = rule_by_id(load_rules(RULES_DIR), BEACONING_ID)
