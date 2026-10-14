@@ -130,6 +130,35 @@ def test_technique_mapping_controls() -> None:
     _check("gap creates a gap cell", cells["tech/attack:T9999/cell/demo/gap/base"] == "gap")
 
 
+def test_refresh_lower_accepts_a_reviewed_regression() -> None:
+    """--lower is the reviewed way to accept a drop (2026-10-14: it covered pinned atoms only, so a
+    ranked regression such as a longer mttd could not be recorded at all); it must equal the
+    measurement, so it can never pre-approve a further drop."""
+    import argparse
+    import tempfile
+    saved = (ratchet.BASELINE_PATH, ratchet.HISTORY_PATH, ratchet.WAIVERS_PATH, ratchet._measure)
+    with tempfile.TemporaryDirectory() as td:
+        tmp = Path(td)
+        ratchet.BASELINE_PATH = tmp / "baseline.json"
+        ratchet.HISTORY_PATH = tmp / "history.jsonl"
+        ratchet.WAIVERS_PATH = tmp / "waivers.json"
+        ratchet._write_json(ratchet.BASELINE_PATH, ratchet._baseline_doc({"scn/demo/base/mttd_seconds": 60.0}, "fp"))
+        ratchet._measure = lambda: ({"scn/demo/base/mttd_seconds": 90.0}, [], {"system_fingerprint": "fp"})
+        evidence = "eval/twin/test_ratchet.py"   # repo-relative, as --evidence requires
+        try:
+            def refresh(lower):
+                return ratchet.cmd_refresh(argparse.Namespace(
+                    reason="reviewed drop recorded by the control test", init=False, scope=None,
+                    retire=None, lower=lower, evidence=evidence))
+            _check("a ranked regression without --lower is refused", refresh(None) == 1)
+            _check("--lower below the measurement is refused", refresh(["scn/demo/base/mttd_seconds=120"]) == 1)
+            _check("--lower at the measurement records the regression",
+                   refresh(["scn/demo/base/mttd_seconds=90.0"]) == 0
+                   and ratchet._load_json(ratchet.BASELINE_PATH)["atoms"]["scn/demo/base/mttd_seconds"] == 90.0)
+        finally:
+            ratchet.BASELINE_PATH, ratchet.HISTORY_PATH, ratchet.WAIVERS_PATH, ratchet._measure = saved
+
+
 def test_trend_is_advisory() -> None:
     with tempfile.TemporaryDirectory() as td:
         path = Path(td) / "trend.jsonl"
@@ -243,7 +272,7 @@ def main() -> int:
         test_atom_direction_and_masking, test_null_and_improvement, test_waiver_validation,
         test_fingerprint_is_stable_and_sensitive, test_direction_table_completeness,
         test_technique_mapping_controls, test_trend_is_advisory,
-        test_guard_controls,
+        test_guard_controls, test_refresh_lower_accepts_a_reviewed_regression,
         test_weakened_rule_mutation_proof,
     ]
     for test in tests:

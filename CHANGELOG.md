@@ -7,6 +7,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (2026-10-14 -- owner decisions on the open PR #93 items; see docs/handoff/2026-10-14-open-items-plan.md)
+
+- **BREAKING (alert ids): WS-4 account group keys are canonical (F2).** Rules grouping on
+  `actor.user.name` or `unmapped.target_user.name` now key their window on `strip().casefold()` -- the
+  ADR-009 canonical actor WS-8 already used (`engine.Rule._group_of`). "Admin", "admin" and "admin " no
+  longer split one burst. Every `alert_key` of those rules changes ONCE, so an alert redelivered across the
+  upgrade can index twice. DOMAIN\ / UPN forms are not folded (that would amend ADR-009); the residual stays
+  an open BUG in `eval/adversarial/evasion_findings.yaml`.
+- **`common_beaconing` needs 20 regular connections, not 6 (Q15).** With 6 events the CV over 5 intervals
+  passes on ordinary memoryless traffic often enough to fire across an estate. Cost, stated: a beacon slower
+  than one call per ~3 minutes no longer reaches 20 in the hour. Storyline, probes, negative twins and the
+  evasion floor were re-cut deliberately.
+- **Companion suppression requires coverage.** A companion alert is dropped only when its sibling matched the
+  same event AND the sibling's window already holds every event it would cite (count rules: subset; distinct
+  rules: the SAME value set). Fixes the loud-address split attack and the loud-resolver DNS tunnel hiding the
+  companion, without doubling every port-scan / lateral / tunnel alert.
+
+### Added (2026-10-14 -- owner decisions, P1 storylines, P4 blind grading)
+
+- **`common_credential_stuffing_sustained` (Q16):** a 24 h tier (20 distinct sources for one account) beside
+  the unchanged 300 s burst rule, as its companion. The deque distinct window now keeps one entry per value
+  (memory bounded by distinct values, the Redis backend's semantics).
+- **Parsers `mail_gateway` (OCSF 4009 Email Activity, new in the schema enum) and `m365_audit`** (Office 365
+  Management Activity schema; inbox-rule effect under `unmapped.m365.inbox_rule`). phishing_bec's two former
+  no-parser steps now parse; no rule reads that telemetry yet, so they stay declared gaps.
+- **F4 flag:** WS-2 stamps `siem.clock_skew_ms` when the record clock and `meta.received_at` differ by more
+  than 5 minutes. Behaviour is unchanged; the stamp makes the record-clock trust gap visible.
+- **Q11:** `RedisWindowCounter.hit_distinct` detects Redis < 6.2 (no `ZADD GT`) from `INFO` and runs the same
+  steps as one Lua script; a live CI test proves parity on a real server.
+- **WS-8 A + B:** the `ts_ms` semantics are a documented, contract-tested behaviour
+  (`test_incident_graph_v2.py::test_ts_ms_semantics_contract`), and `services/ws8-correlation/timeline.py`
+  is a read-side time-ordered view of an incident's member alerts, graded per storyline by
+  `eval/twin/test_timeline_order.py` with a mirrored-clock negative control.
+- **Q3:** the 8 verified rows of `eval/adversarial/evasion_tables.yaml` are ratified; the 2 ASSUMED rows are not.
+- **P1 storylines 6-9:** `ransomware`, `insider_exfil`, `cloud_iam_abuse`, `supply_chain_ci` -- oracles
+  authored from rule intent first; every first-run disagreement recorded (order-blind class), two
+  incident-count notes corrected and dated. The seven technique-matrix waivers they cover are deleted.
+- **P4:** `eval/twin/blind_grader.py` grades the archived blind oracle at technique level and writes a
+  register with an owner-decision column (`docs/handoff/blind-oracles/owner_decisions.yaml`).
+- **Q13:** the nightly corpus lane fetches at the manifest pins (`fetch_corpora.py`, selective LFS) and runs
+  `blind_recall.py --require-corpus`.
+- **Hygiene:** `eval/twin` is type-checked in CI (36 mypy errors fixed); the ratchet fingerprint covers
+  `eval/adversarial/*.yaml` (except the generated `evasion_floor.yaml`, a ratchet output) and
+  `tools/validate_contract.py`.
+- **Harness fixes the new storylines exposed:** `ratchet.py refresh --lower` now covers a ranked
+  regression (it covered pinned atoms only, so a reviewed drop such as phishing_bec's longer MTTD under
+  Q15 could not be recorded) and refuses a value that differs from the measurement; a storyline with one
+  alert-raising step (no incident, no graph) is graded as "nothing to order / nothing to join" instead of
+  failing every order and fidelity criterion, and its baseline carries a "no graph" caveat; an oracle
+  expecting zero full-chain incidents is met when nothing promotes; the periodic boundary control used
+  `ceil()` and never put exactly `threshold` beats in the window when `threshold - 1` does not divide it;
+  the noise-dilution split required every rule of a set to fire on the control burst, so the spray set
+  became unsplittable once its 24 h tier joined it.
+
 ### Added (2026-10-14 -- step 7 of the roadmap, the 5th storyline, and the first real third-party number)
 
 - **`eval/SCORECARD.md` exists now: a committed, generated card** (`eval/scorecard_registry.py`,

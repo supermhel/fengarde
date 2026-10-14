@@ -424,7 +424,8 @@ def cmd_refresh(args: argparse.Namespace) -> int:
         return any(atom == prefix or atom.startswith(prefix.rstrip("*") + ("" if prefix.endswith("*") else "/"))
                    for prefix in retire_prefixes)
     hard = [f for f in result.failures if f.kind not in {"IMPROVED-UNRECORDED", "NEW"}
-            and not (f.kind == "PINNED-CHANGED" and f.atom in lower_names)
+            # --lower is the reviewed way to accept a drop: a pinned change OR a ranked regression
+            and not (f.kind in {"PINNED-CHANGED", "REGRESSED"} and f.atom in lower_names)
             and not (f.kind == "REGRESSED-COVERAGE" and is_retired(f.atom))]
     if hard:
         _print_result(result, atoms, baseline)
@@ -451,6 +452,10 @@ def cmd_refresh(args: argparse.Namespace) -> int:
                 print(f"[FAIL] --lower names unknown baseline atom {atom}")
                 return 1
             value = _parse_value(raw)
+            if atom in atoms and not _equal(value, atoms[atom]):
+                # lowering BELOW the measurement would pre-approve a future drop nobody reviewed
+                print(f"[FAIL] --lower {atom}={raw}: must equal the current measurement {atoms[atom]!r}")
+                return 1
             baseline[atom] = value
             lowered.append({"atom": atom, "value": value,
                             "reason": args.reason, "evidence": args.evidence})

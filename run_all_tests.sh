@@ -69,6 +69,9 @@ echo
 echo "== ws8 campaign view: shared-alert linking, tenant isolation, no entity-only merge =="; LAST_HEADER="== ws8 campaign view =="
 $PY services/ws8-correlation/test_campaigns.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
+echo "== ws8 timeline (owner decision WS-8 B, 2026-10-14): read-side time order of an incident's member alerts =="; LAST_HEADER="== ws8 timeline (owner decision WS-8 B, 2026-10-14): read-side time order of an incident's member alerts =="
+$PY services/ws8-correlation/test_timeline.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
 echo "== ws3 WS-8 wiring: incident routing (day-stable across growth), storage list_incidents, OpenSearch wire format =="; LAST_HEADER="== ws3 WS-8 wiring: incident routing (day-stable across growth), storage list_incidents, OpenSearch wire format =="
 $PY services/ws3-indexer/test_ws8_incidents_routing.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 
@@ -250,6 +253,9 @@ echo
 echo "== ws4 P1-1 (2026-07-21 audit): non-stateful alert_key tenant isolation =="; LAST_HEADER="== ws4 P1-1 (2026-07-21 audit): non-stateful alert_key tenant isolation =="
 $PY services/ws4-detection/test_p1_1_alert_key_tenant.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
+echo "== ws4 F2 (2026-10-14 owner decision): account group keys are the ADR-009 canonical actor =="; LAST_HEADER="== ws4 F2 (2026-10-14 owner decision): account group keys are the ADR-009 canonical actor =="
+$PY services/ws4-detection/test_group_canonical.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
 echo "== ws4 Design-A (2026-07-29 audit): make_alert() records all contributing event ids =="; LAST_HEADER="== ws4 Design-A (2026-07-29 audit): make_alert() records all contributing event ids =="
 $PY services/ws4-detection/test_design_a_event_ids.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
@@ -369,6 +375,9 @@ $PY services/ws2-normalization/parsers/test_cef.py || { fail=1; FAILED="${FAILED
 echo
 echo "== ws2 parsers: cloudtrail (v0.5 A4, un-dormants cloud_root_console_login.yml) =="; LAST_HEADER="== ws2 parsers: cloudtrail (v0.5 A4, un-dormants cloud_root_console_login.yml) =="
 $PY services/ws2-normalization/parsers/test_cloudtrail.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
+echo "== ws2 parsers: mail_gateway (OCSF 4009) + m365_audit, and the F4 clock-skew stamp (2026-10-14) =="; LAST_HEADER="== ws2 parsers: mail_gateway (OCSF 4009) + m365_audit, and the F4 clock-skew stamp (2026-10-14) =="
+$PY services/ws2-normalization/parsers/test_mail_m365.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
 echo "== ws2 parsers: sysmon (P0-3, 2026-07-21 audit: first class-1001 producer) =="; LAST_HEADER="== ws2 parsers: sysmon (P0-3, 2026-07-21 audit: first class-1001 producer) =="
 $PY services/ws2-normalization/parsers/test_sysmon.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
@@ -546,6 +555,10 @@ $PY eval/twin/test_chain_fidelity.py || { fail=1; FAILED="${FAILED} ${LAST_HEADE
 echo
 echo "== twin: causal-order grading (per-incident min ts_ms, DAG pairs, typed-kind winner; order_concordance is a timestamp invariant) =="; LAST_HEADER="== twin: causal-order grading (per-incident min ts_ms, DAG pairs, typed-kind winner; order_concordance is a timestamp invariant) =="
 $PY eval/twin/test_causal_order.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo "== twin: timeline_order_ok -- WS-8 read-side timeline graded for oracle order (+ mirrored-clock negative control) =="; LAST_HEADER="== twin: timeline_order_ok -- WS-8 read-side timeline graded for oracle order (+ mirrored-clock negative control) =="
+$PY eval/twin/test_timeline_order.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo "== twin: P4 blind-oracle grader (technique-level register with owner-decision column; controls) =="; LAST_HEADER="== twin: P4 blind-oracle grader (technique-level register with owner-decision column; controls) =="
+$PY eval/twin/test_blind_grader.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
 echo "== WP-3.5-A: twin Phase 3.5 operational outcome metrics (alert reduction, false correlation, reconstruction, investigation, severity confusion -- determinism + mutation-soundness) =="; LAST_HEADER="== WP-3.5-A: twin Phase 3.5 operational outcome metrics (alert reduction, false correlation, reconstruction, investigation, severity confusion -- determinism + mutation-soundness) =="
 $PY eval/twin/test_phase3_5.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }

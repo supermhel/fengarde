@@ -28,9 +28,11 @@ _FINGERPRINT_GLOBS = (
     "tools/validate_rules.py",            # load_rules validates through it
     "services/**/*.py",
 )
-# The ratchet's own code reads artifacts, it does not produce them.
+# The ratchet's own code reads artifacts, it does not produce them; evasion_floor.yaml is a ratchet
+# OUTPUT (written by evasion_cost.py --update-floor), so a deliberate floor refresh must not stale
+# every artifact it was refreshed from.
 _EXCLUDED = frozenset({"eval/twin/ratchet.py", "eval/twin/ratchet_measure.py",
-                       "eval/twin/fingerprint.py"})
+                       "eval/twin/fingerprint.py", "eval/adversarial/evasion_floor.yaml"})
 
 
 def fingerprint_files(root: Path = ROOT) -> list[Path]:

@@ -26,11 +26,12 @@ detection rules. Update this file in the same PR as any parser or rule change.
 |---|---|---|---|
 | 1001 | File System Activity | sysmon (P0-3, 2026-07-21 audit fix plan — first producer, closes the long-standing gap below; EventID 11 FileCreate) | none yet — see "under-covered" below |
 | 1002 | Kernel/Process | generic_syslog, windows_eventlog (4688/4672), sysmon (P0-3, EventID 1 ProcessCreate; EventID 5 ProcessTerminate added 2026-09-10) | common_after_hours_admin (4672 activity 2) |
-| 3002 | Authentication | linux_ssh, active_directory, windows_eventlog (4624/4634/4647), opcua_audit (v0.4 P2, session events), n8n_audit (v0.4 P3, login/logout — no dedicated rule yet), cef (v0.5, auth-shaped extension keys), cloudtrail (v0.5, ConsoleLogin) | common_bruteforce, common_bruteforce_sourceless (P0-2, 2026-07-21 audit fix plan), common_lateral_movement, common_password_spray, common_impossible_travel (v0.4 P4), ot_new_engineering_connection, cloud_root_console_login (v0.5) |
+| 3002 | Authentication | linux_ssh, active_directory, windows_eventlog (4624/4634/4647), opcua_audit (v0.4 P2, session events), n8n_audit (v0.4 P3, login/logout — no dedicated rule yet), cef (v0.5, auth-shaped extension keys), cloudtrail (v0.5, ConsoleLogin) | common_bruteforce, common_bruteforce_sourceless (P0-2, 2026-07-21 audit fix plan), common_lateral_movement, common_password_spray, common_credential_stuffing_sustained (Q16), common_impossible_travel (v0.4 P4), ot_new_engineering_connection, cloud_root_console_login (v0.5) |
 | 3003 | Account Change | windows_eventlog (4720/4722/4726/4728/4732, added v0.3) | common_priv_grant, common_rapid_account_lifecycle (v0.5) |
 | 4001 | Network Activity | cisco_asa, cef (v0.5, non-auth-shaped extension keys), sysmon (P0-3, EventID 3 NetworkConnect, always activity 7/Accept), modbus_anomaly (M7, 2026-07-22 — protocol-anomaly detector, NOT a vendor-log parser, see its module docstring), inventory_diff (M7 Track Y, 2026-08-05 — inventory worker's new-device notifications, OT-aware) | common_port_scan, common_beaconing (v0.5, periodicity primitive), ot_modbus_unauthorized_write (M7), ot_modbus_unauthorized_write_ticketed (2026-08-28, LOW downgrade companion), ot_new_device_on_segment (M7 Track Y) |
 | 4002 | DNS/HTTP Activity | dns_query (v0.5, first producer — closes the long-standing gap below) | common_dns_exfil (v0.5) |
-| 6003 | API Activity | vmware_vsphere, mcp_agent (v0.4 P1), opcua_audit (v0.4 P2, write/method events), n8n_audit (v0.4 P3), k8s_audit (v0.5, first k8s producer), cloudtrail (v0.5, non-ConsoleLogin management events) | dc_mass_vm_delete, agent_credential_file_access, agent_tool_call_burst, agent_prompt_injection_indicator, ot_write_outside_maintenance, ot_config_change, n8n_new_webhook_exposed, n8n_workflow_modified_after_hours, dc_privileged_container (v0.5) |
+| 4009 | Email Activity | mail_gateway (2026-10-14, secure-email-gateway message log; attachment summary incl. macro-capable flag) | **none** -- parsed and indexed, no rule reads mail telemetry yet (phishing_bec phish_delivery stays a declared gap, T1566.001) |
+| 6003 | API Activity | vmware_vsphere, m365_audit (2026-10-14, mailbox-rule facts under unmapped.m365.inbox_rule -- no rule reads them yet, T1114.003 gap), mcp_agent (v0.4 P1), opcua_audit (v0.4 P2, write/method events), n8n_audit (v0.4 P3), k8s_audit (v0.5, first k8s producer), cloudtrail (v0.5, non-ConsoleLogin management events) | dc_mass_vm_delete, agent_credential_file_access, agent_tool_call_burst, agent_prompt_injection_indicator, ot_write_outside_maintenance, ot_config_change, n8n_new_webhook_exposed, n8n_workflow_modified_after_hours, dc_privileged_container (v0.5) |
 | 6005 | Datastore Activity | db_audit (v0.3 — fixed the dormancy below) | bank_db_priv_esc, bank_mass_card_read (v0.5) |
 
 ## Gaps — classes with NO parser producer at all
@@ -71,6 +72,7 @@ this is now a rule gap, not a parser gap.
 | common_bruteforce | class 3002, activity 4 (Failure) | yes (linux_ssh, active_directory) | ATT&CK T1110 / TA0006 |
 | common_bruteforce_by_account | class 3002, activity 4 (Failure), group_by actor.user.name (immune to source-address rotation; added 2026-10-01; level medium since 2026-10-02 -- it pools every source, so ambient spraying must not queue LLM triage on its own) | yes (linux_ssh, active_directory) | ATT&CK T1110 / TA0006 |
 | common_password_spray | class 3002, activity 4, distinct src_endpoint.ip | yes (linux_ssh, active_directory) | ATT&CK T1110.004 / TA0006 |
+| common_credential_stuffing_sustained | class 3002, activity 4, distinct src_endpoint.ip over 24 h (Q16, 2026-10-14; companion of common_password_spray) | yes (linux_ssh, active_directory) | ATT&CK T1110.004 / TA0006 |
 | common_bruteforce_sourceless | class 3002, activity 4, distinct actor.user.name per src_endpoint.hostname | yes (active_directory, added P0-2, 2026-07-21 audit fix plan) | ATT&CK T1110 / TA0006 |
 | common_lateral_movement | class 3002, activity 1, status Success, dst_endpoint.hostname | yes (windows_eventlog 4624) | ATT&CK T1021 / TA0008 |
 | common_lateral_movement_by_source | class 3002, activity 1, status Success, group_by src_endpoint.ip, distinct dst_endpoint.hostname (immune to credential rotation; added 2026-10-01) | yes (windows_eventlog 4624) | ATT&CK T1021 / TA0008 |
@@ -100,7 +102,7 @@ this is now a rule gap, not a parser gap.
 | cloud_root_console_login | class 3002, activity 1, siem.source_type=cloudtrail, unmapped.cloud.identity_type=Root, unmapped.cloud.mfa_used=No | yes (cloudtrail, added v0.5) | ATT&CK T1078.004 / TA0001 |
 | bank_mass_card_read | class 6005, activity 1, siem.sector=bank, distinct unmapped.db.object | yes (db_audit, object field added v0.5) | ATT&CK T1005 / TA0009 |
 | common_rapid_account_lifecycle | class 3003, activity in [1,4], group unmapped.target_user.name | yes (windows_eventlog 4720/4726) | ATT&CK T1136 / TA0003 |
-| common_beaconing | class 4001, activity 7, periodicity max_cv<=0.25 | yes (cisco_asa, existing producer; A3 periodicity primitive added v0.5) | ATT&CK T1071 / TA0011 |
+| common_beaconing | class 4001, activity 7, 20+ events (Q15, was 6), periodicity max_cv<=0.25 | yes (cisco_asa, existing producer; A3 periodicity primitive added v0.5) | ATT&CK T1071 / TA0011 |
 | ot_modbus_unauthorized_write | class 4001, unmapped.ot.anomaly_type=unauthorized_write | yes (modbus_anomaly, M7 OT expansion, 2026-07-22) | ATT&CK-ICS T0855 / TA0106 |
 | ot_modbus_unauthorized_write_ticketed | class 4001, unmapped.ot.anomaly_type=unauthorized_write, unmapped.ot.change_ticket_id exists (envelope meta only — see modbus_anomaly.py trust boundary) | yes (modbus_anomaly, 2026-08-28; LOW downgrade companion) | ATT&CK-ICS T0855 / TA0106 |
 
@@ -173,10 +175,25 @@ Techniques a storyline demonstrates for which its oracle declares `no_rule_exist
 
 | Missing rule (ATT&CK technique) | Demonstrated by | Why nothing fires today |
 |---|---|---|
-| T1114.003 Email Collection: Email Forwarding Rule | `phishing_bec`: `inbox_rule` | No Microsoft 365 / mail-audit parser and no rule over mailbox-rule changes. Chained gap, same mechanism as phish_delivery. |
+| T1070 Indicator Removal | `insider_exfil`: `cover_tracks` | The bank DB rules cover activity 5 (privileged op) and 1 (reads); a DELETE (activity 4) has no rule. |
+| T1074.001 Data Staged: Local Data Staging | `insider_exfil`: `stage_files` | Class 1001 (File System Activity) has no shipped rule. |
+| T1078 Valid Accounts | `ransomware`: `foothold_logon` | A successful logon with valid credentials is ordinary telemetry; no shipped rule correlates "succeeded after a spray from the same workstation". |
+| T1087.004 Account Discovery: Cloud Account | `cloud_iam_abuse`: `account_discovery` | No shipped rule counts cloud API reads per identity. |
+| T1098.001 Account Manipulation: Additional Cloud Credentials | `cloud_iam_abuse`: `create_access_key` | No shipped rule reads cloud credential creation. |
+| T1098.003 Account Manipulation: Additional Cloud Roles | `cloud_iam_abuse`: `attach_admin_policy` | No shipped rule reads cloud IAM policy attachment. |
+| T1110.004 Brute Force: Credential Stuffing | `cloud_iam_abuse`: `console_stuffing` | CROSS-SOURCE BLIND SPOT, derived from the docs before any run: cloudtrail.py maps every ConsoleLogin to activity 1 and carries a failure only in `status`, while every failed- authentication rule (common_bruteforce, _by_account, common_password_spray, _sourceless) selects activity 4. The shape is the credential-stuffing rule's own, but it cannot see it from this source. A parser or rule fix flips this step to a stale-gap finding. |
+| T1114.003 Email Collection: Email Forwarding Rule | `phishing_bec`: `inbox_rule` | The m365_audit parser reports the rule's effect (unmapped.m365.inbox_rule: forward_to, forwards_external, hides_mail), but no rule reads it. Same honest-gap status as phish_delivery. |
+| T1136.003 Create Account: Cloud Account | `cloud_iam_abuse`: `create_backdoor_user` | No shipped rule reads cloud IAM changes (the account-lifecycle rule reads Windows 3003 events). |
+| T1195.001 Supply Chain Compromise: Compromise Software Dependencies and Development Tools | `supply_chain_ci`: `malicious_dependency` | Process-launch content has no rule; no rule knows a package manager's lifecycle scripts. |
 | T1204.002 User Execution: Malicious File | `phishing_bec`: `user_execution` | Process-launch anomaly detection (suspicious parent/child, encoded command line) is unbuilt: contracts/detection-coverage.md lists class 1002 activity 1 as under-covered; only privilege use (4672) has a rule. |
+| T1486 Data Encrypted for Impact | `ransomware`: `encrypt_files` | Class 1001 (File System Activity) has no shipped rule at all. |
+| T1490 Inhibit System Recovery | `ransomware`: `backup_wipe_cloud` | dc_mass_vm_delete is scoped to siem.source_type vmware_vsphere (its detection block), so cloud snapshot deletion is not covered by any shipped rule. |
+| T1490 Inhibit System Recovery | `ransomware`: `inhibit_recovery` | Process-launch content (command line) has no rule; contracts/detection-coverage.md lists class 1002 activity 1 as under-covered. |
+| T1560.001 Archive Collected Data: Archive via Utility | `insider_exfil`: `stage_archive` | Process-launch content (command line) has no rule (class 1002 activity 1 under-covered). |
+| T1562.008 Impair Defenses: Disable or Modify Cloud Logs | `cloud_iam_abuse`: `log_tampering` | No shipped rule reads audit-trail configuration changes. |
 | T1565.001 Data Manipulation: Stored Data Manipulation | `phishing_bec`: `payment_redirect` | The banking-DB rules cover activity 5 (privileged operation: bank_db_priv_esc) and activity 1 (distinct-object reads: bank_mass_card_read). A plain UPDATE (activity 3) on a payment-details table has no rule. |
-| T1566.001 Phishing: Spearphishing Attachment | `phishing_bec`: `phish_delivery` | There is no mail-gateway parser and no rule over mail telemetry. The raw record is still emitted in its native shape and dead-letters at the parser lookup, exactly like ai_to_ot.external_content; the scenario never claims a type_uid for it. |
+| T1566.001 Phishing: Spearphishing Attachment | `phishing_bec`: `phish_delivery` | The mail_gateway parser now normalises the delivery to class 4009 with the attachment summary (unmapped.email.has_macro_attachment), but NO rule reads mail telemetry. Updated from "no parser" when the parser landed; the step stays an honest gap until a rule exists, and a rule that starts firing turns it into a stale-gap finding. |
+| T1567 Exfiltration Over Web Service | `insider_exfil`: `exfil_upload` | No shipped rule measures outbound volume or a new external destination per host. The beacon rule is the only network rule that could match and it requires regularity; the step is its periodicity negative on real traffic. |
 <!-- gap-register:end -->
 
 How to read it: a row means a storyline performs that technique end to end on the real parsers and the
@@ -213,13 +230,13 @@ Harness-measured on the bundled reference bursts (seed 7, deque counter backend)
 |---|---|---|---|---|---|---|---|---|---|---|
 | `agent_tool_call_burst` | `agent_tool_call_burst` | 51 | 70.503 | 0.824979 | session=3 | n/a | no | no | forgeable | yes |
 | `bank_mass_card_read` | `bank_mass_card_read` | 21 | 522.003 | 0.065 | db_object=3 | n/a | no | no | forgeable | yes |
-| `common_beaconing` | `common_beaconing` | 2 | 4620.011 | 0.001389 | ip=3 | n/a | no | no | no | yes |
+| `common_beaconing` | `common_beaconing` | 2 | 907.902 | 0.005278 | ip=2 | n/a | no | no | no | yes |
 | `common_bruteforce` | `common_bruteforce`, `common_bruteforce_by_account` | 3 | 27.003 | 0.183324 | account=immune, ip=immune | (2,2) | no | no | no | yes |
 | `common_bruteforce_sourceless` | `common_bruteforce_sourceless` | 6 | 222.003 | 0.0375 | host=3 | n/a | no | no | forgeable | yes |
 | `common_dns_exfil` | `common_dns_exfil`, `common_dns_tunnel_by_domain` | 13 | 9.013 | 0.849816 | ip=immune, parent_domain=immune | (2,2) | no | no | no | yes |
 | `common_impossible_travel` | `common_impossible_travel` | 2 | 9000.003 | 0.000278 | account=4 | n/a | no | no | no | NO (sample map) |
 | `common_lateral_movement` | `common_lateral_movement`, `common_lateral_movement_by_source` | 3 | 150.003 | 0.02 | account=immune, ip=immune | (2,2) | evades | no | forgeable | yes |
-| `common_password_spray` | `common_password_spray` | 9 | 525.003 | 0.025 | account=3 | n/a | no | no | forgeable | yes |
+| `common_password_spray` | `common_password_spray`, `common_credential_stuffing_sustained` | 17 | 86285.005 | 0.000266 | account=4 | n/a | no | no | forgeable | yes |
 | `common_port_scan` | `common_port_scan`, `common_port_scan_by_target` | 8 | 18.008 | 0.349953 | dst_ip=immune, ip=immune | (2,2) | no | no | no | yes |
 | `common_rapid_account_lifecycle` | `common_rapid_account_lifecycle` | 3 | 10620.003 | 0.000278 | target_account=4 | n/a | no | no | forgeable | yes |
 | `dc_mass_vm_delete` | `dc_mass_vm_delete`, `dc_mass_vm_delete_by_source` | 3 | 72.003 | 0.049999 | account=immune, ip=immune | (2,2) | evades | no | forgeable | yes |
