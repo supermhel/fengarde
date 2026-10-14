@@ -769,6 +769,53 @@ def test_graph_signature_is_mutation_sound():
           "identically (else a harmless redelivery would never hit cache)")
 
 
+# --- (9) ts_ms semantics, the documented contract (owner decision WS-8 A) --
+def test_ts_ms_semantics_contract():
+    """WS-8 option A (owner decision 2026-10-14, docs/proposals/2026-10-02-ws8-edge-time.md):
+    an edge's ``ts_ms`` is the time of the ONE alert that evidenced the WINNING kind,
+    chosen by kind rank BEFORE time. Pinned here so a change to kind precedence turns
+    the harness red on purpose (eval/twin/causal_order.attribute_edges relies on it)."""
+    # (a) a typed kind arriving LATER displaces an earlier field-pair edge; ts_ms follows it
+    c = _new_correlator()
+    c.ingest_alert(_alert("ts-a1", tactic="TA0006", actor="kim", ip="10.30.0.1",
+                          time_ms=1000, event_ids=["ev-a1"]))
+    incs = c.ingest_alert(_alert("ts-a2", tactic="TA0001", technique="T1078", actor="kim",
+                                 ip="10.30.0.1", time_ms=3000, event_ids=["ev-a2"]))
+    kim, ip1 = (canonical_entity_id("default", "actor", "kim"),
+                canonical_entity_id("default", "ip", "10.30.0.1"))
+    e = _edge(c.incident_graph(next(i["incident_id"] for i in incs if i["entity_type"] == "actor")), kim, ip1)
+    check(e is not None and (e["kind"], e["event_id"], e["ts_ms"]) == ("authenticated_as", "ev-a2", 3000),
+          f"ts_ms (a): the later typed kind must win and carry ITS time (3000), not the earlier "
+          f"field-pair's (1000), got {e}")
+    # (b) the same canonical pair carries DIFFERENT ts_ms in two incidents: tracks key on the
+    #     raw spelling, so the ip track holds the "Lee" alert (t=1000) the actor track "lee" lacks
+    c = _new_correlator()
+    c.ingest_alert(_alert("ts-b1", tactic="TA0006", actor="Lee", ip="10.30.0.2",
+                          time_ms=1000, event_ids=["ev-b1"]))
+    c.ingest_alert(_alert("ts-b2", tactic="TA0007", actor="lee", ip="10.30.0.2",
+                          time_ms=3000, event_ids=["ev-b2"]))
+    c.ingest_alert(_alert("ts-b3", tactic="TA0008", actor="lee", time_ms=4000, event_ids=["ev-b3"]))
+    lee, ip2 = (canonical_entity_id("default", "actor", "lee"),
+                canonical_entity_id("default", "ip", "10.30.0.2"))
+    on_ip = _edge(c.incident_graph("default:ip:10.30.0.2:0"), lee, ip2)
+    on_actor = _edge(c.incident_graph("default:actor:lee:0"), lee, ip2)
+    check(on_ip is not None and on_actor is not None and on_ip["ts_ms"] == 1000 and on_actor["ts_ms"] == 3000,
+          f"ts_ms (b): one pair, two incidents, two ts_ms (1000 on the ip track, 3000 on the actor "
+          f"track) -- consumers must take the minimum, never the first seen. ip={on_ip} actor={on_actor}")
+    # (c) a time-less alert gets a stable DIGEST ts_ms that equals no real alert time
+    c = _new_correlator()
+    timeless = _alert("ts-c1", tactic="TA0006", actor="max", ip="10.30.0.3", event_ids=["ev-c1"])
+    timeless.pop("time")
+    c.ingest_alert(timeless)
+    incs = c.ingest_alert(_alert("ts-c2", tactic="TA0007", actor="max", time_ms=5000, event_ids=["ev-c2"]))
+    e = _edge(c.incident_graph(incs[0]["incident_id"]), canonical_entity_id("default", "actor", "max"),
+              canonical_entity_id("default", "ip", "10.30.0.3"))
+    digest = int(hashlib.sha256(b"ts-c1").hexdigest()[:12], 16)
+    check(e is not None and e["ts_ms"] == digest and e["ts_ms"] not in (0, 5000),
+          f"ts_ms (c): a time-less alert must yield the sha256 digest of its member id "
+          f"({digest}), never a wall clock or another alert's time, got {e}")
+
+
 def run_all():
     test_v2_emitted_shape_and_incidents_topic_untouched()
     test_redelivery_and_fresh_instance_emit_byte_identical_v2()
@@ -781,6 +828,7 @@ def run_all():
     test_typed_kind_signal_is_pure_and_bounded()
     test_graph_cache_skips_rebuild_on_unchanged_member_set()
     test_graph_signature_is_mutation_sound()
+    test_ts_ms_semantics_contract()
 
 
 if __name__ == "__main__":
