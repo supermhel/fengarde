@@ -51,29 +51,44 @@ caught real brute-force false negatives in 2026-07). Corpora:
 - **EVTX-ATTACK-SAMPLES** (GPL-3.0, not vendored): single-incident Security +
   Sysmon technique samples.
 - **splunk/attack_data** (own terms, not vendored): real brute-force/spray
-  volume, 57 raw-XML files.
+  volume. Its datasets are **Git LFS objects** — a clone without `git-lfs`
+  leaves pointer stubs, and the splunk lane now fails loudly on them. The
+  lane reads every raw-XML `.log` export (1,055 files in this snapshot's
+  nightly run); plaintext/JSON exports are a documented, disclosed gap.
+
+Each trend row records `lane_files` (how many files each lane read) so a
+partial checkout can never pass as the full corpus. This is not
+hypothetical: the first cut of this benchmark (trend row 2026-10-13) was
+measured on a **partial local splunk checkout** (57 files: 14,663
+records instead of 265,404) and wrongly reported `bruteforce`,
+`lateral_movement` and `bruteforce_sourceless` as untested. That row stays
+in `eval/trend.jsonl` with a comment block labeling it; the published
+snapshot is the nightly CI row.
 
 A rule with `tp+fn == 0` across all corpus files is reported as `untested`
 — surfaced, never implied passing. **Expected-positives are
 corpus-composition-dependent**: the corpora are fetched at clone time and
-are not version-pinned, so a later clone can shift which rules see
-attack-shaped volume (this snapshot's run: `bruteforce` /
-`lateral_movement` / `bruteforce_sourceless` had zero expected-positives in
-either corpus — the splunk lane reads only raw-XML `.log` exports, and
-splunk/attack_data's brute-force/spray *volume* (purplesharp/T1110) lives in
-its non-XML exports, a documented extractor limitation of the lane).
+are not version-pinned (EVTX-ATTACK-SAMPLES has been static since 2023;
+splunk/attack_data grows), so a later clone can shift which rules see
+attack-shaped volume. In this snapshot only `password_spray` is untested.
 `eval/attack/fire_check.py` is the compensating check: it proves all 28
-MITRE-tagged rules fire on their own real producer fixtures, including the
-12 stateful ones — so an `untested` here means "this corpus composition
-didn't exercise it", not "the rule does not work".
+MITRE-tagged rules (of 29 shipped; one rule carries no MITRE tag and is
+reported as unverified by that gate) fire on their own real producer
+fixtures, including the 12 stateful ones — so an `untested` here means "this
+corpus composition didn't exercise it", not "the rule does not work".
 
 **Committed synthetic fixtures** (`eval/detection_accuracy/attack_fixtures.py`)
 complement the corpora: shapes the two public corpora never contain (one
 account failed from 8+ distinct source IPs in 300 s for `password_spray`)
-are replayed through the same oracle + pipeline and graded like corpus files
-(labeled `fixture:<name>`), but are **never counted** in `corpus_records`,
-`records_supported`, or the parser-coverage denominator. They can only add
-expected-positives; they cannot inflate coverage percentages.
+are replayed through the same oracle + real pipeline and graded like corpus
+files (labeled `fixture:<name>`) — but in a **separate** matrix. Both lanes
+replay the same fixtures, so the trend row takes them once into
+`fixture_per_rule` / `fixture_tested_rules`, published as
+`fixture_per_rule_confusion` / `fixture_tested_rules`. They are never counted
+in `per_rule_confusion`, `untested_rules`, `corpus_records`, or the
+parser-coverage denominator. (The first cut folded them into each lane's
+corpus matrix, which double-counted one fixture as two corpus TPs; fixed
+before merge.)
 
 ## 3. Parser coverage — stated plainly
 
@@ -89,12 +104,12 @@ artifact.** The published snapshot's value (see `results.json` and
 - It is a **corpus-shape measurement**: the EVTX corpus is Windows-centric
   (Security + Sysmon channels), so "42–43%" reads as *"about 57% of THIS
   corpus's records are event types the shipped parser set does not cover."*
-- It is **not** a statement that FENGARDE ingests only ~42% of log formats.
-  17 parsers ship for IT/OT sources the corpus does not contain at all
-  (Linux SSH, Cisco ASA, VMware vSphere, DB audit, MCP/AI-agent, OPC UA/OT,
-  n8n, DNS query log, Kubernetes audit, CEF, AWS CloudTrail, Sysmon, Modbus,
-  generic syslog, inventory-diff …), and other corpora (splunk/attack_data)
-  add more. The uncovered share is dominated by Sysmon event types
+- It is **not** a statement that FENGARDE ingests only ~43% of log formats.
+  Of the 17 shipped parsers, three read this corpus (Windows event log,
+  Active Directory, Sysmon); the other 14 cover sources it does not contain
+  at all (Linux SSH, Cisco ASA, VMware vSphere, DB audit, MCP/AI-agent,
+  OPC UA, n8n, DNS query log, Kubernetes audit, CEF, AWS CloudTrail, Modbus,
+  generic syslog, inventory-diff). The uncovered share is dominated by Sysmon event types
   (ImageLoad/CreateRemoteThread/ProcessAccess/Registry/PipeConnected) that
   have no clean fit in the repo's restricted OCSF profile — closing that
   half is a schema decision, not a parser tweak.
@@ -105,7 +120,7 @@ artifact.** The published snapshot's value (see `results.json` and
 **Why this is published instead of hidden.** The benchmark's purpose is
 credibility. A methodology section that omitted its own weakest number would
 defeat it; the number is stated with its definition so a reader can judge it.
-The earliest trend rows (2026-08-28: 42.3%) and this snapshot (2026-10-13:
+The earliest trend rows (2026-08-28: 42.3%) and this snapshot (2026-10-14:
 43.2%, 2,082 of 4,818 Security+Sysmon records) differ only in the small
 Sysmon-EventID-5 parser addition — the number has not been gamed, it has been
 moved by real parser coverage work.
@@ -117,21 +132,23 @@ moved by real parser coverage work.
 through the **real** parsers, detector, and correlation layer, and graded
 against a documented oracle scenario (`eval/twin/oracle_it_intrusion.yaml`).
 
-**Metric units** (all as in `results.json`/`units`):
+**Metric units** (all as in `results.json`/`units`; definitions follow
+`eval/twin/report.py`'s own metric docstring):
 
 | Metric | Unit | Meaning |
 |---|---|---|
-| `tpr` | [0,1] | true-positive rate on the intrusion replay |
-| `fpr` | [0,1] | false-positive rate on negative-control replays |
-| `mttd_seconds` | seconds | mean time to detect |
-| `mtti_seconds`, `mttr_seconds` | seconds | mean time to investigate / respond (`null` when that stage wasn't exercised) |
-| `chain_fidelity` | [0,1] | fraction of the scenario's causal chain reproduced in the incident graph |
-| `evidence_completeness` | [0,1] | fraction of expected evidence items present |
-| `false_correlation_rate` | ratio | false correlations per true positive incident |
-| `alert_reduction_ratio` | [0,1] | (raw − correlated)/raw alert volume |
-| `incident_reconstruction_time_ms` | ms | wall time to rebuild an incident from member alerts |
-| `severity_calibration_error` | abs | mean |predicted − true| severity over scored alerts |
-| `attribution_accuracy` | [0,1] | share of incident attributions matching ground truth |
+| `tpr` | [0,1] | share of the scenario's oracle-expected detections that fired |
+| `fpr` | [0,1] | share of benign negative-control replays that raised an incident |
+| `mttd_seconds` | seconds | chain start → first step whose expected rule fired, on seed-derived timestamps of ONE scenario (not a mean, not wall-clock) |
+| `mtti_seconds` | seconds, **modeled** | measured investigation step count over the incident's own graph × a documented 30 s/step constant |
+| `mttr_seconds` | — | always `null`: the twin has no remediation/closure event to time |
+| `chain_fidelity` | [0,1] | share of the oracle's allowed causal step-pairs a real WS-8 graph edge joined |
+| `evidence_completeness` | [0,1] | share of oracle per-step evidence fields present (unparsed steps count against it) |
+| `false_correlation_rate` | [0,1], **lower is better** | share of the oracle's *forbidden* causal pairs a graph edge joined anyway (1.0 = all of them) |
+| `alert_reduction_ratio` | [0,1] | 1 − incidents / raw alerts |
+| `incident_reconstruction_time_ms` | ms, informational | median wall-clock to assemble the WS-3 evidence package; machine-dependent |
+| `severity_calibration_error` | binary 0/1 | 0 when the peak alert score is inside the oracle's severity band, 1 when not — **not** a mean error |
+| `attribution_accuracy` | [0,1] | share of actor-bearing steps whose actor matches ground truth |
 
 **Limits.** All twin metrics are harness-measured on a deterministic
 simulation — a fast, repeatable signal, not a field deployment measurement.
@@ -139,8 +156,11 @@ simulation — a fast, repeatable signal, not a field deployment measurement.
 
 ## 5. The selection rule for the snapshot
 
-`benchmark/results.json` packages the **latest dated corpus row** and the
-**latest dated twin row** in `eval/trend.jsonl`. The trend file is
+`benchmark/results.json` packages the **latest dated corpus row** (a row
+that actually replayed the evtx/splunk corpora — quality-only rows never
+win) and the **latest dated twin row** in `eval/trend.jsonl`; on a same-day
+tie the last-appended row wins. Every caveat that cites a number is derived
+from the selected rows, never typed in. The trend file is
 append-only; its one historically fabricated pilot row (labeled as such in a
 comment block) is excluded by date selection, and `tools/generate_benchmark.py`
 refuses loudly if a fabricated-shaped row (fpr=0.25) ever wins selection.
@@ -151,20 +171,27 @@ convention as `eval/trend.jsonl` itself.
 
 ## 6. Code coverage (as reported for the OpenSSF Best Practices badge)
 
-Measured 2026-10-14 across the full gate suite set (118 suite invocations,
-0 suite failures; `coverage.py --branch`, data combined over every suite the
-M2 coverage gate runs):
+Measured 2026-10-14 with `python tools/coverage_summary.py`: every suite the
+M2 coverage gate runs (118 suite invocations, 0 failures), one combined
+`coverage.py --branch` data file:
 
-- **Statement coverage: 79.25%** (6,407 / 7,883 statements)
-- **Branch coverage: 79.73%** (2,042 fully covered + 346 partial / 2,778)
+- **Statement coverage: 81.23%** (6,403 / 7,883 statements)
+- **Branch coverage: 73.47%** (2,041 / 2,778 branch arcs)
+- coverage.py's combined TOTAL (statements + branches): 79.2%
 
 The repo's own gate (`tools/coverage_gate.py`) does not block on a fixed
 80%: it enforces per-service measured floors (WS-2 88%, WS-3 65%,
 services-shared 42%, WS-4 40%, WS-6 60%, WS-8 60%, WS-9 68%) as regression
-guards. The higher OpenSSF badge tiers ask for published 80% statement and
-90% branch coverage; with the honest numbers above, **that criterion is
-stated as not-met** — the published value is the measured one, and raising
-it toward the tier is a per-service test-writing program, not a gate edit.
+guards. Against the OpenSSF tiers: Silver's `test_statement_coverage80`
+(≥80% statement) **is met** by the number above; Gold's
+`test_statement_coverage90` (≥90% statement) and `test_branch_coverage80`
+(≥80% branch) **are not met**. Raising them is a per-service test-writing
+program, not a gate edit.
+
+(The first cut of this section published 79.25% "statement" and 79.73%
+"branch" from a one-off script: the first was coverage.py's combined total,
+the second gave partially covered branch lines half credit. Neither is a
+coverage.py metric; `tools/coverage_summary.py` replaces that script.)
 
 ## 7. What is deliberately NOT in this benchmark
 

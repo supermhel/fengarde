@@ -1,10 +1,10 @@
 {
   "caveats": [
-    "macro_f1 is engine-vs-oracle agreement on a hand-labeled quality canary (10 events, 4 scored rules), not field detection fidelity; see docs/detection-quality.md.",
+    "macro_f1 is engine-vs-oracle agreement on a hand-labeled quality canary (10 events), not field detection fidelity; see docs/detection-quality.md.",
     "per-rule confusion counts are graded per corpus FILE, not per event.",
-    "per-rule expected-positives are corpus-composition-dependent (the corpora are fetched at clone time, not version-pinned): on this snapshot's run the volume-shaped rules bruteforce, lateral_movement, bruteforce_sourceless had zero expected-positives in EITHER corpus (reported as untested) -- splunk/attack_data's brute-force/spray volume lives in non-XML exports this lane's extractor documents as unread; eval/attack/fire_check.py proves all 28 MITRE-tagged rules still fire on their real producer fixtures.",
-    "parser_coverage_pct is a corpus-shape measurement: the EVTX corpus is Security/Sysmon-centric, so the published value (see README.md) means 'that share of THE RECORDS IN THIS CORPUS parse', not 'that share of all log formats FENGARDE can ingest'; the 17 shipped parsers cover IT/OT formats the corpora do not contain.",
-    "twin metrics are harness-measured on a deterministic in-process plc simulator replay (seed 7) with basis=harness-measured; null fields were not measured in that run, not zero.",
+    "per-rule expected-positives are corpus-composition-dependent (the corpora are fetched at clone time, not version-pinned): on this snapshot's run bruteforce, lateral_movement, bruteforce_sourceless had zero expected-positive files in every corpus (reported as untested); eval/attack/fire_check.py separately proves every MITRE-tagged rule fires on its own real producer fixture.",
+    "parser_coverage_pct is a corpus-shape measurement: it means 'that share of THIS EVTX corpus's Security+Sysmon records parse', not 'that share of all log formats FENGARDE can ingest'; most of the 17 shipped parsers cover IT/OT formats these corpora do not contain.",
+    "twin metrics are harness-measured on a deterministic in-process plc simulator replay (seed 7, basis=harness-measured); null fields were not measured in that run, not zero.",
     "ci-clone contamination: GitHub clone counts are inflated by authenticated Actions checkouts and are NOT published here as traction evidence."
   ],
   "detection_quality": {
@@ -13,7 +13,10 @@
       "quality",
       "splunk"
     ],
+    "corpus_files": null,
     "corpus_records": 14663,
+    "fixture_per_rule_confusion": null,
+    "fixture_tested_rules": null,
     "macro_f1": 0.875,
     "parser_coverage_pct": 43.2,
     "per_rule_confusion": {
@@ -69,7 +72,7 @@
       "bruteforce_sourceless"
     ]
   },
-  "generated_at": "2026-10-14T00:07:55+00:00",
+  "generated_at": "2026-10-14T08:43:39+00:00",
   "schema_version": "1.0",
   "source": {
     "corpus_row_date": "2026-10-13",
@@ -91,21 +94,24 @@
     "tpr": 1.0
   },
   "units": {
-    "alert_reduction_ratio": "dimensionless [0,1]; (alerts-raw - alerts-correlated)/alerts-raw",
-    "attribution_accuracy": "dimensionless [0,1]; share of incident attributions matching the scenario's ground truth",
-    "chain_fidelity": "dimensionless [0,1]; fraction of the scenario's causal chain the correlation layer reproduced in its incident graph",
-    "evidence_completeness": "dimensionless [0,1]; fraction of expected evidence items present in the evidence package",
-    "false_correlation_rate": "dimensionless; false correlations per true incident (1.0 = every positive had one genuine link)",
-    "fpr": "dimensionless [0,1]; false-positive rate on the twin's benign/negative-control replay",
-    "incident_reconstruction_time_ms": "milliseconds; wall time to rebuild an incident from its member alerts",
+    "alert_reduction_ratio": "dimensionless [0,1]; 1 - (WS-8 incidents / raw WS-4 alerts) over the scenario window",
+    "attribution_accuracy": "dimensionless [0,1]; share of ACTOR-BEARING scenario steps whose attributed actor matches ground truth (actor-less steps excluded, not credited)",
+    "chain_fidelity": "dimensionless [0,1]; share of the oracle's ALLOWED causal step-pairs that a real WS-8 incident-graph edge joined",
+    "corpus_files": "files each corpus lane read ({evtx, splunk}); null on rows written before provenance was recorded",
+    "evidence_completeness": "dimensionless [0,1]; share of the oracle's per-step evidence fields present on parsed steps (unparsed gap steps count against it)",
+    "false_correlation_rate": "dimensionless [0,1], LOWER IS BETTER; share of the oracle's FORBIDDEN causal step-pairs (allowed: false) that a real WS-8 graph edge joined anyway -- 1.0 means every forbidden pair was falsely joined",
+    "fixture_per_rule_confusion": "counts of committed synthetic fixtures (tp/fp/fn/tn) per rule, graded exactly like a corpus file, counted once; null when the row predates separate grading",
+    "fixture_tested_rules": "rule names with expected-positives from synthetic fixtures (when also listed in untested_rules: ONLY from fixtures)",
+    "fpr": "dimensionless [0,1]; share of the twin's benign negative-control replays that raised an incident",
+    "incident_reconstruction_time_ms": "milliseconds, informational wall-clock: median time to assemble the real WS-3 evidence package for the picked incident; machine-load dependent",
     "macro_f1": "dimensionless, [0,1]; unweighted mean of per-rule F1 (engine-vs-oracle agreement on the hand-labeled detection-quality canary, tools/detection_quality_eval.py) -- NOT field detection fidelity",
-    "mttd_seconds": "mean time to detect, seconds, scenario replay",
-    "mtti_seconds": "mean time to investigate, seconds, scenario replay (null when the run did not produce an incident)",
-    "mttr_seconds": "mean time to respond, seconds (null when not exercised by the run)",
+    "mttd_seconds": "seconds from chain start to the first chain step whose oracle-expected rule fired, on seed-derived event timestamps of ONE deterministic scenario (not a mean over incidents, not wall-clock)",
+    "mtti_seconds": "MODELED, not measured: the real investigation step count over the picked incident's own graph x a documented 30 s/step analyst-latency constant (eval/twin/report.py _ANALYST_STEP_SECONDS); null when no incident promoted",
+    "mttr_seconds": "null by construction: the twin has no remediation/closure event to time (not measured, not zero)",
     "parser_coverage_pct": "percent; share of Security+Sysmon records in the EVTX corpus (records_supported / (records_security + records_sysmon)) that a shipped parser can normalize at all -- corpus-shape-limited, see methodology.md",
-    "per_rule_confusion": "absolute event counts (tp/fp/fn/tn) per rule, graded per corpus FILE by replaying supported records through the real WS-2->WS-4 pipeline against an independent oracle",
-    "severity_calibration_error": "dimensionless; |predicted_severity - true_severity| averaged over scored alerts",
-    "tpr": "dimensionless [0,1]; true-positive rate on the twin's intrusion scenario replay",
-    "untested_rules": "rule names with zero expected-positive events (tp+fn == 0) in the latest corpus run -- surfaced, never implied passing"
+    "per_rule_confusion": "counts of corpus FILES (tp/fp/fn/tn) per rule, NOT events: each third-party corpus file with supported records is replayed through the real WS-2->WS-4 pipeline and graded against an independent oracle; synthetic fixtures excluded",
+    "severity_calibration_error": "binary 0/1, NOT a mean error: 0.0 when the peak fired alert score lies inside the oracle's severity band, 1.0 when outside; null when nothing fired",
+    "tpr": "dimensionless [0,1]; share of the scenario's oracle-expected detections that fired on the twin's intrusion-chain replay",
+    "untested_rules": "rule names with zero expected-positive corpus files (tp+fn == 0) in the latest corpus run -- surfaced, never implied passing"
   }
 }

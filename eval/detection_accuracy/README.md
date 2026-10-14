@@ -79,8 +79,9 @@ and needs no corpus.
 
 The workflow runs `tools/detection_quality_eval.py` (the macro-F1 canary) plus
 `evtx_eval.py` and `splunk_eval.py` against the fetched corpora, then appends
-**one row per run** to `eval/trend.jsonl` (committed — the file's first line is
-a `#` header comment; each object carries `"_schema": "1"`):
+**one row per run** to `eval/trend.jsonl` via `tools/append_trend_row.py`
+(the same script a local run uses; committed — the file's first line is a `#`
+header comment; each object carries `"_schema": "1"`):
 
 | Field | Meaning |
 |---|---|
@@ -88,15 +89,21 @@ a `#` header comment; each object carries `"_schema": "1"`):
 | `date` | ISO date (`YYYY-MM-DD`, UTC) of the run |
 | `corpora` | which lanes contributed (`evtx` / `splunk` / `quality`) |
 | `corpus_size` | total supported records replayed by the corpus lanes (evtx `records_supported` + splunk `supported_records`) |
-| `per_rule` | `rule_id -> {tp,fp,fn,tn}`, keyed by the stable ORACLE rule ids from `evtx_eval.py`, summed across the corpus lanes |
+| `lane_files` | `{evtx, splunk}` corpus files each lane read — provenance, so a partial checkout is visible (rows since 2026-10-14) |
+| `per_rule` | `rule_id -> {tp,fp,fn,tn}`, keyed by the stable ORACLE rule ids from `evtx_eval.py`, summed across the corpus lanes — corpus files only |
+| `fixture_per_rule` | same shape, the committed synthetic fixtures' grading, taken ONCE (both lanes replay them identically) — never folded into `per_rule` (rows since 2026-10-14) |
 | `macro_f1` | the detection-quality canary's macro-F1 (≥ the documented 0.5 floor) |
 | `quality_corpus_events` | size of the canary's hand-authored labeled corpus |
+| `quality_scored_rules` | how many rules the canary scores (rows since 2026-10-14) |
 | `parser_coverage_pct` | combined Security+Sysmon parser coverage from the EVTX corpus (e.g. 42.3%) or `null` when no corpus lane ran |
-| `untested_rules` | ORACLE rules with `tp+fn == 0` — they never met attack-shaped events in the corpus, surfaced so they are never implied-passing (the stateful burst rules reliably land here, matching the event-description gap noted below) |
+| `untested_rules` | ORACLE rules with `tp+fn == 0` — they never met attack-shaped events in the corpus, surfaced so they are never implied-passing (the stateful burst rules reliably land here, matching the event-description gap noted below) — corpus-only: a rule covered only by a fixture stays listed here |
+| `fixture_tested_rules` | ORACLE rules with fixture expected-positives (rows since 2026-10-14) |
 
 The grown file is also published as a per-run `detection-accuracy-trend`
 artifact; the job does not push back to `main` (least-privilege
 `contents: read`, no-auto-commit convention), so local runs append in place.
+Each lane deletes its own `*_eval_results.json` when it SKIPs, so the appender
+never re-publishes a stale lane result under today's date.
 
 ## Committed synthetic attack fixtures (2026-10-14)
 
@@ -104,21 +111,26 @@ artifact; the job does not push back to `main` (least-privilege
 a rule with zero attack-shaped positives in BOTH corpora is reported as
 `untested` (tp+fn == 0) and surfaced on every trend row — the right default,
 but one that can special-case a shape the two public corpora happen never to
-contain. `password_spray` was exactly that: the last residual `untested_rules`
-entry (`["password_spray"]` on the 2026-09-04 row), because neither EVTX-
+contain. `password_spray` is exactly that: untested on every corpus trend
+row, and the only untested rule on the full-corpus nightly rows
+(`["password_spray"]` on 2026-09-04 and 2026-10-14), because neither EVTX-
 ATTACK-SAMPLES nor splunk/attack_data contains a single account failed from
 8+ distinct source IPs within 300 s.
 
-`attack_fixtures.password_spray_records()` provides exactly that shape (10
+`attack_fixtures.ALL["password_spray"]` provides exactly that shape (10
 failed 4625 logons, one account `carla`, 10 distinct `203.0.113.x` sources,
 ~100 s span). Both lanes run **all** entries of `attack_fixtures.ALL` through
 their normal `replay_file()` + `oracle()` path (see `run_fixtures()` in
 `evtx_eval.py`), so the fixture must trip the INDEPENDENT oracle AND the real
 engine — a fixture that only satisfies one of the two fails the lane like any
 other mismatch. Pseudo-files appear as `fixture:<name>` in `per_file` /
-`mismatches` output and are NEVER counted in `records_supported`,
-`records_security`, or the parser-coverage denominator — percentages keep
-measuring the real corpora, and the benchmark's methodology.md states that.
+`mismatches` output and are graded into each lane's separate
+`fixture_confusion`, NEVER its corpus `confusion`, and never counted in
+`records_supported`, `records_security`, or the parser-coverage denominator.
+`password_spray` therefore stays in `untested_rules` (the corpora still never
+exercise it) and appears in `fixture_tested_rules`. (The first cut folded the
+fixture into both lanes' corpus matrices, so the summed trend row counted one
+synthetic fixture as two corpus TPs — the 2026-10-13 row, labeled in-file.)
 
 ## Real numbers observed (2026-08-19)
 

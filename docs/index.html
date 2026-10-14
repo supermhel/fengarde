@@ -195,6 +195,8 @@ review, the verdict, DESIGN.md, and every shipping raster carrying its provenanc
   .principle .eyebrow{margin-bottom:26px}
   .principle h2{font-size:clamp(26px,4vw,42px);line-height:1.2;font-weight:800;letter-spacing:-.02em}
   .principle h2 em{font-style:normal;color:var(--accent-2)}
+  .section-head h2 em{font-style:normal;color:var(--accent-2)}
+  .cta-center{justify-content:center;margin-top:0}
   .principle p.sub{margin:20px 0 0;font-size:15.5px;color:var(--muted)}
   .plist{display:flex;flex-wrap:wrap;justify-content:center;gap:12px;margin-top:36px}
   .plist span{font-family:var(--mono);font-size:12.5px;color:var(--muted);background:var(--panel);
@@ -523,10 +525,12 @@ review, the verdict, DESIGN.md, and every shipping raster carrying its provenanc
 </section>
 
 <section class="block wrap">
-  <span class="eyebrow">Finished the quickstart?</span>
-  <h2>You've seen the pipeline run.<br>Now make it <em>yours</em>.</h2>
-  <p class="sub">The 10-minute install is the first step, not the last. Each of these is about as fast — pick the one that fits.</p>
-  <div class="cta-row">
+  <div class="section-head">
+    <span class="eyebrow">Finished the quickstart?</span>
+    <h2>You've seen the pipeline run.<br>Now make it <em>yours</em>.</h2>
+    <p>The 10-minute install is the first step, not the last. Pick the next one that fits.</p>
+  </div>
+  <div class="cta-row cta-center">
     <a class="btn btn-primary" href="https://github.com/supermhel/fengarde">Star FENGARDE on GitHub</a>
     <a class="btn btn-ghost" href="https://github.com/supermhel/fengarde/issues/new?template=rule_request.md">Request a detection rule</a>
     <a class="btn btn-ghost" href="https://github.com/supermhel/fengarde/blob/main/CONTRIBUTING.md">Add a parser (~30 min)</a>

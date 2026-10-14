@@ -145,8 +145,8 @@ class TestVerdictExitCode(unittest.TestCase):
 
 class TestAttackFixtures(unittest.TestCase):
     """Phase 5 item 8 (2026-10-14): password_spray had zero attack-shaped
-    test events in either corpus (it sat as the last residual untested_rules
-    entry on every trend row). attack_fixtures.py adds a committed synthetic
+    test events in either corpus (untested on every corpus trend row).
+    attack_fixtures.py adds a committed synthetic
     credential-stuffing shape; these tests pin that it trips ONLY the oracle
     rule it is meant to, that the REAL engine agrees (no mismatch), and that
     the fixtures stay deterministic."""
