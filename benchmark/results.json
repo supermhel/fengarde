@@ -1,8 +1,9 @@
 {
   "caveats": [
-    "macro_f1 is engine-vs-oracle agreement on a hand-labeled quality canary (10 events), not field detection fidelity; see docs/detection-quality.md.",
+    "macro_f1 is engine-vs-oracle agreement on a hand-labeled quality canary (10 events, 4 scored rules), not field detection fidelity; see docs/detection-quality.md.",
     "per-rule confusion counts are graded per corpus FILE, not per event.",
     "per-rule expected-positives are corpus-composition-dependent (the corpora are fetched at clone time, not version-pinned): on this snapshot's run password_spray had zero expected-positive files in every corpus (reported as untested); eval/attack/fire_check.py separately proves every MITRE-tagged rule fires on its own real producer fixture.",
+    "password_spray: graded on committed synthetic fixtures (eval/detection_accuracy/attack_fixtures.py), published only in fixture_per_rule_confusion -- never in per_rule_confusion, corpus_records or parser_coverage_pct.",
     "parser_coverage_pct is a corpus-shape measurement: it means 'that share of THIS EVTX corpus's Security+Sysmon records parse', not 'that share of all log formats FENGARDE can ingest'; most of the 17 shipped parsers cover IT/OT formats these corpora do not contain.",
     "twin metrics are harness-measured on a deterministic in-process plc simulator replay (seed 7, basis=harness-measured); null fields were not measured in that run, not zero.",
     "ci-clone contamination: GitHub clone counts are inflated by authenticated Actions checkouts and are NOT published here as traction evidence."
@@ -13,10 +14,52 @@
       "quality",
       "splunk"
     ],
-    "corpus_files": null,
+    "corpus_files": {
+      "evtx": 278,
+      "splunk": 1055
+    },
     "corpus_records": 265404,
-    "fixture_per_rule_confusion": null,
-    "fixture_tested_rules": null,
+    "fixture_per_rule_confusion": {
+      "2e3d4c5b-6f70-4819-9b02-1c2d3e4f5061": {
+        "fn": 0,
+        "fp": 0,
+        "tn": 1,
+        "tp": 0
+      },
+      "4f8a2c61-9e3d-4b57-8a1c-6d2e5f7a8b90": {
+        "fn": 0,
+        "fp": 0,
+        "tn": 0,
+        "tp": 1
+      },
+      "6f1c8a2e-0d3b-4c11-9a21-7b5e2f9a1c01": {
+        "fn": 0,
+        "fp": 0,
+        "tn": 1,
+        "tp": 0
+      },
+      "7d3e9a52-1f6c-4a88-9b3d-2e5c8f1a6d40": {
+        "fn": 0,
+        "fp": 0,
+        "tn": 1,
+        "tp": 0
+      },
+      "8c2f5a91-4d16-4e8b-9c3a-1f6b2e7d5a83": {
+        "fn": 0,
+        "fp": 0,
+        "tn": 1,
+        "tp": 0
+      },
+      "9b5f2d18-3c7a-4e61-8f24-5a1d7c3e9b06": {
+        "fn": 0,
+        "fp": 0,
+        "tn": 1,
+        "tp": 0
+      }
+    },
+    "fixture_tested_rules": [
+      "password_spray"
+    ],
     "macro_f1": 0.875,
     "parser_coverage_pct": 43.2,
     "per_rule_confusion": {
@@ -70,12 +113,12 @@
       "password_spray"
     ]
   },
-  "generated_at": "2026-10-14T09:04:13+00:00",
+  "generated_at": "2026-10-14T09:29:18+00:00",
   "schema_version": "1.0",
   "source": {
     "corpus_row_date": "2026-10-14",
     "file": "eval/trend.jsonl",
-    "twin_row_date": "2026-09-04T07:51:40+00:00"
+    "twin_row_date": "2026-10-14T09:29:18+00:00"
   },
   "twin": {
     "alert_reduction_ratio": 0.7143,
@@ -84,7 +127,7 @@
     "evidence_completeness": 0.9375,
     "false_correlation_rate": 1.0,
     "fpr": 0.0,
-    "incident_reconstruction_time_ms": 0.6087,
+    "incident_reconstruction_time_ms": 0.7212,
     "mttd_seconds": 60.0,
     "mtti_seconds": 360.0,
     "mttr_seconds": null,
