@@ -28,7 +28,10 @@ limitations in [`methodology.md`](methodology.md).
 | Alert-reduction ratio | 0.7143 | 1 − incidents/raw alerts (7 alerts → 2 incidents) |
 
 Full machine-readable detail with per-metric units:
-[`results.json`](results.json)
+[`results.json`](results.json). Sources for numbers not in it: per-lane record
+counts, dead-letters and mismatches come from that run's CI log; the twin's 2/2 forbidden
+pairs, 12 investigation steps and 7 alerts → 2 incidents from the committed
+[`eval/twin/report.json`](../eval/twin/report.json) `context`.
 
 ## The honest boundaries (full text in methodology.md)
 

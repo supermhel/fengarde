@@ -22,8 +22,8 @@ import sys
 
 
 def _git(*args: str, cwd: str | None = None) -> str:
-    return subprocess.run(["git", *args], cwd=cwd, check=True,
-                          capture_output=True, text=True).stdout
+    return subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True,
+                          encoding="utf-8", errors="replace").stdout
 
 
 def unsigned_commits(base: str, head: str = "HEAD",
@@ -50,6 +50,9 @@ def main(argv: list[str]) -> int:
     try:
         _git("rev-parse", "--quiet", "--verify", f"{base}^{{commit}}")
         total, bad = unsigned_commits(base, head)
+    except OSError as exc:  # git missing: still a red check, with a reason
+        print(f"[FAIL] check_dco: cannot run git ({exc})")
+        return 1
     except subprocess.CalledProcessError as exc:
         print(f"[FAIL] check_dco: git failed ({exc.stderr.strip() or exc}) -- "
               f"base {base} not in this checkout? fetch-depth must be 0")
@@ -61,8 +64,9 @@ def main(argv: list[str]) -> int:
         for b in bad:
             print(f"  {b}")
         print("Every commit must be signed off (Developer Certificate of Origin v1.1).")
+        print("The commit AUTHOR must add it (a sign-off by anyone else does not match):")
         print("  git commit -s                          # for new commits")
-        print("  git rebase --signoff <base>            # sign every commit on the branch")
+        print("  git rebase --signoff <base>            # author re-signs their own branch")
         print("See CONTRIBUTING.md -> Pull request expectations -> DCO.")
         return 1
     print("[OK] every new commit is signed off by its author (DCO v1.1)")

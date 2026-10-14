@@ -171,8 +171,9 @@ class TestAttackFixtures(unittest.TestCase):
         self.assertLessEqual(times[-1] - times[0], 300_000)
 
     def test_deterministic_across_calls(self):
-        self.assertEqual(attack_fixtures.ALL["password_spray"],
-                         attack_fixtures.ALL["password_spray"])
+        # two independent builds, not the same cached object twice
+        self.assertEqual(attack_fixtures._password_spray_records(),
+                         attack_fixtures._password_spray_records())
 
     def test_run_fixtures_folds_tp_without_mismatch(self):
         confusion = {rid: {"tp": 0, "fn": 0, "fp": 0, "tn": 0}

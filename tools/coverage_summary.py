@@ -53,6 +53,13 @@ def main() -> int:
         derived = G._derive_scripts((ROOT / "run_all_tests.sh").read_text(encoding="utf-8"))
     except FileNotFoundError:
         derived = {}
+    try:
+        return _run(derived)
+    finally:
+        DATA.unlink(missing_ok=True)
+
+
+def _run(derived: dict) -> int:
     ran, failures = 0, []
     for service_dir, (source, scripts, _min) in G.TARGETS.items():
         for script in G._effective_scripts(source, scripts, derived):
@@ -67,7 +74,6 @@ def main() -> int:
     out = subprocess.run(
         [sys.executable, "-m", "coverage", "json", f"--data-file={DATA}", "-o", "-"],
         cwd=ROOT, check=True, capture_output=True, text=True)
-    DATA.unlink(missing_ok=True)
     s = summarize(json.loads(out.stdout)["totals"])
     print(f"suites_run={ran} suite_failures={len(failures)} {failures if failures else ''}")
     print(f"statement_coverage={s['statement_pct']}% ({s['statements']} statements)")

@@ -74,6 +74,21 @@ class TestCheckDco(unittest.TestCase):
                      f"final paragraph without trailers")
         self.assertEqual(len(self._check()[1]), 1)
 
+    def test_empty_range_passes(self):
+        # nothing new to certify (e.g. PR head == base): green by design
+        self.assertEqual(self._check(), (0, []))
+
+    def test_unsigned_merge_commit_fails(self):
+        self._git("checkout", "-q", "-b", "side")
+        self._commit(f"side\n\nSigned-off-by: {AUTHOR} <{EMAIL}>")
+        self._git("checkout", "-q", "-")
+        self._commit(f"main\n\nSigned-off-by: {AUTHOR} <{EMAIL}>")
+        self._git("merge", "-q", "--no-ff", "--no-edit", "side")  # default msg, no trailer
+        total, bad = self._check()
+        self.assertEqual(total, 3)
+        self.assertEqual(len(bad), 1)
+        self.assertIn("Merge branch", bad[0])
+
     def test_missing_base_fails_closed(self):
         import contextlib
         import io

@@ -144,7 +144,7 @@ this repo's working tree — see SSOT.md §4.
   rather than using GitHub's "Update branch" merge). The trailer certifies the
   [Developer Certificate of Origin v1.1](https://developercertificate.org/) —
   that you have the right to submit the contribution under the project's license.
-  Add it with `git commit -s`; fix a whole branch with `git rebase --signoff <base>`.
+  Add it with `git commit -s`; fix your own branch with `git rebase --signoff <base>` (the sign-off must be the author's own).
 - **Security.** If you found a vulnerability, do **not** open a public PR/issue —
   follow [SECURITY.md](SECURITY.md). Remember the detection engine executes rule
   files, so review any contributed rule's `condition` carefully.
