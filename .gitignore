@@ -67,6 +67,9 @@ eval/twin/report.latest.json
 # Phase 4 adversarial lane regenerated artifacts (gate runs must not dirty
 # tracked files -- same convention as eval/twin/report.latest.json).
 eval/adversarial/out/
+# oracle_consistency LAST-RUN output (step 7 scorecard): `--out` now points the
+# gate here rather than at a tracked path, same convention as above.
+eval/twin/out/
 
 # Claude Code local/editor files (not project artifacts)
 .claude/settings.local.json

@@ -7,6 +7,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (2026-10-14 -- step 7 of the roadmap, the 5th storyline, and the first real third-party number)
+
+- **`eval/SCORECARD.md` exists now: a committed, generated card** (`eval/scorecard_registry.py`,
+  `tools/generate_scorecard.py`, `tools/test_generate_scorecard.py`). It is re-rendered by
+  `generate_scorecard.py --run` from the gate's own JSON artifacts and shows every metric per storyline and
+  per ATT&CK technique, with its known blind spot and a negative control whose existence is checked
+  (function-level, via stdlib `ast`). Twelve "what this harness cannot prove" bullets each carry a guard that
+  must agree with the artifact at generation time, so a limitation expires the moment the code makes it false.
+  `run_all_tests.sh` gained `--check`, `--lint-docs` and the generator's unit tests as gate stanzas (the card
+  must equal a fresh render or the gate goes red); `oracle_consistency.py` now writes its artifact with
+  `--out`. QA: a hand-edited card line fails `--check` with a cell-level diff; a fixture control sitting in an
+  uncalled function is rejected; the corpus guard is an ANCHORED regex and does not trip on the H7 test. The
+  SSOT/README doc lint (`--lint-docs`) allows a quoted harness number only when the card holds that key with
+  that exact value; the six stale SSOT rows carry `[historical numbers - current: eval/SCORECARD.md]`.
+- **The 5th storyline: `ot_opcua_sabotage`** (`eval/twin/storyline_ot_opcua_sabotage.py` +
+  `eval/twin/oracle_ot_opcua_sabotage.yaml`). The first storyline built exclusively on OT telemetry (opcua_audit,
+  modbus_anomaly, inventory_diff). Six shipped rules were covered by no oracle at all until it landed --
+  `ot_new_device_on_segment`, `ot_new_engineering_connection`, `ot_config_change`,
+  `ot_write_outside_maintenance`, `ot_opcua_write_unauthorized_node` (default-off, exercised through the
+  opt-in convention) and `ot_modbus_unauthorized_write_ticketed` -- and their waiver lines in
+  `technique_waivers.yaml` are deleted. Mutation lane: 19/21 applicable variants (0.9048), the only residual
+  being the known WS-8 join class. The oracle-mutation ratchet covers seeds 7 and 11 with the 5th storyline;
+  the catalogue is 367 mutants and `test_oracle_crosscheck.py` now asserts the ratchet names `reg.ALL` rather
+  than three names.
+- **The naked evasion-search bug this storyline exposed: `FastProbe` did not know about default-off rules.**
+  `probe_session.FastProbe` passed no `opt_in_rules` to its Detector while the slow path (and `report`) did, so
+  the two "parity-proven" paths silently disagreed on any OPC UA write -- the parity check caught it only once
+  a storyline exercised the default-off rule. FastProbe now opts in the same set (constant with a load-bearing
+  comment in `probe_session.py`).
+- **The order control could not always say no** (`eval/adversarial/order_controls.py::pick_swap_pair`): the
+  first adjacent graded pair can keep `alert_order_ok` True under a step swap when two windowed rules overlap
+  that way (proven on `rogue_device`/`engineering_sessions`, concordance 0.75 with the boolean intact). The
+  picker now validates that a candidate swap flips `alert_order_ok` to False with a mid-concordance before
+  choosing it, so `engineering_sessions`/`process_write_night` is the control pair for the OT storyline and
+  every storyline's swap control can actually fail.
+- **Evasion-search loss bound: the `n - T` model is wrong by construction for distinct-keyed rules.**
+  A rule keyed on DISTINCT entities in a window can lose its boundary by a removal that drops a whole key's
+  last event or pushes survivors past the window (measured on `ot_new_engineering_connection`: tolerated loss 2
+  where the raw model predicts 3 -- on the four older storylines the same model agrees, so they stay searched
+  `[ok]`). The deviation is now recorded as a documented carve-out on the row instead of a false mismatch; the
+  boundary is still gated from both describable sides (identity run at >= T distinct; the scenario_matrix
+  negative twins below T, e.g. `engineering_single_source`).
+- **Two hardcoded-oracle-lookup bugs in the scorecard generator are fixed** (`tools/generate_scorecard.py`
+  `decorate`): a hardcoded four-storyline map silently resolved the 5th storyline's oracle to the repo root,
+  crashing `--check` on Errno 13; and the deliberately-snapshot `scorecard_registry.STORYLINES` tuple is
+  extended to five (its documented contract). Oracle paths now come from `scenario_registry`, and a registered
+  storyline without an oracle file fails the render loudly instead of vanishing from the card.
+
 ### Fixed (2026-10-13 -- the five remaining adversarial-review areas, run against the current code)
 
 An independent adversarial review (differential/property/fuzz experiments in sandbox worktrees, every finding re-run by the author before it was accepted) covered the five areas the first pass never reached: `tenant-defaultoff`, `harness-validity`, `evasion-ratchet`, `blindrecall-tools`, `claims-audit`. What it found was fixed here; the two limits that remain are stated, not hidden.

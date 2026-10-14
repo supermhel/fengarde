@@ -837,8 +837,14 @@ def test_catalogue_size_and_read_only() -> None:
         with om.memoize_observation():
             g = om.default_grader(result, copy.deepcopy(oracle))
         n += len(om.catalogue(oracle, od.derive(sd, 7, result=result), g)) - 1
-    _check("the catalogue holds about 250 mutants over the three storylines (WRONG + WEAKER, identity excluded)",
-           200 <= n <= 300, f"{n}")
+    # The bound tracks the REGISTRY, not an era: the catalogue is one mutant set per storyline, so it
+    # grows with every storyline that lands (measured seed 7, 2026-10-14: ai_to_ot 92, it_intrusion 92,
+    # infra_takeover 39, phishing_bec 70, ot_opcua_sabotage 74 -- 367 total; the old ceiling of 300 was
+    # already 98% consumed by the first four). Both bounds stay real: a collapsed catalogue (a builder
+    # that stopped generating mutants) or an explosion (a duplicate-emitting one) still fails.
+    _check("the catalogue holds the expected number of mutants over every registered storyline "
+           "(WRONG + WEAKER, identity excluded)",
+           200 <= n <= 450, f"{n}")
     before = {p.name: _sha(p) for p in ORACLE_FILES}
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):

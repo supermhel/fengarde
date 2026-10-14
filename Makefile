@@ -4,7 +4,7 @@
 
 COMPOSE := docker compose -f infra/docker-compose.yml
 
-.PHONY: help preflight demo test adversarial e2e nis2-demo up down ha-up ha-down chaos test-live ha-verify attack-scorecard eval-detection eval-blind-recall mutation-test bench
+.PHONY: help preflight demo test adversarial e2e nis2-demo up down ha-up ha-down chaos test-live ha-verify attack-scorecard eval-detection eval-blind-recall mutation-test bench scorecard scorecard-run
 
 PYTHON ?= python3
 
@@ -25,6 +25,8 @@ help:
 	@echo "  make attack-scorecard - P3-2: declared ATT&CK/ATLAS coverage + Navigator layer export (zero infra)"
 	@echo "  make eval-detection   - P3 eval lane: EVTX/Splunk oracle-replay detection accuracy (needs datasets, see eval/detection_accuracy/README.md)"
 	@echo "  make eval-blind-recall - blind-recall lane: fetch pinned third-party corpora, score FENGARDE against dataset-author ATT&CK labels (needs network + git-lfs)"
+	@echo "  make scorecard  - step 7: render eval/SCORECARD.md, then --check it against the artifacts (--check is what 'make test' runs)"
+	@echo "  make scorecard-run - step 7: re-run EVERY instrument first, then --check (writes shared gitignored artifacts; NEVER run concurrently with 'make test')"
 
 # DX3 — the "doctor". Fails fast with plain-English remedies before anything starts.
 preflight:
@@ -190,3 +192,19 @@ mutation-test:
 # as `make test-live`/`make chaos`.
 bench:
 	@$(PYTHON) tools/fengarde_bench.py --events 2000
+
+# Step 7 scorecard. `scorecard` checks the committed card against the artifacts
+# the last gate run produced (cheap; this is the in-gate path). `scorecard-run`
+# is for a developer who holds stale artifacts: it re-runs EVERY instrument in
+# the gate's order first. That replay writes the SHARED gitignored artifacts
+# (eval/adversarial/out/, eval/attack/out/, eval/twin/report.latest.json,
+# eval/twin/out/) and takes several minutes, so it MUST NOT be run concurrently
+# with `make test` / run_all_tests.sh -- two writers would race on the same
+# paths. report.py keeps --no-trend, so eval/trend.jsonl stays clean.
+scorecard:
+	@$(PYTHON) tools/generate_scorecard.py --check
+	@$(PYTHON) tools/generate_scorecard.py --lint-docs
+
+scorecard-run:
+	@$(PYTHON) tools/generate_scorecard.py --run --check
+	@$(PYTHON) tools/generate_scorecard.py --lint-docs

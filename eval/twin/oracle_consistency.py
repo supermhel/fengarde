@@ -132,6 +132,13 @@ _ACCEPTED: dict = {
     # intent-first oracle said they would; only this known order-blind channel disagreed.
     ("phishing_bec", "forbidden", "payment_redirect", "proxy_pool_logins"): _ORDER_BLIND,
     ("phishing_bec", "forbidden", "foreign_login", "user_execution"): _ORDER_BLIND,
+    # 2026-10-14 ot_opcua_sabotage: the same class on the first OT storyline. The non-edge is
+    # anti-causal (the actuation cannot precede the device that performed it) and the pair shares the
+    # rogue device's own OT address, so the entity track joins it in both directions -- exactly the
+    # order blindness the five entries above record. The oracle declares the pair deliberately: with
+    # NO forbidden relationship the mutation lane's `fcr_unchanged` criterion is unsatisfiable (its
+    # baseline is None), so every scenario_matrix row would fail for a reason unrelated to detection.
+    ("ot_opcua_sabotage", "forbidden", "forged_ticket_write", "rogue_device"): _ORDER_BLIND,
 }
 # History. The map was EMPTY from 2026-10-01: the three AI-to-OT disagreements that used to live here
 # (a stale process_anomaly gap; agent_tool_call_burst and agent_destructive_command

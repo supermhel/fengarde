@@ -477,7 +477,7 @@ echo "== twin: negative controls (FPR source) -- four benign scenarios, all must
 $PY eval/twin/negative_controls.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
 echo "== twin: oracle <-> reality reconciliation (the answer key is self-authored; drift must not be silent) =="; LAST_HEADER="== twin: oracle <-> reality reconciliation (the answer key is self-authored; drift must not be silent) =="
-$PY eval/twin/oracle_consistency.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+$PY eval/twin/oracle_consistency.py --out eval/twin/out/oracle_consistency.latest.json || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 
 # == Phase 4 adversarial system-level validation (WP-4-A) ==
 # Layer A is DETERMINISTIC and BLOCKING (determinism is what licenses
@@ -549,6 +549,20 @@ $PY eval/twin/test_causal_order.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}
 echo
 echo "== WP-3.5-A: twin Phase 3.5 operational outcome metrics (alert reduction, false correlation, reconstruction, investigation, severity confusion -- determinism + mutation-soundness) =="; LAST_HEADER="== WP-3.5-A: twin Phase 3.5 operational outcome metrics (alert reduction, false correlation, reconstruction, investigation, severity confusion -- determinism + mutation-soundness) =="
 $PY eval/twin/test_phase3_5.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
+echo "== scorecard: eval/SCORECARD.md must match a render of the artifacts THIS run produced =="; LAST_HEADER="== scorecard: eval/SCORECARD.md must match a render of the artifacts THIS run produced =="
+# MUST run AFTER every instrument stanza above (report.py, scenario_matrix,
+# evasion_search, layer_a, corpus_b, oracle_consistency, fire_check): it renders
+# the card from the artifacts the gate just wrote and fails on any difference.
+# The order is asserted by tools/test_generate_scorecard.py; a new instrument
+# added BELOW this stanza must be added to the test's instrument list too.
+$PY tools/generate_scorecard.py --check || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
+echo "== scorecard: README/SSOT quote only numbers the card holds (doc-consistency lint) =="; LAST_HEADER="== scorecard: README/SSOT quote only numbers the card holds (doc-consistency lint) =="
+$PY tools/generate_scorecard.py --lint-docs || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
+echo "== scorecard: the registry/generator/controls themselves (positive + negative controls) =="; LAST_HEADER="== scorecard: the registry/generator/controls themselves (positive + negative controls) =="
+$PY tools/test_generate_scorecard.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 
 # == Phase 4 (2026-08-06) enhancement + fix regression tests ==
 echo

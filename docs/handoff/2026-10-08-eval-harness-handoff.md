@@ -334,3 +334,71 @@ itself).
 
 Resume commands in §10 still hold; add
 `python eval/twin/oracle_mutate.py --seed 7` (now a gate stanza) to the list.
+
+---
+
+## 12. Update 2026-10-14 — P0 is closed, and P2 has produced the first real number
+
+Three of the four things §6's P0 asked for now exist, and §P2 has produced what it was for.
+
+**P0(a)** — the five review areas, done in §11.
+
+**P0(c) — the live lane was re-run on the final code and is green.** `docs/handoff/live/run_live.sh` was run
+against the compose stack brought up with the two documented settings (`FENGARDE_OPT_IN_RULES=e7a14b6d-…` on
+`ws3-indexer` AND `ws4-detection`, kept identical; `INVENTORY_BASELINE_SECONDS=0` on `ws6-inventory`). Result:
+`ALL-LIVE-DONE`, exit 0 — all 17 steps rc=0, including `chaos_test` (243 s), the three OpenSearch live lanes,
+`mfa_live_e2e`, the Redis wire-parity and session tests, `container_smoke` and the companion e2e. The v0.1
+acceptance (`tools/demo_e2e.py`) is also green (SSH brute-force → real alert in the index, idempotent under
+replay). **With that plus "confirmed findings 0", the P0 exit criterion in §6 is met.**
+
+Note for whoever runs it next: `run_live.sh` calls `python`, not `python3`, so the wrapper described in the
+skill has to be named `python` as well; and `make` does not exist in this MSYS bash, so `make e2e` has to be run
+as `python tools/demo_e2e.py`.
+
+**P0(d)** — cleaned: the five review worktrees and the nine stale `wf_*` worktrees of §8 are gone
+(`.claude/worktrees/` is empty). The two separate feature-branch checkouts (`- ossfuzz`, `- p5`) were left alone.
+
+**P0(b) is still owed, and is still the honest gap.** The review in §11 is a *same-project* pass. §7 Q1 asks for
+`engineering:code-review` in a new session at max effort, and that has not happened.
+
+**P2 — the first real third-party measurement.** §2 and §11 both say "no real third-party corpus measured yet".
+That is now false. `fetch_corpora.py` (RC=0) fetched `splunk/attack_data` at its exact manifest pin
+(`800ef657…`) plus `EVTX-to-MITRE-Attack` at the first-fetch HEAD (`4748560…`, unpinned), and
+`blind_recall.py --require-corpus` scored FENGARDE against the dataset authors' labels:
+
+- **12 hits of 48 scoreable units (25 %)** — the fair denominator: fetched, labelled, a parser that can ingest
+  the data, and a rule for the technique. Over all 1509 labelled units it is 12 (0.8 %), but 1184 of those were
+  never fetched, so that figure is not a detection statement.
+- **4 of 342 labelled techniques hit at all.** `T1098` 6/33, `T1110` family 2/12, `T1110.003` 2/2 family-level.
+- **The gap lists are published**: 52 techniques with a parser but no rule (credential dumping, service
+  creation, defence evasion at the top), 16 sub-technique gaps with their family rule ids, and **184 fetched
+  units with no parser at all — a bigger structural hole than the 79 with no rule.**
+- The declared `T1110.003` gap is **confirmed by third-party labels** for the first time.
+
+Full funnel, pins, limits and reproduction: `docs/handoff/2026-10-14-p2-blind-recall-funnel.md`. Nothing is
+vendored; the corpora and the results file are gitignored, so "commit nothing from it" holds by structure.
+
+**P4 — a first pass, not the real thing.** Three isolated agents with no access to the rules (one of them
+without even the technique ids) reproduced the committed detectability map on **7 of 8 steps**, and an
+independent derivation reproduced the statistic, the counting key and the design rationale of all three
+detection rules involved — including the sentinel exclusion that turned out to be the real `ZZ` bug this PR
+fixed. It is written up, with the caveats, in `docs/handoff/2026-10-14-p4-blind-oracle-triangulation.md`. It does
+**not** satisfy §P4: no complete oracle was authored blind and committed, and three of the five gaps were
+partly implied by the telemetry list the agents were given.
+
+**Two new questions for §7, both from that triangulation — owner decisions, not silent rule edits:**
+
+15. **`common_beaconing` fires from 6 beats; an independent estimate puts the noise floor at 20.** The argument
+    is quantified (P(CV ≤ 0.20 | memoryless traffic) ≈ 6×10⁻³ at n = 10 versus ≈ 1×10⁻⁴ at n = 20; across an
+    estate with 10⁵–10⁶ distinct (host, destination, port) keys per day, 6 beats is inside the false-positive
+    floor). Raising `threshold` moves a shipped detection rule and would need the storylines' negative twins
+    re-cut, so it belongs in the step-6 boundary work with a decision, not in a drive-by commit.
+16. **The credential-stuffing window is 300 s** (`common_password_spray.yml`, `distinct_field: src_endpoint.ip`,
+    `threshold: 8`) where the independent derivation says a 24 h window with a 1 h fast tier. A five-minute
+    window on a phenomenon the scenario itself spreads over ten minutes is narrow by construction. Whether that
+    is wrong depends on whether the rule is meant to catch a burst or a sustained campaign — a semantics
+    decision.
+
+**Still open, unchanged:** P1 (the five storylines), P3 (in progress — step 7 being built, step 6 not started),
+the rest of P4, all of P5, and §7 Q1, Q3 (all 10 `evasion_tables.yaml` rows still `ratified: false`), Q9, Q11,
+Q12, Q13.
