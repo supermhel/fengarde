@@ -69,7 +69,7 @@
       "bruteforce_sourceless"
     ]
   },
-  "generated_at": "2026-10-13T23:25:11+00:00",
+  "generated_at": "2026-10-14T00:07:55+00:00",
   "schema_version": "1.0",
   "source": {
     "corpus_row_date": "2026-10-13",
@@ -87,12 +87,6 @@
     "mttd_seconds": 60.0,
     "mtti_seconds": 360.0,
     "mttr_seconds": null,
-    "scenario_summary": {
-      "chain_steps": [],
-      "gap_count": null,
-      "negative_controls": {},
-      "parsed_count": null
-    },
     "severity_calibration_error": 0.0,
     "tpr": 1.0
   },

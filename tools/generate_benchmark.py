@@ -209,15 +209,59 @@ def build_document(corpus: dict, twin: dict) -> dict:
     }
 
 
+def render_document(rows: list[dict]) -> str:
+    """The exact bytes generate_benchmark writes (or checks), sorted keys,
+    trailing newline."""
+    return (json.dumps(
+        build_document(latest_corpus_row(rows), latest_twin_row(rows)),
+        indent=2, sort_keys=True) + "\n")
+
+
+def _strip_ts(doc_str: str) -> str:
+    """The document with the volatile generated_at timestamp removed, so
+    --check compares every REAL field (row selection, schema, numbers)
+    without tripping on the one field that changes every render."""
+    d = json.loads(doc_str)
+    d.pop("generated_at", None)
+    return json.dumps(d, indent=2, sort_keys=True)
+
+
+def is_stale(rows: list[dict]) -> tuple[bool, str]:
+    """(True, rendered) when OUT misses or differs from a fresh render.
+
+    --check compares fields EXCEPT generated_at (that timestamp legitimately
+    changes on every write; a committed snapshot must not be called stale
+    for carrying its own generation time). Any real drift -- row selection,
+    schema shape, measured numbers -- fails loudly instead."""
+    rendered = render_document(rows)
+    if not OUT.exists():
+        return True, rendered
+    try:
+        current = OUT.read_text(encoding="utf-8")
+        if _strip_ts(current) == _strip_ts(rendered):
+            return False, rendered
+    except (OSError, json.JSONDecodeError):
+        pass
+    return True, rendered
+
+
 def main() -> int:
     rows = load_trend_rows(TREND)
-    doc = build_document(latest_corpus_row(rows), latest_twin_row(rows))
+    if "--check" in sys.argv:
+        stale, _ = is_stale(rows)
+        if stale:
+            print(f"generate_benchmark --check: {OUT.relative_to(ROOT)} is STALE "
+                  f"(differs from a fresh render of {TREND.relative_to(ROOT)}) -- "
+                  f"run 'python tools/generate_benchmark.py' and commit the result.")
+            return 1
+        print(f"generate_benchmark --check: {OUT.relative_to(ROOT)} is fresh")
+        return 0
     OUT.parent.mkdir(exist_ok=True, parents=True)
-    OUT.write_text(json.dumps(doc, indent=2, sort_keys=True) + "\n",
-                   encoding="utf-8")
+    rendered = render_document(rows)
+    OUT.write_text(rendered, encoding="utf-8")
+    src = json.loads(rendered)["source"]
     print(f"generate_benchmark: wrote {OUT.relative_to(ROOT)} "
-          f"(corpus row {doc['source']['corpus_row_date']}, "
-          f"twin row {doc['source']['twin_row_date']})")
+          f"(corpus row {src['corpus_row_date']}, twin row {src['twin_row_date']})")
     return 0
 
 
