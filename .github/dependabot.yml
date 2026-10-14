@@ -96,6 +96,14 @@ updates:
         update-types: ["version-update:semver-major", "version-update:semver-minor", "version-update:semver-patch"]
       - dependency-name: "redis"
         update-types: ["version-update:semver-major", "version-update:semver-minor", "version-update:semver-patch"]
+  # eval/requirements.txt: the nightly-eval lane's hash-pinned deps.
+  - package-ecosystem: "pip"
+    directory: "/eval"
+    schedule:
+      interval: "weekly"
+    ignore:
+      - dependency-name: "PyYAML"
+        update-types: ["version-update:semver-major", "version-update:semver-minor", "version-update:semver-patch"]
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:

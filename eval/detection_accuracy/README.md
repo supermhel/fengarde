@@ -24,22 +24,21 @@ GPL-3.0; splunk/attack_data has its own terms) — neither is committed to this
 repo. Fetch them yourself:
 
 ```sh
-# EVTX-ATTACK-SAMPLES (GPL-3.0 — review the license before redistributing
-# anything derived from it)
-git clone --depth 1 https://github.com/sbousseaden/EVTX-ATTACK-SAMPLES \
-  eval/detection_accuracy/evtx-samples
-
-# splunk/attack_data (review its own LICENSE)
-git clone --depth 1 https://github.com/splunk/attack_data \
-  eval/detection_accuracy/splunk-attack-data
+# Both corpora at the commits pinned in fetch_corpora.sh (EVTX-ATTACK-SAMPLES
+# is GPL-3.0, splunk/attack_data has its own LICENSE -- review both before
+# redistributing anything derived from them). splunk needs git-lfs.
+bash eval/detection_accuracy/fetch_corpora.sh
 ```
 
 Both target directories are gitignored. `evtx_eval.py` also needs the
-`python-evtx` package to parse `.evtx` binary files:
+`python-evtx` package to parse `.evtx` binary files (hash-pinned):
 
 ```sh
-pip install python-evtx
+pip install --require-hashes -r eval/requirements.txt
 ```
+
+The benchmark's corpus numbers come from the nightly CI run only; see
+`benchmark/reproduction.md` for why local runs are not the source of truth.
 
 ## Running
 
@@ -159,8 +158,8 @@ snapshot, not a comprehensive detection-accuracy claim:
   it to also read Splunk's non-XML raw-text export format is a real,
   disclosed follow-up, not attempted this pass.
 
-Both are reproducible: `git clone` the two corpora per this file's fetch
-commands above, then `make eval-detection`.
+Both are reproducible: fetch the two corpora with `fetch_corpora.sh` (pinned
+commits), then `make eval-detection`.
 
 ## Coverage broadened (2026-09-10)
 

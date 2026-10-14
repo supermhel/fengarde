@@ -48,13 +48,16 @@ jobs:
       - name: Install deps
         # python-evtx: required by the EVTX corpus lane (both corpora eval
         # scripts SKIP cleanly without it, but this lane fetches the corpus so
-        # it is a real dependency here, not optional).
-        run: pip install pyyaml python-evtx
+        # it is a real dependency here, not optional). Hash-pinned like every
+        # services/*/requirements.txt, so a new upstream release can't move
+        # the published numbers without a commit.
+        run: pip install --require-hashes -r eval/requirements.txt
 
       # ---- corpus fetch (opt-in live lane) --------------------------------
       # NIGHTLY_EVAL_MODE is a repository variable:
-      #   unset / "corpus"  -> clone both corpora; a failed clone FAILS the job
-      #                        loudly (a broken download is never silent).
+      #   unset / "corpus"  -> fetch both corpora at the commits PINNED in
+      #                        eval/detection_accuracy/fetch_corpora.sh; a failed
+      #                        fetch FAILS the job loudly (never silent).
       #   "quality-only"    -> skip the fetch + evtx/splunk lanes cleanly; the
       #                        zero-infra quality canary + trend row still run.
       - name: Fetch corpus corpora (EVTX-ATTACK-SAMPLES + splunk/attack_data)

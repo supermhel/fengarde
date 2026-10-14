@@ -73,7 +73,7 @@ def _positives(per_rule: dict) -> list[str]:
 
 def build_row(evtx: dict | None, splunk: dict | None, macro_f1: float,
               quality_events: int, quality_scored_rules: int,
-              now: datetime) -> dict:
+              now: datetime, corpus_commits: dict | None = None) -> dict:
     corpora: list[str] = []
     corpus_size = 0
     parser_coverage_pct = None
@@ -116,6 +116,11 @@ def build_row(evtx: dict | None, splunk: dict | None, macro_f1: float,
         # full nightly clone reads 1,055 -- the row must show which it was.
         "lane_files": {"evtx": (evtx or {}).get("corpus", {}).get("files"),
                        "splunk": (splunk or {}).get("files")},
+        # The corpus commit each lane read (pinned by
+        # eval/detection_accuracy/fetch_corpora.sh); null for a lane that
+        # did not run or a corpus that is not a git checkout.
+        "corpus_commits": {"evtx": (corpus_commits or {}).get("evtx") if evtx else None,
+                           "splunk": (corpus_commits or {}).get("splunk") if splunk else None},
         "per_rule": per_rule,
         "fixture_per_rule": fixture_per_rule,
         "macro_f1": round(macro_f1, 4),
@@ -125,6 +130,15 @@ def build_row(evtx: dict | None, splunk: dict | None, macro_f1: float,
         "untested_rules": untested,
         "fixture_tested_rules": _positives(fixture_per_rule),
     }
+
+
+def _head(path: Path) -> str | None:
+    import subprocess
+    try:
+        return subprocess.run(["git", "-C", str(path), "rev-parse", "HEAD"], check=True,
+                              capture_output=True, text=True).stdout.strip()
+    except (OSError, subprocess.CalledProcessError):
+        return None
 
 
 def main() -> int:
@@ -138,7 +152,9 @@ def main() -> int:
     row = build_row(load_json(LANE_DIR / "evtx_eval_results.json"),
                     load_json(LANE_DIR / "splunk_eval_results.json"),
                     D.macro_f1(per_rule_dq), len(D.CORPUS), len(scored),
-                    datetime.now(timezone.utc))
+                    datetime.now(timezone.utc),
+                    {"evtx": _head(LANE_DIR / "evtx-samples"),
+                     "splunk": _head(LANE_DIR / "splunk-attack-data")})
     with TREND.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(row) + "\n")
     print("APPENDED:", json.dumps(row))
