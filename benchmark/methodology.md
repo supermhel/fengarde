@@ -67,10 +67,13 @@ snapshot is the nightly CI row.
 
 A rule with `tp+fn == 0` across all corpus files is reported as `untested`
 — surfaced, never implied passing. **Expected-positives are
-corpus-composition-dependent**: the corpora are fetched at clone time and
-are not version-pinned (EVTX-ATTACK-SAMPLES has been static since 2023;
-splunk/attack_data grows), so a later clone can shift which rules see
-attack-shaped volume. In this snapshot only `password_spray` is untested.
+corpus-composition-dependent**: both corpora are pinned to fixed commits
+(`eval/detection_accuracy/fetch_corpora.sh`; EVTX-ATTACK-SAMPLES `4ceed2f`,
+static since 2023; splunk/attack_data `eac2f8f`, 2026-10-13), and each row
+records the commits read (`corpus_commits`). splunk/attack_data keeps
+growing upstream; adopting newer data is a pin bump in a PR, so which rules
+see attack-shaped volume can only change with a commit. In this snapshot
+only `password_spray` is untested.
 `eval/attack/fire_check.py` is the compensating check: it proves all 28
 MITRE-tagged rules (of 29 shipped; one rule carries no MITRE tag and is
 reported as unverified by that gate) fire on their own real producer

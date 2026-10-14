@@ -2,7 +2,7 @@
   "caveats": [
     "macro_f1 is engine-vs-oracle agreement on a hand-labeled quality canary (10 events, 4 scored rules), not field detection fidelity; see docs/detection-quality.md.",
     "per-rule confusion counts are graded per corpus FILE, not per event.",
-    "per-rule expected-positives are corpus-composition-dependent (the corpora are fetched at clone time, not version-pinned): on this snapshot's run password_spray had zero expected-positive files in every corpus (reported as untested); eval/attack/fire_check.py separately proves every MITRE-tagged rule fires on its own real producer fixture.",
+    "per-rule expected-positives are corpus-composition-dependent (this row predates commit recording; the corpus fetch is now pinned in eval/detection_accuracy/fetch_corpora.sh; a newer upstream corpus is a pin bump in a PR): on this snapshot's run password_spray had zero expected-positive files in every corpus (reported as untested); eval/attack/fire_check.py separately proves every MITRE-tagged rule fires on its own real producer fixture.",
     "password_spray: graded on committed synthetic fixtures (eval/detection_accuracy/attack_fixtures.py), published only in fixture_per_rule_confusion -- never in per_rule_confusion, corpus_records or parser_coverage_pct.",
     "parser_coverage_pct is a corpus-shape measurement: it means 'that share of THIS EVTX corpus's Security+Sysmon records parse', not 'that share of all log formats FENGARDE can ingest'; most of the 17 shipped parsers cover IT/OT formats these corpora do not contain.",
     "twin metrics are harness-measured on a deterministic in-process plc simulator replay (seed 7, basis=harness-measured); null fields were not measured in that run, not zero.",
@@ -14,6 +14,7 @@
       "quality",
       "splunk"
     ],
+    "corpus_commits": null,
     "corpus_files": {
       "evtx": 278,
       "splunk": 1055
@@ -113,7 +114,7 @@
       "password_spray"
     ]
   },
-  "generated_at": "2026-10-14T13:42:40+00:00",
+  "generated_at": "2026-10-14T14:23:00+00:00",
   "schema_version": "1.0",
   "source": {
     "corpus_row_date": "2026-10-14",
@@ -138,6 +139,7 @@
     "alert_reduction_ratio": "dimensionless [0,1]; 1 - (WS-8 incidents / raw WS-4 alerts) over the scenario window",
     "attribution_accuracy": "dimensionless [0,1]; share of ACTOR-BEARING scenario steps whose attributed actor matches ground truth (actor-less steps excluded, not credited)",
     "chain_fidelity": "dimensionless [0,1]; share of the oracle's ALLOWED causal step-pairs that a real WS-8 incident-graph edge joined",
+    "corpus_commits": "git commit of each corpus the lanes read ({evtx, splunk}), pinned in eval/detection_accuracy/fetch_corpora.sh; null on older rows",
     "corpus_files": "files each corpus lane read ({evtx, splunk}); null on rows written before provenance was recorded",
     "evidence_completeness": "dimensionless [0,1]; share of the oracle's per-step evidence fields present on parsed steps (unparsed gap steps count against it)",
     "false_correlation_rate": "dimensionless [0,1], LOWER IS BETTER; share of the oracle's FORBIDDEN causal step-pairs (allowed: false) that a real WS-8 graph edge joined anyway -- 1.0 means every forbidden pair was falsely joined",

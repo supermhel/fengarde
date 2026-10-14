@@ -27,12 +27,15 @@ Both third-party corpora are **not vendored** (their licenses do not permit
 redistribution — the EVTX corpus is GPL-3.0):
 
 ```sh
-git clone --depth 1 https://github.com/sbousseaden/EVTX-ATTACK-SAMPLES \
-  eval/detection_accuracy/evtx-samples
-git clone --depth 1 https://github.com/splunk/attack_data \
-  eval/detection_accuracy/splunk-attack-data   # needs git-lfs installed (multi-GB)
-pip install python-evtx        # EVTX lane only
+bash eval/detection_accuracy/fetch_corpora.sh     # both corpora at the PINNED commits; needs git-lfs (multi-GB)
+pip install --require-hashes -r eval/requirements.txt   # pyyaml + python-evtx, hash-pinned
 ```
+
+Both corpora are pinned to the exact commits the published snapshot was
+measured on (EVTX-ATTACK-SAMPLES `4ceed2f`, splunk/attack_data `eac2f8f`),
+and every trend row records the commits its lanes actually read
+(`corpus_commits`). New upstream splunk data arrives only through a PR that
+bumps the pin in `fetch_corpora.sh`; that PR's nightly run shows the change.
 
 splunk/attack_data stores its datasets in **Git LFS**. Without `git-lfs`
 the `.log` files are pointer stubs, and `splunk_eval.py` fails loudly on
@@ -40,9 +43,11 @@ them. It also fails loudly when tracked `.log` files are missing from the
 checkout (sparse/partial clone, or **antivirus quarantine**: Windows Defender
 removed 23 attack-sample `.log` files from a local clone on 2026-10-14). The
 row's `lane_files` should match the published snapshot (278 evtx / 1,055
-splunk files). The published snapshot is the nightly CI run on
-`ubuntu-latest`; on Windows, run the lanes in WSL or let CI produce the row
-rather than weakening antivirus settings.
+splunk files). **The corpus lanes are run in CI only** (the nightly
+workflow on `ubuntu-latest`, or `workflow_dispatch` on a branch); that row is
+the source of truth. Local runs are not supported on Windows hosts whose
+antivirus quarantines attack samples, and antivirus settings are never
+weakened to make them pass.
 
 A lane whose dataset is missing prints `[SKIP]` and exits 0 — it proves
 nothing that run, and `parser_coverage_pct` / `per_rule_confusion` will be

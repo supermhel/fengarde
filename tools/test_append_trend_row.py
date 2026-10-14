@@ -57,6 +57,10 @@ class TestBuildRow(unittest.TestCase):
         self.assertEqual(row["date"], "2026-10-14")
         self.assertEqual(row["quality_scored_rules"], 4)
         self.assertEqual(row["lane_files"], {"evtx": 278, "splunk": 1055})
+        self.assertEqual(row["corpus_commits"], {"evtx": None, "splunk": None})
+        pinned = A.build_row(EVTX, None, 0.875, 10, 4, NOW, {"evtx": "4ceed2f", "splunk": "eac2f8f"})
+        # a lane that did not run never claims a commit
+        self.assertEqual(pinned["corpus_commits"], {"evtx": "4ceed2f", "splunk": None})
 
     def test_single_lane_still_carries_fixtures(self):
         row = A.build_row(None, SPLUNK, 0.875, 10, 4, NOW)

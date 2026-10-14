@@ -147,7 +147,8 @@ class TestSelection(unittest.TestCase):
         self.assertTrue(doc["caveats"])
         # every unit-documented metric key has a units entry
         for key in ["macro_f1", "per_rule_confusion", "fixture_per_rule_confusion",
-                    "fixture_tested_rules", "corpus_files", "parser_coverage_pct",
+                    "fixture_tested_rules", "corpus_files", "corpus_commits",
+                    "parser_coverage_pct",
                     "untested_rules", "tpr", "fpr", "mttd_seconds",
                     "mtti_seconds", "mttr_seconds", "chain_fidelity",
                     "evidence_completeness", "false_correlation_rate",

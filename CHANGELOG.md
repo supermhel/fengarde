@@ -280,6 +280,13 @@ A differential/property review in sandbox copies found real defects in code that
   SBOM/CodeQL wording corrected to where those gates actually run; the
   free-text `repository.security.comment` (not allowed by the closed v2.2.0
   `SecurityPosture`) became schema-valid `tools` entries.
+- Nightly eval inputs pinned (owner decision 2026-10-14): both corpora are
+  fetched at fixed commits by `eval/detection_accuracy/fetch_corpora.sh`
+  (EVTX-ATTACK-SAMPLES `4ceed2f`, splunk/attack_data `eac2f8f` — the commits
+  the 2026-10-14 snapshot was measured on), each trend row records
+  `corpus_commits`, and `pyyaml`/`python-evtx`/`hexdump` install from the
+  hash-pinned `eval/requirements.txt` (Dependabot watches `/eval`). Corpus
+  lanes run in CI only.
 - splunk lane fails loudly on tracked `.log` files missing from the checkout
   (partial clone or antivirus quarantine) instead of silently grading fewer files.
 

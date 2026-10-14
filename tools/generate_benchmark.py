@@ -114,10 +114,14 @@ def _caveats(corpus: dict, twin: dict) -> list[str]:
         "per-rule confusion counts are graded per corpus FILE, not per event.",
     ]
     untested = corpus.get("untested_rules") or []
+    commits = {k: v for k, v in (corpus.get("corpus_commits") or {}).items() if v}
+    pin = (f"read corpus commits {commits}" if commits else
+           "predates commit recording; the corpus fetch is now pinned in "
+           "eval/detection_accuracy/fetch_corpora.sh")
     if untested:
         out.append(
-            "per-rule expected-positives are corpus-composition-dependent (the "
-            "corpora are fetched at clone time, not version-pinned): on this "
+            "per-rule expected-positives are corpus-composition-dependent (this "
+            f"row {pin}; a newer upstream corpus is a pin bump in a PR): on this "
             f"snapshot's run {', '.join(untested)} had zero expected-positive "
             "files in every corpus (reported as untested); "
             "eval/attack/fire_check.py separately proves every MITRE-tagged "
@@ -173,6 +177,7 @@ def build_document(corpus: dict, twin: dict) -> dict:
             "corpora": corpus.get("corpora", []),
             "corpus_records": corpus.get("corpus_size"),
             "corpus_files": corpus.get("lane_files"),
+            "corpus_commits": corpus.get("corpus_commits"),
             "quality_corpus_events": corpus.get("quality_corpus_events"),
             "parser_coverage_pct": corpus.get("parser_coverage_pct"),
             "untested_rules": corpus.get("untested_rules", []),
@@ -214,6 +219,9 @@ def build_document(corpus: dict, twin: dict) -> dict:
                                    "+ records_sysmon)) that a shipped parser can "
                                    "normalize at all -- corpus-shape-limited, see "
                                    "methodology.md",
+            "corpus_commits": "git commit of each corpus the lanes read ({evtx, "
+                              "splunk}), pinned in eval/detection_accuracy/"
+                              "fetch_corpora.sh; null on older rows",
             "corpus_files": "files each corpus lane read ({evtx, splunk}); null "
                             "on rows written before provenance was recorded",
             "untested_rules": "rule names with zero expected-positive corpus "
