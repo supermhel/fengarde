@@ -62,6 +62,7 @@ import yaml  # noqa: E402
 
 import mutate_generic as mg  # noqa: E402
 import scenario_registry as reg  # noqa: E402
+from fingerprint import system_fingerprint  # noqa: E402
 
 OUT_DIR = ADVERSARIAL / "out"
 DEFAULT_OUT = OUT_DIR / "evasion_search.latest.json"
@@ -442,6 +443,7 @@ def search_scenario(sdef, seed: int = 7) -> dict:
 def search_all(seed: int = 7, scenarios: list | None = None) -> dict:
     sdefs = [reg.get(n) for n in scenarios] if scenarios else list(reg.ALL)
     return {"seed": seed, "basis": "harness-measured",
+            "system_fingerprint": system_fingerprint(ROOT),
             "scenarios": {s.name: search_scenario(s, seed) for s in sdefs}}
 
 

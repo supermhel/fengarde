@@ -173,6 +173,7 @@ import yaml  # noqa: E402
 import causal_order  # noqa: E402  (stdlib-only + import-pure: cannot collide on sys.modules['main'])
 import degradation  # noqa: E402
 import scenario  # noqa: E402
+from fingerprint import system_fingerprint  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Module-name collision guard (WP-1-F exploration verified this exact trap):
@@ -1535,6 +1536,7 @@ def run(seed: int = 7) -> dict:
             "date": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "seed": seed,
             "basis": "harness-measured",  # Phase 3.5 discipline: sim/replay, not field
+            "system_fingerprint": system_fingerprint(ROOT),
         },
         "metrics": {
             "tpr": tpr,          # already rounded (or None) by _grade_chain

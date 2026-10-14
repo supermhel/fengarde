@@ -63,6 +63,7 @@ for _p in (str(ADVERSARIAL), str(TWIN), str(SERVICES)):
 import layer_a  # noqa: E402
 import mutate_generic  # noqa: E402
 import scenario_registry as reg  # noqa: E402
+from fingerprint import system_fingerprint  # noqa: E402
 
 OUT_DIR = ADVERSARIAL / "out"
 DEFAULT_OUT = OUT_DIR / "scenario_matrix.latest.json"
@@ -279,6 +280,7 @@ def run_scenario(sdef, seed: int = 7) -> dict:
             "mttd_seconds": base.get("mttd_seconds"),
             "campaign_count": base.get("campaign_count"),
             "campaign_full_coverage": base.get("campaign_full_coverage"),
+            "tactic_covered_steps": base.get("tactic_covered_steps"),
             "fired_pairs": [list(p) for p in _fired_pairs(base)],
         },
         "baseline_quality": _scenario_baseline_quality(base),
@@ -308,6 +310,7 @@ def run_all(seed: int = 7, scenarios: list | None = None) -> dict:
         # default path, and ``out/`` is gitignored, so the file alone cannot say what it is.
         "scenario_list": [s.name for s in sdefs],
         "inputs_fingerprint": inputs_fingerprint(),
+        "system_fingerprint": system_fingerprint(ROOT),
         "scenarios": per,
         "pooled": {
             "applicable": tot_ap,

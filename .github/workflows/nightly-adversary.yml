@@ -56,11 +56,20 @@ jobs:
           OLLAMA_MODEL: ${{ vars.OLLAMA_MODEL }}
         run: python eval/adversarial/adversary_c.py --seed 7 --llm --out eval/adversarial/out/adversary_c.latest.json
 
+      # Phase 6: the Layer C trend is advisory and intentionally separate from
+      # the deterministic atom baseline. The append command never fails on a
+      # grade finding; the artifact remains inspectable and reproducible.
+      - name: Append Layer C advisory trend row
+        run: python eval/twin/ratchet.py trend-append --layer-c eval/adversarial/out/adversary_c.latest.json
+      - name: Check Layer C stub determinism (advisory)
+        run: python eval/twin/ratchet.py trend-diff --path eval/trend_layer_c.jsonl
+
       - name: Upload Layer C artifact (advisory)
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: layer-c-adversary-cases
           path: |
             eval/adversarial/out/adversary_c.latest.json
+            eval/trend_layer_c.jsonl
           if-no-files-found: error
           retention-days: 14

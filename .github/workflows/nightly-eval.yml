@@ -194,6 +194,12 @@ jobs:
       - name: WP-1-F twin scorecard
         run: python eval/twin/report.py
 
+      # Phase 6 controls are deterministic and independent of the optional
+      # third-party corpora. The atom baseline itself remains a PR/CI gate;
+      # this nightly lane only rechecks the control and fingerprint machinery.
+      - name: Phase 6 ratchet acceptance controls
+        run: python eval/twin/test_ratchet.py
+
       # ---- WP-0.2-B: assert the rule-health Prometheus series is present ----
       # The WS-4 watchdog (services/ws4-detection/main.py record_fire() /
       # rule_health_metrics(), served by services/shared/runner.py on PORT,
