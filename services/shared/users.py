@@ -220,14 +220,19 @@ class UserStore:
     def __init__(self, path: str = ":memory:"):
         self.db = sqlite3.connect(path, check_same_thread=False)
         self.db.row_factory = sqlite3.Row
-        self._write_lock = threading.Lock()  # same rationale as InventoryStore
+        # Guards reads AND writes: one shared connection is not safe for concurrent
+        # cursors (InterfaceError / wrong rows under load). get_user() runs on every
+        # authenticated request (session account re-check), so reads must serialize
+        # too. Re-entrant: write sections call the read helpers.
+        self._write_lock = threading.RLock()
         self._init()
 
     def _init(self):
         migrate(self.db)
 
     def count(self) -> int:
-        return self.db.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+        with self._write_lock:
+            return self.db.execute("SELECT COUNT(*) FROM users").fetchone()[0]
 
     def create_user(self, username: str, password: str, role: str,
                      tenant_id: str = DEFAULT_TENANT) -> None:
@@ -242,9 +247,10 @@ class UserStore:
             self.db.commit()
 
     def get_user(self, username: str) -> Optional[sqlite3.Row]:
-        return self.db.execute(
-            "SELECT * FROM users WHERE username = ?", (username,)
-        ).fetchone()
+        with self._write_lock:
+            return self.db.execute(
+                "SELECT * FROM users WHERE username = ?", (username,)
+            ).fetchone()
 
     def verify_login(self, username: str, password: str) -> Optional[sqlite3.Row]:
         """Return the user row on success, None on any failure (unknown
@@ -399,14 +405,16 @@ class UserStore:
 
     def list_users(self) -> list[sqlite3.Row]:
         # Explicit column list: password_hash / totp_secret must never leave this store.
-        return self.db.execute(
-            "SELECT username, role, tenant_id, created_at, last_login_at, totp_active, disabled "
-            "FROM users ORDER BY username").fetchall()
+        with self._write_lock:
+            return self.db.execute(
+                "SELECT username, role, tenant_id, created_at, last_login_at, totp_active, disabled "
+                "FROM users ORDER BY username").fetchall()
 
     def count_admins(self) -> int:
         """Active (not disabled) admins -- the ones who can actually log in."""
-        return self.db.execute(
-            "SELECT COUNT(*) FROM users WHERE role = 'admin' AND disabled = 0").fetchone()[0]
+        with self._write_lock:
+            return self.db.execute(
+                "SELECT COUNT(*) FROM users WHERE role = 'admin' AND disabled = 0").fetchone()[0]
 
     def update_user(self, username: str, *, role: Optional[str] = None,
                     password: Optional[str] = None, disabled: Optional[bool] = None) -> bool:

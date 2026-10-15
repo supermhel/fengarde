@@ -90,6 +90,13 @@ export type Dict = typeof en;
 export type Lang = "en" | "de";
 export const dicts: Record<Lang, Dict> = { en, de };
 
+/* Singular forms for the few "N <noun>" labels where N is plausibly 1 ("1 alarms" reads as a bug). */
+const one: Record<Lang, Record<string, string>> = {
+  en: { alarms: "alarm", events: "event", alarmsActive: "active alarm" },
+  de: { alarms: "Alarm", events: "Ereignis", alarmsActive: "aktiver Alarm" },
+};
+export const unit = (lang: Lang, n: number, key: "alarms" | "events" | "alarmsActive", many: string) => (n === 1 ? one[lang][key] : many);
+
 export function initialLang(): Lang {
   try {
     const s = localStorage.getItem("fg.lang");

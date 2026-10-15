@@ -3,27 +3,12 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>FENGARDE — Leitwarte</title>
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 2 4 5v6c0 5 3.4 9.3 8 11 4.6-1.7 8-6 8-11V5z' fill='%231e2226'/%3E%3C/svg%3E">
+  <meta name="theme-color" content="#13173a">
+  <title>FENGARDE</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 2 4 5v6c0 5 3.4 9.3 8 11 4.6-1.7 8-6 8-11V5z' fill='%234f46e5'/%3E%3Cpath d='M8.5 12.2 11 14.6l4.6-5' fill='none' stroke='%23fff' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
   <script src="/api/config.js"></script>
 </head>
 <body>
-<!--
-THESIS: The console is a plant control-room screen (ISA-101 high-performance HMI): everything at
-rest is quiet greyscale, colour is spent only on abnormal state, so the eye lands on what is wrong.
-Refuses the navy SaaS card grid where every number wears a colour.
-OWN-WORLD: grey ground #d4d6d8, panel #e9eaeb, ink #1e2226; amber #f2a900 and red #e21b1b only for
-abnormal; ISA-101 alarm shapes (red square, amber triangle, yellow diamond, outline); Barlow (DIN
-lineage) tabular numerals; mimic flow lines, bar gauges, trend recorders, faceplates, alarm banner.
-STORY: The operator sees "nothing abnormal" or exactly which alarm, follows it into a faceplate with
-rule, MITRE, AI verdict and raw OCSF evidence, acknowledges it, and the audit trail records who.
-FIRST VIEWPORT: full-width alarm banner on top (empty state says what was checked); below, the
-pipeline mimic (collect -> normalize -> detect -> correlate -> index) with live bar gauges; then
-event-rate and alarm-rate trend recorders side by side; the alarm summary list anchors the bottom.
-Primary action: open the top unacknowledged alarm.
-FORM: Leitwarte (ISA-101 HMI), impeccable's pick, rank 1 of 7; seed key 180dc2ec.
-FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, DESIGN.md, and every shipping raster carrying its provenance
--->
 <div id="root"></div>
 <script type="module" src="/src/main.tsx"></script>
 </body>

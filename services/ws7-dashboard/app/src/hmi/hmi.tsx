@@ -68,7 +68,7 @@ export function Trend({ series, from, to, marks = [], label, lang, tone = "brand
   const ticks = [0, 0.25, 0.5, 0.75, 1].map((f) => from + f * (to - from));
   const fmt = (t: number) => new Date(t).toLocaleTimeString(lang, { hour: "2-digit", minute: "2-digit" });
   return (
-    <div className={`trend ${tone}`}>
+    <div className={`trend tone-${tone}`}>
       <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label={`${label}: max ${max} per interval`}>
         <defs>
           <linearGradient id={gid} x1="0" y1="0" x2="0" y2="1">

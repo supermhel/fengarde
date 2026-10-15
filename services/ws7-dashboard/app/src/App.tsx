@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { api, setCsrf, type Session } from "./data/api";
 import { AlarmShape, Icon, Shield } from "./hmi/hmi";
-import { dicts, initialLang } from "./lib/i18n";
 import { isAbnormal, rank } from "./lib/severity";
+import { unit } from "./lib/i18n";
 import { RANGES, ago, type RangeKey } from "./lib/time";
 import { ConsoleProvider, triageOf, useConsole } from "./store";
 import { Account } from "./views/Account";
@@ -12,12 +12,13 @@ import { Coverage } from "./views/Coverage";
 import { Events } from "./views/Events";
 import { Incidents } from "./views/Incidents";
 import { Inventory } from "./views/Inventory";
+import { Login } from "./views/Login";
 import { Operations } from "./views/Operations";
 import { Overview } from "./views/Overview";
 import { Settings } from "./views/Settings";
 import { Sources } from "./views/Sources";
 
-type Auth = { state: "checking" } | { state: "login"; error?: string } | { state: "in"; session: Session | null; rbac: boolean };
+type Auth = { state: "checking" } | { state: "login"; error?: string; down?: boolean } | { state: "in"; session: Session | null; rbac: boolean };
 
 export function App() {
   const [auth, setAuth] = useState<Auth>({ state: "checking" });
@@ -27,7 +28,7 @@ export function App() {
       if (r.ok) { setCsrf(r.data.csrf_token || null); setAuth({ state: "in", session: r.data, rbac: true }); }
       else if (r.status === 404) setAuth({ state: "in", session: null, rbac: false }); // RBAC off: no auth backend
       else if (r.status === 0) setAuth({ state: "in", session: null, rbac: false }); // unreachable: show the console, which says so
-      else setAuth({ state: "login" });
+      else setAuth({ state: "login", down: r.status >= 500 }); // 5xx: nginx is up but WS-3 is not answering
     });
   }, []);
 
@@ -36,41 +37,11 @@ export function App() {
   }, []);
 
   if (auth.state === "checking") return null;
-  if (auth.state === "login") return <Login error={auth.error} onIn={(s) => { setCsrf(s.csrf_token || null); setAuth({ state: "in", session: s, rbac: true }); }} />;
+  if (auth.state === "login") return <Login error={auth.error} down={auth.down} onIn={(s) => { setCsrf(s.csrf_token || null); setAuth({ state: "in", session: s, rbac: true }); }} />;
   return (
     <ConsoleProvider session={auth.session} rbac={auth.rbac} setSession={setSession}>
       <Shell />
     </ConsoleProvider>
-  );
-}
-
-function Login({ onIn, error }: { onIn: (s: Session) => void; error?: string }) {
-  const t = dicts[initialLang()];
-  const [err, setErr] = useState(error || "");
-  const [busy, setBusy] = useState(false);
-  async function submit(e: FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    const f = new FormData(e.currentTarget);
-    setBusy(true); setErr("");
-    const r = await api.login(String(f.get("username") || ""), String(f.get("password") || ""));
-    setBusy(false);
-    if (r.ok) onIn(r.data);
-    else setErr(r.status === 429 ? t.tooMany : r.status === 0 ? `${t.unreachable}.` : r.reason || t.signInFailed);
-  }
-  return (
-    <div className="login">
-      <form onSubmit={submit} aria-label={t.signIn}>
-        <Shield size={34} />
-        <h1>FENGARDE</h1>
-        <p className="muted" style={{ margin: 0 }}>{t.signIn}</p>
-        <label htmlFor="u">{t.username}</label>
-        <input id="u" name="username" autoComplete="username" required autoFocus />
-        <label htmlFor="p">{t.password}</label>
-        <input id="p" name="password" type="password" autoComplete="current-password" required />
-        <p className="err" role="alert">{err}</p>
-        <button className="btn primary" disabled={busy}>{busy ? "…" : t.signIn}</button>
-      </form>
-    </div>
   );
 }
 
@@ -142,10 +113,10 @@ function Shell() {
       </header>
 
       <div className={`banner ${active.length ? "active" : "quiet"}`} role="status" aria-live="polite">
-        <span className="label">{active.length ? <><span className="n">{active.length}</span>{t.alarmsActive} · {unack} {t.unack}</> : t.noAlarms}</span>
+        <span className="label">{active.length ? <><span className="n">{active.length}</span>{unit(lang, active.length, "alarmsActive", t.alarmsActive)} · {unack} {t.unack}</> : t.noAlarms}</span>
         <span className="items">
           {active.length === 0 ? (
-            <span className="muted">{live ? `${alerts.length} ${t.alarms.toLowerCase()} · ${t.checked} ${ago(data.fetchedAt, lang)}` : t.unavailable}</span>
+            <span className="muted">{live ? `${alerts.length} ${unit(lang, alerts.length, "alarms", t.alarms.toLowerCase())} · ${t.checked} ${ago(data.fetchedAt, lang)}` : t.unavailable}</span>
           ) : active.slice(0, 4).map((a) => (
             <button key={a.alert_id} className={`item${triageOf(a, triage).status === "new" ? " unack" : ""}`} onClick={() => go(`#/alarms/${encodeURIComponent(a.alert_id)}`)}>
               <AlarmShape level={a.level} />{a.rule_title}<span className="muted mono">{a.src_endpoint?.ip}</span>

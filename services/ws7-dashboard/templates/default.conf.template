@@ -576,6 +576,7 @@ server {
             deny all;
         }
         resolver 127.0.0.11 ipv6=off valid=30s;
+        resolver_timeout 1s;  # profile off -> fail fast so the panel says "not reachable" instead of waiting
         set $prometheus "http://prometheus:9090";
         if ($http_x_api_key != "${FENGARDE_API_KEY}") { return 401; }
         rewrite ^/api/prom/(.*)$ /$1 break;

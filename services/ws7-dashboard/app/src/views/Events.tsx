@@ -3,6 +3,7 @@ import type { OcsfEvent } from "../data/api";
 import { Panel, Trend } from "../hmi/hmi";
 import { bucket, fmtTime } from "../lib/time";
 import { useConsole } from "../store";
+import { unit } from "../lib/i18n";
 import { E } from "./events.i18n";
 
 const CLASS: Record<number, string> = {
@@ -175,7 +176,7 @@ export function Events() {
             })}
           </div>
 
-          <Panel title={`${num(rows.length)} ${t.events_}`}>
+          <Panel title={`${num(rows.length)} ${unit(lang, rows.length, "events", t.events_)}`}>
             {data.events && !data.events.ok ? <p className="empty"><b>{t.unreachable}.</b> {data.events.reason}</p>
               : events.length === 0 ? <p className="empty">{t.noData}</p>
               : rows.length === 0 ? <p className="empty">{e_.noMatch} <button className="btn" onClick={() => setQ("")}>{t.clear}</button></p> : (
