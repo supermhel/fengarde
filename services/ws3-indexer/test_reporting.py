@@ -3,7 +3,8 @@
 Covers: template rendering from a fixture alert, contract-schema validation
 (the hard rules in contracts/reporting.md), the HTTP backend seam degrading
 to the template on failure/invalid response, idempotent re-generation, and
-the HTTP API (auth applied, GET/POST wiring).
+the HTTP API (auth applied, GET/POST wiring), and the startup pre-create of
+the daily reports-* index (cold-start 504 fix).
 """
 from __future__ import annotations
 
@@ -277,6 +278,70 @@ def test_api_report_missing_alert_doc_fails_closed_for_non_admin():
         srv2.shutdown(); srv2.server_close()
 
 
+def test_report_index_precreated_at_startup():
+    """Cold-start 504 fix (2026-10-15): serve() pre-creates today's reports-*
+    index so the first POST .../report doesn't pay OpenSearch's lazy index
+    creation inside nginx's 5s proxy_read_timeout. Must be idempotent, must
+    never kill startup when the backend is down, and OpenSearch's
+    already-exists 400 is success."""
+    today = reporting._report_index()
+
+    class _FakeServer:  # stands in for ThreadingHTTPServer: no socket bound
+        def __init__(self, *a, **k):
+            pass
+
+        def serve_forever(self):
+            _FakeServer.served = True
+
+    real_srv, rbac = triage_api.ThreadingHTTPServer, os.environ.pop("FENGARDE_RBAC_DB", None)
+    triage_api.ThreadingHTTPServer = _FakeServer
+    try:
+        store = MemoryStore()
+        triage_api.serve(store, port=0)
+        check(today in store._indices, f"serve() did not pre-create {today} at startup")
+
+        # Idempotent: a second init neither fails nor drops an existing doc.
+        store.index(today, "r1:report", {"report_id": "r1:report"})
+        triage_api._ensure_report_index(store)
+        triage_api._ensure_report_index(store)
+        check(store.get(today, "r1:report") is not None,
+              "re-running the report-index init dropped an existing report")
+
+        # Backend down at boot: logged, startup still reaches serve_forever.
+        class _DownStore(MemoryStore):
+            def ensure_index(self, index):
+                raise urllib.error.URLError("connection refused")
+
+        _FakeServer.served = False
+        triage_api.serve(_DownStore(), port=0)
+        check(_FakeServer.served, "serve() crashed when the report index could not be created")
+    finally:
+        triage_api.ThreadingHTTPServer = real_srv
+        if rbac is not None:
+            os.environ["FENGARDE_RBAC_DB"] = rbac
+
+    from storage.opensearch import OpenSearchStore, _HTTPError
+    os_store = OpenSearchStore("http://127.0.0.1:1")
+
+    def _exists(method, path, body=None):
+        raise _HTTPError(400, "Bad Request",
+                         b'{"error":{"type":"resource_already_exists_exception"}}')
+    os_store._request = _exists
+    try:
+        os_store.ensure_index(today)
+    except urllib.error.HTTPError:
+        check(False, "OpenSearchStore.ensure_index raised on resource_already_exists_exception")
+
+    def _bad(method, path, body=None):
+        raise _HTTPError(400, "Bad Request", b'{"error":{"type":"invalid_index_name_exception"}}')
+    os_store._request = _bad
+    try:
+        os_store.ensure_index("Bad")
+        check(False, "OpenSearchStore.ensure_index swallowed a non-already-exists 400")
+    except urllib.error.HTTPError:
+        pass
+
+
 def main():
     test_template_backend_renders_and_validates()
     test_validator_rejects_non_draft_status()
@@ -288,6 +353,7 @@ def main():
     test_api_report_malformed_content_length_is_400()
     test_api_report_requires_auth_when_key_set()
     test_api_report_missing_alert_doc_fails_closed_for_non_admin()
+    test_report_index_precreated_at_startup()
     if FAILS:
         print(f"[FAIL] ws3 reporting: {len(FAILS)} problem(s)")
         for f in FAILS:

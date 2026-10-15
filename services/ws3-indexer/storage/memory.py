@@ -33,6 +33,10 @@ class MemoryStore(StorageAdapter):
     def ensure_template(self, name: str, template: dict) -> None:
         self.templates[name] = template
 
+    def ensure_index(self, index: str) -> None:
+        with self._lock:
+            self._indices.setdefault(index, {})
+
     def index(self, index: str, doc_id: str, document: dict) -> bool:
         with self._lock:
             return self._index_locked(index, doc_id, document)

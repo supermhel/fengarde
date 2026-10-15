@@ -50,6 +50,28 @@
 - `GET /audit` (E1, 2026-08-06, admin-only) — recent entries from the
   append-only, capacity-capped, fail-open audit log
   (`services/ws3-indexer/audit.py`); records login/triage/report events.
+- **Admin routes (2026-10-15, RBAC mode only, role=admin; any other role gets
+  404, no session 401; every write needs the session's `X-CSRF-Token`; every
+  write is audited; none exist when RBAC is off).** Handlers live in
+  `admin_api.py` and `inventory_write.py`; `do_PUT`/`do_PATCH` mirror `do_POST`.
+  - `GET /users`, `POST /users {username,password,role,tenant_id?}`,
+    `PATCH /users/{name} {role?,password?,disabled?}` — password min. 12
+    characters (`shared/users.py password_problem`); a role change, reset or
+    disable ends that user's live sessions; the last active admin cannot be
+    demoted or disabled (409); `password_hash`/`totp_secret` never leave the
+    store; the audit entry names the changed fields, never a password.
+  - `GET /webhooks` — `contracts/webhooks/*.yml` reduced to scheme + host,
+    `secret_env` (the variable NAME), `min_score`, `tenant_id`, and `enabled`
+    (whether that variable is set in this process). Read-only.
+  - `PUT /rules/{id}/enabled {enabled, tenant_id?}` — edits the tenant's
+    `disabled_rules` in `contracts/tenants/<tenant>.yml` (atomic replace;
+    never touches rule conditions). WS-4 re-reads a changed tenant file on the
+    next event (no restart). In compose the file lives on the shared
+    `tenants-config` volume (rw here, ro in ws4-detection).
+  - `POST /inventory/assets {mac,hostname?,ip?,sector?,type?,tenant_id?}` —
+    validates strictly, then calls WS-6 `POST /assets/upsert` server-side
+    (`INVENTORY_URL`, optional `INVENTORY_API_KEY`); WS-6 400 is relayed, any
+    other WS-6 failure is a 502. nginx's `/api/inventory/` stays GET-only.
 - Outbound webhooks (M4.4, `services/ws3-indexer/webhooks.py`) run in a
   separate thread on their OWN consumer group (`cg-webhook`) on the `alerts`
   topic — a slow/down receiver can never delay or duplicate indexing itself.
@@ -81,6 +103,10 @@
   `FENGARDE_ADMIN_PASSWORD` — auth (see SECURITY.md §2).
 - `FENGARDE_SESSION_BACKEND` (memory|redis) and `FENGARDE_SESSION_SECRET`
   (required non-empty for the redis session backend — signing).
+- `INVENTORY_URL` (default `http://ws6-inventory:8000`), `INVENTORY_API_KEY` —
+  target of the admin add-device route (`inventory_write.py`).
+- Startup pre-creates today's `reports-*` index so the first report on a fresh
+  stack does not pay OpenSearch's lazy index creation inside nginx's 5s timeout.
 - `STREAM_REAP_INTERVAL_S` — acked-stream reaper cadence.
 - `REPORT_BACKEND` (template|http), `REPORT_BACKEND_TIMEOUT`,
   `FENGARDE_SEC_REPORT_URL` — incident-report backend seam (`reporting.py`).

@@ -82,6 +82,13 @@ ROUTES_ADDED_SINCE_REFACTOR: list[tuple[str, str, bool]] = [
     ("GET", "/incidents/{incident_id}/graph", False),
     ("GET", "/incidents/{incident_id}/evidence", False),
     ("POST", "/incidents/{incident_id}/report", False),
+    # Admin console routes (2026-10-15), session-RBAC only.
+    ("POST", "/inventory/assets", True),
+    ("GET", "/users", True),
+    ("POST", "/users", True),
+    ("PATCH", "/users/{username}", True),
+    ("GET", "/webhooks", True),
+    ("PUT", "/rules/{rule_id}/enabled", True),
 ]
 
 

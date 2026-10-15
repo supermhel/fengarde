@@ -47,6 +47,18 @@
   ports were previously reachable only container-to-container.
 
 ## Produces
+- **The console (2026-10-15)** is a React + Vite + TypeScript app in `app/`,
+  built in the Dockerfile's first stage and served at `/`; the single-file UI
+  below is kept unchanged at `/legacy/` (linked from the nav). Views, grouped:
+  Detect (Overview, Alarms, Incidents), Investigate (Events log explorer,
+  Coverage), Operate (Sources = how devices get connected, Inventory,
+  Operations incl. System health from Prometheus, Audit, Settings), plus
+  Account (MFA). Settings, the Inventory add-device form and the Coverage rule
+  switch show for `role=admin` only and call WS-3's admin routes via
+  `/api/triage/*` (see ws3-indexer/INTERFACE.md). DE/EN, light/dark, mobile.
+  `/index.html` is `no-cache`, `/assets/*` immutable (hashed). `/api/prom/` is a
+  read-only window onto Prometheus (`targets`, `query` only). The feature-by-
+  feature status is `docs/console-feature-matrix.md`.
 - Static single-file UI (`index.html`) served by nginx. No backend of its own.
 - **Deep-linkable nav** (2026-08-20): the URL hash (`#ops`, `#audit`, `#incidents`, ...)
   selects the active view on load and via `hashchange` — bookmarkable/shareable
