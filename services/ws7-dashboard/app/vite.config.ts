@@ -10,5 +10,6 @@ export default defineConfig({
     port: 5173,
     proxy: { "/api": { target: "http://localhost:8080", changeOrigin: true } },
   },
-  build: { outDir: "dist", assetsDir: "assets", sourcemap: false },
+  // assetsInlineLimit 0: nginx's CSP has no `font-src data:`, so small fonts must stay real files.
+  build: { outDir: "dist", assetsDir: "assets", sourcemap: false, assetsInlineLimit: 0 },
 });

@@ -125,6 +125,12 @@ echo
 echo "== ws6 tenant isolation (F1, 2026-07-29 audit): schema/route/migration scoping =="; LAST_HEADER="== ws6 tenant isolation (F1, 2026-07-29 audit): schema/route/migration scoping =="
 $PY services/ws6-inventory/test_tenant_isolation.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
+echo "== ws6 stores: concurrent reads on the shared SQLite connection (console parallel GETs) =="; LAST_HEADER="== ws6 stores: concurrent reads on the shared SQLite connection (console parallel GETs) =="
+$PY services/ws6-inventory/test_store_threading.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
+echo "== ws6 upsert persists sector + type (admin add-device dropped both) =="; LAST_HEADER="== ws6 upsert persists sector + type (admin add-device dropped both) =="
+$PY services/ws6-inventory/test_upsert_attrs.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
 echo "== ws6 per-tenant API keys, hashed at rest (F1 2nd follow-up, 2026-07-30 audit) =="; LAST_HEADER="== ws6 per-tenant API keys, hashed at rest (F1 2nd follow-up, 2026-07-30 audit) =="
 $PY services/ws6-inventory/test_keystore.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
@@ -441,6 +447,9 @@ $PY tools/test_multi_tenant_isolation.py || { fail=1; FAILED="${FAILED} ${LAST_H
 echo
 echo "== M4.6 ops lifecycle: users.db schema migration (upgrade with data intact) =="; LAST_HEADER="== M4.6 ops lifecycle: users.db schema migration (upgrade with data intact) =="
 $PY services/shared/test_users_migration.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
+echo "== RBAC: UserStore reads are thread-safe (account re-check runs on every request) =="; LAST_HEADER="== RBAC: UserStore reads are thread-safe (account re-check runs on every request) =="
+$PY services/shared/test_users_threading.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
 echo "== M4.6 ops lifecycle: disk-headroom guardrail (real shutil.disk_usage) =="; LAST_HEADER="== M4.6 ops lifecycle: disk-headroom guardrail (real shutil.disk_usage) =="
 $PY services/shared/test_diskguard.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }

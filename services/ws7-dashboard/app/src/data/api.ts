@@ -135,9 +135,11 @@ function unwrap<T>(r: Result<Hits<T>>): Result<T[]> {
 
 export const api = {
   me: () => call<Session>("/api/auth/me"),
-  login: (username: string, password: string) =>
+  // totp_code is only sent when given: WS-3 answers a missing/wrong code with the same uniform 401 as a bad password.
+  login: (username: string, password: string, totp_code?: string) =>
     call<Session>("/api/auth/login", {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ username, password }),
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(totp_code ? { username, password, totp_code } : { username, password }),
     }),
   logout: () => call<unknown>("/api/auth/logout", { method: "POST" }),
 

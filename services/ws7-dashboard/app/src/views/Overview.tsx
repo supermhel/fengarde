@@ -1,5 +1,6 @@
 import { mitreTags } from "../data/api";
 import { AlarmShape, Bars, Mimic, Panel, Trend } from "../hmi/hmi";
+import { unit } from "../lib/i18n";
 import { pipelineStages } from "../lib/ops";
 import { isAbnormal, priority, rank } from "../lib/severity";
 import { ago, bucket, fmtTime } from "../lib/time";
@@ -46,16 +47,16 @@ export function Overview({ go }: { go: (hash: string) => void }) {
         </Panel>
 
         <div className="grid g2">
-          <Panel title={t.eventRate} aside={`${events.length.toLocaleString()} ${t.events_}`}>
+          <Panel title={t.eventRate} aside={`${events.length.toLocaleString()} ${unit(lang, events.length, "events", t.events_)}`}>
             <Trend series={bucket(events.map((e) => e.time), from, to, N)} from={from} to={to} label={t.eventRate} lang={lang} />
           </Panel>
-          <Panel title={t.alarmRate} aside={`${alarmTimes.length} ${t.alarmsActive}`}>
+          <Panel title={t.alarmRate} aside={`${alarmTimes.length} ${unit(lang, alarmTimes.length, "alarmsActive", t.alarmsActive)}`}>
             <Trend tone="alarm" series={bucket(alarmTimes, from, to, N)} from={from} to={to} marks={alarmTimes} label={t.alarmRate} lang={lang} />
           </Panel>
         </div>
 
         <div className="grid g2">
-          <Panel title={t.sevMix} aside={`${alerts.length} ${t.alarms.toLowerCase()}`}>
+          <Panel title={t.sevMix} aside={`${alerts.length} ${unit(lang, alerts.length, "alarms", t.alarms.toLowerCase())}`}>
             <div className="stack" role="img" aria-label={PRIOS.map((p) => `${p} ${mix.get(p) || 0}`).join(", ")}>
               {PRIOS.map((p) => (mix.get(p) ? <span key={p} style={{ flex: mix.get(p), background: PRIO_FILL[p] }} /> : null))}
             </div>
@@ -75,18 +76,20 @@ export function Overview({ go }: { go: (hash: string) => void }) {
             ) : active.length === 0 ? (
               <p className="empty"><b className="ok-text">{t.noAlarms}.</b> {alerts.length} {t.alarms.toLowerCase()} {t.of} {rules?.ok ? rules.data.count : "?"} {t.rules}, {t.checked} {ago(data.fetchedAt, lang)}.</p>
             ) : (
-              <table className="data">
-                <tbody>
-                  {active.slice(0, 8).map((a) => (
-                    <tr key={a.alert_id} className="clk" onClick={() => go(`#/alarms/${encodeURIComponent(a.alert_id)}`)}>
-                      <td style={{ width: 22 }}><AlarmShape level={a.level} /></td>
-                      <td>{a.rule_title}</td>
-                      <td className="mono muted" style={{ whiteSpace: "nowrap" }}>{a.src_endpoint?.ip || ""}</td>
-                      <td className="muted" style={{ whiteSpace: "nowrap" }}>{fmtTime(a.time, lang)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              <div className="table-wrap">
+                <table className="data">
+                  <tbody>
+                    {active.slice(0, 8).map((a) => (
+                      <tr key={a.alert_id} className="clk" onClick={() => go(`#/alarms/${encodeURIComponent(a.alert_id)}`)}>
+                        <td style={{ width: 22 }}><AlarmShape level={a.level} /></td>
+                        <td>{a.rule_title}</td>
+                        <td className="mono muted" style={{ whiteSpace: "nowrap" }}>{a.src_endpoint?.ip || ""}</td>
+                        <td className="muted" style={{ whiteSpace: "nowrap" }}>{fmtTime(a.time, lang)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             )}
           </Panel>
           <Panel title={t.tactics} aside={<a href="#/coverage">{tacticCounts.size} / {tactics.length} →</a>}>

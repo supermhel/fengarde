@@ -180,7 +180,7 @@ main { grid-row: 3; grid-column: 2; padding: 20px 24px 44px; min-width: 0; }
 .trend .grid-line { stroke: var(--rule-soft); stroke-width: 1; }
 .trend .axis { fill: var(--mute); font-size: 11px; font-family: var(--font); }
 .trend .line { fill: none; stroke: var(--brand); stroke-width: 2; stroke-linejoin: round; }
-.trend.alarm .line { stroke: var(--amber); }
+.trend.tone-alarm .line { stroke: var(--amber); }
 .trend .now { stroke: var(--ink-2); stroke-dasharray: 2 3; }
 .trend .mark { fill: var(--amber); stroke: var(--ink); stroke-width: .8; }
 
@@ -246,7 +246,7 @@ table.data { width: 100%; border-collapse: collapse; font-size: 14px; }
 .faceplate.med { border-top-color: var(--yellow); }
 .faceplate h3 { margin: 0 0 4px; font: 700 20px/1.2 var(--font); font-stretch: 85%; }
 .kv { display: grid; grid-template-columns: 116px 1fr; gap: 5px 12px; font-size: 13.5px; margin: 10px 0 14px; }
-.kv dt { color: var(--mute); }
+.kv dt { color: var(--mute); min-width: 0; overflow-wrap: anywhere; }
 .kv dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
 .actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
 .btn { background: var(--panel-2); border: 1px solid var(--rule); border-radius: 6px; padding: 6px 12px; cursor: pointer; font-weight: 600; font-size: 13.5px; transition: background .15s ease-out, border-color .15s ease-out; }
@@ -276,16 +276,27 @@ textarea.note-in { width: 100%; min-height: 56px; background: var(--panel-2); bo
 .graph .gsub { fill: var(--mute); font-size: 10.5px; }
 .graph .gedge { stroke: var(--nominal); stroke-width: 1.6; fill: none; marker-end: url(#arrow); }
 
-/* ---- forms (login, account) ---- */
-.login { min-height: 100vh; display: grid; place-items: center; padding: 16px; background: radial-gradient(1200px 600px at 20% 0%, var(--brand-soft), transparent 60%), var(--ground); }
-.login form, .form { width: min(400px, 100%); background: var(--panel); border: 1px solid var(--rule); border-radius: 10px; padding: 28px; box-shadow: var(--shadow); }
-.login h1 { margin: 12px 0 2px; font: 700 24px/1.2 var(--font); font-stretch: 82%; letter-spacing: .14em; }
-.login label, .form label { display: block; font-size: 13px; color: var(--ink-2); margin: 14px 0 4px; }
-.login input, .form input { width: 100%; padding: 9px 11px; background: var(--panel-2); border: 1px solid var(--rule); border-radius: 6px; }
-.login input:focus, .form input:focus { border-color: var(--brand); outline: none; box-shadow: 0 0 0 3px var(--select); }
+/* ---- forms (sign-in, account) ---- */
+.pw { position: relative; }
+.pw input { padding-right: 42px; }
+.pw-toggle { position: absolute; top: 0; right: 0; height: 100%; width: 40px; display: grid; place-items: center; background: none; border: 0; color: var(--ink-2); cursor: pointer; border-radius: 0 6px 6px 0; }
+.pw-toggle:hover { color: var(--brand); }
+.pw-toggle:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+.form, .signin { width: min(440px, 100%); }
+.form { background: var(--panel); border: 1px solid var(--rule); border-radius: 10px; padding: 28px; box-shadow: var(--shadow); }
+.form label, .signin label { display: block; font-size: 13px; color: var(--ink-2); margin: 14px 0 4px; }
+.signin label:first-child { margin-top: 0; }
+.form input, .signin input { width: 100%; padding: 9px 11px; background: var(--panel-2); border: 1px solid var(--rule); border-radius: 6px; }
+.form input:focus, .signin input:focus { border-color: var(--brand); outline: none; box-shadow: 0 0 0 3px var(--select); }
+.signin .btn { width: 100%; margin-top: 16px; padding: 10px; }
+.hint { margin: 6px 0 0; font-size: 12.5px; line-height: 1.45; color: var(--mute); }
+.login-grid { display: grid; grid-template-columns: minmax(0, 480px) minmax(0, 560px); gap: 16px; align-items: start; }
+.roles { margin: 0; display: grid; gap: 14px; }
+.roles dt { font-weight: 600; color: var(--ink); }
+.roles dd { margin: 3px 0 0; font-size: 13.5px; color: var(--ink-2); max-width: 60ch; }
+@media (max-width: 1100px) { .login-grid { grid-template-columns: minmax(0, 1fr); } }
 .err { color: var(--red); font-size: 13px; min-height: 18px; margin: 10px 0 0; }
 :root[data-theme="dark"] .err { color: #ff6b66; }
-.login .btn { width: 100%; margin-top: 16px; padding: 10px; }
 
 @media (max-width: 1100px) {
   .split, .g3 { grid-template-columns: minmax(0, 1fr); }
