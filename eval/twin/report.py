@@ -246,7 +246,8 @@ def _load_mutation_robustness(seed: int) -> tuple[Optional[float], dict]:
             "per_axis": {ax: s.get("robustness") for ax, s in sorted(per_axis.items())},
             "matrix_seed": matrix_seed,
             "report_seed": seed,
-            "source": str(path.relative_to(ROOT) if path.is_relative_to(ROOT) else path),
+            # POSIX separators: the artifact must be byte-identical across OSes.
+            "source": (path.relative_to(ROOT) if path.is_relative_to(ROOT) else path).as_posix(),
         }
         if matrix_seed != seed:
             context["stale"] = True

@@ -632,16 +632,14 @@ def build_model(arts: dict, root: Path = ROOT) -> dict:
 
 _HISTORICAL_HINT = "eval/SCORECARD.md"
 
-#: The ONLY artifact locations where a backslash may appear. ``report.py`` writes
-#: the Layer A artifact's own path into its context with NATIVE separators
-#: (``eval\adversarial\out\matrix.latest.json``); the renderer never reads that
-#: key. This set is asserted against a live scan of the artifacts by
-#: ``tools/test_generate_scorecard.py``, so a SECOND backslash path -- a new
+#: The ONLY artifact locations where a backslash may appear. Empty: ``report.py``
+#: once wrote the Layer A path with NATIVE separators, so the set differed between
+#: a Windows-generated artifact and a Linux CI run and the test could not pass on
+#: both. It now writes POSIX paths. This set is asserted against a live scan of the
+#: artifacts by ``tools/test_generate_scorecard.py``, so any backslash path -- a
 #: Windows path leaking into an artifact -- fails the test instead of quietly
-#: reaching the card. (The spec asserted the no-backslash rule for the CARD
-#: output only; the scan below is what enforces it at the artifact level.)
-BACKSLASH_ALLOWED_ARTIFACT_PATHS: frozenset[str] = frozenset(
-    {"twin:context.mutation_robustness_matrix.source"})
+#: reaching the card.
+BACKSLASH_ALLOWED_ARTIFACT_PATHS: frozenset[str] = frozenset()
 
 
 def _walk_strings(obj, path=""):
