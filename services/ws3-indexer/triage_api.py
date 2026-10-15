@@ -11,6 +11,9 @@ Endpoints:
   POST /auth/login   {username,password} -> session cookie + csrf_token (RBAC mode only)
   POST /auth/logout                      -> invalidate the session cookie
   GET  /auth/me                          -> current session identity + csrf_token
+  GET/POST /users, PATCH /users/{name}, GET /webhooks, PUT /rules/{id}/enabled,
+  POST /inventory/assets                 -> admin-only, RBAC mode only
+                                            (admin_api.py, inventory_write.py)
 
 Every state-changing (POST) request made with an active session must echo the
 session's csrf_token (from /auth/login or /auth/me) back as an `X-CSRF-Token`
@@ -117,6 +120,8 @@ import rules_view  # noqa: E402
 import nis2_template  # noqa: E402
 import audit  # noqa: E402
 import evidence_package  # noqa: E402
+import inventory_write  # noqa: E402
+import admin_api  # noqa: E402
 
 _MAX_BODY_BYTES = 4096  # a triage update is a status enum + a short note.
 _MAX_NOTE_CHARS = 2000
@@ -253,6 +258,13 @@ ROUTE_INVENTORY: list[tuple[str, str, bool]] = [
     ("POST", "/auth/mfa/verify", True),
     ("POST", "/alerts/{alert_id}/report", False),
     ("POST", "/alerts/{alert_id}/triage", False),
+    # Admin console routes (2026-10-15): session-RBAC only, role=admin.
+    ("POST", "/inventory/assets", True),
+    ("GET", "/users", True),
+    ("POST", "/users", True),
+    ("PATCH", "/users/{username}", True),
+    ("GET", "/webhooks", True),
+    ("PUT", "/rules/{rule_id}/enabled", True),
 ]
 
 
@@ -958,9 +970,26 @@ class Handler(BaseHTTPRequestHandler):
         if not token:
             return None
         try:
-            return self.deps.sessions.resolve(token)
+            session = self.deps.sessions.resolve(token)
         except Exception:  # noqa: BLE001 - a session-store outage must never 500
             return None
+        if session is None:
+            return None
+        # Admin user management (2026-10-15): a session carries the role it was
+        # minted with. Re-check the account on every request so disabling or
+        # re-roling a user takes effect immediately on both session backends,
+        # instead of at session expiry. One primary-key SQLite read.
+        try:
+            row = self.deps.users_db.get_user(session.username)
+        except Exception:  # noqa: BLE001 - fail closed on a broken user store
+            row = None
+        if row is None or row["disabled"] or row["role"] != session.role:
+            try:
+                self.deps.sessions.invalidate(token)
+            except Exception:  # noqa: BLE001 - best effort; still refused below
+                pass
+            return None
+        return session
 
     def _require_role(self, minimum_role: str):
         """Return the active session if it satisfies `minimum_role`, or send an
@@ -1137,6 +1166,10 @@ class Handler(BaseHTTPRequestHandler):
             return route_list_rules(self)
         if path == "/audit":
             return route_audit(self)
+        if self.deps.rbac_enabled and path == "/users":
+            return admin_api.route_list_users(self)
+        if self.deps.rbac_enabled and path == "/webhooks":
+            return admin_api.route_list_webhooks(self)
 
         report_alert_id = self._alert_id_from_path(path, "report")
         if report_alert_id is not None:
@@ -1173,6 +1206,11 @@ class Handler(BaseHTTPRequestHandler):
                 return route_mfa_enable(self)
             if self.deps.rbac_enabled and path == "/auth/mfa/verify":
                 return route_mfa_verify(self)
+            # Admin manual device add: session-RBAC only (inventory_write.py docstring).
+            if self.deps.rbac_enabled and path == "/inventory/assets":
+                return inventory_write.route_post_inventory_asset(self)
+            if self.deps.rbac_enabled and path == "/users":
+                return admin_api.route_create_user(self)
             if not self._check_auth():
                 return
             self._route_post(path)
@@ -1199,6 +1237,42 @@ class Handler(BaseHTTPRequestHandler):
         if alert_id is not None:
             return route_post_triage(self, alert_id)
         return self._send(404, {"error": "no such path"})
+
+    def do_PUT(self):
+        self._do_admin_write("PUT")
+
+    def do_PATCH(self):
+        self._do_admin_write("PATCH")
+
+    def _do_admin_write(self, method: str):
+        """PUT/PATCH dispatcher: same rate-limit -> CSRF -> auth -> error
+        handling order as do_POST. Every PUT/PATCH route is session-RBAC only
+        (admin_api.py), so with RBAC off nothing is routable."""
+        try:
+            if not self._check_rate_limit():  # FIX L4 (no-op when off)
+                return
+            path = self._normalized_path()
+            if not self.deps.rbac_enabled:
+                return self._send(404, {"error": "no such path"})
+            if not self._check_csrf():
+                return
+            if not self._check_auth():
+                return
+            if method == "PATCH":
+                name = self._id_from_path(path, "users")
+                if name:
+                    return admin_api.route_update_user(self, name)
+            else:
+                rule_id = self._id_from_path(path, "rules", "enabled")
+                if rule_id:
+                    return admin_api.route_set_rule_enabled(self, rule_id)
+            return self._send(404, {"error": "no such path"})
+        except _BadRequest as e:
+            self._send(400, {"error": str(e)})
+        except Exception as e:  # noqa: BLE001 - never let a handler crash the thread
+            _LOG.error(f"{method} handler raised", path=self.path, error=repr(e),
+                       traceback=traceback.format_exc())
+            self._send(500, {"error": "internal error"})
 
 
 def make_handler(store, users_db=None, sessions: SessionStore | None = None,
@@ -1237,8 +1311,26 @@ def make_handler(store, users_db=None, sessions: SessionStore | None = None,
     return _BoundHandler
 
 
+def _ensure_report_index(store) -> None:
+    """Pre-create today's reports-* index at startup. On a fresh stack the
+    first POST .../report otherwise pays OpenSearch's lazy index creation
+    (>5s) inside nginx's 5s proxy_read_timeout -> 504. Best-effort: a backend
+    that is down at boot is logged and the write path still creates lazily.
+    shortcut: only today's daily index is warmed; the first report after UTC
+    midnight still creates the next one lazily (cheap on a warm cluster) --
+    schedule a daily pre-create if that ever 504s."""
+    index = reporting._report_index()
+    try:
+        store.ensure_index(index)
+    except Exception as exc:  # noqa: BLE001 - startup must never die on this
+        get_logger("ws3-indexer-triage").warn(
+            "report index pre-create failed; first report write will create it lazily",
+            index=index, error=str(exc))
+
+
 def serve(store, host="0.0.0.0", port=8013):
     warn_if_disabled("ws3-indexer-triage")
+    _ensure_report_index(store)
 
     # M4.2 RBAC: opt-in via FENGARDE_RBAC_DB (a SQLite file path), same
     # unset-is-off convention as FENGARDE_API_KEY/dashboard basic-auth/Redis

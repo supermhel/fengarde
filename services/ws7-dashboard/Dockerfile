@@ -8,14 +8,28 @@
 # adding a capability, and this environment has no running Docker engine to
 # build/verify that change against, so it's deferred rather than shipped
 # unverified.
+# Stage 1 (2026-10-14 Leitwarte rebuild): build the React console. Only the
+# exact source files are copied (never a host node_modules), and `npm ci`
+# installs from the committed lockfile.
+FROM node:20.18.1-alpine AS console
+WORKDIR /build
+COPY services/ws7-dashboard/app/package.json services/ws7-dashboard/app/package-lock.json ./
+RUN npm ci --no-audit --no-fund
+COPY services/ws7-dashboard/app/tsconfig.json services/ws7-dashboard/app/vite.config.ts services/ws7-dashboard/app/index.html ./
+COPY services/ws7-dashboard/app/src ./src
+RUN npm run build
+
 FROM nginx:alpine@sha256:4a73073bd557c65b759505da037898b61f1be6cbcc3c2c3aeac22d2a470c1752
 # Static single-file dashboard. COPY only what belongs at the web root --
 # a COPY-everything-then-denylist drifted twice (the denylist referenced a
 # long-gone nginx.conf and left INTERFACE.md/test files live at the web
 # root); an allowlist of the exact two needed paths cannot drift. The nginx
 # template, tests, and docs live outside the html root by construction.
-COPY services/ws7-dashboard/index.html /usr/share/nginx/html/index.html
-COPY services/ws7-dashboard/mocks /usr/share/nginx/html/mocks
+# New console at the web root; the classic single-file console stays reachable
+# at /legacy/ (with its mocks) until every view is ported -- spec §5 step 5.
+COPY --from=console /build/dist/ /usr/share/nginx/html/
+COPY services/ws7-dashboard/index.html /usr/share/nginx/html/legacy/index.html
+COPY services/ws7-dashboard/mocks /usr/share/nginx/html/legacy/mocks
 # Reverse-proxy config: serves the static files AND proxies /api/alerts to
 # OpenSearch (same-origin -> no CORS). Lives outside the html root so it is not
 # also served as a static file. Shipped as a TEMPLATE under

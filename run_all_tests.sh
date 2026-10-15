@@ -146,6 +146,12 @@ echo
 echo "== M4.2 RBAC: login/logout/roles/tenant isolation (real HTTP) =="; LAST_HEADER="== M4.2 RBAC: login/logout/roles/tenant isolation (real HTTP) =="
 $PY services/ws3-indexer/test_rbac_api.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
+echo "== admin API: users CRUD + last-admin guard + session revocation, redacted webhooks, rule on/off (real HTTP) =="; LAST_HEADER="== admin API: users CRUD + last-admin guard + session revocation, redacted webhooks, rule on/off (real HTTP) =="
+$PY services/ws3-indexer/test_admin_api.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
+echo "== admin add-device: POST /inventory/assets -> fake WS-6 (MAC normalise, 400/502, admin-only, audit) =="; LAST_HEADER="== admin add-device: POST /inventory/assets -> fake WS-6 (MAC normalise, 400/502, admin-only, audit) =="
+$PY services/ws3-indexer/test_inventory_write.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
 echo "== M4.3 versioned REST API: GET /alerts, /events, /rules (+/api/v1 aliases), spec-vs-code =="; LAST_HEADER="== M4.3 versioned REST API: GET /alerts, /events, /rules (+/api/v1 aliases), spec-vs-code =="
 $PY services/ws3-indexer/test_api_v1.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
@@ -309,7 +315,7 @@ echo
 echo "== ws4 B4: rule hot-reload (mtime poll, fail-closed on malformed edit) =="; LAST_HEADER="== ws4 B4: rule hot-reload (mtime poll, fail-closed on malformed edit) =="
 $PY services/ws4-detection/test_hot_reload.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
-echo "== F3: tenants.py::load_disabled_rules fails open on a malformed/path-traversal tenant_id =="; LAST_HEADER="== F3: tenants.py::load_disabled_rules fails open on a malformed/path-traversal tenant_id =="
+echo "== F3: tenants.py::load_disabled_rules fails open on a malformed/path-traversal tenant_id; changed tenant file re-read without restart =="; LAST_HEADER="== F3: tenants.py::load_disabled_rules fails open on a malformed/path-traversal tenant_id; changed tenant file re-read without restart =="
 $PY services/ws4-detection/test_tenants.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
 echo "== M7 follow-up: rule-health watchdog (last-fired timestamp per rule on /metrics/prom) =="; LAST_HEADER="== M7 follow-up: rule-health watchdog (last-fired timestamp per rule on /metrics/prom) =="
@@ -336,6 +342,9 @@ $PY services/ws2-normalization/parsers/test_active_directory.py || { fail=1; FAI
 echo
 echo "== ws2 registry routing (P0.4: non-shadowing content-sniff) =="; LAST_HEADER="== ws2 registry routing (P0.4: non-shadowing content-sniff) =="
 $PY services/ws2-normalization/parsers/test_registry_routing.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
+echo "== ws2 live UDP syslog routing (generic_syslog label -> content-sniffed specific parser; sshd burst -> brute-force alert) =="; LAST_HEADER="== ws2 live UDP syslog routing (generic_syslog label -> content-sniffed specific parser; sshd burst -> brute-force alert) =="
+$PY services/ws2-normalization/test_syslog_udp_routing.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
 echo "== M4.5 parser plugin discovery (entry points, additive, collision-safe) =="; LAST_HEADER="== M4.5 parser plugin discovery (entry points, additive, collision-safe) =="
 $PY services/ws2-normalization/parsers/test_plugins.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
@@ -483,6 +492,15 @@ $PY tools/generate_benchmark.py --check >/dev/null || { fail=1; FAILED="${FAILED
 echo
 echo "== Phase 5 item 10 (2026-10-14): DCO check (per-commit, author-matched, fail-closed) =="; LAST_HEADER="== Phase 5 item 10 (2026-10-14): DCO check (per-commit, author-matched, fail-closed) =="
 $PY tools/test_check_dco.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+
+echo
+echo "== Leitwarte console (2026-10-14): typecheck + unit tests (services/ws7-dashboard/app) =="; LAST_HEADER="== Leitwarte console (2026-10-14): typecheck + unit tests (services/ws7-dashboard/app) =="
+# node is required: a console that cannot be typechecked must not pass the gate silently (R4-#69 stance).
+if command -v npm >/dev/null 2>&1; then
+  ( cd services/ws7-dashboard/app && { [ -d node_modules ] || npm ci --no-audit --no-fund >/dev/null; } && npx tsc --noEmit && npx vitest run ) || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+else
+  echo "FAIL: npm not found -- the console cannot be checked"; fail=1; FAILED="${FAILED} ${LAST_HEADER}"
+fi
 
 # == AI-to-OT twin (WP-1-A..F): PLC sim, attack chain, degradation rig, FPR ==
 echo

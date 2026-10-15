@@ -15,6 +15,32 @@
   offline/air-gap-safe, fail-open; may ADD optional fields to the already-clean
   event) → validate against Contract A → produce.
 
+## Routing (`parsers/__init__.py::resolve`)
+- A registered `source_type` is authoritative: an explicit product label (e.g.
+  `tools/agent_log_shipper.py --source-type linux_ssh`) is never overridden by
+  content.
+- **Exception — `generic_syslog`:** WS-1's UDP listener stamps this label on
+  every datagram, so it means "unidentified syslog line", not a product claim.
+  For a text line under this label, content-sniff runs first (CEF line start,
+  then sshd markers, then a strict `%ASA-N-NNNNNN:` tag, then dnsmasq
+  `query[`); the sniffed parser is used only if it actually parses the line.
+  Otherwise (no sniff hit, or the specific parser declines, e.g. an sshd
+  "Connection closed" line) the line stays on `generic_syslog`, exactly as
+  before. A `{`-prefixed (JSON) line under this label is not structured-sniffed.
+  A syslog-header-wrapped CEF record (`<134>Oct 11 22:14:15 relay01 CEF:0|...`)
+  is unwrapped (`generic_syslog._unwrap_syslog_message`) and parsed by `cef`
+  (test_syslog_udp_routing.py test_3b).
+- Missing/unknown `source_type`: the same text sniff with `generic_syslog` as the
+  catch-all; structured (JSON/dict) payloads go through the field/value sniff,
+  and an ambiguous payload returns None → dead-letter.
+- WS-1 metadata (`ingest_id`, `trace_id`, `tenant_id`) reaches the event
+  unchanged whichever parser wins; the specific parsers also map `received_at`
+  → `metadata.logged_time` (`generic_syslog` never did). The sender IP is only
+  the bus key — WS-1 does not put it in `meta`, so endpoint IPs come from the line;
+  `type_uid` is always derived by `base_event`. Regression test:
+  `test_syslog_udp_routing.py` (incl. a UDP-shaped sshd burst → brute-force
+  alert through WS-2 → WS-4).
+
 ## Produces
 - Topic `normalized.events` — OCSF event (Contract A), partition key = `src_endpoint.ip`.
 - Topic `raw.events.deadletter` — unparseable/invalid inputs with errors. Payload is

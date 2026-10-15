@@ -339,6 +339,16 @@ class OpenSearchStore(StorageAdapter):
         """PUT an index template (Contract E mapping + ILM choice)."""
         self._request("PUT", f"/_index_template/{name}", template)
 
+    def ensure_index(self, index: str) -> None:
+        """PUT an empty index (mappings come from the matching _index_template);
+        an already-existing index is the success path, not an error."""
+        try:
+            self._request("PUT", f"/{urllib.parse.quote(index, safe='')}")
+        except urllib.error.HTTPError as exc:
+            if exc.code == 400 and b"resource_already_exists_exception" in exc.read():
+                return
+            raise
+
     def index(self, index: str, doc_id: str, document: dict) -> bool:
         """Index a document with an explicit ``_id`` (idempotent upsert).
 
