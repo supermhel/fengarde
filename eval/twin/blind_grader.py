@@ -52,7 +52,9 @@ def _rule_techniques(rules_dir: Path = RULES_DIR) -> dict:
     out = {}
     for path in sorted(rules_dir.glob("*.yml")):
         doc = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-        mitre = doc.get("mitre") if isinstance(doc.get("mitre"), dict) else {}
+        mitre = doc.get("mitre")
+        if not isinstance(mitre, dict):
+            mitre = {}
         out[str(doc.get("id"))] = _techniques(mitre.get("technique"))
     return out
 
