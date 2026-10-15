@@ -1,0 +1,38 @@
+// Events log-explorer strings; shared words (time, status, raw, OCSF …) stay in lib/i18n.
+const en = {
+  query: "Query",
+  placeholder: "Search events, or source:linux_ssh status:failure",
+  hint: "Free text searches message, IPs, user, host, parser, status and UID. Narrow with source:, ip:, status:, class: or actor:. Quote values with spaces, e.g. class:\"Network Activity\". ip: matches source or destination.",
+  active: "Active filters",
+  remove: "Remove filter",
+  histogram: "Matching events",
+  topIps: "Top source IPs",
+  noMatch: "No event in this time range matches the query.",
+  shown: (n: string, m: string) => `Showing the newest ${n} of ${m} matches. Narrow the query to see the rest.`,
+  payload: "Payload",
+  copyJson: "Copy JSON",
+  copied: "Copied",
+  copyFailed: "The browser blocked the clipboard. Select the text and copy it instead.",
+  noMessage: "This event carries no raw message field.",
+  uid: "Event UID",
+  ingest: "Ingest ID",
+};
+const de: typeof en = {
+  query: "Abfrage",
+  placeholder: "Ereignisse durchsuchen oder source:linux_ssh status:failure",
+  hint: "Freitext durchsucht Meldung, IPs, Benutzer, Host, Parser, Status und UID. Eingrenzen mit source:, ip:, status:, class: oder actor:. Werte mit Leerzeichen in Anführungszeichen setzen, z. B. class:\"Network Activity\". ip: trifft Quell- oder Ziel-IP.",
+  active: "Aktive Filter",
+  remove: "Filter entfernen",
+  histogram: "Treffer im Zeitverlauf",
+  topIps: "Häufigste Quell-IPs",
+  noMatch: "Kein Ereignis in diesem Zeitraum passt zur Abfrage.",
+  shown: (n: string, m: string) => `Angezeigt werden die neuesten ${n} von ${m} Treffern. Abfrage eingrenzen, um den Rest zu sehen.`,
+  payload: "Inhalt",
+  copyJson: "JSON kopieren",
+  copied: "Kopiert",
+  copyFailed: "Der Browser hat die Zwischenablage blockiert. Text bitte markieren und manuell kopieren.",
+  noMessage: "Dieses Ereignis hat kein Rohmeldungsfeld.",
+  uid: "Ereignis-UID",
+  ingest: "Ingest-ID",
+};
+export const E = { en, de };
