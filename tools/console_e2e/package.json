@@ -1,0 +1,7 @@
+{
+  "name": "fengarde-console-e2e",
+  "private": true,
+  "type": "module",
+  "description": "Scripted-browser checks, screenshots and tour video for the FENGARDE console (live stack)",
+  "dependencies": { "playwright-core": "1.64.1" }
+}

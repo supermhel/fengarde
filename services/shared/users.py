@@ -192,6 +192,10 @@ _SCHEMA_MIGRATIONS: list[tuple[int, str]] = [
     # (a real counter is always >= 0, floor(unix_time/30)), so every existing
     # account upgrades in place with no behavior change until its next TOTP use.
     (4, "ALTER TABLE users ADD COLUMN totp_last_counter INTEGER NOT NULL DEFAULT -1"),
+    # Admin user management (2026-10-15): an admin can disable an account
+    # (PATCH /users/{name}). Additive, default 0, so every existing account
+    # upgrades in place still enabled. Disabled accounts fail verify_login.
+    (5, "ALTER TABLE users ADD COLUMN disabled INTEGER NOT NULL DEFAULT 0"),
 ]
 
 CURRENT_SCHEMA_VERSION = _SCHEMA_MIGRATIONS[-1][0]
@@ -216,14 +220,19 @@ class UserStore:
     def __init__(self, path: str = ":memory:"):
         self.db = sqlite3.connect(path, check_same_thread=False)
         self.db.row_factory = sqlite3.Row
-        self._write_lock = threading.Lock()  # same rationale as InventoryStore
+        # Guards reads AND writes: one shared connection is not safe for concurrent
+        # cursors (InterfaceError / wrong rows under load). get_user() runs on every
+        # authenticated request (session account re-check), so reads must serialize
+        # too. Re-entrant: write sections call the read helpers.
+        self._write_lock = threading.RLock()
         self._init()
 
     def _init(self):
         migrate(self.db)
 
     def count(self) -> int:
-        return self.db.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+        with self._write_lock:
+            return self.db.execute("SELECT COUNT(*) FROM users").fetchone()[0]
 
     def create_user(self, username: str, password: str, role: str,
                      tenant_id: str = DEFAULT_TENANT) -> None:
@@ -238,9 +247,10 @@ class UserStore:
             self.db.commit()
 
     def get_user(self, username: str) -> Optional[sqlite3.Row]:
-        return self.db.execute(
-            "SELECT * FROM users WHERE username = ?", (username,)
-        ).fetchone()
+        with self._write_lock:
+            return self.db.execute(
+                "SELECT * FROM users WHERE username = ?", (username,)
+            ).fetchone()
 
     def verify_login(self, username: str, password: str) -> Optional[sqlite3.Row]:
         """Return the user row on success, None on any failure (unknown
@@ -257,6 +267,10 @@ class UserStore:
             verify_password(password, _DECOY_HASH)
             return None
         if not verify_password(password, row["password_hash"]):
+            return None
+        # Checked after the scrypt verify so a disabled account costs the same
+        # wall-clock time as any other failure (no "exists but disabled" signal).
+        if row["disabled"]:
             return None
         with self._write_lock:
             self.db.execute(
@@ -390,7 +404,68 @@ class UserStore:
 
 
     def list_users(self) -> list[sqlite3.Row]:
-        return self.db.execute("SELECT username, role, tenant_id, created_at FROM users").fetchall()
+        # Explicit column list: password_hash / totp_secret must never leave this store.
+        with self._write_lock:
+            return self.db.execute(
+                "SELECT username, role, tenant_id, created_at, last_login_at, totp_active, disabled "
+                "FROM users ORDER BY username").fetchall()
+
+    def count_admins(self) -> int:
+        """Active (not disabled) admins -- the ones who can actually log in."""
+        with self._write_lock:
+            return self.db.execute(
+                "SELECT COUNT(*) FROM users WHERE role = 'admin' AND disabled = 0").fetchone()[0]
+
+    def update_user(self, username: str, *, role: Optional[str] = None,
+                    password: Optional[str] = None, disabled: Optional[bool] = None) -> bool:
+        """Apply any of role / password / disabled to one account. False if no
+        such user. Raises LastAdminError (nothing written) if the change would
+        leave zero active admins: the guard and the write share one lock, so
+        two concurrent demotions cannot both pass the count."""
+        if role is not None and role not in ROLES:
+            raise ValueError(f"unknown role {role!r}, must be one of {ROLES}")
+        pw_hash = hash_password(password) if password is not None else None  # scrypt outside the lock
+        with self._write_lock:
+            row = self.db.execute(
+                "SELECT role, disabled FROM users WHERE username = ?", (username,)).fetchone()
+            if row is None:
+                return False
+            new_role = role if role is not None else row["role"]
+            new_disabled = int(disabled) if disabled is not None else row["disabled"]
+            was_active_admin = row["role"] == "admin" and not row["disabled"]
+            if was_active_admin and (new_role != "admin" or new_disabled) and self.count_admins() <= 1:
+                raise LastAdminError("refusing to demote or disable the last active admin")
+            self.db.execute("UPDATE users SET role = ?, disabled = ? WHERE username = ?",
+                            (new_role, new_disabled, username))
+            if pw_hash is not None:
+                self.db.execute("UPDATE users SET password_hash = ? WHERE username = ?",
+                                (pw_hash, username))
+            self.db.commit()
+        return True
+
+
+class LastAdminError(Exception):
+    """update_user() would leave the deployment with no active admin."""
+
+
+MIN_PASSWORD_CHARS = 12
+MAX_PASSWORD_CHARS = 256
+
+
+def password_problem(password) -> Optional[str]:
+    """Why `password` is unacceptable for an admin-set account password, or None.
+
+    Applied by the WS-3 admin API (POST /users, PATCH /users/{name}). Length is
+    the one rule NIST SP 800-63B actually asks for; composition rules are not.
+    The first-boot FENGARDE_ADMIN_PASSWORD path predates this and is not
+    retrofitted (it would lock out an existing operator's chosen env value)."""
+    if not isinstance(password, str):
+        return "password must be a string"
+    if len(password) < MIN_PASSWORD_CHARS:
+        return f"password must be at least {MIN_PASSWORD_CHARS} characters"
+    if len(password) > MAX_PASSWORD_CHARS:
+        return f"password must be at most {MAX_PASSWORD_CHARS} characters"
+    return None
 
 
 def ensure_first_boot_admin(store: UserStore, username: str = "admin") -> Optional[str]:

@@ -101,3 +101,7 @@ undocumented. `services/ws6-inventory/` now has 7 substantive modules
 - `BUS_BACKEND` / `REDIS_URL` (and the shared Redis env set) — opt-in bus consumer
   backend; when `BUS_BACKEND=redis`, `bus_consumer.py` republishes
   `assets.updates` → `raw.events` (transparently skipped otherwise).
+
+## Notes (2026-10-16)
+- `POST /assets/upsert` stores an observation's `sector` (one of `bank`, `datacenter`, `common`) and `type` (a string up to 64 characters). Invalid values are ignored, never reject the observation, and a later observation that omits them does not erase them. Before this, both were silently dropped.
+- Reads (`get`, `list`, `resolve`, key `count`/`verify`/`list`) share the stores' lock: one SQLite connection per store is not safe for concurrent cursors, and the console issues parallel GETs. Tests: `test_store_threading.py`, `test_upsert_attrs.py`.

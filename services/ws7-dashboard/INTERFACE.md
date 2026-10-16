@@ -47,6 +47,20 @@
   ports were previously reachable only container-to-container.
 
 ## Produces
+- **The console (2026-10-15)** is a React + Vite + TypeScript app in `app/`,
+  built in the Dockerfile's first stage and served at `/`; the single-file UI
+  below is kept unchanged at `/legacy/` (linked from the nav). Views, grouped:
+  Detect (Overview, Alarms, Incidents), Investigate (Events log explorer,
+  Coverage), Operate (Sources = how devices get connected, Inventory,
+  Operations incl. System health from Prometheus, Audit, Settings), plus
+  Account (MFA). Settings, the Inventory add-device form and the Coverage rule
+  switch show for `role=admin` only and call WS-3's admin routes via
+  `/api/triage/*` (see ws3-indexer/INTERFACE.md). DE/EN, light/dark, mobile.
+  `/index.html` is `no-cache`, `/assets/*` immutable (hashed). `/api/prom/` is a
+  read-only window onto Prometheus (`targets`, `query` only). The feature-by-
+  feature status is `docs/console-feature-matrix.md`.
+- **Demo build** (`npm run build:demo`, output `docs/demo/`): the same console with every `/api/*` call answered in the browser by `src/demo/adapter.ts` from `src/demo/fixtures.json`, a recording of a lab run made by `tools/console_e2e/record_fixtures.mjs`. Timestamps are shifted to now, writes are in-memory only, the attack is hidden until "Replay the attack", and the page that embeds it can start the replay and hears about alarms through `postMessage` (same origin). The normal build contains none of it (`import.meta.env.VITE_DEMO`). Details: `docs/console-demo.md`.
+- Sign-in: username, password and an optional MFA code (the backend answers a missing or wrong code with the same 401 as a wrong password). The page shows the host, whether WS-3 answers, and a warning on plain HTTP away from localhost.
 - Static single-file UI (`index.html`) served by nginx. No backend of its own.
 - **Deep-linkable nav** (2026-08-20): the URL hash (`#ops`, `#audit`, `#incidents`, ...)
   selects the active view on load and via `hashchange` — bookmarkable/shareable

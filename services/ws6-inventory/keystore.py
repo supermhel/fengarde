@@ -206,7 +206,8 @@ class TenantKeyStore:
         # genuine stall now shows up in app.py's exception logging (#2).
         self.db = sqlite3.connect(path, check_same_thread=False, timeout=30)
         self.db.row_factory = sqlite3.Row
-        self._write_lock = threading.Lock()
+        # RLock + locked reads: count()/verify() run on EVERY request on this shared connection.
+        self._write_lock = threading.RLock()
         self._init()
 
     def _init(self):
@@ -313,7 +314,8 @@ class TenantKeyStore:
             (current,))
 
     def count(self) -> int:
-        return self.db.execute("SELECT COUNT(*) FROM api_keys").fetchone()[0]
+        with self._write_lock:
+            return self.db.execute("SELECT COUNT(*) FROM api_keys").fetchone()[0]
 
     def provision(self, tenant_id: str, raw_key: str, source: str = "generated",
                   scope: str | None = None) -> str:
@@ -385,10 +387,11 @@ class TenantKeyStore:
         if not raw_key:
             return False, None, None
         key_hash = _hash_key(raw_key)
-        row = self.db.execute(
-            "SELECT tenant_id, key_hash, scope, key_id FROM api_keys WHERE key_hash=?",
-            (key_hash,),
-        ).fetchone()
+        with self._write_lock:
+            row = self.db.execute(
+                "SELECT tenant_id, key_hash, scope, key_id FROM api_keys WHERE key_hash=?",
+                (key_hash,),
+            ).fetchone()
         if row is None:
             return False, None, None
         # Defense in depth: don't let a single indexed equality lookup BE
@@ -428,7 +431,8 @@ class TenantKeyStore:
             q += " WHERE tenant_id=?"
             args.append(tenant_id)
         q += " ORDER BY tenant_id, created_at"
-        return [dict(r) for r in self.db.execute(q, args).fetchall()]
+        with self._write_lock:
+            return [dict(r) for r in self.db.execute(q, args).fetchall()]
 
 
 def ensure_legacy_keys_migrated(store: TenantKeyStore) -> list[str]:

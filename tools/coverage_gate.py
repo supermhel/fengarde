@@ -44,6 +44,7 @@ TARGETS: dict[str, tuple[str, list[str], float]] = {
             "parsers/test_generic_syslog.py",
             "parsers/test_windows_eventlog.py",
             "parsers/test_registry_routing.py",
+            "test_syslog_udp_routing.py",
             "parsers/test_parser_hardening.py",
             "enrichment/test_enrichment.py",
             "parsers/test_timeutil.py",

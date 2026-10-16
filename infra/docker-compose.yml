@@ -90,12 +90,15 @@ services:
   # volume mounts root:root, but ws3-indexer runs as uid 10001 (Dockerfile
   # USER app), so the first audit.jsonl or RBAC sqlite write would Permission
   # denied without this. No-op once ownership is already correct.
+  # Also chowns the shared tenants-config volume (console rule on/off writes
+  # contracts/tenants/<id>.yml from ws3-indexer; ws4-detection reads it).
   ws3-indexer-init:
     image: busybox:1.36
     container_name: siem-ws3-indexer-init
     volumes:
       - ws3-indexer-data:/app/ws3-indexer/data
-    entrypoint: ["chown", "10001:10001", "/app/ws3-indexer/data"]
+      - tenants-config:/app/contracts/tenants
+    entrypoint: ["chown", "10001:10001", "/app/ws3-indexer/data", "/app/contracts/tenants"]
     restart: "no"
 
   # ---- workstream services (build context = repo root) ----
@@ -176,6 +179,10 @@ services:
       # RBAC stays UNOFFBIG (the pre-M4.2 default) unless the operator sets
       # FENGARDE_RBAC_DB to a path inside this same volume.
       - FENGARDE_AUDIT_LOG=/app/ws3-indexer/data/audit.jsonl
+      # Admin "add device" (POST /inventory/assets, RBAC mode only) forwards to
+      # WS-6 POST /assets/upsert server-side. Key only needed when WS-6 auth is on.
+      - INVENTORY_URL=http://ws6-inventory:8000
+      - INVENTORY_API_KEY=${INVENTORY_API_KEY:-${FENGARDE_API_KEY:-}}
       # - FENGARDE_RBAC_DB=/app/ws3-indexer/data/rbac.sqlite
     # Deploy fix (same bug class as ws1's spool volume, live-docker-caught
     # 2026-08-21): a fresh named volume is created root:root, but this service
@@ -184,6 +191,9 @@ services:
     # chowns /app/ws3-indexer/data to 10001 before the service starts.
     volumes:
       - ws3-indexer-data:/app/ws3-indexer/data
+      # Admin rule on/off (PUT /rules/{id}/enabled) writes here; ws4-detection
+      # mounts the same volume read-only and re-reads a changed file per event.
+      - tenants-config:/app/contracts/tenants
     depends_on:
       redis: { condition: service_healthy }
       opensearch: { condition: service_healthy }
@@ -198,7 +208,12 @@ services:
   ws4-detection:
     build: { context: .., dockerfile: services/ws4-detection/Dockerfile }
     restart: unless-stopped
-    environment: ["BUS_BACKEND=redis", "REDIS_PASSWORD=${REDIS_PASSWORD:-}", "REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0", "FENGARDE_OPT_IN_RULES=${FENGARDE_OPT_IN_RULES:-}"]
+    environment: ["BUS_BACKEND=redis", "REDIS_PASSWORD=${REDIS_PASSWORD:-}", "REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0", "FENGARDE_OPT_IN_RULES=${FENGARDE_OPT_IN_RULES:-}", "RULES_RELOAD_INTERVAL_S=${RULES_RELOAD_INTERVAL_S:-5}"]
+    # Per-tenant disabled_rules, written by ws3-indexer's admin rule toggle; the
+    # rule-reload watcher (RULES_RELOAD_INTERVAL_S, default 5s here) re-reads it
+    # so a console toggle takes effect without restarting WS-4.
+    volumes:
+      - tenants-config:/app/contracts/tenants:ro
     depends_on: { redis: { condition: service_healthy } }
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8004/health', timeout=3)"]
@@ -384,12 +399,40 @@ services:
     ports: ["127.0.0.1:3000:3000"]
     depends_on: [prometheus]
 
+  # M7.5 visit counter (2026-10-16). The project page and demo are embedded in
+  # docs/index.html; "0 trackers" means no THIRD-PARTY trackers. If you serve
+  # the page yourself (not GitHub Pages) and want to know how many people visit
+  # it, this is a self-hosted, cookie-free counter (GoatCounter, EU-DSGVO
+  # friendly). Same convention as Prometheus/Grafana: opt-in `observability`
+  # profile, loopback-only port. First-run setup (docs/deployment.md):
+  #   docker exec -it siem-goatcounter goatcounter db create site \
+  #     -vhost=localhost:8081 -user.email=you@example.com
+  # then open http://127.0.0.1:8081 and create the first account/site, and add
+  # the GoatCounter <script> to your own served docs/index.html copy.
+  goatcounter:
+    image: arp242/goatcounter:2.7.0
+    container_name: siem-goatcounter
+    profiles: [observability]
+    ports: ["127.0.0.1:8081:8081"]
+    environment:
+      - GOATCOUNTER_LISTEN=:8081
+    volumes:
+      - goatcounter-data:/home/goatcounter/goatcounter-data
+    restart: unless-stopped
+
 volumes:
   redis-data:
   os-data:
   inventory-data:
   prometheus-data:
   grafana-data:
+  goatcounter-data:
   ws1-spool:
   # R3-20: ws3-indexer persists audit.jsonl + opt-in RBAC sqlite (FENGARDE_RBAC_DB).
   ws3-indexer-data:
+  # contracts/tenants/*.yml shared by ws3-indexer (rw) and ws4-detection (ro).
+  # The volume, not the image, is the source of truth once it exists: tenant
+  # files added to contracts/tenants/ in the repo and baked into a rebuilt
+  # image are NOT visible to the containers. Edit via the console (or copy
+  # into the volume). A missing tenant file means nothing disabled.
+  tenants-config:

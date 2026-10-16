@@ -1,0 +1,405 @@
+{
+ "results": [
+  [
+   "login: uses the console shell (rail, top bar, banner), not a separate template",
+   true
+  ],
+  [
+   "login: no 'Leitwarte' anywhere",
+   true
+  ],
+  [
+   "login: shows which host you are signing in to",
+   true
+  ],
+  [
+   "login: sign-in service reported reachable",
+   true
+  ],
+  [
+   "login: optional MFA code field present",
+   true
+  ],
+  [
+   "login: roles panel lists read_only, analyst, admin",
+   true
+  ],
+  [
+   "login: no transport warning on localhost",
+   true
+  ],
+  [
+   "login: wrong password shows a specific error, stays on login",
+   true
+  ],
+  [
+   "login: DE switch translates",
+   true
+  ],
+  [
+   "login: dark toggle applies",
+   true
+  ],
+  [
+   "login: mobile has no horizontal overflow",
+   true
+  ],
+  [
+   "admin: signed in, nav rendered (11 entries)",
+   true
+  ],
+  [
+   "admin: Settings nav only for admin",
+   true
+  ],
+  [
+   "admin: #/overview renders",
+   true
+  ],
+  [
+   "admin: Overview charts have a transparent background",
+   true
+  ],
+  [
+   "admin: #/alarms renders",
+   true
+  ],
+  [
+   "admin: #/incidents renders",
+   true
+  ],
+  [
+   "admin: #/events renders",
+   true
+  ],
+  [
+   "admin: #/coverage renders",
+   true
+  ],
+  [
+   "admin: #/sources renders",
+   true
+  ],
+  [
+   "admin: #/inventory renders",
+   true
+  ],
+  [
+   "admin: #/operations renders",
+   true
+  ],
+  [
+   "admin: #/audit renders",
+   true
+  ],
+  [
+   "admin: #/account renders",
+   true
+  ],
+  [
+   "admin: #/settings renders",
+   true
+  ],
+  [
+   "admin: no 'Leitwarte' in the console",
+   true
+  ],
+  [
+   "admin: dark theme applies",
+   true
+  ],
+  [
+   "admin: DE labels",
+   true
+  ],
+  [
+   "admin: mobile (390px) no page-level horizontal overflow",
+   true
+  ],
+  [
+   "admin: no unexpected API errors (only auth/me before login, role-gated audit, Prometheus off)",
+   true
+  ],
+  [
+   "admin: no uncaught page errors",
+   true
+  ],
+  [
+   "analyst: signed in, nav rendered (10 entries)",
+   true
+  ],
+  [
+   "analyst: Settings nav only for admin",
+   true
+  ],
+  [
+   "analyst: #/overview renders",
+   true
+  ],
+  [
+   "analyst: Overview charts have a transparent background",
+   true
+  ],
+  [
+   "analyst: #/alarms renders",
+   true
+  ],
+  [
+   "analyst: #/incidents renders",
+   true
+  ],
+  [
+   "analyst: #/events renders",
+   true
+  ],
+  [
+   "analyst: #/coverage renders",
+   true
+  ],
+  [
+   "analyst: #/sources renders",
+   true
+  ],
+  [
+   "analyst: #/inventory renders",
+   true
+  ],
+  [
+   "analyst: #/operations renders",
+   true
+  ],
+  [
+   "analyst: #/audit renders",
+   true
+  ],
+  [
+   "analyst: #/account renders",
+   true
+  ],
+  [
+   "analyst: #/settings renders",
+   true
+  ],
+  [
+   "analyst: no 'Leitwarte' in the console",
+   true
+  ],
+  [
+   "analyst: no add-device form",
+   true
+  ],
+  [
+   "analyst: no rule switch buttons",
+   true
+  ],
+  [
+   "analyst: #/settings is the admin-only notice",
+   true
+  ],
+  [
+   "analyst: dark theme applies",
+   true
+  ],
+  [
+   "analyst: DE labels",
+   true
+  ],
+  [
+   "analyst: mobile (390px) no page-level horizontal overflow",
+   true
+  ],
+  [
+   "analyst: no unexpected API errors (only auth/me before login, role-gated audit, Prometheus off)",
+   true
+  ],
+  [
+   "analyst: no uncaught page errors",
+   true
+  ],
+  [
+   "readonly: signed in, nav rendered (10 entries)",
+   true
+  ],
+  [
+   "readonly: Settings nav only for admin",
+   true
+  ],
+  [
+   "readonly: #/overview renders",
+   true
+  ],
+  [
+   "readonly: Overview charts have a transparent background",
+   true
+  ],
+  [
+   "readonly: #/alarms renders",
+   true
+  ],
+  [
+   "readonly: #/incidents renders",
+   true
+  ],
+  [
+   "readonly: #/events renders",
+   true
+  ],
+  [
+   "readonly: #/coverage renders",
+   true
+  ],
+  [
+   "readonly: #/sources renders",
+   true
+  ],
+  [
+   "readonly: #/inventory renders",
+   true
+  ],
+  [
+   "readonly: #/operations renders",
+   true
+  ],
+  [
+   "readonly: #/audit renders",
+   true
+  ],
+  [
+   "readonly: #/account renders",
+   true
+  ],
+  [
+   "readonly: #/settings renders",
+   true
+  ],
+  [
+   "readonly: no 'Leitwarte' in the console",
+   true
+  ],
+  [
+   "readonly: no add-device form",
+   true
+  ],
+  [
+   "readonly: no rule switch buttons",
+   true
+  ],
+  [
+   "readonly: #/settings is the admin-only notice",
+   true
+  ],
+  [
+   "readonly: triage is read-only",
+   true
+  ],
+  [
+   "readonly: dark theme applies",
+   true
+  ],
+  [
+   "readonly: DE labels",
+   true
+  ],
+  [
+   "readonly: mobile (390px) no page-level horizontal overflow",
+   true
+  ],
+  [
+   "readonly: no unexpected API errors (only auth/me before login, role-gated audit, Prometheus off)",
+   true
+  ],
+  [
+   "readonly: no uncaught page errors",
+   true
+  ],
+  [
+   "admin: Settings lists ui-admin",
+   true
+  ],
+  [
+   "admin: Settings shows real last-sign-in dates (not 1970)",
+   true
+  ],
+  [
+   "admin: Settings marks the current user",
+   true
+  ],
+  [
+   "admin: creates a user from the form",
+   true
+  ],
+  [
+   "admin: disabling hides the account from the default list",
+   true
+  ],
+  [
+   "admin: 'show disabled accounts' reveals it as disabled",
+   true
+  ],
+  [
+   "admin: add-device form reports success",
+   true
+  ],
+  [
+   "admin: new device appears in the table",
+   true
+  ],
+  [
+   "admin: rule switch flips state in the UI",
+   true
+  ],
+  [
+   "admin: rule restored (no 'switch on' left)",
+   true
+  ],
+  [
+   "admin: Sources confirms the first syslog event (routed to linux_ssh) from the sender",
+   true
+  ],
+  [
+   "admin: no page errors during actions",
+   true
+  ]
+ ],
+ "note": [
+  "admin overview: Overview",
+  "admin alarms: Alarms6 / 11",
+  "admin incidents: Incidents",
+  "admin events: Events100 / 100",
+  "admin coverage: Coverage2 / 29 rules fired",
+  "admin sources: Sources3 source types",
+  "admin inventory: Inventory11 assets",
+  "admin operations: Operations6 / 6 healthy",
+  "admin audit: Admin audit trail200",
+  "admin account: Account",
+  "admin settings: SettingsUsers · Notification channels",
+  "admin console errors: none",
+  "admin API >=400: 401 /api/auth/me, 502 /api/prom/api/v1/targets, 502 /api/prom/api/v1/query",
+  "analyst overview: Overview",
+  "analyst alarms: Alarms6 / 11",
+  "analyst incidents: Incidents",
+  "analyst events: Events100 / 100",
+  "analyst coverage: Coverage2 / 29 rules fired",
+  "analyst sources: Sources3 source types",
+  "analyst inventory: Inventory11 assets",
+  "analyst operations: Operations6 / 6 healthy",
+  "analyst audit: Admin audit trail0",
+  "analyst account: Account",
+  "analyst settings: Settings",
+  "analyst console errors: none",
+  "analyst API >=400: 401 /api/auth/me, 404 /api/audit, 502 /api/prom/api/v1/targets, 502 /api/prom/api/v1/query",
+  "readonly overview: Overview",
+  "readonly alarms: Alarms6 / 11",
+  "readonly incidents: Incidents",
+  "readonly events: Events100 / 100",
+  "readonly coverage: Coverage2 / 29 rules fired",
+  "readonly sources: Sources3 source types",
+  "readonly inventory: Inventory11 assets",
+  "readonly operations: Operations6 / 6 healthy",
+  "readonly audit: Admin audit trail0",
+  "readonly account: Account",
+  "readonly settings: Settings",
+  "readonly console errors: none",
+  "readonly API >=400: 401 /api/auth/me, 404 /api/audit, 502 /api/prom/api/v1/targets, 502 /api/prom/api/v1/query"
+ ]
+}

@@ -14,6 +14,8 @@ is read-only and never touches `detection.condition`.
 from __future__ import annotations
 
 import os
+import tempfile
+import threading
 from pathlib import Path
 
 import yaml
@@ -132,6 +134,57 @@ def _plugin_dirs() -> list[Path]:
         if part:
             out.append(Path(part))
     return out
+
+
+_WRITE_LOCK = threading.Lock()
+
+
+def set_rule_enabled(tenant_id: str, rule_id: str, enabled: bool) -> None:
+    """Add/remove `rule_id` in contracts/tenants/<tenant_id>.yml's
+    `disabled_rules` -- the exact file WS-4's tenants.load_disabled_rules()
+    reads. Other top-level keys in that file are preserved (YAML comments are
+    not: safe_dump rewrites the file). Written via temp file + os.replace so
+    WS-4 never reads a half-written file.
+
+    Callers validate tenant_id/rule_id first; this re-checks tenant_id so the
+    filename can never carry a path separator."""
+    if not valid_tenant_id(tenant_id):
+        raise ValueError("invalid tenant_id")
+    with _WRITE_LOCK:
+        TENANTS_DIR.mkdir(parents=True, exist_ok=True)
+        path = next((p for p in TENANTS_DIR.glob("*.yml") if p.stem == tenant_id),
+                    None)
+        if path is None:
+            # Fallback only when no matching file exists yet. The filename is
+            # rebuilt from a characters-only allowlist so no request-controlled
+            # value ever becomes a path expression (CodeQL py/path-injection;
+            # valid_tenant_id already guarantees the same charset -- this makes
+            # the taint structurally impossible rather than merely checked).
+            # CodeQL's taint model cannot see the sanitizer (its diff model has
+            # no inline suppression, GH codeql#11427); the finding is dismissed
+            # as a false positive, same convention as alert #63/#71/#72.
+            path = TENANTS_DIR / ("".join(c for c in tenant_id
+                                          if c.isalnum() or c == "-") + ".yml")
+        raw = {}
+        if path.exists():
+            loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
+            if loaded is not None and not isinstance(loaded, dict):
+                raise ValueError(f"{path.name} is not a YAML mapping; refusing to overwrite")
+            raw = loaded or {}
+        current = [e for e in (raw.get("disabled_rules") or []) if isinstance(e, str)]
+        if enabled:
+            current = [e for e in current if e != rule_id]
+        elif rule_id not in current:
+            current.append(rule_id)
+        raw["disabled_rules"] = current
+        fd, tmp = tempfile.mkstemp(dir=TENANTS_DIR, suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                yaml.safe_dump(raw, f, sort_keys=False)
+            os.replace(tmp, path)
+        except BaseException:
+            Path(tmp).unlink(missing_ok=True)
+            raise
 
 
 def list_rule_summaries(tenant_id: str | None = None) -> list[dict]:

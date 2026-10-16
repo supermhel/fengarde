@@ -85,6 +85,21 @@ _MAC_FORMAT = re.compile(r"^[0-9A-Fa-f]{2}(?:[:-][0-9A-Fa-f]{2}){5}$")
 _MAC_MAX_LEN = 64
 _HOSTNAME_MAX_LEN = 253   # RFC 1035 maximum FQDN; anything longer is garbage
 _PROTOCOL_MAX_LEN = 64
+_TYPE_MAX_LEN = 64
+# contracts/inventory-api.yaml Asset.sector enum.
+_SECTORS = ("bank", "datacenter", "common")
+
+
+def _asset_attrs(obs: dict) -> tuple[str | None, str | None]:
+    """(sector, type) to persist from an observation, or None for each that is absent/invalid.
+    Lenient on purpose: this also runs on the bus path, where an odd value must not reject the whole
+    observation (the device is still worth recording). The admin add-device route validates strictly
+    upstream. Before 2026-10-16 neither field was stored at all, so a device added by hand with a
+    sector and type came back with both null."""
+    sector, typ = obs.get("sector"), obs.get("type")
+    sector = sector if isinstance(sector, str) and sector in _SECTORS else None
+    typ = typ.strip() if isinstance(typ, str) and typ.strip() and len(typ.strip()) <= _TYPE_MAX_LEN else None
+    return sector, typ
 
 # Gap-hunt #6 (2026-08-26): ip_history/protocols grew without bound and were
 # inlined in FULL into every hydrated read (500 observations -> ~50 KB body).
@@ -219,7 +234,9 @@ class InventoryStore:
         # raises IntegrityError (surfaced to the client as a 500). This lock
         # makes the whole read-modify-write atomic. Writes are cheap; the API
         # is single-process, so an in-process lock is the right-sized fix.
-        self._write_lock = threading.Lock()
+        # RLock + locked reads: one shared connection is not safe for concurrent cursors, and the
+        # console issues parallel GETs (list/get/resolve) while writers run BEGIN IMMEDIATE on it.
+        self._write_lock = threading.RLock()
         self._init()
 
     def _init(self):
@@ -445,11 +462,12 @@ class InventoryStore:
                 on_new_device(tenant_id)
 
             pruned_history = False
+            sector, typ = _asset_attrs(obs)
             if row is None:
                 self.db.execute(
-                    "INSERT INTO assets(tenant_id,mac,hostname,ip_current,last_seen,status) "
-                    "VALUES(?,?,?,?,?, 'active')",
-                    (tenant_id, mac, obs.get("hostname"), ip, seen),
+                    "INSERT INTO assets(tenant_id,mac,hostname,ip_current,sector,type,last_seen,status) "
+                    "VALUES(?,?,?,?,?,?,?, 'active')",
+                    (tenant_id, mac, obs.get("hostname"), ip, sector, typ, seen),
                 )
                 if ip:
                     self.db.execute(
@@ -486,9 +504,10 @@ class InventoryStore:
                             (ip, tenant_id, mac),
                         )
                     self.db.execute(
-                        "UPDATE assets SET last_seen=?, hostname=COALESCE(?,hostname) "
+                        "UPDATE assets SET last_seen=?, hostname=COALESCE(?,hostname), "
+                        "sector=COALESCE(?,sector), type=COALESCE(?,type) "
                         "WHERE tenant_id=? AND mac=?",
-                        (seen, obs.get("hostname"), tenant_id, mac),
+                        (seen, obs.get("hostname"), sector, typ, tenant_id, mac),
                     )
 
             new_protocol = False
@@ -514,55 +533,58 @@ class InventoryStore:
 
     # ---- reads ----------------------------------------------------------
     def get(self, mac: str, tenant_id: str | None = None) -> dict | None:
-        tenant_id = _validated_tenant(tenant_id)
-        row = self.db.execute(
-            "SELECT * FROM assets WHERE tenant_id=? AND mac=?", (tenant_id, mac)
-        ).fetchone()
-        if not row:
-            return None
-        return self._hydrate(row)
+        with self._write_lock:
+            tenant_id = _validated_tenant(tenant_id)
+            row = self.db.execute(
+                "SELECT * FROM assets WHERE tenant_id=? AND mac=?", (tenant_id, mac)
+            ).fetchone()
+            if not row:
+                return None
+            return self._hydrate(row)
 
     def list(self, ip=None, mac=None, sector=None, status=None, limit=50,
               tenant_id: str | None = None) -> list[dict]:
-        tenant_id = _validated_tenant(tenant_id)
-        q = "SELECT * FROM assets WHERE tenant_id=?"
-        args: list = [tenant_id]
-        if mac:
-            q += " AND mac=?"; args.append(mac)
-        if ip:
-            q += " AND ip_current=?"; args.append(ip)
-        if sector:
-            q += " AND sector=?"; args.append(sector)
-        if status:
-            q += " AND status=?"; args.append(status)
-        q += " LIMIT ?"; args.append(limit)
-        return [self._hydrate(r) for r in self.db.execute(q, args).fetchall()]
+        with self._write_lock:
+            tenant_id = _validated_tenant(tenant_id)
+            q = "SELECT * FROM assets WHERE tenant_id=?"
+            args: list = [tenant_id]
+            if mac:
+                q += " AND mac=?"; args.append(mac)
+            if ip:
+                q += " AND ip_current=?"; args.append(ip)
+            if sector:
+                q += " AND sector=?"; args.append(sector)
+            if status:
+                q += " AND status=?"; args.append(status)
+            q += " LIMIT ?"; args.append(limit)
+            return [self._hydrate(r) for r in self.db.execute(q, args).fetchall()]
 
     def resolve(self, ip: str, at: str, tenant_id: str | None = None) -> dict | None:
         """Which MAC held `ip` at instant `at` (historically correct), scoped
         to one tenant's ip_history."""
-        tenant_id = _validated_tenant(tenant_id)
-        at_dt = _parse(at)
-        rows = self.db.execute(
-            "SELECT * FROM ip_history WHERE tenant_id=? AND ip=?", (tenant_id, ip)
-        ).fetchall()
-        for r in rows:
-            try:
-                frm = _parse(r["from_ts"])
-                to = _parse(r["to_ts"]) if r["to_ts"] else None
-            except (ValueError, TypeError):
-                # Gap-hunt #5: a corrupt/legacy stored timestamp (written
-                # before seen_at validation existed) must not turn this lookup
-                # into a 400 that blames the caller's own well-formed `at` --
-                # skip the row and treat it as unknown.
-                _log.warn(
-                    "skipping corrupt ip_history row in resolve()",
-                    tenant_id=tenant_id, ip=ip, mac=r["mac"],
-                )
-                continue
-            if frm <= at_dt and (to is None or at_dt < to):
-                return self.get(r["mac"], tenant_id=tenant_id)
-        return None
+        with self._write_lock:
+            tenant_id = _validated_tenant(tenant_id)
+            at_dt = _parse(at)
+            rows = self.db.execute(
+                "SELECT * FROM ip_history WHERE tenant_id=? AND ip=?", (tenant_id, ip)
+            ).fetchall()
+            for r in rows:
+                try:
+                    frm = _parse(r["from_ts"])
+                    to = _parse(r["to_ts"]) if r["to_ts"] else None
+                except (ValueError, TypeError):
+                    # Gap-hunt #5: a corrupt/legacy stored timestamp (written
+                    # before seen_at validation existed) must not turn this lookup
+                    # into a 400 that blames the caller's own well-formed `at` --
+                    # skip the row and treat it as unknown.
+                    _log.warn(
+                        "skipping corrupt ip_history row in resolve()",
+                        tenant_id=tenant_id, ip=ip, mac=r["mac"],
+                    )
+                    continue
+                if frm <= at_dt and (to is None or at_dt < to):
+                    return self.get(r["mac"], tenant_id=tenant_id)
+            return None
 
     # ---- helpers --------------------------------------------------------
     def _prune_ip_history(self, tenant_id: str, mac: str) -> None:
