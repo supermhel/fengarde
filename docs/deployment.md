@@ -108,3 +108,26 @@ layer if you want both.
   securing that ingestion path (if your log sources traverse an untrusted
   network) is a network-level decision (VPN, firewall rules, or an
   IPsec/WireGuard tunnel to the sources), out of scope for this doc.
+
+## Optional: self-hosted visit counter (GoatCounter)
+
+The project page (`docs/index.html`) claims "no third-party trackers" and
+that stays true on GitHub Pages. If you serve your own copy of the page and
+want to know how many people visit it, the stack ships an optional,
+cookie-free, EU-DSGVO-friendly counter (GoatCounter) in the `observability`
+compose profile — loopback-bound like every other opt-in service, and
+nothing about it leaves your network.
+
+```sh
+docker compose -f infra/docker-compose.yml --profile observability up -d goatcounter
+# first run only: create the database and your admin account
+# (interactive; or pass -user.password=... to skip the prompt)
+docker exec -it siem-goatcounter goatcounter db create site \
+  -vhost=counter.example.local -user.email=you@example.com
+```
+
+Then open `http://127.0.0.1:8081` (with the `Host:` header set to your
+`-vhost` if you are accessing it locally), sign in, and add the GoatCounter
+`<script>` snippet to **your own served copy** of `docs/index.html`; the copy
+in this repository stays free of it. The counter is a separate, documented
+option — it is never enabled by `make up`.
