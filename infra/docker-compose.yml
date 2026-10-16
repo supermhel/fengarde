@@ -397,12 +397,34 @@ services:
     ports: ["127.0.0.1:3000:3000"]
     depends_on: [prometheus]
 
+  # M7.5 visit counter (2026-10-16). The project page and demo are embedded in
+  # docs/index.html; "0 trackers" means no THIRD-PARTY trackers. If you serve
+  # the page yourself (not GitHub Pages) and want to know how many people visit
+  # it, this is a self-hosted, cookie-free counter (GoatCounter, EU-DSGVO
+  # friendly). Same convention as Prometheus/Grafana: opt-in `observability`
+  # profile, loopback-only port. First-run setup (docs/deployment.md):
+  #   docker exec -it siem-goatcounter goatcounter db create site \
+  #     -vhost=localhost:8081 -user.email=you@example.com
+  # then open http://127.0.0.1:8081 and create the first account/site, and add
+  # the GoatCounter <script> to your own served docs/index.html copy.
+  goatcounter:
+    image: arp242/goatcounter:2.7.0
+    container_name: siem-goatcounter
+    profiles: [observability]
+    ports: ["127.0.0.1:8081:8081"]
+    environment:
+      - GOATCOUNTER_LISTEN=:8081
+    volumes:
+      - goatcounter-data:/home/goatcounter/goatcounter-data
+    restart: unless-stopped
+
 volumes:
   redis-data:
   os-data:
   inventory-data:
   prometheus-data:
   grafana-data:
+  goatcounter-data:
   ws1-spool:
   # R3-20: ws3-indexer persists audit.jsonl + opt-in RBAC sqlite (FENGARDE_RBAC_DB).
   ws3-indexer-data:

@@ -140,6 +140,7 @@ make ha-down  # stop the HA profile, remove its volumes
 | 8013 | `ws3-indexer` | Triage API — internal only, not published to the host |
 | 9090 | `prometheus` | Metrics — opt-in, `observability` compose profile |
 | 3000 | `grafana` | Dashboards over Prometheus — opt-in, same profile; default `admin`/`admin`, see `SECURITY.md` §1 |
+| 8081 | `goatcounter` | Self-hosted visit counter for a self-served copy of the project page — opt-in, same profile; cookie-free, nothing leaves your network (set up once via `docker exec`, see `docs/deployment.md`) |
 
 `make preflight` checks the published ports are free before you start.
 
