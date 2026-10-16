@@ -175,6 +175,16 @@ def _newest_input_mtime(root: Path) -> tuple[float, str]:
         for p in root.glob(pattern):
             if not p.is_file():
                 continue
+            # node_modules (and other dependency/build caches under services/)
+            # are NOT instrument sources: a fresh `npm ci`/vitest run writes
+            # .vite/vitest/results.json etc. AFTER an instrument produced its
+            # artifact, which would otherwise mark every card STALE on a
+            # healthy tree. Same convention as .gitignore: vendored
+            # dependencies are never inputs. (2026-10-16, found by the
+            # feat/dashboard-rebuild rebase: the React console's Vitest cache
+            # under services/ws7-dashboard/app/node_modules tripped it.)
+            if "node_modules" in p.parts:
+                continue
             try:
                 m = p.stat().st_mtime
             except OSError:
