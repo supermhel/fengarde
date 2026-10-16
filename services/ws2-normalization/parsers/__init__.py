@@ -222,13 +222,15 @@ def resolve(raw_payload: dict) -> Optional[Parser]:
     st = raw_payload.get("source_type", "") or ""
     parser = _REGISTRY.get(st)
     raw = raw_payload.get("raw")
-    is_text = isinstance(raw, str) and not raw.lstrip().startswith("{")
+    # mypy-narrowing: check isinstance directly at each use site rather than
+    # caching a boolean, so the str type follows into the helpers below.
     if parser is not None:
-        if st == "generic_syslog" and is_text:
+        if st == "generic_syslog" and isinstance(raw, str) \
+                and not raw.lstrip().startswith("{"):
             return _claiming_text_parser(raw_payload, raw) or parser
         return parser
     # Text-line sources (raw is a syslog string, not JSON).
-    if is_text:
+    if isinstance(raw, str) and not raw.lstrip().startswith("{"):
         # catch-all syslog is now reachable
         return _sniff_text(raw) or _REGISTRY["generic_syslog"]
     rec = _as_record(raw)

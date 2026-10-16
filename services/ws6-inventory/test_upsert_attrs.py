@@ -22,15 +22,19 @@ MAC = "AA:BB:CC:00:00:01"
 def main() -> int:
     s = InventoryStore(":memory:")
     a = s.upsert({"mac": MAC, "ip": "10.0.0.1", "hostname": "plc-1", "sector": "datacenter", "type": "plc"})
+    assert a is not None
     assert (a["sector"], a["type"]) == ("datacenter", "plc"), a
     # a later observation without the fields (e.g. SNMP) must not erase them
     b = s.upsert({"mac": MAC, "ip": "10.0.0.1"})
+    assert b is not None
     assert (b["sector"], b["type"]) == ("datacenter", "plc"), b
     # an update that supplies them changes them
     c = s.upsert({"mac": MAC, "sector": "bank", "type": "switch"})
+    assert c is not None
     assert (c["sector"], c["type"]) == ("bank", "switch"), c
     # invalid values never reject the observation and never overwrite good data
     d = s.upsert({"mac": MAC, "sector": "not-a-sector", "type": "x" * 200})
+    assert d is not None
     assert (d["sector"], d["type"]) == ("bank", "switch"), d
     e = s.upsert({"mac": "AA:BB:CC:00:00:02", "sector": 7, "type": ["list"]})
     assert e is not None and e["sector"] is None and e["type"] is None, e
