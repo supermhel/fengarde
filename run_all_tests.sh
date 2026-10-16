@@ -72,6 +72,9 @@ echo
 echo "== ws8 timeline (owner decision WS-8 B, 2026-10-14): read-side time order of an incident's member alerts =="; LAST_HEADER="== ws8 timeline (owner decision WS-8 B, 2026-10-14): read-side time order of an incident's member alerts =="
 $PY services/ws8-correlation/test_timeline.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
+echo "== ws8 IT->OT chain: SSH brute force + Modbus write from one IP is one incident (real parsers, rules, correlator); a different writer is not linked =="; LAST_HEADER="== ws8 IT->OT chain =="
+$PY services/ws8-correlation/test_it_ot_chain.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
 echo "== ws3 WS-8 wiring: incident routing (day-stable across growth), storage list_incidents, OpenSearch wire format =="; LAST_HEADER="== ws3 WS-8 wiring: incident routing (day-stable across growth), storage list_incidents, OpenSearch wire format =="
 $PY services/ws3-indexer/test_ws8_incidents_routing.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 
@@ -493,7 +496,6 @@ echo "== Phase 5 item 6 (2026-09-04): eval/trend.jsonl viewer generator =="; LAS
 $PY tools/test_generate_trend_viewer.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 
 echo
-<<<<<<< HEAD
 echo "== Phase 5 item 8 (2026-10-14): public benchmark generator (latest-row selection + schema) =="; LAST_HEADER="== Phase 5 item 8 (2026-10-14): public benchmark generator (latest-row selection + schema) =="
 $PY tools/test_generate_benchmark.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 $PY tools/test_append_trend_row.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
@@ -504,10 +506,7 @@ echo "== Phase 5 item 10 (2026-10-14): DCO check (per-commit, author-matched, fa
 $PY tools/test_check_dco.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 
 echo
-echo "== Leitwarte console (2026-10-14): typecheck + unit tests (services/ws7-dashboard/app) =="; LAST_HEADER="== Leitwarte console (2026-10-14): typecheck + unit tests (services/ws7-dashboard/app) =="
-=======
 echo "== React console: typecheck + unit tests (services/ws7-dashboard/app) =="; LAST_HEADER="== React console: typecheck + unit tests (services/ws7-dashboard/app) =="
->>>>>>> 4654fc0 (feat(console): static demo build, departure-board project page, rebuilt README, e2e tooling)
 # node is required: a console that cannot be typechecked must not pass the gate silently (R4-#69 stance).
 if command -v npm >/dev/null 2>&1; then
   ( cd services/ws7-dashboard/app && { [ -d node_modules ] || npm ci --no-audit --no-fund >/dev/null; } && npx tsc --noEmit && npx vitest run ) || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
