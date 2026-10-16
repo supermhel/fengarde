@@ -216,6 +216,37 @@ def test_hand_edit_and_crlf() -> None:
 # ==========================================================================
 # 5. NEGATIVE: provenance + freshness
 # ==========================================================================
+def test_node_modules_cache_is_not_a_freshness_input() -> None:
+    """2026-10-16: a vendored dependency/build cache under services/ (the
+    React console's node_modules/.vite/vitest/results.json) must not mark
+    every artifact STALE. npm ci + vitest run writes those files AFTER an
+    instrument produced its artifact, so if the freshness scan counted them,
+    a healthy tree would always look stale."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        root = Path(d)
+        # an artifact and a *freshly written* node_modules cache under services/
+        art = root / "eval" / "attack" / "out" / "fire_check.json"
+        art.parent.mkdir(parents=True, exist_ok=True)
+        art.write_text("{}", encoding="utf-8")
+        t_art = art.stat().st_mtime
+        # wait a hair so the cache is strictly newer than the artifact
+        import time as _t
+        _t.sleep(0.01)
+        cache = root / "services" / "ws7-dashboard" / "app" / "node_modules" / ".vite" / "vitest" / "results.json"
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        cache.write_text("{}", encoding="utf-8")
+        check(cache.stat().st_mtime > t_art,
+              "test setup: cache mtime must exceed the artifact mtime")
+        mtime, name = gs._newest_input_mtime(root)
+        # the cache is the ONLY file matching the globs; without the
+        # node_modules exclusion it would be returned. With it, inputs_mtime
+        # falls back to 0.0 (vacuous) -- which is correct for an isolated
+        # tmp tree, and it must be the cache's own mtime only if excluded.
+        check(name != "services/ws7-dashboard/app/node_modules/.vite/vitest/results.json",
+              "node_modules cache counted as a freshness input")
+
+
 def test_provenance_and_freshness() -> None:
     arts = real_arts()
     check(not gs.validate_provenance(arts, mtimes={k: 9e9 for k in reg.ARTIFACTS_BY_KEY}),
@@ -928,6 +959,7 @@ def main() -> int:
         test_check_detects_a_changed_artifact,
         test_hand_edit_and_crlf,
         test_provenance_and_freshness,
+        test_node_modules_cache_is_not_a_freshness_input,
         test_control_verification_and_none_register,
         test_limits_expire,
         test_per_technique_math,
