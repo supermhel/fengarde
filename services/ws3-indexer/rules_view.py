@@ -153,7 +153,15 @@ def set_rule_enabled(tenant_id: str, rule_id: str, enabled: bool) -> None:
     with _WRITE_LOCK:
         TENANTS_DIR.mkdir(parents=True, exist_ok=True)
         path = next((p for p in TENANTS_DIR.glob("*.yml") if p.stem == tenant_id),
-                    TENANTS_DIR / f"{tenant_id}.yml")
+                    None)
+        if path is None:
+            # Fallback only when no matching file exists yet. The filename is
+            # rebuilt from a characters-only allowlist so no request-controlled
+            # value ever becomes a path expression (CodeQL py/path-injection;
+            # valid_tenant_id already guarantees the same charset -- this makes
+            # the taint structurally impossible rather than merely checked).
+            path = TENANTS_DIR / ("".join(c for c in tenant_id
+                                          if c.isalnum() or c == "-") + ".yml")
         raw = {}
         if path.exists():
             loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
