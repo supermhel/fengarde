@@ -46,6 +46,7 @@ for i in range(4):
     send(f"<164>{stamp()} fw-01 : %ASA-4-106023: Deny tcp src outside:198.51.100.{20 + i}/5{i}000 "
          f"dst inside:10.0.0.{10 + i}/22 by access-group acl_out")
 for i in range(2):
-    send(f"<134>{stamp()} relay-01 CEF:0|Acme|Firewall|1.0|100|Failed login|7|src=198.51.100.{60 + i} suser=svc-backup outcome=failure")
+    send(f"<134>{stamp()} relay-01 CEF:0|Acme|Firewall|1.0|100|Failed login|7|"
+         f"src=198.51.100.{60 + i} suser=svc-backup outcome=failure")
 
 print(f"sent: 12 sshd + 48 DNS from {attacker}, 4 ASA, 2 CEF -> {host}:{port}")
