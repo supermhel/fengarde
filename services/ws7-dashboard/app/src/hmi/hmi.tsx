@@ -151,7 +151,7 @@ export function Bars({ rows }: { rows: [string, number][] }) {
 
 /* Causal graph: entities top-down in first-seen order, edges labelled by kind. */
 export function Graph({ nodes, edges, onPick }: { nodes: GraphNode[]; edges: GraphEdge[]; onPick?: (entityId: string) => void }) {
-  const W = 420, rowH = 58, bw = 170, bh = 38;
+  const W = 420, rowH = 78, bw = 170, bh = 38;
   const order = nodes.map((n) => n.entity_id);
   const pos = (id: string) => {
     const i = Math.max(0, order.indexOf(id));
@@ -168,10 +168,12 @@ export function Graph({ nodes, edges, onPick }: { nodes: GraphNode[]; edges: Gra
         </defs>
         {edges.map((e, i) => {
           const a = pos(e.from), b = pos(e.to);
-          const x1 = a.x + bw / 2, y1 = a.y + bh, x2 = b.x + bw / 2, y2 = b.y;
+          // leave from the side of `from` that faces `to`: an upward edge used to loop outside both boxes
+          const down = b.y >= a.y, k = down ? 1 : -1;
+          const x1 = a.x + bw / 2, y1 = down ? a.y + bh : a.y, x2 = b.x + bw / 2, y2 = down ? b.y : b.y + bh;
           return (
             <g key={i}>
-              <path className="gedge" d={`M${x1} ${y1} C${x1} ${y1 + 16} ${x2} ${y2 - 16} ${x2} ${y2 - 2}`} />
+              <path className="gedge" d={`M${x1} ${y1} C${x1} ${y1 + 16 * k} ${x2} ${y2 - 16 * k} ${x2} ${y2 - 2 * k}`} />
               <text className="gsub" x={(x1 + x2) / 2 + 6} y={(y1 + y2) / 2 + 3}>{e.kind}</text>
             </g>
           );

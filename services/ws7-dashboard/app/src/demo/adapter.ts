@@ -1,0 +1,231 @@
+// Demo adapter: answers the console's /api/* calls from a RECORDING of a lab run (fixtures.json,
+// written by tools/console_e2e/record_fixtures.mjs), so the real console runs on static hosting.
+//
+// Honest by construction:
+//  - the data is a recording of lab traffic, never live, and the console says so (DemoBar);
+//  - timestamps are shifted so the recording reads as "just now" (the only edit made to the data);
+//  - writes (triage, add device, users, rule switch) change in-memory state only and are lost on reload;
+//  - the attack is HIDDEN until "Replay the attack": its events appear at their recorded offsets, its alarms
+//    and incident after an approximate processing delay (the real stage latency was not recorded).
+import fixtures from "./fixtures.json";
+
+/* eslint-disable @typescript-eslint/no-explicit-any */
+type R = { ok: true; data: any } | { ok: false; status: number; reason: string };
+const FX: any = fixtures;
+const META = FX.meta as { t0: number; attacker: string; recordedAt: number; attackAlerts: number; attackEvents: number };
+const T0 = META.t0;
+const LOAD = Date.now();
+const BG_SHIFT = LOAD - T0 - 90_000; // background history: the run's first event sits 90 s before page load
+const DELAY = { event: 0, alert: 2500, incident: 5000 };
+
+let replayStart: number | null = null;
+const triageMem = new Map<string, { status: string; note: string; updated_by: string; updated_at: number }>();
+const ruleOff = new Set<string>(); // ids switched off this session (default from the recording otherwise)
+const ruleOn = new Set<string>();
+const extraAssets: any[] = [];
+const extraUsers: any[] = [];
+const userPatch = new Map<string, any>();
+let timers: number[] = [];
+
+const ok = (data: any): R => ({ ok: true, data });
+const fail = (status: number, reason: string): R => ({ ok: false, status, reason });
+const elapsed = () => (replayStart === null ? -1 : Date.now() - replayStart);
+const shift = (t: number) => (replayStart !== null && t >= T0 ? replayStart + (t - T0) : t + BG_SHIFT);
+const visible = (t: number, kind: keyof typeof DELAY) => t < T0 || (replayStart !== null && elapsed() >= t - T0 + DELAY[kind]);
+
+function emit(msg: Record<string, unknown>) {
+  try { if (window.parent !== window) window.parent.postMessage({ source: "fengarde-demo", ...msg }, location.origin); } catch { /* cross-origin parent */ }
+  window.dispatchEvent(new CustomEvent("fengarde-demo-tick"));
+}
+
+const hits = (raw: any) => (raw?.hits?.hits || []) as { _source: any }[];
+const wrap = (raw: any, rows: any[]) => ({ ...raw, hits: { ...(raw?.hits || {}), hits: rows.map((_source) => ({ _source })) } });
+
+function alerts(gte: number) {
+  const rows = hits(FX.alerts)
+    .map((h) => h._source)
+    .filter((a) => visible(a.time, "alert"))
+    .map((a) => {
+      const tr = triageMem.get(a.alert_id);
+      return { ...a, time: shift(a.time), triage: tr ? { ...(a.triage || {}), ...tr } : a.triage };
+    })
+    .filter((a) => a.time >= gte);
+  return wrap(FX.alerts, rows);
+}
+function events(gte: number) {
+  const rows = hits(FX.events).map((h) => h._source).filter((e) => visible(e.time, "event")).map((e) => ({ ...e, time: shift(e.time) })).filter((e) => e.time >= gte);
+  return wrap(FX.events, rows);
+}
+function aiTriage() {
+  const rows = hits(FX.ai).map((h) => h._source).filter((a) => visible(a.time ?? T0 - 1, "alert")).map((a) => ({ ...a, time: shift(a.time ?? T0 - 1) }));
+  return wrap(FX.ai, rows);
+}
+function incidents() {
+  const list = (FX.incidents.incidents as any[])
+    .filter((i) => visible(i.last_seen, "incident"))
+    .map((i) => ({ ...i, first_seen: shift(i.first_seen), last_seen: shift(i.last_seen) }));
+  return { ...FX.incidents, incidents: list, count: list.length };
+}
+const incVisible = (id: string) => (FX.incidents.incidents as any[]).some((i) => i.incident_id === id && visible(i.last_seen, "incident"));
+
+function rules() {
+  const list = (FX.rules.rules as any[]).map((r) => ({ ...r, enabled: ruleOff.has(r.id) ? false : ruleOn.has(r.id) ? true : r.enabled }));
+  return { ...FX.rules, rules: list };
+}
+const assetList = () => [...(FX.assets as any[]), ...extraAssets];
+const isoShift = (s: string) => new Date(Date.parse(s) + BG_SHIFT).toISOString();
+const shiftAsset = (x: any) => (x.__demo ? x : {
+  ...x,
+  first_seen: x.first_seen && isoShift(x.first_seen),
+  last_seen: x.last_seen && isoShift(x.last_seen),
+  ip_history: (x.ip_history || []).map((h: any) => ({ ...h, from: h.from && isoShift(h.from), to: h.to && isoShift(h.to) })),
+});
+
+function users() {
+  const base = (FX.users.users as any[]).map((u) => ({ ...u, ...(userPatch.get(u.username) || {}), last_login_at: u.last_login_at ? Math.round((Number(u.last_login_at) * 1000 + BG_SHIFT) / 1000) : u.last_login_at }));
+  const list = [...base, ...extraUsers.map((u) => ({ ...u, ...(userPatch.get(u.username) || {}) }))];
+  return { users: list, count: list.length };
+}
+
+export const demoSession = { username: "ui-admin", role: "admin", tenant_id: "default", csrf_token: "demo" };
+
+export async function demoCall(path: string, init: RequestInit = {}): Promise<R> {
+  const u = new URL(path, "http://demo.local");
+  const p = u.pathname;
+  const q = u.searchParams;
+  const method = (init.method || "GET").toUpperCase();
+  let body: any = {};
+  try { body = init.body ? JSON.parse(String(init.body)) : {}; } catch { /* not JSON */ }
+  await new Promise((r) => setTimeout(r, 30)); // a real round trip is never zero
+
+  if (p === "/api/auth/me") return ok(demoSession);
+  if (p === "/api/auth/logout") return ok({});
+  if (p === "/api/auth/mfa/enable" || p === "/api/auth/mfa/verify") return fail(403, "MFA enrolment is switched off in the demo");
+
+  if (p === "/api/alerts") return ok(alerts(Number(q.get("gte") || 0)));
+  if (p === "/api/events") return ok(events(Number(q.get("gte") || 0)));
+  if (p === "/api/ai-triage") return ok(aiTriage());
+  if (p === "/api/incidents") return ok(incidents());
+  if (p === "/api/rules") return ok(rules());
+  if (p === "/api/audit") return ok({ ...FX.audit, entries: (FX.audit.entries as any[]).map((e) => ({ ...e, ts: isoShift(e.ts) })) });
+
+  if (p === "/api/inventory/assets") return ok(assetList().map(shiftAsset));
+  let m = p.match(/^\/api\/inventory\/assets\/(.+)$/);
+  if (m) { const mac = decodeURIComponent(m[1]); const a = FX.asset[mac] || extraAssets.find((x) => x.mac === mac); return a ? ok(shiftAsset(a)) : fail(404, "no such asset"); }
+  if (p === "/api/inventory/keys") return ok(FX.keys);
+
+  m = p.match(/^\/api\/ops\/(ws\d)$/);
+  if (m) return FX.ops[m[1]] ? ok(FX.ops[m[1]]) : fail(404, "no such service");
+  if (p.startsWith("/api/prom/")) return fail(503, "Prometheus is not part of the demo");
+
+  m = p.match(/^\/api\/incidents\/(.+)\/(graph|evidence|report)$/);
+  if (m) {
+    const id = decodeURIComponent(m[1]);
+    if (!incVisible(id)) return fail(404, "no such incident");
+    if (m[2] === "graph") return FX.graph[id] ? ok(FX.graph[id]) : fail(404, "no graph");
+    if (m[2] === "evidence") {
+      const ev = FX.evidence[id];
+      if (!ev) return fail(404, "no evidence");
+      window.setTimeout(() => emit({ type: "verified", incident: id, blocks: (ev.blocks || []).length }), 400);
+      return ok({ ...ev, built_at_ms: Date.now() });
+    }
+    const rep = FX.incidentReport[`${id}|${q.get("lang") || "en"}`];
+    return rep ? ok(rep) : fail(404, "no report");
+  }
+  m = p.match(/^\/api\/entities\/(.+)$/);
+  if (m) { const e = FX.entity[decodeURIComponent(m[1])]; return e ? ok(e) : fail(404, "no such entity"); }
+
+  if (p === "/api/triage/users") {
+    if (method === "POST") {
+      const row = { username: body.username, role: body.role, tenant_id: body.tenant_id || "default", created_at: Math.round(Date.now() / 1000), last_login_at: null, mfa_active: false, disabled: false };
+      extraUsers.push(row);
+      return ok(row);
+    }
+    return ok(users());
+  }
+  m = p.match(/^\/api\/triage\/users\/(.+)$/);
+  if (m && method === "PATCH") {
+    const name = decodeURIComponent(m[1]);
+    const cur = users().users.find((x: any) => x.username === name);
+    if (!cur) return fail(404, "no such user");
+    if ((body.disabled === true || (body.role && body.role !== "admin")) && cur.role === "admin" && users().users.filter((x: any) => x.role === "admin" && !x.disabled).length <= 1) {
+      return fail(409, "the last active admin cannot be demoted or disabled");
+    }
+    userPatch.set(name, { ...(userPatch.get(name) || {}), ...(body.role ? { role: body.role } : {}), ...(typeof body.disabled === "boolean" ? { disabled: body.disabled } : {}) });
+    return ok({ ...cur, ...userPatch.get(name) });
+  }
+  if (p === "/api/triage/webhooks") return ok(FX.webhooks);
+  m = p.match(/^\/api\/triage\/rules\/(.+)\/enabled$/);
+  if (m && method === "PUT") {
+    const id = decodeURIComponent(m[1]);
+    if (body.enabled === false) { ruleOff.add(id); ruleOn.delete(id); } else { ruleOn.add(id); ruleOff.delete(id); }
+    return ok({ id, enabled: body.enabled });
+  }
+  if (p === "/api/triage/inventory/assets" && method === "POST") {
+    const mac = String(body.mac || "").toUpperCase().replace(/-/g, ":");
+    if (!/^([0-9A-F]{2}:){5}[0-9A-F]{2}$/.test(mac)) return fail(400, "mac is required, e.g. AA:BB:CC:DD:EE:FF");
+    const prev = assetList().find((a) => a.mac === mac);
+    const row = { ...(prev || { first_seen: new Date().toISOString(), ip_history: [], protocols_seen: [], status: "active", tenant_id: "default" }), __demo: true, mac, hostname: body.hostname || prev?.hostname, ip_current: body.ip || prev?.ip_current, sector: body.sector || prev?.sector, type: body.type || prev?.type, last_seen: new Date().toISOString() };
+    if (!prev) extraAssets.push(row);
+    else Object.assign(prev, row);
+    return ok({ ...row, new_device: !prev });
+  }
+  m = p.match(/^\/api\/triage\/alerts\/(.+)\/triage$/);
+  if (m && method === "POST") {
+    const id = decodeURIComponent(m[1]);
+    const rec = { status: body.status, note: body.note || "", updated_by: demoSession.username, updated_at: Date.now() };
+    triageMem.set(id, rec);
+    return ok({ status: rec.status, note: rec.note });
+  }
+  m = p.match(/^\/api\/triage\/alerts\/(.+)\/report$/);
+  if (m && method === "POST") {
+    const id = decodeURIComponent(m[1]);
+    const q2 = u.search || "";
+    const rep = FX.reports[`${id}|${q2}`];
+    return ok(rep || { body: "(Demo) Reports are generated by the live backend. This demo only carries recordings for the replayed attack's own alarms." });
+  }
+  return fail(404, `not available in the demo: ${method} ${p}`);
+}
+
+// ---- replay -------------------------------------------------------------------------------------
+export type ReplayState = { phase: "idle" | "replaying" | "done"; elapsedMs: number; totalMs: number };
+const totalMs = () => {
+  const times = [...hits(FX.alerts).map((h) => h._source.time + 0), ...(FX.incidents.incidents as any[]).map((i) => i.last_seen)].filter((t: number) => t >= T0);
+  return (times.length ? Math.max(...times) - T0 : 0) + DELAY.incident;
+};
+export function replayState(): ReplayState {
+  if (replayStart === null) return { phase: "idle", elapsedMs: 0, totalMs: totalMs() };
+  const e = elapsed();
+  return { phase: e >= totalMs() ? "done" : "replaying", elapsedMs: Math.min(e, totalMs()), totalMs: totalMs() };
+}
+export function startReplay() {
+  resetReplay(false);
+  replayStart = Date.now();
+  emit({ type: "replay-start" });
+  const at = (ms: number, fn: () => void) => timers.push(window.setTimeout(fn, Math.max(0, ms)));
+  for (const a of hits(FX.alerts).map((h) => h._source).filter((x) => x.time >= T0)) {
+    at(a.time - T0 + DELAY.alert, () => {
+      const tags = a.mitre?.tactics?.[0] || a.mitre?.tactic || "";
+      emit({ type: "alarm", at: shift(a.time), rule: a.rule_title, ip: a.src_endpoint?.ip || "", level: a.level, tactic: tags, technique: a.mitre?.technique || a.mitre?.techniques?.[0] || "" });
+    });
+  }
+  for (const i of (FX.incidents.incidents as any[]).filter((x) => x.last_seen >= T0)) {
+    at(i.last_seen - T0 + DELAY.incident, () => emit({ type: "incident", at: shift(i.last_seen), entity: i.entity_value, tactics: i.tactics, alerts: i.member_count, id: i.incident_id }));
+  }
+  at(totalMs(), () => emit({ type: "replay-done" }));
+  // keep the console fresh while the replay runs (its own poll is slower)
+  for (let t = 400; t < totalMs() + 1500; t += 800) at(t, () => window.dispatchEvent(new CustomEvent("fengarde-demo-tick")));
+}
+export function resetReplay(announce = true) {
+  timers.forEach((t) => window.clearTimeout(t));
+  timers = [];
+  replayStart = null;
+  triageMem.clear();
+  if (announce) emit({ type: "reset" });
+}
+window.addEventListener("message", (ev) => {
+  if (ev.origin !== location.origin || ev.data?.source !== "fengarde-page") return;
+  if (ev.data.type === "replay") startReplay();
+  if (ev.data.type === "reset") resetReplay();
+});
+export const demoMeta = META;

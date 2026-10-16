@@ -59,6 +59,8 @@
   `/index.html` is `no-cache`, `/assets/*` immutable (hashed). `/api/prom/` is a
   read-only window onto Prometheus (`targets`, `query` only). The feature-by-
   feature status is `docs/console-feature-matrix.md`.
+- **Demo build** (`npm run build:demo`, output `docs/demo/`): the same console with every `/api/*` call answered in the browser by `src/demo/adapter.ts` from `src/demo/fixtures.json`, a recording of a lab run made by `tools/console_e2e/record_fixtures.mjs`. Timestamps are shifted to now, writes are in-memory only, the attack is hidden until "Replay the attack", and the page that embeds it can start the replay and hears about alarms through `postMessage` (same origin). The normal build contains none of it (`import.meta.env.VITE_DEMO`). Details: `docs/console-demo.md`.
+- Sign-in: username, password and an optional MFA code (the backend answers a missing or wrong code with the same 401 as a wrong password). The page shows the host, whether WS-3 answers, and a warning on plain HTTP away from localhost.
 - Static single-file UI (`index.html`) served by nginx. No backend of its own.
 - **Deep-linkable nav** (2026-08-20): the URL hash (`#ops`, `#audit`, `#incidents`, ...)
   selects the active view on load and via `hashchange` — bookmarkable/shareable

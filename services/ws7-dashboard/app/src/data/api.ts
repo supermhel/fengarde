@@ -2,6 +2,8 @@
 // console (services/ws7-dashboard/templates/default.conf.template). No mocks:
 // an unreachable backend yields `ok:false` and the views say so.
 
+import { DEMO } from "../demo/flag";
+
 export type Level = "critical" | "high" | "medium" | "low" | "info" | string;
 
 export interface Mitre { tactic?: string; technique?: string; tactics?: string[]; techniques?: string[] }
@@ -86,7 +88,7 @@ export interface Asset {
 }
 export interface ApiKeyMeta { key_id: string; tenant_id: string; scope?: string; source?: string; created_at?: string; last_used_at?: string | null }
 export interface AuditEntry { ts: string; event: string; actor: string; tenant_id?: string | null; detail?: Record<string, unknown> }
-export interface UserRow { username: string; role: string; tenant_id: string; created_at?: string; last_login_at?: string | null; mfa_active: boolean; disabled: boolean }
+export interface UserRow { username: string; role: string; tenant_id: string; created_at?: string; last_login_at?: number | null; /* epoch seconds */ mfa_active: boolean; disabled: boolean }
 export interface WebhookRow { id: string; scheme: string; host: string; tenant_id?: string; min_score?: number; secret_env: string; enabled: boolean }
 export interface Session { username: string; role: string; tenant_id: string; csrf_token?: string }
 
@@ -109,6 +111,7 @@ function headers(extra: Record<string, string> = {}): Record<string, string> {
 }
 
 async function call<T>(path: string, init: RequestInit = {}): Promise<Result<T>> {
+  if (DEMO) return (await import("../demo/adapter")).demoCall(path, init) as Promise<Result<T>>;
   try {
     const r = await fetch(path, {
       credentials: "same-origin", ...init,

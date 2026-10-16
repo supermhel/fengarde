@@ -7,21 +7,24 @@ import { S } from "./sources.i18n";
 
 /* Data sources & onboarding. Only mechanisms that exist in the repo:
    - WS-1 UDP syslog listener, default 0.0.0.0:5514 (ws1-collectors/main.py, syslog_udp_server.py);
-     every datagram is stamped source_type=generic_syslog, which WS-2 treats as authoritative
-     (ws2-normalization/parsers/__init__.py resolve()), so UDP senders arrive as generic_syslog.
+     every datagram is stamped source_type=generic_syslog, which WS-2 treats as "unidentified"
+     (ws2-normalization/parsers/__init__.py resolve()): a line that looks like sshd, Cisco ASA, CEF or a DNS
+     query is routed to that parser, anything else stays generic_syslog. So a syslog sender arrives as one of those.
    - tools/agent_log_shipper.py: JSONL -> raw.events with any --source-type (structured parsers).
    - WS-6 inventory is MAC-keyed and fed only by assets.updates, so these sources never add devices. */
 
 type DevId = "rsyslog" | "syslogng" | "k8s" | "cloudtrail" | "windows" | "mcp";
-interface Device { id: DevId; st: string; usesHost: boolean; snippet: (host: string) => string }
+interface Device { id: DevId; st: string; /** other types a line from this device can be routed to */ alt?: string[]; usesHost: boolean; snippet: (host: string) => string }
+
+const SYSLOG_ROUTED = ["linux_ssh", "cisco_asa", "cef", "dns_query"];
 
 const SHIP_ENV = "export BUS_BACKEND=redis REDIS_URL=redis://127.0.0.1:6379/0\n";
 const LOGGER_TEST = 'logger -t fengarde-test "first event from $(hostname)"';
 
 const DEVICES: Device[] = [
-  { id: "rsyslog", st: "generic_syslog", usesHost: true, snippet: (h) =>
+  { id: "rsyslog", st: "generic_syslog", alt: SYSLOG_ROUTED, usesHost: true, snippet: (h) =>
     `# /etc/rsyslog.d/90-fengarde.conf\n*.* @${h}:5514\n\nsudo systemctl restart rsyslog\n${LOGGER_TEST}` },
-  { id: "syslogng", st: "generic_syslog", usesHost: true, snippet: (h) =>
+  { id: "syslogng", st: "generic_syslog", alt: SYSLOG_ROUTED, usesHost: true, snippet: (h) =>
     `# /etc/syslog-ng/conf.d/fengarde.conf\ndestination d_fengarde { network("${h}" port(5514) transport("udp")); };\nlog { source(s_src); destination(d_fengarde); };\n\nsudo systemctl restart syslog-ng\n${LOGGER_TEST}` },
   { id: "k8s", st: "k8s_audit", usesHost: false, snippet: () =>
     `${SHIP_ENV}ssh CONTROL_PLANE 'sudo tail -F /var/log/kubernetes/audit.log' \\\n  | python tools/agent_log_shipper.py --stdin --source-type k8s_audit` },
@@ -151,7 +154,7 @@ function Connect({ events }: { events: OcsfEvent[] }) {
 
   const needle = want.trim().toLowerCase();
   const matching = useMemo(() => (dev
-    ? events.filter((e) => e.siem?.source_type === dev.st
+    ? events.filter((e) => (e.siem?.source_type === dev.st || (dev.alt || []).includes(e.siem?.source_type || ""))
         && (!needle || [e.src_endpoint?.hostname, e.src_endpoint?.ip].some((v) => v?.toLowerCase() === needle)))
     : []), [dev, events, needle]);
 
@@ -208,7 +211,7 @@ function Connect({ events }: { events: OcsfEvent[] }) {
                 <span className="note" style={{ margin: 0 }} aria-live="polite">{copied === "ok" ? s.copied : copied === "manual" ? s.copyManual : ""}</span>
               </div>
               <p className="note">{s.devices[dev.id].note}{!dev.usesHost && <> {s.shipperNote}</>}</p>
-              <p className="note">{s.arrivesAs} <span className="tag">{dev.st}</span></p>
+              <p className="note">{s.arrivesAs} <span className="tag">{dev.st}</span>{dev.alt && <> {s.orRouted} {dev.alt.map((x) => <span key={x} className="tag">{x}</span>)}</>}</p>
             </div>
           )}
         </li>
@@ -227,13 +230,13 @@ function Connect({ events }: { events: OcsfEvent[] }) {
                   : fresh ? (
                     <p style={{ margin: 0 }}>
                       <span className="pill ok">{s.received}</span>{" "}
-                      <span className="mono">{dev.st}</span>
+                      <span className="mono">{fresh.siem?.source_type || dev.st}</span>
                       {sender(fresh) && <> {s.from} <span className="mono">{sender(fresh)}</span></>}
                       {" · "}<span className="muted">{fmtTime(fresh.time, lang)}</span>
                     </p>
                   ) : (
                     <>
-                      <p style={{ margin: 0 }}><span className="pill off">{s.waiting(dev.st)}</span></p>
+                      <p style={{ margin: 0 }}><span className="pill off">{s.waiting([dev.st, ...(dev.alt || [])].join(" / "))}</span></p>
                       <p className="note">{s.lastCheck}: {data.fetchedAt ? ago(data.fetchedAt, lang) : "—"}{baseline.ids.size > 0 && <> · {s.already(baseline.ids.size)}</>}</p>
                     </>
                   )}

@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 import { api, setCsrf, type Session } from "./data/api";
+import { DEMO } from "./demo/flag";
 import { AlarmShape, Icon, Shield } from "./hmi/hmi";
 import { isAbnormal, rank } from "./lib/severity";
 import { unit } from "./lib/i18n";
@@ -17,6 +18,8 @@ import { Operations } from "./views/Operations";
 import { Overview } from "./views/Overview";
 import { Settings } from "./views/Settings";
 import { Sources } from "./views/Sources";
+
+const DemoBar = DEMO ? lazy(() => import("./demo/DemoBar")) : null;
 
 type Auth = { state: "checking" } | { state: "login"; error?: string; down?: boolean } | { state: "in"; session: Session | null; rbac: boolean };
 
@@ -89,6 +92,7 @@ function Shell() {
       <span className="brand"><Shield /> FENGARDE</span>
       <header className="top">
         <span className={`chip ${data.alerts === null ? "" : live ? "ok" : "down"}`}><span className="dot" />{data.alerts === null ? "…" : live ? `${t.live} · ${ago(data.fetchedAt, lang)}` : t.unavailable}</span>
+        {DemoBar && <Suspense fallback={null}><DemoBar /></Suspense>}
         <span className="spacer" />
         {isAdmin && tenants.length > 1 && (
           <select className="ctl" aria-label={t.tenant} value={tenant} onChange={(e) => setTenantScope(e.target.value)}>
@@ -107,7 +111,7 @@ function Shell() {
         {rbac && session && (
           <>
             <a className="chip user" href="#/account"><span className="av">{session.username.slice(0, 2)}</span>{session.username} · {session.role}</a>
-            <button className="ctl" onClick={async () => { await api.logout(); setSession(null); }}>{t.signOut}</button>
+            {!DEMO && <button className="ctl" onClick={async () => { await api.logout(); setSession(null); }}>{t.signOut}</button>}
           </>
         )}
       </header>
@@ -137,7 +141,7 @@ function Shell() {
             ))}
           </div>
         ))}
-        <a className="classic" href="legacy/"><Icon name="classic" size={16} />{t.classic}</a>
+        {!DEMO && <a className="classic" href="legacy/"><Icon name="classic" size={16} />{t.classic}</a>}
       </nav>
 
       <main>
