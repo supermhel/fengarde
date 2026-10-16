@@ -47,7 +47,7 @@ def _int_env(name: str, default: int, log, *, crash_on_bad: bool = False) -> int
         return default
 
 # Free-text fields any parser may populate from raw, attacker-controlled log
-# content -- sanitized uniformly here (one choke point for all 17 parsers)
+# content -- sanitized uniformly here (one choke point for all 19 parsers)
 # rather than in each parser individually. (path, is_list) where is_list means
 # "a list of dicts with this key", used for actor.user/process which some
 # parsers may extend; today none do, so this stays a flat dotted-path walk.

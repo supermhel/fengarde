@@ -1,50 +1,79 @@
-# FENGARDE
+<p align="center"><img src="docs/img/logo.svg" alt="FENGARDE" width="84"></p>
 
-[![CI](https://github.com/supermhel/fengarde/actions/workflows/ci.yml/badge.svg)](https://github.com/supermhel/fengarde/actions/workflows/ci.yml)
-[![CodeQL](https://github.com/supermhel/fengarde/actions/workflows/codeql.yml/badge.svg)](https://github.com/supermhel/fengarde/actions/workflows/codeql.yml)
-[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/supermhel/fengarde/badge)](https://securityscorecards.dev/viewer/?uri=github.com/supermhel/fengarde)
+<h1 align="center">FENGARDE</h1>
+
+<p align="center"><b>Logs in. Evidence out.</b><br>
+Open-source security pipeline for IT, AI and OT: raw logs to a verified incident and a draft NIS2 notification.</p>
+
+<p align="center">
+<a href="https://supermhel.github.io/fengarde/"><b>Project page and live demo</b></a> ·
+<a href="#quickstart">Quickstart</a> ·
+<a href="#the-console">Console</a> ·
+<a href="#architecture">Architecture</a> ·
+<a href="SSOT.md">Status (SSOT)</a>
+</p>
+
+<p align="center">
+<a href="https://github.com/supermhel/fengarde/actions/workflows/ci.yml"><img src="https://github.com/supermhel/fengarde/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+<a href="https://github.com/supermhel/fengarde/actions/workflows/codeql.yml"><img src="https://github.com/supermhel/fengarde/actions/workflows/codeql.yml/badge.svg" alt="CodeQL"></a>
+<a href="https://securityscorecards.dev/viewer/?uri=github.com/supermhel/fengarde"><img src="https://api.securityscorecards.dev/projects/github.com/supermhel/fengarde/badge" alt="OpenSSF Scorecard"></a>
+<img src="https://img.shields.io/badge/license-Apache--2.0-blue" alt="Apache-2.0">
+</p>
+
+<p align="center"><a href="https://supermhel.github.io/fengarde/"><img src="docs/img/console-overview.png" alt="The FENGARDE console, Overview" width="860"></a></p>
 
 > Badges reflect the latest real run on `main`, not a promise. Scorecard's
-> remaining findings are accepted, documented trade-offs, not gaps — see
+> remaining findings are accepted, documented trade-offs, not gaps; see
 > [SSOT.md](SSOT.md) §1.
 
 **FENGARDE connects security telemetry across IT, AI and OT to show what
 happened, who or what acted, what was affected, how the events relate, and
 what evidence supports the conclusion.**
 
-Built for the European industrial Mittelstand — open-source, self-hosted,
+Built for the European industrial Mittelstand: open source, self-hosted,
 Apache-2.0, with a draft NIS2 incident-notification path, a deterministic
 German/English report generator, opt-in RBAC/MFA/audit-log/multi-tenancy for
 MSP-style deployments, an opt-in HA profile (live-kill-tested, not just
 wired), and AI triage that never leaves your network.
 
-FENGARDE ingests logs from multiple sources, normalizes them to a single schema
-([OCSF](https://schema.ocsf.io/)), runs correlation rules over a sliding window,
-and surfaces alerts in a dashboard. Storage is OpenSearch. Every service is
-independent and talks to the rest of the system only through a message bus, so
-you can scale or replace any piece without rewriting the others.
+Logs are collected, normalized to one schema ([OCSF](https://schema.ocsf.io/)),
+run through correlation rules over a sliding window, grouped into incidents with
+a causal graph and a hash-chained evidence package, and indexed in OpenSearch.
+Every service is independent and talks to the rest only through a message bus,
+so any piece can be scaled or replaced without rewriting the others.
 
-Three things make it different from a generic self-hosted SIEM:
+## Why FENGARDE
 
 - **OCSF-native, not retrofitted.** Every source normalizes to the same open
-  schema from day one, so one rule covers every source that emits the event —
-  an SSH login, a Windows login and an Active Directory login are one
-  brute-force detection, not three. Instrument once, stay portable, no vendor
-  log-format lock-in.
+  schema from day one, so one rule covers every source that emits the event: an
+  SSH login, a Windows login and an Active Directory login are one brute-force
+  detection, not three. No vendor log-format lock-in.
 - **OT and IT in one pipeline.** OPC UA and Modbus/TCP normalize into the same
-  OCSF schema as Active Directory, Windows and your firewall, so the plant floor
-  runs through the same detection engine, dashboard and report path as the
-  office network — not a second toolchain.
+  schema as Active Directory, Windows and your firewall, so the plant floor runs
+  through the same detection engine, console and report path as the office
+  network, not a second toolchain.
 - **AI triage that never leaves your network.** Local Ollama by default, with a
-  documented stub fallback — your alert data is never piped through a
-  third-party LLM API.
+  documented stub fallback. Alert data is never piped through a third-party LLM
+  API, and the console names which engine actually ran.
+- **Evidence, not just alerts.** Incidents carry a typed causal graph and a
+  Merkle hash-chain evidence package that the API verifies before serving it.
+- **Honest status.** What is proven, what is claimed and what is stubbed is
+  written down in [SSOT.md](SSOT.md) and enforced by tests; this README only
+  summarizes it.
 
 > **OpenSearch, not Elastic:** no license asterisk on the storage engine
-> ([ADR 003](docs/adr/003-opensearch-not-elasticsearch.md)) — worth knowing,
-> but not a differentiator against Wazuh (its indexer is an OpenSearch fork
-> too). Only relevant against Elastic-based stacks.
+> ([ADR 003](docs/adr/003-opensearch-not-elasticsearch.md)). Worth knowing, but
+> not a differentiator against Wazuh (its indexer is an OpenSearch fork too).
 
 ---
+
+## Try it
+
+| Way | Needs | What you get |
+|---|---|---|
+| **[The project page](https://supermhel.github.io/fengarde/)** | A browser | The real console on a *recording* of a lab run, with a replayable attack, the architecture, all 36 rules and four recorded walkthroughs. Static; writes stay in your browser ([`docs/console-demo.md`](docs/console-demo.md) says exactly what is real). |
+| **`make e2e`** | Python 3 | SSH brute-force to a real alert, idempotent under replay. No Docker, Redis or OpenSearch. |
+| **`make demo`** | Docker | The full live stack; a real brute-force alert appears in the console within about a minute. |
 
 ## Quickstart
 
@@ -111,80 +140,109 @@ make ha-down  # stop the HA profile, remove its volumes
 | 8013 | `ws3-indexer` | Triage API — internal only, not published to the host |
 | 9090 | `prometheus` | Metrics — opt-in, `observability` compose profile |
 | 3000 | `grafana` | Dashboards over Prometheus — opt-in, same profile; default `admin`/`admin`, see `SECURITY.md` §1 |
+| 8081 | `goatcounter` | Self-hosted visit counter for a self-served copy of the project page — opt-in, same profile; cookie-free, nothing leaves your network (set up once via `docker exec`, see `docs/deployment.md`) |
 
 `make preflight` checks the published ports are free before you start.
 
-**Just saw your first alert land in the dashboard? Here's where to go next:**
+---
 
-- **Star the repo** — at this stage every star is measurable; it's the cheapest
-  signal an early-stage OSS security tool can get. [⭐ Star FENGARDE](https://github.com/supermhel/fengarde)
-- **Seen something it missed?** Open a
-  [detection-rule request](.github/ISSUE_TEMPLATE/rule_request.md) — new rules
-  review and merge like parsers (wrong/absent-false-negative reports are a
-  feature, see `SSOT.md` §2).
-- **Contribute a parser (~30 min):** [CONTRIBUTING.md](CONTRIBUTING.md) +
-  [docs/adding-a-parser.md](docs/adding-a-parser.md).
-- **Running it for customers?** See [docs/mssp-quickstart.md](docs/mssp-quickstart.md)
-  or apply for the [partner listing](https://github.com/supermhel/fengarde/issues/new?template=mssp_partner_registration.md).
+## The console
+
+After `make up` the console is at `http://localhost:8080` (React 18 and Vite;
+the previous single-file UI stays at `/legacy/`). Twelve views in three groups:
+
+| Group | Views |
+|---|---|
+| **Detect** | Overview, Alarms (triage, AI verdict, "why it fired", NIS2 draft), Incidents (causal graph, evidence package, incident report) |
+| **Investigate** | Events (query bar, facets, histogram, raw/OCSF), Coverage (MITRE heatmap, all rules, per-tenant switch for admins) |
+| **Operate** | Sources (connect a device, wait for its first event), Inventory (live asset record, add a device as admin), Operations (service health, dead letters, Prometheus panel), Audit, Settings (users and notification channels, admin only) |
+| **Account** | MFA enrolment |
+
+German and English, light and dark, phone widths. Sign-in accepts an MFA code
+and says which host it talks to, whether the sign-in service answers, and warns
+on plain HTTP. What each role may do is listed on the sign-in page.
+
+| | |
+|---|---|
+| ![Alarms](docs/img/console-alarms.png) | ![Incidents](docs/img/console-incidents.png) |
+| ![Sources](docs/img/console-sources.png) | ![Coverage](docs/img/console-coverage.png) |
+
+Recorded walkthroughs (`docs/video/`): attack to evidence, sign-in to settings,
+analyst triage with the NIS2 draft in German, connecting a device. Everything
+above is driven on a live stack by [`tools/console_e2e`](tools/console_e2e/README.md)
+as admin, analyst and read-only, in both languages, in dark mode and at phone width.
 
 ---
 
-## What's real
+## What is real
 
-Working end-to-end pipeline. This table is a snapshot of `main` (last tagged
-release: `v0.10.0`) — for the itemized history see [CHANGELOG.md](CHANGELOG.md),
-for the continuously-updated authoritative status see [SSOT.md](SSOT.md); this
-table is a summary, that file is the source of truth. Product tour with real
-screenshots: [supermhel.github.io/fengarde](https://supermhel.github.io/fengarde/).
-Measured, externally-usable detection numbers (macro-F1, per-rule
-TP/FP/FN/TN, twin scorecard — with units, methodology and the honest
-limits): **[`benchmark/`](benchmark/)**.
+Summary of `main` (last tagged release: `v0.10.0`). The itemized history is
+[CHANGELOG.md](CHANGELOG.md); the authoritative, continuously updated status is
+[SSOT.md](SSOT.md). If they disagree with this table, SSOT wins. Measured,
+externally-usable detection numbers (macro-F1, per-rule TP/FP/FN/TN, twin
+scorecard — with units, methodology and the honest limits):
+**[`benchmark/`](benchmark/)**.
 
-**Phase 5 (analyst read path) shipped in
-[PR #92](https://github.com/supermhel/fengarde/pull/92) (merged 2026-09-10).**
-Rows marked **(PR #92)** are live on `main`.
+Rows marked **(console rebuild)** describe the rebuilt console, its admin APIs
+and the demo, which ship with `feat/dashboard-rebuild` and are in review until
+that branch merges. Phase 5 ([PR #92](https://github.com/supermhel/fengarde/pull/92)) is merged.
+
+**Pipeline and detection**
 
 | Capability | Status | Notes |
 |---|---|---|
-| **Detection pipeline** (collect → normalize → detect → index → dashboard) | ✅ Works | End-to-end since v0.1 |
-| **Parsers (17)** | ✅ Works | Cisco ASA, Active Directory, VMware vSphere, Linux SSH, generic syslog, Windows Event Log, DB audit, MCP/AI-agent tool-call audit, OPC UA/OT audit, n8n automation-platform audit, DNS query log, Kubernetes audit, CEF, AWS CloudTrail, Sysmon, Modbus/TCP protocol-anomaly detector, inventory-diff OT device detector — all → OCSF |
-| **Detection rules (29)** | ✅ Works | Brute-force (per-IP and sourceless), port-scan, lateral-movement, password-spray, privileged-group grant, after-hours admin, impossible-travel, bank DB priv-esc, DC mass-VM-delete, agent credential-file access / tool-call burst / prompt-injection / destructive-command / egress-non-allowlisted, OT write-outside-maintenance / new-engineering-connection / config-change / Modbus unauthorized-write (+ ticketed downgrade) / new device on segment, n8n new-webhook-exposed / after-hours workflow-modified, DNS exfil, privileged-container-create, cloud root console login, mass DB-object read, rapid account create/delete, beaconing |
-| **Rule grammar** | ✅ Works | Boolean logic, comparison operators, allowlist suppression (CIDR + exact), time-of-day — fail closed on malformed input |
-| **Rule prefilter** | ✅ Works | Rules bucketed by `class_uid`; events only evaluated against candidate rules |
-| **Anti-dormancy + rule-boundary guardrails** | ✅ Works | CI proves every rule is satisfiable by a real parser's output, and that declared thresholds/predicates are actually enforced (12/12 stateful, 16/16 stateless) — engine-vs-declaration agreement, not a claim that thresholds are well-chosen. See `SSOT.md` |
-| **AI triage** (local Ollama) | ✅ Works, opt-in | Via `OLLAMA_URL` (default `qwen2.5`); unset or unreachable degrades to a deterministic offline stub — zero infra, zero network calls. Per-rule `llm_gate: false` opt-out. Verdict and which engine actually ran (Ollama vs. stub) shown in the dashboard's "Why" panel |
-| **Triage workflow** | ✅ Works | Status + analyst note per alert, editable in the dashboard; concurrent writes protected (lock + OpenSearch optimistic concurrency) |
-| **Incident-report draft hook** | ✅ Works | `POST /alerts/{id}/report` — generic markdown report, always `status: draft` with a disclaimer; regulated-content backend is a paid, optional add-on |
-| **NIS2 (DE) report template** | ✅ Works | Deterministic German/English NIS2 Art. 23 / §32 BSIG draft (`?template=nis2`); 3 stages × 2 languages, picker in the dashboard; every entity-specific fact is an explicit `[ANALYST MUST PROVIDE]` placeholder, never fabricated |
-| **Opt-in auth** | ✅ Works | Shared-secret `FENGARDE_API_KEY`, dashboard basic-auth, Redis `AUTH` — unset stays fully open |
-| **RBAC** | ✅ Works, opt-in | Per-user accounts/roles/tenant scoping, session cookies, CSRF protection, login UI; unset = pre-RBAC API-key-only behavior |
-| **MFA/TOTP** | ✅ Works, opt-in | Per-user, stdlib RFC 6238; provision→confirm activation, login gates once active, re-entering your password required for config changes. Enrollment UI in the dashboard's Security panel |
-| **Admin audit log** | ✅ Works, opt-in | Append-only, capacity-capped, fail-open; `GET /audit` and a dashboard Audit tab |
-| **Redis-backed sessions** (multi-replica RBAC) | ✅ Works, opt-in | Every session row HMAC-signed; `FENGARDE_SESSION_SECRET` required to start |
-| **Multi-tenancy** | ✅ Works | `tenant_id` threaded end-to-end; per-tenant indices + rule enablement + fair consume ordering (one flooding tenant can't starve another); reflected throughout the dashboard |
-| **Versioned REST API** | ✅ Works | OpenAPI 3.1 spec (`contracts/triage-api.yaml`), bare or `/api/v1/...`; spec-vs-code drift CI-tested |
-| **Outbound alert webhooks** | ✅ Works, opt-in | HMAC-SHA256-signed deliveries; see `docs/webhooks.md` |
-| **Parser/rule plugin interface** | ✅ Works | External pip package can ship a parser or rule pack via entry points, no fork needed; see `docs/plugin-development.md` |
-| **Cross-alert correlation** (WS-8) | ✅ Works | A second consumer tracks actor/IP/device activity over a rolling window and promotes an incident once ≥2 distinct MITRE tactics appear — catches a low-and-slow attacker no single rule's own threshold would catch. Deterministic `incident_id`; bounded, swept memory |
-| **Chaos-tested delivery** | ✅ Works | `make chaos`: 40 scenarios, every pipeline service SIGKILLed mid-replay — zero lost, zero duplicate alerts. Consumer-failure durability; Redis-primary failover is a separate proven scenario, see `SSOT.md` |
-| **HA profile** (Redis Sentinel + 3-node OpenSearch) | ✅ Works, opt-in | `make ha-up`. Both sides live-kill-tested: Sentinel failover (~1s promotion, zero lost messages), OpenSearch write round-robin to a surviving node |
-| **Dashboard** | ✅ Works | Alert feed with MITRE tags + severity, raw event browser, time-range picker, saved searches, dark mode, per-alert playbooks, Ops/Audit/API-keys panels, inventory with live asset drill-in |
-| **Product tour** | ✅ Works, live | Real screenshots off a live stack — [supermhel.github.io/fengarde](https://supermhel.github.io/fengarde/) |
-| **Entity resolution** (WS-9) | ✅ Works | Deterministic entity ids off `entity.updates`; bounded, idempotent under redelivery |
-| **Causal incident graph** (`incident.graph`) | ✅ Works | WS-8 emits a typed causal DAG per incident (`caused_by`/`invoked`/`authenticated_as`/`wrote_to`/`changed`), each edge grounded in one alert's own evidence, never a transitive inference |
-| **Evidence package** (WS-3) | ✅ Works | Immutable Merkle hash-chain over an incident's alerts/events/graph, tamper-evident verification, deterministic `package_id` |
-| **Bounded AI-triage concurrency** (WS-5) | ✅ Works | Thread pool + admission semaphore; per-event-id dedup under concurrent redelivery |
-| **OT business context** (`contracts/ot-points/`) | ✅ Works, opt-in | Additive per-device plant/line/owner/safety fields — schema-only, config not inference |
-| **AI-to-OT digital twin** (`eval/twin/`) | ✅ Works | Deterministic offline validation harness (PLC sim, attack scenario, oracle, negative controls, telemetry degradation) measuring operational outcome metrics — every number harness-measured, honest `null` where nothing exists to measure (e.g. MTTR) |
-| **Adversarial mutation validation** (`eval/adversarial/`) | ✅ Works | Three layers: deterministic + blocking mutation matrix (8 axes, must keep detection **and** chain fidelity **and** false-correlation rate to pass), a curated corpus, and a nightly LLM-composed adversary that's advisory-only and never blocks CI |
-| **Entity / incident-graph / evidence read routes** (WS-3) | ✅ Works (PR #92) | `GET /entities/{id}`, `GET /incidents/{id}/graph`, `GET /incidents/{id}/evidence` — evidence route verifies the hash chain before ever serving it (409 on failure, never a silent unverified 200) |
-| **Dashboard: incident causal graph + evidence panel** | ✅ Works (PR #92) | Incident detail renders the causal DAG as an SVG plus a build-on-click evidence panel, alongside the member-alert list |
-| **Dashboard: live asset drill-in** | ✅ Works (PR #92) | Inventory now reads the live single-device record, not just the list snapshot |
-| **OT-criticality exposure scoring** | ✅ Works (PR #92) | `contracts/ot-points/*.yml` criticality now adds real points to an OT alert's score |
-| **Incident-level NIS2 draft** | ✅ Works (PR #92) | `POST /incidents/{id}/report` — a separate seam from the alert-scoped report, causal-ordered narrative |
-| **`eval/trend.jsonl` viewer** | ✅ Works (PR #92) | Static HTML render of the real nightly detection-quality + twin scorecard history |
-| SNMP / NetFlow / custom-JSON / proxy parsers | 🚧 Planned | Deferred — [good first issue](CONTRIBUTING.md) |
-| S7/PROFINET parser | 🚧 Deferred | Needed vocabulary sits behind a Siemens support login this project doesn't have access to |
+| Detection pipeline (collect, normalize, detect, index, console) | ✅ Works | End-to-end since v0.1 |
+| **Parsers (19)** | ✅ Works | Cisco ASA, Active Directory, VMware vSphere, Linux SSH, generic syslog, Windows Event Log, DB audit, MCP/AI-agent tool-call audit, OPC UA/OT audit, n8n audit, DNS query log, Kubernetes audit, CEF, AWS CloudTrail, Sysmon, Modbus/TCP anomaly detector, inventory-diff OT device detector, mail gateway, M365 audit; all to OCSF |
+| **Live syslog routing** (console rebuild) | ✅ Works | A forwarded sshd, Cisco ASA or CEF line (also behind a syslog header) reaches its own parser, not the generic one; proven by a real UDP burst that raised the brute-force alarm |
+| **Detection rules (36)** | ✅ Works | Brute-force, port-scan, lateral movement, password spray, privileged-group grant, after-hours admin, impossible travel, bank DB privilege escalation, mass VM delete, AI-agent rules (credential files, tool-call burst, prompt injection, destructive command, non-allowlisted egress), OT rules (write outside maintenance, new engineering connection, config change, Modbus unauthorized write, new device on segment), n8n, DNS exfiltration, privileged container, cloud root login, mass DB read, rapid account churn, beaconing. The full list is on the [project page](https://supermhel.github.io/fengarde/) |
+| Rule grammar and prefilter | ✅ Works | Boolean logic, comparisons, allowlist suppression (CIDR and exact), time of day; fails closed on malformed input; rules bucketed by `class_uid` |
+| Anti-dormancy and rule-boundary guardrails | ✅ Works | CI proves every rule is satisfiable by a real parser's output and that declared thresholds are enforced (19/19 stateful, 17/17 stateless): engine-versus-declaration agreement, not a claim that thresholds are well chosen |
+| **Cross-alert correlation** (WS-8) | ✅ Works | Promotes an incident once an entity shows two or more distinct MITRE tactics; deterministic `incident_id`; bounded memory |
+| **Causal incident graph** | ✅ Works | Typed DAG per incident, each edge grounded in one alert's own evidence, never a transitive inference |
+| Entity resolution (WS-9) | ✅ Works | Deterministic entity ids, idempotent under redelivery |
+| Chaos-tested delivery | ✅ Works | `make chaos`: 40 scenarios, every pipeline service SIGKILLed mid-replay, zero lost and zero duplicate alerts |
+| HA profile (Redis Sentinel and 3-node OpenSearch) | ✅ Works, opt-in | `make ha-up`; Sentinel failover (about 1 s promotion, zero lost messages) and OpenSearch write round-robin both live-kill-tested |
+
+**Analyst workflow**
+
+| Capability | Status | Notes |
+|---|---|---|
+| **Console (React)** (console rebuild) | ✅ Works | Twelve views, DE/EN, light/dark, phone widths, MFA sign-in. `check.mjs` (90 checks across three roles) and `mfa.mjs` pass against the live stack |
+| **Static console demo** (console rebuild) | ✅ Works | `npm run build:demo`: the real console on a recording of a lab run (`docs/demo/`), with an attack replay; labelled as recorded data |
+| Triage workflow | ✅ Works | Status and note per alert; concurrent writes protected (lock plus OpenSearch optimistic concurrency) |
+| AI triage (local Ollama) | ✅ Works, opt-in | `OLLAMA_URL` (default `qwen2.5`); unset or unreachable degrades to a deterministic offline stub with no network calls; per-rule `llm_gate: false` opt-out; bounded concurrency |
+| Alert and incident reports | ✅ Works | Generic markdown draft and a deterministic German/English NIS2 Art. 23 / §32 BSIG draft (3 stages, 2 languages); entity-specific facts are explicit `[ANALYST MUST PROVIDE]` placeholders, never fabricated; incident-level draft built from the verified evidence package |
+| Evidence package | ✅ Works | Merkle hash chain over an incident's alerts, events and graph; the route verifies before serving (409 on failure, never a silent unverified 200) |
+| OT business context and exposure scoring | ✅ Works, opt-in | `contracts/ot-points/*.yml` adds plant, line, owner and criticality to OT alerts and real points to their score |
+
+**Operating it**
+
+| Capability | Status | Notes |
+|---|---|---|
+| Opt-in auth, RBAC, MFA/TOTP, audit log | ✅ Works, opt-in | API key, basic-auth, Redis `AUTH`; per-user roles with tenant scoping, session cookies, CSRF; RFC 6238 TOTP; append-only audit trail. Unset stays open |
+| Redis-backed sessions | ✅ Works, opt-in | Every session row HMAC-signed; `FENGARDE_SESSION_SECRET` required |
+| Multi-tenancy | ✅ Works | `tenant_id` end to end; per-tenant indices, rule enablement and fair consume ordering |
+| **Admin APIs** (console rebuild) | ✅ Works, opt-in (RBAC) | `/users`, `/webhooks` (redacted), `PUT /rules/{id}/enabled` (WS-4 honours it within a request), `POST /inventory/assets`; admin only, CSRF, audited |
+| Versioned REST API | ✅ Works | OpenAPI 3.1 (`contracts/triage-api.yaml`), bare or `/api/v1/...`; spec-versus-code drift is CI-tested |
+| Outbound webhooks | ✅ Works, opt-in | HMAC-SHA256 signed; see [`docs/webhooks.md`](docs/webhooks.md) |
+| Parser and rule plugins | ✅ Works | Entry-point packages, no fork needed; see [`docs/plugin-development.md`](docs/plugin-development.md) |
+
+**Validation**
+
+| Capability | Status | Notes |
+|---|---|---|
+| AI-to-OT digital twin (`eval/twin/`) | ✅ Works | Offline harness (PLC simulator, attack scenario, oracle, negative controls); every number harness-measured, honest `null` where nothing exists to measure |
+| Adversarial mutation validation (`eval/adversarial/`) | ✅ Works | Blocking mutation matrix (8 axes), curated corpus, and an advisory nightly LLM-composed adversary that never blocks CI |
+| `eval/trend.jsonl` viewer | ✅ Works | Static render of the nightly detection-quality and twin scorecard history |
+
+**Not done**
+
+| Capability | Status | Notes |
+|---|---|---|
+| SNMP, NetFlow, custom-JSON, proxy parsers | 🚧 Planned | SNMP/NetFlow read mock files today; [good first issue](CONTRIBUTING.md) |
+| RFC 5424, TCP/TLS syslog | 🚧 Planned | UDP RFC 3164 only; the Sources view says so |
+| S7/PROFINET parser | 🚧 Deferred | Needed vocabulary sits behind a Siemens support login |
+| Prometheus health panel with data | ⚠️ Not proven | The unreachable state is tested; the populated state is not |
 
 > **No AI required.** The pipeline produces real alerts with zero infra and no LLM;
 > Ollama triage is an optional layer that degrades gracefully to a stub.
@@ -218,12 +276,12 @@ never touches the bus, and no backend service depends on it.
 | WS | Service | Role |
 |----|---------|------|
 | 1 | `services/ws1-collectors` | Collect logs → `raw.events` |
-| 2 | `services/ws2-normalization` | Parsers → validated OCSF events (17 parsers) |
-| 3 | `services/ws3-indexer` | Routing + OpenSearch indexing; entity/incident-graph/evidence read routes (PR #92) |
-| 4 | `services/ws4-detection` | Correlation rules + scoring + windowing (29 rules) |
+| 2 | `services/ws2-normalization` | Parsers → validated OCSF events (19 parsers) |
+| 3 | `services/ws3-indexer` | Routing + OpenSearch indexing; entity/incident-graph/evidence read routes |
+| 4 | `services/ws4-detection` | Correlation rules + scoring + windowing (36 rules) |
 | 5 | `services/ws5-ai` | Triage — real local-LLM (Ollama), stub fallback, bounded concurrency |
-| 6 | `services/ws6-inventory` | IP/MAC inventory API (SQLite) |
-| 7 | `services/ws7-dashboard` | Alert console |
+| 6 | `services/ws6-inventory` | IP/MAC inventory API (SQLite); stores sector and type; thread-safe reads |
+| 7 | `services/ws7-dashboard` | Console (React) + `/legacy/` UI; a static demo build for the project page |
 | 8 | `services/ws8-correlation` | Cross-alert correlation + causal incident graph |
 | 9 | `services/ws9-resolver` | Deterministic entity resolution (`entity.updates`) |
 
@@ -245,7 +303,7 @@ One-command, reproducible by anyone with a clone — no Docker required.
 | Sustained EPS (5,000 events, `linux_ssh` only) | ~985 events/sec |
 | Sustained EPS (20,000 events, mixed sources) | ~2,500-2,650 events/sec |
 | Peak resident memory (20,000-event run) | ~114 MB |
-| Rule prefilter vs. forced linear scan (29 rules, 20,000 events) | 1.12x faster |
+| Rule prefilter vs. forced linear scan (36 rules, 20,000 events) | 1.12x faster |
 
 This is a **zero-infra CPU-bound baseline** (one process, in-memory bus) — it
 measures how fast the Python code processes a batch, excluding real Redis
@@ -286,16 +344,6 @@ under `eval/`:
 canary all run in `run_all_tests.sh`; `eval-detection` is dataset-gated so
 it's excluded from the zero-infra gate, but it's the harness that has
 actually caught real false negatives in shipped rules.
-
-Every lane above writes a deterministic JSON artifact. [`eval/SCORECARD.md`](eval/SCORECARD.md)
-renders all of them into one committed card: each metric per storyline and per
-ATT&CK technique, with its blind spot and the negative control that can move it
-(bold `NONE` where no control exists), plus a "what this harness cannot prove"
-section whose bullets are tied to guards and expire when their evidence does.
-It is generated by `python tools/generate_scorecard.py` and re-rendered inside
-`run_all_tests.sh`, so a stale number or a hand edit fails the gate rather than
-sitting in the file. **This README quotes no harness numbers on purpose** — the
-card is the only place they live, and `--lint-docs` enforces that.
 
 ---
 

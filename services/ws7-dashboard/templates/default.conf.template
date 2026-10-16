@@ -67,6 +67,35 @@ server {
         try_files $uri $uri/ =404;
     }
 
+    # 2026-10-15: cache policy for the Vite console. The HTML entry points must
+    # revalidate on every load so a redeploy is picked up immediately (`/` and
+    # `/legacy/` reach these exact matches via the `index` internal redirect);
+    # the content-hashed bundles under /assets/ never change in place, so they
+    # are cached forever. Each block repeats the server-level security headers
+    # because any add_header here drops the inherited ones (see config.js below).
+    location = /index.html {
+        add_header Cache-Control "no-cache";
+        add_header X-Frame-Options "DENY" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header Referrer-Policy "no-referrer" always;
+        add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'" always;
+    }
+    location = /legacy/index.html {
+        add_header Cache-Control "no-cache";
+        add_header X-Frame-Options "DENY" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header Referrer-Policy "no-referrer" always;
+        add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'" always;
+    }
+    location /assets/ {
+        try_files $uri =404;
+        add_header Cache-Control "public, max-age=31536000, immutable";
+        add_header X-Frame-Options "DENY" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header Referrer-Policy "no-referrer" always;
+        add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'" always;
+    }
+
     # 2026-08-26 gap-hunt: same-origin config bootstrap. The browser must
     # PRESENT X-Api-Key on every request (see the write-route guards below),
     # so the page needs a same-origin source for the key. envsubst substitutes
@@ -523,6 +552,43 @@ server {
         proxy_pass $ws8_ops;
         proxy_set_header Host $host;
         proxy_connect_timeout 3s;
+        proxy_read_timeout 5s;
+    }
+
+    # 2026-10-15: system-health panel (Operations view). Strictly read-only
+    # window onto the opt-in Prometheus (infra/docker-compose.yml, profile
+    # `observability`): only GET /api/v1/targets and GET /api/v1/query are
+    # reachable. Prometheus has no auth of its own and its admin/tsdb/write/
+    # lifecycle endpoints are destructive, so this is an allowlist, not a
+    # denylist: the regex location below is the ONLY way through, and the
+    # prefix block denies every other /api/prom/ path. nginx matches on the
+    # normalized URI ($uri, %-decoded, ../ resolved) and the rewrite passes the
+    # normalized path upstream, so encoded/traversal tricks cannot escape the
+    # two allowed paths. Same X-Api-Key gate as /api/ops/* and /api/rules.
+    # No add_header here, so the server-level security headers are inherited.
+    # Prometheus not running (profile off) -> resolver failure -> 502, which
+    # the console shows as "Prometheus not reachable".
+    location /api/prom/ {
+        return 403;
+    }
+    location ~ ^/api/prom/api/v1/(targets|query)$ {
+        limit_except GET {
+            deny all;
+        }
+        resolver 127.0.0.11 ipv6=off valid=30s;
+        resolver_timeout 1s;  # profile off -> fail fast so the panel says "not reachable" instead of waiting
+        set $prometheus "http://prometheus:9090";
+        if ($http_x_api_key != "${FENGARDE_API_KEY}") { return 401; }
+        rewrite ^/api/prom/(.*)$ /$1 break;
+        proxy_pass $prometheus;
+        proxy_set_header Host $host;
+        # Nothing of the caller's travels upstream: no body, no credentials.
+        proxy_pass_request_body off;
+        proxy_set_header Content-Length "";
+        proxy_set_header Authorization "";
+        proxy_set_header Cookie "";
+        proxy_set_header X-Api-Key "";
+        proxy_connect_timeout 2s;
         proxy_read_timeout 5s;
     }
 }

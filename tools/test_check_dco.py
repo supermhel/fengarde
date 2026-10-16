@@ -78,6 +78,21 @@ class TestCheckDco(unittest.TestCase):
         # nothing new to certify (e.g. PR head == base): green by design
         self.assertEqual(self._check(), (0, []))
 
+    def test_dependabot_author_is_exempt(self):
+        # Dependabot commits have no human sign-off; they must not block the
+        # dependabot PRs (security/version bumps, bot cannot certify DCO).
+        env = dict(os.environ, GIT_AUTHOR_NAME="dependabot[bot]",
+                   GIT_AUTHOR_EMAIL="dependabot[bot]@users.noreply.github.com",
+                   GIT_COMMITTER_NAME="dependabot[bot]",
+                   GIT_COMMITTER_EMAIL="dependabot[bot]@users.noreply.github.com")
+        subprocess.run(["git", "-c", "commit.gpgsign=false", "commit", "-q",
+                        "--allow-empty", "-m", "chore(deps): bump the x group with 1 update"],
+                       cwd=self.repo, env=env, check=True, capture_output=True,
+                       text=True)
+        # exempted author -> not counted as a violating commit
+        total, bad = self._check()
+        self.assertEqual(bad, [])
+
     def test_unsigned_merge_commit_fails(self):
         self._git("checkout", "-q", "-b", "side")
         self._commit(f"side\n\nSigned-off-by: {AUTHOR} <{EMAIL}>")

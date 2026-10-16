@@ -1,0 +1,106 @@
+// DE/EN. Browser language picks the default; the toggle overrides (remembered per browser).
+const en = {
+  overview: "Overview", alarms: "Alarms", incidents: "Incidents", events: "Events",
+  coverage: "Coverage", sources: "Sources", inventory: "Inventory", operations: "Operations", audit: "Audit", account: "Account",
+  classic: "Classic console", detect: "Detect", investigate: "Investigate", operate: "Operate",
+  noAlarms: "No active alarms", unack: "unacknowledged", checked: "checked", alarmsActive: "active alarms",
+  pipeline: "Pipeline", eventRate: "Event rate", alarmRate: "Alarm rate", tactics: "MITRE tactics hit",
+  settings: "Settings", latest: "Latest alarms", openTop: "Open top alarm", signIn: "Sign in", username: "Username", password: "Password",
+  signOut: "Sign out", live: "live", unavailable: "data unavailable", time: "Time", rule: "Rule", level: "Priority",
+  score: "Score", source: "Source", status: "Status", entity: "Entity", members: "Alerts", lastSeen: "Last seen",
+  firstSeen: "First seen", severity: "Severity", why: "Why it fired", evidence: "Evidence package", build: "Build + verify",
+  graph: "Causal graph", ack: "Acknowledge", close: "Close", falsePositive: "False positive", truePositive: "True positive",
+  note: "Analyst note", save: "Save", report: "Report", nis2: "NIS2 draft", raw: "Raw", normalized: "OCSF",
+  aiTriage: "AI triage", engine: "engine", noData: "Nothing in this time range.", unreachable: "The backend did not answer",
+  events_: "events", of: "of", rules: "rules", class: "Class", activity: "Activity", actor: "Actor", sector: "Sector",
+  select: "Select a row to see its details.", open: "Open", all: "All", search: "Search rule, ID, IP or sector",
+  allSev: "All priorities", allStatus: "All statuses", saveFilter: "Save filter", saved: "Saved filters",
+  filterName: "Name for this filter", lifecycle: "Lifecycle: new → triaged (investigating, contained) → closed or false positive. The backend stores new, triaged, true_positive, false_positive and closed.",
+  readOnly: "Read-only role: triage is disabled.", noRefs: "This alert carries no event references.",
+  outside: "The source events are outside the loaded time range.", earlyWarning: "Early warning (24 h)",
+  notification: "Notification (72 h)", finalReport: "Final report (1 month)",
+  tactics_: "Tactics", tenant: "Tenant", promoted: "≥ 2 distinct MITRE tactics per entity",
+  noIncidents: "No correlated incidents.", noIncidentsHint: "An entity (actor, IP or device) is promoted once its alerts span at least two distinct MITRE tactics.",
+  noGraph: "No causal graph for this incident yet.", notBuilt: "Not built yet. Building hashes every member alert, its events and the graph into one chain.",
+  verified: "Verified", blocks: "blocks", tamper: "Verification failed: the stored chain does not match (tamper evident).",
+  capReached: "member cap reached", allSources: "All sources", parser: "Parser", bySource: "Events by source",
+  sevMix: "Alarm priority mix", coverageMap: "Detection coverage by tactic", untagged: "Rules without an honest single-technique mapping",
+  allRules: "All rules", weight: "Score weight", stateful: "Stateful", enabled: "Enabled", yes: "yes", no: "no",
+  optIn: "opt-in", fired: "fired", rulesFired: "rules fired", noRules: "No rules loaded.",
+  assets: "Assets", filterAsset: "Filter by IP, MAC or hostname", allSectors: "All sectors", hostname: "Hostname",
+  mac: "MAC", ip: "Current IP", type: "Type", protocols: "Protocols", ipHistory: "IP history", current: "current",
+  liveRecord: "live device record", snapshot: "list snapshot", apiKeys: "API keys", keyId: "Key ID", scope: "Scope",
+  created: "Created", lastUsed: "Last used", noKeys: "No keys provisioned, or none visible to this session.",
+  noAssets: "No assets in the inventory yet.", services: "Service health", topics: "Topics", extras: "Service detail",
+  noMetrics: "metrics endpoint did not answer", deadLettered: "dead-lettered", ruleLastFired: "Rule last fired",
+  auditTrail: "Admin audit trail", auditHint: "Sign-ins, MFA, triage and report generation. The backend shows this to admins only.",
+  noAudit: "No audit entries visible. You need the admin role, or nothing has been logged yet.", event: "Event", detail: "Detail",
+  mfa: "Two-factor authentication", mfaIntro: "Re-enter your password to generate a new TOTP secret.",
+  mfaGenerate: "Generate secret", mfaAdd: "Add this secret to an authenticator app, then enter the 6-digit code it shows.",
+  mfaCode: "6-digit code", mfaVerify: "Verify and activate", mfaOn: "Two-factor authentication is active.",
+  secret: "Secret", signedInAs: "Signed in as", role: "Role", rbacOff: "Sign-in is switched off on this backend (no RBAC database), so there is no account to manage.",
+  tooMany: "Too many attempts. Wait a minute and try again.", signInFailed: "Sign-in failed.", allTenants: "All tenants",
+  checking: "checking…", clear: "Clear", download: "Download .md", silent: "silent > 15 min", incidentReport: "Incident report", incidentReportHint: "Builds and verifies the evidence package, then drafts the NIS2 incident report from it.", graphHint: "Select an entity in the graph to look it up.", noEntity: "This entity is not resolved yet.", incidentGone: "This incident is no longer in the loaded list (it aged out of the time range or the tenant scope changed).", flow: "flow", healthy: "healthy", stages: "stages",
+};
+const de: typeof en = {
+  overview: "Übersicht", alarms: "Alarme", incidents: "Vorfälle", events: "Ereignisse",
+  coverage: "Abdeckung", sources: "Quellen", inventory: "Inventar", operations: "Betrieb", audit: "Audit", account: "Konto",
+  classic: "Klassische Konsole", detect: "Erkennen", investigate: "Untersuchen", operate: "Betreiben",
+  noAlarms: "Keine aktiven Alarme", unack: "unquittiert", checked: "geprüft", alarmsActive: "aktive Alarme",
+  pipeline: "Pipeline", eventRate: "Ereignisrate", alarmRate: "Alarmrate", tactics: "Getroffene MITRE-Taktiken",
+  settings: "Einstellungen", latest: "Neueste Alarme", openTop: "Obersten Alarm öffnen", signIn: "Anmelden", username: "Benutzername",
+  password: "Passwort", signOut: "Abmelden", live: "live", unavailable: "Daten nicht verfügbar", time: "Zeit",
+  rule: "Regel", level: "Priorität", score: "Score", source: "Quelle", status: "Status", entity: "Entität",
+  members: "Alarme", lastSeen: "Zuletzt", firstSeen: "Zuerst", severity: "Schwere", why: "Warum ausgelöst",
+  evidence: "Beweispaket", build: "Erstellen + prüfen", graph: "Kausalgraph", ack: "Quittieren", close: "Schließen",
+  falsePositive: "Fehlalarm", truePositive: "Echter Treffer", note: "Analystennotiz", save: "Speichern",
+  report: "Bericht", nis2: "NIS2-Entwurf", raw: "Roh", normalized: "OCSF", aiTriage: "KI-Triage", engine: "Engine",
+  noData: "Nichts in diesem Zeitraum.", unreachable: "Das Backend hat nicht geantwortet", events_: "Ereignisse",
+  of: "von", rules: "Regeln", class: "Klasse", activity: "Aktivität", actor: "Akteur", sector: "Sektor",
+  select: "Zeile wählen, um Details zu sehen.", open: "Offen", all: "Alle", search: "Regel, ID, IP oder Sektor suchen",
+  allSev: "Alle Prioritäten", allStatus: "Alle Status", saveFilter: "Filter speichern", saved: "Gespeicherte Filter",
+  filterName: "Name für diesen Filter", lifecycle: "Ablauf: neu → in Bearbeitung (untersucht, eingedämmt) → geschlossen oder Fehlalarm. Das Backend speichert new, triaged, true_positive, false_positive und closed.",
+  readOnly: "Nur-Lese-Rolle: Triage ist deaktiviert.", noRefs: "Dieser Alarm verweist auf keine Ereignisse.",
+  outside: "Die Quellereignisse liegen außerhalb des geladenen Zeitraums.", earlyWarning: "Frühwarnung (24 h)",
+  notification: "Meldung (72 h)", finalReport: "Abschlussbericht (1 Monat)",
+  tactics_: "Taktiken", tenant: "Mandant", promoted: "≥ 2 verschiedene MITRE-Taktiken je Entität",
+  noIncidents: "Keine korrelierten Vorfälle.", noIncidentsHint: "Eine Entität (Akteur, IP oder Gerät) wird hochgestuft, sobald ihre Alarme mindestens zwei verschiedene MITRE-Taktiken umfassen.",
+  noGraph: "Für diesen Vorfall gibt es noch keinen Kausalgraphen.", notBuilt: "Noch nicht erstellt. Beim Erstellen werden alle Alarme, ihre Ereignisse und der Graph zu einer Hash-Kette verknüpft.",
+  verified: "Geprüft", blocks: "Blöcke", tamper: "Prüfung fehlgeschlagen: Die gespeicherte Kette stimmt nicht (manipulationssicher erkannt).",
+  capReached: "Mitgliederlimit erreicht", allSources: "Alle Quellen", parser: "Parser", bySource: "Ereignisse nach Quelle",
+  sevMix: "Alarmprioritäten", coverageMap: "Erkennungsabdeckung nach Taktik", untagged: "Regeln ohne eindeutige Einzeltechnik-Zuordnung",
+  allRules: "Alle Regeln", weight: "Score-Gewicht", stateful: "Zustandsbehaftet", enabled: "Aktiv", yes: "ja", no: "nein",
+  optIn: "opt-in", fired: "ausgelöst", rulesFired: "Regeln ausgelöst", noRules: "Keine Regeln geladen.",
+  assets: "Geräte", filterAsset: "Nach IP, MAC oder Hostname filtern", allSectors: "Alle Sektoren", hostname: "Hostname",
+  mac: "MAC", ip: "Aktuelle IP", type: "Typ", protocols: "Protokolle", ipHistory: "IP-Verlauf", current: "aktuell",
+  liveRecord: "Live-Gerätedatensatz", snapshot: "Listen-Momentaufnahme", apiKeys: "API-Schlüssel", keyId: "Schlüssel-ID",
+  scope: "Geltung", created: "Erstellt", lastUsed: "Zuletzt genutzt", noKeys: "Keine Schlüssel angelegt oder für diese Sitzung nicht sichtbar.",
+  noAssets: "Noch keine Geräte im Inventar.", services: "Dienstzustand", topics: "Topics", extras: "Dienstdetails",
+  noMetrics: "Metrik-Endpunkt antwortet nicht", deadLettered: "in Dead-Letter", ruleLastFired: "Regel zuletzt ausgelöst",
+  auditTrail: "Admin-Audit-Protokoll", auditHint: "Anmeldungen, MFA, Triage und Berichtserstellung. Das Backend zeigt dies nur Admins.",
+  noAudit: "Keine Audit-Einträge sichtbar. Dafür ist die Admin-Rolle nötig, oder es wurde noch nichts protokolliert.", event: "Ereignis", detail: "Detail",
+  mfa: "Zwei-Faktor-Anmeldung", mfaIntro: "Passwort erneut eingeben, um ein neues TOTP-Geheimnis zu erzeugen.",
+  mfaGenerate: "Geheimnis erzeugen", mfaAdd: "Geheimnis in einer Authenticator-App hinzufügen und den 6-stelligen Code eingeben.",
+  mfaCode: "6-stelliger Code", mfaVerify: "Prüfen und aktivieren", mfaOn: "Zwei-Faktor-Anmeldung ist aktiv.",
+  secret: "Geheimnis", signedInAs: "Angemeldet als", role: "Rolle", rbacOff: "Die Anmeldung ist in diesem Backend ausgeschaltet (keine RBAC-Datenbank), daher gibt es kein Konto zu verwalten.",
+  tooMany: "Zu viele Versuche. Eine Minute warten und erneut versuchen.", signInFailed: "Anmeldung fehlgeschlagen.", allTenants: "Alle Mandanten",
+  checking: "prüfe…", clear: "Zurücksetzen", download: ".md herunterladen", silent: "still > 15 min", incidentReport: "Vorfallsbericht", incidentReportHint: "Erstellt und prüft das Beweispaket und entwirft daraus den NIS2-Vorfallsbericht.", graphHint: "Entität im Graphen wählen, um sie nachzuschlagen.", noEntity: "Diese Entität ist noch nicht aufgelöst.", incidentGone: "Dieser Vorfall ist nicht mehr in der geladenen Liste (aus dem Zeitraum gefallen oder Mandant gewechselt).", flow: "Fluss", healthy: "in Ordnung", stages: "Stufen",
+};
+export type Dict = typeof en;
+export type Lang = "en" | "de";
+export const dicts: Record<Lang, Dict> = { en, de };
+
+/* Singular forms for the few "N <noun>" labels where N is plausibly 1 ("1 alarms" reads as a bug). */
+const one: Record<Lang, Record<string, string>> = {
+  en: { alarms: "alarm", events: "event", alarmsActive: "active alarm" },
+  de: { alarms: "Alarm", events: "Ereignis", alarmsActive: "aktiver Alarm" },
+};
+export const unit = (lang: Lang, n: number, key: "alarms" | "events" | "alarmsActive", many: string) => (n === 1 ? one[lang][key] : many);
+
+export function initialLang(): Lang {
+  try {
+    const s = localStorage.getItem("fg.lang");
+    if (s === "en" || s === "de") return s;
+  } catch { /* storage blocked */ }
+  return (navigator.language || "en").toLowerCase().startsWith("de") ? "de" : "en";
+}

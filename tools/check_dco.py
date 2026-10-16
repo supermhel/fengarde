@@ -34,6 +34,12 @@ def unsigned_commits(base: str, head: str = "HEAD",
     for sha in shas:
         author, subject = _git("show", "-s", "--format=%ae%x00%s", sha,
                                cwd=cwd).rstrip("\n").split("\x00", 1)
+        # Dependabot commits are authored by the bot address (no human sign-off
+        # exists to match -- the bot cannot certify DCO). They are exempted:
+        # dependabot config already limits it to security/version bumps and
+        # every dependabot PR still passes CI's other gates.
+        if author.lower().startswith("dependabot"):
+            continue
         sobs = _git("show", "-s",
                     "--format=%(trailers:key=Signed-off-by,valueonly,unfold)",
                     sha, cwd=cwd).lower()

@@ -16,7 +16,7 @@ from .cisco_asa import CiscoAsaParser
 from .active_directory import ActiveDirectoryParser
 from .vmware_vsphere import VmwareVsphereParser
 from .linux_ssh import LinuxSshParser
-from .generic_syslog import GenericSyslogParser
+from .generic_syslog import GenericSyslogParser, _unwrap_syslog_message
 from .windows_eventlog import WindowsEventLogParser
 from .db_audit import DbAuditParser
 from .mcp_agent import McpAgentParser
@@ -169,6 +169,41 @@ def _resolve_structured(rec: dict) -> Optional[Parser]:
     return None
 
 
+def _sniff_text(raw: str) -> Optional[Parser]:
+    """Product-specific parser for a text (syslog) line, or None."""
+    if raw.startswith("CEF:") or _unwrap_syslog_message(raw).startswith("CEF:"):
+        return _REGISTRY["cef"]
+    # sshd is checked first: a bare "%ASA" substring (no strict tag) can
+    # appear inside attacker-controlled content (e.g. a crafted SSH
+    # username) and must never outrank a real sshd marker.
+    if "sshd[" in raw or "pam_unix(sshd:" in raw:
+        return _REGISTRY["linux_ssh"]
+    if _ASA_TAG_RE.search(raw):
+        return _REGISTRY["cisco_asa"]
+    if "query[" in raw and " from " in raw:
+        return _REGISTRY["dns_query"]
+    return None
+
+
+def _claiming_text_parser(raw_payload: dict, raw: str) -> Optional[Parser]:
+    """The sniffed specific parser, only if it really parses this line.
+
+    A sniff hit the parser then declines (an sshd "Connection closed" line, an
+    app message merely mentioning "sshd[") must keep today's generic_syslog
+    result instead of becoming a new dead-letter.
+    shortcut: claimed lines are parsed twice (here + normalize_one); regex-cheap,
+    revisit only if WS-2 profiling shows it.
+    """
+    candidate = _sniff_text(raw)
+    if candidate is None:
+        return None
+    try:
+        claimed = candidate.parse(raw_payload) is not None
+    except Exception:  # noqa: BLE001 -- hostile line must not escape resolve()
+        claimed = False
+    return candidate if claimed else None
+
+
 def resolve(raw_payload: dict) -> Optional[Parser]:
     """Pick a parser for a raw.events payload.
 
@@ -177,26 +212,27 @@ def resolve(raw_payload: dict) -> Optional[Parser]:
     routes on specific fields/values, keeps every registered parser reachable, and
     returns None (-> dead-letter) rather than silently mis-routing an ambiguous
     payload.
+
+    Exception: ``generic_syslog`` is the label WS-1's UDP listener stamps on
+    EVERY datagram (it cannot know the product), so it means "unidentified
+    syslog line", not a product claim. For that label only, a text line is
+    content-sniffed first and handed to a specific parser if that parser
+    actually parses it; otherwise it stays on ``generic_syslog``.
     """
     st = raw_payload.get("source_type", "") or ""
     parser = _REGISTRY.get(st)
-    if parser is not None:
-        return parser
     raw = raw_payload.get("raw")
+    # mypy-narrowing: check isinstance directly at each use site rather than
+    # caching a boolean, so the str type follows into the helpers below.
+    if parser is not None:
+        if st == "generic_syslog" and isinstance(raw, str) \
+                and not raw.lstrip().startswith("{"):
+            return _claiming_text_parser(raw_payload, raw) or parser
+        return parser
     # Text-line sources (raw is a syslog string, not JSON).
     if isinstance(raw, str) and not raw.lstrip().startswith("{"):
-        if raw.startswith("CEF:"):
-            return _REGISTRY["cef"]
-        # sshd is checked first: a bare "%ASA" substring (no strict tag) can
-        # appear inside attacker-controlled content (e.g. a crafted SSH
-        # username) and must never outrank a real sshd marker.
-        if "sshd[" in raw or "pam_unix(sshd:" in raw:
-            return _REGISTRY["linux_ssh"]
-        if _ASA_TAG_RE.search(raw):
-            return _REGISTRY["cisco_asa"]
-        if "query[" in raw and " from " in raw:
-            return _REGISTRY["dns_query"]
-        return _REGISTRY["generic_syslog"]  # catch-all syslog is now reachable
+        # catch-all syslog is now reachable
+        return _sniff_text(raw) or _REGISTRY["generic_syslog"]
     rec = _as_record(raw)
     if rec is None:
         return None

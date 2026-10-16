@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (2026-10-15/16, console rebuild, demo and project page — `feat/dashboard-rebuild`)
+
+- **Rebuilt console** (React 18, Vite, TypeScript, `services/ws7-dashboard/app`) at `/`, the previous UI at `/legacy/`. Twelve views, German and English, light and dark, phone widths; Archivo + JetBrains Mono; ISA-101 alarm shapes plus text. New views: Events log explorer, Coverage, Sources (how devices get connected), Inventory, Operations (with a Prometheus health panel), Audit, Account (MFA), Settings.
+- **Admin features**: users (create, role, reset, disable; last-active-admin guard), notification channels (read-only, redacted), per-tenant rule switch (WS-4 re-reads a changed tenant file per event; shared `tenants-config` volume), add device (WS-3 calls WS-6 server-side). Admin only, CSRF, audited. Sign-in has an MFA code field and says which host, whether the sign-in service answers, and warns on plain HTTP.
+- **Live UDP syslog reaches the specific parsers**: WS-2 content-sniffs the `generic_syslog` label WS-1 stamps on every datagram (sshd, Cisco ASA, CEF, DNS, including CEF behind a syslog header); explicit source types stay authoritative.
+- **Static demo build** (`npm run build:demo`, `docs/demo/`): the real console on a recording of a lab run, timestamps shifted to now, writes local only, with "Replay the attack". See `docs/console-demo.md`.
+- **Project page rebuilt** as a departure board (`docs/index.html`, `DESIGN.md`): the board follows the embedded console during the replay, nine-service architecture diagram that lights as the attack passes, 36-rule timetable generated from the rule files, a capability board with honest "cancelled" rows, four recorded chapters, DE/EN, self-hosted fonts, no third-party requests.
+- `tools/console_e2e` (check, MFA, demo, page, screenshots, fixture recorder, tour and chapter recordings) and `tools/console_tour_traffic.py` (lab attack traffic).
+- `docs/console-feature-matrix.md`: every console feature with its proven state.
+
 ### Changed (2026-10-14 -- owner decisions on the open PR #93 items; see docs/handoff/2026-10-14-open-items-plan.md)
 
 - **BREAKING (alert ids): WS-4 account group keys are canonical (F2).** Rules grouping on

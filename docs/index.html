@@ -1,557 +1,844 @@
-<!--
-THESIS: A SIEM's proof isn't a claim, it's a screenshot — so the page reads like an
-engineering console handing you its own receipts, not a product marketing page
-gesturing at one. Refuses the "hero metric + generic feature cards" SaaS template.
-OWN-WORLD: deep-navy hero (soft blurred atmosphere, no photography) dissolving to
-near-black content; bold rounded Sora display over Public Sans body over Fragment
-Mono for anything measured (commands, counts, endpoints); one blue accent; every
-card a real `.gcard` bezel with a real HTTP call as its footer, never a stock icon
-tile.
-STORY: a security engineer evaluating self-hosted SIEMs lands, sees a real command
-they could run in the next 30 seconds, then eight real dashboard screenshots each
-captioned with the literal request that produced them.
-FIRST VIEWPORT: left column — eyebrow pill, two-line bold headline, one-paragraph
-sub, three pill CTAs (primary white "View on GitHub"). Right column — a terminal
-card with tabs (Quickstart / Zero-infra demo), traffic-light dots, copy button,
-the real `make preflight && make demo` command. Soft navy gradient + blurred glow
-behind both, dissolving into the near-black body below.
-FORM: brief-pinned direction (user named an exact reference, deepseek.com/harness)
-— concept-seed/comp-tournament skipped per new-work.md's brief-pinned-direction
-rule; code-led build, no image-gen comp pipeline wired for this repo.
-FINISH: unreviewed and undocumented is unfinished; this build ends with the finish
-review, the verdict, DESIGN.md, and every shipping raster carrying its provenance.
--->
+<!doctype html>
+<html lang="en">
+<head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>FENGARDE</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Sora:wght@600;700;800&family=Public+Sans:wght@400;500;600;700&family=Fragment+Mono:ital@0;1&display=swap" rel="stylesheet">
+<title>FENGARDE · Logs in. Evidence out.</title>
+<meta name="description" content="FENGARDE is an open-source, self-hosted security pipeline for IT, AI and OT. Press replay: a recorded lab attack runs through the real console and the departure board announces it.">
+<meta name="color-scheme" content="dark">
+<meta property="og:type" content="website">
+<meta property="og:title" content="FENGARDE: Logs in. Evidence out.">
+<meta property="og:description" content="Open-source, self-hosted security pipeline for IT, AI and OT. Replay a recorded attack through the real console.">
+<meta property="og:url" content="https://supermhel.github.io/fengarde/">
+<meta property="og:image" content="https://supermhel.github.io/fengarde/img/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="theme-color" content="#080c18">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 2 4 5v6c0 5 3.4 9.3 8 11 4.6-1.7 8-6 8-11V5z' fill='%234f46e5'/%3E%3Cpath d='M8.5 12.2 11 14.6l4.6-5' fill='none' stroke='%23fff' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<link rel="preload" href="fonts/archivo-latin-wdth.woff2" as="font" type="font/woff2" crossorigin>
 <style>
+  @font-face{font-family:"Archivo";src:url("fonts/archivo-latin-wdth.woff2") format("woff2");font-weight:100 900;font-stretch:62% 125%;font-display:swap}
+  @font-face{font-family:"JetBrains Mono";src:url("fonts/jetbrains-mono-latin.woff2") format("woff2");font-weight:100 800;font-display:swap}
   :root{
-    /* FENGARDE's own established dark palette (services/ws7-dashboard DESIGN.md) --
-       kept as-is on purpose: this redesign borrows deepseek.com/harness's component
-       vocabulary and layout rhythm, not its navy-blue color world. */
-    --bg:#08090c; --bg-2:#0c0e13;
-    --hero-1:#08090c; --hero-2:#12141d; --hero-glow:#818cf8;
-    --panel:#12141b; --panel-2:#171a23;
-    --border:#232733; --border-soft:#1a1d26;
-    --txt:#eceef3; --muted:#8891a5; --dim:#5b6478;
-    --accent:#818cf8; --accent-2:#a5addf; --accent-ink:#08090c; --accent-soft:rgba(129,140,248,.14);
-    --crit:#f87171; --high:#fb923c; --med:#facc15; --low:#4ade80;
-    --crit-soft:rgba(248,113,113,.12); --high-soft:rgba(251,146,60,.12);
-    --med-soft:rgba(250,204,21,.12); --low-soft:rgba(74,222,128,.12);
-    --shadow:0 1px 2px rgba(0,0,0,.5), 0 24px 60px rgba(0,0,0,.5);
-    --display:'Sora',ui-sans-serif,system-ui,sans-serif;
-    --sans:'Public Sans',-apple-system,"Segoe UI",Roboto,sans-serif;
-    --mono:'Fragment Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    /* the board: night-blue ground, white ink; amber and red are alarm-only (same rule as the console) */
+    --ground:#080c18; --panel:#0d1325; --panel-2:#121a31; --rule:#1d2744; --rule-soft:#141c36;
+    --ink:#f1f4fb; --ink-2:#aab3cc; --mute:#6c7897;
+    --ok:#2fd3bd; --ok-soft:rgba(47,211,189,.12);
+    --alarm:#f2a900; --alarm-soft:rgba(242,169,0,.13); --red:#ff5a52;
+    --brand:#8f93fb; --brand-strong:#4f46e5; --brand-ink:#0c0f16;
+    --font:"Archivo",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    --mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    --wrap:1240px;
   }
   *{box-sizing:border-box}
-  html{background:var(--bg)}
-  body{margin:0;background:var(--bg);color:var(--txt);font-family:var(--sans);
-    -webkit-font-smoothing:antialiased;line-height:1.6;overflow-x:hidden}
-  ::selection{background:var(--accent);color:var(--accent-ink)}
-  ::-webkit-scrollbar{width:12px;height:12px}
-  ::-webkit-scrollbar-track{background:var(--bg)}
-  ::-webkit-scrollbar-thumb{background:var(--border);border-radius:8px;border:3px solid var(--bg)}
-  ::-webkit-scrollbar-thumb:hover{background:var(--dim)}
-  html{scrollbar-color:var(--border) var(--bg)}
-  a{color:var(--accent)}
-  :focus-visible{outline:2px solid var(--accent);outline-offset:3px;border-radius:3px}
-  h1,h2,h3{text-wrap:balance;margin:0;font-family:var(--display)}
-  .wrap{max-width:1180px;margin:0 auto;padding:0 32px}
-  @media (max-width:720px){.wrap{padding:0 20px}}
-  code,.mono{font-family:var(--mono)}
-  .num{font-variant-numeric:tabular-nums}
+  html{background:var(--ground);scroll-behavior:smooth;scrollbar-color:var(--rule) var(--ground)}
+  body{margin:0;background:var(--ground);color:var(--ink);font:400 16px/1.55 var(--font);-webkit-font-smoothing:antialiased;
+    font-variant-numeric:tabular-nums;overflow-x:hidden}
+  ::selection{background:var(--brand);color:var(--brand-ink)}
+  a{color:var(--brand);text-underline-offset:3px}
+  :focus-visible{outline:2px solid var(--brand);outline-offset:3px;border-radius:3px}
+  code,.mono{font-family:var(--mono);font-size:.88em}
+  .wrap{max-width:var(--wrap);margin:0 auto;padding:0 32px}
+  .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+  .tiny{font:600 11.5px/1 var(--font);font-stretch:85%;letter-spacing:.16em;text-transform:uppercase;color:var(--mute)}
+  .cond{font-stretch:68%;font-weight:800;text-transform:uppercase;letter-spacing:.005em}
 
-  /* ---- eyebrow pill: used exactly 3x on this page (hero / architecture / closing),
-     each one a real distinguishing label, not decoration ---- */
-  .eyebrow{display:inline-flex;align-items:center;gap:8px;font-family:var(--mono);font-size:11px;
-    letter-spacing:.1em;text-transform:uppercase;color:var(--accent-2);border:1px solid rgba(174,188,255,.25);
-    background:rgba(111,139,255,.08);border-radius:999px;padding:7px 14px}
+  /* ---- top bar ---- */
+  .top{position:sticky;top:0;z-index:20;background:#080c18;border-bottom:1px solid var(--rule-soft)}
+  .top .wrap{display:flex;align-items:center;gap:22px;height:58px}
+  .mark{display:inline-flex;align-items:center;gap:10px;font:700 17px/1 var(--font);font-stretch:82%;letter-spacing:.17em;color:#fff;text-decoration:none}
+  .nav{display:flex;gap:4px;margin-left:12px}
+  .nav a{color:var(--ink-2);text-decoration:none;font-weight:600;font-size:14px;padding:8px 12px;border-radius:6px}
+  .nav a:hover{color:#fff;background:var(--panel-2)}
+  .spacer{flex:1}
+  .seg{display:inline-flex;border:1px solid var(--rule);border-radius:7px;overflow:hidden}
+  .seg button{background:none;border:0;color:var(--ink-2);font:700 12.5px/1 var(--font);letter-spacing:.06em;padding:8px 11px;cursor:pointer}
+  .seg button[aria-pressed="true"]{background:var(--brand);color:var(--brand-ink)}
+  .hero-grid{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);grid-template-areas:"h l" "c c";gap:26px 56px;align-items:end}
 
   /* ---- hero ---- */
-  .hero{position:relative;padding:120px 0 96px;overflow:hidden;
-    background:linear-gradient(180deg,var(--hero-1) 0%,var(--hero-2) 62%,var(--bg) 100%)}
-  .hero-glow{position:absolute;inset:0;pointer-events:none;z-index:0;
-    background:
-      radial-gradient(60% 50% at 78% 18%, rgba(129,140,248,.35), transparent 60%),
-      radial-gradient(45% 40% at 92% 42%, rgba(129,140,248,.22), transparent 65%),
-      radial-gradient(35% 30% at 55% 8%, rgba(74,222,128,.08), transparent 60%);
-    filter:blur(60px);opacity:.9}
-  .hero-inner{position:relative;z-index:1}
-  .topbar{display:flex;align-items:center;justify-content:space-between;padding-bottom:64px}
-  .brand{display:flex;align-items:center;gap:10px;font-family:var(--display);font-weight:700;
-    font-size:16px;letter-spacing:-.01em}
-  .brand .mark{width:28px;height:28px;border-radius:8px;background:var(--accent-soft);
-    color:var(--accent-2);display:flex;align-items:center;justify-content:center;flex:0 0 auto;
-    border:1px solid rgba(174,188,255,.25)}
-  .brand .mark svg{width:16px;height:16px}
-  .brand .tag{font-family:var(--mono);font-size:11px;letter-spacing:.04em;color:var(--muted);
-    border:1px solid var(--border);border-radius:999px;padding:3px 9px;margin-left:2px}
-  .navlinks{display:flex;align-items:center;gap:8px}
-  .navlink{font-family:var(--sans);font-weight:600;font-size:13.5px;color:var(--muted);text-decoration:none;
-    border-radius:999px;padding:9px 16px;transition:color .15s,background .15s}
-  .navlink:hover{color:var(--txt);background:rgba(255,255,255,.06)}
-  @media (max-width:720px){.navlinks{display:none}}
-
-  .hero-cols{display:grid;grid-template-columns:1.1fr .9fr;gap:56px;align-items:start}
-  .hero-cols>*{min-width:0}
-  @media (max-width:960px){.hero-cols{grid-template-columns:1fr}}
-  .hero h1{font-weight:800;font-size:clamp(38px,5.1vw,60px);letter-spacing:-.02em;line-height:1.06;
-    margin-top:22px}
-  .hero h1 em{font-style:normal;color:var(--accent-2)}
-  .hero p.lede{max-width:52ch;margin:22px 0 0;font-size:17px;color:var(--muted);line-height:1.7;overflow-wrap:anywhere}
-  .cta-row{display:flex;flex-wrap:wrap;gap:10px;margin-top:32px}
-  .btn{display:inline-flex;align-items:center;gap:8px;font-family:var(--sans);font-weight:700;font-size:14px;
-    border-radius:999px;padding:12px 20px;text-decoration:none;transition:transform .15s,background .15s,border-color .15s}
+  .hero{padding:28px 0 8px}
+  .hero .tiny{display:block;margin-bottom:18px}
+  h1{margin:0;font-size:clamp(50px,7vw,100px);line-height:.92;letter-spacing:-.005em}
+  h1 em{font-style:normal;color:var(--ok)}
+  .lede{max-width:50ch;margin:0 0 6px;font-size:17px;line-height:1.6;color:var(--ink-2);text-wrap:pretty}
+  .lede b{color:var(--ink);font-weight:600}
+  .cta{display:flex;flex-wrap:wrap;align-items:flex-start;gap:8px;margin:0}
+  .cta .btn{padding:12px 14px;font-size:14px}
+  .btn{display:inline-flex;align-items:center;gap:9px;font:700 15px/1 var(--font);padding:13px 20px;border-radius:8px;border:1px solid var(--rule);
+    background:var(--panel-2);color:var(--ink);text-decoration:none;cursor:pointer;transition:background .15s,border-color .15s,transform .1s}
+  .btn:hover{border-color:var(--brand)}
   .btn:active{transform:translateY(1px)}
-  .btn svg{width:16px;height:16px}
-  .btn-primary{background:var(--txt);color:var(--hero-1)}
-  .btn-primary:hover{background:var(--accent-2)}
-  .btn-ghost{background:rgba(255,255,255,.04);color:var(--txt);border:1px solid rgba(255,255,255,.14)}
-  .btn-ghost:hover{border-color:rgba(174,188,255,.5);background:rgba(255,255,255,.07)}
+  .btn.primary{background:var(--brand);border-color:var(--brand);color:var(--brand-ink)}
+  .btn.primary:hover{background:#a7aafc}
+  .btn:disabled{opacity:.55;cursor:default}
+  .play{width:0;height:0;border-left:9px solid currentColor;border-top:6px solid transparent;border-bottom:6px solid transparent;flex:none}
+  .gh-ic{flex:none}
+  .gh-ic.sm{width:14px;height:14px;vertical-align:-2px;margin-right:6px}
+  .ext::after{content:"";width:7px;height:7px;border-top:2px solid currentColor;border-right:2px solid currentColor;margin:-2px 0 0 4px;flex:none}
+  kbd{font:700 11px/1 var(--mono);padding:3px 6px;border-radius:4px;border:1px solid currentColor;opacity:.75}
 
-  .term{background:rgba(10,13,22,.82);backdrop-filter:blur(14px);border:1px solid rgba(255,255,255,.1);
-    border-radius:16px;box-shadow:var(--shadow);overflow:hidden}
-  .term-tabs{display:flex;align-items:center;gap:2px;padding:10px 10px 0}
-  .term-tab{font-family:var(--mono);font-size:12px;color:var(--dim);background:transparent;border:none;
-    padding:9px 14px;border-radius:8px 8px 0 0;cursor:default}
-  .term-tab.active{color:var(--txt);background:rgba(255,255,255,.06)}
-  .term-bar{display:flex;align-items:center;gap:8px;padding:11px 16px;border-top:1px solid rgba(255,255,255,.08);
-    border-bottom:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.02)}
-  .term-bar .dot{width:9px;height:9px;border-radius:50%}
-  .term-bar .path{margin-left:auto;display:inline-flex;align-items:center;gap:6px;font-family:var(--mono);
-    font-size:11.5px;color:var(--dim);background:none;border:none;cursor:default}
-  .term-body{padding:20px 18px 22px;font-family:var(--mono);font-size:13.5px;line-height:1.9;min-width:0}
-  .term-body .ln{color:var(--muted);overflow-wrap:anywhere}
-  .term-body .prompt{color:var(--accent-2)}
-  .term-body .out{color:var(--dim);overflow-wrap:anywhere}
+  /* ---- the board ---- */
+  .board-wrap{margin-top:34px;border:1px solid var(--rule);border-radius:12px;background:var(--panel);overflow:hidden}
+  .board-head{display:flex;align-items:center;gap:18px;padding:16px 22px;border-bottom:1px solid var(--rule);background:linear-gradient(180deg,var(--panel-2),var(--panel))}
+  .board-head h2{margin:0;font-size:clamp(26px,3.4vw,40px);line-height:1}
+  .board-head .sub{margin-left:auto;text-align:right}
+  table.board{width:100%;border-collapse:collapse}
+  .board th{padding:10px 22px;text-align:left;font:600 11.5px/1 var(--font);font-stretch:85%;letter-spacing:.16em;text-transform:uppercase;color:var(--mute);border-bottom:1px solid var(--rule-soft)}
+  .board td{padding:13px 22px;border-bottom:1px solid var(--rule-soft);font:600 clamp(16px,1.55vw,20px)/1.25 var(--font);font-stretch:78%;text-transform:uppercase;letter-spacing:.02em;vertical-align:middle}
+  .board tr:last-child td{border-bottom:0}
+  .board td.m{font-family:var(--mono);font-stretch:100%;font-weight:500;font-size:clamp(13px,1.15vw,15px);letter-spacing:0;color:var(--ink-2);text-transform:none}
+  .board .c-time{width:92px}.board .c-src{width:190px}.board .c-track{width:200px}.board .c-st{width:170px}
+  .st{display:inline-flex;align-items:center;gap:8px;white-space:nowrap}
+  .st::before{content:"";width:9px;height:9px;border-radius:50%;background:currentColor;flex:none}
+  .st.ok{color:var(--ok)}
+  .st.idle{color:var(--mute)}
+  .st.idle::before{background:none;border:2px solid currentColor}
+  .st.check{color:var(--alarm)}
+  .st.check::before{border-radius:0;clip-path:polygon(50% 0,100% 100%,0 100%)}            /* amber triangle, as in the console */
+  .st.verified{color:var(--ok)}
+  .st.verified::before{background:none;width:10px;height:6px;border-left:2.5px solid currentColor;border-bottom:2.5px solid currentColor;border-radius:0;transform:rotate(-45deg) translateY(-2px)}
+  .st.request{color:var(--brand)}
+  .st.request::before{background:none;border:2px solid currentColor}
+  .st.replace{color:var(--ink)}
+  .st.replace::before{background:none;border:2px dashed currentColor}
+  .st.cancel{color:var(--mute);text-decoration:line-through;text-decoration-thickness:2px}
+  .st.cancel::before{background:var(--mute);border-radius:0;height:2px;width:10px}
+  tr.alarm-row td{background:var(--alarm-soft)}
+  /* split-flap: each new character flips into place */
+  .ch{display:inline-block;transform-origin:50% 55%}
+  .fresh .ch{animation:flap .46s cubic-bezier(.3,.1,.2,1) both;animation-delay:var(--d,0ms)}
+  @keyframes flap{0%{transform:rotateX(-92deg);opacity:.15}55%{transform:rotateX(14deg);opacity:1}100%{transform:rotateX(0)}}
+  .board-foot{display:flex;flex-wrap:wrap;gap:8px 22px;align-items:center;padding:13px 22px;border-top:1px solid var(--rule);font:500 13px/1.4 var(--mono);color:var(--mute)}
+  .board-foot b{color:var(--ink-2);font-weight:600}
 
-  /* ---- section shell ---- */
-  section.block{padding:96px 0}
-  .section-head{max-width:640px;margin:0 auto 52px;text-align:center}
-  .section-head .eyebrow{margin-bottom:18px}
-  .section-head h2{font-size:clamp(28px,3.6vw,38px);letter-spacing:-.015em;font-weight:800}
-  .section-head p{color:var(--muted);font-size:16px;margin-top:16px}
+  /* ---- console terminal ---- */
+  .terminal{scroll-margin-top:72px;margin-top:26px;border:1px solid var(--rule);border-radius:12px;overflow:hidden;background:#0a0f20}
+  .terminal-bar{display:flex;align-items:center;gap:14px;padding:12px 18px;border-bottom:1px solid var(--rule);background:var(--panel)}
+  .terminal-bar .sub{margin-left:auto;font:500 13px/1.3 var(--mono);color:var(--mute)}
+  .terminal-bar a{font:600 13px/1 var(--font)}
+  .terminal iframe{display:block;width:100%;height:min(88vh,880px);min-height:620px;border:0;background:#fff}
 
-  /* ---- architecture: 4x2 icon-card grid (real 8 pipeline stages, not filler) ---- */
-  .stagegrid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
-  @media (max-width:900px){.stagegrid{grid-template-columns:repeat(2,1fr)}}
-  .stage{background:var(--panel);border:1px solid var(--border);border-radius:16px;padding:24px 20px}
-  .stage-head{display:flex;align-items:center;gap:10px;margin-bottom:14px}
-  .stage .icn{width:20px;height:20px;color:var(--muted);display:flex;align-items:center;justify-content:center;
-    flex:0 0 auto}
-  .stage.live .icn{color:var(--accent-2)}
-  .stage .icn svg{width:20px;height:20px;stroke-width:1.6}
-  .stage h3{font-size:15px;font-weight:700}
-  .stage p{font-size:13px;color:var(--muted);margin-top:8px;line-height:1.55}
-  .stage .no{font-family:var(--mono);font-size:11px;color:var(--dim);margin-bottom:8px}
+  /* ---- sections ---- */
+  section.block{padding:104px 0 0}
+  .sec-head{display:flex;flex-wrap:wrap;align-items:flex-end;gap:12px 34px;margin-bottom:34px}
+  .sec-head .tiny{width:100%}
+  h2.big{margin:0;font-size:clamp(38px,5.6vw,72px);line-height:.95}
+  .sec-head p{margin:0;max-width:60ch;color:var(--ink-2);font-size:17px}
+  .legend{display:flex;flex-wrap:wrap;gap:8px 22px;margin:0 0 16px;font:600 13px/1 var(--font);font-stretch:85%;letter-spacing:.08em;text-transform:uppercase}
+  .cap td.what{font-family:var(--font);font-stretch:100%;font-weight:450;font-size:15.5px;text-transform:none;letter-spacing:0;line-height:1.45;color:var(--ink)}
+  .cap td.what small{display:block;margin-top:2px;color:var(--mute);font-size:13.5px}
+  .cap .c-src{width:120px}.cap .c-track{width:240px}.cap .c-st{width:190px}
+  .cap td.m{font-size:13px}
 
-  /* ---- console showcase: sticky panel (desktop) that swaps to whichever
-     item is scrolled into the center band, real screenshots only -- see
-     showcase.js below. Falls back to one inline screenshot per item on
-     narrow viewports, where a pinned panel has no room to live. ---- */
-  .showcase{display:grid;grid-template-columns:.92fr 1.08fr;gap:56px;align-items:start}
-  .showcase-list{display:flex;flex-direction:column}
-  .showcase-item{padding:56px 0;border-bottom:1px solid var(--border-soft);opacity:.4;
-    transition:opacity .35s ease}
-  .showcase-item:first-child{padding-top:0}
-  .showcase-item.active{opacity:1}
-  .showcase-item .no{font-family:var(--mono);font-size:12px;color:var(--dim)}
-  .showcase-item h3{font-size:21px;margin-top:9px;font-weight:700}
-  .showcase-item p{color:var(--muted);font-size:14.5px;margin-top:10px;max-width:46ch;line-height:1.65}
-  .showcase-item .tag{display:inline-block;margin-top:14px;font-family:var(--mono);font-size:11px;
-    letter-spacing:.04em;text-transform:uppercase;color:var(--accent-2);background:var(--accent-soft);
-    border-radius:999px;padding:6px 13px;border:1px solid rgba(174,188,255,.2)}
-  .showcase-item .mob-shot{display:none}
-  .showcase-sticky{position:sticky;top:96px}
-  .showcase-frame{background:var(--panel);border:1px solid var(--border);border-radius:20px;
-    box-shadow:var(--shadow);overflow:hidden}
-  .showcase-frame .shot-wrap{background:var(--bg-2);aspect-ratio:1440/900;display:flex;
-    align-items:center;justify-content:center;padding:18px}
-  .showcase-frame img{display:block;width:100%;height:100%;object-fit:contain;object-position:center;
-    border-radius:8px}
-  .showcase-note{display:flex;gap:8px;align-items:baseline;padding:15px 26px 20px;font-family:var(--mono);
-    font-size:12px;color:var(--dim);border-top:1px solid var(--border-soft)}
-  .showcase-note b{color:var(--low);font-weight:600}
-  @media (max-width:900px){
-    .showcase{display:block}
-    .showcase-sticky{display:none}
-    .showcase-item{opacity:1;padding:0;border:none;background:var(--panel);border:1px solid var(--border);
-      border-radius:20px;box-shadow:var(--shadow);overflow:hidden;margin-bottom:24px}
-    .showcase-item .item-body{padding:26px 24px 20px}
-    .showcase-item .mob-shot{display:block;border-top:1px solid var(--border-soft);background:var(--bg-2);
-      padding:18px}
-    .showcase-item .mob-shot img{display:block;width:100%;height:auto;border-radius:10px}
-    .showcase-item .mob-note{display:flex;gap:8px;padding:14px 24px 18px;font-family:var(--mono);
-      font-size:11.5px;color:var(--dim);border-top:1px solid var(--border-soft)}
-    .showcase-item .mob-note b{color:var(--low);font-weight:600}
+
+
+  /* ---- LED ticker: the numbers, set like a station Laufband ---- */
+  .ticker{overflow:hidden;border-bottom:1px solid var(--rule-soft);background:#060a14}
+  .ticker{position:relative}
+  .ticker-pause{position:absolute;right:0;top:0;bottom:0;width:54px;border:0;border-left:1px solid var(--rule-soft);background:linear-gradient(90deg,transparent,#060a14 40%);color:var(--ink-2);cursor:pointer;display:grid;place-items:center}
+  .ticker-pause:hover{color:#fff}
+  .ticker-pause span{width:10px;height:12px;border-left:3px solid currentColor;border-right:3px solid currentColor}
+  .ticker-pause[aria-pressed="true"] span{width:0;height:0;border:0;border-left:10px solid currentColor;border-top:6px solid transparent;border-bottom:6px solid transparent}
+  .ticker.paused .ticker-track{animation-play-state:paused}
+  .ticker-track{display:flex;width:max-content;animation:ticker 70s linear infinite}
+  .ticker:hover .ticker-track,.ticker:focus-within .ticker-track{animation-play-state:paused}
+  .ticker .it{display:inline-flex;align-items:center;gap:12px;padding:11px 26px 11px 0;font:600 12.5px/1 var(--font);font-stretch:80%;letter-spacing:.14em;text-transform:uppercase;color:var(--ink-2);white-space:nowrap}
+  .ticker .it b{color:var(--ok);font-family:var(--mono);font-stretch:100%;font-weight:600;letter-spacing:.02em;font-size:13px}
+  .ticker .it::after{content:"";width:5px;height:5px;background:var(--rule);margin-left:14px}
+  @keyframes ticker{to{transform:translateX(-50%)}}
+  /* ---- closing call ---- */
+  .closing{margin-top:120px;border-top:1px solid var(--rule);border-bottom:1px solid var(--rule);background:linear-gradient(180deg,var(--panel),var(--ground))}
+  .closing .wrap{padding-top:78px;padding-bottom:78px;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:30px 60px;align-items:end}
+  .closing h2{margin:0;font-size:clamp(44px,7vw,104px);line-height:.92}
+  .closing h2 em{font-style:normal;color:var(--ok)}
+  .closing p{margin:18px 0 0;max-width:56ch;color:var(--ink-2);font-size:17px}
+  .closing .cta{margin:0;justify-content:flex-end}
+  .btn.gh{padding:9px 14px;font-size:13.5px;white-space:nowrap}
+
+
+  /* ---- architecture: a bus diagram, boxes link to the repository, lit by the replay ---- */
+  .arch-wrap{overflow-x:auto;border:1px solid var(--rule);border-radius:12px;background:var(--panel);padding:18px 18px 8px}
+  .arch-wrap svg{display:block;width:100%;min-width:920px;height:auto}
+  .arch-hint{display:none;margin:0 0 10px;font:600 12px/1 var(--font);font-stretch:85%;letter-spacing:.12em;text-transform:uppercase;color:var(--mute)}
+  .arch-note{margin:14px 2px 0;color:var(--mute);font-size:14px;max-width:84ch}
+  .arch-note code{color:var(--ink-2)}
+  .an rect{fill:var(--panel-2);stroke:var(--rule);stroke-width:1.5;transition:fill .25s,stroke .25s}
+  .an .nm{fill:var(--ink);font:700 15px var(--font);font-stretch:82%;letter-spacing:.12em;text-transform:uppercase}
+  .an .sb{fill:var(--ink-2);font:500 12.5px var(--font)}
+  .an .tp{fill:var(--mute);font:500 11px var(--mono)}
+  .an .lb{fill:var(--mute);font:700 9.5px var(--font);font-stretch:85%;letter-spacing:.16em;text-transform:uppercase}
+  .an:hover rect,.an:focus-visible rect{stroke:var(--brand)}
+  .an.lit rect{fill:rgba(47,211,189,.16);stroke:var(--ok)}
+  .an.lit .nm{fill:var(--ok)}
+  .an.alarm.lit rect{fill:rgba(242,169,0,.15);stroke:var(--alarm)}
+  .an.alarm.lit .nm{fill:var(--alarm)}
+  .bus{stroke:var(--rule);stroke-width:5;stroke-linecap:round}
+  .bus.live{stroke:var(--ok)}
+  .stub{stroke:var(--rule);stroke-width:2}
+  .stub.on{stroke:var(--ok)}
+  .http{stroke:var(--mute);stroke-width:2;stroke-dasharray:5 5}
+  .bus-lb{fill:var(--mute);font:700 10px var(--font);font-stretch:85%;letter-spacing:.18em;text-transform:uppercase}
+
+  /* ---- why: a ruled list, not a card grid ---- */
+  .why{border-top:1px solid var(--rule)}
+  .why-row{display:grid;grid-template-columns:minmax(0,5fr) minmax(0,7fr);gap:18px 48px;padding:30px 0;border-bottom:1px solid var(--rule)}
+  .why-row h3{margin:0;font-size:clamp(26px,3vw,40px);line-height:1}
+  .why-row p{margin:0;color:var(--ink-2);font-size:16.5px;line-height:1.6;max-width:66ch}
+  .why-row .rcpt{display:block;margin-top:12px;font:500 12.5px/1.5 var(--mono);color:var(--mute)}
+  /* capability board: group headers */
+  .board.cap tr.grp td{padding:18px 22px 10px;background:var(--panel-2);border-bottom:1px solid var(--rule);font:700 12.5px/1 var(--font);font-stretch:85%;letter-spacing:.18em;text-transform:uppercase;color:var(--brand)}
+  .board.cap tr.grp:first-child td{border-top:0}
+  /* rule timetable */
+  .det-dom{margin:34px 0 8px;display:flex;align-items:baseline;gap:14px;flex-wrap:wrap}
+  .det-dom h3{margin:0;font-size:clamp(24px,2.6vw,34px);line-height:1}
+  .det-dom .tiny{letter-spacing:.14em}
+  .det-list{display:grid;grid-template-columns:1fr 1fr;gap:0 30px;border-top:1px solid var(--rule)}
+  .rl{display:grid;grid-template-columns:106px minmax(0,1fr);gap:4px 14px;padding:11px 0;border-bottom:1px solid var(--rule-soft);align-items:baseline}
+  .rl .rt{font-size:15px;line-height:1.35}
+  .rl .mt{grid-column:2;font-size:12.5px;color:var(--mute)}
+  .lv{display:inline-flex;align-items:center;gap:8px;font:700 11.5px/1 var(--font);font-stretch:85%;letter-spacing:.1em;text-transform:uppercase;white-space:nowrap}
+  .lv::before{content:"";width:10px;height:10px;flex:none;background:currentColor}
+  .lv.critical{color:var(--red)}
+  .lv.high{color:var(--alarm)}.lv.high::before{clip-path:polygon(50% 0,100% 100%,0 100%)}
+  .lv.medium{color:#e3c400}.lv.medium::before{clip-path:polygon(50% 0,100% 50%,50% 100%,0 50%)}
+  .lv.low{color:var(--ink-2)}.lv.low::before{background:none;border:2px solid currentColor;border-radius:50%}
+  .shapes{display:flex;flex-wrap:wrap;gap:8px 22px;margin:0 0 4px}
+
+  .views{display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:16px}
+  .view{display:block;text-decoration:none;color:inherit;border:1px solid var(--rule);border-radius:10px;overflow:hidden;background:var(--panel);transition:border-color .15s,transform .15s}
+  .view:hover{border-color:var(--brand);transform:translateY(-2px)}
+  .view img{display:block;width:100%;aspect-ratio:1440/900;object-fit:cover;object-position:top left;background:#fff}
+  .view .cap-txt{padding:13px 16px 15px}
+  .view b{display:block;font:700 15px/1.2 var(--font);font-stretch:85%;letter-spacing:.1em;text-transform:uppercase}
+  .view span{display:block;margin-top:5px;font-size:13.5px;line-height:1.45;color:var(--ink-2)}
+
+  .video-frame{max-width:1040px;border:1px solid var(--rule);border-radius:12px;overflow:hidden;background:var(--panel)}
+  .video-frame video{display:block;width:100%;height:auto;aspect-ratio:16/9;background:#05060a}
+  .video-frame .board-foot{border-top:1px solid var(--rule)}
+
+
+  .rec{display:grid;grid-template-columns:minmax(0,1.7fr) minmax(0,1fr);gap:22px;align-items:start}
+  .rec .video-frame{max-width:none}
+  .chapters{list-style:none;margin:0;padding:0;display:grid;gap:10px}
+  .chapters button{width:100%;text-align:left;display:grid;grid-template-columns:auto minmax(0,1fr);gap:4px 14px;padding:14px 16px;border:1px solid var(--rule);border-radius:10px;background:var(--panel);color:var(--ink);cursor:pointer;font:inherit}
+  .chapters button:hover{border-color:var(--brand)}
+  .chapters button[aria-current="true"]{border-color:var(--ok);background:var(--panel-2)}
+  .chapters .n{grid-row:1 / span 2;font:700 28px/1 var(--font);font-stretch:68%;color:var(--mute);align-self:center}
+  .chapters button[aria-current="true"] .n{color:var(--ok)}
+  .chapters b{font:700 16px/1.2 var(--font);font-stretch:85%;letter-spacing:.06em;text-transform:uppercase}
+  .chapters .d{font:500 12.5px/1 var(--mono);color:var(--mute);margin-left:8px;letter-spacing:0;text-transform:none}
+  .chapters span.t{font-size:13.5px;line-height:1.45;color:var(--ink-2)}
+
+  .run{display:grid;grid-template-columns:1.1fr .9fr;gap:34px;align-items:start}
+  pre.cmd{margin:0;padding:22px 24px;border:1px solid var(--rule);border-radius:12px;background:var(--panel);font:500 14.5px/1.85 var(--mono);color:var(--ink-2);overflow-x:auto}
+  pre.cmd .p{color:var(--brand)} pre.cmd .c{color:var(--mute)}
+  .run ul{margin:0;padding:0;list-style:none;display:grid;gap:12px;color:var(--ink-2)}
+  .run li{padding-left:22px;position:relative}
+  .run li::before{content:"";position:absolute;left:0;top:.62em;width:9px;height:9px;border-radius:50%;border:2px solid var(--ok)}
+
+  footer{padding:44px 0 64px;color:var(--mute)}
+  footer .row{display:flex;flex-wrap:wrap;gap:16px 40px;justify-content:space-between}
+  .foot-mark{margin-bottom:22px}
+  footer p{margin:0;max-width:74ch;font-size:14px;line-height:1.6}
+  footer a{color:var(--ink-2)}
+
+  @media (max-width:980px){
+    .nav{display:none}
+    .arch-hint{display:block}
+    .hero-grid{grid-template-columns:1fr;grid-template-areas:"h" "l" "c";gap:22px}
+    .run{grid-template-columns:1fr}
+    .rec{grid-template-columns:1fr}
+    .closing .wrap{grid-template-columns:1fr}.closing .cta{justify-content:flex-start}
+    .why-row{grid-template-columns:1fr}
+    .det-list{grid-template-columns:1fr}
+    .board .c-time,.board .c-track{display:none}.board th.c-time,.board th.c-track{display:none}
+    .board .c-src{width:96px}.board .c-st{width:120px}
+    .cap .c-track{display:none}.cap th.c-track{display:none}
   }
-
-  /* ---- closing principle ---- */
-  .principle{background:var(--panel-2);border-top:1px solid var(--border-soft);border-bottom:1px solid var(--border-soft)}
-  .principle-inner{max-width:760px;margin:0 auto;text-align:center}
-  .principle .eyebrow{margin-bottom:26px}
-  .principle h2{font-size:clamp(26px,4vw,42px);line-height:1.2;font-weight:800;letter-spacing:-.02em}
-  .principle h2 em{font-style:normal;color:var(--accent-2)}
-  .section-head h2 em{font-style:normal;color:var(--accent-2)}
-  .cta-center{justify-content:center;margin-top:0}
-  .principle p.sub{margin:20px 0 0;font-size:15.5px;color:var(--muted)}
-  .plist{display:flex;flex-wrap:wrap;justify-content:center;gap:12px;margin-top:36px}
-  .plist span{font-family:var(--mono);font-size:12.5px;color:var(--muted);background:var(--panel);
-    border:1px solid var(--border);border-radius:999px;padding:9px 16px}
-  .plist span b{color:var(--txt);font-weight:600}
-
-  /* ---- footer ---- */
-  footer{padding:60px 0 64px}
-  .foot-grid{display:flex;justify-content:space-between;align-items:flex-end;gap:32px;flex-wrap:wrap}
-  .foot-brand{font-family:var(--display);font-weight:700;font-size:16px}
-  .foot-brand p{font-family:var(--sans);font-weight:400;font-size:13.5px;color:var(--muted);margin-top:10px;
-    max-width:360px;line-height:1.6}
-  .foot-links{display:flex;gap:24px}
-  .foot-rule{height:1px;background:var(--border-soft);margin:34px 0 20px}
-  .foot-legal{display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px;font-family:var(--mono);
-    font-size:11.5px;color:var(--dim)}
-  @media (prefers-reduced-motion:no-preference){
-    .reveal{animation:rise .6s cubic-bezier(.16,1,.3,1) both}
-    @keyframes rise{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:translateY(0)}}
+  @media (max-width:720px){
+    .wrap{padding:0 18px}
+    .top .wrap{gap:10px}.mark{letter-spacing:.12em;font-size:15px;gap:8px}.btn.gh{padding:8px 11px;font-size:13px}.seg button{padding:8px 9px}
+    .hero{padding-top:34px}
+    .board th{display:none}
+    .board tr{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 12px;padding:12px 16px;border-bottom:1px solid var(--rule-soft)}
+    .board tr:last-child{border-bottom:0}
+    .board td{border:0;padding:0;width:auto!important}
+    .board.cap tr.grp{display:block;padding:0}.board.cap tr.grp td{display:block;padding:14px 16px 8px}
+    .board td.c-ev,.cap td.what{flex:1 1 100%;order:1}
+    .board td.c-st{order:2}.board td.c-src{order:3}
+    .board-head{padding:14px 16px}.board-foot{padding:12px 16px}
+    .cap td.c-src{order:0;flex:1 1 100%;margin-bottom:2px}
+    section.block{padding-top:76px}
+    .terminal iframe{height:80vh;min-height:560px}
   }
+  @media (prefers-reduced-motion:reduce){.an rect{transition:none}.ticker-pause{display:none}.ticker-track{animation:none;flex-wrap:wrap;width:auto}html{scroll-behavior:auto}.fresh .ch{animation:none}.view{transition:none}}
 </style>
+</head>
+<body>
+<!--
+THESIS: A security tool's page should be its own status board: the visitor watches one real attack get announced, then checks the receipts. Refuses the dark-navy hero, three feature cards and a screenshot carousel.
+OWN-WORLD: German station departure board: night-blue ground, white condensed caps (Archivo, narrow width axis), hairline rows, split-flap character flips. Teal means on time/verified; amber is alarm-only; indigo marks actions. Real data in mono.
+STORY: In seconds the visitor sees what it is (logs in, evidence out), presses Replay, and the board announces a recorded lab attack as the embedded real console raises it: alarm, incident, evidence verified. The capability board then states what is cancelled, plainly.
+FIRST VIEWPORT: Oversized condensed headline left, lede, primary Replay button, then the departure board with the five pipeline stages on time; the real console sits below it as the information terminal.
+FORM: Departure board (Anzeigetafel), assigned index 5, seed key 5e0f51d3.
+FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, DESIGN.md, and every shipping raster carrying its provenance
+-->
 
-<header class="hero">
-  <div class="hero-glow" aria-hidden="true"></div>
-  <div class="wrap hero-inner">
-    <div class="topbar">
-      <div class="brand">
-        <span class="mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l8 3v6c0 5-3.4 8.6-8 11-4.6-2.4-8-6-8-11V5l8-3z"/><path d="M9 12l2 2 4-4"/></svg></span>
-        FENGARDE
-        <span class="tag">console tour</span>
-      </div>
-      <nav class="navlinks">
-        <a class="navlink" href="https://github.com/supermhel/fengarde">GitHub</a>
-        <a class="navlink" href="https://github.com/supermhel/fengarde/blob/main/README.md">README</a>
-        <a class="navlink" href="https://github.com/supermhel/fengarde/blob/main/SSOT.md">Status</a>
-      </nav>
-    </div>
-
-    <div class="hero-cols">
-      <div>
-        <span class="eyebrow">Captured live off a running stack</span>
-        <h1>Every alert is real.<br>Every screenshot <em>proves</em> it.</h1>
-        <p class="lede">FENGARDE connects security telemetry across IT, AI and OT — <code
-          class="mono">collect → normalize → detect → correlate → index</code> — to show what happened,
-          who or what acted, and what evidence supports the conclusion. Open-source, self-hosted,
-          Apache-2.0, built for the European industrial Mittelstand with a draft-NIS2 path in. The eight
-          views below aren't mockups: each one is a render from a live Docker stack, seconds after the
-          HTTP request that produced it.</p>
-        <div class="cta-row">
-          <a class="btn btn-primary" href="https://github.com/supermhel/fengarde">
-            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.48 2 2 6.58 2 12.25c0 4.53 2.87 8.37 6.84 9.73.5.1.68-.22.68-.5 0-.24-.01-1.04-.01-1.88-2.78.62-3.37-1.21-3.37-1.21-.46-1.19-1.11-1.51-1.11-1.51-.91-.63.07-.62.07-.62 1 .07 1.53 1.05 1.53 1.05.89 1.56 2.34 1.11 2.91.85.09-.66.35-1.11.63-1.37-2.22-.26-4.56-1.14-4.56-5.06 0-1.12.39-2.03 1.03-2.75-.1-.26-.45-1.3.1-2.71 0 0 .84-.28 2.75 1.05a9.3 9.3 0 0 1 5 0c1.9-1.33 2.74-1.05 2.74-1.05.55 1.41.2 2.45.1 2.71.64.72 1.03 1.63 1.03 2.75 0 3.93-2.34 4.79-4.57 5.05.36.32.68.94.68 1.9 0 1.37-.01 2.48-.01 2.81 0 .28.18.61.69.5A10.26 10.26 0 0 0 22 12.25C22 6.58 17.52 2 12 2z"/></svg>
-            View on GitHub
-          </a>
-          <a class="btn btn-ghost" href="#quickstart-anchor">Quickstart</a>
-          <a class="btn btn-ghost" href="https://github.com/supermhel/fengarde/blob/main/SSOT.md">Live status</a>
-        </div>
-      </div>
-
-      <div class="term" id="quickstart-anchor">
-        <div class="term-tabs">
-          <span class="term-tab active">Quickstart</span>
-          <span class="term-tab">Zero-infra demo</span>
-        </div>
-        <div class="term-bar">
-          <span class="dot" style="background:#f87171"></span>
-          <span class="dot" style="background:#fbbf24"></span>
-          <span class="dot" style="background:#4ade80"></span>
-          <span class="path">fengarde — 10 min</span>
-        </div>
-        <div class="term-body">
-          <div class="ln"><span class="prompt">$</span> git clone https://github.com/supermhel/fengarde.git</div>
-          <div class="ln"><span class="prompt">$</span> cd fengarde &amp;&amp; make preflight</div>
-          <div class="ln"><span class="prompt">$</span> make demo</div>
-          <div class="out"># real SSH brute-force alert in the dashboard within ~30-60s</div>
-          <div class="out"># open http://localhost:8080</div>
-        </div>
-      </div>
-    </div>
+<header class="top">
+  <div class="wrap">
+    <a class="mark" href="#top" aria-label="FENGARDE"><svg width="26" height="26" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2 4 5v6c0 5 3.4 9.3 8 11 4.6-1.7 8-6 8-11V5z" fill="#4f46e5"/><path d="M8.5 12.2 11 14.6l4.6-5" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>FENGARDE</a>
+    <nav class="nav" aria-label="Sections">
+      <a href="#console" data-i18n="nav_console">Console</a>
+      <a href="#why" data-i18n="nav_why">Why</a>
+      <a href="#architecture" data-i18n="nav_arch">Architecture</a>
+      <a href="#capabilities" data-i18n="nav_cap">What runs</a>
+      <a href="#views" data-i18n="nav_views">Views</a>
+      <a href="#tour" data-i18n="nav_tour">Recording</a>
+      <a href="#run" data-i18n="nav_run">Run it</a>
+    </nav>
+    <span class="spacer"></span>
+    <a class="btn gh" href="https://github.com/supermhel/fengarde" aria-label="FENGARDE on GitHub"><svg class="gh-ic" width="17" height="17" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2C6.48 2 2 6.58 2 12.25c0 4.53 2.87 8.37 6.84 9.73.5.1.68-.22.68-.5 0-.24-.01-1.04-.01-1.88-2.78.62-3.37-1.21-3.37-1.21-.46-1.19-1.11-1.51-1.11-1.51-.91-.63.07-.62.07-.62 1 .07 1.53 1.05 1.53 1.05.89 1.56 2.34 1.11 2.91.85.09-.66.35-1.11.63-1.37-2.22-.26-4.56-1.14-4.56-5.06 0-1.12.39-2.03 1.03-2.75-.1-.26-.45-1.3.1-2.71 0 0 .84-.28 2.75 1.05a9.3 9.3 0 0 1 5 0c1.9-1.33 2.74-1.05 2.74-1.05.55 1.41.2 2.45.1 2.71.64.72 1.03 1.63 1.03 2.75 0 3.93-2.34 4.79-4.57 5.05.36.32.68.94.68 1.9 0 1.37-.01 2.48-.01 2.81 0 .28.18.61.69.5A10.26 10.26 0 0 0 22 12.25C22 6.58 17.52 2 12 2z"/></svg>GitHub</a>
+    <span class="seg" role="group" aria-label="Language"><button type="button" data-lang="de" aria-pressed="false">DE</button><button type="button" data-lang="en" aria-pressed="true">EN</button></span>
   </div>
 </header>
 
-<section class="block wrap">
-  <div class="section-head">
-    <span class="eyebrow">Architecture</span>
-    <h2>Nine independent services.<br>One message bus between them.</h2>
-    <p>No service calls another directly. Every arrow below is a real Redis Streams topic — swap, restart,
-      or scale any one stage without touching the rest. (Two arrows are HTTP via the same-origin nginx
-      proxy instead: Console↔Index and Console↔Inventory-read — the dashboard talks HTTP, not streams.)</p>
+<div class="ticker" role="region" aria-label="Numbers"><div class="ticker-track" id="ticker"></div><button class="ticker-pause" id="tickerPause" type="button" aria-pressed="false" aria-label="Pause the ticker"><span></span></button></div>
+
+<main id="top">
+  <section class="hero wrap">
+    <div class="hero-grid">
+      <h1 class="cond" style="grid-area:h"><span data-i18n="h1a">Logs in.</span><br><em data-i18n="h1b">Evidence out.</em></h1>
+      <div class="cta" style="grid-area:c">
+        <button class="btn primary" id="replay" type="button"><span class="play" aria-hidden="true"></span><span id="replayLabel">Replay the attack</span> <kbd>R</kbd></button>
+        <a class="btn" href="demo/" data-i18n="cta_console">Open console</a>
+        <a class="btn" href="#tour" data-i18n="cta_tour">Watch the recordings</a>
+        <a class="btn" href="https://github.com/supermhel/fengarde"><svg class="gh-ic" width="17" height="17" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2C6.48 2 2 6.58 2 12.25c0 4.53 2.87 8.37 6.84 9.73.5.1.68-.22.68-.5 0-.24-.01-1.04-.01-1.88-2.78.62-3.37-1.21-3.37-1.21-.46-1.19-1.11-1.51-1.11-1.51-.91-.63.07-.62.07-.62 1 .07 1.53 1.05 1.53 1.05.89 1.56 2.34 1.11 2.91.85.09-.66.35-1.11.63-1.37-2.22-.26-4.56-1.14-4.56-5.06 0-1.12.39-2.03 1.03-2.75-.1-.26-.45-1.3.1-2.71 0 0 .84-.28 2.75 1.05a9.3 9.3 0 0 1 5 0c1.9-1.33 2.74-1.05 2.74-1.05.55 1.41.2 2.45.1 2.71.64.72 1.03 1.63 1.03 2.75 0 3.93-2.34 4.79-4.57 5.05.36.32.68.94.68 1.9 0 1.37-.01 2.48-.01 2.81 0 .28.18.61.69.5A10.26 10.26 0 0 0 22 12.25C22 6.58 17.52 2 12 2z"/></svg>GitHub</a>
+      </div>
+      <p class="lede" style="grid-area:l" data-i18n-html="lede">FENGARDE turns a raw log line into a <b>verified incident</b> and a <b>draft NIS2 notification</b>.</p>
+    </div>
+
+    <div class="board-wrap" id="boardwrap">
+      <div class="board-head">
+        <h2 class="cond" data-i18n="board_title">Departures</h2>
+        <span class="tiny" data-i18n="board_tag">pipeline · lab stack</span>
+        <span class="sub tiny" id="boardState" data-i18n="state_idle">Idle: nothing replayed</span>
+      </div>
+      <table class="board" id="board">
+        <caption class="sr-only" data-i18n="board_cap">Departure board: pipeline stages and the alarms raised by the replayed attack</caption>
+        <thead><tr>
+          <th class="c-time" data-i18n="th_time">Time</th><th class="c-src" data-i18n="th_src">Source</th><th class="c-ev" data-i18n="th_ev">Event</th>
+          <th class="c-track" data-i18n="th_track">Track</th><th class="c-st" data-i18n="th_st">Status</th>
+        </tr></thead>
+        <tbody id="boardBody"></tbody>
+      </table>
+      <div class="board-foot"><span data-i18n-html="board_foot"><b>Track</b> = bus topic.</span></div>
+    </div>
+    <div class="sr-only" id="live" aria-live="polite"></div>
+
+    <div class="terminal" id="console">
+      <div class="terminal-bar">
+        <span class="tiny" data-i18n="term_title">Information terminal · the real console</span>
+        <span class="sub" data-i18n="term_sub">recorded lab data · changes are not saved</span>
+        <a class="ext" href="demo/" target="_blank" rel="noopener" data-i18n="term_open">Open full screen</a>
+      </div>
+      <iframe id="frame" title="FENGARDE console, demo build on recorded lab data" data-src="demo/" loading="lazy" referrerpolicy="no-referrer"></iframe>
+    </div>
+  </section>
+
+  <section class="block wrap" id="why">
+    <div class="sec-head">
+      <h2 class="big cond" data-i18n="why_h">One pipeline. Receipts included.</h2>
+      <p data-i18n="why_p">Seven things FENGARDE does that a log viewer does not. Each names the place in the repository where you can check it.</p>
+    </div>
+    <div class="why" id="whyList"></div>
+  </section>
+
+  <section class="block wrap" id="architecture">
+    <div class="sec-head">
+      <h2 class="big cond" data-i18n="arch_h">Nine services. One bus.</h2>
+      <p data-i18n="arch_p">No service calls another. Each reads topics from the bus and writes topics back, so any stage can be restarted, swapped or scaled alone. Every box opens its directory on GitHub, and during a replay the boxes light as the attack passes through them.</p>
+    </div>
+    <p class="arch-hint" data-i18n="arch_hint">Swipe sideways to see the whole bus.</p>
+    <div class="arch-wrap"><svg id="archSvg" viewBox="0 0 1120 500" role="img" aria-labelledby="archT archD"></svg></div>
+    <p class="arch-note" data-i18n-html="arch_note"></p>
+  </section>
+
+  <section class="block wrap" id="capabilities">
+    <div class="sec-head">
+      <h2 class="big cond" data-i18n="cap_h">What runs. What does not.</h2>
+      <p data-i18n="cap_p">Every capability gets the board's honest word. Anything stubbed, opt-in or not built says so.</p>
+    </div>
+    <div class="legend" aria-label="Legend">
+      <span class="st ok" data-i18n="st_ok">on time</span><span class="st request" data-i18n="st_request">on request</span>
+      <span class="st replace" data-i18n="st_replace">replacement</span><span class="st cancel" data-i18n="st_cancel">cancelled</span>
+    </div>
+    <div class="board-wrap">
+      <table class="board cap" id="capBoard">
+        <caption class="sr-only" data-i18n="cap_cap">Capability board</caption>
+        <thead><tr><th class="c-src" data-i18n="th_svc">Service</th><th data-i18n="th_what">What</th><th class="c-track" data-i18n="th_track2">Interface</th><th class="c-st" data-i18n="th_st">Status</th></tr></thead>
+        <tbody id="capBody"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="block wrap" id="detection">
+    <div class="sec-head">
+      <h2 class="big cond" data-i18n="det_h">36 rules, all listed.</h2>
+      <p data-i18n="det_p">Read straight from the rule files in the repository: level, title and the MITRE ATT&amp;CK (or ATLAS, or ICS) tag each one carries.</p>
+    </div>
+    <div class="legend shapes" aria-label="Levels"><span class="lv critical" data-i18n="lv_critical">critical</span><span class="lv high" data-i18n="lv_high">high</span><span class="lv medium" data-i18n="lv_medium">medium</span><span class="lv low" data-i18n="lv_low">low</span></div>
+    <div id="detBody"></div>
+  </section>
+
+  <section class="block wrap" id="views">
+    <div class="sec-head">
+      <h2 class="big cond" data-i18n="views_h">Twelve views. Open any.</h2>
+      <p data-i18n="views_p">Each tile opens that view of the real console on the recorded data.</p>
+    </div>
+    <div class="views" id="viewGrid"></div>
+  </section>
+
+  <section class="block wrap" id="tour">
+    <div class="sec-head">
+      <h2 class="big cond" data-i18n="tour_h">One take, no cuts.</h2>
+      <p data-i18n="tour_p">Recorded in a scripted browser against a running stack. A real SSH brute force and a DNS burst go in over UDP 5514 at about 0:30.</p>
+    </div>
+    <div class="rec">
+      <div class="video-frame">
+        <video id="player" controls preload="metadata" playsinline poster="video/fengarde-console-tour.jpg" aria-label="FENGARDE console recording">
+          <source id="playerSrc" src="video/fengarde-console-tour.mp4" type="video/mp4">
+        </video>
+        <div class="board-foot"><span id="recFoot"></span></div>
+      </div>
+      <ol class="chapters" id="chapters" aria-label="Chapters"></ol>
+    </div>
+  </section>
+
+  <section class="block wrap" id="run">
+    <div class="sec-head">
+      <h2 class="big cond" data-i18n="run_h">Run it in ten minutes.</h2>
+    </div>
+    <div class="run">
+      <pre class="cmd"><span class="p">$</span> git clone https://github.com/supermhel/fengarde.git
+<span class="p">$</span> cd fengarde &amp;&amp; make preflight
+<span class="p">$</span> make demo          <span class="c"># an SSH brute force becomes a real alarm</span>
+<span class="c"># console on http://localhost:8080</span>
+
+<span class="p">$</span> cd tools/console_e2e &amp;&amp; npm install
+<span class="p">$</span> node check.mjs       <span class="c"># every view as admin, analyst, read-only</span>
+<span class="p">$</span> node tour.mjs out    <span class="c"># re-records the video, sends the attack</span></pre>
+      <ul>
+        <li data-i18n="run_l1">Docker Desktop with enough memory for OpenSearch. make preflight checks ports and limits before the first start.</li>
+        <li data-i18n-html="run_l2">The console, its checks and this page's video all come from the repository: <code>services/ws7-dashboard/app</code>, <code>tools/console_e2e</code>.</li>
+        <li data-i18n="run_l3">The UDP syslog listener is unauthenticated: expose port 5514 on a trusted network or VPN only.</li>
+        <li data-i18n-html="run_l4">Status, proven versus claimed: <a href="https://github.com/supermhel/fengarde/blob/main/SSOT.md">SSOT.md</a>. Features per view: <a href="https://github.com/supermhel/fengarde/blob/main/docs/console-feature-matrix.md">console feature matrix</a>.</li>
+      </ul>
+    </div>
+  </section>
+</main>
+
+<section class="block wrap" id="next">
+  <div class="sec-head">
+    <h2 class="big cond" data-i18n="next_h">You've seen the pipeline run. Now make it yours.</h2>
+    <p data-i18n="next_p">The 10-minute install is the first step, not the last. Pick the next one that fits.</p>
   </div>
-  <div class="stagegrid">
-    <div class="stage"><div class="no">01</div>
-      <div class="stage-head"><div class="icn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M4 12h16M4 18h9"/></svg></div><h3>Collect</h3></div>
-      <p><b>Syslog UDP → <code class="mono">raw.events</code></b> — SNMP/NetFlow collectors are still 🚧 planned (mock-JSON skeletons, no parser yet; every such payload dead-letters today)</p></div>
-    <div class="stage"><div class="no">02</div>
-      <div class="stage-head"><div class="icn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg></div><h3>Normalize</h3></div>
-      <p>17 parsers → restricted OCSF profile</p></div>
-    <div class="stage live"><div class="no">03</div>
-      <div class="stage-head"><div class="icn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l3 6 6 1-4.5 4.5L18 20l-6-3-6 3 1.5-6.5L3 9l6-1 3-6z"/></svg></div><h3>Detect</h3></div>
-      <p>29 rules, 28 MITRE-tagged, stateful windows</p></div>
-    <div class="stage live"><div class="no">04</div>
-      <div class="stage-head"><div class="icn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.4"/><circle cx="18" cy="6" r="2.4"/><circle cx="12" cy="18" r="2.4"/><path d="M8 7l8-1M8.4 8l3 8M15.6 8l-3 8"/></svg></div><h3>Correlate</h3></div>
-      <p>Cross-alert tracks → incidents</p></div>
-    <div class="stage"><div class="no">05</div>
-      <div class="stage-head"><div class="icn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="3"/><path d="M9 9h.01M15 9h.01M9 15c1 1 5 1 6 0"/></svg></div><h3>Triage</h3></div>
-      <p>Local Ollama or deterministic stub — never leaves the network</p></div>
-    <div class="stage"><div class="no">06</div>
-      <div class="stage-head"><div class="icn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="5" rx="1.5"/><rect x="3" y="11" width="18" height="5" rx="1.5"/><path d="M6 6.5h.01M6 13.5h.01"/></svg></div><h3>Inventory</h3></div>
-      <p>MAC-keyed asset history, IP-over-time</p></div>
-    <div class="stage"><div class="no">07</div>
-      <div class="stage-head"><div class="icn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="6" rx="8" ry="3"/><path d="M4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg></div><h3>Index</h3></div>
-      <p>OpenSearch, idempotent under redelivery</p></div>
-    <div class="stage live"><div class="no">08</div>
-      <div class="stage-head"><div class="icn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg></div><h3>Console</h3></div>
-      <p>This dashboard — read-only over HTTP</p></div>
-    <div class="stage"><div class="no">09</div>
-      <div class="stage-head"><div class="icn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="18" r="2.4"/><circle cx="18" cy="18" r="2.4"/><circle cx="12" cy="6" r="2.4"/><path d="M12 8.4V13M8.4 16.7L10.7 14.5M15.6 16.7L13.3 14.5"/></svg></div><h3>Resolve</h3></div>
-      <p>Deterministic entity IDs off the same alert stream, alongside Correlate — surfaced in the incident causal graph, with a dedicated <code class="mono">GET /entities/{id}</code> lookup</p></div>
+  <div class="cta">
+    <a class="btn primary" href="https://github.com/supermhel/fengarde">Star FENGARDE on GitHub</a>
+    <a class="btn" href="https://github.com/supermhel/fengarde/issues/new?template=rule_request.md">Request a detection rule</a>
+    <a class="btn" href="https://github.com/supermhel/fengarde/blob/main/CONTRIBUTING.md">Add a parser (~30 min)</a>
+    <a class="btn" href="https://github.com/supermhel/fengarde/issues/new?template=mssp_partner_registration.md">Run it as an MSSP</a>
   </div>
 </section>
 
-<section class="block wrap">
-  <div class="section-head">
-    <span class="eyebrow">The console</span>
-    <h2>What an analyst actually sees</h2>
-    <p>Eight views, one running stack. Every number in every screenshot below came back from a real
-      HTTP request made seconds before capture — unless a fallback is noted (see the "mock data" badge;
-      the Overview's Active-devices card reads the real inventory API, not the hardcoded mock, since
-      the 2026-08-26 fix). Scroll — the panel on the right follows.</p>
-  </div>
-
-  <div class="showcase" id="showcase">
-    <div class="showcase-list">
-      <div class="showcase-item active"
-        data-img="img/global.png"
-        data-alt="FENGARDE Overview: stat cards, system posture, top sources, and a live alert table with MITRE tags and severity pills"
-        data-tag="WS-3 · WS-4 · WS-5"
-        data-note="$ curl /api/alerts <b>&rarr; 200</b> &mdash; real alerts, live pipeline connected">
-        <div class="item-body">
-        <div class="no">01 / Overview</div><h3>Live triage, MITRE-tagged, AI-assisted</h3>
-        <p>Real alerts with real severity, a MITRE ATT&amp;CK chip pulled straight off the firing rule, and an
-          inline "Why" panel joining the AI verdict back onto its alert without ever overwriting it.</p>
-        <span class="tag">WS-3 · WS-4 · WS-5</span>
-        </div>
-        <div class="mob-shot"><img loading="lazy" alt="FENGARDE Overview: stat cards, system posture, top sources, and a live alert table with MITRE tags and severity pills"></div>
-        <div class="mob-note">$ curl /api/alerts <b>→ 200</b> — real alerts, live pipeline connected</div>
-      </div>
-
-      <div class="showcase-item"
-        data-img="img/coverage.png"
-        data-alt="FENGARDE MITRE ATT&CK coverage heatmap by tactic and technique, plus a table of all 29 detection rules with sector, level, score weight, stateful, and enabled columns"
-        data-tag="WS-4"
-        data-note="29 rules loaded <b>&middot;</b> 97% carry a real technique mapping">
-        <div class="item-body">
-        <div class="no">02 / Coverage</div><h3>MITRE ATT&amp;CK, measured not asserted</h3>
-        <p>One cell per rule that actually carries a technique tag, shaded by real fired-alert counts. The
-          rule table below it shows exactly which rules are enabled, stateful, and how they're weighted —
-          per tenant.</p>
-        <span class="tag">WS-4</span>
-        </div>
-        <div class="mob-shot"><img loading="lazy" alt="FENGARDE MITRE ATT&CK coverage heatmap by tactic and technique, plus a table of all 29 detection rules with sector, level, score weight, stateful, and enabled columns"></div>
-        <div class="mob-note">29 rules loaded <b>·</b> 97% carry a real technique mapping</div>
-      </div>
-
-      <div class="showcase-item"
-        data-img="img/inventory.png"
-        data-alt="FENGARDE Inventory view: a table of network assets by MAC address, hostname, current IP, and status, with an API keys panel below"
-        data-tag="WS-6"
-        data-note="GET /assets <b>&rarr; 200</b> &mdash; real WS-6 inventory, not a mock fallback">
-        <div class="item-body">
-        <div class="no">03 / Inventory</div><h3>Asset history that survives DHCP</h3>
-        <p>Every device is keyed by MAC, not IP — so a lease renewal doesn't fork one host into two records.
-          Full IP-over-time history, per tenant, one click away.</p>
-        <span class="tag">WS-6</span>
-        </div>
-        <div class="mob-shot"><img loading="lazy" alt="FENGARDE Inventory view: a table of network assets by MAC address, hostname, current IP, and status, with an API keys panel below"></div>
-        <div class="mob-note">GET /assets <b>→ 200</b> — real WS-6 inventory, not a mock fallback</div>
-      </div>
-
-      <div class="showcase-item"
-        data-img="img/events.png"
-        data-alt="FENGARDE raw event browser showing normalized OCSF DNS / HTTP Activity (4002) events from a live DNS-exfil burst, with a human-readable class name instead of a bare class_uid, plus activity, status, source, actor, and sector"
-        data-tag="WS-2"
-        data-note="DNS / HTTP Activity (4002) <b>&middot;</b> class name, not a bare class_uid">
-        <div class="item-body">
-        <div class="no">04 / Events</div><h3>Every event, not just the ones that fired</h3>
-        <p>The full pre-detection OCSF stream — what WS-2 actually normalized, before any rule ever saw it.
-          Class and activity codes are decoded against the project's own restricted 8-class profile, not
-          guessed.</p>
-        <span class="tag">WS-2</span>
-        </div>
-        <div class="mob-shot"><img loading="lazy" alt="FENGARDE raw event browser showing normalized OCSF DNS / HTTP Activity (4002) events from a live DNS-exfil burst, with a human-readable class name instead of a bare class_uid, plus activity, status, source, actor, and sector"></div>
-        <div class="mob-note">DNS / HTTP Activity (4002) <b>·</b> class name, not a bare class_uid</div>
-      </div>
-
-      <div class="showcase-item"
-        data-img="img/sources.png"
-        data-alt="FENGARDE Sources view showing real event counts by parser: Dns Query with 45 events, Linux Ssh with 12, Cisco Asa with 1"
-        data-tag="WS-2"
-        data-note="dns_query: 45 <b>&middot;</b> linux_ssh: 12 &mdash; real siem.source_type counts">
-        <div class="item-body">
-        <div class="no">05 / Sources</div><h3>Which parser actually did the work</h3>
-        <p>A real per-parser event count, derived from whatever's already indexed — no separate breakdown
-          endpoint exists, so this reads the same data the Events tab does and counts it honestly.</p>
-        <span class="tag">WS-2</span>
-        </div>
-        <div class="mob-shot"><img loading="lazy" alt="FENGARDE Sources view showing real event counts by parser: Dns Query with 45 events, Linux Ssh with 12, Cisco Asa with 1"></div>
-        <div class="mob-note">dns_query: 45 <b>·</b> linux_ssh: 12 — real siem.source_type counts</div>
-      </div>
-
-      <div class="showcase-item"
-        data-img="img/ops.png"
-        data-alt="FENGARDE Ops view showing per-service health cards for WS-1 through WS-3, WS-4/5/8, with real acked event counts, a dead-letter depth on WS-2's raw.events, and WS-8 correlator active-track/promotion counts"
-        data-tag="WS-1 · 2 · 3 · 4 · 8"
-        data-note="raw.events.deadletter_depth <b>&rarr; 8</b> &mdash; shown, not swept under the rug">
-        <div class="item-body">
-        <div class="no">06 / Ops</div><h3>Health, including the parts that aren't healthy</h3>
-        <p>Per-topic acked/failed/dead-lettered counts read live off every workstream's own metrics endpoint.
-          Nothing is hidden — including a real dead-letter backlog sitting in one service's queue.</p>
-        <span class="tag">WS-1 · 2 · 3 · 4 · 8</span>
-        </div>
-        <div class="mob-shot"><img loading="lazy" alt="FENGARDE Ops view showing per-service health cards for WS-1 through WS-3, WS-4/5/8, with real acked event counts, a dead-letter depth on WS-2's raw.events, and WS-8 correlator active-track/promotion counts"></div>
-        <div class="mob-note">raw.events.deadletter_depth <b>→ 8</b> — shown, not swept under the rug</div>
-      </div>
-
-      <div class="showcase-item"
-        data-img="img/audit.png"
-        data-alt="FENGARDE admin audit trail table with real timestamped events including triage_update, login_success, and mfa_reauth_failure, actor, tenant, and human-readable detail columns"
-        data-tag="WS-3"
-        data-note="GET /audit <b>&rarr; 200</b> &mdash; real login, MFA, and triage history">
-        <div class="item-body">
-        <div class="no">07 / Audit</div><h3>Every admin action, appended forever</h3>
-        <p>Login, logout, MFA enrollment, triage changes, report generation — an append-only trail the
-          backend gates to admins by session role when RBAC is enabled (on the zero-config demo default
-          with RBAC off, the audit route is reachable by anyone with the API key / port access — enable
-          RBAC or dashboard auth before exposing it).</p>
-        <span class="tag">WS-3</span>
-        </div>
-        <div class="mob-shot"><img loading="lazy" alt="FENGARDE admin audit trail table with real timestamped events including triage_update, login_success, and mfa_reauth_failure, actor, tenant, and human-readable detail columns"></div>
-        <div class="mob-note">GET /audit <b>→ 200</b> — real login, MFA, and triage history</div>
-      </div>
-
-      <div class="showcase-item"
-        data-img="img/incidents.png"
-        data-alt="FENGARDE incident detail for a real ip-scoped incident spanning two MITRE tactics, showing its causal graph (actor:admin used_ip ip:203.0.113.77) and a verified 16-block evidence package"
-        data-tag="WS-8 · 3 · 9"
-        data-note="2 tactics, 1 incident <b>&middot;</b> causal graph + verified evidence, both real">
-        <div class="item-body">
-        <div class="no">08 / Incidents</div><h3>Multi-stage attacks, correlated across alerts</h3>
-        <p>A single actor, IP, or device that crosses two distinct MITRE tactics gets promoted from N separate
-          alerts into one incident — evidence of an attack that stayed under any single rule's own threshold.
-          This run: a brute-force burst (TA0006) and a DNS-exfil burst (TA0011) from one IP, merged into the
-          causal graph below — each edge derived from the two alerts' own MITRE tags, never a fabricated line —
-          alongside a build-on-click evidence package: a Merkle hash-chain over the incident's alerts and
-          events, verified before it ever renders <code class="mono">VERIFIED</code>.</p>
-        <span class="tag">WS-8 · 3 · 9</span>
-        </div>
-        <div class="mob-shot"><img loading="lazy" alt="FENGARDE incident detail for a real ip-scoped incident spanning two MITRE tactics, showing its causal graph (actor:admin used_ip ip:203.0.113.77) and a verified 16-block evidence package"></div>
-        <div class="mob-note">2 tactics, 1 incident <b>·</b> causal graph + verified evidence, both real</div>
-      </div>
+<section class="closing">
+  <div class="wrap">
+    <div>
+      <h2 class="cond"><span data-i18n="close_a">Take a seat.</span><br><em data-i18n="close_b">Read the code.</em></h2>
+      <p data-i18n="close_p">FENGARDE is open source under Apache-2.0. Everything on this page, the console, its checks, the video and the board, is in the repository.</p>
     </div>
-
-    <div class="showcase-sticky">
-      <div class="showcase-frame">
-        <div class="shot-wrap"><img id="showcaseImg" src="img/global.png" alt="FENGARDE Overview: stat cards, system posture, top sources, and a live alert table with MITRE tags and severity pills"></div>
-        <div class="showcase-note" id="showcaseNote">$ curl /api/alerts <b>→ 200</b> — 50 real alerts, live pipeline connected</div>
-      </div>
+    <div class="cta">
+      <a class="btn primary" href="https://github.com/supermhel/fengarde"><svg class="gh-ic" width="17" height="17" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2C6.48 2 2 6.58 2 12.25c0 4.53 2.87 8.37 6.84 9.73.5.1.68-.22.68-.5 0-.24-.01-1.04-.01-1.88-2.78.62-3.37-1.21-3.37-1.21-.46-1.19-1.11-1.51-1.11-1.51-.91-.63.07-.62.07-.62 1 .07 1.53 1.05 1.53 1.05.89 1.56 2.34 1.11 2.91.85.09-.66.35-1.11.63-1.37-2.22-.26-4.56-1.14-4.56-5.06 0-1.12.39-2.03 1.03-2.75-.1-.26-.45-1.3.1-2.71 0 0 .84-.28 2.75 1.05a9.3 9.3 0 0 1 5 0c1.9-1.33 2.74-1.05 2.74-1.05.55 1.41.2 2.45.1 2.71.64.72 1.03 1.63 1.03 2.75 0 3.93-2.34 4.79-4.57 5.05.36.32.68.94.68 1.9 0 1.37-.01 2.48-.01 2.81 0 .28.18.61.69.5A10.26 10.26 0 0 0 22 12.25C22 6.58 17.52 2 12 2z"/></svg>GitHub</a>
+      <a class="btn" href="#run" data-i18n="close_run">Run it</a>
+      <a class="btn" href="https://github.com/supermhel/fengarde/blob/main/SSOT.md" data-i18n="close_ssot">Proven vs claimed</a>
     </div>
   </div>
 </section>
 
-<script>
-(function(){
-  // mobile fallback images share the SAME data-img string the sticky panel
-  // uses (no second embed) -- populated here instead of a literal src= on
-  // each <img>, which would double the page's embedded-screenshot weight.
-  document.querySelectorAll('#showcase .showcase-item').forEach(function(it){
-    var mobImg = it.querySelector('.mob-shot img');
-    if(mobImg) mobImg.src = it.getAttribute('data-img');
-  });
-})();
-(function(){
-  var items = document.querySelectorAll('#showcase .showcase-item');
-  var img = document.getElementById('showcaseImg');
-  var note = document.getElementById('showcaseNote');
-  if(!items.length || !img || !('IntersectionObserver' in window)) return;
-  var reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-  function activate(el){
-    items.forEach(function(it){ it.classList.remove('active'); });
-    el.classList.add('active');
-    var next = el.getAttribute('data-img');
-    if(img.getAttribute('src') === next) return;
-    if(reduceMotion){
-      img.src = next;
-      img.alt = el.getAttribute('data-alt');
-      note.innerHTML = el.getAttribute('data-note');
-    } else {
-      img.style.opacity = '0';
-      setTimeout(function(){
-        img.src = next;
-        img.alt = el.getAttribute('data-alt');
-        note.innerHTML = el.getAttribute('data-note');
-        img.style.opacity = '1';
-      }, 140);
-    }
-  }
-  var io = new IntersectionObserver(function(entries){
-    entries.forEach(function(e){ if(e.isIntersecting) activate(e.target); });
-  }, {root:null, rootMargin:'-42% 0px -42% 0px', threshold:0});
-  items.forEach(function(it){ io.observe(it); });
-  img.style.transition = 'opacity .14s ease';
-})();
-</script>
-
-<section class="principle">
-  <div class="wrap principle-inner block">
-    <span class="eyebrow">Product principle</span>
-    <h2>Real data <em>or</em> nothing.<br>Every empty state says so.</h2>
-    <p class="sub">Every card, every panel, every empty state in this console either shows something the
-      backend actually computed — or says plainly that it can't.</p>
-    <div class="plist">
-      <span><b>0</b> fabricated percentages</span>
-      <span><b>0</b> stock chart libraries</span>
-      <span><b>1</b> Docker Compose file to run it all</span>
+<footer>
+  <div class="wrap">
+    <a class="mark foot-mark" href="#top" aria-label="FENGARDE, back to top"><svg width="30" height="30" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2 4 5v6c0 5 3.4 9.3 8 11 4.6-1.7 8-6 8-11V5z" fill="#4f46e5"/><path d="M8.5 12.2 11 14.6l4.6-5" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>FENGARDE</a>
+    <div class="row">
+      <p data-i18n-html="foot_p"><b>Lab data.</b> The attack is generated by <code>tools/console_tour_traffic.py</code> with documentation-range addresses and sent to a stack on the author's machine.</p>
+      <p><a href="https://github.com/supermhel/fengarde"><svg class="gh-ic sm" width="17" height="17" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2C6.48 2 2 6.58 2 12.25c0 4.53 2.87 8.37 6.84 9.73.5.1.68-.22.68-.5 0-.24-.01-1.04-.01-1.88-2.78.62-3.37-1.21-3.37-1.21-.46-1.19-1.11-1.51-1.11-1.51-.91-.63.07-.62.07-.62 1 .07 1.53 1.05 1.53 1.05.89 1.56 2.34 1.11 2.91.85.09-.66.35-1.11.63-1.37-2.22-.26-4.56-1.14-4.56-5.06 0-1.12.39-2.03 1.03-2.75-.1-.26-.45-1.3.1-2.71 0 0 .84-.28 2.75 1.05a9.3 9.3 0 0 1 5 0c1.9-1.33 2.74-1.05 2.74-1.05.55 1.41.2 2.45.1 2.71.64.72 1.03 1.63 1.03 2.75 0 3.93-2.34 4.79-4.57 5.05.36.32.68.94.68 1.9 0 1.37-.01 2.48-.01 2.81 0 .28.18.61.69.5A10.26 10.26 0 0 0 22 12.25C22 6.58 17.52 2 12 2z"/></svg>GitHub</a> · <a href="https://github.com/supermhel/fengarde/blob/main/README.md">README</a> · <a href="https://github.com/supermhel/fengarde/blob/main/LICENSE">Apache-2.0</a> · <span data-i18n="foot_fonts">Fonts: Archivo and JetBrains Mono (OFL-1.1), self-hosted. No third-party trackers, no third-party requests. An optional, self-hosted visit counter (GoatCounter) ships in the observability profile: nothing leaves your network.</span></p>
     </div>
-  </div>
-</section>
-
-<section class="block wrap">
-  <div class="section-head">
-    <span class="eyebrow">Finished the quickstart?</span>
-    <h2>You've seen the pipeline run.<br>Now make it <em>yours</em>.</h2>
-    <p>The 10-minute install is the first step, not the last. Pick the next one that fits.</p>
-  </div>
-  <div class="cta-row cta-center">
-    <a class="btn btn-primary" href="https://github.com/supermhel/fengarde">Star FENGARDE on GitHub</a>
-    <a class="btn btn-ghost" href="https://github.com/supermhel/fengarde/issues/new?template=rule_request.md">Request a detection rule</a>
-    <a class="btn btn-ghost" href="https://github.com/supermhel/fengarde/blob/main/CONTRIBUTING.md">Add a parser (~30 min)</a>
-    <a class="btn btn-ghost" href="https://github.com/supermhel/fengarde/issues/new?template=mssp_partner_registration.md">Run it as an MSSP</a>
-  </div>
-</section>
-
-<footer class="wrap">
-  <div class="foot-grid">
-    <div class="foot-brand">FENGARDE
-      <p>An open-source IT/AI/OT security pipeline for teams who want to see the whole signal path —
-        collectors to console — without a vendor in between.</p>
-    </div>
-    <div class="foot-links">
-      <a class="navlink" href="https://github.com/supermhel/fengarde">Repository</a>
-      <a class="navlink" href="https://github.com/supermhel/fengarde/blob/main/LICENSE">Apache-2.0</a>
-    </div>
-  </div>
-  <div class="foot-rule"></div>
-  <div class="foot-legal">
-    <span>Every screenshot on this page was captured from a live local stack — same code, same data, no staging.</span>
-    <span>Self-hosted. No telemetry leaves your network unless you turn it on.</span>
   </div>
 </footer>
+
+<script>
+(function () {
+  "use strict";
+  var $ = function (s, r) { return (r || document).querySelector(s); };
+  var ORIGIN = location.origin === "null" ? "*" : location.origin;
+
+  /* ---------------- copy (EN / DE) ---------------- */
+  var T = {
+    en: {
+      nav_console: "Console", nav_cap: "What runs", nav_views: "Views", nav_tour: "Recording", nav_run: "Run it",
+      kicker: "Open-source security pipeline for IT, AI and OT · Apache-2.0 · self-hosted",
+      clock_lbl: "Time", clock_sub: "local time",
+      h1a: "Logs in.", h1b: "Evidence out.",
+      lede: "FENGARDE is an open-source, self-hosted security pipeline for IT, AI and OT. It turns a raw log line into a <b>verified incident</b> and a <b>draft NIS2 notification</b>. Press replay: a recorded lab attack runs through the real console below, and the board announces it as the console raises it.",
+      cta_console: "Open console", cta_tour: "Watch the recordings",
+      replay: "Replay the attack", replaying: "Replaying…", again: "Replay again",
+      board_title: "Departures", board_tag: "pipeline · lab stack",
+      state_idle: "Idle: nothing replayed", state_run: "Replay running", state_done: "Replay finished",
+      board_cap: "Departure board: pipeline stages and the alarms raised by the replayed attack",
+      th_time: "Time", th_src: "Source", th_ev: "Event", th_track: "Track", th_st: "Status", th_svc: "Service", th_what: "What", th_track2: "Interface",
+      board_foot: "<b>Track</b> = the bus topic a stage publishes to. <b>Amber</b> only ever means an alarm needs a person. Press <kbd>R</kbd> to replay.",
+      st_ok: "on time", st_request: "on request", st_replace: "replacement", st_cancel: "cancelled", st_check: "check", st_verified: "verified", st_idle: "ready",
+      term_title: "Information terminal · the real console", term_sub: "recorded lab data · changes are not saved", term_open: "Open full screen",
+      cap_tag: "Track 4 · what runs today", cap_h: "What runs. What does not.", cap_p: "Every capability gets the board's honest word. Anything stubbed, opt-in or not built says so.", cap_cap: "Capability board",
+      views_tag: "Track 6 · every view", views_h: "Twelve views. Open any.", views_p: "Each tile opens that view of the real console on the recorded data.",
+      tour_tag: "Track 7 · the recordings", tour_h: "Four takes, no cuts.", tour_p: "Recorded in a scripted browser against a running stack, in real time. Pick a chapter: an attack to verified evidence, sign-in to settings, an analyst's triage with the NIS2 draft in German, and connecting a device.",
+      foot_rec: "real time · nothing sped up · nothing mocked after the socket",
+      chap: [["Attack to evidence", "A real SSH brute force and a DNS burst go in over UDP 5514 at about 0:30: quiet banner, alarm, incident, verified evidence."], ["Sign-in to settings", "What an analyst can and cannot see, then an admin adds a user, a device and a rule switch, and finds each action in the audit trail."], ["Triage and NIS2 in German", "Note and verdict on an alarm, the early-warning draft in German, the incident report, the log explorer."], ["Connect a device", "Pick rsyslog, copy the config, a real syslog line arrives and the page confirms the first event."]],
+      tour_foot: "<b>1:51</b> · real time · nothing sped up · nothing mocked after the socket",
+      run_tag: "Track 8 · ride it yourself", run_h: "Run it in ten minutes.",
+      run_l1: "Docker Desktop with enough memory for OpenSearch. make preflight checks ports and limits before the first start.",
+      run_l2: "The console, its checks and this page's video all come from the repository: <code>services/ws7-dashboard/app</code>, <code>tools/console_e2e</code>.",
+      run_l3: "The UDP syslog listener is unauthenticated: expose port 5514 on a trusted network or VPN only.",
+      run_l4: "Status, proven versus claimed: <a href=\"https://github.com/supermhel/fengarde/blob/main/SSOT.md\">SSOT.md</a>. Features per view: <a href=\"https://github.com/supermhel/fengarde/blob/main/docs/console-feature-matrix.md\">console feature matrix</a>.",
+      foot_p: "<b>Lab data.</b> The attack is generated by <code>tools/console_tour_traffic.py</code> with documentation-range addresses and sent to a stack on the author's machine. The demo console serves a recording of that run; its timestamps are shifted to now.",
+      foot_fonts: "Fonts: Archivo and JetBrains Mono (OFL-1.1), self-hosted. No third-party trackers, no third-party requests. An optional, self-hosted visit counter (GoatCounter) ships in the observability profile: nothing leaves your network.",
+      ev_incident: "Incident: {n} tactics, {a} alarms", src_incident: "INCIDENT",
+      live_alarm: "New alarm: {r} from {ip}", live_incident: "Incident raised for {e}", live_verified: "Evidence package verified, {b} blocks",
+      stages: [
+        ["WS-1", "Collect · syslog UDP 5514", "raw.events"], ["WS-2", "Normalize · 19 parsers to OCSF", "normalized.events"],
+        ["WS-4", "Detect · 36 rules", "alerts"], ["WS-8", "Correlate · tracks to incidents", "incidents"], ["WS-3", "Index · OpenSearch, idempotent", "alerts, incidents"],
+      ],
+      caps: [["#", "Collect"], ["WS-1", "Syslog over UDP 5514 (RFC 3164)", "Forwarded sshd, Cisco ASA and CEF lines are routed to their parsers by content.", "raw.events", "ok"], ["WS-1", "JSONL log shipper", "Ships agent and application log files into the pipeline with a chosen source type.", "tools/agent_log_shipper.py", "ok"], ["WS-6", "Asset inventory", "Keyed by MAC with full IP history. Devices arrive from asset observations or the admin form.", "assets.updates", "ok"], ["#", "Understand"], ["WS-2", "19 parsers to OCSF", "Active Directory, Windows, Sysmon, Linux SSH, Cisco ASA, CEF, CloudTrail, Kubernetes audit, VMware, DB audit, DNS, OPC UA, Modbus, MCP agents, n8n, generic syslog, inventory diff, mail gateway, M365 audit.", "normalized.events", "ok"], ["WS-2", "Plugin interface", "An external pip package can ship a parser or a rule pack through entry points, no fork needed.", "docs/plugin-development.md", "ok"], ["#", "Detect"], ["WS-4", "36 rules, 35 MITRE-tagged", "Identity, network, cloud, OT, AI agents and banking data. Stateful windows. Listed in full below.", "alerts", "ok"], ["WS-4", "Rule grammar", "Boolean logic, comparisons, allowlists (CIDR and exact), time of day. Malformed rules fail closed.", "contracts/rules", "ok"], ["WS-4", "Anti-dormancy guardrails", "CI proves every rule can be satisfied by a real parser's output and that declared thresholds are enforced.", "CI", "ok"], ["WS-4", "Per-tenant rule switch", "An admin switches a rule off or on per tenant; detection honours it within seconds, no restart.", "PUT /rules/{id}/enabled", "ok"], ["WS-4", "OT criticality scoring", "Per-device criticality adds points to an OT alarm's score. Configuration, not inference.", "contracts/ot-points", "request"], ["#", "Correlate and prove"], ["WS-8", "Correlation into incidents", "Two distinct MITRE tactics from one entity promote an incident: it catches the low-and-slow attacker no single rule's threshold would.", "incidents", "ok"], ["WS-9", "Entity resolution", "Deterministic entity ids off the alarm stream, idempotent under redelivery.", "entity.updates", "ok"], ["WS-8", "Causal graph", "Typed edges (caused_by, invoked, authenticated_as, wrote_to, changed), each grounded in one alarm's own evidence, never inferred transitively.", "incident.graph", "ok"], ["WS-3", "Evidence package", "A hash chain over an incident's alarms, events and graph, verified before it is served; a failed check is a 409, never a silent 200.", "GET /incidents/{id}/evidence", "ok"], ["#", "Triage and report"], ["WS-3", "Triage workflow", "Status and analyst note per alarm. Concurrent writes are protected by a lock and optimistic concurrency.", "POST /alerts/{id}/triage", "ok"], ["WS-5", "AI triage", "Local Ollama when OLLAMA_URL is set. Otherwise a deterministic stub answers, and the console names which engine produced each verdict.", "ai.requests, ai.results", "replace"], ["WS-3", "NIS2 draft, German and English", "Early warning, notification and final report. Every fact the system cannot know is an explicit placeholder, never invented.", "POST …/report?template=nis2", "ok"], ["WS-3", "Incident report", "A causal-ordered narrative built from the verified incident, separate from the alarm report.", "POST /incidents/{id}/report", "ok"], ["#", "Operate"], ["WS-7", "The console, twelve views", "React, German and English, light and dark, phone widths. Admins add devices, manage users and switch rules.", "/", "ok"], ["Ops", "Metrics and health", "Per-service counters from every service. Prometheus and Grafana are an opt-in compose profile.", "/metrics, observability profile", "request"], ["WS-3", "REST API", "Versioned OpenAPI 3.1 spec; drift between spec and code is tested in CI.", "contracts/triage-api.yaml", "ok"], ["WS-3", "Signed webhooks", "HMAC-SHA256 signed outbound alert deliveries on their own consumer group, so a slow receiver cannot delay indexing.", "contracts/webhooks", "request"], ["all", "Multi-tenancy", "tenant_id end to end: per-tenant indices and rule enablement, fair consume ordering so one flooding tenant cannot starve another.", "tenant_id", "ok"], ["#", "Secure"], ["WS-3", "Sign-in, roles, MFA, audit", "Per-user roles with tenant scoping, CSRF, TOTP, an append-only audit log. Off, the API stays key-only.", "session API", "request"], ["WS-3", "Redis-backed sessions", "For multi-replica RBAC. Every session row is HMAC-signed.", "FENGARDE_SESSION_SECRET", "request"], ["CI", "Fuzzing, CodeQL, OpenSSF Scorecard", "A fuzz target per parser (19), plus CodeQL and Scorecard workflows.", ".github/workflows", "ok"], ["#", "Validate"], ["test", "Chaos-tested delivery", "make chaos: 40 scenarios, every pipeline service killed mid-replay. Zero lost and zero duplicate alarms.", "make chaos", "ok"], ["eval", "Adversarial mutation validation", "A blocking matrix over 8 axes must keep detection, chain fidelity and false-correlation rate; a nightly adversary is advisory only.", "eval/adversarial", "ok"], ["eval", "AI-to-OT digital twin", "An offline PLC simulation measures operational outcomes. Every number is harness-measured; where nothing exists to measure it says null.", "eval/twin", "ok"], ["eval", "Detection-quality canary", "Precision, recall and F1 per rule on a labeled corpus. A regression canary, not a claim about real-world detection.", "docs/detection-quality.md", "ok"], ["#", "High availability"], ["HA", "Redis Sentinel and 3-node OpenSearch", "Kill-tested failover: about one second to promote, no lost messages. Start it with make ha-up.", "make ha-up", "request"], ["#", "Not built"], ["WS-1", "SNMP and NetFlow collectors", "Mock files only, and no parser yet. Live collection is planned.", "—", "cancel"], ["WS-1", "Syslog over TCP/TLS and RFC 5424", "Not implemented.", "—", "cancel"], ["WS-2", "S7 and PROFINET parser", "Deferred: the vocabulary sits behind a vendor support login this project does not have.", "—", "cancel"], ["bus", "Kafka", "Not implemented. The bus is Redis Streams, or in-memory for tests.", "—", "cancel"]],
+      why: [["One pipeline for IT, OT and AI agents", "Windows, Linux, firewalls and cloud audit logs, OPC UA and Modbus from the plant floor, and tool-call audit from AI agents and automation platforms all normalize to one schema (OCSF) and run through the same rules and the same console. Of the 36 rules, 7 watch OT and 5 watch AI agents.", "services/ws2-normalization/parsers · contracts/rules"], ["Evidence, not assertion", "An alarm is never shown without the rule and the events that fired it. An incident carries a causal graph whose every edge comes from one alarm's own evidence, and a hash-chain evidence package that is verified before it is served.", "ADR-010 · GET /incidents/{id}/evidence"], ["The NIS2 path is built in", "Draft early warning, notification and final report in German and English, generated deterministically from the incident. What the system cannot know stays an explicit [ANALYST MUST PROVIDE] placeholder. They are drafts: a person files them.", "services/ws3-indexer/nis2_template.py"], ["Your network, your data", "Self-hosted and Apache-2.0. AI triage runs on a local Ollama model and never leaves the network; without it a labelled deterministic stub answers, and the console says which engine produced each verdict. Nothing is sent anywhere unless you turn it on.", "ADR-006 · local-first LLM triage"], ["Delivery you can trust", "Services talk only over a message bus; delivery is at-least-once and every id is deterministic, so a replay never duplicates an alarm. make chaos kills each pipeline service mid-replay across 40 scenarios and expects zero lost, zero duplicate. Dead letters are shown in the console, not swept away.", "make chaos · ADR-001 · ADR-004"], ["Tested against evasion, limits stated", "A blocking mutation matrix over 8 axes, a nightly adversary, a digital-twin harness that reports null where nothing can be measured, and a labeled-corpus canary that says it is a regression canary and not a claim about real-world detection. Every parser has a fuzz target in CI.", "eval/adversarial · eval/twin · docs/detection-quality.md"], ["Extend it without a fork", "A plugin interface for parsers and rule packs, a versioned OpenAPI 3.1 REST API, signed webhooks, and tenant isolation end to end for MSSP use.", "docs/plugin-development.md · docs/webhooks.md"]],
+      doms: {"identity": "Identity, network and hosts", "cloud": "Cloud, containers and automation", "ot": "Operational technology", "ai": "AI agents", "bank": "Banking data"},
+      nav_why: "Why", nav_arch: "Architecture", tick_pause: "Pause the ticker", tick_play: "Resume the ticker", arch_hint: "Swipe sideways to see the whole bus.",
+      arch_tag: "Track 3 · how it is wired", arch_h: "Nine services. One bus.",
+      arch_p: "No service calls another. Each reads topics from the bus and writes topics back, so any stage can be restarted, swapped or scaled alone. Every box opens its directory on GitHub, and during a replay the boxes light as the attack passes through them.",
+      arch_note: "The bus is Redis Streams (in-memory in tests). Delivery is at-least-once and every id is deterministic, so a redelivery never duplicates an alarm. The console talks HTTP to WS-3 and WS-6 through one same-origin proxy and has no bus access. Topic contract: <code>contracts/bus-topics.md</code>.",
+      arch_bus: "Redis Streams bus · at-least-once · deterministic ids", arch_reads: "reads", arch_writes: "writes", arch_http: "HTTP",
+      arch_sub: { ws1: "Collectors", ws2: "Normalization", ws4: "Detection", ws8: "Correlation", ws9: "Entity resolver", ws3: "Indexer + API", ws6: "Inventory", ws5: "AI triage", ws7: "Console" },
+      arch_title: "FENGARDE architecture", arch_desc: "Nine services coupled only through a message bus: collectors, normalization, detection, correlation, entity resolver and AI triage publish and read topics; the indexer stores everything and serves the API; the console reads over HTTP.",
+next_h: "You've seen the pipeline run. Now make it yours.", next_p: "The 10-minute install is the first step, not the last. Pick the next one that fits.", close_a: "Take a seat.", close_b: "Read the code.", close_p: "FENGARDE is open source under Apache-2.0. Everything on this page, the console, its checks, the video and the board, is in the repository.", close_run: "Run it", close_ssot: "Proven vs claimed",
+      ticker: [["36", "detection rules"], ["7", "for OT"], ["5", "for AI agents"], ["19", "parsers to OCSF"], ["40", "chaos scenarios, zero lost alarms"], ["3", "NIS2 stages in German and English"], ["12", "console views"], ["1", "pipeline for IT, OT and AI"], ["0", "third-party trackers"], ["Apache-2.0", "self-hosted"]],
+      why_tag: "Track 2 · why it is different", why_h: "One pipeline. Receipts included.", why_p: "Seven things FENGARDE does that a log viewer does not. Each names the place in the repository where you can check it.",
+      det_tag: "Track 5 · detection timetable", det_h: "36 rules, all listed.", det_p: "Read straight from the rule files in the repository: level, title and the MITRE ATT&CK (or ATLAS, or ICS) tag each one carries.",
+      lv_critical: "critical", lv_high: "high", lv_medium: "medium", lv_low: "low", rules_n: "rules",
+      views: [
+        ["overview", "Overview", "Quiet when nothing needs a person; the pipeline as a schematic."],
+        ["alarms", "Alarms", "Faceplate with rule, MITRE, AI verdict, the events that fired it, triage and reports."],
+        ["incidents", "Incidents", "Causal graph and a hash-chain evidence package."],
+        ["events", "Events", "Log explorer over the normalized stream."],
+        ["coverage", "Coverage", "MITRE tactics by what actually fired; rule switch for admins."],
+        ["sources", "Sources", "How a device gets connected, step by step."],
+        ["inventory", "Inventory", "Assets by MAC with IP history; add a device."],
+        ["operations", "Operations", "Per-service counters and health, honest when Prometheus is off."],
+        ["audit", "Audit", "Every privileged action."],
+        ["settings", "Settings", "Users and notification channels."],
+      ],
+      extra: [["login", "img/login.png", "Sign-in", "The console's own shell, the host, reachability and a warning on plain HTTP."], ["dark", "img/console-overview-dark.png", "Dark and German", "Theme and language switch everywhere; phone widths hold."]],
+    },
+    de: {
+      nav_console: "Konsole", nav_cap: "Was fährt", nav_views: "Ansichten", nav_tour: "Aufzeichnung", nav_run: "Selbst starten",
+      kicker: "Quelloffene Security-Pipeline für IT, KI und OT · Apache-2.0 · selbst gehostet",
+      clock_lbl: "Zeit", clock_sub: "Ortszeit",
+      h1a: "Logs rein.", h1b: "Belege raus.",
+      lede: "FENGARDE ist eine quelloffene, selbst gehostete Security-Pipeline für IT, KI und OT. Sie macht aus einer rohen Logzeile einen <b>geprüften Vorfall</b> und einen <b>NIS2-Meldungsentwurf</b>. Drücken Sie Abspielen: Ein aufgezeichneter Laborangriff läuft durch die echte Konsole unten, und die Tafel kündigt ihn an, sobald die Konsole ihn meldet.",
+      cta_console: "Konsole öffnen", cta_tour: "Aufzeichnungen ansehen",
+      replay: "Angriff abspielen", replaying: "Spielt ab…", again: "Erneut abspielen",
+      board_title: "Abfahrt", board_tag: "Pipeline · Laborstack",
+      state_idle: "Ruhe: nichts abgespielt", state_run: "Wiedergabe läuft", state_done: "Wiedergabe beendet",
+      board_cap: "Abfahrtstafel: Pipeline-Stufen und die Alarme des abgespielten Angriffs",
+      th_time: "Zeit", th_src: "Quelle", th_ev: "Ereignis", th_track: "Gleis", th_st: "Hinweis", th_svc: "Dienst", th_what: "Was", th_track2: "Schnittstelle",
+      board_foot: "<b>Gleis</b> = das Bus-Topic, auf das eine Stufe veröffentlicht. <b>Amber</b> heißt immer: Ein Alarm braucht einen Menschen. Mit <kbd>R</kbd> abspielen.",
+      st_ok: "pünktlich", st_request: "auf Anforderung", st_replace: "Ersatzverkehr", st_cancel: "fällt aus", st_check: "prüfen", st_verified: "geprüft", st_idle: "bereit",
+      term_title: "Informationsterminal · die echte Konsole", term_sub: "aufgezeichnete Labordaten · Änderungen werden nicht gespeichert", term_open: "Vollbild öffnen",
+      cap_tag: "Gleis 4 · was heute fährt", cap_h: "Was fährt. Was nicht.", cap_p: "Jede Fähigkeit bekommt das ehrliche Wort der Tafel. Was nur ein Platzhalter ist, optional ist oder fehlt, sagt es.", cap_cap: "Fähigkeitentafel",
+      views_tag: "Gleis 6 · jede Ansicht", views_h: "Zwölf Ansichten. Eine öffnen.", views_p: "Jede Kachel öffnet diese Ansicht der echten Konsole auf den aufgezeichneten Daten.",
+      tour_tag: "Gleis 7 · die Aufzeichnungen", tour_h: "Vier Aufnahmen, kein Schnitt.", tour_p: "Aufgenommen in einem skriptgesteuerten Browser gegen einen laufenden Stack, in Echtzeit. Wählen Sie ein Kapitel: ein Angriff bis zum geprüften Beleg, von der Anmeldung bis zu den Einstellungen, die Triage einer Analystin mit NIS2-Entwurf auf Deutsch und das Anbinden eines Geräts.",
+      foot_rec: "Echtzeit · nichts beschleunigt · nach dem Socket nichts simuliert",
+      chap: [["Angriff bis zum Beleg", "Ein echter SSH-Brute-Force und ein DNS-Schwall gehen bei etwa 0:30 über UDP 5514 hinein: ruhiges Banner, Alarm, Vorfall, geprüfter Beleg."], ["Anmeldung bis Einstellungen", "Was ein Analyst sehen darf und was nicht, dann legt ein Admin Benutzer, Gerät und Regelschalter an und findet jede Aktion im Audit-Trail."], ["Triage und NIS2 auf Deutsch", "Notiz und Urteil zu einem Alarm, der Frühwarnungsentwurf auf Deutsch, der Vorfallsbericht, der Log-Explorer."], ["Gerät anbinden", "rsyslog wählen, Konfiguration kopieren, eine echte Syslog-Zeile kommt an und die Seite bestätigt das erste Ereignis."]],
+      tour_foot: "<b>1:51</b> · Echtzeit · nichts beschleunigt · nach dem Socket nichts simuliert",
+      run_tag: "Gleis 8 · selbst mitfahren", run_h: "In zehn Minuten am Laufen.",
+      run_l1: "Docker Desktop mit genug Speicher für OpenSearch. make preflight prüft Ports und Grenzen vor dem ersten Start.",
+      run_l2: "Die Konsole, ihre Prüfungen und das Video dieser Seite stammen aus dem Repository: <code>services/ws7-dashboard/app</code>, <code>tools/console_e2e</code>.",
+      run_l3: "Der UDP-Syslog-Listener ist nicht authentifiziert: Port 5514 nur in einem vertrauenswürdigen Netz oder per VPN erreichbar machen.",
+      run_l4: "Stand, belegt statt behauptet: <a href=\"https://github.com/supermhel/fengarde/blob/main/SSOT.md\">SSOT.md</a>. Funktionen je Ansicht: <a href=\"https://github.com/supermhel/fengarde/blob/main/docs/console-feature-matrix.md\">Konsolen-Funktionsmatrix</a>.",
+      foot_p: "<b>Labordaten.</b> Der Angriff wird von <code>tools/console_tour_traffic.py</code> mit Adressen aus dem Dokumentationsbereich erzeugt und an einen Stack auf dem Rechner des Autors gesendet. Die Demo-Konsole liefert eine Aufzeichnung dieses Laufs; ihre Zeitstempel sind auf jetzt verschoben.",
+      foot_fonts: "Schriften: Archivo und JetBrains Mono (OFL-1.1), selbst gehostet. Keine Drittanbieter-Tracker, keine Fremdanfragen. Ein optionaler, selbst gehosteter Besuchszähler (GoatCounter) liegt im Observability-Profil bereit: Nichts verlässt Ihr Netz.",
+      ev_incident: "Vorfall: {n} Taktiken, {a} Alarme", src_incident: "VORFALL",
+      live_alarm: "Neuer Alarm: {r} von {ip}", live_incident: "Vorfall für {e} gemeldet", live_verified: "Beweispaket geprüft, {b} Blöcke",
+      stages: [
+        ["WS-1", "Erfassen · Syslog UDP 5514", "raw.events"], ["WS-2", "Normalisieren · 19 Parser nach OCSF", "normalized.events"],
+        ["WS-4", "Erkennen · 36 Regeln", "alerts"], ["WS-8", "Korrelieren · Spuren zu Vorfällen", "incidents"], ["WS-3", "Indexieren · OpenSearch, idempotent", "alerts, incidents"],
+      ],
+      caps: [["#", "Erfassen"], ["WS-1", "Syslog über UDP 5514 (RFC 3164)", "Weitergeleitete sshd-, Cisco-ASA- und CEF-Zeilen gehen nach Inhalt an ihre Parser.", "raw.events", "ok"], ["WS-1", "JSONL-Log-Shipper", "Schickt Agenten- und Anwendungslogs mit gewähltem Quelltyp in die Pipeline.", "tools/agent_log_shipper.py", "ok"], ["WS-6", "Geräteinventar", "Nach MAC geführt, mit vollständigem IP-Verlauf. Geräte kommen aus Asset-Beobachtungen oder dem Admin-Formular.", "assets.updates", "ok"], ["#", "Verstehen"], ["WS-2", "19 Parser nach OCSF", "Active Directory, Windows, Sysmon, Linux-SSH, Cisco ASA, CEF, CloudTrail, Kubernetes-Audit, VMware, DB-Audit, DNS, OPC UA, Modbus, MCP-Agenten, n8n, generisches Syslog, Inventar-Diff, Mail-Gateway, M365-Audit.", "normalized.events", "ok"], ["WS-2", "Plugin-Schnittstelle", "Ein externes pip-Paket kann über Entry Points einen Parser oder ein Regelpaket mitbringen, ohne Fork.", "docs/plugin-development.md", "ok"], ["#", "Erkennen"], ["WS-4", "36 Regeln, 35 MITRE-markiert", "Identität, Netzwerk, Cloud, OT, KI-Agenten und Bankdaten. Zustandsbehaftete Fenster. Unten vollständig aufgelistet.", "alerts", "ok"], ["WS-4", "Regelgrammatik", "Boolesche Logik, Vergleiche, Allowlists (CIDR und exakt), Tageszeit. Fehlerhafte Regeln scheitern geschlossen.", "contracts/rules", "ok"], ["WS-4", "Anti-Dormanz-Leitplanken", "CI beweist, dass jede Regel von der Ausgabe eines echten Parsers erfüllt werden kann und deklarierte Schwellen durchgesetzt werden.", "CI", "ok"], ["WS-4", "Regelschalter je Mandant", "Ein Admin schaltet eine Regel je Mandant ein oder aus; die Erkennung übernimmt es binnen Sekunden, ohne Neustart.", "PUT /rules/{id}/enabled", "ok"], ["WS-4", "OT-Kritikalitätsbewertung", "Die Kritikalität je Gerät gibt einem OT-Alarm Punkte. Konfiguration, keine Schlussfolgerung.", "contracts/ot-points", "request"], ["#", "Korrelieren und belegen"], ["WS-8", "Korrelation zu Vorfällen", "Zwei verschiedene MITRE-Taktiken einer Entität erzeugen einen Vorfall: So fällt der langsame Angreifer auf, den keine einzelne Schwelle fängt.", "incidents", "ok"], ["WS-9", "Entitätsauflösung", "Deterministische Entitäts-IDs aus dem Alarmstrom, idempotent bei Wiederzustellung.", "entity.updates", "ok"], ["WS-8", "Kausalgraph", "Typisierte Kanten (caused_by, invoked, authenticated_as, wrote_to, changed), jede aus dem Beleg genau eines Alarms, nie transitiv erschlossen.", "incident.graph", "ok"], ["WS-3", "Beweispaket", "Eine Hash-Kette über Alarme, Ereignisse und Graph eines Vorfalls, geprüft vor der Auslieferung; scheitert sie, kommt 409, nie ein stilles 200.", "GET /incidents/{id}/evidence", "ok"], ["#", "Bearbeiten und berichten"], ["WS-3", "Triage-Workflow", "Status und Analystennotiz je Alarm. Gleichzeitige Schreibzugriffe sind durch Sperre und optimistische Nebenläufigkeit geschützt.", "POST /alerts/{id}/triage", "ok"], ["WS-5", "KI-Triage", "Lokales Ollama, wenn OLLAMA_URL gesetzt ist. Sonst antwortet ein deterministischer Stub, und die Konsole nennt die Engine hinter jedem Urteil.", "ai.requests, ai.results", "replace"], ["WS-3", "NIS2-Entwurf, Deutsch und Englisch", "Frühwarnung, Meldung und Abschlussbericht. Jede Angabe, die das System nicht kennen kann, ist ein ausdrücklicher Platzhalter, nie erfunden.", "POST …/report?template=nis2", "ok"], ["WS-3", "Vorfallsbericht", "Eine kausal geordnete Schilderung aus dem geprüften Vorfall, getrennt vom Alarmbericht.", "POST /incidents/{id}/report", "ok"], ["#", "Betreiben"], ["WS-7", "Die Konsole, zwölf Ansichten", "React, Deutsch und Englisch, hell und dunkel, Handybreiten. Admins legen Geräte an, verwalten Benutzer und schalten Regeln.", "/", "ok"], ["Ops", "Metriken und Zustand", "Zähler je Dienst aus jedem Dienst. Prometheus und Grafana sind ein optionales Compose-Profil.", "/metrics, observability-Profil", "request"], ["WS-3", "REST-API", "Versionierte OpenAPI-3.1-Spezifikation; Abweichungen zwischen Spezifikation und Code werden in CI getestet.", "contracts/triage-api.yaml", "ok"], ["WS-3", "Signierte Webhooks", "HMAC-SHA256-signierte ausgehende Alarmzustellungen auf eigener Consumer-Gruppe, ein langsamer Empfänger bremst die Indexierung nicht.", "contracts/webhooks", "request"], ["alle", "Mandantenfähigkeit", "tenant_id durchgängig: Indizes und Regelschalter je Mandant, faire Verarbeitungsreihenfolge, damit ein flutender Mandant keinen anderen aushungert.", "tenant_id", "ok"], ["#", "Absichern"], ["WS-3", "Anmeldung, Rollen, MFA, Audit", "Rollen je Benutzer mit Mandantenbezug, CSRF, TOTP, ein unveränderliches Audit-Log. Ausgeschaltet bleibt die API schlüsselbasiert.", "Sitzungs-API", "request"], ["WS-3", "Redis-gestützte Sitzungen", "Für RBAC mit mehreren Replikaten. Jede Sitzungszeile ist HMAC-signiert.", "FENGARDE_SESSION_SECRET", "request"], ["CI", "Fuzzing, CodeQL, OpenSSF Scorecard", "Ein Fuzz-Ziel je Parser (17), dazu CodeQL- und Scorecard-Workflows.", ".github/workflows", "ok"], ["#", "Validieren"], ["test", "Chaos-getestete Zustellung", "make chaos: 40 Szenarien, jeder Pipeline-Dienst wird mitten im Replay beendet. Null verlorene und null doppelte Alarme.", "make chaos", "ok"], ["eval", "Adversariale Mutationsprüfung", "Eine blockierende Matrix über 8 Achsen muss Erkennung, Kettentreue und Falschkorrelationsrate halten; ein nächtlicher Gegner ist nur beratend.", "eval/adversarial", "ok"], ["eval", "KI-zu-OT digitaler Zwilling", "Eine Offline-SPS-Simulation misst Betriebsergebnisse. Jede Zahl ist vom Prüfstand gemessen; wo nichts zu messen ist, steht null.", "eval/twin", "ok"], ["eval", "Erkennungsqualitäts-Kanarienvogel", "Precision, Recall und F1 je Regel auf einem gelabelten Korpus. Ein Regressions-Kanarienvogel, keine Aussage über reale Erkennung.", "docs/detection-quality.md", "ok"], ["#", "Hochverfügbarkeit"], ["HA", "Redis Sentinel und 3-Knoten-OpenSearch", "Failover unter Beschuss getestet: etwa eine Sekunde bis zur Übernahme, keine verlorenen Nachrichten. Start mit make ha-up.", "make ha-up", "request"], ["#", "Nicht gebaut"], ["WS-1", "SNMP- und NetFlow-Collector", "Nur Mock-Dateien, noch kein Parser. Echte Erfassung ist geplant.", "—", "cancel"], ["WS-1", "Syslog über TCP/TLS und RFC 5424", "Nicht implementiert.", "—", "cancel"], ["WS-2", "S7- und PROFINET-Parser", "Zurückgestellt: Das Vokabular liegt hinter einem Hersteller-Supportlogin, den dieses Projekt nicht hat.", "—", "cancel"], ["bus", "Kafka", "Nicht implementiert. Der Bus ist Redis Streams, für Tests im Speicher.", "—", "cancel"]],
+      why: [["Eine Pipeline für IT, OT und KI-Agenten", "Windows, Linux, Firewalls und Cloud-Audit, OPC UA und Modbus aus der Anlage sowie Tool-Call-Audit von KI-Agenten und Automatisierungsplattformen werden zu einem Schema (OCSF) normalisiert und laufen durch dieselben Regeln und dieselbe Konsole. Von den 36 Regeln beobachten 7 OT und 5 KI-Agenten.", "services/ws2-normalization/parsers · contracts/rules"], ["Beleg statt Behauptung", "Ein Alarm erscheint nie ohne die Regel und die Ereignisse, die ihn ausgelöst haben. Ein Vorfall trägt einen Kausalgraphen, dessen Kanten jeweils aus dem Beleg genau eines Alarms stammen, und ein Hash-Ketten-Beweispaket, das vor der Auslieferung geprüft wird.", "ADR-010 · GET /incidents/{id}/evidence"], ["Der NIS2-Weg ist eingebaut", "Entwürfe für Frühwarnung, Meldung und Abschlussbericht auf Deutsch und Englisch, deterministisch aus dem Vorfall erzeugt. Was das System nicht wissen kann, bleibt ein ausdrücklicher Platzhalter [ANALYST MUST PROVIDE]. Es sind Entwürfe: Eine Person reicht sie ein.", "services/ws3-indexer/nis2_template.py"], ["Ihr Netz, Ihre Daten", "Selbst gehostet und Apache-2.0. Die KI-Triage läuft auf einem lokalen Ollama-Modell und verlässt das Netz nie; ohne es antwortet ein gekennzeichneter deterministischer Stub, und die Konsole nennt die Engine hinter jedem Urteil. Nichts wird irgendwohin gesendet, solange Sie es nicht einschalten.", "ADR-006 · lokale LLM-Triage"], ["Zustellung, der man trauen kann", "Dienste sprechen nur über einen Nachrichtenbus; die Zustellung ist at-least-once und jede ID deterministisch, ein Replay dupliziert also nie einen Alarm. make chaos beendet jeden Pipeline-Dienst mitten im Replay in 40 Szenarien und erwartet null verlorene, null doppelte. Dead Letters zeigt die Konsole, statt sie wegzukehren.", "make chaos · ADR-001 · ADR-004"], ["Gegen Umgehung getestet, Grenzen benannt", "Eine blockierende Mutationsmatrix über 8 Achsen, ein nächtlicher Gegner, ein Digital-Twin-Prüfstand, der null meldet, wo nichts messbar ist, und ein Korpus-Kanarienvogel, der sich Regressions-Kanarienvogel nennt und keine Aussage über reale Erkennung ist. Jeder Parser hat ein Fuzz-Ziel in CI.", "eval/adversarial · eval/twin · docs/detection-quality.md"], ["Erweitern ohne Fork", "Eine Plugin-Schnittstelle für Parser und Regelpakete, eine versionierte OpenAPI-3.1-REST-API, signierte Webhooks und durchgängige Mandantentrennung für den MSSP-Einsatz.", "docs/plugin-development.md · docs/webhooks.md"]],
+      doms: {"identity": "Identität, Netzwerk und Hosts", "cloud": "Cloud, Container und Automatisierung", "ot": "Betriebstechnik (OT)", "ai": "KI-Agenten", "bank": "Bankdaten"},
+      nav_why: "Warum", nav_arch: "Architektur", tick_pause: "Laufband anhalten", tick_play: "Laufband fortsetzen", arch_hint: "Seitlich wischen, um den ganzen Bus zu sehen.",
+      arch_tag: "Gleis 3 · wie es verdrahtet ist", arch_h: "Neun Dienste. Ein Bus.",
+      arch_p: "Kein Dienst ruft einen anderen auf. Jeder liest Topics vom Bus und schreibt Topics zurück, sodass jede Stufe einzeln neu gestartet, getauscht oder skaliert werden kann. Jeder Kasten öffnet sein Verzeichnis auf GitHub, und während einer Wiedergabe leuchten die Kästen, wenn der Angriff sie durchläuft.",
+      arch_note: "Der Bus ist Redis Streams (in Tests im Speicher). Die Zustellung ist at-least-once und jede ID deterministisch, eine Wiederzustellung dupliziert also nie einen Alarm. Die Konsole spricht über einen gemeinsamen Same-Origin-Proxy per HTTP mit WS-3 und WS-6 und hat keinen Buszugriff. Topic-Vertrag: <code>contracts/bus-topics.md</code>.",
+      arch_bus: "Redis-Streams-Bus · at-least-once · deterministische IDs", arch_reads: "liest", arch_writes: "schreibt", arch_http: "HTTP",
+      arch_sub: { ws1: "Collector", ws2: "Normalisierung", ws4: "Erkennung", ws8: "Korrelation", ws9: "Entitätsauflösung", ws3: "Indexer + API", ws6: "Inventar", ws5: "KI-Triage", ws7: "Konsole" },
+      arch_title: "FENGARDE-Architektur", arch_desc: "Neun Dienste, nur über einen Nachrichtenbus gekoppelt: Collector, Normalisierung, Erkennung, Korrelation, Entitätsauflösung und KI-Triage veröffentlichen und lesen Topics; der Indexer speichert alles und liefert die API; die Konsole liest per HTTP.",
+next_h: "Sie haben die Pipeline laufen sehen. Jetzt machen Sie sie zu Ihrer.", next_p: "Die 10-Minuten-Installation ist der erste Schritt, nicht der letzte. Wählen Sie den nächsten, der passt.", close_a: "Platz nehmen.", close_b: "Code lesen.", close_p: "FENGARDE ist quelloffen unter Apache-2.0. Alles auf dieser Seite, Konsole, Prüfungen, Video und Tafel, liegt im Repository.", close_run: "Selbst starten", close_ssot: "Belegt statt behauptet",
+      ticker: [["36", "Erkennungsregeln"], ["7", "für OT"], ["5", "für KI-Agenten"], ["19", "Parser nach OCSF"], ["40", "Chaos-Szenarien, null verlorene Alarme"], ["3", "NIS2-Stufen auf Deutsch und Englisch"], ["12", "Konsolenansichten"], ["1", "Pipeline für IT, OT und KI"], ["0", "Drittanbieter-Tracker"], ["Apache-2.0", "selbst gehostet"]],
+      why_tag: "Gleis 2 · warum es anders ist", why_h: "Eine Pipeline. Belege inklusive.", why_p: "Sieben Dinge, die FENGARDE tut und ein Log-Viewer nicht. Jedes nennt die Stelle im Repository, an der Sie es prüfen können.",
+      det_tag: "Gleis 5 · Fahrplan der Erkennung", det_h: "36 Regeln, alle aufgelistet.", det_p: "Direkt aus den Regeldateien im Repository gelesen: Stufe, Titel und das MITRE-ATT&CK-Kürzel (oder ATLAS, oder ICS), das jede trägt.",
+      lv_critical: "kritisch", lv_high: "hoch", lv_medium: "mittel", lv_low: "niedrig", rules_n: "Regeln",
+      views: [
+        ["overview", "Übersicht", "Ruhig, wenn niemand eingreifen muss; die Pipeline als Schema."],
+        ["alarms", "Alarme", "Faceplate mit Regel, MITRE, KI-Urteil, den auslösenden Ereignissen, Triage und Berichten."],
+        ["incidents", "Vorfälle", "Kausalgraph und Hash-Ketten-Beweispaket."],
+        ["events", "Ereignisse", "Log-Explorer über den normalisierten Strom."],
+        ["coverage", "Abdeckung", "MITRE-Taktiken nach dem, was tatsächlich auslöste; Regelschalter für Admins."],
+        ["sources", "Quellen", "Wie ein Gerät angebunden wird, Schritt für Schritt."],
+        ["inventory", "Inventar", "Geräte nach MAC mit IP-Verlauf; Gerät hinzufügen."],
+        ["operations", "Betrieb", "Zähler und Zustand je Dienst, ehrlich, wenn Prometheus aus ist."],
+        ["audit", "Audit", "Jede privilegierte Aktion."],
+        ["settings", "Einstellungen", "Benutzer und Benachrichtigungskanäle."],
+      ],
+      extra: [["login", "img/login.png", "Anmeldung", "Die eigene Hülle der Konsole, der Host, Erreichbarkeit und eine Warnung bei reinem HTTP."], ["dark", "img/console-overview-dark.png", "Dunkel und Deutsch", "Design und Sprache überall umschaltbar; Handybreiten halten."]],
+    },
+  };
+
+  var RULES = [["identity", "high", "Privileged logon outside business hours", "TA0004", "T1078"], ["identity", "medium", "Regular-interval outbound connections from one source (beaconing)", "TA0011", "T1071"], ["identity", "high", "Authentication brute-force from single source", "TA0006", "T1110"], ["identity", "medium", "Authentication brute-force against one account (any number of sources)", "TA0006", "T1110"], ["identity", "high", "Authentication brute-force against one host (source IP not recorded)", "TA0006", "T1110"], ["identity", "medium", "Sustained credential stuffing (one account from many distinct source IPs over 24 hours)", "TA0006", "T1110.004"], ["identity", "medium", "DNS query volume to many distinct domains from one source", "TA0011", "T1071.004"], ["identity", "medium", "DNS tunnelling shape - many distinct names under one parent domain", "TA0011", "T1071.004"], ["identity", "high", "Impossible travel (same account, distinct countries in a short window)", "TA0001", "T1078"], ["identity", "high", "Lateral movement (one account auth success to many distinct hosts)", "TA0008", "T1021"], ["identity", "high", "Lateral movement from one source host (any number of accounts)", "TA0008", "T1021"], ["identity", "high", "Credential stuffing (one account attempted from many distinct source IPs)", "TA0006", "T1110.004"], ["identity", "high", "Port scan from single source (many distinct destination ports)", "TA0007", "T1046"], ["identity", "low", "Port scan against one target (any number of sources)", "TA0007", "T1046"], ["identity", "high", "Privileged group membership grant", "TA0003", "T1098"], ["identity", "high", "Rapid account create-then-delete (same target account)", "TA0003", "T1136"], ["cloud", "critical", "AWS root console login without MFA", "TA0001", "T1078.004"], ["cloud", "critical", "Mass VM deletion via hypervisor API (ransomware / sabotage pattern)", "TA0040", "T1485"], ["cloud", "critical", "Mass VM deletion from one source address (any number of accounts)", "TA0040", "T1485"], ["cloud", "high", "Privileged container created via the Kubernetes API", "TA0002", "T1610"], ["cloud", "medium", "n8n new webhook exposed", "TA0003", "T1133"], ["cloud", "medium", "n8n automation-platform activity outside business hours", "TA0004", "T1078"], ["ot", "high", "OT configuration/firmware node changed", "TA0106", "T0836"], ["ot", "high", "Modbus/TCP write outside the expected address range (unauthorized write)", "TA0106", "T0855"], ["ot", "low", "Modbus/TCP write outside the expected address range, ticketed (authorized change)", "TA0106", "T0855"], ["ot", "high", "New OT device appeared on the OT inventory segment", "TA0108", "T0864"], ["ot", "medium", "Multiple distinct sources connecting to the same PLC (concurrent)", "TA0108", "T0864"], ["ot", "medium", "OPC UA write to a node not on the authorised-node list", "TA0106", "T0855"], ["ot", "high", "OT control-system write outside the maintenance window", "TA0106", "T0836"], ["ai", "high", "AI agent tool call accessed credential material", "TA0006", "T1552"], ["ai", "critical", "AI agent tool call carries a destructive command pattern", "TA0040", "T1485"], ["ai", "high", "AI agent tool call reached a non-allowlisted domain", "TA0011", "T1071"], ["ai", "medium", "AI agent tool call carries a prompt-injection indicator", "AML.TA0004", "AML.T0051"], ["ai", "medium", "AI agent tool-call burst (runaway/abused agent session)", "", ""], ["bank", "critical", "Privileged database operation on a banking DB", "TA0004", "T1548"], ["bank", "high", "Mass cardholder-data read (one database object hammered, bank)", "TA0009", "T1005"]];
+
+  var CHAPTERS = [["attack", "fengarde-console-tour", "1:51"], ["access", "fengarde-chapter-access", "1:43"], ["triage", "fengarde-chapter-triage", "1:23"], ["onboard", "fengarde-chapter-onboard", "0:50"]];
+  var chapIdx = 0;
+
+  var lang = (function () {
+    try { var s = localStorage.getItem("fg.site.lang"); if (s === "de" || s === "en") return s; } catch (e) { /* storage blocked */ }
+    return (navigator.language || "en").toLowerCase().indexOf("de") === 0 ? "de" : "en";
+  })();
+  var t = function (k) { return T[lang][k]; };
+  var fmt = function (s, o) { return s.replace(/\{(\w+)\}/g, function (_, k) { return o[k]; }); };
+  var esc = function (s) { return String(s).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; }); };
+
+  /* ---------------- board model ---------------- */
+  var stageOn = {};                // a stage turns "on time" only once the replay has actually passed through it
+  var dyn = [];                    // newest first: alarm and incident rows from the replay
+  var replayState = "idle";
+  var MAX_DYN = 3;
+
+  function flapHtml(text, base) {
+    var out = "", i = 0;
+    String(text).split("").forEach(function (c) {
+      out += '<span class="ch" style="--d:' + (base + i * 22) + 'ms">' + (c === " " ? "&nbsp;" : esc(c)) + "</span>"; i++;
+    });
+    return out;
+  }
+  function stHtml(kind, fresh, base) {
+    var label = kind === "check" ? t("st_check") : kind === "verified" ? t("st_verified") : t("st_" + kind);
+    return '<span class="st ' + kind + (fresh ? " fresh" : "") + '"><span>' + (fresh ? flapHtml(label, base) : esc(label)) + "</span></span>";
+  }
+  function cell(cls, html, fresh) { return '<td class="' + cls + (fresh ? " fresh" : "") + '">' + html + "</td>"; }
+  function rowHtml(r) {
+    var f = r.fresh, b = 0;
+    var time = r.at ? new Date(r.at).toLocaleTimeString(lang === "de" ? "de-DE" : "en-GB", { hour: "2-digit", minute: "2-digit" }) : "—";
+    var ev = r.kind === "incident" ? fmt(t("ev_incident"), { n: r.tactics.length, a: r.alerts }) : r.ev;
+    var src = r.kind === "incident" ? t("src_incident") : r.src;
+    var html = '<tr class="' + (r.kind === "alarm" ? "alarm-row" : "") + '">' +
+      cell("c-time m", f ? flapHtml(time, b) : esc(time), f) +
+      cell("c-src m", f ? flapHtml(src, b + 60) : esc(src), f) +
+      cell("c-ev", f ? flapHtml(ev, b + 120) : esc(ev), f) +
+      cell("c-track m", f ? flapHtml(r.track, b + 200) : esc(r.track), f) +
+      '<td class="c-st">' + stHtml(r.st, f, b + 260) + "</td></tr>";
+    r.fresh = false;
+    return html;
+  }
+  function baseRows() {
+    return t("stages").map(function (s) { return { kind: "stage", at: 0, src: s[0], ev: s[1], track: s[2], st: stageOn[s[0].toLowerCase().replace("-", "")] ? "ok" : "idle" }; });
+  }
+  function renderBoard() {
+    $("#boardBody").innerHTML = dyn.concat(baseRows()).map(rowHtml).join("");
+  }
+  function renderCaps() {
+    $("#capBody").innerHTML = t("caps").map(function (c) {
+      if (c[0] === "#") return '<tr class="grp"><td colspan="4">' + esc(c[1]) + "</td></tr>";
+      return '<tr><td class="c-src m">' + esc(c[0]) + '</td><td class="what">' + esc(c[1]) + "<small>" + esc(c[2]) + '</small></td><td class="c-track m">' + esc(c[3]) + '</td><td class="c-st">' + stHtml(c[4], false, 0) + "</td></tr>";
+    }).join("");
+  }
+  /* ---------------- architecture diagram ---------------- */
+  var GH = "https://github.com/supermhel/fengarde/tree/main/services/";
+  // [id, label, directory, row, column, reads[], writes[]]
+  var ARCH = [
+    ["ws1", "WS-1", "ws1-collectors", 0, 0, [], ["raw.events", "assets.updates"]],
+    ["ws2", "WS-2", "ws2-normalization", 0, 1, ["raw.events"], ["normalized.events"]],
+    ["ws4", "WS-4", "ws4-detection", 0, 2, ["normalized.events"], ["scored.events", "alerts", "ai.requests"]],
+    ["ws8", "WS-8", "ws8-correlation", 0, 3, ["alerts"], ["incidents", "incident.graph"]],
+    ["ws9", "WS-9", "ws9-resolver", 0, 4, ["alerts"], ["entity.updates"]],
+    ["ws3", "WS-3", "ws3-indexer", 0, 5, ["normalized.events", "scored.events", "alerts", "incidents", "incident.graph", "entity.updates", "ai.results"], []],
+    ["ws6", "WS-6", "ws6-inventory", 1, 0, ["assets.updates"], ["raw.events"]],
+    ["ws5", "WS-5", "ws5-ai", 1, 2, ["ai.requests"], ["ai.results", "alerts"]],
+    ["ws7", "WS-7", "ws7-dashboard", 1, 5, [], []],
+  ];
+  function renderArch() {
+    var W = 170, H = 80, step = 186, busY = 270, out = "";
+    var sub = t("arch_sub");
+    out += '<title id="archT">' + esc(t("arch_title")) + '</title><desc id="archD">' + esc(t("arch_desc")) + "</desc>";
+    out += '<line class="bus" id="busLine" x1="6" y1="' + busY + '" x2="1114" y2="' + busY + '"/>';
+    out += '<text class="bus-lb" x="330" y="' + (busY + 24) + '">' + esc(t("arch_bus")) + "</text>";
+    // the console talks HTTP to WS-3 (dashed, outside the bus)
+    out += '<line class="http" x1="1104" y1="' + (busY + 50) + '" x2="1104" y2="' + (20 + H) + '"/><text class="bus-lb" x="1096" y="' + (busY + 66) + '" text-anchor="end">' + esc(t("arch_http")) + "</text>";
+    ARCH.forEach(function (n) {
+      var x = 6 + n[4] * step, top = n[3] === 0, y = top ? 20 : busY + 44, id = n[0];
+      var alarm = id === "ws4" || id === "ws8";
+      var lines = [];
+      if (n[5].length) { lines.push(["lb", t("arch_reads")]); n[5].forEach(function (q) { lines.push(["tp", q]); }); }
+      if (n[6].length) { lines.push(["lb", t("arch_writes")]); n[6].forEach(function (q) { lines.push(["tp", q]); }); }
+      if (id === "ws7") { lines = [["lb", t("arch_http")], ["tp", "WS-3 triage API"], ["tp", "WS-6 inventory (GET)"], ["tp", "Prometheus (opt-in)"]]; }
+      var ty = top ? y + H + 20 : y + H + 20;
+      var txt = lines.map(function (l, i) { return '<text class="' + l[0] + '" x="' + (x + 2) + '" y="' + (ty + i * 14 + (l[0] === "lb" ? 2 : 0)) + '">' + esc(l[1]) + "</text>"; }).join("");
+      // stub to the bus: right side of the box, so the topic text stays clear
+      var sx = x + W - (id === "ws3" ? 34 : 12);
+      var stub = id === "ws7" ? "" : top
+        ? '<line class="stub" data-n="' + id + '" x1="' + sx + '" y1="' + (y + H) + '" x2="' + sx + '" y2="' + busY + '"/>'
+        : '<line class="stub" data-n="' + id + '" x1="' + sx + '" y1="' + busY + '" x2="' + sx + '" y2="' + y + '"/>';
+      out += stub + '<a class="an' + (alarm ? " alarm" : "") + '" id="n-' + id + '" href="' + GH + n[2] + '" target="_blank" rel="noopener" aria-label="' + n[1] + " " + esc(sub[id]) + '"><rect x="' + x + '" y="' + y + '" width="' + W + '" height="' + H + '" rx="8"/>' +
+        '<text class="nm" x="' + (x + 14) + '" y="' + (y + 32) + '">' + n[1] + '</text><text class="sb" x="' + (x + 14) + '" y="' + (y + 54) + '">' + esc(sub[id]) + '</text>' + txt + "</a>";
+    });
+    $("#archSvg").innerHTML = out;
+  }
+  var litTimers = {};
+  function light(ids, ms) {
+    ids.forEach(function (id) { if (!stageOn[id]) { stageOn[id] = true; renderBoard(); } });
+    ids.forEach(function (id) {
+      var el = $("#n-" + id), st = document.querySelector('.stub[data-n="' + id + '"]');
+      if (!el) return;
+      el.classList.add("lit"); if (st) st.classList.add("on"); $("#busLine").classList.add("live");
+      clearTimeout(litTimers[id]);
+      litTimers[id] = setTimeout(function () { el.classList.remove("lit"); if (st) st.classList.remove("on"); }, ms || 1700);
+    });
+    clearTimeout(litTimers.bus); litTimers.bus = setTimeout(function () { var b = $("#busLine"); if (b) b.classList.remove("live"); }, (ms || 1700) + 300);
+  }
+  function renderTicker() {
+    var one = t("ticker").map(function (x) { return '<span class="it"><b>' + esc(x[0]) + "</b>" + esc(x[1]) + "</span>"; }).join("");
+    $("#ticker").innerHTML = one + one;   // twice, so the loop is seamless
+  }
+  function selectChapter(i, play) {
+    chapIdx = i;
+    var c = CHAPTERS[i], v = $("#player");
+    $("#playerSrc").setAttribute("src", "video/" + c[1] + ".mp4");
+    v.setAttribute("poster", "video/" + c[1] + ".jpg");
+    v.load();
+    if (play) v.play().catch(function () { /* autoplay refused: the controls are right there */ });
+    renderChapters();
+  }
+  function renderChapters() {
+    var names = t("chap");
+    $("#chapters").innerHTML = CHAPTERS.map(function (c, i) {
+      return '<li><button type="button" data-i="' + i + '" aria-current="' + (i === chapIdx) + '"><span class="n">' + (i + 1) + "</span><b>" + esc(names[i][0]) + '<span class="d">' + c[2] + '</span></b><span class="t">' + esc(names[i][1]) + "</span></button></li>";
+    }).join("");
+    document.querySelectorAll("#chapters button").forEach(function (b) { b.addEventListener("click", function () { selectChapter(Number(b.getAttribute("data-i")), true); }); });
+    $("#recFoot").innerHTML = "<b>" + CHAPTERS[chapIdx][2] + "</b> · " + esc(t("foot_rec"));
+    $("#player").setAttribute("aria-label", names[chapIdx][0]);
+  }
+  function renderWhy() {
+    $("#whyList").innerHTML = t("why").map(function (w) {
+      return '<div class="why-row"><h3 class="cond">' + esc(w[0]) + '</h3><div><p>' + esc(w[1]) + '</p><span class="rcpt">' + esc(w[2]) + "</span></div></div>";
+    }).join("");
+  }
+  function renderDet() {
+    var doms = t("doms"), out = "";
+    ["identity", "cloud", "ot", "ai", "bank"].forEach(function (k) {
+      var list = RULES.filter(function (r) { return r[0] === k; });
+      out += '<div class="det-dom"><h3 class="cond">' + esc(doms[k]) + '</h3><span class="tiny">' + list.length + " " + esc(t("rules_n")) + '</span></div><div class="det-list">' +
+        list.map(function (r) {
+          return '<div class="rl"><span class="lv ' + r[1] + '">' + esc(t("lv_" + r[1])) + '</span><span class="rt">' + esc(r[2]) + '</span><span class="mt mono">' + esc([r[3], r[4]].filter(Boolean).join(" · ") || "—") + "</span></div>";
+        }).join("") + "</div>";
+    });
+    $("#detBody").innerHTML = out;
+  }
+  function renderViews() {
+    var v = t("views").map(function (x) { return { href: "demo/#/" + x[0], img: "img/console-" + x[0] + ".png", name: x[1], text: x[2] }; });
+    t("extra").forEach(function (x) { v.push({ href: x[0] === "login" ? "img/login.png" : "demo/", img: x[1], name: x[2], text: x[3] }); });
+    $("#viewGrid").innerHTML = v.map(function (x) {
+      return '<a class="view" href="' + x.href + '"><img loading="lazy" src="' + x.img + '" alt="' + esc(x.name) + '"><div class="cap-txt"><b>' + esc(x.name) + "</b><span>" + esc(x.text) + "</span></div></a>";
+    }).join("");
+  }
+  function applyLang() {
+    document.documentElement.lang = lang;
+    document.querySelectorAll("[data-i18n]").forEach(function (el) { var v = t(el.getAttribute("data-i18n")); if (v != null) el.textContent = v; });
+    document.querySelectorAll("[data-i18n-html]").forEach(function (el) { var v = t(el.getAttribute("data-i18n-html")); if (v != null) el.innerHTML = v; });
+    document.querySelectorAll("[data-lang]").forEach(function (b) { b.setAttribute("aria-pressed", String(b.getAttribute("data-lang") === lang)); });
+    setReplayUi(); renderBoard(); renderTicker(); renderArch(); renderChapters(); renderWhy(); renderCaps(); renderDet(); renderViews();
+    try { localStorage.setItem("fg.site.lang", lang); localStorage.setItem("fg.lang", lang); } catch (e) { /* storage blocked */ }
+  }
+  function setReplayUi() {
+    $("#replayLabel").textContent = replayState === "running" || replayState === "starting" ? t("replaying") : replayState === "done" ? t("again") : t("replay");
+    $("#replay").disabled = replayState === "running" || replayState === "starting";
+    $("#boardState").textContent = replayState === "running" || replayState === "starting" ? t("state_run") : replayState === "done" ? t("state_done") : t("state_idle");
+  }
+  function announce(msg) { $("#live").textContent = msg; }
+
+  /* ---------------- the embedded console ---------------- */
+  var frame = $("#frame"), frameLoaded = false, frameWaiters = [];
+  function loadFrame() {
+    if (frame.getAttribute("src")) return;
+    frame.addEventListener("load", function () { frameLoaded = true; frameWaiters.splice(0).forEach(function (f) { f(); }); });
+    frame.setAttribute("src", frame.getAttribute("data-src"));
+  }
+  function whenFrame(fn) { if (frameLoaded) fn(); else { frameWaiters.push(fn); loadFrame(); } }
+  if ("IntersectionObserver" in window) {
+    new IntersectionObserver(function (es) { if (es.some(function (e) { return e.isIntersecting; })) loadFrame(); }, { rootMargin: "700px 0px" }).observe($("#console"));
+  } else loadFrame();
+
+  var retry = null;
+  function startReplay() {
+    if (replayState === "running" || replayState === "starting") return;
+    replayState = "starting"; setReplayUi();
+    whenFrame(function () {
+      var tries = 0;
+      clearInterval(retry);
+      retry = setInterval(function () {            // the demo registers its listener after its first API call: retry until it acks
+        if (replayState !== "starting" || ++tries > 40) { clearInterval(retry); if (replayState === "starting") { replayState = "idle"; setReplayUi(); } return; }
+        frame.contentWindow.postMessage({ source: "fengarde-page", type: "replay" }, ORIGIN);
+      }, 300);
+    });
+    $("#console").scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" });
+  }
+  $("#replay").addEventListener("click", startReplay);
+  document.addEventListener("keydown", function (e) {
+    if ((e.key === "r" || e.key === "R") && !e.ctrlKey && !e.metaKey && !e.altKey && !/^(INPUT|TEXTAREA|SELECT)$/.test((e.target || {}).tagName || "")) startReplay();
+  });
+
+  window.addEventListener("message", function (e) {
+    var d = e.data;
+    if (e.origin !== location.origin && location.origin !== "null") return;
+    if (!d || d.source !== "fengarde-demo") return;
+    if (d.type === "replay-start") { clearInterval(retry); replayState = "running"; dyn = []; stageOn = {}; setReplayUi(); renderBoard(); announce(""); light(["ws1"], 1500); setTimeout(function () { light(["ws2"], 1500); }, 350); setTimeout(function () { light(["ws4"], 1500); }, 900); }
+    else if (d.type === "alarm") {
+      dyn.unshift({ kind: "alarm", at: d.at, src: d.ip || "—", ev: d.rule, track: d.tactic || "—", st: "check", fresh: true });
+      dyn = dyn.slice(0, MAX_DYN); renderBoard(); announce(fmt(t("live_alarm"), { r: d.rule, ip: d.ip })); light(["ws4", "ws3"], 1900);
+    } else if (d.type === "incident") {
+      dyn.unshift({ kind: "incident", at: d.at, src: t("src_incident"), tactics: d.tactics || [], alerts: d.alerts, track: (d.tactics || []).join(" · "), st: "check", id: d.id, fresh: true });
+      dyn = dyn.slice(0, MAX_DYN); renderBoard(); announce(fmt(t("live_incident"), { e: d.entity })); light(["ws8", "ws9", "ws3"], 2200);
+    } else if (d.type === "verified") {
+      dyn.forEach(function (r) { if (r.kind === "incident" && r.id === d.incident && r.st !== "verified") { r.st = "verified"; r.fresh = true; } });
+      renderBoard(); announce(fmt(t("live_verified"), { b: d.blocks })); light(["ws3"], 2200);
+    } else if (d.type === "replay-done") { replayState = "done"; setReplayUi(); }
+    else if (d.type === "reset") { replayState = "idle"; dyn = []; stageOn = {}; setReplayUi(); renderBoard(); }
+  });
+
+  /* ---------------- chrome ---------------- */
+  $("#tickerPause").addEventListener("click", function () {
+    var on = this.getAttribute("aria-pressed") !== "true";
+    this.setAttribute("aria-pressed", String(on)); $(".ticker").classList.toggle("paused", on);
+    this.setAttribute("aria-label", t(on ? "tick_play" : "tick_pause"));
+  });
+  document.querySelectorAll("[data-lang]").forEach(function (b) { b.addEventListener("click", function () { lang = b.getAttribute("data-lang"); applyLang(); }); });
+  var pad = function (n) { return String(n).padStart(2, "0"); };
+  applyLang();
+})();
+</script>
+</body>
+</html>
