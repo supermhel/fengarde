@@ -178,8 +178,9 @@ export const api = {
     call<UserRow>(`/api/triage/users/${encodeURIComponent(name)}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(b) }),
   webhooks: () => call<{ webhooks: WebhookRow[]; count: number }>("/api/triage/webhooks"),
   setRuleEnabled: (id: string, enabled: boolean) =>
-    call<{ id: string; enabled: boolean }>(`/api/triage/rules/${encodeURIComponent(id)}/enabled${tq("?")}`, {
-      method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled }),
+    call<{ id: string; enabled: boolean }>(`/api/triage/rules/${encodeURIComponent(id)}/enabled`, {
+      method: "PUT", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(tenant ? { enabled, tenant_id: tenant } : { enabled }),
     }),
   ops: (ws: "ws1"| "ws2" | "ws3" | "ws4" | "ws5" | "ws8") => call<OpsMetrics>(`/api/ops/${ws}`),
   setTriage: (alertId: string, status: string, note: string) =>
