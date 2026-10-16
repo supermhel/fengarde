@@ -16,6 +16,7 @@ export function Settings() {
   const [hooks, setHooks] = useState<Result<{ webhooks: WebhookRow[]; count: number }> | null>(null);
   const [msg, setMsg] = useState("");
   const [editing, setEditing] = useState("");
+  const [showDisabled, setShowDisabled] = useState(false);
 
   const load = () => { api.users().then(setUsers); api.webhooks().then(setHooks); };
   useEffect(() => { if (isAdmin) load(); }, [isAdmin]);
@@ -40,7 +41,9 @@ export function Settings() {
     if (r.ok) { form.reset(); load(); }
   }
 
-  const list = users?.ok ? users.data.users : [];
+  const all = users?.ok ? users.data.users : [];
+  const disabledCount = all.filter((u) => u.disabled).length;
+  const list = showDisabled ? all : all.filter((u) => !u.disabled);
   return (
     <>
       <h1 className="view-title">{s.title}<small>{s.users} · {s.channels}</small></h1>
@@ -48,6 +51,12 @@ export function Settings() {
       <div className="grid">
         <Panel title={s.users} aside={users?.ok ? `${list.length}` : undefined}>
           <p className="note">{s.roleHint}</p>
+          {disabledCount > 0 && (
+            <label className="note" style={{ display: "inline-flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+              <input type="checkbox" style={{ width: "auto" }} checked={showDisabled} onChange={(e) => setShowDisabled(e.target.checked)} />
+              {s.showDisabled} ({disabledCount})
+            </label>
+          )}
           {users === null ? <p className="empty">…</p> : !users.ok ? <p className="empty">{users.reason}</p> : (
             <div className="table-wrap">
               <table className="data">
@@ -55,7 +64,7 @@ export function Settings() {
                 <tbody>
                   {list.map((u) => (
                     <tr key={u.username}>
-                      <td className="mono">{u.username}{u.username === session?.username ? " ·" : ""}</td>
+                      <td className="mono">{u.username}{u.username === session?.username && <span className="pill ok" style={{ marginLeft: 8 }}>{s.you}</span>}</td>
                       <td>
                         <select className="ctl" aria-label={`${s.role} ${u.username}`} value={u.role}
                           onChange={(e) => act(api.updateUser(u.username, { role: e.target.value }))}>
@@ -64,7 +73,7 @@ export function Settings() {
                       </td>
                       <td>{u.tenant_id}</td>
                       <td><span className={`pill ${u.mfa_active ? "ok" : "off"}`}>{u.mfa_active ? s.active : "—"}</span></td>
-                      <td className="muted">{u.last_login_at ? new Date(u.last_login_at).toLocaleString(lang) : s.never}</td>
+                      <td className="muted">{u.last_login_at ? new Date(Number(u.last_login_at) * 1000).toLocaleString(lang) : s.never}</td>
                       <td><span className={`pill ${u.disabled ? "warn" : "ok"}`}>{u.disabled ? s.disabled : s.active}</span></td>
                       <td>
                         {editing === u.username ? (

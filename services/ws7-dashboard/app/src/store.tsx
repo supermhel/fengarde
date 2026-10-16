@@ -1,9 +1,10 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { DEMO } from "./demo/flag";
 import { api, setTenant, type Alert, type Incident, type OcsfEvent, type OpsMetrics, type Result, type Rule, type Session } from "./data/api";
 import { dicts, initialLang, type Dict, type Lang } from "./lib/i18n";
 import { RANGES, type RangeKey } from "./lib/time";
 
-const POLL_MS = 10_000;
+const POLL_MS = DEMO ? 3_000 : 10_000;
 export const OPS_KEYS = ["ws1", "ws2", "ws4", "ws8", "ws3", "ws5"] as const;
 export type OpsKey = (typeof OPS_KEYS)[number];
 
@@ -85,6 +86,14 @@ export function ConsoleProvider({ session, rbac, setSession, children }: {
     refresh();
     const id = setInterval(() => { if (!document.hidden) refresh(); }, POLL_MS);
     return () => clearInterval(id);
+  }, [refresh]);
+
+  // Demo build: the replay adapter ticks whenever something new becomes visible.
+  useEffect(() => {
+    if (!DEMO) return;
+    const on = () => refresh();
+    window.addEventListener("fengarde-demo-tick", on);
+    return () => window.removeEventListener("fengarde-demo-tick", on);
   }, [refresh]);
 
   // Tenants accumulate across refreshes: once scoped, the filtered data no longer shows the others.

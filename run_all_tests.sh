@@ -493,6 +493,7 @@ echo "== Phase 5 item 6 (2026-09-04): eval/trend.jsonl viewer generator =="; LAS
 $PY tools/test_generate_trend_viewer.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 
 echo
+<<<<<<< HEAD
 echo "== Phase 5 item 8 (2026-10-14): public benchmark generator (latest-row selection + schema) =="; LAST_HEADER="== Phase 5 item 8 (2026-10-14): public benchmark generator (latest-row selection + schema) =="
 $PY tools/test_generate_benchmark.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 $PY tools/test_append_trend_row.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
@@ -504,6 +505,9 @@ $PY tools/test_check_dco.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 
 echo
 echo "== Leitwarte console (2026-10-14): typecheck + unit tests (services/ws7-dashboard/app) =="; LAST_HEADER="== Leitwarte console (2026-10-14): typecheck + unit tests (services/ws7-dashboard/app) =="
+=======
+echo "== React console: typecheck + unit tests (services/ws7-dashboard/app) =="; LAST_HEADER="== React console: typecheck + unit tests (services/ws7-dashboard/app) =="
+>>>>>>> 4654fc0 (feat(console): static demo build, departure-board project page, rebuilt README, e2e tooling)
 # node is required: a console that cannot be typechecked must not pass the gate silently (R4-#69 stance).
 if command -v npm >/dev/null 2>&1; then
   ( cd services/ws7-dashboard/app && { [ -d node_modules ] || npm ci --no-audit --no-fund >/dev/null; } && npx tsc --noEmit && npx vitest run ) || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
