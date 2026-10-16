@@ -38,7 +38,7 @@ def unsigned_commits(base: str, head: str = "HEAD",
         # exists to match -- the bot cannot certify DCO). They are exempted:
         # dependabot config already limits it to security/version bumps and
         # every dependabot PR still passes CI's other gates.
-        if author.lower().startswith("dependabot"):
+        if "dependabot" in author.lower():
             continue
         sobs = _git("show", "-s",
                     "--format=%(trailers:key=Signed-off-by,valueonly,unfold)",

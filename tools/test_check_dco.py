@@ -82,9 +82,9 @@ class TestCheckDco(unittest.TestCase):
         # Dependabot commits have no human sign-off; they must not block the
         # dependabot PRs (security/version bumps, bot cannot certify DCO).
         env = dict(os.environ, GIT_AUTHOR_NAME="dependabot[bot]",
-                   GIT_AUTHOR_EMAIL="dependabot[bot]@users.noreply.github.com",
+                   GIT_AUTHOR_EMAIL="49699333+dependabot[bot]@users.noreply.github.com",
                    GIT_COMMITTER_NAME="dependabot[bot]",
-                   GIT_COMMITTER_EMAIL="dependabot[bot]@users.noreply.github.com")
+                   GIT_COMMITTER_EMAIL="49699333+dependabot[bot]@users.noreply.github.com")
         subprocess.run(["git", "-c", "commit.gpgsign=false", "commit", "-q",
                         "--allow-empty", "-m", "chore(deps): bump the x group with 1 update"],
                        cwd=self.repo, env=env, check=True, capture_output=True,
