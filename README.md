@@ -71,7 +71,7 @@ so any piece can be scaled or replaced without rewriting the others.
 
 | Way | Needs | What you get |
 |---|---|---|
-| **[The project page](https://supermhel.github.io/fengarde/)** | A browser | The real console on a *recording* of a lab run, with a replayable attack, the architecture, all 29 rules and four recorded walkthroughs. Static; writes stay in your browser ([`docs/console-demo.md`](docs/console-demo.md) says exactly what is real). |
+| **[The project page](https://supermhel.github.io/fengarde/)** | A browser | The real console on a *recording* of a lab run, with a replayable attack, the architecture, all 36 rules and four recorded walkthroughs. Static; writes stay in your browser ([`docs/console-demo.md`](docs/console-demo.md) says exactly what is real). |
 | **`make e2e`** | Python 3 | SSH brute-force to a real alert, idempotent under replay. No Docker, Redis or OpenSearch. |
 | **`make demo`** | Docker | The full live stack; a real brute-force alert appears in the console within about a minute. |
 
@@ -278,7 +278,7 @@ never touches the bus, and no backend service depends on it.
 | 1 | `services/ws1-collectors` | Collect logs → `raw.events` |
 | 2 | `services/ws2-normalization` | Parsers → validated OCSF events (17 parsers) |
 | 3 | `services/ws3-indexer` | Routing + OpenSearch indexing; entity/incident-graph/evidence read routes |
-| 4 | `services/ws4-detection` | Correlation rules + scoring + windowing (29 rules) |
+| 4 | `services/ws4-detection` | Correlation rules + scoring + windowing (36 rules) |
 | 5 | `services/ws5-ai` | Triage — real local-LLM (Ollama), stub fallback, bounded concurrency |
 | 6 | `services/ws6-inventory` | IP/MAC inventory API (SQLite); stores sector and type; thread-safe reads |
 | 7 | `services/ws7-dashboard` | Console (React) + `/legacy/` UI; a static demo build for the project page |
@@ -303,7 +303,7 @@ One-command, reproducible by anyone with a clone — no Docker required.
 | Sustained EPS (5,000 events, `linux_ssh` only) | ~985 events/sec |
 | Sustained EPS (20,000 events, mixed sources) | ~2,500-2,650 events/sec |
 | Peak resident memory (20,000-event run) | ~114 MB |
-| Rule prefilter vs. forced linear scan (29 rules, 20,000 events) | 1.12x faster |
+| Rule prefilter vs. forced linear scan (36 rules, 20,000 events) | 1.12x faster |
 
 This is a **zero-infra CPU-bound baseline** (one process, in-memory bus) — it
 measures how fast the Python code processes a batch, excluding real Redis
