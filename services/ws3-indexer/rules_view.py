@@ -160,6 +160,9 @@ def set_rule_enabled(tenant_id: str, rule_id: str, enabled: bool) -> None:
             # value ever becomes a path expression (CodeQL py/path-injection;
             # valid_tenant_id already guarantees the same charset -- this makes
             # the taint structurally impossible rather than merely checked).
+            # CodeQL's taint model cannot see the sanitizer (its diff model has
+            # no inline suppression, GH codeql#11427); the finding is dismissed
+            # as a false positive, same convention as alert #63/#71/#72.
             path = TENANTS_DIR / ("".join(c for c in tenant_id
                                           if c.isalnum() or c == "-") + ".yml")
         raw = {}
