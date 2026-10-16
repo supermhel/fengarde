@@ -25,6 +25,7 @@ import time
 from typing import Optional
 
 from .base import Parser, SEV_HIGH, SEV_INFO, status_from_outcome
+from .generic_syslog import _unwrap_syslog_message
 from .timeutil import to_epoch_ms
 from shared.ocsf import valid_ip
 
@@ -57,7 +58,10 @@ class CefParser(Parser):
 
     def parse(self, raw: dict) -> Optional[dict]:
         line = raw.get("raw")
-        if not isinstance(line, str) or not line.startswith("CEF:"):
+        if not isinstance(line, str):
+            return None
+        line = _unwrap_syslog_message(line)  # syslog-relayed CEF keeps its header
+        if not line.startswith("CEF:"):
             return None
         parts = line.split("|", 7)
         if len(parts) < 7:

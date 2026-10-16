@@ -8,6 +8,16 @@
 
 ## Produces
 - Topic `raw.events` — `{source_type, raw, meta}`, partition key = source IP (`meta.ip`).
+  - **UDP syslog listener specifics** (`collectors/syslog_udp_server.py::build_raw_event`):
+    every datagram is produced with `source_type=generic_syslog` (the listener
+    cannot know the product) and `meta = {received_at, ingest_id, trace_id,
+    tenant_id}`. The bus key is the datagram's peer IP, but the peer IP is NOT
+    written into `meta` (no `meta.ip`), so parsers take endpoint IPs from the
+    log line itself. WS-2 treats this one label as "unidentified syslog" and
+    content-routes the line to a specific parser (sshd → `linux_ssh`, `%ASA-` →
+    `cisco_asa`, `CEF:` → `cef`, dnsmasq `query[` → `dns_query`) when that parser
+    parses it; anything else stays `generic_syslog`. See
+    `services/ws2-normalization/INTERFACE.md` → Routing.
 - Topic `assets.updates` — `{mac, ip, hostname, seen_at}`, partition key = mac (fallback ip).
 
 ## Backpressure (B2, F4)

@@ -121,9 +121,13 @@ _REGISTRY: dict[str, Parser] = {
 ```
 
 That's all the wiring there is. `get_parser(source_type)` now returns your parser, and
-`resolve(...)` will route to it on an exact `source_type` match. (Optionally add a
-content-sniff branch in `resolve()` if your source arrives under a generic
-`source_type` like `syslog_rfc5424`.)
+`resolve(...)` will route to it on an exact `source_type` match. If your source is a
+text syslog line that arrives over WS-1's UDP listener, it will arrive labelled
+`source_type=generic_syslog` (WS-1 stamps every datagram that way): add a branch to
+`_sniff_text()` in `parsers/__init__.py` so `resolve()` can hand the line to your
+parser. For that label the sniffed parser is used only if its `parse()` returns an
+event; otherwise the line falls back to `generic_syslog`. Any other explicit
+`source_type` stays authoritative and is never re-routed by content.
 
 ### Edit 3 — make the contract test exercise it
 

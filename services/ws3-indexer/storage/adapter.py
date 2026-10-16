@@ -33,6 +33,15 @@ class StorageAdapter(abc.ABC):
         records it; the OpenSearch store PUTs it to ``_index_template``.
         """
 
+    def ensure_index(self, index: str) -> None:
+        """Create ``index`` up front if it does not exist yet (idempotent).
+
+        Startup-time warm-up so a request path never pays the backend's
+        index-creation cost inside a tight proxy timeout. Default is a no-op:
+        every write still creates its index lazily, so an adapter without this
+        hook only loses the warm-up, never correctness.
+        """
+
     @abc.abstractmethod
     def index(self, index: str, doc_id: str, document: dict) -> bool:
         """Store ``document`` under ``(index, doc_id)``.

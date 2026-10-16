@@ -96,6 +96,25 @@ def _deterministic_ingest_id(line: str) -> str:
     return f"{digest[0:8]}-{digest[8:12]}-{digest[12:16]}-{digest[16:20]}-{digest[20:32]}"
 
 
+def _unwrap_syslog_message(line: str) -> str:
+    """The product payload inside an RFC 3164 wrapper, else `line` stripped.
+
+    CEF appliances commonly send ``CEF:0|...`` as the program/message part of a
+    syslog record (``<134>Oct 11 22:14:15 relay01 CEF:0|Acme|...``), so the
+    header parses with prog="CEF" and the payload must be re-joined."""
+    text = line.strip()
+    pri_m = _PRI.match(text)
+    if pri_m:
+        text = text[pri_m.end():]
+    hdr = _HEADER.match(text)
+    if hdr is None:
+        return text
+    message = hdr.group("msg") or ""
+    if hdr.group("prog").upper() == "CEF":
+        return "CEF:" + message
+    return message
+
+
 class GenericSyslogParser(Parser):
     SOURCE_TYPE = "generic_syslog"
     SECTOR = "common"
