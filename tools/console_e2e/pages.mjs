@@ -32,7 +32,7 @@ for (const [name, w, h] of [["desktop", 1440, 900], ["mobile", 390, 844]]) {
   ok(`${name}: the top bar fits the viewport (language toggle not clipped)`, await page.evaluate(() => document.querySelector(".top .seg").getBoundingClientRect().right <= window.innerWidth - 8));
   ok(`${name}: the ticker carries the numbers`, (await page.$$("#ticker .it")).length >= 10);
   ok(`${name}: seven reasons, each with a receipt`, (await page.$$("#whyList .why-row")).length === 7 && (await page.$$("#whyList .rcpt")).length === 7);
-  ok(`${name}: all 29 rules are listed (6 OT, 5 AI agent)`, (await page.$$("#detBody .rl")).length === 29 && (await page.textContent("#detBody")).includes("Modbus"));
+  ok(`${name}: all 36 rules are listed (7 OT, 5 AI agent)`, (await page.$$("#detBody .rl")).length === 36 && (await page.textContent("#detBody")).includes("Modbus"));
   ok(`${name}: GitHub is linked from nav, hero, closing and footer`, (await page.$$('a[href^="https://github.com/supermhel/fengarde"]')).length >= 8);
   ok(`${name}: nine architecture boxes, each linking to its directory`, (await page.$$eval("#archSvg a.an", (a) => a.filter((x) => /tree\/main\/services\/ws\d-/.test(x.getAttribute("href"))).length)) === 9);
   await shot("top");

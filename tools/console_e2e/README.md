@@ -9,7 +9,7 @@ stack**, not mocks. It produced the screenshots, the recordings and the demo dat
 | `check.mjs` | Signs in as admin, analyst and read_only and walks every view: renders, role gating (no Settings, add-device form or rule switches for non-admins), dark theme, German, 390 px width without horizontal overflow, no unexpected API errors, no uncaught page errors. As admin it creates and disables a user, adds a device, flips a rule off and on, and runs the Sources first-event flow with a real UDP syslog line. `node check.mjs [shotDir]` |
 | `mfa.mjs` | Enrols a throwaway user in MFA, computes a TOTP code, and signs in **through the real form** with it (a missing code is refused). |
 | `demo.mjs` | Checks the static demo build (`docs/demo`): quiet start, replay, incident, evidence "Verified", recorded NIS2 report, local-only writes, reset, German, phone width. Needs `python -m http.server 8099 --directory docs`. |
-| `pages.mjs` | Checks the project page: board, ticker, seven reasons, all 29 rules, nine linked architecture boxes that light on replay, four chapters play, DE/EN, no third-party requests, phone width. Same static server. |
+| `pages.mjs` | Checks the project page: board, ticker, seven reasons, all 36 rules, nine linked architecture boxes that light on replay, four chapters play, DE/EN, no third-party requests, phone width. Same static server. |
 | `shots.mjs` | Deliberate screenshot states of each view. `node shots.mjs <outDir>` |
 | `record_fixtures.mjs` | Records the demo's fixtures from the live stack (`src/demo/fixtures.json`). See `docs/console-demo.md`. |
 | `tour.mjs` | Records the "attack to evidence" video: a real two-stage attack over UDP 5514 while recording. |
