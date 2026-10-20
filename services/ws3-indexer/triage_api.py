@@ -778,6 +778,11 @@ def route_post_report(self, report_alert_id: str):
     if template == "nis2":
         stage = q.get("stage", ["notification"])[0]
         lang = q.get("lang", ["de"])[0]
+        # gap-hunt R3-43: an unknown stage/lang used to be coerced silently to the default text.
+        if stage not in nis2_template.STAGES or lang not in nis2_template.LANGUAGES:
+            return self._send(400, {"error": "invalid stage or lang",
+                                    "stages": list(nis2_template.STAGES),
+                                    "langs": list(nis2_template.LANGUAGES)})
         report = nis2_template.build_report(alert_doc, triage, stage=stage, lang=lang)
     else:
         report = reporting.generate_report(alert_doc, triage)

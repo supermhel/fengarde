@@ -224,6 +224,19 @@ def test_http_report_route_selects_nis2_template_via_query_params():
         srv.shutdown(); srv.server_close()
 
 
+def test_http_report_route_rejects_unknown_stage_or_lang():
+    """gap-hunt R3-43: a typo'd stage/lang is a 400, never a silent 200 with the default stage's text."""
+    store = MemoryStore()
+    store.index("alerts-2026.07.16", "a1", dict(_ALERT))
+    srv, port = _serve(store)
+    try:
+        for q in ("stage=final-report&lang=en", "stage=notification&lang=fr"):
+            code, _body = _post(port, f"/alerts/a1/report?template=nis2&{q}")
+            check(code == 400, f"unknown stage/lang ({q}) must be 400, got {code}")
+    finally:
+        srv.shutdown(); srv.server_close()
+
+
 def test_http_report_route_without_template_param_keeps_generic_backend():
     store = MemoryStore()
     store.index("alerts-2026.07.16", "a1", dict(_ALERT))
@@ -248,6 +261,7 @@ def main():
     test_build_report_envelope_matches_nis2_schema()
     test_invalid_stage_lang_coercion_is_logged_loudly()
     test_http_report_route_selects_nis2_template_via_query_params()
+    test_http_report_route_rejects_unknown_stage_or_lang()
     test_http_report_route_without_template_param_keeps_generic_backend()
 
     if FAILS:
