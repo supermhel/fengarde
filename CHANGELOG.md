@@ -20,7 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   EventID 10 (process access). All class 1002 (activity 3 / 4 / 5). Heuristic indicators in the parsers
   (`unmapped.service.suspicious_path`, `unmapped.lsass_access_suspicious`), not classifiers.
 - Rules: `win_audit_log_cleared` (T1070.001), `win_service_installed_suspicious_path` (T1543.003),
-  `win_lsass_access_suspicious` (T1003.001). 36 -> 39 rules, 35 -> 38 MITRE-tagged. Chosen from the blind-recall funnel's
+  `win_lsass_access_suspicious` (T1003.001). 36 -> 39 rules, 35 -> 38 MITRE-tagged (41 / 40 after part 2). Chosen from the blind-recall funnel's
   NO_RULE/partial-parse heads (T1003, T1543.003, Security:1102). Effect on third-party recall: NOT yet measured.
 
 ### Added (2026-10-20, owner decisions Q2 / Q8 / Q12)
