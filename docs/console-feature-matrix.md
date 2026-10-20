@@ -49,14 +49,14 @@ States: **Built** (in the new console, not yet checked on the live stack), **Liv
 | 33 | Live syslog reaches the specific parsers (sshd, Cisco ASA, CEF) | WS-1 stamps every UDP datagram `generic_syslog` and WS-2 trusts it, so sshd/ASA/CEF never reach their parsers and the SSH brute-force rule cannot fire on forwarded logs | WS-2 content detection when the label is the generic UDP one; explicit source types stay authoritative | Live-tested 2026-10-15: 12 UDP sshd lines on 5514 -> 12 linux_ssh events -> brute-force alert (high); syslog-wrapped CEF -> cef 3002 Failure. Tests: services/ws2-normalization/test_syslog_udp_routing.py (10) |
 | 34 | RFC 5424, TCP/TLS syslog, live SNMP/NetFlow | not implemented (SNMP/NetFlow read mock files) | named as not connectable on the Sources page | Needs backend |
 
-## C. Features arriving with open PRs
+## C. Features that arrived with PRs (all merged 2026-10-14..16; checked 2026-10-20)
 
 | PR | Feature | UI impact | State |
 |---|---|---|---|
-| #96 | Public detection benchmark (`benchmark/`, results + trend viewer), OpenSSF badge, DCO, funnel CTA | Detection-quality summary in the console; Pages site already links it | Missing (after merge) |
-| #97 | Classic console keeps the open incident across the 10 s refresh | New console already keeps it; shows "incident left the loaded list" when it ages out | Built |
-| #93 | R3 injection-evasion hardening, eval phases 5–7 | none (backend + eval) | n/a |
-| #94, #95 | GitHub Actions bumps | none | n/a |
+| #96 | Public detection benchmark (`benchmark/`, results + trend viewer), OpenSSF badge, DCO, funnel CTA | Detection-quality summary in the console; Pages site already links it | Merged in #96; console summary still Missing (no UI reads `benchmark/results.json`) |
+| #97 | Classic console keeps the open incident across the 10 s refresh | New console already keeps it; shows "incident left the loaded list" when it ages out | Merged in #97; Built (not asserted by a script) |
+| #93 | R3 injection-evasion hardening, eval phases 5–7 | none (backend + eval) | Merged; n/a |
+| #94, #95 | GitHub Actions bumps | none | Merged; n/a |
 
 ## D. Found and fixed by driving the console on the live stack (2026-10-15/16)
 

@@ -184,8 +184,8 @@ scorecard — with units, methodology and the honest limits):
 **[`benchmark/`](benchmark/)**.
 
 Rows marked **(console rebuild)** describe the rebuilt console, its admin APIs
-and the demo, which ship with `feat/dashboard-rebuild` and are in review until
-that branch merges. Phase 5 ([PR #92](https://github.com/supermhel/fengarde/pull/92)) is merged.
+and the demo, merged in [PR #100](https://github.com/supermhel/fengarde/pull/100)
+and released in v0.11.0. Phase 5 ([PR #92](https://github.com/supermhel/fengarde/pull/92)) is merged.
 
 **Pipeline and detection**
 
@@ -286,7 +286,7 @@ never touches the bus, and no backend service depends on it.
 | 9 | `services/ws9-resolver` | Deterministic entity resolution (`entity.updates`) |
 
 For current status and the forward roadmap, see **[SSOT.md](SSOT.md)** (read that first).
-For historical design context: [`docs/PHASE0_README.md`](docs/PHASE0_README.md).
+For historical design context: [`docs/archive/PHASE0_README.md`](docs/archive/PHASE0_README.md).
 
 ---
 

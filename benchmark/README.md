@@ -37,7 +37,7 @@ pairs, 12 investigation steps and 7 alerts → 2 incidents from the committed
 
 - **Parser coverage (43.2% in this snapshot) is real and disclosed.** It
   measures this corpus — Security/Sysmon-centric — not FENGARDE's reach; most
-  of the 17 shipped parsers cover IT/OT sources these corpora never contain.
+  of the 19 shipped parsers cover IT/OT sources these corpora never contain.
 - **`password_spray` is untested by the corpora** — neither public corpus
   contains the one-account-many-IPs shape. A committed synthetic fixture
   (`eval/detection_accuracy/attack_fixtures.py`) exercises that shape through

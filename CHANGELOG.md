@@ -1335,7 +1335,7 @@ mypy/ruff on every touched workstream:
 - **46 confirmed findings from a full repo audit** — 17-partition static review,
   a documentation-discrepancy sweep, and live Docker/Redis/OpenSearch
   verification, followed by a same-day fix pass. Full writeup, methodology,
-  and the (small) list of deliberate exceptions in `docs/audit-2026-08-13.md`.
+  and the (small) list of deliberate exceptions in `docs/archive/audit-2026-08-13.md`.
 - **Correctness/crash fixes**: `timeutil.py`/`base.py` no longer raise on a
   JSON `Infinity`/`NaN` timestamp (previously dead-lettered real security
   events); `ws4-detection/engine.py`'s class_uid-bucketing satisfiability
@@ -1714,7 +1714,7 @@ mypy/ruff on every touched workstream:
 
 An independent security/architecture/CI audit (28 findings, plus a
 cross-check against a prior swarm review and a dedicated HA audit — full
-detail in `SSOT.md`'s two new §1 rows and `docs/reviews/implementation_report_2026-08-06.md`)
+detail in `SSOT.md`'s two new §1 rows and `docs/archive/reviews/implementation_report_2026-08-06.md`)
 drove a 39-finding fix pass, followed by a second independent review that
 caught 1 CRITICAL + 4 HIGH regressions the fix pass itself introduced and
 fixed those too (commit `983efc7`).

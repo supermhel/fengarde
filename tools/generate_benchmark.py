@@ -136,7 +136,7 @@ def _caveats(corpus: dict, twin: dict) -> list[str]:
     out += [
         "parser_coverage_pct is a corpus-shape measurement: it means 'that share "
         "of THIS EVTX corpus's Security+Sysmon records parse', not 'that share of "
-        "all log formats FENGARDE can ingest'; most of the 17 shipped parsers "
+        "all log formats FENGARDE can ingest'; most of the 19 shipped parsers "
         "cover IT/OT formats these corpora do not contain.",
         f"twin metrics are harness-measured on a deterministic in-process plc "
         f"simulator replay (seed {twin.get('seed')}, basis={twin.get('basis')}); "

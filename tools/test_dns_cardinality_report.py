@@ -116,6 +116,12 @@ def by_parent(rep: dict) -> dict:
     return {f["parent"]: f for f in rep["flagged"]}
 
 
+def has_parent(rep: dict, parent: str) -> bool:
+    # equality on the parent field, not a substring test (CodeQL
+    # py/incomplete-url-substring-sanitization flagged `has_parent(rep, "x.net")`)
+    return any(f["parent"] == parent for f in rep["flagged"])
+
+
 # --------------------------------------------------------------------------- tests
 
 def test_rule_params_come_from_rule_yaml() -> None:
@@ -193,23 +199,23 @@ def test_window_semantics() -> None:
     for n, expect in ((39, False), (40, True)):
         recs = [(BASE, f"n{i}.edge-check.net", "10.0.5.1") for i in range(n)]
         _, rep = run(render("zeek", recs))
-        check(("edge-check.net" in by_parent(rep)) is expect, f"{n} names in one window: flagged={not expect}")
+        check((has_parent(rep, "edge-check.net")) is expect, f"{n} names in one window: flagged={not expect}")
     # 60 distinct names spread over 600 s (one per 10 s) never exceed 6 in any 60 s window: negative control
     spread = [(BASE + 10 * i, f"s{i}.slow-spread.net", "10.0.5.2") for i in range(60)]
     _, rep = run(render("zeek", spread))
-    check("slow-spread.net" not in by_parent(rep), "names spread over 10 minutes were flagged (window not applied)")
+    check(not has_parent(rep, "slow-spread.net"), "names spread over 10 minutes were flagged (window not applied)")
     top = {b["parent"]: b for b in rep["highest_below_threshold"]}
     check(top.get("slow-spread.net", {}).get("max_distinct_names_in_window") == 7,
           f"max distinct in a sliding 60 s window should be 7 (ts >= newest-60): {top}")
     # repeated queries for the SAME name do not inflate the distinct count
     repeat = [(BASE + i // 10, "same.repeat-name.net", "10.0.5.3") for i in range(500)]
     _, rep = run(render("zeek", repeat))
-    check("repeat-name.net" not in by_parent(rep), "500 queries for one name were counted as 500 distinct names")
+    check(not has_parent(rep, "repeat-name.net"), "500 queries for one name were counted as 500 distinct names")
     # --threshold / --window overrides
     _, rep = run(render("zeek", normal()), "--threshold", "5")
-    check("normal-site.org" in by_parent(rep), "--threshold override ignored")
+    check(has_parent(rep, "normal-site.org"), "--threshold override ignored")
     _, rep = run(render("zeek", spread), "--window", "600")
-    check("slow-spread.net" in by_parent(rep), "--window override ignored")
+    check(has_parent(rep, "slow-spread.net"), "--window override ignored")
 
 
 def test_format_parity() -> None:
@@ -251,7 +257,7 @@ def test_no_timestamps_is_loud() -> None:
         check(rc == 0, f"{fmt} no-timestamp run exit {rc}")
         check(rep["timestamps"]["single_window"] is True, f"{fmt}: no-timestamp file not flagged as single window")
         check(any("NO TIMESTAMPS" in w and "ONE" in w for w in rep["warnings"]), f"{fmt}: loud warning missing")
-        check("untimed-zone.net" in by_parent(rep), f"{fmt}: single-window upper bound should still list the parent")
+        check(has_parent(rep, "untimed-zone.net"), f"{fmt}: single-window upper bound should still list the parent")
         text = run_text(render(fmt, recs, timestamps=False))
         check("NO TIMESTAMPS" in text and "ONE window" in text and text.count("!!") >= 1, f"{fmt}: text banner missing")
     # negative control: a timestamped file carries no such warning
@@ -268,14 +274,14 @@ def test_malformed_lines_counted_not_fatal() -> None:
     rc, rep = run("\n".join(zeek) + "\n")
     check(rc == 0, f"malformed zeek lines were fatal (exit {rc})")
     check(rep["input"]["malformed"] == 3, f"malformed count: {rep['input']['malformed']}")
-    check("cdn-vendor.net" in by_parent(rep), "good lines were lost around malformed ones")
+    check(has_parent(rep, "cdn-vendor.net"), "good lines were lost around malformed ones")
     check(any("malformed" in w for w in rep["warnings"]), "no malformed-line warning")
     for fmt, junk in (("bind", "garbage not a query line"), ("csv", "justonefield"), ("jsonl", "{not json")):
         lines = render(fmt, cdn_like()).splitlines()
         lines.insert(5, junk)
         rc, rep = run("\n".join(lines) + "\n")
         check(rc == 0 and rep["input"]["malformed"] == 1, f"{fmt}: malformed handling rc={rc} {rep.get('input')}")
-        check("cdn-vendor.net" in by_parent(rep), f"{fmt}: good lines lost")
+        check(has_parent(rep, "cdn-vendor.net"), f"{fmt}: good lines lost")
     # negative control: clean data has zero malformed lines
     _, rep = run(render("zeek", cdn_like()))
     check(rep["input"]["malformed"] == 0, "clean data counted malformed lines")
@@ -291,13 +297,13 @@ def test_same_parent_as_ws2_parser() -> None:
     check(dcr.parent_domain is parent_domain, "tool does not use parsers.dns_query.parent_domain")
     recs = [(BASE, f"a{i}.shop.example.co.uk", "10.0.7.1") for i in range(45)]
     _, rep = run(render("zeek", recs))
-    check("example.co.uk" in by_parent(rep), f"two-label public suffix not honoured: {list(by_parent(rep))}")
+    check(has_parent(rep, "example.co.uk"), f"two-label public suffix not honoured: {list(by_parent(rep))}")
 
 
 def test_stdin_and_memory_bound() -> None:
     out = io.StringIO()
     rc = dcr.main(["-", "--json"], stdin=io.StringIO(render("jsonl", cdn_like())), stdout=out)
-    check(rc == 0 and "cdn-vendor.net" in by_parent(json.loads(out.getvalue())), "stdin ('-') input failed")
+    check(rc == 0 and has_parent(json.loads(out.getvalue()), "cdn-vendor.net"), "stdin ('-') input failed")
     # one hour of steady traffic: the retained window must stay bounded by the window, not the file
     n = 7200
     recs = [(BASE + i // 2, f"q{i}.big-zone.net", "10.0.8.1") for i in range(n)]

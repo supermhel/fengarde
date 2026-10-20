@@ -1,5 +1,7 @@
 # Stage 1 row diff: `causal_order_retained` recorded, not gating (2026-10-02)
 
+> **Stale numbers (2026-10-20):** the pooled 37/47 below predates later storylines. Current pooled scenario matrix is 162/198 = 0.8182 (`eval/SCORECARD.md`); Layer A 34/37 = 0.9189 is the AI-to-OT lane only.
+
 Record of the before/after comparison required by the causal-order plan (Stage 1). `eval/adversarial/out/` is generated and gitignored, so the comparison is committed here instead of the raw JSON.
 
 - **Before:** `eval/adversarial/layer_a.py --seed 7` and `eval/adversarial/scenario_matrix.py --seed 7` at the code of commit `c8705c6`.
