@@ -653,6 +653,8 @@ $PY services/ws1-collectors/test_fix_counters_deterministic.py || { fail=1; FAIL
 echo
 echo "== H7 regression: EVTX business-hours boundary (oracle vs real engine at 18:00:00) =="; LAST_HEADER="== H7 regression: EVTX business-hours boundary (oracle vs real engine at 18:00:00) =="
 $PY eval/detection_accuracy/test_evtx_eval.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo "== splunk_eval guard: Q13 subset fetch leaves LFS pointers by design, only a zero-pull fetch fails =="; LAST_HEADER="== splunk_eval guard =="
+$PY eval/detection_accuracy/test_splunk_eval_guard.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
 echo "== blind-recall lane: synthetic controls (label from the dataset, never from FENGARDE; NOT a third-party measurement) =="; LAST_HEADER="== blind-recall lane: synthetic controls (label from the dataset, never from FENGARDE; NOT a third-party measurement) =="
 $PY eval/detection_accuracy/test_blind_recall.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
