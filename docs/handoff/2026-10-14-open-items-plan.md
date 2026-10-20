@@ -17,7 +17,7 @@ checked against the tree, not taken from the earlier hand-off list.
 | §7 Q13 nightly corpus fetch | OPEN | `nightly-eval.yml` clones EVTX samples directly; no `fetch_corpora.py` / `blind_recall.py` step |
 | Push `7e7d5da` | OPEN | `origin/fix/r3-injection-evasion-hardening` = `a56e5b8` |
 | Stale worktree `storyline-ot-opcua-sabotage` | removable | every modified file equals `7e7d5da` except two older copies (`seed % 2` vs committed `seed % 3`; `oracle_strength.json` differs only by CRLF) |
-| `heuristic-dhawan-8f7d20`, `.impeccable/`, `AGENTS.md`, `docs/cfp/` | not ours | left alone |
+| `heuristic-dhawan-8f7d20`, `.impeccable/`, `AGENTS.md` | not ours | left alone; `docs/cfp/` moved to the private `fengarde-sec/cfp/` 2026-10-21 (it had been swept into a commit by mistake) |
 | 27 mypy errors in `eval/twin` | OPEN | gate mypy covers `services/` + `tools/` only |
 
 ## Plan
