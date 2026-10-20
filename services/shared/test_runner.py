@@ -517,6 +517,44 @@ def _test_topic_worker_bus_error_increments_metrics():
           f"'bus_error', not just /health -- got {snap}")
 
 
+# gap-hunt R2-14: the test above breaks BOTH bus methods, so deleting the counter from either except block still
+# passed (the other kept it >= 1). Break ONE method at a time so each except block must count on its own.
+def _test_topic_worker_bus_error_each_path_counts():
+    class _Quiet:
+        def claim_pending(self, *_a, **_k):
+            return []
+
+        def consume(self, *_a, **_k):
+            return []
+
+    class _ClaimBroken(_Quiet):
+        def claim_pending(self, *_a, **_k):
+            raise ConnectionError("redis down (claim_pending only)")
+
+    class _ConsumeBroken(_Quiet):
+        def consume(self, *_a, **_k):
+            raise ConnectionError("redis down (consume only)")
+
+    for name, bus_cls in (("claim_pending", _ClaimBroken), ("consume", _ConsumeBroken)):
+        topic = _unique_topic(f"t.bus-error-{name}")
+        metrics = runner.Metrics()
+        state = runner.HealthState()
+        shutdown = threading.Event()
+        t = threading.Thread(
+            target=runner._topic_worker,
+            args=(lambda bus_cls=bus_cls: bus_cls(), topic, f"cg-{name}", lambda p: None),
+            kwargs=dict(max_redeliveries=5, shutdown=shutdown, claim_idle_ms=60000,
+                        idle_sleep_s=0.05, consume_block_ms=100,
+                        service_name="test-svc", state=state, metrics=metrics),
+            daemon=True)
+        t.start()
+        time.sleep(0.3)
+        shutdown.set()
+        t.join(timeout=2)
+        check(metrics.snapshot().get(topic, {}).get("bus_error", 0) >= 1,
+              f"{name}() raising ALONE must increment 'bus_error' -- got {metrics.snapshot()}")
+
+
 # --------------------------------------------------------------------------- #
 # P2.4: start_depth_watchdog logs when a topic's backlog crosses warn_at, and
 # warn_at<=0 disables it (returns None, spawns no thread).
@@ -556,6 +594,7 @@ def main():
     _test_health_degraded()
     _test_metrics_counts_outcomes()
     _test_topic_worker_bus_error_increments_metrics()
+    _test_topic_worker_bus_error_each_path_counts()
     _test_prometheus_metrics_endpoint()
     _test_depth_watchdog()
     parametrized = [
