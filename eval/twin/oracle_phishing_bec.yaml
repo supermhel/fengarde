@@ -49,6 +49,10 @@ provenance:
     common_bruteforce_by_account: "71734317dfda0c8ecfbb1c62e786df21a6e9c81c1d3c53901a3822cb1079df20"
     common_impossible_travel: "78864cbe016a52317b8a4d00ce78ac1d8d83d90f5fb9d4c975f13f86e6b97bbb"
     common_password_spray: "c565b58f392c8e85ac08049c49d1ab119846540d7bcbea86f0ea2f4e30d1a089"
+    # 2026-10-20: the two rules below were written AFTER this oracle, by the same author, to close two declared gaps.
+    # They are therefore NOT independent evidence of detection quality; the pins stop silent edits only.
+    email_macro_attachment_delivered: "2c85396febd40d213f89fda70a879c0478940596ed26b25faf215833f9219e84"
+    m365_inbox_rule_external_forward: "d8a5b0c2ac3c1dab1c82641e3c7df3c60075bc011456863af0638c91238231ca"
 
 expected_sequence:
   - phish_delivery
@@ -82,15 +86,9 @@ detection_points:
     step: phish_delivery
     role: "spear-phishing mail with a malicious attachment is delivered"
     expected_event_source: "mail_gateway message log (class 4009 Email Activity, activity 2 Receive; parser added 2026-10-14)"
-    expected_rules: []
-    gap:
-      no_rule_exists: true
-      attack_technique: "T1566.001"      # Phishing: Spearphishing Attachment
-      reason: >
-        The mail_gateway parser now normalises the delivery to class 4009 with the
-        attachment summary (unmapped.email.has_macro_attachment), but NO rule reads mail
-        telemetry. Updated from "no parser" when the parser landed; the step stays an honest gap
-        until a rule exists, and a rule that starts firing turns it into a stale-gap finding.
+    expected_rules:
+      - {rule_id: "b9520921-f098-4f6d-b49e-2691ed51711f", title: "Inbound email with a macro-capable attachment was delivered", level: medium, role: spear-phishing attachment detection (rule added 2026-10-20; gap closed)}
+    gap: {no_rule_exists: false}
 
   user_execution:
     step: user_execution
@@ -151,14 +149,9 @@ detection_points:
     step: inbox_rule
     role: "the attacker creates a mailbox rule that forwards and hides replies"
     expected_event_source: "m365_audit New-InboxRule (class 6003, activity 1; parser added 2026-10-14)"
-    expected_rules: []
-    gap:
-      no_rule_exists: true
-      attack_technique: "T1114.003"      # Email Collection: Email Forwarding Rule
-      reason: >
-        The m365_audit parser reports the rule's effect (unmapped.m365.inbox_rule:
-        forward_to, forwards_external, hides_mail), but no rule reads it. Same honest-gap
-        status as phish_delivery.
+    expected_rules:
+      - {rule_id: "0ca6b652-ad3a-470b-8d31-f43f97c11799", title: "Mailbox rule forwards mail to an external address", level: high, role: forwarding-rule persistence detection (rule added 2026-10-20; gap closed)}
+    gap: {no_rule_exists: false}
 
   payment_redirect:
     step: payment_redirect

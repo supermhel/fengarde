@@ -11,7 +11,7 @@ description: >
   via a new service. Added 2026-10-20 (blind-recall funnel: T1543.003 was the #2 NO_RULE technique).
 level: high
 logsource:
-  category: service_install
+  category: process_activity
 detection:
   win_sel:
     class_uid: 1002

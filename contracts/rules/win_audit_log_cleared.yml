@@ -9,7 +9,7 @@ description: >
   2026-10-20 from the blind-recall funnel (Security:1102 was the top partially-parsed unit).
 level: high
 logsource:
-  category: defense_evasion
+  category: process_activity
 detection:
   win_sel:
     class_uid: 1002

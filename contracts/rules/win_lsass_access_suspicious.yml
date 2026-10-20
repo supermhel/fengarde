@@ -10,7 +10,7 @@ description: >
   #1 NO_RULE technique, 19 units).
 level: critical
 logsource:
-  category: process_access
+  category: process_activity
 detection:
   win_sel:
     class_uid: 1002

@@ -11,7 +11,7 @@ description: >
   2026-10-20 (blind-recall funnel: PowerShell 4104/4103/800 were 62 NO_PARSER units).
 level: high
 logsource:
-  category: script_execution
+  category: process_activity
 detection:
   sel:
     class_uid: 1002

@@ -11,7 +11,7 @@ description: >
   NO_PARSER units). MITRE mapping is the generic T1098 because the attributes span several techniques.
 level: high
 logsource:
-  category: directory_change
+  category: account_change
 detection:
   sel:
     class_uid: 3003

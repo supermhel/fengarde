@@ -10,7 +10,7 @@ description: >
   consuming it).
 level: medium
 logsource:
-  category: email
+  category: email_activity
 detection:
   sel:
     class_uid: 4009

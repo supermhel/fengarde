@@ -10,7 +10,7 @@ description: >
   parser shipped 2026-10-14 with 'no rule reads that telemetry yet').
 level: high
 logsource:
-  category: cloud_audit
+  category: api_activity
 detection:
   sel:
     class_uid: 6003
