@@ -211,11 +211,11 @@ class Detector:
         })
         return out
 
-    def _load(self):
+    def _load(self, strict_empty: bool = False):
         """Load base + plugin rules and bucket them by class_uid. Raises on
         any parse/validation error -- callers decide what to do with a
         failed load (__init__ lets it propagate; reload() catches it)."""
-        rules = load_rules(self.rules_dir, self.allowlists_dir)
+        rules = load_rules(self.rules_dir, self.allowlists_dir, strict_empty=strict_empty)
         # A plugin rule whose id collides with an already-loaded one (built-
         # in or an earlier plugin) is skipped -- whichever loaded first
         # wins, so a plugin extends detection but can never silently
@@ -267,7 +267,7 @@ class Detector:
         there is no explicit eviction needed.
         """
         try:
-            new_rules, new_by_class_uid = self._load()
+            new_rules, new_by_class_uid = self._load(strict_empty=True)   # R4 #17: an empty rule file is a bad edit
         except Exception as exc:
             from shared.log import get_logger
             get_logger("ws4-detection").warn(

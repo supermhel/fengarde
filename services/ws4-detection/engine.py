@@ -1071,8 +1071,11 @@ def _validate_loaded_rule(raw: dict, path: Path) -> None:
                          f"{poison[0]}")
 
 
-def load_rules(rules_dir: Path, allowlists_dir: Path | None = None) -> list[Rule]:
+def load_rules(rules_dir: Path, allowlists_dir: Path | None = None, *, strict_empty: bool = False) -> list[Rule]:
+    """``strict_empty``: raise instead of skipping a zero-byte/truncated rule file (used by hot reload so a bad
+    edit keeps the PREVIOUS rule set live; boot keeps the lenient skip + warning). gap-hunt R4 #17."""
     rules = []
+    empty_files: list = []
     resolved_allowlists = allowlists_dir or (Path(rules_dir).parent / "allowlists")
     # Drop this dir's cached allowlists before the pass. Without this, an
     # allowlist that failed to load once (ok=False, cached) stays cached for
@@ -1094,7 +1097,10 @@ def load_rules(rules_dir: Path, allowlists_dir: Path | None = None) -> list[Rule
                 "rule file parsed to empty/None (zero-byte or truncated?); "
                 "ignoring it -- the loaded rule set is smaller than the dir "
                 "contains", file=path.name)
+            empty_files.append(path.name)
             continue
         _validate_loaded_rule(raw, path)  # FIX 2(c): reject bad rules at load time
         rules.append(Rule(raw, allowlists_dir=resolved_allowlists))
+    if strict_empty and empty_files:
+        raise ValueError(f"rule file(s) parsed empty (zero-byte or truncated?): {empty_files}")
     return rules
