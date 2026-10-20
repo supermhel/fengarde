@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (2026-10-20, recall work: 3 rules, 3 event types)
+
+- Windows parser: System 7045 / Security 4697 (service installed), Security 1102 / System 104 (audit log cleared); Sysmon
+  EventID 10 (process access). All class 1002 (activity 3 / 4 / 5). Heuristic indicators in the parsers
+  (`unmapped.service.suspicious_path`, `unmapped.lsass_access_suspicious`), not classifiers.
+- Rules: `win_audit_log_cleared` (T1070.001), `win_service_installed_suspicious_path` (T1543.003),
+  `win_lsass_access_suspicious` (T1003.001). 36 -> 39 rules, 35 -> 38 MITRE-tagged. Chosen from the blind-recall funnel's
+  NO_RULE/partial-parse heads (T1003, T1543.003, Security:1102). Effect on third-party recall: NOT yet measured.
+
 ### Added (2026-10-20, owner decisions Q2 / Q8 / Q12)
 
 - **Q12 `FENGARDE_WINDOW_TIME_SOURCE=ingest`** (opt-in, default `event` = unchanged): WS-4 stateful windows are driven by the

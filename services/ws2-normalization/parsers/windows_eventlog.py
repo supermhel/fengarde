@@ -69,6 +69,9 @@ _CLS_ACCT = 3003    # Account Change
 # Activity ids within class 1002 (Contract A leaves these open, 0-99).
 _ACT_PROC_LAUNCH = 1   # process launch / exec
 _ACT_PROC_PRIV = 2     # privilege use
+_ACT_SERVICE_INSTALL = 3   # 7045 / 4697 (2026-10-20, recall work: T1543.003)
+_ACT_LOG_CLEARED = 4       # Security 1102 / System 104 (T1070.001)
+_ACT_PROC_ACCESS = 5       # sysmon.py owns this one (EventID 10); listed so the ids stay unique
 
 # EventID -> (class_uid, activity_id, status, severity_id, verb)
 _EVENT_MAP: dict[int, tuple] = {
@@ -77,6 +80,12 @@ _EVENT_MAP: dict[int, tuple] = {
     4647: (_CLS_AUTH, 2, "Success", SEV_INFO, "Logoff"),
     4688: (_CLS_PROC, _ACT_PROC_LAUNCH, None, SEV_INFO, "Process created"),
     4672: (_CLS_PROC, _ACT_PROC_PRIV, "Success", SEV_MEDIUM, "Special privileges assigned"),
+    # 2026-10-20 (recall work, blind-recall funnel NO_PARSER/NO_RULE heads): a service was
+    # installed (System 7045 / Security 4697) and an audit log was cleared (Security 1102 / System 104).
+    4697: (_CLS_PROC, _ACT_SERVICE_INSTALL, "Success", SEV_MEDIUM, "Service installed"),
+    7045: (_CLS_PROC, _ACT_SERVICE_INSTALL, "Success", SEV_MEDIUM, "Service installed"),
+    1102: (_CLS_PROC, _ACT_LOG_CLEARED, "Success", SEV_HIGH, "Audit log cleared"),
+    104: (_CLS_PROC, _ACT_LOG_CLEARED, "Success", SEV_HIGH, "Audit log cleared"),
     # v0.3 (A4): Account Change events -- see the module docstring's "Class 3003"
     # section for the actor/target-account field mapping this table feeds.
     4720: (_CLS_ACCT, 1, "Success", SEV_MEDIUM, "Account created"),
@@ -85,6 +94,22 @@ _EVENT_MAP: dict[int, tuple] = {
     4728: (_CLS_ACCT, 5, "Success", SEV_HIGH, "Member added to global security group"),
     4732: (_CLS_ACCT, 5, "Success", SEV_HIGH, "Member added to local security group"),
 }
+
+
+#: Substrings (case-folded) that make a service image path suspicious: user-writable or
+#: temp locations, a shell as the service binary, UNC paths, or a script/LOLBin host. A
+#: HEURISTIC, like the agent-parser indicators - legitimate installers under %ProgramFiles%
+#: or %SystemRoot%\System32 do not match. Tune per deployment.
+_SUSPICIOUS_SERVICE_PATH = (
+    r"\temp" "\\", r"\appdata" "\\", r"\users\public" "\\", r"\programdata" "\\", r"\windows\tasks" "\\",
+    "%comspec%", "cmd.exe /c", "cmd /c", "powershell", "pwsh", "rundll32", "mshta", "wscript", "cscript",
+    "regsvr32", "\\\\",
+)
+
+
+def _suspicious_service_path(path: str) -> bool:
+    low = path.lower().replace("/", "\\")
+    return any(tok in low for tok in _SUSPICIOUS_SERVICE_PATH)
 
 
 class WindowsEventLogParser(Parser):
@@ -145,6 +170,13 @@ class WindowsEventLogParser(Parser):
             target_user_sid = rec.get("TargetUserSid")
 
         message = f"{verb} for user {user or '?'}"
+        service_name = service_path = None
+        if event_id in (4697, 7045):
+            service_name = safe_str(rec.get("ServiceName"))
+            service_path = safe_str(rec.get("ImagePath") or rec.get("ServiceFileName"))
+            message = f"{verb}: {service_name or '?'} -> {service_path or '?'} (by {user or '?'})"
+        elif event_id in (1102, 104):
+            message = f"{verb} (by {user or '?'})"
         if class_uid == _CLS_ACCT and target_user:
             message = f"{verb}: {target_user} (by {user or '?'})"
         elif event_id == 4688 and rec.get("NewProcessName"):
@@ -214,6 +246,15 @@ class WindowsEventLogParser(Parser):
             if target_user_sid:
                 target["uid"] = str(target_user_sid)
             event["unmapped"] = {"target_user": target}
+
+        if service_name or service_path:
+            svc: dict = {}
+            if service_name:
+                svc["name"] = service_name
+            if service_path:
+                svc["path"] = service_path
+                svc["suspicious_path"] = _suspicious_service_path(service_path)
+            event.setdefault("unmapped", {})["service"] = svc
 
         return event
 

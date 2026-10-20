@@ -36,6 +36,13 @@
 # allowlists on hot reload. A missing or malformed file FAILS OPEN (the rule keeps
 # alerting) -- the safe direction.
 #
+# TESTED ONCE (2026-10-20, owner decision Q9: public sample dataset): PicoDomain Zeek dns.log
+# (iHeartGraph/PicoDomain, GPL-3.0, a small Windows lab, 2019-07-19..21): 120,392 queries, 246 parents.
+# With NO allowlist the rule trips on 0 parents at the shipped threshold 40 (highest: g.lab = 32,
+# the lab's own AD domain; microsoft.com = 7). That shows the rule is quiet on a small lab; it does
+# NOT exercise any of the entries below (a lab has almost no CDN browsing traffic), so they remain
+# unverified. A browsing-heavy resolver log is still needed. Data was not vendored.
+#
 # STATUS: UNVERIFIED. This is a STARTER set of widely deployed CDN / update / lookup
 # zones, chosen from general knowledge of what such zones look like. It has NOT been
 # checked against real traffic, and it is not a vetted baseline of your network.

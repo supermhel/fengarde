@@ -72,6 +72,11 @@ FIXTURES: dict[str, list[dict]] = {
         {"raw": "<131>Jun 10 13:55:36 host1 app[99]: disk error", "meta": {}},
     ],
     "windows_eventlog": [
+        {"raw": {"EventID": 7045, "TimeCreated": 1750000003000, "Computer": "wks-jdoe",
+                 "SubjectUserName": "jdoe", "ServiceName": "UpdSvc",
+                 "ImagePath": r"C:\Users\jdoe\AppData\Local\Temp\upd.exe"}, "meta": {}},
+        {"raw": {"EventID": 1102, "TimeCreated": 1750000004000, "Computer": "dc01",
+                 "SubjectUserName": "Administrator", "SubjectDomainName": "CORP"}, "meta": {}},
         {"raw": {"EventID": 4624, "TargetUserName": "jdoe", "Computer": "dc01",
                  "IpAddress": "10.9.9.9", "WorkstationName": "wks-jdoe",
                  "TimeCreated": 1750000000000}, "meta": {}},
@@ -170,6 +175,9 @@ FIXTURES: dict[str, list[dict]] = {
     # a month despite this file's own docstring claiming to check "every
     # registered parser". Mirrors parsers/test_sysmon.py's fixtures.
     "sysmon": [
+        {"raw": {"EventID": 10, "TimeCreated": 1750000005000, "Computer": "wks-jdoe",
+                 "SourceImage": r"C:\Users\jdoe\Downloads\dump.exe", "SourceProcessId": "4242",
+                 "TargetImage": r"C:\Windows\System32\lsass.exe", "GrantedAccess": "0x1010"}, "meta": {}},
         {"raw": {"EventID": 1, "TimeCreated": 1750000000000, "Computer": "wks-jdoe",
                  "Image": r"C:\Windows\System32\cmd.exe", "CommandLine": "cmd /c whoami",
                  "ProcessId": "1234", "ParentImage": r"C:\Windows\explorer.exe",

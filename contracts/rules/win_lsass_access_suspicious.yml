@@ -1,0 +1,29 @@
+title: Suspicious process access to lsass.exe
+id: ed287553-9e4b-45c1-8189-625dfbad7442
+status: stable
+description: >
+  A process opened lsass.exe with a GrantedAccess mask typical of credential dumping (Sysmon
+  EventID 10 ProcessAccess; OCSF class 1002, activity_id 5) from a caller that is not a known
+  system component or Defender. The parser sets unmapped.lsass_access_suspicious as a HEURISTIC
+  (mask list + trusted-caller list in sysmon.py); EDR and some backup agents also read lsass and
+  will fire - tune the trusted list per site. Added 2026-10-20 (blind-recall funnel: T1003 was the
+  #1 NO_RULE technique, 19 units).
+level: critical
+logsource:
+  category: process_access
+detection:
+  win_sel:
+    class_uid: 1002
+    activity_id: 5
+    unmapped.lsass_access_suspicious: true
+  condition: win_sel
+fields:
+  - actor.process.name
+  - unmapped.target_process
+  - unmapped.granted_access
+siem:
+  sector: common
+  score_weight: 90
+mitre:
+  tactic: TA0006
+  technique: T1003.001

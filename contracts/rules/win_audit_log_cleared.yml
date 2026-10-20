@@ -1,0 +1,26 @@
+title: Windows audit log cleared
+id: 17dcc2b9-4d62-4fc2-9833-83954bf1b902
+status: stable
+description: >
+  A Windows event log was cleared (Security EventID 1102 or System EventID 104; OCSF Kernel/Process
+  class 1002, activity_id 4). Clearing the audit trail is a classic defence-evasion step after
+  intrusion. Single-shot: one clear is already worth an analyst's attention. Legitimate log
+  maintenance by an administrator will also fire it - tune or acknowledge per site. Added
+  2026-10-20 from the blind-recall funnel (Security:1102 was the top partially-parsed unit).
+level: high
+logsource:
+  category: defense_evasion
+detection:
+  win_sel:
+    class_uid: 1002
+    activity_id: 4
+  condition: win_sel
+fields:
+  - actor.user.name
+  - src_endpoint.hostname
+siem:
+  sector: common
+  score_weight: 75
+mitre:
+  tactic: TA0005
+  technique: T1070.001

@@ -105,6 +105,13 @@ _CLS_FILE = 1001    # File System Activity
 
 _ACT_PROC_LAUNCH = 1   # matches windows_eventlog.py's own convention
 _ACT_PROC_TERMINATE = 3   # windows_eventlog.py already owns 2 (Priv use)
+_ACT_PROC_ACCESS = 5      # EventID 10 ProcessAccess (2026-10-20, T1003.001); windows_eventlog.py owns 3/4
+
+# GrantedAccess masks seen in credential dumping from lsass (Sigma / SwiftOnSecurity lists): process-read/VM-read
+# variants plus PROCESS_ALL_ACCESS. A HEURISTIC, not a classifier.
+_LSASS_DUMP_ACCESS = {"0x1010", "0x1410", "0x1438", "0x143a", "0x147a", "0x1fffff", "0x1f1fff", "0x1f3fff", "0x1f0fff"}
+# Callers that legitimately read lsass (system components, Defender); lower-cased image suffixes.
+_LSASS_TRUSTED_SOURCES = tuple(chr(92) + n for n in ("wininit.exe", "csrss.exe", "lsm.exe", "services.exe", "smss.exe", "msmpeng.exe"))
 
 # Network Activity (4001): 6=Deny, 7=Accept, per ocsf-classes.md / cisco_asa.py's
 # existing convention. Sysmon EventID 3 only fires on an ESTABLISHED connection
@@ -119,6 +126,7 @@ _EVENT_MAP = {
     1: (_CLS_PROC, _ACT_PROC_LAUNCH, SEV_INFO, "Process created"),
     3: (_CLS_NET, _ACT_NET_ACCEPT, SEV_INFO, "Network connection"),
     5: (_CLS_PROC, _ACT_PROC_TERMINATE, SEV_INFO, "Process terminated"),
+    10: (_CLS_PROC, _ACT_PROC_ACCESS, SEV_MEDIUM, "Process accessed"),
     11: (_CLS_FILE, _ACT_FILE_CREATE, SEV_MEDIUM, "File created"),
 }
 
@@ -157,8 +165,13 @@ class SysmonParser(Parser):
         user = safe_str(rec.get("User"))
         image = safe_str(rec.get("Image"))
         pid = self._parse_pid(rec.get("ProcessId"))
+        if event_id == 10:  # ProcessAccess names the caller SourceImage / SourceProcessId
+            image = safe_str(rec.get("SourceImage"))
+            pid = self._parse_pid(rec.get("SourceProcessId"))
 
-        if class_uid == _CLS_PROC:
+        if event_id == 10:
+            message = f"{verb}: {image or '?'} -> {safe_str(rec.get('TargetImage')) or '?'} (access {rec.get('GrantedAccess')})"
+        elif class_uid == _CLS_PROC:
             message = f"{verb}: {image or '?'} (by {user or '?'})"
         elif class_uid == _CLS_NET:
             dst_ip = valid_ip(rec.get("DestinationIp"))
@@ -234,6 +247,18 @@ class SysmonParser(Parser):
             target = safe_str(rec.get("TargetFilename"))
             if target:
                 event["unmapped"] = {"target_filename": target}
+
+        if event_id == 10:
+            target_image = safe_str(rec.get("TargetImage")) or ""
+            access = safe_str(rec.get("GrantedAccess")) or ""
+            src_low = (image or "").lower().replace("/", chr(92))
+            lsass = target_image.lower().replace("/", chr(92)).endswith(chr(92) + "lsass.exe")
+            trusted = src_low.endswith(_LSASS_TRUSTED_SOURCES)
+            event["unmapped"] = {
+                "target_process": target_image,
+                "granted_access": access,
+                "lsass_access_suspicious": bool(lsass and access.lower() in _LSASS_DUMP_ACCESS and not trusted),
+            }
 
         return event
 

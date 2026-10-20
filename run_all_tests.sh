@@ -399,6 +399,8 @@ $PY services/ws2-normalization/parsers/test_mail_m365.py || { fail=1; FAILED="${
 echo
 echo "== ws2 parsers: sysmon (P0-3, 2026-07-21 audit: first class-1001 producer) =="; LAST_HEADER="== ws2 parsers: sysmon (P0-3, 2026-07-21 audit: first class-1001 producer) =="
 $PY services/ws2-normalization/parsers/test_sysmon.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo "== recall work (2026-10-20): service install / log cleared / lsass access parse + rules =="; LAST_HEADER="== recall events =="
+$PY services/ws2-normalization/parsers/test_recall_events.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
 echo "== ws2 parsers: modbus_anomaly (M7 Track X, 2026-07-22: OT protocol-anomaly detector, not a vendor-log parser -- un-dormants ot_modbus_unauthorized_write.yml) =="; LAST_HEADER="== ws2 parsers: modbus_anomaly (M7 Track X, 2026-07-22: OT protocol-anomaly detector, not a vendor-log parser -- un-dormants ot_modbus_unauthorized_write.yml) =="
 $PY services/ws2-normalization/parsers/test_modbus_anomaly.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
