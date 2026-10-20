@@ -27,7 +27,7 @@ from typing import Optional
 from .base import Parser, SEV_HIGH, SEV_INFO, status_from_outcome
 from .generic_syslog import _unwrap_syslog_message
 from .timeutil import to_epoch_ms
-from shared.ocsf import valid_ip
+from shared.ocsf import valid_ip, valid_port
 
 _CLASS_AUTH = 3002
 _CLASS_NET = 4001
@@ -102,14 +102,14 @@ class CefParser(Parser):
         src_ip = valid_ip(src_ip)
         if src_ip:
             sep = {"ip": src_ip}
-            spt = _as_int(extension.get("spt"))
+            spt = valid_port(_as_int(extension.get("spt")))
             if spt is not None:
                 sep["port"] = spt
             event["src_endpoint"] = sep
         dst_ip = valid_ip(dst_ip)
         if dst_ip:
             dep = {"ip": dst_ip}
-            dpt = _as_int(extension.get("dpt"))
+            dpt = valid_port(_as_int(extension.get("dpt")))
             if dpt is not None:
                 dep["port"] = dpt
             event["dst_endpoint"] = dep

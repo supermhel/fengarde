@@ -84,7 +84,7 @@ class OpcUaAuditParser(Parser):
         meta = raw.get("meta") or {}
 
         event_type = _pick(rec, "eventType", "EventType")
-        if not event_type:
+        if not event_type or not isinstance(event_type, str):   # 2026-10-20 fuzz finding: a dict/list is unhashable
             return None
 
         if event_type in _SESSION_EVENTS or event_type in _CLOSE_EVENTS or event_type in _CERT_EVENTS:

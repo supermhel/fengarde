@@ -30,7 +30,7 @@ from typing import Optional
 
 from .base import Parser, SEV_HIGH, SEV_INFO
 from .timeutil import to_epoch_ms
-from shared.ocsf import valid_ip
+from shared.ocsf import valid_ip, valid_port
 
 _CLASS = 3002  # Authentication
 
@@ -235,7 +235,7 @@ def _account_and_source(rest: str):
         if not account:
             return None
         pm = _PORT.match(rest, c.end())
-        return account, tok, _as_int(pm.group(1)) if pm else None
+        return account, tok, valid_port(_as_int(pm.group(1))) if pm else None
     return None
 
 

@@ -18,6 +18,17 @@ import re
 from typing import Optional
 
 
+def valid_port(value) -> Optional[int]:
+    """``value`` as a TCP/UDP port (int 0-65535, not a bool), else ``None``.
+
+    2026-10-20: found by the repaired atheris harnesses -- the cef, cisco_asa and linux_ssh parsers copied a logged
+    port number into ``src_endpoint``/``dst_endpoint`` unchecked, so a line carrying ``port 520022`` produced an
+    event Contract A rejects (maximum 65535) and the real record was dead-lettered instead of normalized."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value if 0 <= value <= 65535 else None
+
+
 def valid_ip(value) -> Optional[str]:
     """Return ``value`` normalized to a real IPv4/IPv6 address, else ``None``.
 

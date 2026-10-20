@@ -148,8 +148,8 @@ make ha-down  # stop the HA profile, remove its volumes
 
 ## The console
 
-After `make up` the console is at `http://localhost:8080` (React 18 and Vite;
-the previous single-file UI stays at `/legacy/`). Twelve views in three groups:
+After `make up` the console is at `http://localhost:8080` (React 18 and Vite; the previous
+single-file UI at `/legacy/` was retired on 2026-10-20). Twelve views in three groups:
 
 | Group | Views |
 |---|---|
@@ -281,7 +281,7 @@ never touches the bus, and no backend service depends on it.
 | 4 | `services/ws4-detection` | Correlation rules + scoring + windowing (43 rules) |
 | 5 | `services/ws5-ai` | Triage — real local-LLM (Ollama), stub fallback, bounded concurrency |
 | 6 | `services/ws6-inventory` | IP/MAC inventory API (SQLite); stores sector and type; thread-safe reads |
-| 7 | `services/ws7-dashboard` | Console (React) + `/legacy/` UI; a static demo build for the project page |
+| 7 | `services/ws7-dashboard` | Console (React); a static demo build for the project page |
 | 8 | `services/ws8-correlation` | Cross-alert correlation + causal incident graph |
 | 9 | `services/ws9-resolver` | Deterministic entity resolution (`entity.updates`) |
 

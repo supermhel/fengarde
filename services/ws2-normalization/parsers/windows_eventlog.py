@@ -234,7 +234,7 @@ class WindowsEventLogParser(Parser):
         if class_uid == _CLS_ACCT and target_user:
             message = f"{verb}: {target_user} (by {user or '?'})"
         elif event_id == 4688 and rec.get("NewProcessName"):
-            message = f"{verb}: {rec['NewProcessName']} (by {user or '?'})"
+            message = f"{verb}: {safe_str(rec['NewProcessName']) or '?'} (by {user or '?'})"
         elif ip:
             message += f" from {ip}"
 
@@ -283,8 +283,9 @@ class WindowsEventLogParser(Parser):
                 actor_user["uid"] = str(user_sid)
             actor["user"] = actor_user
 
-        if event_id == 4688 and rec.get("NewProcessName"):
-            proc: dict = {"name": rec["NewProcessName"]}
+        proc_name = safe_str(rec.get("NewProcessName")) if event_id == 4688 else None
+        if event_id == 4688 and proc_name:
+            proc: dict = {"name": proc_name}
             pid = self._parse_pid(rec.get("NewProcessId"))
             if pid is not None:
                 proc["pid"] = pid

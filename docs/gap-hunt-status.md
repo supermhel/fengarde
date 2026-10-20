@@ -30,6 +30,12 @@ MINOR findings (65) have NOT been triaged. Statuses are claims from that read, r
 | R3-43 | the report route returns 400 for an unknown NIS2 `stage`/`lang` (regression test) |
 | R3-57 | `llm_adapter._urlopen` fails closed when the no-redirect opener is unavailable (opt-out env var) |
 | R4-136 | active_directory maps a logon's target host to `dst_endpoint.hostname`, so lateral-movement rules count AD logons |
+| R4 #54 / #61 / #69 | the legacy console was retired (owner decision 2026-10-20), so its bugs and tests are gone |
+| R4 #6 | audit append takes the cross-process lock |
+| R4 #17 | hot reload rejects a zero-byte/truncated rule file and keeps the old set |
+| R3-22 / R3-23 | Sentinel healthcheck verifies the monitored master; Sentinels wait for healthy Redis nodes (validated with a real 6-container run) |
+| R2-14 | `bus_error` counted on each failing path, mutation-checked |
+| fuzzing (new, not in the 2026-08-26 report) | the 19 atheris harnesses had no coverage feedback; repaired, and the repaired run found 5 parser bugs, all fixed (see CHANGELOG) |
 | R4-108 (part) | the live bench returns 1 when a latency run collects 0 samples (the fixed SSH-burst ids are still untagged) |
 
 ## Still OPEN or PARTIAL (not fixed here), with the suggested fix
@@ -39,17 +45,12 @@ MINOR findings (65) have NOT been triaged. Statuses are claims from that read, r
 | R4-129 | needs real data | ship a GeoIP resolver or real egress prefixes, then make the rule `stable` |
 | R4-52 | partial | issue the key only after an RBAC session, not on a spoofable `Sec-Fetch-Site` check |
 | R2-2 | accepted (decided 2026-10-20) | keeping `verify_totp` on enrolment: `test_fix_mfa` pins that the enrolment code cannot be replayed at login; cost is waiting for the next 30 s code |
-| R2-10, R2-14 | test strength | add a test that boots with a garbage `SYSLOG_UDP_PORT`; assert `bus_error` for each failing method separately |
 | R3-4, R3-6 | partial | WS-5 alerts never correlate (give them an entity or drop WS-5 from the producer list); accept/document the spoofable `device:` track |
-| R3-22, R3-23 | open / partial | Sentinel healthcheck should query `sentinel master <name>`; use `condition: service_healthy` for Sentinel `depends_on` |
 | R3-35 | partial | probe the outside-hours window per minute (1440 samples) |
 | R3-39 | partial | fail (not warn) in `fire_check` for a rule with no `mitre:` unless waived (one rule has none) |
 | R3-43 | partial | return 400 from the report route for an unknown NIS2 `stage`/`lang` |
-| R4 #6 | partial | take the cross-process lock in the audit `_append_locked` too |
-| R4 #17 | partial | `reload()` should keep the old rule set when a rule file parses empty |
 | R4 #33 | partial | add a test with a dribbling fake response asserting `TimeoutError` |
 | R4 #44 | partial | accepted/documented (lengthening the baseline never applies to existing devices) |
-| R4 #54, #61, #69 | open / partial | legacy console only (`/legacy/`): read `_fallback`, fix the playbook cache reset, add DOM tests; or retire `/legacy/` |
 | R4 #85 | partial | add the replay step to the SSOT MFA row |
 | R4 #107, #108 | partial / open | print and fail on `eps_dropped_majority`; tag the live bench SSH-burst ids with the run id |
 | R4 #120, #121 | open | add `backpressure_load_test.py` to the wiring check; run a baseline before `mutmut run \|\| true` |
