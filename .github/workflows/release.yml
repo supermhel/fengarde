@@ -182,3 +182,6 @@ jobs:
     with:
       base64-subjects: "${{ needs.build-and-sign.outputs.digests }}"
       upload-assets: true
+      # v0.11.1: with no explicit name the generator's upload-assets job got an
+      # empty provenance-name and failed ('Path  already exists', exit 27).
+      provenance-name: "fengarde-${{ inputs.tag || github.ref_name }}.intoto.jsonl"
