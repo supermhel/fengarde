@@ -10,8 +10,10 @@ lifecycle story. The default choice for most SIEM projects is the
 Elastic stack, but Elasticsearch/Kibana moved off an OSI-approved license
 to the SSPL in 2021 (Elastic-licensed features require a subscription past a
 certain point) — an asterisk that most "open-source SIEM" write-ups eventually
-get to in a footnote. Wazuh, probably the most-cited open SIEM, inherits that
-asterisk because its storage layer is Elastic.
+get to in a footnote. (Correction 2026-10-20: this ADR originally said Wazuh
+inherits that asterisk. It does not - Wazuh's indexer is an OpenSearch fork
+too, as the README now says. Security Onion 2.x does sit on Elasticsearch and
+ships its own components under the Elastic License 2.0, per its docs.)
 
 ## Decision
 
