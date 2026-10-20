@@ -112,9 +112,10 @@ class TestSysmonParser(unittest.TestCase):
     def test_unmapped_event_id_returns_none(self):
         """Deliberately unmapped -- no clean OCSF class fit in the restricted
         profile (see module docstring's full accounting, updated 2026-09-10):
-        7 ImageLoad, 8 CreateRemoteThread, 10 ProcessAccess, 12/13/14 Registry*,
-        18 PipeConnected."""
-        for eid in (7, 8, 10, 12, 13, 14, 18, 9999):
+        7 ImageLoad, 8 CreateRemoteThread, 12/13/14 Registry*, 18 PipeConnected.
+        (10 ProcessAccess was mapped to class 1002/activity 5 on 2026-10-20 for the lsass rule;
+        see test_recall_events.py.)"""
+        for eid in (7, 8, 12, 13, 14, 18, 9999):
             self.assertIsNone(PARSER.parse(_raw({"EventID": eid, "TimeCreated": 1})),
                               f"EventID {eid} must stay an honest gap, not a forced mapping")
 

@@ -1,0 +1,32 @@
+title: Horizontal sweep (one source denied across many distinct hosts)
+id: d4a91b7c-62e8-4c3f-95a0-1e8b7d2f6c33
+status: stable
+description: >
+  One source IP hitting 15+ DISTINCT destination addresses with DENIED connections within 60 seconds (OCSF
+  Network Activity, class 4001, activity 6) - a HORIZONTAL sweep (few ports, many hosts), e.g. the 445/22/3389
+  discovery pass that precedes lateral movement. The vertical sibling common_port_scan.yml counts distinct ports
+  on one target and scores a constant 1 on this shape; this rule closes that gap its description recorded
+  (added 2026-10-20, owner-approved). Denies only, like its sibling: a sweep that lands on open ports is
+  not counted. Noise: vulnerability scanners and asset-discovery tools sweep by design - allowlist their
+  addresses; on an internet-edge deny log inbound background scanning will fire it constantly.
+level: medium
+logsource:
+  category: network_activity
+detection:
+  network_deny:
+    class_uid: 4001
+    activity_id: 6
+  condition: network_deny
+fields:
+  - src_endpoint.ip
+  - dst_endpoint.ip
+siem:
+  sector: common
+  score_weight: 55
+  window_seconds: 60
+  threshold: 15
+  group_by: src_endpoint.ip
+  distinct_field: dst_endpoint.ip
+mitre:
+  tactic: TA0007      # Discovery
+  technique: T1046    # Network Service Discovery

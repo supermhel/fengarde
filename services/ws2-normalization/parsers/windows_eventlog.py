@@ -62,6 +62,7 @@ from typing import Optional
 from .base import Parser, SEV_INFO, SEV_MEDIUM, SEV_HIGH
 from shared.ocsf import valid_ip, valid_mac, safe_str
 from .timeutil import to_epoch_ms
+from .proc_launch import launch_info
 
 _CLS_AUTH = 3002    # Authentication
 _CLS_PROC = 1002    # Kernel / Process
@@ -306,6 +307,9 @@ class WindowsEventLogParser(Parser):
             event.setdefault("unmapped", {})["powershell"] = ps_info
         if ds_info is not None:
             event.setdefault("unmapped", {})["directory"] = ds_info
+        if event_id == 4688 and proc_name:
+            event.setdefault("unmapped", {})["process_launch"] = launch_info(
+                safe_str(rec.get("ParentProcessName")), proc_name, safe_str(rec.get("CommandLine")))
 
         if service_name or service_path:
             svc: dict = {}

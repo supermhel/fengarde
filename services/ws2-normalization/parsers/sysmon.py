@@ -98,6 +98,7 @@ from typing import Optional
 from .base import Parser, SEV_INFO, SEV_MEDIUM
 from shared.ocsf import valid_ip, safe_str
 from .timeutil import to_epoch_ms
+from .proc_launch import launch_info
 
 _CLS_PROC = 1002    # Kernel / Process
 _CLS_NET = 4001     # Network Activity
@@ -247,6 +248,10 @@ class SysmonParser(Parser):
             target = safe_str(rec.get("TargetFilename"))
             if target:
                 event["unmapped"] = {"target_filename": target}
+
+        if event_id == 1:
+            event["unmapped"] = {"process_launch": launch_info(
+                safe_str(rec.get("ParentImage")), image, safe_str(rec.get("CommandLine")))}
 
         if event_id == 10:
             target_image = safe_str(rec.get("TargetImage")) or ""

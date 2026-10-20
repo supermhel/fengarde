@@ -130,9 +130,55 @@ check(not R_E.evaluate(e_blocked), "quarantined macro attachment must stay quiet
 check(not R_E.evaluate(e_plain), "non-macro attachment must stay quiet")
 check(not R_E.evaluate(e_out), "outbound mail must stay quiet")
 
+# ---- owner-approved trio (2026-10-20): Office->shell launch, one-source password spray, horizontal sweep ----
+word = r"C:\Program Files\Microsoft Office\root\Office16\WINWORD.EXE"
+sy1 = {"EventID": 1, "TimeCreated": T, "Computer": "wks1", "User": "CORP\\jdoe", "ProcessId": "10",
+       "CommandLine": "cmd /c whoami"}
+spawn = parse("sysmon", dict(sy1, Image=r"C:\Windows\System32\cmd.exe", ParentImage=word))
+benign = parse("sysmon", dict(sy1, Image=r"C:\Windows\System32\cmd.exe", ParentImage=r"C:\Windows\explorer.exe"))
+office_notepad = parse("sysmon", dict(sy1, Image=r"C:\Windows\notepad.exe", ParentImage=word))
+w4688 = parse("windows_eventlog", {"EventID": 4688, "TimeCreated": T, "Computer": "wks1", "SubjectUserName": "jdoe",
+                                   "NewProcessName": r"C:\Windows\System32\wscript.exe", "ParentProcessName": word})
+check(spawn["unmapped"]["process_launch"]["suspicious"] is True, "winword -> cmd must be suspicious")
+check(benign["unmapped"]["process_launch"]["suspicious"] is False, "explorer -> cmd must not be suspicious")
+check(office_notepad["unmapped"]["process_launch"]["suspicious"] is False, "winword -> notepad must not be suspicious")
+check(w4688["unmapped"]["process_launch"]["suspicious"] is True, "4688 winword -> wscript must be suspicious")
+R_OFF = rule("Document or browser host spawned a shell or script host")
+check(R_OFF.evaluate(spawn) and R_OFF.evaluate(w4688), "office-spawn rule must fire on sysmon 1 and 4688")
+check(not R_OFF.evaluate(benign) and not R_OFF.evaluate(office_notepad), "office-spawn rule must stay quiet on benign launches")
+
+R_SPR = rule("Password spray (one source failing against many distinct accounts)")
+check(R_SPR.stateful and R_SPR.distinct_field == "actor.user.name", "spray rule must count distinct accounts per source")
+BASE = 1_750_000_000_000
+
+
+def fail_auth(src, user, i):
+    return {"class_uid": 3002, "activity_id": 4, "time": BASE + i * 100, "actor": {"user": {"name": user}},
+            "src_endpoint": {"ip": src}, "siem": {"ingest_id": f"sp-{src}-{i}"}}
+
+
+fired = [R_SPR.evaluate(fail_auth("203.0.113.50", f"user{i}", i)) for i in range(8)]
+check(fired[:7] == [False] * 7 and fired[7] is True, "spray: 8th distinct account must fire, 7 must not")
+same = [R_SPR.evaluate(fail_auth("203.0.113.51", "admin", i)) for i in range(30)]
+check(not any(same), "spray: 30 failures against ONE account (brute force) must stay quiet")
+
+R_SWP = rule("Horizontal sweep (one source denied across many distinct hosts)")
+check(R_SWP.stateful and R_SWP.distinct_field == "dst_endpoint.ip", "sweep rule must count distinct destination hosts")
+
+
+def deny(src, dst, port, i):
+    return {"class_uid": 4001, "activity_id": 6, "time": BASE + i * 100, "src_endpoint": {"ip": src},
+            "dst_endpoint": {"ip": dst, "port": port}, "siem": {"ingest_id": f"sw-{src}-{i}"}}
+
+
+fired = [R_SWP.evaluate(deny("203.0.113.60", f"10.0.0.{i + 1}", 445, i)) for i in range(15)]
+check(fired[:14] == [False] * 14 and fired[14] is True, "sweep: 15th distinct host must fire, 14 must not")
+vert = [R_SWP.evaluate(deny("203.0.113.61", "10.0.0.1", 1000 + i, i)) for i in range(30)]
+check(not any(vert), "sweep: 30 ports on ONE host (vertical scan) must stay quiet")
+
 if FAILS:
     for f in FAILS:
         print("[FAIL]", f)
     sys.exit(1)
-print("[OK] service-install, log-cleared, lsass, PowerShell and AD-attribute events parse; "
-          "their rules fire/stay quiet correctly")
+print("[OK] service-install, log-cleared, lsass, PowerShell, AD-attribute events and the Office-spawn / spray / sweep rules "
+      "parse and fire/stay quiet correctly")

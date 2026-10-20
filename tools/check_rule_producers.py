@@ -182,6 +182,10 @@ FIXTURES: dict[str, list[dict]] = {
     # a month despite this file's own docstring claiming to check "every
     # registered parser". Mirrors parsers/test_sysmon.py's fixtures.
     "sysmon": [
+        {"raw": {"EventID": 1, "TimeCreated": 1750000006000, "Computer": "wks-jdoe",
+                 "Image": r"C:\Windows\System32\cmd.exe", "CommandLine": "cmd /c whoami",
+                 "ProcessId": "1235", "ParentImage": r"C:\Program Files\Microsoft Office\root\Office16\WINWORD.EXE",
+                 "User": "CORP\\jdoe"}, "meta": {}},
         {"raw": {"EventID": 10, "TimeCreated": 1750000005000, "Computer": "wks-jdoe",
                  "SourceImage": r"C:\Users\jdoe\Downloads\dump.exe", "SourceProcessId": "4242",
                  "TargetImage": r"C:\Windows\System32\lsass.exe", "GrantedAccess": "0x1010"}, "meta": {}},

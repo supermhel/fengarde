@@ -82,6 +82,9 @@ this is now a rule gap, not a parser gap.
 | win_audit_log_cleared | class 1002, activity 4 | yes (windows_eventlog 1102 / 104, added 2026-10-20) | ATT&CK T1070.001 / TA0005 |
 | win_service_installed_suspicious_path | class 1002, activity 3, unmapped.service.suspicious_path | yes (windows_eventlog 7045 / 4697, added 2026-10-20) | ATT&CK T1543.003 / TA0003 |
 | win_lsass_access_suspicious | class 1002, activity 5, unmapped.lsass_access_suspicious | yes (sysmon EventID 10, added 2026-10-20) | ATT&CK T1003.001 / TA0006 |
+| win_office_spawns_shell | class 1002, activity 1, unmapped.process_launch.suspicious (document host parent -> shell/script host child; name heuristic) | yes (sysmon EventID 1, windows_eventlog 4688 with ParentProcessName; added 2026-10-20) | ATT&CK T1204.002 / TA0002 |
+| common_password_spray_by_source | class 3002, activity 4, group_by src_endpoint.ip, distinct actor.user.name, threshold 8 / 300 s (true password spray; inverse of common_password_spray; added 2026-10-20) | yes (linux_ssh, active_directory) | ATT&CK T1110.003 / TA0006 |
+| common_port_sweep | class 4001, activity 6 (Deny), group_by src_endpoint.ip, distinct dst_endpoint.ip, threshold 15 / 60 s (horizontal sweep; sibling of common_port_scan; added 2026-10-20) | yes (cisco_asa) | ATT&CK T1046 / TA0007 |
 | win_powershell_suspicious_script | class 1002, activity 6, unmapped.powershell.suspicious | yes (windows_eventlog 4104 / 4103 / 800, added 2026-10-20) | ATT&CK T1059.001 / TA0002 |
 | win_ad_sensitive_attribute_modified | class 3003, activity 6, unmapped.directory.sensitive_attribute | yes (windows_eventlog 5136, added 2026-10-20) | ATT&CK T1098 / TA0003 |
 | m365_inbox_rule_external_forward | class 6003, unmapped.m365.inbox_rule.forwards_external | yes (m365_audit, 2026-10-14 parser; rule 2026-10-20) | ATT&CK T1114.003 / TA0009 |

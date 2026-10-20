@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (2026-10-20, recall work part 4: the three owner-approved rules)
+
+- `win_office_spawns_shell` (T1204.002: document host -> shell/script host; Sysmon 1 and Windows 4688 now carry
+  `unmapped.process_launch`), `common_password_spray_by_source` (T1110.003: one source, 8+ distinct accounts / 300 s) and
+  `common_port_sweep` (T1046: one source denied across 15+ distinct hosts / 60 s). 43 -> 46 rules, 42 -> 45 MITRE-tagged.
+  Closes the one-source-spray and horizontal-sweep gaps recorded in the descriptions of their sibling rules.
+- Second Docker fuzz run found one more parser bug of the same class (`n8n_audit` dict/list `eventType`); fixed + regression test.
+
 ### Fixed / Removed (2026-10-20, gap-hunt closure + fuzzing repair)
 
 - **Fuzzing was blind, now repaired** (`tools/fuzz/_common.py`): none of the 19 atheris harnesses instrumented the parsers
