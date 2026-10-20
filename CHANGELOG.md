@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (2026-10-20, recall work part 2: PowerShell + AD attribute changes)
+
+- Windows parser: PowerShell logging (4104 script block, 4103 module logging, classic 800) -> class 1002 activity 6 with
+  `unmapped.powershell` {script (<=2000 chars), suspicious, indicators}; Security 5136 (directory object modified) -> class 3003
+  activity 6 with `unmapped.directory` {object_dn, attribute, value, sensitive_attribute}. Heuristics, not classifiers.
+- Rules: `win_powershell_suspicious_script` (T1059.001), `win_ad_sensitive_attribute_modified` (T1098). 39 -> 41 rules, 40 MITRE-tagged.
+
 ### Added (2026-10-20, recall work: 3 rules, 3 event types)
 
 - Windows parser: System 7045 / Security 4697 (service installed), Security 1102 / System 104 (audit log cleared); Sysmon

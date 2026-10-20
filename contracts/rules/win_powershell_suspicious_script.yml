@@ -1,0 +1,30 @@
+title: Suspicious PowerShell script content
+id: 79a1b4be-2ffb-4aba-8051-f09b4863ffc4
+status: stable
+description: >
+  PowerShell logging (script block 4104, module logging 4103 or classic pipeline 800; OCSF class 1002,
+  activity_id 6) carried content that matches known attack tooling or download-and-execute / encoded-command
+  patterns. The parser sets unmapped.powershell.suspicious from a string/regex HEURISTIC (strong indicators
+  such as DownloadString, FromBase64String, AMSI bypass strings or Invoke-Mimikatz; or two weak ones such as
+  IEX with -nop/hidden) - it is not a classifier. Admin and deployment scripts that download and run code
+  will fire it; tune per site. Needs PowerShell script block logging enabled on the endpoints. Added
+  2026-10-20 (blind-recall funnel: PowerShell 4104/4103/800 were 62 NO_PARSER units).
+level: high
+logsource:
+  category: script_execution
+detection:
+  sel:
+    class_uid: 1002
+    activity_id: 6
+    unmapped.powershell.suspicious: true
+  condition: sel
+fields:
+  - actor.user.name
+  - src_endpoint.hostname
+  - unmapped.powershell.indicators
+siem:
+  sector: common
+  score_weight: 70
+mitre:
+  tactic: TA0002
+  technique: T1059.001
