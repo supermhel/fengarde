@@ -22,11 +22,11 @@ RUN git clone --depth 1 https://github.com/supermhel/fengarde fengarde
 # services modules by module name, and shared/ocsf.py locates
 # tools/validate_contract.py relative to the repo root at import time, so
 # put the repo's relevant roots on PYTHONPATH.
-ENV PYTHONPATH="$SRC/fengarde/tools/fuzz:$SRC/fengarde"
+ENV PYTHONPATH="$SRC/fengarde/tools/fuzz:$SRC/fengarde:$SRC/fengarde/services:$SRC/fengarde/services/ws2-normalization"
 
 # Atheris is pre-installed on the base image, but pin the latest release
 # explicitly so the project does not silently depend on the base image tag.
-RUN python3 -m pip install --upgrade atheris
+RUN python3 -m pip install --upgrade atheris pyyaml
 
 COPY build.sh $SRC/build.sh
 WORKDIR $SRC/fengarde

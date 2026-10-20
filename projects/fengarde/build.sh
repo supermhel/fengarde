@@ -39,6 +39,21 @@ FUZZ_TARGETS=(
   fuzz_windows_eventlog
 )
 
+# The harnesses add services/ to sys.path at RUN time, which PyInstaller cannot see, so (1) the Dockerfile puts the
+# service directories on PYTHONPATH for the analysis, (2) every package is collected explicitly, and (3) shared/ocsf.py
+# finds tools/validate_contract.py and contracts/ relative to its own bundled location (_MEIPASS), so ship both.
+PYI_ARGS=(
+  --paths "$SRC/fengarde/services"
+  --paths "$SRC/fengarde/services/ws2-normalization"
+  --paths "$SRC/fengarde/tools/fuzz"
+  --collect-submodules shared
+  --collect-submodules parsers
+  --collect-submodules enrichment
+  --hidden-import yaml
+  --add-data "$SRC/fengarde/tools/validate_contract.py:tools"
+  --add-data "$SRC/fengarde/contracts:contracts"
+)
+
 for fuzzer in "${FUZZ_TARGETS[@]}"; do
-  compile_python_fuzzer "$SRC/fengarde/tools/fuzz/${fuzzer}.py"
+  compile_python_fuzzer "$SRC/fengarde/tools/fuzz/${fuzzer}.py" "${PYI_ARGS[@]}"
 done
