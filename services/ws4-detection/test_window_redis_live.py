@@ -26,7 +26,7 @@ def main() -> int:
     url = os.environ.get("REDIS_URL")
     if not url:
         print("[SKIP] REDIS_URL unset: live Redis Lua-fallback parity not run (CI redis-integration runs it)")
-        return 0
+        return 1 if os.environ.get("FENGARDE_E2E_STRICT") == "1" else 0   # R4-122
     import redis  # noqa: PLC0415 -- only the live path needs the client
 
     client = redis.Redis.from_url(url)

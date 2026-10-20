@@ -305,6 +305,8 @@ def main() -> None:
     if not _reachable(url):
         print(f"[SKIP] test_opensearch_live: OpenSearch not reachable at {url} "
               "(set OPENSEARCH_URL and bring up a real cluster to run this lane)")
+        if os.environ.get("FENGARDE_E2E_STRICT") == "1":   # R4-122: a CI lane must not pass by skipping
+            raise SystemExit(1)
         return
 
     store = OpenSearchStore(url=url)

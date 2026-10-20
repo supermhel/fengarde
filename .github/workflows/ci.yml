@@ -138,6 +138,7 @@ jobs:
         run: python services/ws4-detection/test_window.py
       - name: hit_distinct Lua fallback (Redis < 6.2 path) on real Redis
         env:
+          FENGARDE_E2E_STRICT: "1"
           REDIS_URL: redis://localhost:6379/0
         run: python services/ws4-detection/test_window_redis_live.py
 
@@ -164,6 +165,7 @@ jobs:
         run: pip install pyyaml redis
       - name: hit_distinct Lua fallback on a real Redis 6.0
         env:
+          FENGARDE_E2E_STRICT: "1"
           REDIS_URL: redis://localhost:6379/0
           REDIS_EXPECT_LEGACY: "1"
         run: python services/ws4-detection/test_window_redis_live.py
