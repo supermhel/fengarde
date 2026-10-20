@@ -231,7 +231,10 @@ def test_http_report_route_rejects_unknown_stage_or_lang():
     srv, port = _serve(store)
     try:
         for q in ("stage=final-report&lang=en", "stage=notification&lang=fr"):
-            code, _body = _post(port, f"/alerts/a1/report?template=nis2&{q}")
+            try:
+                code, _body = _post(port, f"/alerts/a1/report?template=nis2&{q}")
+            except urllib.error.HTTPError as exc:
+                code = exc.code
             check(code == 400, f"unknown stage/lang ({q}) must be 400, got {code}")
     finally:
         srv.shutdown(); srv.server_close()
