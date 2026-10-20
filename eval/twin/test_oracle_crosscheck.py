@@ -171,8 +171,9 @@ def _run(sdef, oracle, seed=7, **kw):
 
 def test_derive_clean_tree() -> None:
     glob = od.apply_waivers(od.lint_rules(_RULES), "*")
-    _check("DER-NEG-1 the 36 rule files pass the static OCSF logsource lint (F10)",
-           len(_RULES) == 36 and not glob["unwaived"], f"rules={len(_RULES)} bad={[f['item'] for f in glob['unwaived']]}")
+    n_files = len(list((TWIN.parent.parent / "contracts" / "rules").glob("*.yml")))
+    _check(f"DER-NEG-1 the {n_files} rule files pass the static OCSF logsource lint (F10)",
+           len(_RULES) == n_files and not glob["unwaived"], f"rules={len(_RULES)} bad={[f['item'] for f in glob['unwaived']]}")
     for seed in (7, 11):
         for sd in reg.ALL:
             res = _run(sd, _oracle(sd), seed)
