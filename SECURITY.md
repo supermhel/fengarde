@@ -450,15 +450,16 @@ any `v*` tag, not just stable releases — see its `:latest` image-tag gating
 
 ### 2. Verify the source-tarball release artifact (sign-blob)
 
-Each release also ships `fengarde-<VERSION>.tar.gz` (a deterministic `git
-archive` of the tag) plus its keyless signature and certificate, named
-`fengarde-<VERSION>.tar.gz.sig` and `fengarde-<VERSION>.tar.gz.pem`. Download
-all three from the release and verify:
+Each release ships `fengarde-<VERSION>.tar.gz` (a deterministic `git
+archive` of the tag) plus its keyless signature **bundle**, named
+`fengarde-<VERSION>.tar.gz.bundle` — the bundle carries both the signature
+and the signing certificate (cosign >= 2.4's NewBundleFormat; the legacy
+`.sig`/`.pem` pair predates it and is no longer produced). Download both
+files from the release and verify:
 
 ```bash
 cosign verify-blob \
-  --signature   fengarde-<VERSION>.tar.gz.sig \
-  --certificate fengarde-<VERSION>.tar.gz.pem \
+  --bundle   fengarde-<VERSION>.tar.gz.bundle \
   --certificate-identity-regexp \
     '^https://github.com/supermhel/fengarde/\.github/workflows/release\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$' \
   --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \

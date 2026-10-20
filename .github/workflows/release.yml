@@ -91,9 +91,15 @@ jobs:
           set -euo pipefail
           mkdir -p dist
           git archive --format=tar.gz -o "dist/fengarde-${REF}.tar.gz" HEAD
-          cosign sign-blob --yes "dist/fengarde-${REF}.tar.gz" \
-            --output-signature  "dist/fengarde-${REF}.tar.gz.sig" \
-            --output-certificate "dist/fengarde-${REF}.tar.gz.pem"
+          # Keyless sign-blob. cosign >= 2.4 defaults to the NewBundleFormat,
+          # which IGNORES --output-signature/--output-certificate and writes
+          # one .bundle file that contains both the signature and the signing
+          # certificate (release failed 2026-10-20 with "create bundle file:
+          # open : no such file or directory" for exactly that reason). The
+          # bundle form works across cosign 2.x/3.x, so no binary pin needed.
+          cosign sign-blob --yes \
+            --bundle "dist/fengarde-${REF}.tar.gz.bundle" \
+            "dist/fengarde-${REF}.tar.gz"
           sha256sum "dist/fengarde-${REF}.tar.gz"
 
       - name: Build, push, and keyless-sign every service image
@@ -146,13 +152,13 @@ jobs:
           # Explicit, not inferred from github.ref_name: on workflow_dispatch
           # that's the branch the run was launched from, not the release tag.
           tag_name: ${{ inputs.tag || github.ref_name }}
-          # The source tarball + its keyless signature + certificate.
-          # SLSA provenance (.intoto.jsonl + .sig + .cert) is attached by the
-          # provenance job via the generator's own upload-assets.
+          # The source tarball + its keyless signature bundle (the bundle holds
+          # both the signature and the signing certificate). SLSA provenance
+          # (.intoto.jsonl + .sig + .cert) is attached by the provenance job
+          # via the generator's own upload-assets.
           files: |
             dist/fengarde-${{ inputs.tag || github.ref_name }}.tar.gz
-            dist/fengarde-${{ inputs.tag || github.ref_name }}.tar.gz.sig
-            dist/fengarde-${{ inputs.tag || github.ref_name }}.tar.gz.pem
+            dist/fengarde-${{ inputs.tag || github.ref_name }}.tar.gz.bundle
           fail_on_unmatched_files: true
 
   # ---------------------------------------------------------------------
