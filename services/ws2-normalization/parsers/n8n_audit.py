@@ -73,7 +73,7 @@ class N8nAuditParser(Parser):
         meta = raw.get("meta") or {}
 
         event_type = _pick(rec, "eventType", "event_type", "type")
-        if not event_type:
+        if not event_type or not isinstance(event_type, str):  # fuzz finding: a dict/list is unhashable
             return None
 
         user = safe_str(_pick(rec, "user", "userEmail", "username"))

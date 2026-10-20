@@ -64,6 +64,15 @@ for bad in ({"a": 1}, ["x"], 5):
     else:
         check(out is None, f"opcua_audit must reject a non-string eventType {bad!r}")
 
+# n8n_audit: unhashable eventType (second fuzz run)
+for bad in ({"a": 1}, ["x"], 5):
+    try:
+        out = parse("n8n_audit", {"eventType": bad, "user": "u"})
+    except Exception as exc:  # noqa: BLE001
+        FAILS.append(f"n8n_audit raised on eventType={bad!r}: {exc!r}")
+    else:
+        check(out is None, f"n8n_audit must reject a non-string eventType {bad!r}")
+
 if FAILS:
     for f in FAILS:
         print("[FAIL]", f)
