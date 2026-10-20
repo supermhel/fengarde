@@ -105,6 +105,18 @@ def test_reload_rejects_malformed_edit_keeps_old_set():
     _with_tmp_rules_dir(body)
 
 
+def test_reload_rejects_zero_byte_rule_file_keeps_old_set():
+    """gap-hunt R4 #17: a zero-byte/truncated rule file used to reload as a 'success' with fewer rules live."""
+    def body(tmp):
+        (tmp / "r.yml").write_text(_RULE_TMPL.format(n=3, threshold=1), encoding="utf-8")
+        detector = ws4.Detector(plugin_rule_dirs=[])
+        check(len(detector.process(_event())[1]) == 1, "sanity: valid rule fires before the bad edit")
+        (tmp / "r.yml").write_text("", encoding="utf-8")
+        check(detector.reload() is False, "a zero-byte rule file must fail reload(), not shrink the rule set")
+        check(len(detector.process(_event())[1]) == 1, "the PREVIOUS rule set must still fire after the rejected reload")
+    _with_tmp_rules_dir(body)
+
+
 def test_reload_removed_rule_stops_firing():
     def body(tmp):
         (tmp / "r.yml").write_text(_RULE_TMPL.format(n=3, threshold=1), encoding="utf-8")
@@ -167,6 +179,7 @@ def test_reload_watcher_picks_up_a_change():
 def main():
     test_reload_picks_up_a_new_threshold()
     test_reload_rejects_malformed_edit_keeps_old_set()
+    test_reload_rejects_zero_byte_rule_file_keeps_old_set()
     test_reload_removed_rule_stops_firing()
     test_rules_max_mtime_reflects_real_changes()
     test_reload_watcher_disabled_by_default()

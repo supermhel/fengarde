@@ -155,5 +155,19 @@ class TestActiveDirectoryParser(unittest.TestCase):
         self.assertEqual(validate(event), [])
 
 
+    def test_logon_target_host_is_dst_endpoint(self):
+        """gap-hunt R4-136: the machine the 4624 was logged on is the destination, so lateral-movement
+        rules can count AD logons; src hostname keeps its WorkstationName -> Computer fallback."""
+        rec = {"EventID": 4624, "TimeCreated": 1750000000000, "TargetUserName": "jdoe",
+               "IpAddress": "10.0.0.5", "WorkstationName": "wks-jdoe", "Computer": "srv-file01"}
+        ev = PARSER.parse(_raw(rec))
+        self.assertEqual(ev["dst_endpoint"], {"hostname": "srv-file01"})
+        self.assertEqual(ev["src_endpoint"]["hostname"], "wks-jdoe")
+        self.assertEqual(validate(ev), [])
+        no_computer = dict(rec)
+        no_computer.pop("Computer")
+        self.assertNotIn("dst_endpoint", PARSER.parse(_raw(no_computer)))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

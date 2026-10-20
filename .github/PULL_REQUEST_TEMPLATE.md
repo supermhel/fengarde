@@ -22,6 +22,7 @@ A short description of the change.
 ## Verification
 
 - [ ] `make test` (i.e. `./run_all_tests.sh`) passes locally.
+- [ ] New or changed behavior has a test (contract test, sample or unit test); see CONTRIBUTING.md "Pull request expectations".
 - [ ] If evaluation inputs or atom values changed: `python eval/twin/ratchet.py refresh --reason "..."`
       was run from a clean, full-gate artifact set; no baseline number was edited by hand.
 - [ ] Any accepted drop uses `eval/twin/ratchet_waivers.json` with an owner,

@@ -61,6 +61,10 @@ jobs:
         run: |
           mkdir -p tools/fuzz/corpus/${{ matrix.target }}
           cd tools/fuzz
+          # Seed with the repo's real parser fixtures (never overwrites cached corpus files): without valid-looking
+          # records the mutator plateaus at a few dozen edges (measured 2026-10-20).
+          python make_seeds.py "$RUNNER_TEMP/seeds"
+          cp -n "$RUNNER_TEMP/seeds/${{ matrix.target }}/"* corpus/${{ matrix.target }}/
           python fuzz_${{ matrix.target }}.py -max_total_time=600 corpus/${{ matrix.target }}
       - name: Upload crashing input (if any)
         if: failure()

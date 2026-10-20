@@ -626,10 +626,14 @@ class SyslogUDPServer:
         return time.monotonic() - self._last_received_ts
 
     def _worker_loop(self) -> None:
-        while self._running.is_set():
+        # R4-72 (gap-hunt 2026-08-26): keep working after stop() clears _running until the queue is
+        # empty, so datagrams already accepted are handled, not discarded uncounted.
+        while self._running.is_set() or not self._queue.empty():
             try:
                 item = self._queue.get(timeout=0.5)
             except queue.Empty:
+                if not self._running.is_set():
+                    break
                 continue
             if item is None:  # stop() sentinel
                 break
@@ -687,6 +691,14 @@ class SyslogUDPServer:
         for t in self._worker_threads:
             t.join(timeout=5)
         self._worker_threads = []
+        # Anything the workers could not finish within the join timeout is lost: COUNT it.
+        while True:
+            try:
+                item = self._queue.get_nowait()
+            except queue.Empty:
+                break
+            if item is not None:
+                self.events_lost += 1
         self._spool_shutdown.set()
         if self._spool_thread is not None:
             self._spool_thread.join(timeout=5)

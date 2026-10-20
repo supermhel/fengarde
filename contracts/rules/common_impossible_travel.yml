@@ -1,7 +1,10 @@
 title: Impossible travel (same account, distinct countries in a short window)
 id: 7081a2b3-c405-4de3-be5f-6a7b8c9d0e12
-status: stable
+status: experimental
 description: >
+  STATUS experimental (gap-hunt R4-129, 2026-10-20): with the shipped SAMPLE geo map this rule cannot
+  fire on production traffic; it becomes stable only once a deployment supplies real egress prefixes or a
+  GeoIP resolver. Kept enabled so the engine path stays exercised.
   The same account authenticated successfully (OCSF Authentication, class
   3002, activity 1 Logon) from source IPs resolving to 2+ DISTINCT countries
   within 60 minutes (window widened from 600s in 2026-08-26: the 10-minute

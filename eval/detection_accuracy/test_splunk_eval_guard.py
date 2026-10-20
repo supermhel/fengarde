@@ -1,6 +1,11 @@
 """Regression: Q13 subset fetch leaves LFS pointers by design; splunk_eval must
 fail only when NOTHING was pulled, and grade the fetched files otherwise."""
-import contextlib, importlib.util, io, pathlib, sys, tempfile
+import contextlib
+import importlib.util
+import io
+import pathlib
+import sys
+import tempfile
 
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))

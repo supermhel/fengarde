@@ -126,6 +126,14 @@ class ActiveDirectoryParser(Parser):
                 sep["mac"] = mac
             event["src_endpoint"] = sep
 
+        # gap-hunt R4-136: a logon's TARGET host (the machine the event was logged on) is the destination, as
+        # windows_eventlog.py already maps it; without it the lateral-movement rules could never count AD logons.
+        # src_endpoint.hostname is left exactly as before (WorkstationName, falling back to Computer) because
+        # common_bruteforce_sourceless depends on that fallback.
+        target_host = _hostname(rec.get("Computer"))
+        if target_host:
+            event["dst_endpoint"] = {"hostname": target_host}
+
         if user:
             actor_user: dict = {"name": user}
             if domain:

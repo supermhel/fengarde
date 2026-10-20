@@ -195,6 +195,9 @@ def _syslog_metrics(udp) -> dict:
     # Ingestion-edge-redundancy design doc (fengarde-sec) step 2: the "healthy
     # but nothing is arriving" signal /health never had.
     m["seconds_since_last_event"] = round(udp.seconds_since_last_event(), 1)
+    spool = getattr(udp, "_spool", None)
+    if spool is not None:   # gap-hunt R4-74: torn/corrupt spool lines were counted but never exported
+        m["spool_corrupt_lines_skipped"] = getattr(spool, "corrupt_lines_skipped", 0)
     return m
 
 
@@ -237,7 +240,7 @@ def main() -> None:
     spool = None
     if spool_path:
         spool_max_bytes = _int_env("SYSLOG_SPOOL_MAX_BYTES", SPOOL_DEFAULT_MAX_BYTES, log)
-        spool = BoundedSpool(spool_path, max_bytes=spool_max_bytes)
+        spool = BoundedSpool(spool_path, max_bytes=spool_max_bytes, logger=log)
         log.info("syslog zero-loss spool enabled", path=spool_path, max_bytes=spool_max_bytes)
     # P0-4 (2026-07-21 audit): recv/dispatch decoupling knobs -- see
     # syslog_udp_server.py's module docstring for the live-proven kernel-drop

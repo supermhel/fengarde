@@ -401,6 +401,8 @@ echo "== ws2 parsers: sysmon (P0-3, 2026-07-21 audit: first class-1001 producer)
 $PY services/ws2-normalization/parsers/test_sysmon.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo "== recall work (2026-10-20): service install / log cleared / lsass access parse + rules =="; LAST_HEADER="== recall events =="
 $PY services/ws2-normalization/parsers/test_recall_events.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo "== fuzz findings (2026-10-20): parser bugs found by the repaired atheris harnesses =="; LAST_HEADER="== fuzz findings =="
+$PY services/ws2-normalization/parsers/test_fuzz_findings.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
 echo "== ws2 parsers: modbus_anomaly (M7 Track X, 2026-07-22: OT protocol-anomaly detector, not a vendor-log parser -- un-dormants ot_modbus_unauthorized_write.yml) =="; LAST_HEADER="== ws2 parsers: modbus_anomaly (M7 Track X, 2026-07-22: OT protocol-anomaly detector, not a vendor-log parser -- un-dormants ot_modbus_unauthorized_write.yml) =="
 $PY services/ws2-normalization/parsers/test_modbus_anomaly.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
@@ -665,20 +667,12 @@ echo
 echo "== blind-recall lane: synthetic controls (label from the dataset, never from FENGARDE; NOT a third-party measurement) =="; LAST_HEADER="== blind-recall lane: synthetic controls (label from the dataset, never from FENGARDE; NOT a third-party measurement) =="
 $PY eval/detection_accuracy/test_blind_recall.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
-echo "== ws7 UX fixes: saved searches, dark mode, alert lifecycle (static assertions) =="; LAST_HEADER="== ws7 UX fixes: saved searches, dark mode, alert lifecycle (static assertions) =="
-$PY services/ws7-dashboard/test_fix_ux.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
 echo "== ws7 read-plane regression: LIVE ownership, outage marker, config.js gate, badge copy =="; LAST_HEADER="== ws7 read-plane regression: LIVE ownership, outage marker, config.js gate, badge copy =="
 $PY services/ws7-dashboard/test_fix_read_plane.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
-echo "== Phase 5 item 4 (2026-09-04): GET /assets/{mac} wired into the Inventory drill-in =="; LAST_HEADER="== Phase 5 item 4 (2026-09-04): GET /assets/{mac} wired into the Inventory drill-in =="
-$PY services/ws7-dashboard/test_phase5_asset_detail.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
-echo "== Phase 5 item 3 (2026-09-04): incident detail renders the causal graph + evidence package =="; LAST_HEADER="== Phase 5 item 3 (2026-09-04): incident detail renders the causal graph + evidence package =="
-$PY services/ws7-dashboard/test_phase5_incident_graph_evidence.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
-echo "== WS-7 (2026-10-14): 10s poll refresh keeps the open incident + its evidence panel =="; LAST_HEADER="== WS-7 (2026-10-14): 10s poll refresh keeps the open incident + its evidence panel =="
-$PY services/ws7-dashboard/test_incident_poll_keeps_selection.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 
 echo
 if [ "$fail" -eq 0 ]; then

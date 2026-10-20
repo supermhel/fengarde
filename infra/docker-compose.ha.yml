@@ -159,14 +159,18 @@ services:
     volumes:
       - ./redis-sentinel-entrypoint.sh:/redis-sentinel-entrypoint.sh:ro
       - redis-sentinel-ha-1:/data
-    depends_on: [redis-1, redis-2, redis-3]
+    depends_on:
+      redis-1: {condition: service_healthy}
+      redis-2: {condition: service_healthy}
+      redis-3: {condition: service_healthy}
     networks:
       ha:
         ipv4_address: 172.28.0.21
     ports: ["127.0.0.1:26379:26379"]
     healthcheck:
-      # R3-#22: auth-aware ping (AUTH when REDIS_PASSWORD set, else plain).
-      test: ["CMD-SHELL", "if [ -n \"$$REDIS_PASSWORD\" ]; then redis-cli -p 26379 -a \"$$REDIS_PASSWORD\" ping | grep -q PONG || exit 1; else redis-cli -p 26379 ping | grep -q PONG || exit 1; fi"]
+      # R3-#22 (completed 2026-10-20): auth-aware ping AND a real check that this Sentinel can name the monitored master
+      # (`sentinel get-master-addr-by-name`), so a Sentinel that answers PING but lost its master is not 'healthy'.
+      test: ["CMD-SHELL", "M=$${REDIS_SENTINEL_MASTER:-mymaster}; A=; if [ -n \"$$REDIS_PASSWORD\" ]; then A=\"-a $$REDIS_PASSWORD --no-auth-warning\"; fi; redis-cli -p 26379 $$A ping | grep -q PONG || exit 1; redis-cli -p 26379 $$A sentinel get-master-addr-by-name $$M | head -1 | grep -q . || exit 1"]
       interval: 5s
       timeout: 3s
       retries: 5
@@ -187,13 +191,14 @@ services:
     volumes:
       - ./redis-sentinel-entrypoint.sh:/redis-sentinel-entrypoint.sh:ro
       - redis-sentinel-ha-2:/data
-    depends_on: [redis-sentinel-1]
+    depends_on:
+      redis-sentinel-1: {condition: service_healthy}
     networks:
       ha:
         ipv4_address: 172.28.0.22
     ports: ["127.0.0.1:26380:26379"]
     healthcheck:
-      test: ["CMD-SHELL", "if [ -n \"$$REDIS_PASSWORD\" ]; then redis-cli -p 26379 -a \"$$REDIS_PASSWORD\" ping | grep -q PONG || exit 1; else redis-cli -p 26379 ping | grep -q PONG || exit 1; fi"]
+      test: ["CMD-SHELL", "M=$${REDIS_SENTINEL_MASTER:-mymaster}; A=; if [ -n \"$$REDIS_PASSWORD\" ]; then A=\"-a $$REDIS_PASSWORD --no-auth-warning\"; fi; redis-cli -p 26379 $$A ping | grep -q PONG || exit 1; redis-cli -p 26379 $$A sentinel get-master-addr-by-name $$M | head -1 | grep -q . || exit 1"]
       interval: 5s
       timeout: 3s
       retries: 5
@@ -214,13 +219,14 @@ services:
     volumes:
       - ./redis-sentinel-entrypoint.sh:/redis-sentinel-entrypoint.sh:ro
       - redis-sentinel-ha-3:/data
-    depends_on: [redis-sentinel-1]
+    depends_on:
+      redis-sentinel-1: {condition: service_healthy}
     networks:
       ha:
         ipv4_address: 172.28.0.23
     ports: ["127.0.0.1:26381:26379"]
     healthcheck:
-      test: ["CMD-SHELL", "if [ -n \"$$REDIS_PASSWORD\" ]; then redis-cli -p 26379 -a \"$$REDIS_PASSWORD\" ping | grep -q PONG || exit 1; else redis-cli -p 26379 ping | grep -q PONG || exit 1; fi"]
+      test: ["CMD-SHELL", "M=$${REDIS_SENTINEL_MASTER:-mymaster}; A=; if [ -n \"$$REDIS_PASSWORD\" ]; then A=\"-a $$REDIS_PASSWORD --no-auth-warning\"; fi; redis-cli -p 26379 $$A ping | grep -q PONG || exit 1; redis-cli -p 26379 $$A sentinel get-master-addr-by-name $$M | head -1 | grep -q . || exit 1"]
       interval: 5s
       timeout: 3s
       retries: 5

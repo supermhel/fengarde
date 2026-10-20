@@ -319,7 +319,9 @@ services:
     # (Syslog 5514 deliberately stays on all interfaces -- remote devices must
     # reach it to ship logs.)
     ports: ["127.0.0.1:8080:80"]
-    depends_on: [ws6-inventory]
+    depends_on:
+      ws6-inventory:
+        condition: service_healthy   # R3-25 (gap-hunt): started is not ready
     # R3-19: nginx:alpine ships busybox `wget` (not curl/python), so the liveness
     # probe is a wget GET of the root page (fails on non-2xx) -- functionally the
     # "curl -f http://localhost/" check, written to the image's actual tooling.

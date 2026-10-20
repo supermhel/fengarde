@@ -6,7 +6,7 @@ from pathlib import Path
 # valid_ip/valid_mac/safe_str have no tools/ dependency and are re-exported
 # here for backward compatibility with existing callers -- see ip_utils.py's
 # module docstring for why they live in their own dependency-free module.
-from shared.ip_utils import valid_ip, valid_mac, safe_str  # noqa: F401
+from shared.ip_utils import valid_ip, valid_mac, valid_port, safe_str  # noqa: F401
 
 # Reuse the single source-of-truth validator in tools/. Resolve its location for
 # BOTH the repo layout (repo/services/shared -> repo/tools, parents[2]) and the

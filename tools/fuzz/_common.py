@@ -23,6 +23,18 @@ SERVICES = ROOT / "services"
 sys.path.insert(0, str(SERVICES))
 sys.path.insert(0, str(SERVICES / "ws2-normalization"))
 
+# 2026-10-20: the harnesses were BLIND. atheris only gets coverage feedback from modules imported inside
+# ``atheris.instrument_imports()``; none of the 19 harnesses did that, so the corpus never grew ("corp: 1/1b" after 3.8M
+# runs in a 90 s Docker run) and the nightly job / OSS-Fuzz fuzzed with no guidance. Importing the ``parsers`` package here,
+# before any harness imports a parser, instruments every parser module (the registry imports them all). Guarded so
+# ``_common`` stays importable where atheris is not installed (only the harness entry points need it).
+try:
+    import atheris as _atheris
+except ImportError:  # pragma: no cover
+    _atheris = None
+if _atheris is not None:
+    with _atheris.instrument_imports():
+        import parsers  # noqa: E402,F401
 from shared.ocsf import validate as ocsf_validate  # noqa: E402
 
 
@@ -34,11 +46,11 @@ def make_test_one_input(parser, source_type: str):
     (rejected input) is success, not a finding -- that's the parser doing
     its job on adversarial input.
     """
-    import atheris
 
     def test_one_input(data: bytes) -> None:
-        fdp = atheris.FuzzedDataProvider(data)
-        line = fdp.ConsumeUnicodeNoSurrogates(fdp.remaining_bytes())
+        # Plain UTF-8 decode of the fuzz bytes (2026-10-20): FuzzedDataProvider.ConsumeUnicode* re-encodes bytes into
+        # code points in its own scheme, so a real seed record never round-trips to the same text and seeds are useless.
+        line = data.decode("utf-8", errors="replace")
         raw = {
             "source_type": source_type,
             "raw": line,
@@ -75,11 +87,9 @@ def make_json_test_one_input(parser, source_type: str):
     """
     import json as _json
 
-    import atheris
 
     def test_one_input(data: bytes) -> None:
-        fdp = atheris.FuzzedDataProvider(data)
-        text = fdp.ConsumeUnicodeNoSurrogates(fdp.remaining_bytes())
+        text = data.decode("utf-8", errors="replace")   # see the note in make_test_one_input
         try:
             rec = _json.loads(text)
         except (ValueError, TypeError):

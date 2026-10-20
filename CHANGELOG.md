@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed / Removed (2026-10-20, gap-hunt closure + fuzzing repair)
+
+- **Fuzzing was blind, now repaired** (`tools/fuzz/_common.py`): none of the 19 atheris harnesses instrumented the parsers
+  (`atheris.instrument_imports()`), so the corpus never grew (`corp: 1/1b` after 3.8M runs in Docker) in the nightly job and in
+  OSS-Fuzz alike; the string harness also re-encoded the bytes through `ConsumeUnicode*`, which defeats seeds. Fixed both, added
+  `tools/fuzz/make_seeds.py` (one real record per parser path, used by `fuzz.yml` and the OSS-Fuzz `build.sh`). The repaired runs
+  found five real parser bugs within seconds, all fixed with regression tests (`test_fuzz_findings.py`): `windows_eventlog`
+  non-string `NewProcessName`; `cef` / `cisco_asa` / `linux_ssh` ports above 65535 copied into endpoints (new
+  `shared.ip_utils.valid_port`); `opcua_audit` dict/list `eventType` raised `TypeError`.
+- **Legacy console retired**: `/legacy/` (the single-file `index.html`, its mocks, and the four tests that only asserted its JS)
+  is removed; nginx no longer has the location. The React console is the only UI.
+- Gap-hunt fixes: Sentinel healthcheck verifies the monitored master and Sentinels wait for healthy Redis nodes; the audit
+  append takes the cross-process lock; hot reload rejects a zero-byte rule file; the NIS2 report route returns 400 for an
+  unknown stage/lang; the AI adapter fails closed without the no-redirect opener; AD logons map the target host to
+  `dst_endpoint` (lateral-movement rules now count them). See `docs/gap-hunt-status.md`.
+
 ### Added (2026-10-20, recall work part 3: rules for the 2026-10-14 mail/M365 parsers)
 
 - `m365_inbox_rule_external_forward` (T1114.003) and `email_macro_attachment_delivered` (T1566.001); mail_gateway parser now
