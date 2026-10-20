@@ -176,7 +176,7 @@ as admin, analyst and read-only, in both languages, in dark mode and at phone wi
 
 ## What is real
 
-Summary of `main` (last tagged release: `v0.10.0`). The itemized history is
+Summary of `main` (last tagged release: `v0.11.0`). The itemized history is
 [CHANGELOG.md](CHANGELOG.md); the authoritative, continuously updated status is
 [SSOT.md](SSOT.md). If they disagree with this table, SSOT wins. Measured,
 externally-usable detection numbers (macro-F1, per-rule TP/FP/FN/TN, twin
