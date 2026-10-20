@@ -57,3 +57,13 @@ PYI_ARGS=(
 for fuzzer in "${FUZZ_TARGETS[@]}"; do
   compile_python_fuzzer "$SRC/fengarde/tools/fuzz/${fuzzer}.py" "${PYI_ARGS[@]}"
 done
+
+# Seed corpora: one real record per parser path, from the repo's own fixtures (tools/fuzz/make_seeds.py). OSS-Fuzz picks up
+# $OUT/<target>_seed_corpus.zip automatically. Without seeds the mutator has to invent valid JSON from random bytes.
+python3 "$SRC/fengarde/tools/fuzz/make_seeds.py" /tmp/fengarde-seeds
+for fuzzer in "${FUZZ_TARGETS[@]}"; do
+  src="${fuzzer#fuzz_}"
+  if compgen -G "/tmp/fengarde-seeds/${src}/*" > /dev/null; then
+    zip -q -j "$OUT/${fuzzer}_seed_corpus.zip" /tmp/fengarde-seeds/${src}/*
+  fi
+done
