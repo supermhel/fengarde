@@ -6,8 +6,8 @@ it and fails on any difference.
 
 - basis: `harness-measured`  |  seed: `7`
 - registry digest: `8ac1d7365811d565724060382586226bc72e7a1057753d242d83a5851b139623` (`eval/scorecard_registry.py`)
-- 42 tagged rules, 26 ATT&CK/ATT&CK-ICS/ATLAS techniques, 9 storylines, 31 registered metrics
-- pooled across storylines: 162/198 = 0.8182 (convenience only -- the per-storyline numbers are the result)
+- 45 tagged rules, 28 ATT&CK/ATT&CK-ICS/ATLAS techniques, 9 storylines, 31 registered metrics
+- pooled across storylines: 163/198 = 0.8232 (convenience only -- the per-storyline numbers are the result)
 
 ## How to read this card
 
@@ -89,17 +89,17 @@ Oracle: 3 step(s), 0 declared gap(s), 3 non-gap step(s).
 
 phishing -> encoded PowerShell -> C2 beacon -> credential stuffing -> foreign login -> mailbox rule -> payment redirect
 
-Oracle: 8 step(s), 3 declared gap(s), 5 non-gap step(s).
+Oracle: 8 step(s), 2 declared gap(s), 6 non-gap step(s).
 
 | metric | value | direction | blind spot | control |
 |---|---|---|---|---|
-| tpr | 1.0 (non-gap steps detected 5/5; oracle declares 8 step(s) and 3 gap(s)) | higher-better | Step COVERAGE, not rule completeness: the denominator excludes `no_rule_exists` gap steps (report._grade_chain skips them), so a gap can never lower TPR. Detection is judged by an oracle-listed rule, or by ATT&CK tactic equivalence in the mutation lane. | `eval/adversarial/test_scenario_harness.py::test_oracle_reconciliation` |
+| tpr | 1.0 (non-gap steps detected 6/6; oracle declares 8 step(s) and 2 gap(s)) | higher-better | Step COVERAGE, not rule completeness: the denominator excludes `no_rule_exists` gap steps (report._grade_chain skips them), so a gap can never lower TPR. Detection is judged by an oracle-listed rule, or by ATT&CK tactic equivalence in the mutation lane. | `eval/adversarial/test_scenario_harness.py::test_oracle_reconciliation` |
 | chain_fidelity | 0.5 | higher-better | Measures entity SHARING, not causal order: the join predicate answers 'joined' for a step pair and for the same pair reversed (directional_discrimination is 0.0), so it reports 'is there an entity bridge', never 'was the chain reconstructed'. | `eval/adversarial/test_scenario_harness.py::test_directional_discrimination` |
 | false_correlation_rate | 1.0 | lower-better | Same order-blind predicate as chain_fidelity: a saturated 1.0 cannot distinguish a mutation that INDUCES false correlation from one that merely fails to improve an already-saturated number. | `eval/adversarial/test_scenario_harness.py::test_directional_discrimination` |
 | directional_discrimination | 0.0 | higher-better | The honest counterweight to the two rows above: 0.0 means the legacy join cannot tell a causal direction from its reverse. Order is graded separately (alert_order_ok; causal_order_* in the twin). | `eval/adversarial/test_scenario_harness.py::test_directional_discrimination` |
 | alert_order_ok | true | flag | Only meaningful with at least two alerting steps; with fewer it is None, and None is reported as null rather than folded to true. | `eval/adversarial/test_scenario_harness.py::test_alert_order` |
 | incident_membership_ok | false | flag | Whether ONE incident spans the whole oracle chain. A storyline that pivots across entities (it_intrusion) reports false: no single entity bridges it. Reported as measured; campaign persistence is an owner decision (ADR-009/010 'tracks never merge' stays ratified). | **NONE** |
-| mutation_robustness | 0.6 | higher-better | Measured RELATIVE to a baseline whose fidelity and FCR are already degraded; a mutation that changes nothing is N/A and is EXCLUDED from the denominator (the 'variants' cell shows how many were applicable). | `eval/adversarial/test_scenario_harness.py::test_matrix_gate` |
+| mutation_robustness | 0.64 | higher-better | Measured RELATIVE to a baseline whose fidelity and FCR are already degraded; a mutation that changes nothing is N/A and is EXCLUDED from the denominator (the 'variants' cell shows how many were applicable). | `eval/adversarial/test_scenario_harness.py::test_matrix_gate` |
 | mutation_variants (applicable) | 25 | info | The denominator of the row above; N/A variants (single-shot rules that cannot be volume-evaded) are not counted. | `eval/adversarial/test_scenario_harness.py::test_matrix_gate` |
 | evasion rows searched (this storyline) | 1 | info | A step is searched only when it has more than one event: a single-event step has no volume boundary to bisect, so 0 searched is a scope limit, not an evasion result. | `eval/adversarial/test_scenario_harness.py::test_evasion_search` |
 | evasion boundary agreement | 1/1 | higher-better | 'measured == predicted-from-declared': the artifact's own `predicted` is derived from the rule YAML's declared threshold/window/group_by. An axis whose row shows `immune`/null is a PREDICTED-IMMUNE agreement, not a measurement, and a rule with no group_by-relative count is vacuous there. | `eval/adversarial/test_scenario_harness.py::test_evasion_search` |
@@ -234,7 +234,7 @@ cover AI-to-OT. The other storylines show `not measured` for these; generalising
 | corpus cases fully matched | 8/8 | higher-better | Eight hand-curated cases. A miss is reported per case in the artifact; this cell says how many had NO missed rule, not how well the rules generalise. | `eval/adversarial/test_layer_a.py::_test_coverage` |
 | corpus incidents promoted | 1 | info | One deliberate shared-attacker merge is expected; the cross-case merge cleanliness flag is what proves no incident spans two corpus groups. | **NONE** |
 
-## Per-technique coverage (26 techniques, 42 tagged rules)
+## Per-technique coverage (28 techniques, 45 tagged rules)
 
 `rules` = tagged rules carrying the technique (`†` = companion rule).
 `verified` = rules that fired on their own producer fixture AND whose boundary or
@@ -253,7 +253,7 @@ decorative expectation (see the cross-cutting table), never as coverage.
 | T1003.001 | attack | TA0006 | 1 | 1/1 | 0/198 | **NOT EXERCISED END-TO-END** | declared at no oracle step: measured only on the rule's own producer fixture, so no storyline exercises it end-to-end | `eval/attack/test_fire_check.py::test_under_threshold_probe_catches_an_off_by_one_rule` |
 | T1005 | attack | TA0009 | 1 | 1/1 | 4/198 (insider_exfil/drop_bulk_table_read, insider_exfil/stretch_2x, insider_exfil/stretch_6x, insider_exfil/thin_60pct) | yes: insider_exfil/bulk_table_read | declared at an oracle step AND measured on the rule's own fixture; the two agree, which still says nothing about traffic the fixture does not model | `eval/attack/test_fire_check.py::test_under_threshold_probe_catches_an_off_by_one_rule` |
 | T1021 | attack | TA0008 | 2 (1† companion) | 2/2 | 6/198 (it_intrusion/drop_lateral_movement, it_intrusion/stretch_6x, it_intrusion/thin_60pct, ransomware/drop_lateral_spread, ransomware/stretch_6x, ransomware/thin_60pct) | yes: it_intrusion/lateral_movement, ransomware/lateral_spread | declared at an oracle step AND measured on the rule's own fixture; the two agree, which still says nothing about traffic the fixture does not model | `eval/attack/test_fire_check.py::test_under_threshold_probe_catches_an_off_by_one_rule` |
-| T1046 | attack | TA0007 | 2 (1† companion) | 2/2 | 3/198 (it_intrusion/drop_recon_port_scan, it_intrusion/stretch_6x, it_intrusion/thin_60pct) | yes: it_intrusion/recon_port_scan | declared at an oracle step AND measured on the rule's own fixture; the two agree, which still says nothing about traffic the fixture does not model | `eval/attack/test_fire_check.py::test_under_threshold_probe_catches_an_off_by_one_rule` |
+| T1046 | attack | TA0007 | 3 (1† companion) | 3/3 | 3/198 (it_intrusion/drop_recon_port_scan, it_intrusion/stretch_6x, it_intrusion/thin_60pct) | yes: it_intrusion/recon_port_scan | declared at an oracle step AND measured on the rule's own fixture; the two agree, which still says nothing about traffic the fixture does not model | `eval/attack/test_fire_check.py::test_under_threshold_probe_catches_an_off_by_one_rule` |
 | T1059.001 | attack | TA0002 | 1 | 1/1 | 0/198 | **NOT EXERCISED END-TO-END** | declared at no oracle step: measured only on the rule's own producer fixture, so no storyline exercises it end-to-end | `eval/attack/test_fire_check.py::test_under_threshold_probe_catches_an_off_by_one_rule` |
 | T1070.001 | attack | TA0005 | 1 | 1/1 | 0/198 | **NOT EXERCISED END-TO-END** | declared at no oracle step: measured only on the rule's own producer fixture, so no storyline exercises it end-to-end | `eval/attack/test_fire_check.py::test_under_threshold_probe_catches_an_off_by_one_rule` |
 | T1071 | attack | TA0011 | 2 | 2/2 | 9/198 (ai_to_ot/drop_agent_mcp_tool_call, phishing_bec/drop_c2_beacon, phishing_bec/duplicate_all, phishing_bec/ip_rotate_2, phishing_bec/ip_rotate_all, phishing_bec/jitter_100pct, phishing_bec/thin_25pct, phishing_bec/thin_60pct, supply_chain_ci/drop_artifact_exfil) | yes: ai_to_ot/agent_mcp_tool_call, phishing_bec/c2_beacon, supply_chain_ci/artifact_exfil | declared at an oracle step AND measured on the rule's own fixture; the two agree, which still says nothing about traffic the fixture does not model | `eval/attack/test_fire_check.py::test_under_threshold_probe_catches_an_off_by_one_rule` |
@@ -262,10 +262,12 @@ decorative expectation (see the cross-cutting table), never as coverage.
 | T1078.004 | attack | TA0001 | 1 | 1/1 | 1/198 (infra_takeover/drop_cloud_root_login) | yes: infra_takeover/cloud_root_login | declared at an oracle step AND measured on the rule's own fixture; the two agree, which still says nothing about traffic the fixture does not model | `eval/attack/test_fire_check.py::test_under_threshold_probe_catches_an_off_by_one_rule` |
 | T1098 | attack | TA0003 | 2 | 2/2 | 1/198 (it_intrusion/drop_priv_grant) | yes: it_intrusion/priv_grant | declared at an oracle step AND measured on the rule's own fixture; the two agree, which still says nothing about traffic the fixture does not model | `eval/attack/test_fire_check.py::test_under_threshold_probe_catches_an_off_by_one_rule` |
 | T1110 | attack | TA0006 | 3 (1† companion) | 3/3 | 8/198 (it_intrusion/drop_ssh_bruteforce, it_intrusion/stretch_6x, it_intrusion/thin_25pct, it_intrusion/thin_60pct, ransomware/drop_cred_spray, ransomware/hostname_rotate_all, ransomware/stretch_6x, ransomware/thin_60pct) | yes: it_intrusion/ssh_bruteforce, ransomware/cred_spray | declared at an oracle step AND measured on the rule's own fixture; the two agree, which still says nothing about traffic the fixture does not model | `eval/attack/test_fire_check.py::test_under_threshold_probe_catches_an_off_by_one_rule` |
+| T1110.003 | attack | TA0006 | 1 | 1/1 | 0/198 | **NOT EXERCISED END-TO-END** | declared at no oracle step: measured only on the rule's own producer fixture, so no storyline exercises it end-to-end | `eval/attack/test_fire_check.py::test_under_threshold_probe_catches_an_off_by_one_rule` |
 | T1110.004 | attack | TA0006 | 2 (1† companion) | 2/2 | 5/198 (phishing_bec/account_split_2, phishing_bec/drop_proxy_pool_logins, phishing_bec/ip_rotate_2, phishing_bec/stretch_6x, phishing_bec/thin_60pct) | yes: phishing_bec/proxy_pool_logins | declared at an oracle step AND measured on the rule's own fixture; the two agree, which still says nothing about traffic the fixture does not model | `eval/attack/test_fire_check.py::test_under_threshold_probe_catches_an_off_by_one_rule` |
 | T1114.003 | attack | TA0009 | 1 | 1/1 | 1/198 (phishing_bec/drop_inbox_rule) | yes: phishing_bec/inbox_rule | declared at an oracle step AND measured on the rule's own fixture; the two agree, which still says nothing about traffic the fixture does not model | `eval/attack/test_fire_check.py::test_under_threshold_probe_catches_an_off_by_one_rule` |
 | T1133 | attack | TA0003 | 1 | 1/1 | 1/198 (ai_to_ot/drop_n8n_execution) | yes: ai_to_ot/n8n_execution | declared at an oracle step AND measured on the rule's own fixture; the two agree, which still says nothing about traffic the fixture does not model | `eval/attack/test_fire_check.py::test_under_threshold_probe_catches_an_off_by_one_rule` |
 | T1136 | attack | TA0003 | 1 | 1/1 | 1/198 (ransomware/drop_backdoor_account) | yes: ransomware/backdoor_account | declared at an oracle step AND measured on the rule's own fixture; the two agree, which still says nothing about traffic the fixture does not model | `eval/attack/test_fire_check.py::test_under_threshold_probe_catches_an_off_by_one_rule` |
+| T1204.002 | attack | TA0002 | 1 | 1/1 | 1/198 (phishing_bec/drop_user_execution) | yes: phishing_bec/user_execution | declared at an oracle step AND measured on the rule's own fixture; the two agree, which still says nothing about traffic the fixture does not model | `eval/attack/test_fire_check.py::test_under_threshold_probe_catches_an_off_by_one_rule` |
 | T1485 | attack | TA0040 | 3 (1† companion) | 3/3 | 7/198 (infra_takeover/drop_mass_vm_delete, infra_takeover/stretch_6x, infra_takeover/thin_60pct, ransomware/drop_mass_vm_delete, ransomware/stretch_6x, ransomware/thin_60pct, supply_chain_ci/drop_pipeline_sabotage) | yes: infra_takeover/mass_vm_delete, ransomware/mass_vm_delete, supply_chain_ci/pipeline_sabotage | declared at an oracle step AND measured on the rule's own fixture; the two agree, which still says nothing about traffic the fixture does not model | `eval/attack/test_fire_check.py::test_under_threshold_probe_catches_an_off_by_one_rule` |
 | T1543.003 | attack | TA0003 | 1 | 1/1 | 0/198 | **NOT EXERCISED END-TO-END** | declared at no oracle step: measured only on the rule's own producer fixture, so no storyline exercises it end-to-end | `eval/attack/test_fire_check.py::test_under_threshold_probe_catches_an_off_by_one_rule` |
 | T1548 | attack | TA0004 | 1 | 1/1 | 1/198 (insider_exfil/drop_grant_self_access) | yes: insider_exfil/grant_self_access | declared at an oracle step AND measured on the rule's own fixture; the two agree, which still says nothing about traffic the fixture does not model | `eval/attack/test_fire_check.py::test_under_threshold_probe_catches_an_off_by_one_rule` |
@@ -273,7 +275,7 @@ decorative expectation (see the cross-cutting table), never as coverage.
 | T1566.001 | attack | TA0001 | 1 | 1/1 | 1/198 (phishing_bec/drop_phish_delivery) | yes: phishing_bec/phish_delivery | declared at an oracle step AND measured on the rule's own fixture; the two agree, which still says nothing about traffic the fixture does not model | `eval/attack/test_fire_check.py::test_under_threshold_probe_catches_an_off_by_one_rule` |
 | T1610 | attack | TA0002 | 1 | 1/1 | 2/198 (infra_takeover/drop_privileged_container, supply_chain_ci/drop_privileged_runner) | yes: infra_takeover/privileged_container, supply_chain_ci/privileged_runner | declared at an oracle step AND measured on the rule's own fixture; the two agree, which still says nothing about traffic the fixture does not model | `eval/attack/test_fire_check.py::test_under_threshold_probe_catches_an_off_by_one_rule` |
 
-## Oracle gaps (23)
+## Oracle gaps (22)
 
 Steps the oracle records with `no_rule_exists: true`. These are excluded from the
 TPR denominator, so a declared gap can never lower TPR -- read them here, not there.
@@ -295,7 +297,6 @@ TPR denominator, so a declared gap can never lower TPR -- read them here, not th
 | insider_exfil | exfil_upload | No shipped rule measures outbound volume or a new external destination per host. The beacon rule is the only network rule that could match and it requires regularity; the step is i |
 | insider_exfil | cover_tracks | The bank DB rules cover activity 5 (privileged op) and 1 (reads); a DELETE (activity 4) has no rule. |
 | it_intrusion | initial_access | No shipped rule correlates a SUCCESSFUL logon with a preceding failure burst from the same source (the classic "brute force that worked" signal). A single successful SSH logon from |
-| phishing_bec | user_execution | Process-launch anomaly detection (suspicious parent/child, encoded command line) is unbuilt: contracts/detection-coverage.md lists class 1002 activity 1 as under-covered; only priv |
 | phishing_bec | victim_session | Not an attack step: ordinary telemetry that the foreign login is judged against (impossible travel needs two countries). Declared so a rule that starts firing on a lone home-countr |
 | phishing_bec | payment_redirect | The banking-DB rules cover activity 5 (privileged operation: bank_db_priv_esc) and activity 1 (distinct-object reads: bank_mass_card_read). A plain UPDATE (activity 3) on a payment |
 | ransomware | foothold_logon | A successful logon with valid credentials is ordinary telemetry; no shipped rule correlates "succeeded after a spray from the same workstation". |
@@ -306,7 +307,7 @@ TPR denominator, so a declared gap can never lower TPR -- read them here, not th
 
 ## Register: metric cells with NO control
 
-14 of 137 rendered metric cells have no control that can move them today, and 120 more cells are not measured at all (twin-only metrics for the other storylines; listed below, not rendered above). Each is a gap in the harness, not a clean bill of health.
+14 of 139 rendered metric cells have no control that can move them today, and 120 more cells are not measured at all (twin-only metrics for the other storylines; listed below, not rendered above). Each is a gap in the harness, not a clean bill of health.
 
 | cell | why there is no control |
 |---|---|
@@ -454,7 +455,7 @@ TPR denominator, so a declared gap can never lower TPR -- read them here, not th
 3. chain_fidelity and false_correlation_rate measure entity SHARING, not causal order: the legacy join predicate answers 'joined' for a pair and for that pair reversed, so both numbers describe 'is there an entity bridge', never 'was the causal chain reconstructed'.
    - guard: OK -- directional_discrimination (ai_to_ot=0.0, cloud_iam_abuse=None, infra_takeover=0.0, insider_exfil=0.2, it_intrusion=0.0, ot_opcua_sabotage=0.0, phishing_bec=0.0, ransomware=0.0, supply_chain_ci=0.0) < 0.5 on every storyline
 4. alert_order_ok is only meaningful with at least two alerting steps; where a storyline has fewer, it is reported as null rather than folded to true.
-   - guard: OK -- ai_to_ot: 5 non-gap step(s) of 7, alert_order_ok=true; cloud_iam_abuse: 1 non-gap step(s) of 8, alert_order_ok=null; infra_takeover: 3 non-gap step(s) of 3, alert_order_ok=true; insider_exfil: 2 non-gap step(s) of 7, alert_order_ok=true; it_intrusion: 5 non-gap step(s) of 6, alert_order_ok=true; ot_opcua_sabotage: 5 non-gap step(s) of 5, alert_order_ok=true; phishing_bec: 5 non-gap step(s) of 8, alert_order_ok=true; ransomware: 5 non-gap step(s) of 9, alert_order_ok=true; supply_chain_ci: 5 non-gap step(s) of 6, alert_order_ok=true
+   - guard: OK -- ai_to_ot: 5 non-gap step(s) of 7, alert_order_ok=true; cloud_iam_abuse: 1 non-gap step(s) of 8, alert_order_ok=null; infra_takeover: 3 non-gap step(s) of 3, alert_order_ok=true; insider_exfil: 2 non-gap step(s) of 7, alert_order_ok=true; it_intrusion: 5 non-gap step(s) of 6, alert_order_ok=true; ot_opcua_sabotage: 5 non-gap step(s) of 5, alert_order_ok=true; phishing_bec: 6 non-gap step(s) of 8, alert_order_ok=true; ransomware: 5 non-gap step(s) of 9, alert_order_ok=true; supply_chain_ci: 5 non-gap step(s) of 6, alert_order_ok=true
 5. decoy_contamination is null when a storyline declares no decoys, and a benign scanner sitting on the attacker's own target is POOLED into the attack incident by design -- a documented trade-off, not an oversight.
    - guard: OK -- measured on cloud_iam_abuse(max 0.0), infra_takeover(max 0.0), insider_exfil(max 0.0), it_intrusion(max 0.0), ot_opcua_sabotage(max 0.0), phishing_bec(max 0.0), ransomware(max 0.0), supply_chain_ci(max 0.0); null on ai_to_ot
 6. mutation_robustness is measured RELATIVE to a baseline whose chain fidelity and false-correlation rate are already degraded, and variants that change nothing (N/A) are excluded from the denominator.
@@ -462,7 +463,7 @@ TPR denominator, so a declared gap can never lower TPR -- read them here, not th
 7. The evasion search finds the boundary the rule YAML DECLARES. It proves the engine honours the rules as written, not that the rules are the right ones.
    - guard: OK -- 12 searched row(s): all_agree=true, so measured == predicted-from-declared at every searched boundary
 8. fire_check proves declared-vs-fired on each rule's OWN producer fixture. It is not a real-world detection result and says nothing about traffic the fixture does not model.
-   - guard: OK -- 42 tagged rule(s), every one fired on its own producer fixture
+   - guard: OK -- 45 tagged rule(s), every one fired on its own producer fixture
 9. No third-party labelled corpus runs in the blocking lane: run_all_tests.sh never invokes evtx_eval.py or splunk_eval.py, which are dataset-gated and opt-in only.
    - guard: OK -- run_all_tests.sh: 0 matches for the ANCHORED '$PY eval/detection_accuracy/(evtx OR splunk)_eval.py'; the H7 oracle-vs-engine test it does run (test_evtx_eval.py) uses no third-party corpus
 10. The oracles are self-authored: the answer key and the system under test were written by the same project. oracle_consistency reconciles them against an independently derived oracle, which bounds but does not remove that bias.
@@ -470,7 +471,7 @@ TPR denominator, so a declared gap can never lower TPR -- read them here, not th
 11. Per-technique attribution is per STEP, not per event: a step mapped to two techniques credits both, and mutation attrition on a multi-rule step can overstate one technique.
    - guard: OK -- 11 oracle step(s) carry >1 expected rule and are credited to every one of them: ai_to_ot/agent_mcp_tool_call (2), ai_to_ot/n8n_execution (2), infra_takeover/mass_vm_delete (2), it_intrusion/dns_exfil (2)
 12. `--check` proves the committed card matches a fresh render; it blocks nothing by itself. The atom ratchet (`eval/twin/ratchet.py check`, a gate stanza) blocks an unwaived drop of every atom it measures, but several card metrics have no atom behind them, and for those accepting a worse number is still a card regeneration plus a commit.
-   - guard: OK -- 4164 atoms in eval/twin/baseline_scenarios.json; 20 of 31 card metrics ratcheted; not ratcheted: mttr, peak_alert_score, severity_in_band, causal_order_fidelity, order_concordance, degradation_behavior, decorative_expectations, oracle_new_disagreements, oracle_accepted_disagreements, oracle_stale_allowlist_entries, corpus_incidents_promoted
+   - guard: OK -- 4199 atoms in eval/twin/baseline_scenarios.json; 20 of 31 card metrics ratcheted; not ratcheted: mttr, peak_alert_score, severity_in_band, causal_order_fidelity, order_concordance, degradation_behavior, decorative_expectations, oracle_new_disagreements, oracle_accepted_disagreements, oracle_stale_allowlist_entries, corpus_incidents_promoted
 
 ## Provenance
 
@@ -566,7 +567,7 @@ TPR denominator, so a declared gap can never lower TPR -- read them here, not th
   "insider_exfil": 0.75,
   "it_intrusion": 0.7391,
   "ot_opcua_sabotage": 0.9048,
-  "phishing_bec": 0.6,
+  "phishing_bec": 0.64,
   "ransomware": 0.8462,
   "supply_chain_ci": 0.8182
  },
