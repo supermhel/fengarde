@@ -460,6 +460,46 @@ rule_sets:
         threshold: 8
         window_seconds: 300
     production_reachable: true
+  common_password_spray_by_source:
+    fields:
+      clock_forgeable:
+        basis: harness-measured
+        better: min
+        value: true
+      extra_seconds:
+        basis: harness-measured
+        better: max
+        value: 265.001
+      forgery_evades:
+        basis: harness-measured
+        better: min
+        value: false
+      forgone_events:
+        basis: harness-measured
+        better: max
+        value: 1
+      min_keys.ip:
+        basis: harness-measured
+        better: max
+        value: 2
+      respelling_evades:
+        basis: harness-measured
+        better: min
+        value: false
+      stealth_rate:
+        basis: harness-measured
+        better: min
+        value: 0.023333
+    fingerprint: 676c51bb4306e45e4062f2a7da2efa1962e814012427829f22a30ff57cdbeeda
+    params:
+      common_password_spray_by_source:
+        companion_of: null
+        distinct_field: actor.user.name
+        group_by: src_endpoint.ip
+        periodicity: null
+        threshold: 8
+        window_seconds: 300
+    production_reachable: true
   common_port_scan:
     fields:
       clock_forgeable:
@@ -516,6 +556,46 @@ rule_sets:
         companion_of: 1d2c3b4a-5e6f-4708-8a91-0b1c2d3e4f05
         distinct_field: dst_endpoint.port
         group_by: dst_endpoint.ip
+        periodicity: null
+        threshold: 15
+        window_seconds: 60
+    production_reachable: true
+  common_port_sweep:
+    fields:
+      clock_forgeable:
+        basis: harness-measured
+        better: min
+        value: false
+      extra_seconds:
+        basis: harness-measured
+        better: max
+        value: 32.001
+      forgery_evades:
+        basis: harness-measured
+        better: min
+        value: false
+      forgone_events:
+        basis: harness-measured
+        better: max
+        value: 1
+      min_keys.ip:
+        basis: harness-measured
+        better: max
+        value: 2
+      respelling_evades:
+        basis: harness-measured
+        better: min
+        value: false
+      stealth_rate:
+        basis: harness-measured
+        better: min
+        value: 0.233329
+    fingerprint: e142dde01e1a77b2691ff71d6424f01ec1f7a7573f571461cfc2f42b899715ac
+    params:
+      common_port_sweep:
+        companion_of: null
+        distinct_field: dst_endpoint.ip
+        group_by: src_endpoint.ip
         periodicity: null
         threshold: 15
         window_seconds: 60

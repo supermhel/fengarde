@@ -73,8 +73,11 @@ LEGACY_EXPECT = {
     "infra_takeover": {"tpr": 1.0, "chain_fidelity": 0.5, "false_correlation_rate": 1.0,
                        "directional_discrimination": 0.0, "incident_count": 1},
     # 2026-10-03: measured on the first run of the 4th storyline
+    # 2026-10-20: incident_count 1 -> 2. win_office_spawns_shell now alerts at user_execution, and that alert plus the
+    # beacon share the workstation (device:wks-ap-02), a second two-tactic (TA0002 + TA0011) entity track beside the
+    # account's; measured, not tuned. Nothing else moved.
     "phishing_bec": {"tpr": 1.0, "chain_fidelity": 0.5, "false_correlation_rate": 1.0,
-                     "directional_discrimination": 0.0, "incident_count": 1},
+                     "directional_discrimination": 0.0, "incident_count": 2},
     # 2026-10-14: measured on the first run of the 5th storyline. Two entity tracks promote (the
     # shared OT address and the client account); the ADDRESS track carries every alert of the chain
     # (incident_membership_ok True), and the 2 incident count is those two tracks, exactly like

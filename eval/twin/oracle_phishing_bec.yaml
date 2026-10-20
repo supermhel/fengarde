@@ -47,12 +47,14 @@ provenance:
     common_beaconing: "b83ae4d66ca4e8634540c5efeb8d35f21b595d2e4426793d76eb4115a7dd8b5e"   # re-read + re-pinned 2026-10-14 (Q15: threshold 6 -> 20)
     common_bruteforce: "f685feb7ab0efe2e0cd9ed3427a2e0466c3a0de785cc28deef3c53a0b585919b"
     common_bruteforce_by_account: "71734317dfda0c8ecfbb1c62e786df21a6e9c81c1d3c53901a3822cb1079df20"
-    common_impossible_travel: "78864cbe016a52317b8a4d00ce78ac1d8d83d90f5fb9d4c975f13f86e6b97bbb"
+    common_impossible_travel: "10385cf60b19c0d186499f25c119f1e60a7247e41f9b6f36ce7821786e0cb27c"   # re-read + re-pinned 2026-10-20: status stable -> experimental only (logic unchanged)
     common_password_spray: "c565b58f392c8e85ac08049c49d1ab119846540d7bcbea86f0ea2f4e30d1a089"
     # 2026-10-20: the two rules below were written AFTER this oracle, by the same author, to close two declared gaps.
     # They are therefore NOT independent evidence of detection quality; the pins stop silent edits only.
     email_macro_attachment_delivered: "2c85396febd40d213f89fda70a879c0478940596ed26b25faf215833f9219e84"
     m365_inbox_rule_external_forward: "d8a5b0c2ac3c1dab1c82641e3c7df3c60075bc011456863af0638c91238231ca"
+    # 2026-10-20: also written after this oracle by the same author, to close the user_execution gap (T1204.002).
+    win_office_spawns_shell: "5365f833d20260efc2fafd6081b57526e11fa7bd5e7f243372769ccc9a234e14"
 
 expected_sequence:
   - phish_delivery
@@ -94,14 +96,9 @@ detection_points:
     step: user_execution
     role: "the user opens the attachment: the office app spawns an encoded PowerShell"
     expected_event_source: "sysmon EventID 1 (class 1002, activity 1)"
-    expected_rules: []
-    gap:
-      no_rule_exists: true
-      attack_technique: "T1204.002"      # User Execution: Malicious File
-      reason: >
-        Process-launch anomaly detection (suspicious parent/child, encoded command line) is
-        unbuilt: contracts/detection-coverage.md lists class 1002 activity 1 as under-covered;
-        only privilege use (4672) has a rule.
+    expected_rules:
+      - {rule_id: "5b7e0d3a-91c4-4f6e-8a2d-3c1f9e7b4a10", title: "Document or browser host spawned a shell or script host", level: high, role: user-execution detection (rule added 2026-10-20; gap closed)}
+    gap: {no_rule_exists: false}
 
   c2_beacon:
     step: c2_beacon

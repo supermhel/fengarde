@@ -650,6 +650,7 @@ _INERT_KEYS: dict = {
     "provenance.rules_read.common_beaconing": _PROV_PIN,
     "provenance.rules_read.email_macro_attachment_delivered": _PROV_PIN,   # 2026-10-20 (phishing_bec gap closed)
     "provenance.rules_read.m365_inbox_rule_external_forward": _PROV_PIN,   # 2026-10-20 (phishing_bec gap closed)
+    "provenance.rules_read.win_office_spawns_shell": _PROV_PIN,   # 2026-10-20 (phishing_bec user_execution gap closed)
     "provenance.rules_read.common_bruteforce": _PROV_PIN,
     "provenance.rules_read.common_bruteforce_by_account": _PROV_PIN,
     "provenance.rules_read.common_impossible_travel": _PROV_PIN,

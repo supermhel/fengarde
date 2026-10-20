@@ -160,6 +160,32 @@ def _common_password_spray() -> Probe:
                  {"account": _dict_setter("TargetUserName", "victim{j}")})
 
 
+def _common_password_spray_by_source() -> Probe:
+    # 2026-10-20 (owner-approved rule): ONE source cycling 8 distinct accounts in 40 s (threshold 8 / 300 s).
+    def build(i, t):
+        return "active_directory", {"EventID": 4625, "TimeCreated": t, "TargetUserName": f"acct{i:02d}",
+                                    "Computer": "dc-probe-0", "WorkstationName": "wks-spray",
+                                    "IpAddress": "198.18.6.10"}
+
+    def set_ip(p, j):
+        p["raw"]["IpAddress"] = f"198.18.6.{j + 10}"
+        return True
+    return Probe("common_password_spray_by_source", "password_spray", "active_directory", 8, 5_000, build,
+                 {"ip": set_ip})
+
+
+def _common_port_sweep() -> Probe:
+    # 2026-10-20 (owner-approved rule): ONE source denied on 445 across 15 distinct hosts in 30 s (threshold 15 / 60 s).
+    def build(i, t):
+        return "cisco_asa", (f"%ASA-4-106023: Deny tcp src outside:203.0.113.77/5000 "
+                             f"dst inside:10.0.8.{i + 1}/445 by access-group acl_out")
+
+    def set_ip(p, j):
+        p["raw"] = p["raw"].replace("203.0.113.77", f"203.0.113.{j + 100}", 1)
+        return True
+    return Probe("common_port_sweep", "horizontal_sweep", "cisco_asa", 15, 2_000, build, {"ip": set_ip})
+
+
 def _common_rapid_account_lifecycle() -> Probe:
     def build(i, t):
         return "windows_eventlog", {"EventID": 4720 if i % 2 == 0 else 4726, "TimeCreated": t,
@@ -180,7 +206,7 @@ def _ot_new_engineering_connection() -> Probe:
 
 _FACTORIES = (_agent_tool_call_burst, _bank_mass_card_read, _common_beaconing,
               _common_bruteforce_sourceless, _common_impossible_travel, _common_password_spray,
-              _common_rapid_account_lifecycle, _ot_new_engineering_connection)
+              _common_password_spray_by_source, _common_port_sweep, _common_rapid_account_lifecycle, _ot_new_engineering_connection)
 
 
 def all_probes() -> dict:

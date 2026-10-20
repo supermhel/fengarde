@@ -194,7 +194,6 @@ Techniques a storyline demonstrates for which its oracle declares `no_rule_exist
 | T1110.004 Brute Force: Credential Stuffing | `cloud_iam_abuse`: `console_stuffing` | CROSS-SOURCE BLIND SPOT, derived from the docs before any run: cloudtrail.py maps every ConsoleLogin to activity 1 and carries a failure only in `status`, while every failed- authentication rule (common_bruteforce, _by_account, common_password_spray, _sourceless) selects activity 4. The shape is the credential-stuffing rule's own, but it cannot see it from this source. A parser or rule fix flips this step to a stale-gap finding. |
 | T1136.003 Create Account: Cloud Account | `cloud_iam_abuse`: `create_backdoor_user` | No shipped rule reads cloud IAM changes (the account-lifecycle rule reads Windows 3003 events). |
 | T1195.001 Supply Chain Compromise: Compromise Software Dependencies and Development Tools | `supply_chain_ci`: `malicious_dependency` | Process-launch content has no rule; no rule knows a package manager's lifecycle scripts. |
-| T1204.002 User Execution: Malicious File | `phishing_bec`: `user_execution` | Process-launch anomaly detection (suspicious parent/child, encoded command line) is unbuilt: contracts/detection-coverage.md lists class 1002 activity 1 as under-covered; only privilege use (4672) has a rule. |
 | T1486 Data Encrypted for Impact | `ransomware`: `encrypt_files` | Class 1001 (File System Activity) has no shipped rule at all. |
 | T1490 Inhibit System Recovery | `ransomware`: `backup_wipe_cloud` | dc_mass_vm_delete is scoped to siem.source_type vmware_vsphere (its detection block), so cloud snapshot deletion is not covered by any shipped rule. |
 | T1490 Inhibit System Recovery | `ransomware`: `inhibit_recovery` | Process-launch content (command line) has no rule; contracts/detection-coverage.md lists class 1002 activity 1 as under-covered. |
@@ -245,7 +244,9 @@ Harness-measured on the bundled reference bursts (seed 7, deque counter backend)
 | `common_impossible_travel` | `common_impossible_travel` | 2 | 9000.003 | 0.000278 | account=4 | n/a | no | no | no | NO (sample map) |
 | `common_lateral_movement` | `common_lateral_movement`, `common_lateral_movement_by_source` | 3 | 150.003 | 0.02 | account=immune, ip=immune | (2,2) | evades | no | forgeable | yes |
 | `common_password_spray` | `common_password_spray`, `common_credential_stuffing_sustained` | 17 | 86285.005 | 0.000266 | account=4 | n/a | no | no | forgeable | yes |
+| `common_password_spray_by_source` | `common_password_spray_by_source` | 1 | 265.001 | 0.023333 | ip=2 | n/a | no | no | forgeable | yes |
 | `common_port_scan` | `common_port_scan`, `common_port_scan_by_target` | 8 | 18.008 | 0.349953 | dst_ip=immune, ip=immune | (2,2) | no | no | no | yes |
+| `common_port_sweep` | `common_port_sweep` | 1 | 32.001 | 0.233329 | ip=2 | n/a | no | no | no | yes |
 | `common_rapid_account_lifecycle` | `common_rapid_account_lifecycle` | 3 | 10620.003 | 0.000278 | target_account=4 | n/a | no | no | forgeable | yes |
 | `dc_mass_vm_delete` | `dc_mass_vm_delete`, `dc_mass_vm_delete_by_source` | 3 | 72.003 | 0.049999 | account=immune, ip=immune | (2,2) | evades | no | forgeable | yes |
 | `ot_new_engineering_connection` | `ot_new_engineering_connection` | 3 | 1770.003 | 0.001667 | ot_server=4 | n/a | no | no | forgeable | yes |
