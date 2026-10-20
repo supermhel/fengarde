@@ -15,7 +15,7 @@
 #
 ################################################################################
 
-# Build all 17 atheris fuzz harnesses from tools/fuzz/ into $OUT.
+# Build all 19 atheris fuzz harnesses from tools/fuzz/ into $OUT.
 # This list MUST match .github/workflows/fuzz.yml and tools/fuzz/ exactly.
 FUZZ_TARGETS=(
   fuzz_active_directory
@@ -28,6 +28,8 @@ FUZZ_TARGETS=(
   fuzz_inventory_diff
   fuzz_k8s_audit
   fuzz_linux_ssh
+  fuzz_m365_audit
+  fuzz_mail_gateway
   fuzz_mcp_agent
   fuzz_modbus_anomaly
   fuzz_n8n_audit

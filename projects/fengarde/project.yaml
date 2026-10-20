@@ -28,10 +28,10 @@ sanitizers:
 architectures:
   - x86_64
 
-# Fuzz targets (17): one atheris harness per parser, compiled by build.sh
+# Fuzz targets (19): one atheris harness per parser, compiled by build.sh
 # from tools/fuzz/fuzz_<name>.py into $OUT/fuzz_<name>.
 # fuzz_active_directory, fuzz_cef, fuzz_cisco_asa, fuzz_cloudtrail,
 # fuzz_db_audit, fuzz_dns_query, fuzz_generic_syslog, fuzz_inventory_diff,
-# fuzz_k8s_audit, fuzz_linux_ssh, fuzz_mcp_agent, fuzz_modbus_anomaly,
+# fuzz_k8s_audit, fuzz_linux_ssh, fuzz_m365_audit, fuzz_mail_gateway, fuzz_mcp_agent, fuzz_modbus_anomaly,
 # fuzz_n8n_audit, fuzz_opcua_audit, fuzz_sysmon, fuzz_vmware_vsphere,
 # fuzz_windows_eventlog
