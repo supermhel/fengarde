@@ -1,5 +1,8 @@
 # Handoff — FENGARDE evaluation harness (2026-10-08)
 
+> **Status note (2026-10-20):** historical record. Question status moved to `docs/handoff/2026-10-14-open-items-plan.md` (Phase 8 / status section). Q1, Q3, Q11, Q13 and Q15/Q16 are decided and implemented there; Q2, Q8, Q9, Q12 remain open. Read that file for current state.
+
+
 Branch `fix/r3-injection-evasion-hardening`, PR #93 on supermhel/fengarde, head `7205945`.
 Gate at that commit: `run_all_tests.sh` ALL TESTS PASS (1,984 s). The PR reported 32 of 32 checks passing when this
 was written (read once, not polled). Docker stack is down; nothing is running in the background.

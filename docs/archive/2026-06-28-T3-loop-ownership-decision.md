@@ -3,7 +3,7 @@
 Date: 2026-06-28
 Resolves: the one UNRESOLVED decision in the v0.1 build plan (bus `consume()` fix shape)
 Status: **RESOLVED — mechanism proven on real Redis.** (Was "DIRECTION CHOSEN, MECHANISM
-UNPROVEN"; see [SSOT.md](../../../SSOT.md) for current canonical status.) The "still needs
+UNPROVEN"; see [SSOT.md](../../SSOT.md) for current canonical status.) The "still needs
 real-Redis confirmation" gaps below were closed in the v0.1 live-infra session: XAUTOCLAIM +
 XPENDING redelivery→DLQ ran on a real broker (see build-plan §"CI + live-infra
 confirmations"), and the WS-4 duplicate-alert footgun (gap 4) was fixed by deterministic

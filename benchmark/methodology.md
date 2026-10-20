@@ -108,7 +108,7 @@ artifact.** The published snapshot's value (see `results.json` and
   (Security + Sysmon channels), so "42–43%" reads as *"about 57% of THIS
   corpus's records are event types the shipped parser set does not cover."*
 - It is **not** a statement that FENGARDE ingests only ~43% of log formats.
-  Of the 17 shipped parsers, three read this corpus (Windows event log,
+  Of the 19 shipped parsers, three read this corpus (Windows event log,
   Active Directory, Sysmon); the other 14 cover sources it does not contain
   at all (Linux SSH, Cisco ASA, VMware vSphere, DB audit, MCP/AI-agent,
   OPC UA, n8n, DNS query log, Kubernetes audit, CEF, AWS CloudTrail, Modbus,

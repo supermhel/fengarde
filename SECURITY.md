@@ -182,8 +182,8 @@ untrusted hint, not ground truth.
 ### 7. Triage API (WS-3) is an unauthenticated write surface
 
 v0.3 adds a triage HTTP API in WS-3 (`TRIAGE_PORT`, default `8013`): `POST
-/alerts/{id}/triage` sets a status + analyst note on any alert. Like every other
-service it has **no authentication** (see the out-of-scope list) — anyone who can
+/alerts/{id}/triage` sets a status + analyst note on any alert. Unless you enable the opt-in
+API key / RBAC session auth (see section 2), it has **no authentication** (see the out-of-scope list) — anyone who can
 reach the port can set/clear the triage state of any alert (tamper with an
 investigation, clear a note, mark a real alert `false_positive`). Blast radius is
 bounded: it touches only the additive `triage` field (never the alert's detection
@@ -521,7 +521,6 @@ release line only.
 | Version | Supported |
 |---------|-----------|
 | `main` (unreleased work) | ✅ |
-| v0.5.0 (latest tag) | ✅ |
-| v0.4.0 | ✅ |
-| v0.3.0 | ❌ (superseded; upgrade to v0.5.0) |
-| < v0.3.0 | ❌ |
+| v0.11.x (latest line) | ✅ |
+| v0.6.0 - v0.10.x | ❌ (superseded; upgrade to the latest v0.11.x) |
+| < v0.6.0 | ❌ |

@@ -39,7 +39,7 @@ failure proven by a benign corpus.
 
 ### Q15 decision record
 
-- **Current status:** OPEN.
+- **Current status:** DONE (implemented 2026-10-14, see CHANGELOG "Changed/Added 2026-10-14"; owner decisions Q15, Q16).
 - **Option A:** keep six beats and document the measured false-positive limitation.
 - **Option B:** raise the threshold toward 20 beats, then recut positive/negative twins,
   `rule_probes.py`, evasion floors, oracle boundaries and the scorecard.
@@ -81,7 +81,7 @@ semantic extension, not a claim that the existing five-minute burst is invalid.
 
 ### Q16 decision record
 
-- **Current status:** OPEN.
+- **Current status:** DONE (implemented 2026-10-14, see CHANGELOG "Changed/Added 2026-10-14"; owner decisions Q15, Q16).
 - **Option A:** keep the 300-second burst as the fast tier and add a separately named 24-hour
   companion rule for sustained one-account stuffing.
 - **Option B:** redefine the existing rule's window, then recut every positive/negative twin,
