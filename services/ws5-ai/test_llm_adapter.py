@@ -131,6 +131,21 @@ class TestOllamaParsing(unittest.TestCase):
         self.assertIn(out["verdict"], llm_adapter._VERDICTS)
 
 
+class TestOutboundFailClosed(unittest.TestCase):
+    """gap-hunt R3-57: no redirect-following fallback when shared.outbound_http is unavailable."""
+
+    def test_refuses_without_the_no_redirect_opener(self):
+        with mock.patch.object(llm_adapter, "_no_redirect_urlopen", None),                 mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("FENGARDE_ALLOW_REDIRECTING_URLOPEN", None)
+            with self.assertRaises(RuntimeError):
+                llm_adapter._urlopen(object(), timeout=1)
+
+    def test_explicit_override_allows_plain_urlopen(self):
+        sentinel = object()
+        with mock.patch.object(llm_adapter, "_no_redirect_urlopen", None),                 mock.patch.dict(os.environ, {"FENGARDE_ALLOW_REDIRECTING_URLOPEN": "1"}),                 mock.patch.object(llm_adapter.urllib.request, "urlopen", return_value=sentinel):
+            self.assertIs(llm_adapter._urlopen(object(), timeout=1), sentinel)
+
+
 class TestFallback(unittest.TestCase):
     def test_connection_failure_degrades_to_stub_no_raise(self):
         def boom(*a, **k):
