@@ -1147,6 +1147,10 @@ def main() -> int:
           f"silent) -- necessity of each DECLARED predicate, not well-scopedness"
           + (f"; {len(nm_partly_held)} rule(s) had at least one predicate with no "
              f"constructible near-miss" if nm_partly_held else ""))
+    synthetic = sorted(rid for rid, src in _DISTINCT_REPLAY_SOURCE.items() if src == "synthetic")
+    if synthetic:
+        print(f"[WARN] {len(synthetic)} distinct-count rule(s) passed their positive fire check on SYNTHETIC distinct "
+              f"values (the fixture pool was too small for real ones; gap-hunt R4-132): {', '.join(synthetic)}")
     unverified = untested + len(untagged)
     if untested:
         print(f"[WARN] {untested} MITRE-tagged rule(s) negatively verified by "
