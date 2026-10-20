@@ -155,4 +155,4 @@ this repo's working tree — see SSOT.md §4.
 ## Code of conduct
 
 Be respectful and constructive. We want FENGARDE to be a welcoming project for
-first-time open-source contributors.
+first-time open-source contributors. The full policy is in [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).

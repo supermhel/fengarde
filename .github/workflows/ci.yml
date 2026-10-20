@@ -63,6 +63,8 @@ jobs:
         run: python eval/twin/test_ratchet.py
       - name: Phase 6 PR baseline guard
         run: python eval/twin/ratchet.py guard --base origin/main
+      - name: Evasion floor may not be lowered without a recorded reason (Q2)
+        run: python tools/check_floor_lowering.py --base origin/main
 
   # Integration gate: the Redis-path mechanisms (runner ack/redelivery/DLQ) against a
   # REAL broker. This is the tier that catches anything the memory bus can't model.

@@ -126,3 +126,12 @@ Every phase ends with `bash run_all_tests.sh` green before it is called done.
   reset it to the pushed head once the push lands.
 - Alert ids of account-grouped rules change once on deploy (F2): a redelivered alert across the upgrade
   can index twice.
+
+## Owner decisions 2026-10-20 (Q2, Q8, Q9, Q12)
+
+| Q | Decision | State |
+|---|---|---|
+| Q2 ratchet authority | Any maintainer may lower an evasion floor, with the reason written in the PR/file. | DONE: `tools/check_floor_lowering.py` fails PR CI when a floor value is lowered without a new dated `lowered:` entry (unit-tested; runs in `ratchet-integrity`). |
+| Q8 OPC UA allowlist | The deploying operator owns it. The rule stays default-off; no real values ship. | DONE (decision recorded; no code change needed). |
+| Q9 DNS allowlist | Verify against a public sample dataset. | OPEN: no dataset chosen or run yet. Starter list stays labelled UNVERIFIED until a run is recorded. |
+| Q12 wall-clock window | Fund it now. | DONE (opt-in): WS-2 stamps `siem.received_ms`; `FENGARDE_WINDOW_TIME_SOURCE=ingest` drives WS-4 stateful windows from receipt time. Default `event` is unchanged. Periodicity rules always use record time. Regression test `test_window_time_source.py`. NOT proven: live Docker run; Redis window backend with ingest source; flipping the default is a separate decision. |

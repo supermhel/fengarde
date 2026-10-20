@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (2026-10-20, owner decisions Q2 / Q8 / Q12)
+
+- **Q12 `FENGARDE_WINDOW_TIME_SOURCE=ingest`** (opt-in, default `event` = unchanged): WS-4 stateful windows are driven by the
+  WS-1 receipt time that WS-2 now stamps as `siem.received_ms`, so a forged record clock can no longer spread a burst out
+  of its window (finding F4). Periodicity rules keep record time. `test_window_time_source.py`.
+- **Q2 `tools/check_floor_lowering.py`**: PR CI fails if `eval/adversarial/evasion_floor.yaml` is lowered without a new
+  `lowered:` entry (any maintainer may lower, the reason must be recorded).
+- `CODE_OF_CONDUCT.md` (Contributor Covenant 2.1).
+- Q8 recorded: the deploying operator owns the OPC UA allowlist; the rule stays default-off.
+
 ### Added (2026-10-15/16, console rebuild, demo and project page — `feat/dashboard-rebuild`)
 
 - **Rebuilt console** (React 18, Vite, TypeScript, `services/ws7-dashboard/app`) at `/`, the previous UI at `/legacy/`. Twelve views, German and English, light and dark, phone widths; Archivo + JetBrains Mono; ISA-101 alarm shapes plus text. New views: Events log explorer, Coverage, Sources (how devices get connected), Inventory, Operations (with a Prometheus health panel), Audit, Account (MFA), Settings.

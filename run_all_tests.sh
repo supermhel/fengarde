@@ -655,6 +655,10 @@ echo "== H7 regression: EVTX business-hours boundary (oracle vs real engine at 1
 $PY eval/detection_accuracy/test_evtx_eval.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo "== splunk_eval guard: Q13 subset fetch leaves LFS pointers by design, only a zero-pull fetch fails =="; LAST_HEADER="== splunk_eval guard =="
 $PY eval/detection_accuracy/test_splunk_eval_guard.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo "== Q2: evasion floor may not be lowered without a recorded reason =="; LAST_HEADER="== Q2 floor-lowering guard =="
+$PY tools/test_check_floor_lowering.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo "== Q12: WS-4 window time source (event default, ingest opt-in) =="; LAST_HEADER="== Q12 window time source =="
+$PY services/ws4-detection/test_window_time_source.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
 echo "== blind-recall lane: synthetic controls (label from the dataset, never from FENGARDE; NOT a third-party measurement) =="; LAST_HEADER="== blind-recall lane: synthetic controls (label from the dataset, never from FENGARDE; NOT a third-party measurement) =="
 $PY eval/detection_accuracy/test_blind_recall.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
