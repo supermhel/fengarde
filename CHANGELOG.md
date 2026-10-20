@@ -310,6 +310,10 @@ A differential/property review in sandbox copies found real defects in code that
 - `tools/generate_trend_viewer.py` renders `eval/trend.jsonl`'s real nightly rows into a static `eval/trend_viewer.html`.
 - Two code-review rounds (`/code-review high` then `/code-review max`) found and fixed 13 issues total, including a WS-4 co-firing scoring bug (an `exposure_gate`-off rule co-firing with a same-weight/level ungated rule fully hid the ungated rule's exposure score) and a dashboard async state race on fast incident deselect/reselect. See `SSOT.md` §1's Phase 5 row for the full account.
 
+## [0.11.0] - 2026-10-20
+
+Rebuilt React console, GitHub Pages demo and departure-board project page, 36 rules / 19 parsers, CI and DCO hardening. See the entries under Unreleased above for the itemised list; they shipped in this tag. Known at release: the cosign signing job failed (fix in PR #105), so this release has no signed artifact until re-run.
+
 ## [0.10.0] - 2026-09-04
 
 ### Added (2026-09-03, Phase 4 — WP-4-A adversarial system-level validation)
