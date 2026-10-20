@@ -1,0 +1,28 @@
+title: Mailbox rule forwards mail to an external address
+id: 0ca6b652-ad3a-470b-8d31-f43f97c11799
+status: stable
+description: >
+  A mailbox rule or mailbox setting was created/changed in Microsoft 365 (New-/Set-InboxRule, Set-Mailbox
+  forwarding; OCSF API Activity 6003) that forwards mail to an address outside the user's own domain
+  (unmapped.m365.inbox_rule.forwards_external, set by the m365_audit parser; false when the user's own domain
+  is unknown - it never guesses). A classic business-email-compromise persistence/collection step. Legitimate
+  forwarding to a partner or personal address will also fire - tune per tenant. Added 2026-10-20 (the m365_audit
+  parser shipped 2026-10-14 with 'no rule reads that telemetry yet').
+level: high
+logsource:
+  category: cloud_audit
+detection:
+  sel:
+    class_uid: 6003
+    unmapped.m365.inbox_rule.forwards_external: true
+  condition: sel
+fields:
+  - actor.user.name
+  - unmapped.m365.inbox_rule.name
+  - unmapped.m365.inbox_rule.forward_to
+siem:
+  sector: common
+  score_weight: 75
+mitre:
+  tactic: TA0009
+  technique: T1114.003

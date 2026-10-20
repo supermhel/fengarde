@@ -126,6 +126,7 @@ class MailGatewayParser(Parser):
             "sender_domain": sender.rsplit("@", 1)[-1] if "@" in sender else None,
             "attachments": attachments,
             "has_macro_attachment": macro,
+            "delivered": not blocked,
         }}
         return event
 

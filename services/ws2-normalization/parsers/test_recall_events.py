@@ -101,6 +101,35 @@ check(ds_desc["unmapped"]["directory"]["sensitive_attribute"] is False, "descrip
 R_DS = rule("Sensitive Active Directory attribute modified")
 check(R_DS.evaluate(ds_spn) and not R_DS.evaluate(ds_desc), "AD attribute rule fire/quiet")
 
+# ---- M365 inbox-rule forwarding and macro-attachment mail (parsers shipped 2026-10-14, rules 2026-10-20)
+def parse_raw(src, rec):
+    return _REGISTRY[src].parse({"source_type": src, "raw": rec, "meta": {"ingest_id": "t-" + src}})
+
+
+m_fwd = parse_raw("m365_audit", {"Operation": "New-InboxRule", "Workload": "Exchange", "UserId": "jdoe@corp.example",
+                                 "ClientIP": "203.0.113.51:50432", "CreationTime": "2026-07-20T10:00:00Z",
+                                 "Parameters": [{"Name": "ForwardTo", "Value": "x@evil.example"}]})
+m_int = parse_raw("m365_audit", {"Operation": "New-InboxRule", "Workload": "Exchange", "UserId": "jdoe@corp.example",
+                                 "ClientIP": "203.0.113.51:50432", "CreationTime": "2026-07-20T10:00:00Z",
+                                 "Parameters": [{"Name": "ForwardTo", "Value": "boss@corp.example"}]})
+m_other = parse_raw("m365_audit", {"Operation": "MailItemsAccessed", "Workload": "Exchange", "UserId": "jdoe@corp.example",
+                                   "ClientIP": "203.0.113.51", "CreationTime": "2026-07-20T10:00:00Z"})
+R_M = rule("Mailbox rule forwards mail to an external address")
+check(R_M.evaluate(m_fwd), "external forwarding inbox rule must fire")
+check(not R_M.evaluate(m_int) and not R_M.evaluate(m_other), "internal forward / unrelated op must stay quiet")
+
+mail = {"from": "billing@vendor.example", "to": "jdoe@corp.example", "subject": "Invoice", "ts": 1750000000000,
+        "src_ip": "203.0.113.200"}
+e_ok = parse_raw("mail_gateway", dict(mail, attachment="Invoice.docm", verdict="delivered"))
+e_blocked = parse_raw("mail_gateway", dict(mail, attachment="Invoice.docm", verdict="quarantined"))
+e_plain = parse_raw("mail_gateway", dict(mail, attachment="Invoice.pdf", verdict="delivered"))
+e_out = parse_raw("mail_gateway", dict(mail, attachment="Invoice.docm", verdict="delivered", direction="outbound"))
+R_E = rule("Inbound email with a macro-capable attachment was delivered")
+check(R_E.evaluate(e_ok), "delivered inbound macro attachment must fire")
+check(not R_E.evaluate(e_blocked), "quarantined macro attachment must stay quiet")
+check(not R_E.evaluate(e_plain), "non-macro attachment must stay quiet")
+check(not R_E.evaluate(e_out), "outbound mail must stay quiet")
+
 if FAILS:
     for f in FAILS:
         print("[FAIL]", f)

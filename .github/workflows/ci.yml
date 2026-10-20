@@ -141,6 +141,33 @@ jobs:
           REDIS_URL: redis://localhost:6379/0
         run: python services/ws4-detection/test_window_redis_live.py
 
+  # Q11 (owner decision 2026-10-14, proven 2026-10-20): the hit_distinct Lua fallback on a REAL Redis older
+  # than 6.2 (no ZADD GT). The redis-integration job above runs Redis 7 with the Lua path merely FORCED; this
+  # job runs the same parity test on redis 6.0 and asserts the server really is < 6.2 and auto-detect picks Lua.
+  redis-legacy:
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:6.0
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Install deps
+        run: pip install pyyaml redis
+      - name: hit_distinct Lua fallback on a real Redis 6.0
+        env:
+          REDIS_URL: redis://localhost:6379/0
+          REDIS_EXPECT_LEGACY: "1"
+        run: python services/ws4-detection/test_window_redis_live.py
+
   # FIX M26 (2026-08-06): live OpenSearch integration. ws3's storage layer and
   # the migration tool have live-cluster paths that no other CI job exercises
   # (the zero-infra gate uses fakes/in-memory); this job runs them against a

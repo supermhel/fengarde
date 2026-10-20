@@ -43,6 +43,19 @@
 # NOT exercise any of the entries below (a lab has almost no CDN browsing traffic), so they remain
 # unverified. A browsing-heavy resolver log is still needed. Data was not vendored.
 #
+# SECOND DATASET (2026-10-20): Zenodo 'A User DNS Fingerprint Dataset' (CC BY 4.0, a metropolitan ISP,
+# Dec 2023 - Feb 2024, 171,623 user-days, 56,471 parents). It has per-user daily domain lists but NO per-query
+# timestamps, so it gives an UPPER BOUND on the rule's 60 s window: 27 parents had >= 40 distinct names in ONE day
+# pooled across users. Of the starter entries only googlevideo.com (251), cloudfront.net (99), akamai.net (45)
+# exceeded 40; akamaiedge.net 34, azureedge.net 37, akadns.net 30, googleusercontent.com 24, edgekey.net 9,
+# edgesuite.net 9, spamhaus.org 4, windowsupdate.com 3, sophosxl.net 1 did not (a CONSUMER ISP: enterprise networks
+# differ, so those entries are kept). Large benign parents that were NOT listed: icloud.com 302, googleapis.com 167,
+# gvt1.com 146, appsflyersdk.com 100, apple.com 99, tiktokcdn.com 99, google.com 91, microsoft.com 79,
+# trafficmanager.net 74, sharepoint.com 72. The first-party vendor zones among them (icloud.com, apple.com,
+# google.com, googleapis.com, gvt1.com, microsoft.com) pass the admission test below (the vendor runs the
+# authoritative servers and delegates no subdomains) and were ADDED. The multi-tenant / customer-assigned ones
+# (sharepoint.com, trafficmanager.net, appsflyersdk.com, tiktokcdn.com) were NOT added without checking (b).
+#
 # STATUS: UNVERIFIED. This is a STARTER set of widely deployed CDN / update / lookup
 # zones, chosen from general knowledge of what such zones look like. It has NOT been
 # checked against real traffic, and it is not a vetted baseline of your network.
@@ -78,6 +91,13 @@ entries:
   - "googleusercontent.com"
   # Operating-system update delivery
   - "windowsupdate.com"
+  # First-party vendor service zones (2026-10-20, ISP dataset above: >= 40 distinct names/day pooled)
+  - "apple.com"
+  - "google.com"
+  - "googleapis.com"
+  - "gvt1.com"
+  - "icloud.com"
+  - "microsoft.com"
   # DNS-based reputation lookups (one name per looked-up address or hash)
   - "sophosxl.net"
   - "spamhaus.org"

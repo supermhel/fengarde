@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (2026-10-20, recall work part 3: rules for the 2026-10-14 mail/M365 parsers)
+
+- `m365_inbox_rule_external_forward` (T1114.003) and `email_macro_attachment_delivered` (T1566.001); mail_gateway parser now
+  exposes `unmapped.email.delivered`. 41 -> 43 rules, 40 -> 42 MITRE-tagged.
+- CI job `redis-legacy`: the hit_distinct Lua fallback test now also runs on a REAL Redis 6.0 (asserts the server is < 6.2 and
+  that auto-detect picks the Lua path). Proves Q11 on a pre-6.2 server.
+- DNS allowlist: +6 first-party zones from the Zenodo ISP dataset (see the file header).
+
 ### Added (2026-10-20, recall work part 2: PowerShell + AD attribute changes)
 
 - Windows parser: PowerShell logging (4104 script block, 4103 module logging, classic 800) -> class 1002 activity 6 with
@@ -20,7 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   EventID 10 (process access). All class 1002 (activity 3 / 4 / 5). Heuristic indicators in the parsers
   (`unmapped.service.suspicious_path`, `unmapped.lsass_access_suspicious`), not classifiers.
 - Rules: `win_audit_log_cleared` (T1070.001), `win_service_installed_suspicious_path` (T1543.003),
-  `win_lsass_access_suspicious` (T1003.001). 36 -> 39 rules, 35 -> 38 MITRE-tagged (41 / 40 after part 2). Chosen from the blind-recall funnel's
+  `win_lsass_access_suspicious` (T1003.001). 36 -> 39 rules, 35 -> 38 MITRE-tagged (41 / 40 after part 2, 43 / 42 after part 3). Chosen from the blind-recall funnel's
   NO_RULE/partial-parse heads (T1003, T1543.003, Security:1102). Effect on third-party recall: NOT yet measured.
 
 ### Added (2026-10-20, owner decisions Q2 / Q8 / Q12)
