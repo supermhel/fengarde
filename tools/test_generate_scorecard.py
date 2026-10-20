@@ -597,14 +597,14 @@ def test_per_technique_math() -> None:
     # (c) an oracle step with no_rule_exists -> a GAP row
     gaps = {(s, step) for s, step, _ in gs.build_model(copy.deepcopy(arts))["gaps"]}
     for expect in (("ai_to_ot", "external_content"), ("ai_to_ot", "plc_state_change"),
-                   ("it_intrusion", "initial_access"), ("phishing_bec", "phish_delivery"),
+                   ("it_intrusion", "initial_access"), ("phishing_bec", "payment_redirect"),
                    ("phishing_bec", "victim_session")):
         check(expect in gaps, f"oracle gap {expect} is missing from the GAP table")
     den = arts["__denominator__"]
     check(den["ai_to_ot"][:2] == (5, 7), f"ai_to_ot TPR denominator wrong: {den['ai_to_ot']}")
     check(den["it_intrusion"][:2] == (5, 6), f"it_intrusion wrong: {den['it_intrusion']}")
     check(den["infra_takeover"][:2] == (3, 3), f"infra_takeover wrong: {den['infra_takeover']}")
-    check(den["phishing_bec"][:2] == (3, 8), f"phishing_bec wrong: {den['phishing_bec']}")
+    check(den["phishing_bec"][:2] == (6, 8), f"phishing_bec wrong: {den['phishing_bec']}")
     check(den["ot_opcua_sabotage"][:2] == (5, 5),
           f"ot_opcua_sabotage wrong: {den['ot_opcua_sabotage']}")
     # P1 storylines 6-9 (2026-10-14): non-gap steps / declared steps, from the oracles

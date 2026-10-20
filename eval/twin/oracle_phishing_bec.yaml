@@ -197,4 +197,4 @@ incident_membership:
 # Read-side campaign view (links incidents sharing a member alert). REPORTED, never gated.
 campaign_membership:
   campaign_count: 1
-  full_coverage: true
+  full_coverage: false   # measured 2026-10-20: the mail/M365 alerts carry no actor, so no single campaign spans every step (F14)
