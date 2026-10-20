@@ -734,6 +734,9 @@ def route_mfa_verify(self):
     code = body.get("totp_code")
     if not isinstance(code, str):
         return self._send(400, {"error": "totp_code (string) is required"})
+    # gap-hunt R2-2 (decided 2026-10-20: KEEP): verify_totp also burns the step when confirming ENROLMENT, so the
+    # first login inside the same +/-1 step window is rejected. That is deliberate: test_fix_mfa pins that the
+    # enrolment code cannot be replayed at /auth/login. Cost: wait for the next 30 s code after enrolling.
     if not self.deps.users_db.verify_totp(target, code):
         self._audit("mfa_verify_failure", actor=session.username,
                     tenant_id=session.tenant_id, detail={"target": target})

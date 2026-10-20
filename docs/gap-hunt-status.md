@@ -27,6 +27,9 @@ MINOR findings (65) have NOT been triaged. Statuses are claims from that read, r
 | R3-45 | `triage-api.yaml` CSRF note corrected (writes need `X-CSRF-Token` from the login session) |
 | R4-74 / R4-75 | WS-1 passes its logger to the spool and exports `spool_corrupt_lines_skipped` |
 | R4-122 | live OpenSearch / Redis tests exit 1 instead of SKIP when `FENGARDE_E2E_STRICT=1` (set in those CI jobs) |
+| R3-43 | the report route returns 400 for an unknown NIS2 `stage`/`lang` (regression test) |
+| R3-57 | `llm_adapter._urlopen` fails closed when the no-redirect opener is unavailable (opt-out env var) |
+| R4-136 | active_directory maps a logon's target host to `dst_endpoint.hostname`, so lateral-movement rules count AD logons |
 | R4-108 (part) | the live bench returns 1 when a latency run collects 0 samples (the fixed SSH-burst ids are still untagged) |
 
 ## Still OPEN or PARTIAL (not fixed here), with the suggested fix
@@ -35,14 +38,13 @@ MINOR findings (65) have NOT been triaged. Statuses are claims from that read, r
 |---|---|---|
 | R4-129 | needs real data | ship a GeoIP resolver or real egress prefixes, then make the rule `stable` |
 | R4-52 | partial | issue the key only after an RBAC session, not on a spoofable `Sec-Fetch-Site` check |
-| R2-2 | open | `/auth/mfa/verify` should call `confirm_totp` so enrolling does not burn the current 30 s step |
+| R2-2 | accepted (decided 2026-10-20) | keeping `verify_totp` on enrolment: `test_fix_mfa` pins that the enrolment code cannot be replayed at login; cost is waiting for the next 30 s code |
 | R2-10, R2-14 | test strength | add a test that boots with a garbage `SYSLOG_UDP_PORT`; assert `bus_error` for each failing method separately |
 | R3-4, R3-6 | partial | WS-5 alerts never correlate (give them an entity or drop WS-5 from the producer list); accept/document the spoofable `device:` track |
 | R3-22, R3-23 | open / partial | Sentinel healthcheck should query `sentinel master <name>`; use `condition: service_healthy` for Sentinel `depends_on` |
 | R3-35 | partial | probe the outside-hours window per minute (1440 samples) |
 | R3-39 | partial | fail (not warn) in `fire_check` for a rule with no `mitre:` unless waived (one rule has none) |
 | R3-43 | partial | return 400 from the report route for an unknown NIS2 `stage`/`lang` |
-| R3-57 | partial | `llm_adapter` should fail closed if `shared.outbound_http` cannot be imported |
 | R4 #6 | partial | take the cross-process lock in the audit `_append_locked` too |
 | R4 #17 | partial | `reload()` should keep the old rule set when a rule file parses empty |
 | R4 #33 | partial | add a test with a dribbling fake response asserting `TimeoutError` |
@@ -52,5 +54,4 @@ MINOR findings (65) have NOT been triaged. Statuses are claims from that read, r
 | R4 #107, #108 | partial / open | print and fail on `eps_dropped_majority`; tag the live bench SSH-burst ids with the run id |
 | R4 #120, #121 | open | add `backpressure_load_test.py` to the wiring check; run a baseline before `mutmut run \|\| true` |
 | R4 #133, #134 | partial | horizontal-sweep rule; true one-source spray rule (T1110.003) |
-| R4 #136 | open | map the 4624 target host to `dst_endpoint.hostname` in `active_directory.py` (lateral-movement blind spot) |
 | R4 #86 | unverifiable | check git history for 2026-08-22..25 CHANGELOG gaps |
