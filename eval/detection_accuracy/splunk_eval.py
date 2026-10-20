@@ -130,13 +130,21 @@ def main():
         elif head.startswith("version https://git-lfs"):
             lfs_pointers += 1
     files.sort()
-    # The datasets are Git LFS objects: a clone without git-lfs leaves pointer
-    # stubs that silently look like "non-XML exports" and shrink the corpus.
-    # A degraded corpus must fail loudly, never publish smaller numbers.
-    if lfs_pointers:
+    # The datasets are Git LFS objects. Since Q13 (2026-10-14) fetch_corpora.py
+    # pulls only a per-technique-capped SUBSET, so most files stay LFS pointers
+    # BY DESIGN -- failing on any pointer broke the nightly lane every run from
+    # 2026-10-16. What must still fail loudly is a fetch that pulled NOTHING
+    # (no git-lfs, failed pull): pointers present and zero real files. The
+    # graded file count is published as lane_files in the trend row, so a
+    # shrunken subset is visible there, never silent.
+    if lfs_pointers and not files:
         print(f"[FAIL] splunk_eval: {lfs_pointers} .log files are un-fetched Git LFS "
-              f"pointers -- install git-lfs and run 'git lfs pull' in {SA.parents[1]}")
+              f"pointers and none were pulled -- install git-lfs and run "
+              f"fetch_corpora.py (or 'git lfs pull') in {SA.parents[1]}")
         return 1
+    if lfs_pointers:
+        print(f"[info] splunk_eval: grading {len(files)} fetched file(s); "
+              f"{lfs_pointers} other .log pointer(s) left un-pulled by the Q13 subset fetch.")
     # Tracked .log files missing from the working tree (sparse/partial checkout,
     # or antivirus quarantining attack samples -- seen on Windows Defender,
     # 23 files, 2026-10-14) shrink the corpus just as silently.
