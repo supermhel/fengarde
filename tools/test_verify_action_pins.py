@@ -45,6 +45,16 @@ def test_parses_real_workflow_shapes():
         check(got == expected, f"parse_uses({line!r}) -> {got}, expected {expected}")
 
 
+def test_tag_only_exception_is_narrow():
+    """The SLSA generator may be referenced by an exact release tag and nothing else; every other action stays SHA-only."""
+    check("slsa-framework/slsa-github-generator" in v.TAG_ONLY_EXCEPTIONS, "the generator exception is gone")
+    check(len(v.TAG_ONLY_EXCEPTIONS) == 1, "the tag-only exception list grew: each entry needs its own justification")
+    check(v._EXACT_TAG.match("v2.1.0") is not None, "an exact release tag was rejected")
+    for bad in ("v2", "v2.1", "main", "v2.1.0-rc1", "f7dd8c54c2067bafc12ca7a55595d5ee9b75204a"):
+        check(v._EXACT_TAG.match(bad) is None, f"{bad!r} must not satisfy the tag-only exception")
+    check("actions/checkout" not in v.TAG_ONLY_EXCEPTIONS, "ordinary actions must stay SHA-pinned")
+
+
 def test_skips_unpinnable_references():
     for line in ("      - uses: ./.github/actions/local",
                  "      - uses: docker://alpine:3.19"):
@@ -120,6 +130,7 @@ def test_offline_mode_passes_on_the_real_repo():
 
 def main():
     test_parses_real_workflow_shapes()
+    test_tag_only_exception_is_narrow()
     test_skips_unpinnable_references()
     test_exact_comment_must_name_a_tag_on_that_commit()
     test_major_only_comment_accepts_any_release_in_that_major()
