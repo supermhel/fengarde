@@ -10,27 +10,37 @@ part in minutes, by running the CHEAP gate scripts that fail first.
     python tools/rule_cascade.py --no-generate         # report only: touch no file
     python tools/rule_cascade.py --no-floor            # generate docs but leave evasion_floor.yaml alone
 
-What it RUNS (all deterministic, all existing tools; it never edits anything by hand):
+What it RUNS (all deterministic, all existing tools):
   * eval/adversarial/technique_matrix.py --write-doc          (gap-register block in contracts/detection-coverage.md)
   * eval/adversarial/evasion_cost.py --seed 7 --write-doc     (evasion-cost table in contracts/detection-coverage.md)
-  * eval/adversarial/evasion_cost.py --seed 7 --update-floor  only when a new rule is STATEFUL; this moves the
-    floor toward the defender only, and is NEVER run with --allow-lower: a refusal is reported, not forced.
+  * eval/adversarial/evasion_cost.py --seed 7 --update-floor  only when a new rule is STATEFUL, and only through a
+    GUARD: the update runs against a scratch COPY of eval/adversarial/evasion_floor.yaml, and the result is written to
+    the real file only if it purely ADDS rule-set keys. evasion_cost's --update-floor also re-baselines the fingerprint
+    and values of every OTHER rule-set whose numbers did not get worse, so any change to an existing key (or to
+    anything outside rule_sets) is refused: nothing is written and the changed keys are listed as a TODO. Never run
+    with --allow-lower.
 Then it runs the gates that catch the next failures: validate_rules, check_rule_producers, check_lane_coverage,
-technique_matrix (recomputes scenario_matrix when its artifact is absent: a few minutes).
+technique_matrix (recomputes scenario_matrix when its artifact is absent or stale: a few minutes), evasion_cost.
+A generator, the floor update or a gate that fails (non-zero exit, timeout, cannot start) is a TODO with the
+output tail, never a silent pass.
 
-What it NEVER does: edit an oracle, a waiver, a findings register, a producer fixture, a probe template, a rule
-count, or the ratchet baseline. Those are decisions (or hand-written fixtures); they are printed as a checklist,
+FILES IT MAY WRITE: contracts/detection-coverage.md (the two generated blocks) and eval/adversarial/evasion_floor.yaml
+(new keys only, see above; fingerprint.py calls that file a ratchet OUTPUT, so review that diff). It NEVER edits an
+oracle, a waiver, the findings register, a producer fixture, a probe template, a rule count, or the ratchet baseline
+(eval/twin/baseline_scenarios.json). Those are decisions or hand-written fixtures; they are printed as a checklist,
 with the ones the gates already prove missing marked TODO and the rest marked CHECK.
 
-Exit 0 = nothing missing that the cheap gates can see (CHECK items are reminders); 1 = a gate failed or a TODO
-item is open; 2 = no new rule found / bad usage.
+Exit 0 = nothing missing that the cheap gates can see (CHECK items are reminders); 1 = a generator or gate failed or
+a TODO item is open; 2 = no new rule found / bad usage.
 """
 from __future__ import annotations
 
 import argparse
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -66,23 +76,44 @@ class Report:
 def run(cmd: list[str], timeout: int = 1800) -> tuple[int, str]:
     """Run one repo command from the repo root; (returncode, combined output)."""
     t0 = time.time()
-    p = subprocess.run([sys.executable, *cmd], cwd=ROOT, capture_output=True, text=True, timeout=timeout,
-                       encoding="utf-8", errors="replace")
-    print(f"    [{time.time() - t0:5.0f}s] {' '.join(cmd)} -> rc {p.returncode}", flush=True)
-    return p.returncode, (p.stdout or "") + (p.stderr or "")
+    try:
+        p = subprocess.run([sys.executable, *cmd], cwd=ROOT, capture_output=True, text=True, timeout=timeout,
+                           encoding="utf-8", errors="replace")
+        rc, out = p.returncode, (p.stdout or "") + (p.stderr or "")
+    except subprocess.TimeoutExpired:
+        rc, out = 124, f"[FAIL] timed out after {timeout}s: {' '.join(cmd)}"
+    except OSError as exc:
+        rc, out = 127, f"[FAIL] could not start {' '.join(cmd)}: {exc}"
+    print(f"    [{time.time() - t0:5.0f}s] {' '.join(cmd)} -> rc {rc}", flush=True)
+    return rc, out
 
 
-def git(*args: str) -> list[str]:
-    p = subprocess.run(["git", *args], cwd=ROOT, capture_output=True, text=True, encoding="utf-8")
-    return [ln.strip() for ln in p.stdout.splitlines() if ln.strip()] if p.returncode == 0 else []
+def git_z(*args: str) -> list[str]:
+    """NUL-separated git output, entries kept verbatim (no stripping, no quoting)."""
+    p = subprocess.run(["git", "-c", "core.quotePath=false", args[0], "-z", *args[1:]], cwd=ROOT, capture_output=True, text=True,
+                       encoding="utf-8")
+    return p.stdout.split("\0") if p.returncode == 0 else []
 
 
 def new_rule_files(base: str) -> list[str]:
-    """Rule files added vs ``base`` (committed) or present but not yet committed. Renames/edits are not 'new'."""
-    found: set[str] = set(git("diff", "--name-only", "--diff-filter=A", f"{base}...HEAD", "--", RULES_DIR))
-    for ln in git("status", "--porcelain", "--", RULES_DIR):
-        if ln[:2].strip() in {"A", "??", "AM"}:
-            found.add(ln[3:].strip().strip('"'))
+    """Rule files added or renamed-in vs ``base`` (committed), or present but not yet committed. Edits are not 'new'."""
+    found: set[str] = set()
+    parts = git_z("diff", "--name-status", "--diff-filter=AR", f"{base}...HEAD", "--", RULES_DIR)
+    i = 0
+    while i < len(parts) and parts[i]:
+        status = parts[i]
+        n = 3 if status.startswith("R") else 2          # R<score> OLD NEW  /  A PATH
+        found.add(parts[i + n - 1])
+        i += n
+    parts = git_z("status", "--porcelain=v1", "--", RULES_DIR)
+    i = 0
+    while i < len(parts) and parts[i]:
+        xy, path = parts[i][:2], parts[i][3:]
+        if "R" in xy:
+            i += 1                                       # the rename's origin path follows as its own entry
+        if xy in {"A ", "AM", "??", "R ", "RM"}:
+            found.add(path)
+        i += 1
     return sorted(f for f in found if re.fullmatch(rf"{RULES_DIR}/[^/]+\.ya?ml", f))
 
 
@@ -126,20 +157,63 @@ def count_mentions(total: int) -> list[str]:
     return out
 
 
+FLOOR = "eval/adversarial/evasion_floor.yaml"
+
+
+def floor_change(before: dict, after: dict) -> tuple[list[str], list[str]]:
+    """(added rule-set keys, changed-or-removed keys) between two parsed floors. Only additions are acceptable."""
+    b, a = before.get("rule_sets") or {}, after.get("rule_sets") or {}
+    changed = [k for k in b if a.get(k) != b[k]]
+    changed += [f"<{k}>" for k in set(before) | set(after) if k != "rule_sets" and before.get(k) != after.get(k)]
+    return sorted(set(a) - set(b)), sorted(changed)
+
+
+def guarded_floor_update() -> tuple[int, str]:
+    """Run ``evasion_cost --update-floor`` on a scratch copy; commit it to the real floor only if it adds keys alone."""
+    real = ROOT / FLOOR
+    with tempfile.TemporaryDirectory() as d:
+        scratch = Path(d) / "evasion_floor.yaml"
+        shutil.copyfile(real, scratch)
+        rc, out = run(["eval/adversarial/evasion_cost.py", "--seed", "7", "--update-floor", "--floor", str(scratch),
+                       "--out", str(Path(d) / "evasion_cost.json"), "--no-doc-check"])
+        if rc != 0:
+            return rc, out
+        before = yaml.safe_load(real.read_text(encoding="utf-8")) or {}
+        after = yaml.safe_load(scratch.read_text(encoding="utf-8")) or {}
+        added, changed = floor_change(before, after)
+        if changed:
+            return 1, (f"[REFUSED] --update-floor would also re-baseline existing floor entries {changed}; nothing was written. "
+                       "Review that drift deliberately with evasion_cost.py itself, then re-run.")
+        if added:
+            shutil.copyfile(scratch, real)
+        return 0, f"floor: added {added or 'no'} rule-set key(s); existing entries untouched"
+
+
+def stale_matrix(out: str) -> bool:
+    return "G1 artefact" in out
+
+
 def cascade(rules: list[str], base: str, generate: bool, floor: bool, recompute: bool) -> list[Report]:
     docs = {p: load_rule(p) for p in rules}
     reports = [Report(p, is_stateful(d)) for p, d in docs.items()]
     any_stateful = any(r.stateful for r in reports)
     total = len(list((ROOT / RULES_DIR).glob("*.y*ml")))
     outputs: dict[str, tuple[int, str]] = {}
+    general = Report("(generators)", False)
 
     print(f"== rule_cascade: {len(rules)} new rule(s), {total} rules in total ==")
     if generate:
         print("-- generators (deterministic; review the diff they leave) --")
-        outputs["tm_doc"] = run(["eval/adversarial/technique_matrix.py", "--write-doc"])
-        outputs["ec_doc"] = run(["eval/adversarial/evasion_cost.py", "--seed", "7", "--write-doc"])
+        gens = [("technique_matrix --write-doc", run(["eval/adversarial/technique_matrix.py", "--write-doc"])),
+                ("evasion_cost --write-doc", run(["eval/adversarial/evasion_cost.py", "--seed", "7", "--write-doc"]))]
         if any_stateful and floor:
-            outputs["floor"] = run(["eval/adversarial/evasion_cost.py", "--seed", "7", "--update-floor"])
+            gens.append(("evasion_cost --update-floor (guarded: new keys only)", guarded_floor_update()))
+        for name, (rc, out) in gens:
+            if rc == 0:
+                general.items.append(Item("DONE", f"generator {name}"))
+            else:
+                tail = " | ".join(ln.strip() for ln in out.strip().splitlines()[-3:])
+                general.items.append(Item("TODO", f"generator {name} failed (rc {rc})", tail[:400]))
     print("-- cheap gates (the ones that fail first) --")
     outputs["validate"] = run(["tools/validate_rules.py"])
     outputs["producers"] = run(["tools/check_rule_producers.py"])
@@ -147,6 +221,9 @@ def cascade(rules: list[str], base: str, generate: bool, floor: bool, recompute:
     art = ROOT / "eval/adversarial/out/scenario_matrix.latest.json"
     tm_cmd = ["eval/adversarial/technique_matrix.py"] + ([] if art.exists() and not recompute else ["--recompute"])
     outputs["matrix"] = run(tm_cmd)
+    if outputs["matrix"][0] != 0 and "--recompute" not in tm_cmd and stale_matrix(outputs["matrix"][1]):
+        print("    scenario_matrix artifact is stale (G1); recomputing")
+        outputs["matrix"] = run(tm_cmd + ["--recompute"])
     outputs["cost"] = run(["eval/adversarial/evasion_cost.py", "--seed", "7"])
 
     findings_text = (ROOT / "eval/adversarial/evasion_findings.yaml").read_text(encoding="utf-8")
@@ -204,13 +281,13 @@ def cascade(rules: list[str], base: str, generate: bool, floor: bool, recompute:
         stale = count_mentions(total)
         it.append(Item("CHECK", f"rule counts (real total is {total})",
                        "; ".join(stale) if stale else "no differing count found in " + ", ".join(COUNT_FILES)))
-    return reports
+    return ([general] if general.items else []) + reports
 
 
 def render(reports: list[Report]) -> int:
     open_todo = 0
     for rep in reports:
-        print(f"\n### {rep.rule}  ({'stateful' if rep.stateful else 'stateless'})")
+        print(f"\n### {rep.rule}" + ("" if rep.rule.startswith("(") else f"  ({'stateful' if rep.stateful else 'stateless'})"))
         for i in rep.items:
             mark = {"DONE": "[x]", "TODO": "[ ] TODO ", "CHECK": "[ ] CHECK"}[i.status]
             print(f"  {mark} {i.what}")

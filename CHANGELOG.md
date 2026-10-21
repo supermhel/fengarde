@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed (2026-10-22, hardening of the CI split + `rule_cascade` after an independent review)
+
+- **Path filter false negatives** (`tools/ci_eval_filter.py`, `ci.yml` `changes` job): `git diff` rename detection hid the old path of
+  a rule moved out of `contracts/rules` (now `--no-renames -z`, `core.quotePath=false`); `README.md` / `SSOT.md` (linted by the
+  scorecard), `tools/validate_contract.py`, `tools/validate_rules.py`, ws3 and the other services, and the filter + its test were
+  not covered. The patterns are now DERIVED from `eval/twin/fingerprint.py` (plus the eval tree, docs, gate script, workflow), and
+  `test_ci_eval_filter.py` fails if a fingerprinted file would not trigger eval (it used to assert the gaps). The step fails closed
+  (`set -euo pipefail`; the aggregator fails unless the output is exactly `true`/`false`); every tier checkout pins `ref: ${{ github.sha }}`.
+- `run_all_tests.sh`: the ratchet baseline guard no longer prints a vacuous `[OK]` when the base is HEAD (push to `main`); it prints a notice.
+- `tools/rule_cascade.py`: `--update-floor` ran for every rule-set and re-baselined other rule-sets' fingerprints; it now runs on a
+  scratch copy and writes only added keys. Generator/floor/gate failures, timeouts and unstartable interpreters are TODOs with a non-zero
+  exit, a stale `scenario_matrix` artifact is recomputed, renamed-in rule files count as new, and the tests no longer fake every call.
+  Docs corrected: it writes `evasion_floor.yaml` (new keys only), it does not touch `baseline_scenarios.json`.
+- `tools/test_gate_tiers.py` also covers non-`$PY` stanzas (the console's npm/npx) and asserts `contract-tests` needs `changes`.
+
 ### Changed (2026-10-21, CI split + new-rule cascade helper)
 
 - **CI no longer runs the whole gate as one ~25-30 min serial step.** `run_all_tests.sh` gained `GATE_TIER` (unset = the full
@@ -20,7 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Runs the generators a new rule needs (`technique_matrix.py --write-doc`, `evasion_cost.py --seed 7 --write-doc`, `--update-floor`
   for a new stateful rule) and the cheap gates that fail first, then prints the manual checklist (producer fixture, coverage row,
-  waiver or storyline, probe template, F4 listing, oracle pins, rule counts). Never edits oracles, waivers or the ratchet.
+  waiver or storyline, probe template, F4 listing, oracle pins, rule counts). Never edits oracles, waivers, the findings register or the ratchet baseline; its only writes are the generated blocks of `contracts/detection-coverage.md` and new keys in `eval/adversarial/evasion_floor.yaml` (guarded, see below).
 
 ### Added (2026-10-20, recall work part 4: the three owner-approved rules)
 
