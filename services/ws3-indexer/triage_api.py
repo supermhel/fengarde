@@ -734,6 +734,9 @@ def route_mfa_verify(self):
     code = body.get("totp_code")
     if not isinstance(code, str):
         return self._send(400, {"error": "totp_code (string) is required"})
+    # gap-hunt R2-2 (decided 2026-10-20: KEEP): verify_totp also burns the step when confirming ENROLMENT, so the
+    # first login inside the same +/-1 step window is rejected. That is deliberate: test_fix_mfa pins that the
+    # enrolment code cannot be replayed at /auth/login. Cost: wait for the next 30 s code after enrolling.
     if not self.deps.users_db.verify_totp(target, code):
         self._audit("mfa_verify_failure", actor=session.username,
                     tenant_id=session.tenant_id, detail={"target": target})
@@ -778,6 +781,11 @@ def route_post_report(self, report_alert_id: str):
     if template == "nis2":
         stage = q.get("stage", ["notification"])[0]
         lang = q.get("lang", ["de"])[0]
+        # gap-hunt R3-43: an unknown stage/lang used to be coerced silently to the default text.
+        if stage not in nis2_template.STAGES or lang not in nis2_template.LANGUAGES:
+            return self._send(400, {"error": "invalid stage or lang",
+                                    "stages": list(nis2_template.STAGES),
+                                    "langs": list(nis2_template.LANGUAGES)})
         report = nis2_template.build_report(alert_doc, triage, stage=stage, lang=lang)
     else:
         report = reporting.generate_report(alert_doc, triage)

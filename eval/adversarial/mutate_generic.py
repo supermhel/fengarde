@@ -77,7 +77,7 @@ def get_time(p: dict) -> Optional[int]:
 #: raw-record keys that carry an epoch-ms event time (rewritten when present). ``timestamp`` is
 #: db_audit's / opcua_audit's own clock and ``seen_at`` inventory_diff's: the parser reads those in
 #: preference to ``meta.received_at``, so leaving them behind would silently keep the old time.
-_EPOCH_KEYS = ("TimeCreated", "createdTime", "ts", "time", "timestamp", "seen_at")
+_EPOCH_KEYS = ("TimeCreated", "createdTime", "CreationTime", "ts", "time", "timestamp", "seen_at")  # CreationTime: m365_audit (2026-10-20)
 #: raw-record keys that carry an ISO-8601 event time (rewritten when present). k8s audit records
 #: carry ``requestReceivedTimestamp`` (microsecond precision) and the parser prefers it to
 #: ``meta.received_at``.

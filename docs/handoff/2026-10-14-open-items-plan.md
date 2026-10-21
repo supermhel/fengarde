@@ -17,7 +17,7 @@ checked against the tree, not taken from the earlier hand-off list.
 | §7 Q13 nightly corpus fetch | OPEN | `nightly-eval.yml` clones EVTX samples directly; no `fetch_corpora.py` / `blind_recall.py` step |
 | Push `7e7d5da` | OPEN | `origin/fix/r3-injection-evasion-hardening` = `a56e5b8` |
 | Stale worktree `storyline-ot-opcua-sabotage` | removable | every modified file equals `7e7d5da` except two older copies (`seed % 2` vs committed `seed % 3`; `oracle_strength.json` differs only by CRLF) |
-| `heuristic-dhawan-8f7d20`, `.impeccable/`, `AGENTS.md`, `docs/cfp/` | not ours | left alone |
+| `heuristic-dhawan-8f7d20`, `.impeccable/`, `AGENTS.md` | not ours | left alone; `docs/cfp/` moved to the private `fengarde-sec/cfp/` 2026-10-21 (it had been swept into a commit by mistake) |
 | 27 mypy errors in `eval/twin` | OPEN | gate mypy covers `services/` + `tools/` only |
 
 ## Plan
@@ -126,3 +126,12 @@ Every phase ends with `bash run_all_tests.sh` green before it is called done.
   reset it to the pushed head once the push lands.
 - Alert ids of account-grouped rules change once on deploy (F2): a redelivered alert across the upgrade
   can index twice.
+
+## Owner decisions 2026-10-20 (Q2, Q8, Q9, Q12)
+
+| Q | Decision | State |
+|---|---|---|
+| Q2 ratchet authority | Any maintainer may lower an evasion floor, with the reason written in the PR/file. | DONE: `tools/check_floor_lowering.py` fails PR CI when a floor value is lowered without a new dated `lowered:` entry (unit-tested; runs in `ratchet-integrity`). |
+| Q8 OPC UA allowlist | The deploying operator owns it. The rule stays default-off; no real values ship. | DONE (decision recorded; no code change needed). |
+| Q9 DNS allowlist | Verify against a public sample dataset. | PARTLY DONE 2026-10-20: ran `tools/dns_cardinality_report.py --format jsonl` on PicoDomain (120,392 queries, 3 days): 0 parents trip at threshold 40 even with an EMPTY allowlist; g.lab (own AD domain) peaks at 32. This does not exercise the 12 entries (a lab has no CDN browsing), so they stay UNVERIFIED. Still needed: a browsing-heavy resolver log. SECOND DATASET 2026-10-20 (Zenodo ISP, 171,623 user-days, no timestamps -> daily upper bound): 27 parents >= 40 names/day; only 3 of the 12 entries exceeded 40; 6 large first-party zones were missing and were ADDED (icloud, apple, google, googleapis, gvt1, microsoft); customer-assigned zones (sharepoint, trafficmanager, appsflyersdk, tiktokcdn) NOT added without checking the admission test. Still not proven: a 60 s window on timestamped data. |
+| Q12 wall-clock window | Fund it now. | DONE (opt-in): WS-2 stamps `siem.received_ms`; `FENGARDE_WINDOW_TIME_SOURCE=ingest` drives WS-4 stateful windows from receipt time. Default `event` is unchanged. Periodicity rules always use record time. Regression test `test_window_time_source.py`. NOT proven: live Docker run; Redis window backend with ingest source; flipping the default is a separate decision. |

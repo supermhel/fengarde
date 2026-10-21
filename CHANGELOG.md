@@ -7,6 +7,67 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (2026-10-20, recall work part 4: the three owner-approved rules)
+
+- `win_office_spawns_shell` (T1204.002: document host -> shell/script host; Sysmon 1 and Windows 4688 now carry
+  `unmapped.process_launch`), `common_password_spray_by_source` (T1110.003: one source, 8+ distinct accounts / 300 s) and
+  `common_port_sweep` (T1046: one source denied across 15+ distinct hosts / 60 s). 43 -> 46 rules, 42 -> 45 MITRE-tagged.
+  Closes the one-source-spray and horizontal-sweep gaps recorded in the descriptions of their sibling rules.
+- Second Docker fuzz run found one more parser bug of the same class (`n8n_audit` dict/list `eventType`); fixed + regression test.
+
+### Fixed / Removed (2026-10-20, gap-hunt closure + fuzzing repair)
+
+- **Fuzzing was blind, now repaired** (`tools/fuzz/_common.py`): none of the 19 atheris harnesses instrumented the parsers
+  (`atheris.instrument_imports()`), so the corpus never grew (`corp: 1/1b` after 3.8M runs in Docker) in the nightly job and in
+  OSS-Fuzz alike; the string harness also re-encoded the bytes through `ConsumeUnicode*`, which defeats seeds. Fixed both, added
+  `tools/fuzz/make_seeds.py` (one real record per parser path, used by `fuzz.yml` and the OSS-Fuzz `build.sh`). The repaired runs
+  found five real parser bugs within seconds, all fixed with regression tests (`test_fuzz_findings.py`): `windows_eventlog`
+  non-string `NewProcessName`; `cef` / `cisco_asa` / `linux_ssh` ports above 65535 copied into endpoints (new
+  `shared.ip_utils.valid_port`); `opcua_audit` dict/list `eventType` raised `TypeError`.
+- **Legacy console retired**: `/legacy/` (the single-file `index.html`, its mocks, and the four tests that only asserted its JS)
+  is removed; nginx no longer has the location. The React console is the only UI.
+- Gap-hunt fixes: Sentinel healthcheck verifies the monitored master and Sentinels wait for healthy Redis nodes; the audit
+  append takes the cross-process lock; hot reload rejects a zero-byte rule file; the NIS2 report route returns 400 for an
+  unknown stage/lang; the AI adapter fails closed without the no-redirect opener; AD logons map the target host to
+  `dst_endpoint` (lateral-movement rules now count them). See `docs/gap-hunt-status.md`.
+
+### Added (2026-10-20, recall work part 3: rules for the 2026-10-14 mail/M365 parsers)
+
+- `m365_inbox_rule_external_forward` (T1114.003) and `email_macro_attachment_delivered` (T1566.001); mail_gateway parser now
+  exposes `unmapped.email.delivered`. 41 -> 43 rules, 40 -> 42 MITRE-tagged.
+- CI job `redis-legacy`: the hit_distinct Lua fallback test now also runs on a REAL Redis 6.0 (asserts the server is < 6.2 and
+  that auto-detect picks the Lua path). Proves Q11 on a pre-6.2 server.
+- DNS allowlist: +6 first-party zones from the Zenodo ISP dataset (see the file header).
+
+### Added (2026-10-20, recall work part 2: PowerShell + AD attribute changes)
+
+- Windows parser: PowerShell logging (4104 script block, 4103 module logging, classic 800) -> class 1002 activity 6 with
+  `unmapped.powershell` {script (<=2000 chars), suspicious, indicators}; Security 5136 (directory object modified) -> class 3003
+  activity 6 with `unmapped.directory` {object_dn, attribute, value, sensitive_attribute}. Heuristics, not classifiers.
+- Rules: `win_powershell_suspicious_script` (T1059.001), `win_ad_sensitive_attribute_modified` (T1098). 39 -> 41 rules, 40 MITRE-tagged.
+
+### Added (2026-10-20, recall work: 3 rules, 3 event types)
+
+- Windows parser: System 7045 / Security 4697 (service installed), Security 1102 / System 104 (audit log cleared); Sysmon
+  EventID 10 (process access). All class 1002 (activity 3 / 4 / 5). Heuristic indicators in the parsers
+  (`unmapped.service.suspicious_path`, `unmapped.lsass_access_suspicious`), not classifiers.
+- Rules: `win_audit_log_cleared` (T1070.001), `win_service_installed_suspicious_path` (T1543.003),
+  `win_lsass_access_suspicious` (T1003.001). 36 -> 39 rules, 35 -> 38 MITRE-tagged (41 / 40 after part 2, 43 / 42 after part 3). Chosen from the blind-recall funnel's
+  NO_RULE/partial-parse heads (T1003, T1543.003, Security:1102). Effect on third-party recall: NOT yet measured.
+
+### Added (2026-10-20, owner decisions Q2 / Q8 / Q12)
+
+- **Q12 `FENGARDE_WINDOW_TIME_SOURCE=ingest`** (opt-in, default `event` = unchanged): WS-4 stateful windows are driven by the
+  WS-1 receipt time that WS-2 now stamps as `siem.received_ms`, so a forged record clock can no longer spread a burst out
+  of its window (finding F4). Periodicity rules keep record time. `test_window_time_source.py`. Limits: WS-1 stamps
+  receipt time (whole seconds) when a record ARRIVES, so a backlog an upstream forwarder (WEF, rsyslog queue) delivers
+  late after an outage lands in one burst and can trip count windows (WS-1's own spool keeps the original stamp); events
+  with no `meta.received_at` silently fall back to the record clock, so F4 stays open for them.
+- **Q2 `tools/check_floor_lowering.py`**: PR CI fails if `eval/adversarial/evasion_floor.yaml` is lowered without a new
+  `lowered:` entry (any maintainer may lower, the reason must be recorded).
+- `CODE_OF_CONDUCT.md` (Contributor Covenant 2.1).
+- Q8 recorded: the deploying operator owns the OPC UA allowlist; the rule stays default-off.
+
 ### Added (2026-10-15/16, console rebuild, demo and project page — `feat/dashboard-rebuild`)
 
 - **Rebuilt console** (React 18, Vite, TypeScript, `services/ws7-dashboard/app`) at `/`, the previous UI at `/legacy/`. Twelve views, German and English, light and dark, phone widths; Archivo + JetBrains Mono; ISA-101 alarm shapes plus text. New views: Events log explorer, Coverage, Sources (how devices get connected), Inventory, Operations (with a Prometheus health panel), Audit, Account (MFA), Settings.

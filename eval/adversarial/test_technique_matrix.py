@@ -287,9 +287,10 @@ def test_real_data() -> None:
            "(the harness stamps a fresh ingest_id per copy)",
            any(e["variant"] == "delivery/duplicate_all" and "known_cause" in e for e in bc["evaded_unexpected"]),
            str(bc["evaded_unexpected"]))
-    _check("(e) the register lists the four phishing_bec techniques with no rule, and not the context step",
-           sorted(u["technique"] for u in m["demonstrated_but_undetected"])
-           == ["T1114.003", "T1204.002", "T1565.001", "T1566.001"], str(m["demonstrated_but_undetected"]))
+    _check("(e) the register lists the one phishing_bec technique with no rule (T1565.001 payment_redirect; "
+           "T1566.001, T1114.003 and T1204.002 gained rules 2026-10-20), and not the context step",
+           sorted(u["technique"] for u in m["demonstrated_but_undetected"]) == ["T1565.001"],
+           str(m["demonstrated_but_undetected"]))
     _check("(e) the real matrix has no observed-vs-oracle disagreement on this storyline",
            m["observed_vs_oracle"] == [], str(m["observed_vs_oracle"]))
 

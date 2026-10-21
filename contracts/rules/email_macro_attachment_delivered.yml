@@ -1,0 +1,30 @@
+title: Inbound email with a macro-capable attachment was delivered
+id: b9520921-f098-4f6d-b49e-2691ed51711f
+status: stable
+description: >
+  An inbound message with an Office macro-capable attachment (.docm/.xlsm/.pptm and legacy binary Office
+  formats) was DELIVERED by the mail gateway, not blocked or quarantined (OCSF Email Activity 4009; parser
+  fields unmapped.email.has_macro_attachment and unmapped.email.delivered). The T1566.001 spear-phishing
+  attachment shape. Macro documents are routine in some businesses (finance), so this is medium and single-shot;
+  tune or suppress per site. Added 2026-10-20 (the mail_gateway parser shipped 2026-10-14 with no rule
+  consuming it).
+level: medium
+logsource:
+  category: email_activity
+detection:
+  sel:
+    class_uid: 4009
+    activity_id: 2
+    unmapped.email.has_macro_attachment: true
+    unmapped.email.delivered: true
+  condition: sel
+fields:
+  - unmapped.email.sender_domain
+  - unmapped.email.verdict
+  - unmapped.email.attachments
+siem:
+  sector: common
+  score_weight: 50
+mitre:
+  tactic: TA0001
+  technique: T1566.001

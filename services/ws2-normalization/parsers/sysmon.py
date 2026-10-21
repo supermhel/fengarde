@@ -98,6 +98,7 @@ from typing import Optional
 from .base import Parser, SEV_INFO, SEV_MEDIUM
 from shared.ocsf import valid_ip, safe_str
 from .timeutil import to_epoch_ms
+from .proc_launch import launch_info
 
 _CLS_PROC = 1002    # Kernel / Process
 _CLS_NET = 4001     # Network Activity
@@ -105,6 +106,40 @@ _CLS_FILE = 1001    # File System Activity
 
 _ACT_PROC_LAUNCH = 1   # matches windows_eventlog.py's own convention
 _ACT_PROC_TERMINATE = 3   # windows_eventlog.py already owns 2 (Priv use)
+_ACT_PROC_ACCESS = 5      # EventID 10 ProcessAccess (2026-10-20, T1003.001); windows_eventlog.py owns 4 and 6
+# NOTE: windows_eventlog.py ALSO uses 3 (service install, 2026-10-20), so type_uid 100203 has two meanings; a rule on
+# activity 3 must select a field only one of them sets (contracts/ocsf-classes.md).
+
+# GrantedAccess masks seen in credential dumping from lsass (Sigma / SwiftOnSecurity lists): process-read/VM-read
+# variants plus PROCESS_ALL_ACCESS. A HEURISTIC, not a classifier. Any other mask that still grants what a memory dump
+# needs (PROCESS_VM_READ plus a query right) counts too, so one extra access bit does not slip past the list.
+_LSASS_DUMP_ACCESS = {"0x1010", "0x1410", "0x1438", "0x143a", "0x147a", "0x1fffff", "0x1f1fff", "0x1f3fff", "0x1f0fff"}
+_VM_READ, _QUERY_RIGHTS = 0x0010, 0x0400 | 0x1000   # PROCESS_VM_READ; QUERY_INFORMATION | QUERY_LIMITED_INFORMATION
+# Callers that legitimately read lsass (system components, Defender), matched on the FULL path after the drive
+# letter -- a basename match would trust any renamed binary (C:\Users\Public\MsMpEng.exe).
+_LSASS_TRUSTED_SOURCES = frozenset(chr(92).join(("", "windows", "system32", n)) for n in (
+    "wininit.exe", "csrss.exe", "lsm.exe", "services.exe", "smss.exe")) | {
+    chr(92).join(("", "program files", "windows defender", "msmpeng.exe"))}
+_DEFENDER_PLATFORM = chr(92).join(("", "programdata", "microsoft", "windows defender", "platform", ""))
+
+
+def _dump_capable(access: str) -> bool:
+    low = access.strip().lower()
+    if low in _LSASS_DUMP_ACCESS:
+        return True
+    try:
+        mask = int(low, 16)
+    except ValueError:
+        return False
+    return bool(mask & _VM_READ) and bool(mask & _QUERY_RIGHTS)
+
+
+def _trusted_lsass_caller(image: str) -> bool:
+    path = image.lower().replace("/", chr(92))
+    if len(path) > 1 and path[1] == ":":
+        path = path[2:]
+    return path in _LSASS_TRUSTED_SOURCES or (path.startswith(_DEFENDER_PLATFORM)
+                                               and path.endswith(chr(92) + "msmpeng.exe"))
 
 # Network Activity (4001): 6=Deny, 7=Accept, per ocsf-classes.md / cisco_asa.py's
 # existing convention. Sysmon EventID 3 only fires on an ESTABLISHED connection
@@ -119,6 +154,7 @@ _EVENT_MAP = {
     1: (_CLS_PROC, _ACT_PROC_LAUNCH, SEV_INFO, "Process created"),
     3: (_CLS_NET, _ACT_NET_ACCEPT, SEV_INFO, "Network connection"),
     5: (_CLS_PROC, _ACT_PROC_TERMINATE, SEV_INFO, "Process terminated"),
+    10: (_CLS_PROC, _ACT_PROC_ACCESS, SEV_MEDIUM, "Process accessed"),
     11: (_CLS_FILE, _ACT_FILE_CREATE, SEV_MEDIUM, "File created"),
 }
 
@@ -157,8 +193,13 @@ class SysmonParser(Parser):
         user = safe_str(rec.get("User"))
         image = safe_str(rec.get("Image"))
         pid = self._parse_pid(rec.get("ProcessId"))
+        if event_id == 10:  # ProcessAccess names the caller SourceImage / SourceProcessId
+            image = safe_str(rec.get("SourceImage"))
+            pid = self._parse_pid(rec.get("SourceProcessId"))
 
-        if class_uid == _CLS_PROC:
+        if event_id == 10:
+            message = f"{verb}: {image or '?'} -> {safe_str(rec.get('TargetImage')) or '?'} (access {rec.get('GrantedAccess')})"
+        elif class_uid == _CLS_PROC:
             message = f"{verb}: {image or '?'} (by {user or '?'})"
         elif class_uid == _CLS_NET:
             dst_ip = valid_ip(rec.get("DestinationIp"))
@@ -234,6 +275,21 @@ class SysmonParser(Parser):
             target = safe_str(rec.get("TargetFilename"))
             if target:
                 event["unmapped"] = {"target_filename": target}
+
+        if event_id == 1:
+            event["unmapped"] = {"process_launch": launch_info(
+                safe_str(rec.get("ParentImage")), image, safe_str(rec.get("CommandLine")))}
+
+        if event_id == 10:
+            target_image = safe_str(rec.get("TargetImage")) or ""
+            access = safe_str(rec.get("GrantedAccess")) or ""
+            lsass = target_image.lower().replace("/", chr(92)).endswith(chr(92) + "lsass.exe")
+            event["unmapped"] = {
+                "target_process": target_image,
+                "granted_access": access,
+                "lsass_access_suspicious": bool(lsass and _dump_capable(access)
+                                                and not _trusted_lsass_caller(image or "")),
+            }
 
         return event
 

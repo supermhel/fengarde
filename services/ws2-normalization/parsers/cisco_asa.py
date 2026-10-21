@@ -22,6 +22,7 @@ from typing import Optional
 from .base import (Parser, SEV_INFO, SEV_LOW, SEV_MEDIUM, SEV_HIGH,
                    SEV_CRITICAL, IPV4)
 from .timeutil import to_epoch_ms
+from shared.ocsf import valid_port
 
 # Cisco ASA syslog severity (0-7) -> OCSF severity_id. The old two-level map
 # (<=4 -> MEDIUM else INFO) capped emergency/alert/critical (0/1/2) at MEDIUM,
@@ -105,7 +106,11 @@ class CiscoAsaParser(Parser):
         if sm is not None:
             src_ip = sm.group("ip")
             if src_ip and _IPV4_FULL.match(src_ip):
-                event["src_endpoint"] = {"ip": src_ip, "port": int(sm.group("port"))}
+                sep = {"ip": src_ip}
+                spt = valid_port(int(sm.group("port")))
+                if spt is not None:
+                    sep["port"] = spt
+                event["src_endpoint"] = sep
             elif meta.get("ip"):
                 event["src_endpoint"] = {"ip": meta["ip"]}
         elif meta.get("ip"):
@@ -113,7 +118,11 @@ class CiscoAsaParser(Parser):
         if dm is not None:
             dst_ip = dm.group("ip")
             if dst_ip and _IPV4_FULL.match(dst_ip):
-                event["dst_endpoint"] = {"ip": dst_ip, "port": int(dm.group("port"))}
+                dep = {"ip": dst_ip}
+                dpt = valid_port(int(dm.group("port")))
+                if dpt is not None:
+                    dep["port"] = dpt
+                event["dst_endpoint"] = dep
 
         return event
 

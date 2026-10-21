@@ -301,6 +301,9 @@ def main() -> int:
         print("[FAIL] EPS backlog never reached the target count -- the run "
               "did not drain; treat the numbers as inconclusive, not a clean result.")
         return 1
+    if "latency" in result and result["latency"].get("samples_collected", 0) == 0:
+        print("[FAIL] latency run collected 0 samples -- inconclusive, not a clean result (gap-hunt R4-108).")
+        return 1
     if not result:
         print("[FAIL] nothing was measured (both --skip-eps and --skip-latency given).")
         return 1

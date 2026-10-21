@@ -26,7 +26,7 @@ def main() -> int:
     url = os.environ.get("REDIS_URL")
     if not url:
         print("[SKIP] REDIS_URL unset: live Redis Lua-fallback parity not run (CI redis-integration runs it)")
-        return 0
+        return 1 if os.environ.get("FENGARDE_E2E_STRICT") == "1" else 0   # R4-122
     import redis  # noqa: PLC0415 -- only the live path needs the client
 
     client = redis.Redis.from_url(url)
@@ -37,6 +37,15 @@ def main() -> int:
     rng = random.Random(62)
     base = 1_750_000_000_000
     fails = []
+    if os.environ.get("REDIS_EXPECT_LEGACY") == "1":
+        ver = str(client.info("server").get("redis_version", ""))
+        major, minor = (int(x) for x in ver.split(".")[:2])
+        if (major, minor) >= (6, 2):
+            print(f"[FAIL] REDIS_EXPECT_LEGACY=1 but the server is {ver} (>= 6.2): this run proves nothing about legacy Redis")
+            return 1
+        if auto._gt_supported():
+            print(f"[FAIL] server {ver} lacks ZADD GT but RedisWindowCounter auto-detect chose the GT path")
+            return 1
     try:
         for i in range(400):
             t = base + rng.randrange(0, 200_000)       # arbitrary order, stale repeats included

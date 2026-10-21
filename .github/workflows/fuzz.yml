@@ -50,7 +50,8 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install atheris
-        run: pip install atheris
+        # pyyaml: make_seeds.py imports tools/check_rule_producers.py, which loads the rule files
+        run: pip install atheris pyyaml
       - name: Restore corpus cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
         with:
@@ -61,6 +62,14 @@ jobs:
         run: |
           mkdir -p tools/fuzz/corpus/${{ matrix.target }}
           cd tools/fuzz
+          # Seed with the repo's real parser fixtures (never overwrites cached corpus files): without valid-looking
+          # records the mutator plateaus at a few dozen edges (measured 2026-10-20).
+          python make_seeds.py "$RUNNER_TEMP/seeds"
+          # Explicit skip instead of `cp -n`, whose exit status on a skipped file differs across coreutils versions.
+          for f in "$RUNNER_TEMP/seeds/${{ matrix.target }}/"*; do
+            [ -e "$f" ] || continue
+            [ -e "corpus/${{ matrix.target }}/$(basename "$f")" ] || cp "$f" "corpus/${{ matrix.target }}/"
+          done
           python fuzz_${{ matrix.target }}.py -max_total_time=600 corpus/${{ matrix.target }}
       - name: Upload crashing input (if any)
         if: failure()

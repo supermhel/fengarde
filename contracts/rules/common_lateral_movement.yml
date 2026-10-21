@@ -7,17 +7,10 @@ description: >
   status Success. Distinct-count on dst_endpoint.hostname catches an attacker
   reusing valid credentials to hop across hosts -- Windows 4624 records the target
   host as dst_endpoint.hostname.
-  Parser-coverage honesty (fixed 2026-08-26): dst_endpoint.hostname is populated
-  only by parsers that map the logon target onto dst_endpoint (the
-  windows_eventlog parser does this for 4624; the shape is pinned by
-  test_engine_distinct_rules.py). The active_directory parser currently maps a
-  4624 logon's host onto src_endpoint.hostname instead and NEVER emits
-  dst_endpoint, so logons normalized under source_type=active_directory cannot
-  count toward this rule at all (fail-closed: no dst_endpoint.hostname value =
-  no distinct count) -- a real blind spot tracked as finding #136 in the
-  2026-08-26 gap hunt; the corrective action belongs to the active_directory
-  parser (align its host mapping with windows_eventlog), not to this rule's
-  shape.
+  Parser coverage: dst_endpoint.hostname comes from parsers that map the logon target onto dst_endpoint:
+  windows_eventlog (4624) and, since 2026-10-20 (gap-hunt R4-136), active_directory (the event's Computer
+  field). Before that, logons normalized under source_type=active_directory carried no dst_endpoint and could
+  not count toward this rule at all.
 level: high
 logsource:
   category: authentication

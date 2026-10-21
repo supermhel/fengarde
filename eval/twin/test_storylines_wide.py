@@ -184,7 +184,7 @@ def test_reconciler_kinds() -> None:
            any(s["step"] == "proxy_pool_logins" for s in f["stale_gaps"]))
     # campaign_membership: reported, never gated
     o = copy.deepcopy(oracle)
-    o["campaign_membership"] = {"campaign_count": 5, "full_coverage": False}
+    o["campaign_membership"] = {"campaign_count": 5, "full_coverage": True}
     f = oc.reconcile(SEED, SD, oracle=o, grade=grade)
     _check("(c) campaign_membership that disagrees with the run is REPORTED ...",
            {x["field"] for x in f["campaign_report"]} == {"campaign_count", "full_coverage"}, str(f["campaign_report"]))
@@ -356,9 +356,18 @@ def test_phishing_bec() -> None:
     _check("(h) the account is spelled identically on every parsed source (one WS-8 actor track)",
            len({mg.get_actor(p) for s, p in pl if s.parse_expected and mg.get_actor(p)}) == 1)
     g = reg.grade(SD, SEED)
+    # 2026-10-20: the mail / M365 rules (alerts with no actor) made incident_membership_ok False (oracle_derive F14), and
+    # win_office_spawns_shell adds a second two-tactic entity track (the workstation beside the account): 2 incidents.
     _check("(h) every expected rule fires at its step and the order of alerts follows the oracle",
-           g["tpr"] == 1.0 and g["alert_order_ok"] is True and g["incident_membership_ok"] is True
-           and g["incident_count"] == 1, f"tpr={g['tpr']} order={g['alert_order_ok']} incidents={g['incident_count']}")
+           g["tpr"] == 1.0 and g["alert_order_ok"] is True and g["incident_membership_ok"] is False
+           and g["incident_count"] == 2, f"tpr={g['tpr']} order={g['alert_order_ok']} incidents={g['incident_count']}")
+    # Pin the SHAPE of the two incidents, not just their count, so a different chain break that still yields 2
+    # incidents fails here (2026-10-21, PR #112 review): the account track (4 alerts, 4 tactics) and the workstation
+    # track (Office spawn + beacon). When F14 is resolved this check changes on purpose.
+    shape = sorted((i["entity"].split(":")[0], i["member_count"], tuple(i["tactics"])) for i in g["incident_summary"])
+    _check("(h) the two incidents are the account track and the workstation track (F14 measured shape)",
+           shape == [("actor", 4, ("TA0001", "TA0002", "TA0006", "TA0011")), ("device", 2, ("TA0002", "TA0011"))],
+           str(shape))
     first: dict = {}
     for a in g["fired"]:
         first.setdefault(a["step"], a["time"])
@@ -389,9 +398,9 @@ def test_phishing_bec() -> None:
     # the honest-gap register
     gaps_t = sorted((s, pt["gap"]["attack_technique"]) for s, pt in reg.load_oracle(SD)["detection_points"].items()
                     if pt["gap"].get("no_rule_exists") and not pt.get("context"))
-    _check("(h) the missing-rule register is exactly the four gaps the oracle declares, each with its ATT&CK id",
-           gaps_t == [("inbox_rule", "T1114.003"), ("payment_redirect", "T1565.001"), ("phish_delivery", "T1566.001"),
-                      ("user_execution", "T1204.002")], str(gaps_t))
+    _check("(h) the missing-rule register is exactly the one gap the oracle still declares, with its ATT&CK id "
+           "(phish_delivery, inbox_rule and user_execution gained rules 2026-10-20)",
+           gaps_t == [("payment_redirect", "T1565.001")], str(gaps_t))
     _check("(h) no invented rule: every rule the oracle expects is a shipped rule file",
            all(r["rule_id"] in oc._known_rule_ids()
                for pt in reg.load_oracle(SD)["detection_points"].values() for r in pt.get("expected_rules") or []))

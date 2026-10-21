@@ -47,5 +47,5 @@ findings:
       move both clocks together and cannot see it.
     repro: {kind: row_flag, flag: clock_forgeable, module: evasion_axes, function: clock_forgeable}
     rule_sets: [agent_tool_call_burst, bank_mass_card_read, common_bruteforce_sourceless, common_lateral_movement,
-                common_password_spray, common_rapid_account_lifecycle, dc_mass_vm_delete, ot_new_engineering_connection]
+                common_password_spray, common_password_spray_by_source, common_rapid_account_lifecycle, dc_mass_vm_delete, ot_new_engineering_connection]
     decision: "owner decision 6 of step 5: add a source-clock-versus-receipt skew guard, or accept the trust model"

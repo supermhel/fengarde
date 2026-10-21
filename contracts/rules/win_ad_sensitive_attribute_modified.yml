@@ -1,0 +1,30 @@
+title: Sensitive Active Directory attribute modified
+id: 4243e2e6-8bd0-4c6e-87ec-574d1ec681a5
+status: stable
+description: >
+  A directory object attribute known to enable an attack step was modified (Security EventID 5136, OCSF
+  Account Change class 3003, activity_id 6): servicePrincipalName (Kerberoasting prep), delegation attributes,
+  msDS-KeyCredentialLink (shadow credentials), gPLink / gPCFileSystemPath (GPO abuse), scriptPath, userAccountControl
+  or sIDHistory. The parser sets unmapped.directory.sensitive_attribute from a fixed attribute list - a HEURISTIC.
+  Routine admin work changes these too (new service accounts get SPNs), so tune per site. Needs Directory Service
+  Changes auditing on the domain controllers. Added 2026-10-20 (blind-recall funnel: Security:5136 was 16
+  NO_PARSER units). MITRE mapping is the generic T1098 because the attributes span several techniques.
+level: high
+logsource:
+  category: account_change
+detection:
+  sel:
+    class_uid: 3003
+    activity_id: 6
+    unmapped.directory.sensitive_attribute: true
+  condition: sel
+fields:
+  - actor.user.name
+  - unmapped.directory.attribute
+  - unmapped.directory.object_dn
+siem:
+  sector: common
+  score_weight: 65
+mitre:
+  tactic: TA0003
+  technique: T1098

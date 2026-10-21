@@ -31,8 +31,10 @@ def main() -> int:
     check("every committed step is graded", g["steps"] == 8, str(g["steps"]))
     check("the benign victim session is CONTEXT on both sides (not a gap disagreement)",
           rows["victim_session"]["verdict"] == "agree" and rows["victim_session"]["committed_class"] == "context")
-    check("user_execution is the recorded disagreement: blind says detectable, the product has no rule",
-          rows["user_execution"]["verdict"] == "disagree" and "user_execution" in g["open_disagreements"])
+    check("user_execution now agrees (2026-10-20: win_office_spawns_shell closed the T1204.002 gap); the open "
+          "disagreements are the two steps the blind pass called gaps that rules were later written for",
+          rows["user_execution"]["verdict"] == "agree" and "user_execution" not in g["open_disagreements"]
+          and set(g["open_disagreements"]) == {"phish_delivery", "inbox_rule"}, str(g["open_disagreements"]))
     check("owner decisions are read from the file (Q15 on c2_beacon), absent rows read OPEN",
           rows["c2_beacon"]["owner_decision"].startswith("Q15") and rows["user_execution"]["owner_decision"] == "OPEN")
     check("technique parent match: T1071 (rule) vs T1071.001 (blind)", rows["c2_beacon"]["technique"] == "parent")

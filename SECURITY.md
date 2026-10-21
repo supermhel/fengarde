@@ -513,6 +513,13 @@ review, the CI gate, and the threat boundary documented above. See
 
 ---
 
+## Dashboard API key is not an access-control boundary (gap-hunt R4-52)
+
+When `FENGARDE_API_KEY` is set, nginx no longer injects it on proxied requests, but `/api/config.js` hands the key
+to the browser for any request whose `Sec-Fetch-Site` header is `same-origin`. That header is trivially forged by a
+script, so on port 8080 the shared API key is **not** an access-control boundary. Real access control is the RBAC
+login (`FENGARDE_RBAC_DB`, sessions + CSRF). Do not expose port 8080 beyond a trusted network without it.
+
 ## Supported versions
 
 FENGARDE is pre-1.0. Security fixes target the latest `main` and the current

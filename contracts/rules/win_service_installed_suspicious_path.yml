@@ -1,0 +1,30 @@
+title: Service installed from a suspicious path
+id: dcddff84-7500-4360-8acc-14768a2ae0b7
+status: stable
+description: >
+  A Windows service was installed (System EventID 7045 / Security EventID 4697; OCSF class 1002,
+  activity_id 3) whose image path is in a user-writable or temp location, uses a shell/script host
+  (cmd /c, powershell, rundll32, mshta ...) or is a UNC path. The parser sets
+  unmapped.service.suspicious_path as a string-match HEURISTIC (windows_eventlog.py), not a
+  classifier. Legitimate installers under Program Files or System32 do not match; some software
+  deployed from temp or ProgramData will - tune per deployment. Persistence / privilege escalation
+  via a new service. Added 2026-10-20 (blind-recall funnel: T1543.003 was the #2 NO_RULE technique).
+level: high
+logsource:
+  category: process_activity
+detection:
+  win_sel:
+    class_uid: 1002
+    activity_id: 3
+    unmapped.service.suspicious_path: true
+  condition: win_sel
+fields:
+  - actor.user.name
+  - unmapped.service.name
+  - unmapped.service.path
+siem:
+  sector: common
+  score_weight: 70
+mitre:
+  tactic: TA0003
+  technique: T1543.003

@@ -23,8 +23,12 @@ The contract validator rejects any event where this does not hold.
 
 ## Common activity_id values
 
+Kernel / Process (1002): `1` Launch, `2` Privilege Use, `3` Service Install (windows_eventlog) / Terminate (sysmon EID 5),
+`4` Log Cleared, `5` Process Access, `6` Script (PowerShell 4104/4103/800). Project-local ids, not OCSF's Process Activity ids;
+`3` is shared by two meanings, so a rule on activity 3 must also select a field only one of them sets (as
+win_service_installed_suspicious_path does with `unmapped.service.suspicious_path`).
 Authentication (3002): `1` Logon, `2` Logoff, `3` Auth Ticket, `4` Failure
-Account Change (3003): `1` Create, `2` Enable, `3` Password Change, `4` Delete, `5` Privilege Grant
+Account Change (3003): `1` Create, `2` Enable, `3` Password Change, `4` Delete, `5` Privilege Grant, `6` Directory Object Modified (5136, 2026-10-20)
 Network Activity (4001): `1` Open, `2` Close, `6` Deny, `7` Accept
 Email Activity (4009): `1` Send, `2` Receive, `3` Scan
 API Activity (6003): `1` Create, `2` Read, `3` Update, `4` Delete

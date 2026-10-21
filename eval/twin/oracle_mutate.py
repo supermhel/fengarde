@@ -511,6 +511,11 @@ _EQUIVALENT: dict = {
     # the storyline is deliberately gap-heavy (phish_delivery / inbox_rule / payment_redirect are
     # no-parser pre-post-log "no_rule_exists" gaps, user_execution has no rule, victim_session is
     # benign context), so the same mechanics the earlier storylines waived for apply here in bulk.
+    ("phishing_bec", "change_incident_count", "IMPROVED"): {"max": 1, "reason": (
+        "2026-10-20 same fact as it_intrusion's waiver: since the mail and M365 rules now raise alerts whose entities do not "
+        "meet the account chain (a delivered message has no actor; the M365 UserId is a UPN), incident_membership_ok is "
+        "False on the true run, so lowering incident_count 1->0 turns it True. F14 in oracle_derive.py reports the same "
+        "fact (dated 2026-10-20 waiver); owner decision pending, WS-8 tracks-never-merge untouched")},
     ("phishing_bec", "drop_step", "SURVIVED"): {"max": 3, "reason": (
         "2026-10-13 no rule fires at phish_delivery / victim_session / inbox_rule (two no-parser gaps, "
         "one context step): dropping them from the sequence changes no emitted alert and no graded output")},
@@ -643,6 +648,9 @@ _INERT_KEYS: dict = {
     "provenance.pipeline_run_before_authoring": ("cross-instrument: 2026-10-13 checked by "
         "eval/twin/oracle_provenance.py's pin (must be explicitly false); the mutation grader never reads it"),
     "provenance.rules_read.common_beaconing": _PROV_PIN,
+    "provenance.rules_read.email_macro_attachment_delivered": _PROV_PIN,   # 2026-10-20 (phishing_bec gap closed)
+    "provenance.rules_read.m365_inbox_rule_external_forward": _PROV_PIN,   # 2026-10-20 (phishing_bec gap closed)
+    "provenance.rules_read.win_office_spawns_shell": _PROV_PIN,   # 2026-10-20 (phishing_bec user_execution gap closed)
     "provenance.rules_read.common_bruteforce": _PROV_PIN,
     "provenance.rules_read.common_bruteforce_by_account": _PROV_PIN,
     "provenance.rules_read.common_impossible_travel": _PROV_PIN,

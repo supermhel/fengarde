@@ -173,11 +173,19 @@ class AuditLog:
             parent = os.path.dirname(self.path)
             if parent:
                 os.makedirs(parent, exist_ok=True)
-            with open(self.path, "a", encoding="utf-8") as f:
-                f.write(json.dumps(entry, sort_keys=True) + "\n")
-                # Flush so a crash/eviction doesn't sit in the OS/page cache
-                # and lose the one line we just promised.
-                f.flush()
+            # gap-hunt R4 #6: take the SAME cross-process lock as _trim_locked around the append, otherwise a
+            # replica appending while another replica's trim sits between its read and its os.replace loses that
+            # line. Released before _trim_locked runs (flock is not re-entrant across file descriptors).
+            lock = _acquire_cross_process_lock(self.path)
+            try:
+                with open(self.path, "a", encoding="utf-8") as f:
+                    f.write(json.dumps(entry, sort_keys=True) + "\n")
+                    # Flush so a crash/eviction doesn't sit in the OS/page cache
+                    # and lose the one line we just promised.
+                    f.flush()
+            finally:
+                if lock is not None:
+                    lock.close()
         except OSError as e:
             _warn(f"audit write failed (fail-open): {e}")
             return None

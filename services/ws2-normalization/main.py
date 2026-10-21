@@ -196,6 +196,7 @@ def _stamp_clock_skew(event: dict, raw_payload: dict) -> None:
     siem = event.get("siem")
     if received is None or isinstance(t, bool) or not isinstance(t, int) or not isinstance(siem, dict):
         return
+    siem["received_ms"] = received  # Q12: trusted receipt clock for FENGARDE_WINDOW_TIME_SOURCE=ingest
     skew = t - received
     if abs(skew) > _CLOCK_SKEW_FLAG_MS:
         siem["clock_skew_ms"] = skew

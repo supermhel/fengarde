@@ -11,6 +11,13 @@
 
 unexercised:
   common_credential_stuffing_sustained: "2026-10-14 Q16 24 h tier added; no storyline runs a sustained (hours-long) one-account trickle yet -- the phishing_bec proxy pool is 9-12 addresses in minutes"
+  common_password_spray_by_source: "2026-10-20 owner-approved rule (T1110.003, one source -> many accounts); covered by test_recall_events.py, fire_check, the anti-dormancy gate and a rule_probes reference burst, but no storyline sprays -- a credential_access step in it_intrusion would"
+  common_port_sweep: "2026-10-20 owner-approved rule (T1046 horizontal sweep); covered by test_recall_events.py, fire_check, the anti-dormancy gate and a rule_probes reference burst, but no storyline sweeps hosts -- a discovery step before lateral movement would"
+  win_ad_sensitive_attribute_modified: "2026-10-20 added from the blind-recall funnel (T1098 via 5136); covered by parser + rule unit tests (test_recall_events.py), fire_check and the anti-dormancy gate, but no storyline exercises it yet -- a ransomware/it_intrusion step would"
+  win_audit_log_cleared: "2026-10-20 added from the blind-recall funnel (T1070.001); covered by parser + rule unit tests (test_recall_events.py), fire_check and the anti-dormancy gate, but no storyline exercises it yet -- a ransomware/it_intrusion step would"
+  win_lsass_access_suspicious: "2026-10-20 added from the blind-recall funnel (T1003.001); covered by parser + rule unit tests (test_recall_events.py), fire_check and the anti-dormancy gate, but no storyline exercises it yet -- a ransomware/it_intrusion step would"
+  win_powershell_suspicious_script: "2026-10-20 added from the blind-recall funnel (T1059.001); covered by parser + rule unit tests (test_recall_events.py), fire_check and the anti-dormancy gate, but no storyline exercises it yet -- a ransomware/it_intrusion step would"
+  win_service_installed_suspicious_path: "2026-10-20 added from the blind-recall funnel (T1543.003); covered by parser + rule unit tests (test_recall_events.py), fire_check and the anti-dormancy gate, but no storyline exercises it yet -- a ransomware/it_intrusion step would"
 
 no_technique:
   agent_tool_call_burst: "2026-10-03 no solid single ATT&CK mapping for a generic tool-call-volume burst; the rule omits the mitre block on purpose (contracts/detection-coverage.md, C3 rule)"

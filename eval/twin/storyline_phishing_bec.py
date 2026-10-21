@@ -95,6 +95,10 @@ def _build(seed: int, *, n_pool: int | None = None, n_beats: int | None = None,
     same_ip = f"192.0.2.{rng.randint(100, 140)}"          # US (the same-country twin)
     pool_base = rng.randint(10, 60)
     c2_ip = f"203.0.113.{rng.randint(200, 240)}"
+    # 2026-10-20: the mailbox rule is created through ANOTHER egress than the login (derived from pool_base, no new rng draw,
+    # so every later draw and frozen baseline is unchanged). One shared attacker IP would form an order-sensitive IP incident
+    # that breaks the mirror control (see order_controls.validity_reason).
+    rule_ip = f"198.51.100.{pool_base + 40}"          # CN, outside the proxy pool addresses
     n_pool = drawn_pool if n_pool is None else n_pool
     n_beats = drawn_beats if n_beats is None else n_beats
     steps = {s.label: s for s in STEPS}
@@ -160,10 +164,10 @@ def _build(seed: int, *, n_pool: int | None = None, n_beats: int | None = None,
 
     t = BASE_MS + 1_300_000
     add("inbox_rule", "m365_audit",
-        {"Operation": "New-InboxRule", "UserId": f"{victim}@corp.example", "ClientIP": away_ip,
+        {"Operation": "New-InboxRule", "UserId": f"{victim}@corp.example", "ClientIP": rule_ip,
          "Parameters": {"ForwardTo": "ap-desk@vendor-update.example.invalid", "DeleteMessage": True},
-         "CreationTime": t}, t, away_ip)
-    notes["inbox_rule"] = "forward-and-delete mailbox rule; parsed (m365_audit), no rule -> gap"
+         "CreationTime": t}, t, rule_ip)
+    notes["inbox_rule"] = "forward-and-delete mailbox rule from another egress; parsed (m365_audit); email forwarding rule fires"
 
     t = BASE_MS + 1_500_000
     add("payment_redirect", "db_audit",

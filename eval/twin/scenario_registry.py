@@ -46,6 +46,7 @@ def _discover(directory: Path = TWIN) -> tuple:
     if str(directory) not in sys.path:
         sys.path.insert(0, str(directory))
     found: list = []
+    importlib.invalidate_caches()   # a module written moments ago (tests) is otherwise invisible to the finder
     for path in sorted(directory.glob("storyline_*.py")):
         mod = importlib.import_module(path.stem)
         sdef = getattr(mod, "STORYLINE", None)

@@ -111,6 +111,8 @@ _CATEGORY_CLASSES = {
     "datastore_activity": {6005},
     "privilege_use": {1002},
     "file_activity": {1001},
+    "process_activity": {1002},   # 2026-10-20: Windows service/log-clear/lsass/PowerShell rules (class 1002)
+    "email_activity": {4009},     # 2026-10-20: mail_gateway rule (class 4009)
 }
 
 # Dated, closed waiver table: (scenario, kind, step, item) -> "YYYY-MM-DD reason". A stale entry
@@ -123,6 +125,15 @@ _WAIVED: dict = {
         "`incident_count: 1` that this correlator cannot meet. Owner decision pending (retarget "
         "onto campaign_full_coverage, lower the target, or keep as a flagged gap); the WS-8 "
         "invariant is not touched."),
+    ("phishing_bec", "F14", "-", "incident_count"): (
+        "2026-10-20 known and measured, not resolved: closing the phish_delivery and inbox_rule gaps (rules "
+        "email_macro_attachment_delivered, m365_inbox_rule_external_forward) adds two alert-raising steps whose entities "
+        "do not meet the endpoint/identity chain: a delivered message has no actor, and the M365 UserId is a UPN "
+        "(user@corp.example) while every other step uses the bare account name (WS-8 compares actors verbatim; "
+        "the DOMAIN\\/UPN residual is the open F2 finding). So no incident carries those two steps "
+        "(incident_membership_ok=False); since win_office_spawns_shell the run forms TWO incidents (the account track and "
+        "a workstation track, shape pinned in test_storylines_wide.py); detection coverage rose, chain joining fell. Owner decision pending (canonicalise UPN, add a recipient "
+        "entity, or retarget)."),
     ("supply_chain_ci", "F6", "agent_runaway", "2b3c4d5e-6f70-4899-8a1b-2c3d4e5f6a7c"): (
         "2026-10-14 agent_tool_call_burst carries no mitre block BY DESIGN (no single ATT&CK technique "
         "fits a generic tool-call-volume burst; technique_waivers.yaml no_technique), and supply_chain_ci "

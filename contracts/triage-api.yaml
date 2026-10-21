@@ -216,13 +216,12 @@ paths:
         "200": { description: the generated report document }
         "400": { description: alert_id/template/stage/lang invalid }
         "404": { description: alert not found / not visible }
-    # CSRF note (2026-08-27, R3-#45): every state-changing route here (POST
-    # /report, POST /triage, POST /auth/*) is protected from cross-origin
-    # writes by the same-origin nginx proxy (the dashboard is served and
-    # proxied from one origin) plus the caller-presented X-Api-Key gate; there
-    # is no cookie-based session that a cross-site form could abuse. An operator
-    # exposing the triage API directly (no nginx front) must put it behind an
-    # authenticating reverse proxy or enforce a CSRF token.
+    # CSRF note (corrected 2026-10-20, gap-hunt R3-#45): when RBAC login sessions are on
+    # (FENGARDE_RBAC_DB), POST /auth/login sets a session cookie and returns a `csrf_token`
+    # (also on GET /auth/me). Every state-changing request made with that cookie session
+    # (POST/PATCH/PUT) must send it back in the `X-CSRF-Token` header or the server answers
+    # 403. Requests authenticated only by X-Api-Key are not cookie-based and need no token.
+    # An operator exposing the API directly must keep this check on.
   /api/v1/events:
     get:
       summary: Newest-first normalized-event listing (not free-text search)

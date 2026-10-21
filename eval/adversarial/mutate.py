@@ -471,7 +471,7 @@ def mutate_protocol(payloads: list, rng: Random, *, variant: str, **_kw) -> list
                 _m["received_at"] += _shift
             _rw = _p.get("raw")
             if isinstance(_rw, dict):
-                for _k in ("ts", "time", "TimeCreated", "createdTime"):
+                for _k in ("ts", "time", "TimeCreated", "createdTime", "CreationTime"):
                     if isinstance(_rw.get(_k), int):
                         _rw[_k] += _shift
     return payloads

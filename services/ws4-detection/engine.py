@@ -34,6 +34,7 @@ import fnmatch
 import hashlib
 import json
 import math
+import os
 import re
 import sys
 import time
@@ -273,6 +274,21 @@ def _event_fingerprint(event: dict) -> str:
     except (TypeError, ValueError):
         blob = repr(event)
     return hashlib.sha1(blob.encode("utf-8", "replace")).hexdigest()[:16]
+
+
+def _window_time_of(event: dict, periodicity: bool):
+    """The raw timestamp that drives a stateful window (Q12, 2026-10-20).
+
+    Default ``event``: the record's own ``time`` (historical replay works, a forged record
+    clock can still stretch a burst - finding F4). ``FENGARDE_WINDOW_TIME_SOURCE=ingest``:
+    the WS-1 receipt time WS-2 stamped as ``siem.received_ms``; falls back to the record time
+    when absent. Periodicity rules always use the record time: their verdict IS the regularity
+    of the event times, and receipt jitter would destroy it."""
+    if not periodicity and os.environ.get("FENGARDE_WINDOW_TIME_SOURCE", "event").strip().lower() == "ingest":
+        recv = (event.get("siem") or {}).get("received_ms")
+        if isinstance(recv, int) and not isinstance(recv, bool):
+            return recv
+    return event.get("time", 0)
 
 
 def _valid_window_time(value) -> int | None:
@@ -873,13 +889,14 @@ class Rule:
             # as every other malformed-input path in this evaluator.)
             return False
         group = group_value
-        now = _valid_window_time(event.get("time", 0))
+        raw_time = _window_time_of(event, bool(self.periodicity))
+        now = _valid_window_time(raw_time)
         if now is None:
             # Non-numeric/NaN/inf time would crash the counter arithmetic
             # (now_ms - window_ms) and poison-pill the consumer; a far-future
             # time would corrupt the window (see _MAX_CLOCK_SKEW_MS). Fail closed
             # -- same discipline as the time-of-day predicate (_time_outside_hours).
-            raw = event.get("time", 0)
+            raw = raw_time
             if (isinstance(raw, (int, float)) and not isinstance(raw, bool)
                     and math.isfinite(raw)
                     and int(raw) > int(time.time() * 1000) + _MAX_CLOCK_SKEW_MS):
@@ -1054,8 +1071,11 @@ def _validate_loaded_rule(raw: dict, path: Path) -> None:
                          f"{poison[0]}")
 
 
-def load_rules(rules_dir: Path, allowlists_dir: Path | None = None) -> list[Rule]:
+def load_rules(rules_dir: Path, allowlists_dir: Path | None = None, *, strict_empty: bool = False) -> list[Rule]:
+    """``strict_empty``: raise instead of skipping a zero-byte/truncated rule file (used by hot reload so a bad
+    edit keeps the PREVIOUS rule set live; boot keeps the lenient skip + warning). gap-hunt R4 #17."""
     rules = []
+    empty_files: list = []
     resolved_allowlists = allowlists_dir or (Path(rules_dir).parent / "allowlists")
     # Drop this dir's cached allowlists before the pass. Without this, an
     # allowlist that failed to load once (ok=False, cached) stays cached for
@@ -1077,7 +1097,10 @@ def load_rules(rules_dir: Path, allowlists_dir: Path | None = None) -> list[Rule
                 "rule file parsed to empty/None (zero-byte or truncated?); "
                 "ignoring it -- the loaded rule set is smaller than the dir "
                 "contains", file=path.name)
+            empty_files.append(path.name)
             continue
         _validate_loaded_rule(raw, path)  # FIX 2(c): reject bad rules at load time
         rules.append(Rule(raw, allowlists_dir=resolved_allowlists))
+    if strict_empty and empty_files:
+        raise ValueError(f"rule file(s) parsed empty (zero-byte or truncated?): {empty_files}")
     return rules

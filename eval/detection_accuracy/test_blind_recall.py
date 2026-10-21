@@ -118,7 +118,7 @@ def build_splunk_tree(root: Path) -> None:
     write_splunk(root, "T1021.002", "ctl_lateral", [("w.log", SEC, "\n".join(lateral_logons()))],
                  ["T1021.002"])
     # N1: identical events, label of a technique no rule declares
-    write_splunk(root, "T1059.001", "ctl_relabelled", [("w.log", SEC, burst)], ["T1059.001"])
+    write_splunk(root, "T1218.011", "ctl_relabelled", [("w.log", SEC, burst)], ["T1218.011"])
     # P3: 12 failures split over TWO files (6 + 6, interleaved in time); alone each is below
     # the 10-in-60s threshold, only the merged scenario fires
     a = "\n".join(ev(4625, BASE_MS + i * 6000, "DC01", {"TargetUserName": "victim",
@@ -131,8 +131,8 @@ def build_splunk_tree(root: Path) -> None:
     # a rule family exists (T1136) but nothing in this dataset fires it; no ORACLE rule there
     write_splunk(root, "T1136.001", "ctl_miss_nonoracle", [("w.log", SEC, "\n".join(account_create()))],
                  ["T1136.001"])
-    # sibling gap: spray label, rules only reach the family via the T1110 brute-force rules
-    write_splunk(root, "T1110.003", "ctl_spray_label", [("w.log", SEC, burst)], ["T1110.003"])
+    # sibling gap: a T1110.002 (password cracking) label has no exact rule -- the rules only reach the family via T1110
+    write_splunk(root, "T1110.002", "ctl_spray_label", [("w.log", SEC, burst)], ["T1110.002"])
     # P4: parent-level label scores against the exact T1110 rule
     write_splunk(root, "T1110", "ctl_parent_label", [("w.log", SEC, burst)], ["T1110"])
     # LFS pointer, never pulled
@@ -145,7 +145,7 @@ def build_splunk_tree(root: Path) -> None:
     write_splunk(root, "misc", "ctl_nolabel", [("w.log", SEC, burst)], None)
     # multi-label scenario: 2 units from 1 replay
     write_splunk(root, "T1110.001", "ctl_multi", [("w.log", SEC, burst)],
-                 ["T1110.001", "T1059.001"])
+                 ["T1110.001", "T1218.011"])
     # old-style YAML: 'dataset:' URL list, no mitre_technique -> label from the dir name, sniffed
     write_splunk(root, "T1110.001", "ctl_old", [("old.log", SEC, burst)], None, old_style=True)
     # partial parse: parseable burst + unparseable Sysmon EID 10 records
@@ -332,10 +332,10 @@ class TestSplunkControls(SplunkLaneBase):
         r = row_of(self.results, "ctl_spray_label.yml")
         self.assertEqual(r["bucket"], "HIT_FAMILY")
         self.assertNotIn("4f8a2c61-9e3d-4b57-8a1c-6d2e5f7a8b90", r["rules_in_family"])
-        t = self.results["per_technique"]["T1110.003"]
+        t = self.results["per_technique"]["T1110.002"]
         self.assertFalse(t["exact_rule"])
         self.assertTrue(t["sibling_gap"])
-        self.assertIn("T1110.003", [g["technique"] for g in self.results["gap_no_exact_rule"]])
+        self.assertIn("T1110.002", [g["technique"] for g in self.results["gap_no_exact_rule"]])
 
     def test_lfs_pointer_is_not_fetched_not_a_miss(self):
         r = row_of(self.results, "ctl_lfs_only.yml")
@@ -357,7 +357,7 @@ class TestSplunkControls(SplunkLaneBase):
 
     def test_multi_label_scenario_is_scored_per_label(self):
         a = row_of(self.results, "ctl_multi.yml", "T1110.001")
-        b = row_of(self.results, "ctl_multi.yml", "T1059.001")
+        b = row_of(self.results, "ctl_multi.yml", "T1218.011")
         self.assertEqual((a["bucket"], b["bucket"]), ("HIT_FAMILY", "NO_RULE"))
         self.assertIn("6f1c8a2e-0d3b-4c11-9a21-7b5e2f9a1c01", b["off_label_rules"])
 
@@ -415,7 +415,7 @@ class TestSplunkControls(SplunkLaneBase):
 
     def test_no_rule_techniques_are_listed_not_dropped(self):
         gap = {g["technique"]: g["n_fetched"] for g in self.results["gap_no_rule"]}
-        self.assertEqual(gap.get("T1059.001"), 2)            # ctl_relabelled + ctl_multi label
+        self.assertEqual(gap.get("T1218.011"), 2)            # ctl_relabelled + ctl_multi label
         self.assertNotIn("T1003.001", gap)                    # NOT_FETCHED: no fetched dataset
         self.assertNotIn("T1110.001", gap)
 
@@ -427,8 +427,8 @@ class TestSplunkControls(SplunkLaneBase):
                          ["T1110.001"])
             write_splunk(root, "T1110.001", "d_below", [("w.log", SEC, "\n".join(failed_logons(3)))],
                          ["T1110.001"])
-            write_splunk(root, "T1059.001", "d_norule", [("w.log", SEC, "\n".join(failed_logons(12)))],
-                         ["T1059.001"])
+            write_splunk(root, "T1218.011", "d_norule", [("w.log", SEC, "\n".join(failed_logons(12)))],
+                         ["T1218.011"])
             first = BR.run([CA.SplunkAttackData(root)], RULES)
             again = BR.run([CA.SplunkAttackData(root)], RULES)
             ad = CA.SplunkAttackData(root)
@@ -438,7 +438,7 @@ class TestSplunkControls(SplunkLaneBase):
         dump = lambda r: json.dumps(r, sort_keys=True)          # noqa: E731
         self.assertEqual(dump(first), dump(again))
         self.assertEqual(dump(first), dump(shuffled))
-        self.assertEqual([r["bucket"] for r in first["rows"]], ["NO_RULE", "MISS", "HIT_FAMILY"])
+        self.assertEqual([r["bucket"] for r in first["rows"]], ["MISS", "HIT_FAMILY", "NO_RULE"])
         self.assertNotRegex(json.dumps(self.results), r"(timestamp|generated_at|run_at|\bdate\b)")
 
     def test_files_listed_in_adapter_are_sorted_by_path(self):
@@ -490,10 +490,10 @@ class TestNegativeControls(unittest.TestCase):
     def test_n9_nothing_scoreable_fails_require_corpus(self):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td) / "s"
-            # fetched, but only NO_PARSER (CloudTrail) and NO_RULE (T1059.001) -> measured nothing
+            # fetched, but only NO_PARSER (CloudTrail) and NO_RULE (T1218.011) -> measured nothing
             write_splunk(root, "T1078.004", "ct", [("c.json", "aws_cloudtrail", "{}\n")], ["T1078.004"])
-            write_splunk(root, "T1059.001", "norule", [("w.log", SEC, "\n".join(failed_logons(12)))],
-                         ["T1059.001"])
+            write_splunk(root, "T1218.011", "norule", [("w.log", SEC, "\n".join(failed_logons(12)))],
+                         ["T1218.011"])
             res = BR.run([CA.SplunkAttackData(root)], RULES)
         self.assertEqual(res["scoreable_units"], 0)
         self.assertGreater(res["units_fetched"], 0)
@@ -522,10 +522,10 @@ class TestNegativeControls(unittest.TestCase):
             sc = CA.Scenario(dataset_id="stub", corpus="stub", labels=[label], label_source="stub",
                              files=[], fetch_state="present", _loader=lambda s: res)
             return SimpleNamespace(name="stub", scenarios=lambda: iter([sc]))
-        wrong = BR.run([stub("T1059.001")], RULES)
+        wrong = BR.run([stub("T1218.011")], RULES)
         right = BR.run([stub("T1110.001")], RULES)
         self.assertEqual(len(recs), 12)
-        self.assertEqual((wrong["rows"][0]["label"], wrong["rows"][0]["bucket"]), ("T1059.001", "NO_RULE"))
+        self.assertEqual((wrong["rows"][0]["label"], wrong["rows"][0]["bucket"]), ("T1218.011", "NO_RULE"))
         self.assertTrue(wrong["rows"][0]["off_label_rules"])
         self.assertEqual((right["rows"][0]["label"], right["rows"][0]["bucket"]),
                          ("T1110.001", "HIT_FAMILY"))
@@ -555,7 +555,7 @@ class TestEvtxToMitre(unittest.TestCase):
         files = {
             "TA0006-Credential Access/T1110.xxx-Brut force/ctl burst & co.evtx": failed_logons(12),
             "TA0006-Credential Access/T1136.001-Create Account/ctl_acct.evtx": account_create(),
-            "TA0002-Execution/T1059.001-PowerShell/ctl_norule.evtx": failed_logons(12),
+            "TA0002-Execution/T1218.011-Rundll32/ctl_norule.evtx": failed_logons(12),
             "Antivirus/ctl_av.evtx": failed_logons(12),
             "TA0006-Credential Access/T1110.xxx-Brut force/ctl_empty.evtx": None,
         }
@@ -684,7 +684,7 @@ class TestFetchTooling(unittest.TestCase):
             sizes = {"c": 300, "a": 100, "b": 200, "d": 400}
             for nm, sz in sizes.items():
                 write_splunk(root, "T1110.001", f"s_{nm}", [("w.log", SEC, ptr(sz))], ["T1110.001"])
-            write_splunk(root, "T1059.001", "s_norule", [("w.log", SEC, ptr(1))], ["T1059.001"])
+            write_splunk(root, "T1218.011", "s_norule", [("w.log", SEC, ptr(1))], ["T1218.011"])
             write_splunk(root, "T1110.001", "s_ct", [("c.json", "aws_cloudtrail", ptr(1))], ["T1110.001"])
             write_splunk(root, "T1110.001", "s_present", [("w.log", SEC, "\n".join(failed_logons(2)))],
                          ["T1110.001"])

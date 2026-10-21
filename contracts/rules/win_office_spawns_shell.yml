@@ -1,0 +1,32 @@
+title: Document host spawned a shell or script host
+id: 5b7e0d3a-91c4-4f6e-8a2d-3c1f9e7b4a10
+status: stable
+description: >
+  A document/PDF host (Word, Excel, PowerPoint, Outlook, Access, Publisher, OneNote, Acrobat, Foxit) launched a
+  shell, script host or LOLBin (cmd, PowerShell, wscript/cscript, mshta, rundll32, regsvr32, certutil, bitsadmin,
+  msiexec). OCSF class 1002 activity 1 (launch), produced from Sysmon EventID 1 (ParentImage) or Windows 4688
+  (ParentProcessName, Win10+ with process-creation auditing). The parser sets unmapped.process_launch.suspicious
+  from a process-NAME heuristic - not a classifier; macro-enabled business workbooks that shell out will fire it,
+  so tune per site. This is the host-side step that follows a delivered macro attachment
+  (email_macro_attachment_delivered) in a phishing chain. Added 2026-10-20 (owner-approved; closes the
+  T1204.002 gap noted in the technique matrix).
+level: high
+logsource:
+  category: process_activity
+detection:
+  sel:
+    class_uid: 1002
+    activity_id: 1
+    unmapped.process_launch.suspicious: true
+  condition: sel
+fields:
+  - actor.user.name
+  - actor.process.name
+  - unmapped.process_launch.parent
+  - unmapped.process_launch.command_line
+siem:
+  sector: common
+  score_weight: 75
+mitre:
+  tactic: TA0002        # Execution
+  technique: T1204.002  # User Execution: Malicious File

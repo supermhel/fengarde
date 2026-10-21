@@ -85,6 +85,9 @@ def main() -> int:
               "is vacuously true over an empty corpus. The scenario module "
               "did not load, or was emptied (R3-#40).")
         return 1
+    if len(SCENARIOS) < 10:
+        print(f"[FAIL] run_eval: only {len(SCENARIOS)} scenario(s); the documented floor is 10 (R3-#40).")
+        return 1
     for name, alert, triage in SCENARIOS:
         for stage in nis2_template.STAGES:
             for lang in nis2_template.LANGUAGES:

@@ -89,6 +89,11 @@ def _urlopen(req, timeout=None):
     tests mocking that name keep working."""
     if _no_redirect_urlopen is not None:
         return _no_redirect_urlopen(req, timeout=timeout)
+    # gap-hunt R3-57: FAIL CLOSED. Without the no-redirect opener a hostile or misconfigured endpoint could
+    # pivot an authenticated POST to an internal host via a 30x, so refuse unless an operator opted out explicitly.
+    if os.environ.get("FENGARDE_ALLOW_REDIRECTING_URLOPEN") != "1":
+        raise RuntimeError("shared.outbound_http.no_redirect_urlopen is unavailable; refusing a redirect-following "
+                           "request (set FENGARDE_ALLOW_REDIRECTING_URLOPEN=1 to override, not recommended)")
     return urllib.request.urlopen(req, timeout=timeout)  # pragma: no cover
 
 

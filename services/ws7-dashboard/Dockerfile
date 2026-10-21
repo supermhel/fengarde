@@ -25,11 +25,9 @@ FROM nginx:alpine@sha256:4a73073bd557c65b759505da037898b61f1be6cbcc3c2c3aeac22d2
 # long-gone nginx.conf and left INTERFACE.md/test files live at the web
 # root); an allowlist of the exact two needed paths cannot drift. The nginx
 # template, tests, and docs live outside the html root by construction.
-# New console at the web root; the classic single-file console stays reachable
-# at /legacy/ (with its mocks) until every view is ported -- spec §5 step 5.
+# The React console at the web root. The classic single-file console that used to
+# live at /legacy/ was RETIRED 2026-10-20 (owner decision; gap-hunt R4 #54/#61/#69).
 COPY --from=console /build/dist/ /usr/share/nginx/html/
-COPY services/ws7-dashboard/index.html /usr/share/nginx/html/legacy/index.html
-COPY services/ws7-dashboard/mocks /usr/share/nginx/html/legacy/mocks
 # Reverse-proxy config: serves the static files AND proxies /api/alerts to
 # OpenSearch (same-origin -> no CORS). Lives outside the html root so it is not
 # also served as a static file. Shipped as a TEMPLATE under
@@ -56,5 +54,4 @@ ENV WS3_TRIAGE_PORT=8013
 # network, so the 502-to-empty-fallback it previously masked is gone.
 ENV OPENSEARCH_HOST=opensearch:9200
 EXPOSE 80
-# DX4: alerts come LIVE from /api/alerts (proxied to OpenSearch). Inventory is
-# fetched from WS-6 via window.INVENTORY_API. Both fall back to mocks/mock_data.js.
+# Alerts come LIVE from /api/alerts (proxied to OpenSearch); inventory from WS-6 via the /api/inventory/ proxy.

@@ -34,7 +34,7 @@ provenance:
     common_password_spray: "c565b58f392c8e85ac08049c49d1ab119846540d7bcbea86f0ea2f4e30d1a089"
     common_impossible_travel: "78864cbe016a52317b8a4d00ce78ac1d8d83d90f5fb9d4c975f13f86e6b97bbb"
     common_after_hours_admin: "86e9e88065420ea32c6cd361466709802d0583515ae6c22296a474ffe23df529"
-    common_lateral_movement: "49683690a92d8d1609906947063ccb8a6da2ceb2ccbdf2c9f43a7f0047af75a4"
+    common_lateral_movement: "2f010d5cf5adb6de7df93f6a30da3ed32029626dccc912f118af9813d0d4c8ae"   # re-read + re-pinned 2026-10-20: description only (AD parser now maps dst_endpoint, R4-136); detection/siem unchanged
     common_lateral_movement_by_source: "5c97a629f62aef6211d2b9ab47826dcc90a49ea8c0eb3bf9dd74dd0009fc2f14"
     common_rapid_account_lifecycle: "5e3f99f11fd658621fc411e0777e39089937dee33285ba3c4c99f43f0416227a"
     dc_mass_vm_delete: "38a2fca1e662c6e63775da687c95780852ce7f5d280a160009e166756ba0dd51"

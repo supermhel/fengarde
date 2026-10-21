@@ -115,3 +115,6 @@ IDEA.md
 # locally, they're just no longer tracked/public
 DESIGN.md
 PRODUCT.md
+
+# console e2e last-run output (written by every run; never commit)
+tools/console_e2e/out/
