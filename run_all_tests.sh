@@ -650,10 +650,13 @@ $PY eval/twin/ratchet.py check || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
 echo "== Phase 6: baseline tamper/weakening guard =="; LAST_HEADER="== Phase 6: baseline tamper/weakening guard =="
 RATCHET_BASE="${RATCHET_GUARD_BASE:-origin/main}"
-if git rev-parse --verify "$RATCHET_BASE" >/dev/null 2>&1; then
-  $PY eval/twin/ratchet.py guard --base "$RATCHET_BASE" || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
-else
+if ! git rev-parse --verify "$RATCHET_BASE" >/dev/null 2>&1; then
   echo "[NOTICE] ratchet guard base $RATCHET_BASE is unavailable in this shallow/local checkout; CI integrity job supplies it."
+elif [ "$(git rev-parse "$RATCHET_BASE")" = "$(git rev-parse HEAD)" ]; then
+  # push-to-main / a branch sitting on its base: the baseline would be compared with itself, a vacuous [OK].
+  echo "[NOTICE] ratchet guard skipped: $RATCHET_BASE is HEAD, so there is nothing to compare against; the PR-time guard (ratchet-integrity job) ran on the change."
+else
+  $PY eval/twin/ratchet.py guard --base "$RATCHET_BASE" || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 fi
 echo
 echo "== scorecard: eval/SCORECARD.md must match a render of the artifacts THIS run produced =="; LAST_HEADER="== scorecard: eval/SCORECARD.md must match a render of the artifacts THIS run produced =="

@@ -4,7 +4,7 @@
 run_all_tests.sh wraps every stanza in `if tier_on <tier>; then ... fi  # tier: <tier>`; ci.yml runs
 each tier as its own job and the whole file as `full-gate` on main. This test pins the pieces:
 
-  * every `$PY` invocation sits inside exactly one tier block (no stanza in no tier, none in two);
+  * every command (`$PY` stanzas AND the console's npm/npx stanza) sits inside a tier block;
   * every declared tier has a block, and every block names a declared tier;
   * ci.yml runs each tier via GATE_TIER and `full-gate` runs the script with no GATE_TIER;
   * artifact consumers run after their producers, in the file AND in the job graph (needs:).
@@ -24,6 +24,8 @@ _m = next(re.search(r'GATE_TIERS="([^"]+)"', ln) for ln in GATE if ln.startswith
 declared = _m.group(1).split() if _m else []
 blocks: list[tuple[str, int, int]] = []  # (tier, first line, last line), 1-indexed
 open_tier, start = None, 0
+first_block_line = next((n for n, ln in enumerate(GATE, 1) if ln.startswith("if tier_on ")), 0)
+summary_line = next((n for n, ln in enumerate(GATE, 1) if ln.startswith('if [ "$fail" -eq 0 ]')), len(GATE) + 1)
 for n, line in enumerate(GATE, 1):
     m = re.match(r"if tier_on (\S+); then\s+# tier: (\S+)$", line)
     if m:
@@ -41,8 +43,13 @@ for n, line in enumerate(GATE, 1):
             blocks.append((open_tier, start, n))
         open_tier = None
         continue
-    if re.search(r"\$PY\b", line) and not open_tier and not line.lstrip().startswith("PY="):
-        problems.append(f"line {n}: stanza outside every tier block (it would run only in the full gate): {line.strip()[:90]}")
+    if open_tier or n < first_block_line or n >= summary_line:
+        continue
+    # Between the first tier block and the pass/fail summary EVERY command belongs to a tier: $PY stanzas, but also
+    # the console's npm/npx stanza, git calls, anything. Blank lines, comments and bare `echo` separators are exempt.
+    s = line.strip()
+    if s and not s.startswith("#") and s != "echo":
+        problems.append(f"line {n}: command outside every tier block (it would run only in the full gate): {s[:90]}")
 if open_tier:
     problems.append(f"tier '{open_tier}' opened at line {start} is never closed")
 for t, _, _ in blocks:
@@ -94,6 +101,8 @@ if not problems:
     for t in declared:
         if tier_jobs[t] not in agg:
             problems.append(f"required check contract-tests must `needs:` the {t} job, or a red tier would not block merging")
+    if "changes" not in agg:
+        problems.append("required check contract-tests must `needs:` changes (it validates the filter's output)")
     if "full-gate" not in agg:
         problems.append("required check contract-tests must `needs:` full-gate")
 
