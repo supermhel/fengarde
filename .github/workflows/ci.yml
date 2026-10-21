@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 # Least-privilege default for every job (Scorecard TokenPermissionsID):
 # nothing in this workflow writes to the repo or its APIs.
@@ -26,8 +27,46 @@ jobs:
           # Lets the action post a summary / comment on pull requests.
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  # Zero-infra gate: contract tests + runner/window/evaluator + both e2e on the memory bus.
-  contract-tests:
+  # CI SPLIT (see CONTRIBUTING.md "CI layout"). `bash run_all_tests.sh` used to be ONE ~25-30 min serial
+  # step. It is now the same script run as tiers (GATE_TIER=<name>, see the tier_on blocks in
+  # run_all_tests.sh; tools/test_gate_tiers.py proves the tiers together cover every stanza):
+  #   fast-gate  - every PR/push, the quick tier (contract validator, parsers, rules, services, guards)
+  #   eval-*     - the eval harness as parallel jobs, only on PRs touching tools/ci_eval_filter.py's paths;
+  #                artifact consumers (eval-report, eval-gates) run after their producers, artifacts handed over
+  #                with upload/download-artifact (eval/twin/fingerprint.py stamps them, so a stale one fails loud)
+  #   full-gate  - the unmodified full script on every push to main (and on manual runs), so nothing is dropped
+  #   contract-tests - the REQUIRED check name, kept; now an aggregator that is green only when every tier that
+  #                should have run is green. Branch protection needs no change.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      eval: ${{ steps.filter.outputs.eval }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+        with:
+          fetch-depth: 0
+      - name: Does this PR touch anything the eval harness measures?
+        id: filter
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          # Non-PR runs (main push, manual) take the full-gate job instead of the eval tier jobs.
+          if [ "$EVENT" != "pull_request" ]; then
+            echo "eval=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Fail safe: if the diff cannot be computed, run the eval jobs.
+          if files=$(git diff --name-only "origin/${BASE_REF}...HEAD"); then
+            run_eval=$(printf '%s\n' "$files" | python3 tools/ci_eval_filter.py)
+          else
+            echo "git diff failed -- running the eval jobs"
+            run_eval=true
+          fi
+          printf 'changed files:\n%s\n' "$files"
+          echo "eval=$run_eval" >> "$GITHUB_OUTPUT"
+
+  fast-gate:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
@@ -42,8 +81,203 @@ jobs:
         # the test's forced ValueError is ever reached, so the test can only
         # ever hit the fallback branch and always fails.
         run: pip install --require-hashes -r .github/ci-requirements/yaml-hypothesis-redis.txt
+      - name: Gate tier fast
+        env:
+          GATE_TIER: fast
+          PYTHON: python3
+        run: bash run_all_tests.sh
+
+  # Eval: twin self-checks, negative controls, oracle cross-check/mutation, detection-accuracy controls. Produces oracle_consistency.latest.json.
+  eval-twin:
+    needs: [changes]
+    if: ${{ needs.changes.outputs.eval == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Install deps
+        run: pip install --require-hashes -r .github/ci-requirements/yaml-hypothesis-redis.txt
+      - name: Gate tier eval-twin
+        env:
+          GATE_TIER: eval-twin
+          PYTHON: python3
+        run: bash run_all_tests.sh
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: eval-out-twin
+          path: eval/twin/out/
+          if-no-files-found: error
+          retention-days: 2
+
+  # Eval: adversarial Layer A + curated corpus B. Produces matrix.latest.json + corpus.latest.json.
+  eval-layers:
+    needs: [changes]
+    if: ${{ needs.changes.outputs.eval == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Install deps
+        run: pip install --require-hashes -r .github/ci-requirements/yaml-hypothesis-redis.txt
+      - name: Gate tier eval-layers
+        env:
+          GATE_TIER: eval-layers
+          PYTHON: python3
+        run: bash run_all_tests.sh
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: eval-out-layers
+          path: eval/adversarial/out/
+          if-no-files-found: error
+          retention-days: 2
+
+  # Eval: scenario matrix, ATT&CK technique matrix, evasion search/cost, noise dilution. Produces scenario_matrix/evasion_search/... .latest.json.
+  eval-matrix:
+    needs: [changes]
+    if: ${{ needs.changes.outputs.eval == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Install deps
+        run: pip install --require-hashes -r .github/ci-requirements/yaml-hypothesis-redis.txt
+      - name: Gate tier eval-matrix
+        env:
+          GATE_TIER: eval-matrix
+          PYTHON: python3
+        run: bash run_all_tests.sh
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: eval-out-matrix
+          path: eval/adversarial/out/
+          if-no-files-found: error
+          retention-days: 2
+
+  # Eval: twin report + chain/causal/phase-3.5 tests. report.py reads matrix.latest.json from eval-layers; produces report.latest.json.
+  eval-report:
+    needs: [changes, eval-layers]
+    if: ${{ needs.changes.outputs.eval == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Install deps
+        run: pip install --require-hashes -r .github/ci-requirements/yaml-hypothesis-redis.txt
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          name: eval-out-layers
+          path: eval/adversarial/out
+      - name: Gate tier eval-report
+        env:
+          GATE_TIER: eval-report
+          PYTHON: python3
+        run: bash run_all_tests.sh
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: eval-out-report
+          path: eval/twin/report.latest.json
+          if-no-files-found: error
+          retention-days: 2
+
+  # Eval: ratchet check + baseline guard + scorecard check/lint. CONSUMES every artifact above, so it runs last; fetch-depth 0 so the ratchet guard has origin/main.
+  eval-gates:
+    needs: [changes, eval-twin, eval-layers, eval-matrix, eval-report]
+    if: ${{ needs.changes.outputs.eval == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Install deps
+        run: pip install --require-hashes -r .github/ci-requirements/yaml-hypothesis-redis.txt
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          name: eval-out-twin
+          path: eval/twin/out
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          name: eval-out-layers
+          path: eval/adversarial/out
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          name: eval-out-matrix
+          path: eval/adversarial/out
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
+        with:
+          name: eval-out-report
+          path: eval/twin
+      - name: Regenerate the fire_check artifact (the exact command of the gate's fire_check stanza; seconds)
+        run: python3 eval/attack/fire_check.py
+      - name: Gate tier eval-gates
+        env:
+          GATE_TIER: eval-gates
+          PYTHON: python3
+        run: bash run_all_tests.sh
+
+  # The unmodified full script: exactly what contract-tests ran before the split. Runs on every push to main
+  # (and manually), so a merge that the PR-time path filter let through unmeasured still meets the whole gate.
+  full-gate:
+    if: ${{ github.event_name != 'pull_request' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Install deps
+        run: pip install --require-hashes -r .github/ci-requirements/yaml-hypothesis-redis.txt
       - name: Full zero-infra gate
         run: PYTHON=python3 bash run_all_tests.sh
+
+  # REQUIRED CHECK (branch protection name unchanged). Green only if every tier that should have run did:
+  # the eval tiers must be success when the PR touched eval paths and skipped otherwise, full-gate must be
+  # success on non-PR runs and skipped on PRs. A skipped/cancelled/failed tier anywhere else is red.
+  contract-tests:
+    needs: [changes, fast-gate, eval-twin, eval-layers, eval-matrix, eval-report, eval-gates, full-gate]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Every tier green (or correctly skipped)
+        env:
+          EVENT: ${{ github.event_name }}
+          RUN_EVAL: ${{ needs.changes.outputs.eval }}
+          R_CHANGES: ${{ needs.changes.result }}
+          R_FAST: ${{ needs.fast-gate.result }}
+          R_TWIN: ${{ needs.eval-twin.result }}
+          R_LAYERS: ${{ needs.eval-layers.result }}
+          R_MATRIX: ${{ needs.eval-matrix.result }}
+          R_REPORT: ${{ needs.eval-report.result }}
+          R_GATES: ${{ needs.eval-gates.result }}
+          R_FULL: ${{ needs.full-gate.result }}
+        run: |
+          fail=0
+          check() {
+            if [ "$2" = "$3" ]; then echo "ok:   $1 = $2"; else echo "FAIL: $1 = $2 (expected $3)"; fail=1; fi
+          }
+          if [ "$RUN_EVAL" = "true" ]; then eval_want=success; else eval_want=skipped; fi
+          if [ "$EVENT" = "pull_request" ]; then full_want=skipped; else full_want=success; fi
+          check changes "$R_CHANGES" success
+          check fast-gate "$R_FAST" success
+          check eval-twin "$R_TWIN" "$eval_want"
+          check eval-layers "$R_LAYERS" "$eval_want"
+          check eval-matrix "$R_MATRIX" "$eval_want"
+          check eval-report "$R_REPORT" "$eval_want"
+          check eval-gates "$R_GATES" "$eval_want"
+          check full-gate "$R_FULL" "$full_want"
+          exit "$fail"
 
   # Phase 6 integrity is deliberately separate from the long zero-infra
   # matrix: it has full history for the PR-time baseline guard and exercises

@@ -16,6 +16,23 @@ if [ "$#" -gt 0 ]; then
   exit 64
 fi
 
+# CI tiers (docs: CONTRIBUTING.md "CI layout"). Unset GATE_TIER = the FULL gate: every
+# block below runs, exactly as before the split. GATE_TIER=<a>,<b> runs only the blocks
+# wrapped in `if tier_on <name>; then ... fi`. tools/test_gate_tiers.py proves every
+# stanza sits in exactly one tier, so the tiers together are the full gate.
+GATE_TIERS="fast eval-twin eval-layers eval-matrix eval-report eval-gates"
+tier_on() {
+  [ -z "${GATE_TIER:-}" ] && return 0
+  case ",${GATE_TIER}," in *",$1,"*) return 0 ;; esac
+  return 1
+}
+if [ -n "${GATE_TIER:-}" ]; then
+  for t in $(echo "$GATE_TIER" | tr ',' ' '); do
+    case " $GATE_TIERS " in *" $t "*) ;; *) echo "unknown GATE_TIER '$t' (valid: $GATE_TIERS)" >&2; exit 64 ;; esac
+  done
+fi
+
+if tier_on fast; then  # tier: fast
 echo "== Phase 0: contract validator =="; LAST_HEADER="== Phase 0: contract validator =="
 $PY tools/validate_contract.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 $PY tools/test_validate_contract.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
@@ -510,6 +527,12 @@ echo "== Phase 5 item 10 (2026-10-14): DCO check (per-commit, author-matched, fa
 $PY tools/test_check_dco.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 
 echo
+echo "== CI layout: tiers cover every stanza, eval path filter, new-rule cascade helper =="; LAST_HEADER="== CI layout: tiers cover every stanza, eval path filter, new-rule cascade helper =="
+$PY tools/test_gate_tiers.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+$PY tools/test_ci_eval_filter.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+$PY tools/test_rule_cascade.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+
+echo
 echo "== React console: typecheck + unit tests (services/ws7-dashboard/app) =="; LAST_HEADER="== React console: typecheck + unit tests (services/ws7-dashboard/app) =="
 # node is required: a console that cannot be typechecked must not pass the gate silently (R4-#69 stance).
 if command -v npm >/dev/null 2>&1; then
@@ -517,8 +540,10 @@ if command -v npm >/dev/null 2>&1; then
 else
   echo "FAIL: npm not found -- the console cannot be checked"; fail=1; FAILED="${FAILED} ${LAST_HEADER}"
 fi
+fi  # tier: fast
 
 # == AI-to-OT twin (WP-1-A..F): PLC sim, attack chain, degradation rig, FPR ==
+if tier_on eval-twin; then  # tier: eval-twin
 echo
 echo "== twin: telemetry-degradation rig self-check (delay/duplicate/reorder/loss determinism + loss-subset proof) =="; LAST_HEADER="== twin: telemetry-degradation rig self-check (delay/duplicate/reorder/loss determinism + loss-subset proof) =="
 $PY eval/twin/degradation.py --selfcheck || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
@@ -531,12 +556,14 @@ $PY eval/twin/negative_controls.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}
 echo
 echo "== twin: oracle <-> reality reconciliation (the answer key is self-authored; drift must not be silent) =="; LAST_HEADER="== twin: oracle <-> reality reconciliation (the answer key is self-authored; drift must not be silent) =="
 $PY eval/twin/oracle_consistency.py --out eval/twin/out/oracle_consistency.latest.json || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+fi  # tier: eval-twin
 
 # == Phase 4 adversarial system-level validation (WP-4-A) ==
 # Layer A is DETERMINISTIC and BLOCKING (determinism is what licenses
 # blocking); Layer B curated corpus is deterministic + blocking; the
 # stochastic Layer C (adaptive LLM adversary) NEVER runs in this gate --
 # it lives only in .github/workflows/nightly-adversary.yml.
+if tier_on eval-layers; then  # tier: eval-layers
 echo
 echo "== Phase 4: mutation engine self-check (8 axes, every variant byte-changes, deterministic catalogue) =="; LAST_HEADER="== Phase 4: mutation engine self-check (8 axes, every variant byte-changes, deterministic catalogue) =="
 $PY eval/adversarial/mutate.py --selfcheck || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
@@ -552,12 +579,16 @@ $PY eval/adversarial/test_layer_a.py || { fail=1; FAILED="${FAILED} ${LAST_HEADE
 echo
 echo "== Phase 4 multi-storyline: instruments pass positive+negative controls (directional discrimination, order, decoys, operators, search) =="; LAST_HEADER="== Phase 4 multi-storyline: instruments pass positive+negative controls =="
 $PY eval/adversarial/test_scenario_harness.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+fi  # tier: eval-layers
+if tier_on eval-twin; then  # tier: eval-twin
 echo
 echo "== twin: oracle cross-check (mutation testing + independent derived oracle + triangulation) =="; LAST_HEADER="== twin: oracle cross-check (mutation testing + independent derived oracle + triangulation) =="
 $PY eval/twin/test_oracle_crosscheck.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
 echo "== twin: the oracle mutation instrument ITSELF (waiver table + inert-key table + ratchet over every storyline) =="; LAST_HEADER="== twin: the oracle mutation instrument itself =="
 $PY eval/twin/oracle_mutate.py --seed 7 || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+fi  # tier: eval-twin
+if tier_on eval-matrix; then  # tier: eval-matrix
 echo
 echo "== Phase 4 multi-storyline: mutation lane over EVERY attack shape (AI-to-OT, IT intrusion, infra takeover) =="; LAST_HEADER="== Phase 4 multi-storyline: mutation lane over every attack shape =="
 $PY eval/adversarial/scenario_matrix.py --seed 7 || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
@@ -588,6 +619,8 @@ $PY eval/adversarial/evasion_cost.py --seed 7 || { fail=1; FAILED="${FAILED} ${L
 echo
 echo "== Phase 4 adaptive evasion: benign-noise dilution (F1 sweep), blocking subset =="; LAST_HEADER="== Phase 4 adaptive evasion: benign-noise dilution (F1 sweep), blocking subset =="
 $PY eval/adversarial/noise_dilution.py --blocking-subset || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+fi  # tier: eval-matrix
+if tier_on eval-report; then  # tier: eval-report
 echo
 echo "== twin: full scorecard smoke run (report.py must complete without error on the real cascade) =="; LAST_HEADER="== twin: full scorecard smoke run (report.py must complete without error on the real cascade) =="
 # PR #80 finding 10: write to a GITIGNORED last-run path, NOT the committed
@@ -609,6 +642,8 @@ $PY eval/twin/test_phase3_5.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
 echo "== Phase 6: atom-level ratchet acceptance tests (positive/negative controls, masking, fingerprints) =="; LAST_HEADER="== Phase 6: atom-level ratchet acceptance tests =="
 $PY eval/twin/test_ratchet.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+fi  # tier: eval-report
+if tier_on eval-gates; then  # tier: eval-gates
 echo
 echo "== Phase 6: deterministic baseline/current ratchet gate =="; LAST_HEADER="== Phase 6: deterministic baseline/current ratchet gate =="
 $PY eval/twin/ratchet.py check || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
@@ -634,8 +669,10 @@ $PY tools/generate_scorecard.py --lint-docs || { fail=1; FAILED="${FAILED} ${LAS
 echo
 echo "== scorecard: the registry/generator/controls themselves (positive + negative controls) =="; LAST_HEADER="== scorecard: the registry/generator/controls themselves (positive + negative controls) =="
 $PY tools/test_generate_scorecard.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+fi  # tier: eval-gates
 
 # == Phase 4 (2026-08-06) enhancement + fix regression tests ==
+if tier_on fast; then  # tier: fast
 echo
 echo "== ws3 FIX H6: OpenSearch multi-node writer failover (2026-08-06) =="; LAST_HEADER="== ws3 FIX H6: OpenSearch multi-node writer failover (2026-08-06) =="
 $PY services/ws3-indexer/test_fix_h6_opensearch_failover.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
@@ -654,22 +691,31 @@ $PY services/ws1-collectors/test_fix_metric_sources.py || { fail=1; FAILED="${FA
 echo
 echo "== ws1: fix-counters determinism (no double-count/race under concurrent produce) =="; LAST_HEADER="== ws1: fix-counters determinism (no double-count/race under concurrent produce) =="
 $PY services/ws1-collectors/test_fix_counters_deterministic.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+fi  # tier: fast
+if tier_on eval-twin; then  # tier: eval-twin
 echo
 echo "== H7 regression: EVTX business-hours boundary (oracle vs real engine at 18:00:00) =="; LAST_HEADER="== H7 regression: EVTX business-hours boundary (oracle vs real engine at 18:00:00) =="
 $PY eval/detection_accuracy/test_evtx_eval.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo "== splunk_eval guard: Q13 subset fetch leaves LFS pointers by design, only a zero-pull fetch fails =="; LAST_HEADER="== splunk_eval guard =="
 $PY eval/detection_accuracy/test_splunk_eval_guard.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+fi  # tier: eval-twin
+if tier_on fast; then  # tier: fast
 echo "== Q2: evasion floor may not be lowered without a recorded reason =="; LAST_HEADER="== Q2 floor-lowering guard =="
 $PY tools/test_check_floor_lowering.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo "== Q12: WS-4 window time source (event default, ingest opt-in) =="; LAST_HEADER="== Q12 window time source =="
 $PY services/ws4-detection/test_window_time_source.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+fi  # tier: fast
+if tier_on eval-twin; then  # tier: eval-twin
 echo
 echo "== blind-recall lane: synthetic controls (label from the dataset, never from FENGARDE; NOT a third-party measurement) =="; LAST_HEADER="== blind-recall lane: synthetic controls (label from the dataset, never from FENGARDE; NOT a third-party measurement) =="
 $PY eval/detection_accuracy/test_blind_recall.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+fi  # tier: eval-twin
+if tier_on fast; then  # tier: fast
 echo
 echo
 echo "== ws7 read-plane regression: LIVE ownership, outage marker, config.js gate, badge copy =="; LAST_HEADER="== ws7 read-plane regression: LIVE ownership, outage marker, config.js gate, badge copy =="
 $PY services/ws7-dashboard/test_fix_read_plane.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+fi  # tier: fast
 echo
 echo
 echo
