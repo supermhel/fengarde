@@ -453,7 +453,7 @@ any `v*` tag, not just stable releases — see its `:latest` image-tag gating
 Each release ships `fengarde-<VERSION>.tar.gz` (a deterministic `git
 archive` of the tag) plus its keyless signature **bundle**, named
 `fengarde-<VERSION>.tar.gz.bundle` — the bundle carries both the signature
-and the signing certificate (cosign >= 2.4's NewBundleFormat; the legacy
+and the signing certificate (sigstore bundle format v0.3: cosign v3 verifies it as shown below; cosign 2.4.x needs `--new-bundle-format` added to `verify-blob`, tested 2026-10-21 against the v0.11.2 tarball; the legacy
 `.sig`/`.pem` pair predates it and is no longer produced). Download both
 files from the release and verify:
 
