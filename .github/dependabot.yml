@@ -102,6 +102,14 @@ updates:
     directory: "/.github/ci-requirements"
     schedule:
       interval: "weekly"
+    # Same policy as the service directories above: PyYAML and redis are bumped by hand across ALL pip directories in one
+    # PR (tools/check_lane_coverage.py A6 fails any CI file that drifts from the version the services ship; Dependabot
+    # PR #114 hit exactly that). Security advisories still open PRs (not a version-update type).
+    ignore:
+      - dependency-name: "PyYAML"
+        update-types: ["version-update:semver-major", "version-update:semver-minor", "version-update:semver-patch"]
+      - dependency-name: "redis"
+        update-types: ["version-update:semver-major", "version-update:semver-minor", "version-update:semver-patch"]
   # eval/requirements.txt: the nightly-eval lane's hash-pinned deps.
   - package-ecosystem: "pip"
     directory: "/eval"

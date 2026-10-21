@@ -2,6 +2,8 @@
 
 <h1 align="center">FENGARDE</h1>
 
+<p align="center"><a href="https://www.bestpractices.dev/projects/14443"><img src="https://www.bestpractices.dev/projects/14443/badge" alt="OpenSSF Best Practices"></a></p>
+
 <p align="center"><b>Logs in. Evidence out.</b><br>
 Open-source security pipeline for IT, AI and OT: raw logs to a verified incident and a draft NIS2 notification.</p>
 
