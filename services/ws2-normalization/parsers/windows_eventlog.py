@@ -71,7 +71,7 @@ _CLS_ACCT = 3003    # Account Change
 # Activity ids within class 1002 (Contract A leaves these open, 0-99).
 _ACT_PROC_LAUNCH = 1   # process launch / exec
 _ACT_PROC_PRIV = 2     # privilege use
-_ACT_SERVICE_INSTALL = 3   # 7045 / 4697 (2026-10-20, recall work: T1543.003)
+_ACT_SERVICE_INSTALL = 3   # 7045 / 4697 (2026-10-20, recall work: T1543.003); shares 3 with sysmon's Terminate
 _ACT_LOG_CLEARED = 4       # Security 1102 / System 104 (T1070.001)
 _ACT_PROC_ACCESS = 5       # sysmon.py owns this one (EventID 10); listed so the ids stay unique
 _ACT_SCRIPT = 6            # PowerShell script block / module / pipeline log (4104 / 4103 / 800)
@@ -90,7 +90,7 @@ _EVENT_MAP: dict[int, tuple] = {
     1102: (_CLS_PROC, _ACT_LOG_CLEARED, "Success", SEV_HIGH, "Audit log cleared"),
     104: (_CLS_PROC, _ACT_LOG_CLEARED, "Success", SEV_HIGH, "Audit log cleared"),
     # PowerShell logging (Microsoft-Windows-PowerShell/Operational 4104 script block, 4103 module logging;
-    # classic 'Windows PowerShell' 800 pipeline execution). The EventID alone is unambiguous per channel.
+    # classic 'Windows PowerShell' 800 pipeline execution). EventIDs are only unique per provider: see _SCOPED below.
     # 5136 directory service object modified (AD change auditing): an Account Change (3003) with activity 6.
     5136: (_CLS_ACCT, 6, "Success", SEV_MEDIUM, "Directory object modified"),
     4104: (_CLS_PROC, _ACT_SCRIPT, "Success", SEV_INFO, "PowerShell script block"),
@@ -105,6 +105,32 @@ _EVENT_MAP: dict[int, tuple] = {
     4732: (_CLS_ACCT, 5, "Success", SEV_HIGH, "Member added to local security group"),
 }
 
+#: EventIDs are unique per PROVIDER, not globally (another provider's 104 is not a log clear). For these IDs a record
+#: that names its Channel / Provider must name the expected one (case-folded), else the parser declines it. A record
+#: naming neither is still accepted, as before (many shippers flatten those fields away).
+_SCOPED: dict[int, tuple] = {
+    104: ({"system"}, {"microsoft-windows-eventlog", "eventlog"}),
+    1102: ({"security"}, {"microsoft-windows-eventlog", "eventlog"}),
+    7045: ({"system"}, {"service control manager"}),
+    800: ({"windows powershell"}, {"powershell"}),
+    4103: ({"microsoft-windows-powershell/operational"}, {"microsoft-windows-powershell"}),
+    4104: ({"microsoft-windows-powershell/operational"}, {"microsoft-windows-powershell"}),
+}
+
+
+def _out_of_scope(event_id: int, rec: dict) -> bool:
+    scope = _SCOPED.get(event_id)
+    if scope is None:
+        return False
+    channels, providers = scope
+    channel = rec.get("Channel")
+    provider = rec.get("ProviderName") or rec.get("Provider") or rec.get("SourceName")
+    if isinstance(provider, dict):
+        provider = provider.get("Name")
+    if isinstance(channel, str) and channel.strip().lower() not in channels:
+        return True
+    return isinstance(provider, str) and provider.strip().lower() not in providers
+
 
 #: Substrings (case-folded) that make a service image path suspicious: user-writable or
 #: temp locations, a shell as the service binary, UNC paths, or a script/LOLBin host. A
@@ -114,6 +140,8 @@ _SUSPICIOUS_SERVICE_PATH = (
     r"\temp" "\\", r"\appdata" "\\", r"\users\public" "\\", r"\programdata" "\\", r"\windows\tasks" "\\",
     "%comspec%", "cmd.exe /c", "cmd /c", "powershell", "pwsh", "rundll32", "mshta", "wscript", "cscript",
     "regsvr32", "\\\\",
+    # 7045 often logs the ImagePath unexpanded, so the same locations as environment variables:
+    "%temp%", "%tmp%", "%appdata%", "%localappdata%", "%public%", "%programdata%", "%userprofile%",
 )
 
 
@@ -127,7 +155,8 @@ def _suspicious_service_path(path: str) -> bool:
 _PS_STRONG = tuple(re.compile(x) for x in (
     r"downloadstring", r"downloadfile", r"frombase64string", r"net\.webclient", r"amsiinitfailed", r"amsiutils",
     r"invoke-mimikatz", r"invoke-shellcode", r"invoke-reflectivepeinjection", r"reflection\.assembly\]::load",
-    r"virtualalloc", r"-e(nc(odedcommand)?)?\s+[a-z0-9+/=]{30,}",
+    # -EncodedCommand under any prefix PowerShell accepts (-e, -ec, -en, -enc, -enco ...), with -, /, en or em dash.
+    r"virtualalloc", r"(?:^|\s)[-/–—](?:e|ec|en[a-z]*)\s+[a-z0-9+/=]{30,}",
 ))
 _PS_WEAK = tuple(re.compile(x) for x in (
     r"\biex\b", r"invoke-expression", r"-exec(utionpolicy)?\s+bypass", r"-nop(rofile)?\b",
@@ -176,7 +205,7 @@ class WindowsEventLogParser(Parser):
         except (TypeError, ValueError):
             return None
         mapping = _EVENT_MAP.get(event_id)
-        if mapping is None:
+        if mapping is None or _out_of_scope(event_id, rec):
             return None
         class_uid, activity_id, status, severity_id, verb = mapping
 

@@ -361,6 +361,13 @@ def test_phishing_bec() -> None:
     _check("(h) every expected rule fires at its step and the order of alerts follows the oracle",
            g["tpr"] == 1.0 and g["alert_order_ok"] is True and g["incident_membership_ok"] is False
            and g["incident_count"] == 2, f"tpr={g['tpr']} order={g['alert_order_ok']} incidents={g['incident_count']}")
+    # Pin the SHAPE of the two incidents, not just their count, so a different chain break that still yields 2
+    # incidents fails here (2026-10-21, PR #112 review): the account track (4 alerts, 4 tactics) and the workstation
+    # track (Office spawn + beacon). When F14 is resolved this check changes on purpose.
+    shape = sorted((i["entity"].split(":")[0], i["member_count"], tuple(i["tactics"])) for i in g["incident_summary"])
+    _check("(h) the two incidents are the account track and the workstation track (F14 measured shape)",
+           shape == [("actor", 4, ("TA0001", "TA0002", "TA0006", "TA0011")), ("device", 2, ("TA0002", "TA0011"))],
+           str(shape))
     first: dict = {}
     for a in g["fired"]:
         first.setdefault(a["step"], a["time"])

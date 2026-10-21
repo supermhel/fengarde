@@ -97,7 +97,7 @@ detection_points:
     role: "the user opens the attachment: the office app spawns an encoded PowerShell"
     expected_event_source: "sysmon EventID 1 (class 1002, activity 1)"
     expected_rules:
-      - {rule_id: "5b7e0d3a-91c4-4f6e-8a2d-3c1f9e7b4a10", title: "Document or browser host spawned a shell or script host", level: high, role: user-execution detection (rule added 2026-10-20; gap closed)}
+      - {rule_id: "5b7e0d3a-91c4-4f6e-8a2d-3c1f9e7b4a10", title: "Document host spawned a shell or script host", level: high, role: user-execution detection (rule added 2026-10-20; gap closed)}
     gap: {no_rule_exists: false}
 
   c2_beacon:

@@ -1,5 +1,5 @@
-"""Shared heuristic for process-launch events (Sysmon 1, Windows 4688): did a document/browser host spawn a
-shell or script host? A HEURISTIC over process names, not a classifier -- see win_process_launch_office_child.yml."""
+"""Shared heuristic for process-launch events (Sysmon 1, Windows 4688): did a document/PDF host spawn a
+shell or script host? A HEURISTIC over process names, not a classifier -- see contracts/rules/win_office_spawns_shell.yml."""
 from __future__ import annotations
 
 from typing import Optional

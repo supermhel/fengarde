@@ -130,8 +130,9 @@ _WAIVED: dict = {
         "email_macro_attachment_delivered, m365_inbox_rule_external_forward) adds two alert-raising steps whose entities "
         "do not meet the endpoint/identity chain: a delivered message has no actor, and the M365 UserId is a UPN "
         "(user@corp.example) while every other step uses the bare account name (WS-8 compares actors verbatim; "
-        "the DOMAIN\\/UPN residual is the open F2 finding). So the single incident carries only the account chain "
-        "(incident_membership_ok=False); detection coverage rose, chain joining fell. Owner decision pending (canonicalise UPN, add a recipient "
+        "the DOMAIN\\/UPN residual is the open F2 finding). So no incident carries those two steps "
+        "(incident_membership_ok=False); since win_office_spawns_shell the run forms TWO incidents (the account track and "
+        "a workstation track, shape pinned in test_storylines_wide.py); detection coverage rose, chain joining fell. Owner decision pending (canonicalise UPN, add a recipient "
         "entity, or retarget)."),
     ("supply_chain_ci", "F6", "agent_runaway", "2b3c4d5e-6f70-4899-8a1b-2c3d4e5f6a7c"): (
         "2026-10-14 agent_tool_call_burst carries no mitre block BY DESIGN (no single ATT&CK technique "

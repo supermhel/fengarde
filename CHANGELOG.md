@@ -59,7 +59,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Q12 `FENGARDE_WINDOW_TIME_SOURCE=ingest`** (opt-in, default `event` = unchanged): WS-4 stateful windows are driven by the
   WS-1 receipt time that WS-2 now stamps as `siem.received_ms`, so a forged record clock can no longer spread a burst out
-  of its window (finding F4). Periodicity rules keep record time. `test_window_time_source.py`.
+  of its window (finding F4). Periodicity rules keep record time. `test_window_time_source.py`. Limits: WS-1 stamps
+  receipt time (whole seconds) when a record ARRIVES, so a backlog an upstream forwarder (WEF, rsyslog queue) delivers
+  late after an outage lands in one burst and can trip count windows (WS-1's own spool keeps the original stamp); events
+  with no `meta.received_at` silently fall back to the record clock, so F4 stays open for them.
 - **Q2 `tools/check_floor_lowering.py`**: PR CI fails if `eval/adversarial/evasion_floor.yaml` is lowered without a new
   `lowered:` entry (any maintainer may lower, the reason must be recorded).
 - `CODE_OF_CONDUCT.md` (Contributor Covenant 2.1).

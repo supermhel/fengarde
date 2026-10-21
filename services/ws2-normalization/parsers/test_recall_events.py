@@ -143,7 +143,7 @@ check(spawn["unmapped"]["process_launch"]["suspicious"] is True, "winword -> cmd
 check(benign["unmapped"]["process_launch"]["suspicious"] is False, "explorer -> cmd must not be suspicious")
 check(office_notepad["unmapped"]["process_launch"]["suspicious"] is False, "winword -> notepad must not be suspicious")
 check(w4688["unmapped"]["process_launch"]["suspicious"] is True, "4688 winword -> wscript must be suspicious")
-R_OFF = rule("Document or browser host spawned a shell or script host")
+R_OFF = rule("Document host spawned a shell or script host")
 check(R_OFF.evaluate(spawn) and R_OFF.evaluate(w4688), "office-spawn rule must fire on sysmon 1 and 4688")
 check(not R_OFF.evaluate(benign) and not R_OFF.evaluate(office_notepad), "office-spawn rule must stay quiet on benign launches")
 
@@ -175,6 +175,45 @@ fired = [R_SWP.evaluate(deny("203.0.113.60", f"10.0.0.{i + 1}", 445, i)) for i i
 check(fired[:14] == [False] * 14 and fired[14] is True, "sweep: 15th distinct host must fire, 14 must not")
 vert = [R_SWP.evaluate(deny("203.0.113.61", "10.0.0.1", 1000 + i, i)) for i in range(30)]
 check(not any(vert), "sweep: 30 ports on ONE host (vertical scan) must stay quiet")
+
+# ---- PR #112 review fixes (2026-10-21) ----
+# EventIDs are per provider: another provider's 104 / 800 must not become a log clear / PowerShell event.
+check(parse("windows_eventlog", {"EventID": 104, "TimeCreated": T, "Computer": "h",
+                                 "Channel": "Microsoft-Windows-Other/Operational"}) is None, "104 from another channel")
+check(parse("windows_eventlog", {"EventID": 104, "TimeCreated": T, "Computer": "h", "Channel": "System",
+                                 "ProviderName": "Some-Driver"}) is None, "104 from another provider in System")
+check(parse("windows_eventlog", {"EventID": 800, "TimeCreated": T, "Computer": "h", "Channel": "Application"}) is None,
+      "800 outside 'Windows PowerShell'")
+clr_scoped = parse("windows_eventlog", {"EventID": 104, "TimeCreated": T, "Computer": "h", "Channel": "System",
+                                        "Provider": {"Name": "Microsoft-Windows-Eventlog"}})
+check(clr_scoped and R_CLR.evaluate(clr_scoped), "real System/Eventlog 104 must still fire")
+check(parse("windows_eventlog", {"EventID": 4624, "TimeCreated": T, "Computer": "h", "Channel": "Security",
+                                 "TargetUserName": "u"}) is not None, "unscoped EventIDs are unaffected")
+# Trusted lsass callers match the full path, not the basename; any dump-capable mask counts.
+for src, acc, want in ((r"C:\Users\Public\MsMpEng.exe", "0x1010", True), (r"C:\Temp\csrss.exe", "0x1010", True),
+                       (r"D:\Windows\System32\csrss.exe", "0x1010", False),
+                       (r"C:\ProgramData\Microsoft\Windows Defender\Platform\4.18.1\MsMpEng.exe", "0x1fffff", False),
+                       (r"C:\x\dump.exe", "0x1011", True), (r"C:\x\dump.exe", "0x1418", True),
+                       (r"C:\x\dump.exe", "0x1400", False), (r"C:\x\dump.exe", "junk", False)):
+    ev = parse("sysmon", dict(sysmon10, SourceImage=src, GrantedAccess=acc))
+    check(ev["unmapped"]["lsass_access_suspicious"] is want, f"lsass {src} {acc} -> want {want}")
+# Unexpanded environment-variable service paths.
+for p in (r"%TEMP%\evil.exe", r"%APPDATA%\x\svc.exe", r"%PUBLIC%\svc.exe", r"%ProgramData%\svc.exe"):
+    ev = parse("windows_eventlog", {"EventID": 7045, "TimeCreated": T, "Computer": "h", "ServiceName": "s", "ImagePath": p})
+    check(ev["unmapped"]["service"]["suspicious_path"] is True, f"service path {p} must be suspicious")
+# Every -EncodedCommand prefix PowerShell accepts; a short argument after -e is not a payload.
+b64 = "SQBFAFgAIAAoAE4AZQB3AC0ATwBiAGoAZQBjAHQAIABOAGUAdAAu"
+for flag in ("-e", "-ec", "-en", "-enc", "-enco", "-EncodedCommand", "/enc", "\u2013enc"):
+    ev = parse("windows_eventlog", {"EventID": 800, "TimeCreated": T, "Computer": "h", "HostApplication": f"powershell {flag} {b64}"})
+    check(ev["unmapped"]["powershell"]["suspicious"] is True, f"encoded command via {flag!r} must be suspicious")
+ev = parse("windows_eventlog", {"EventID": 4104, "TimeCreated": T, "Computer": "h",
+                                "ScriptBlockText": "Get-Item -ErrorAction SilentlyContinue C:/x; Set-Content -Encoding utf8 x y"})
+check(ev["unmapped"]["powershell"]["suspicious"] is False, "-ErrorAction / -Encoding are not -EncodedCommand")
+# Activity 3 means service install (windows_eventlog) AND process terminate (sysmon EID 5): the service rule must
+# not fire on a terminate, even one of a binary in a temp dir.
+term = parse("sysmon", {"EventID": 5, "TimeCreated": T, "Computer": "h", "ProcessId": "7",
+                        "Image": r"C:\Users\jdoe\AppData\Local\Temp\u.exe"})
+check(term["activity_id"] == 3 and not R_SVC.evaluate(term), "service rule must not fire on sysmon terminate")
 
 if FAILS:
     for f in FAILS:
