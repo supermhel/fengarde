@@ -162,7 +162,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install deps
-        run: pip install pyyaml redis
+        run: pip install --require-hashes -r .github/ci-requirements/yaml-redis.txt
       - name: hit_distinct Lua fallback on a real Redis 6.0
         env:
           FENGARDE_E2E_STRICT: "1"
@@ -326,6 +326,22 @@ jobs:
       - name: Teardown
         if: always()
         run: docker compose -f infra/docker-compose.yml down -v
+
+  # React console (WS-7): the dev-tooling majors bumped in the supply-chain pin change (vite, vitest, plugin-react) are
+  # only exercised by a real install, type-check, build and test run -- nothing else in CI builds the console.
+  console:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/ws7-dashboard/app
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
+        with:
+          node-version: "22"
+      - run: npm ci
+      - run: npm run build
+      - run: npm test
 
   # M2 code-quality floor (PLAN_C Tier 2.3). Lint blocks; coverage blocks at the
   # MEASURED baseline (see tools/coverage_gate.py) not the unmet-for-WS-3 85%
