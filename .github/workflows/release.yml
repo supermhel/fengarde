@@ -54,6 +54,17 @@ jobs:
     outputs:
       digests: ${{ steps.subjects.outputs.digests }}
     steps:
+      - name: Validate the release tag
+        # inputs.tag is free text on workflow_dispatch and reaches a file name and a release glob; a tag push cannot
+        # carry odd characters, so this only ever rejects a mistyped or hostile manual input.
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          if ! printf '%s' "$RELEASE_TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.]+)?$'; then
+            echo "refusing to release: '$RELEASE_TAG' is not a version tag like v1.2.3" >&2
+            exit 1
+          fi
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
         with:
           ref: ${{ inputs.tag || github.ref_name }}
@@ -184,4 +195,9 @@ jobs:
       upload-assets: true
       # v0.11.1: with no explicit name the generator's upload-assets job got an
       # empty provenance-name and failed ('Path  already exists', exit 27).
-      provenance-name: "fengarde-${{ inputs.tag || github.ref_name }}.intoto.jsonl"
+      # Named after the tarball (SECURITY.md documents fengarde-<VERSION>.tar.gz.intoto.jsonl and builds the
+      # `cosign verify-blob-attestation` commands from it), so the file and the docs agree.
+      provenance-name: "fengarde-${{ inputs.tag || github.ref_name }}.tar.gz.intoto.jsonl"
+      # The generator only uploads on a tag ref or when this is set; a workflow_dispatch re-run has a branch ref, so
+      # without it the provenance would silently not be attached while the run still reports green.
+      upload-tag-name: "${{ inputs.tag || github.ref_name }}"
