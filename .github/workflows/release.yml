@@ -14,7 +14,8 @@
 # check would be theatre.
 #
 # All `uses:` are pinned to 40-char commit SHAs to match the rest of this
-# repo (see tools/verify_action_pins.py — that CI gate re-checks this file
+# repo, EXCEPT the SLSA generator, which only accepts an exact release tag (see the comment at its `uses:`
+# and the narrow exception in tools/verify_action_pins.py) (see tools/verify_action_pins.py — that CI gate re-checks this file
 # on every PR). See that tool's docstring for the "resolves, not behaves"
 # caveat.
 
@@ -192,8 +193,8 @@ jobs:
     # MUST be referenced by TAG, not by commit SHA. Found on the v0.11.2 run (2026-10-21): with the SHA pin the generator's
     # first step fails ("Invalid ref: f7dd8c54... Expected ref of the form refs/tags/vX.Y.Z", exit 2), its signing step then
     # cannot find the builder binary (exit 127), the provenance-name output stays empty, upload-assets fails with
-    # "Path  already exists"/an empty path and the run ends red with no provenance attached. This is the real cause of the
-    # v0.11.0/v0.11.1 failures; the SHA pin has been in place since the workflow was written. The tag is the
+    # "Path  already exists"/an empty path and the run ends red with no provenance attached. This is the cause of the v0.11.1 and
+    # v0.11.2 provenance failures (v0.11.0 failed earlier, at sign-blob, before the generator ran); the SHA pin has been in place since the workflow was written. The tag is the
     # form its builder fetch accepts (and the signing identity that SECURITY.md verifies is @refs/tags/v2.1.0), so it is an accepted exception to SHA pinning; the Scorecard PinnedDependencies finding for this one
     # line is expected.
     uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@v2.1.0

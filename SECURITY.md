@@ -475,14 +475,14 @@ files. It is generated and keyless-signed by the official
 release artifacts (the source tarball and every pushed service image) were
 built from this repository and this git ref.
 
-Verify the attestation of an image you pulled:
+The provenance is NOT pushed to the registry as an image attestation (`cosign verify-attestation` against an image
+fails: tested 2026-10-22, the generator attests the release file only). It lists every image digest of the release as a
+subject instead, so after verifying the provenance file below, compare the digest you pulled with its subjects:
 
 ```bash
-cosign verify-attestation --type slsaprovenance \
-  ghcr.io/supermhel/fengarde-ws3-indexer:<VERSION> \
-  --certificate-identity-regexp \
-    '^https://github.com/slsa-framework/slsa-github-generator/\.github/workflows/generator_generic_slsa3\.yml@refs/tags/v2\.1\.0$' \
-  --certificate-oidc-issuer 'https://token.actions.githubusercontent.com'
+jq -r .dsseEnvelope.payload fengarde-<VERSION>.tar.gz.intoto.jsonl | base64 -d \
+  | jq -r '.subject[] | "\(.name)  \(.digest.sha256)"'
+docker buildx imagetools inspect ghcr.io/supermhel/fengarde-ws3-indexer:<VERSION> | grep Digest
 ```
 
 Or verify the provenance file attached to the release, against the tarball it

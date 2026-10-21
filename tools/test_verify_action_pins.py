@@ -46,13 +46,29 @@ def test_parses_real_workflow_shapes():
 
 
 def test_tag_only_exception_is_narrow():
-    """The SLSA generator may be referenced by an exact release tag and nothing else; every other action stays SHA-only."""
-    check("slsa-framework/slsa-github-generator" in v.TAG_ONLY_EXCEPTIONS, "the generator exception is gone")
+    """The decision itself (not just its constants): ONE reusable workflow, by exact vX.Y.Z tag, nothing else."""
+    gen = "slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml"
+    check(v.tag_only_ok(gen, "v2.1.0") is True, "the generator at an exact release tag must be allowed")
+    for bad_ref in ("v2", "v2.1", "main", "v2.1.0-rc1", "f7dd8c54c2067bafc12ca7a55595d5ee9b75204a", ""):
+        check(v.tag_only_ok(gen, bad_ref) is False, f"generator@{bad_ref!r} must not pass the tag-only exception")
+    for other in ("slsa-framework/slsa-github-generator/.github/workflows/generator_container_slsa3.yml",
+                  "slsa-framework/slsa-github-generator", "evil/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml",
+                  "actions/checkout", "Slsa-Framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml"):
+        check(v.tag_only_ok(other, "v2.1.0") is False, f"{other}@v2.1.0 must stay SHA-only")
     check(len(v.TAG_ONLY_EXCEPTIONS) == 1, "the tag-only exception list grew: each entry needs its own justification")
-    check(v._EXACT_TAG.match("v2.1.0") is not None, "an exact release tag was rejected")
-    for bad in ("v2", "v2.1", "main", "v2.1.0-rc1", "f7dd8c54c2067bafc12ca7a55595d5ee9b75204a"):
-        check(v._EXACT_TAG.match(bad) is None, f"{bad!r} must not satisfy the tag-only exception")
-    check("actions/checkout" not in v.TAG_ONLY_EXCEPTIONS, "ordinary actions must stay SHA-pinned")
+    # the parser keeps the full workflow path for the exception repo only, so sibling workflows are not covered by it
+    check(v.parse_uses("    uses: " + gen + "@v2.1.0  # v2.1.0") == (gen, "v2.1.0", "v2.1.0"), "generator reference parsed wrongly")
+    other_wf = "slsa-framework/slsa-github-generator/.github/workflows/other.yml"
+    got = v.parse_uses("    uses: " + other_wf + "@v2.1.0")
+    check(got is not None and not v.tag_only_ok(got[0], got[1]), "a sibling generator workflow slipped through the exception")
+
+
+def test_flow_style_uses_is_scanned():
+    """GitHub accepts `- { uses: x@y }`; a line-anchored pattern skipped it silently (review of PR 117)."""
+    got = v.parse_uses("      - { name: build, uses: evil/repo@main }")
+    check(got == ("evil/repo", "main", ""), f"flow-style uses was not parsed: {got}")
+    check(v.parse_uses("      - { uses: actions/checkout@abc  } # v4") is not None, "flow-style with trailing comment not parsed")
+    check(v.parse_uses("    # uses: evil/repo@main") is None, "a comment line was parsed as a reference")
 
 
 def test_skips_unpinnable_references():
@@ -131,6 +147,7 @@ def test_offline_mode_passes_on_the_real_repo():
 def main():
     test_parses_real_workflow_shapes()
     test_tag_only_exception_is_narrow()
+    test_flow_style_uses_is_scanned()
     test_skips_unpinnable_references()
     test_exact_comment_must_name_a_tag_on_that_commit()
     test_major_only_comment_accepts_any_release_in_that_major()

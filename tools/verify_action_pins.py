@@ -48,7 +48,9 @@ ROOT = Path(__file__).resolve().parents[1]
 WORKFLOWS = ROOT / ".github" / "workflows"
 
 # `uses: owner/repo[/sub/path]@ref` with an optional trailing `# comment`.
-_USES = re.compile(r"^\s*(?:-\s*)?uses:\s*(?P<spec>\S+)(?:\s+#\s*(?P<comment>\S+))?")
+# Block style (`uses: x@y`, `- uses: x@y`) and flow style (`- { name: n, uses: x@y }`), which GitHub also accepts and a line-anchored
+# pattern would silently skip. Comment-only lines are never references.
+_USES = re.compile(r"(?:^|[\s{,])uses:\s*[\"']?(?P<spec>[^\s\"',}]+)[\"']?(?:[^#]*?\s#\s*(?P<comment>\S+))?")
 _SHA = re.compile(r"^[0-9a-f]{40}$")
 # Tag-shaped comments only: `# v4.37.3`, `# v4`. Anything else is prose.
 _TAGLIKE = re.compile(r"^v?\d[\w.\-]*$")
@@ -58,7 +60,9 @@ _TAGLIKE = re.compile(r"^v?\d[\w.\-]*$")
 # makes provenance fail. Allowed ONLY as a full vMAJOR.MINOR.PATCH tag (never a branch or a floating major), and the tag must
 # exist upstream (checked online). A moved tag is the accepted residual risk; the signing identity that SECURITY.md verifies is
 # @refs/tags/<that tag>, so a substituted generator would not verify.
-TAG_ONLY_EXCEPTIONS = {"slsa-framework/slsa-github-generator"}
+# Keyed on the FULL reusable-workflow path, not the repo: any other workflow in the same repo must still be SHA-pinned.
+TAG_ONLY_EXCEPTIONS = {"slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml"}
+_TAG_ONLY_REPOS = {"/".join(x.split("/")[:2]) for x in TAG_ONLY_EXCEPTIONS}
 _EXACT_TAG = re.compile(r"^v\d+\.\d+\.\d+$")
 
 
@@ -67,7 +71,9 @@ def parse_uses(line: str) -> tuple[str, str, str] | None:
 
     Local (`./path`) and container (`docker://`) actions are not pinnable this
     way and are skipped rather than reported."""
-    m = _USES.match(line)
+    if line.lstrip().startswith("#"):
+        return None
+    m = _USES.search(line)
     if not m:
         return None
     spec = m.group("spec").strip("\"'")
@@ -78,6 +84,8 @@ def parse_uses(line: str) -> tuple[str, str, str] | None:
     path, ref = spec.rsplit("@", 1)
     parts = path.split("/")
     repo = "/".join(parts[:2])  # owner/repo, dropping any sub-action path
+    if repo in _TAG_ONLY_REPOS:
+        repo = path  # keep the full workflow path so the tag-only exception can be exact
     return repo, ref, (m.group("comment") or "")
 
 
@@ -155,6 +163,15 @@ def comment_is_satisfied(tags: set[str], comment: str) -> bool:
     return False
 
 
+def _owner_repo(repo: str) -> str:
+    return "/".join(repo.split("/")[:2])
+
+
+def tag_only_ok(repo: str, ref: str) -> bool:
+    """True only for an allow-listed reusable workflow (full path) referenced by an exact vMAJOR.MINOR.PATCH tag."""
+    return repo in TAG_ONLY_EXCEPTIONS and _EXACT_TAG.match(ref) is not None
+
+
 def main(argv: list[str]) -> int:
     offline = "--offline" in argv
     refs = scan()
@@ -163,11 +180,11 @@ def main(argv: list[str]) -> int:
 
     for path, lineno, repo, ref, comment in refs:
         where = f"{path.relative_to(ROOT)}:{lineno}"
-        if repo in TAG_ONLY_EXCEPTIONS and _EXACT_TAG.match(ref):
+        if tag_only_ok(repo, ref):
             if not offline:
-                by_commit = tags_by_commit(repo)
+                by_commit = tags_by_commit(_owner_repo(repo))
                 if by_commit is None:
-                    problems.append(f"{where}: could not reach github.com/{repo} to verify tag {ref}")
+                    problems.append(f"{where}: could not reach github.com/{_owner_repo(repo)} to verify tag {ref}")
                 elif not any(ref in tags for tags in by_commit.values()):
                     problems.append(f"{where}: {repo} has no release tag {ref} upstream")
             continue
@@ -178,7 +195,7 @@ def main(argv: list[str]) -> int:
             continue
         if offline or not _TAGLIKE.match(comment):
             continue
-        by_commit = tags_by_commit(repo)
+        by_commit = tags_by_commit(_owner_repo(repo))
         if by_commit is None:
             problems.append(
                 f"{where}: could not reach github.com/{repo} to verify its "
