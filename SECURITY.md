@@ -412,7 +412,7 @@ current release.
 ## Verifying release artifacts
 
 Every tagged release (`v*`) is signed **keylessly** with [Sigstore](https://www.sigstore.dev/)
-cosign and carries **SLSA v1 provenance**, and the signatures are published
+cosign and carries **SLSA provenance** (the v0.2 predicate that `slsa-github-generator` v2.1.0 emits), and the signatures are published
 with the release so you can actually check them. The signing workflow
 (`.github/workflows/release.yml`) uses **no private key and no secret**: its
 cosign signatures are bound to this repository's GitHub Actions OIDC identity
@@ -466,10 +466,11 @@ cosign verify-blob \
   fengarde-<VERSION>.tar.gz
 ```
 
-### 3. Verify the SLSA v1 provenance (attestation)
+### 3. Verify the SLSA provenance (attestation)
 
-Each release carries an `intoto.jsonl` SLSA v1 provenance attestation (plus its
-`.sig` and `.cert`), generated and keyless-signed by the official
+Each release carries one `intoto.jsonl` file: a sigstore bundle (v0.3) whose DSSE envelope is the SLSA
+provenance (v0.2 predicate) with the signing certificate inside it - there are no separate `.sig`/`.cert`
+files. It is generated and keyless-signed by the official
 `slsa-framework/slsa-github-generator` reusable workflow. It attests that the
 release artifacts (the source tarball and every pushed service image) were
 built from this repository and this git ref.
@@ -492,15 +493,23 @@ cosign verify-blob-attestation \
   --certificate-identity-regexp \
     '^https://github.com/slsa-framework/slsa-github-generator/\.github/workflows/generator_generic_slsa3\.yml@refs/tags/v2\.1\.0$' \
   --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
-  --signature <provenance>.intoto.jsonl.sig \
-  --certificate <provenance>.intoto.jsonl.cert \
+  --bundle <provenance>.intoto.jsonl \
   --type slsaprovenance \
   fengarde-<VERSION>.tar.gz
 ```
 
+(Tested 2026-10-22 with cosign v3.0.2 against the v0.11.2 release: `Verified OK`; with cosign 2.4.x add
+`--new-bundle-format`. The attested subjects are the tarball and every service image digest.)
+
 where `<provenance>` is the attestation filename from the release (it is the
 tarball name with `.intoto.jsonl` appended, e.g.
 `fengarde-<VERSION>.tar.gz.intoto.jsonl`).
+
+**Re-runs.** The signing identity is the workflow ref that ran: a release run by pushing a `v*` tag is signed as
+`release.yml@refs/tags/vX.Y.Z` and passes every check above. A manual `workflow_dispatch` re-run is signed as
+`release.yml@refs/heads/main` and does NOT match these regular expressions (it also re-signs the images), so
+release by pushing a new tag; use a dispatch run only to repair an incomplete release and say so in its notes.
+(v0.11.2 was re-run by dispatch on 2026-10-22: its tarball bundle and image signatures carry the `main` identity.)
 
 **What verification proves and does not:** a green cosign check proves the
 artifact you downloaded is byte-for-byte the artifact this repository built
