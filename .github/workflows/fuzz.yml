@@ -50,7 +50,8 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install atheris
-        run: pip install atheris
+        # pyyaml: make_seeds.py imports tools/check_rule_producers.py, which loads the rule files
+        run: pip install atheris pyyaml
       - name: Restore corpus cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
         with:

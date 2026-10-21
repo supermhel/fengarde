@@ -22,7 +22,7 @@ def _base(path) -> str:
 def launch_info(parent_image, image, command_line: Optional[str] = None) -> dict:
     """``{"parent", "image", "suspicious"}``; ``suspicious`` is True for a document host spawning a shell/script host."""
     parent, child = _base(parent_image), _base(image)
-    info = {"suspicious": parent in _PARENTS and child in _CHILDREN}
+    info: dict = {"suspicious": parent in _PARENTS and child in _CHILDREN}
     if parent_image:
         info["parent"] = str(parent_image)[:260]
     if image:

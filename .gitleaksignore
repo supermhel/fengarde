@@ -1,0 +1,8 @@
+# gitleaks false positives (reviewed 2026-10-21). Each line is one finding fingerprint.
+# These are SHA-256 pins of PUBLIC rule files (eval/twin/oracle_*.yaml provenance.rules_read), keyed by rule
+# names like common_password_spray, which the generic-api-key heuristic reads as "password: <high-entropy>".
+# They are content hashes of committed rules, not credentials. Real secret detection stays fully on.
+13d5ca91f786190b52f0650b9abafd0db2b53584:eval/twin/oracle_cloud_iam_abuse.yaml:generic-api-key:26
+13d5ca91f786190b52f0650b9abafd0db2b53584:eval/twin/oracle_ransomware.yaml:generic-api-key:34
+13d5ca91f786190b52f0650b9abafd0db2b53584:eval/twin/oracle_supply_chain_ci.yaml:generic-api-key:22
+dc73471cdb354a3cb8f180a2a70ee03441ecd24b:eval/twin/oracle_phishing_bec.yaml:generic-api-key:51
