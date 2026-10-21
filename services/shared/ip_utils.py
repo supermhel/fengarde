@@ -60,6 +60,10 @@ def valid_ip(value) -> Optional[str]:
     """
     if not isinstance(value, str):
         return None
+    # IPv6 zone / scope id ("fe80::1%eth0"): Python's ipaddress (3.9+) accepts ANY text after the '%' and str() keeps
+    # it, but Contract A's ip pattern has no zone. Found by the nightly fuzz job (db_audit, 2026-10-21): "::%<bytes>"
+    # produced a schema-invalid event. The zone names an interface, not the address, so drop it.
+    value = value.split("%", 1)[0]
     try:
         addr = ipaddress.ip_address(value)
     except ValueError:

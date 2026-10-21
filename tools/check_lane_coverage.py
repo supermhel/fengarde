@@ -702,7 +702,7 @@ def _require_hashes(pins: dict[str, str], req: Path) -> list[str]:
 
 
 CI_REQUIREMENTS = ROOT / ".github" / "ci-requirements"
-_ANY_PIN_RE = re.compile(r"^([A-Za-z0-9_.-]+)==([\w.+!]+)\s*[\\]?\s*$")
+_ANY_PIN_RE = re.compile(r"^([A-Za-z0-9_.-]+)==([\w.+!]+)\s*(?:;[^\\]*)?[\\]?\s*$")
 
 
 def _check_ci_requirements(service_pins: dict[str, dict[str, str]]) -> list[str]:
