@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (2026-10-21, CI split + new-rule cascade helper)
+
+- **CI no longer runs the whole gate as one ~25-30 min serial step.** `run_all_tests.sh` gained `GATE_TIER` (unset = the full
+  gate, unchanged); `ci.yml` runs `fast-gate` on every PR, the eval harness as parallel `eval-twin` / `eval-layers` /
+  `eval-matrix` jobs followed by `eval-report` and `eval-gates` (artifacts handed over with upload/download-artifact) on PRs
+  touching eval-affecting paths (`tools/ci_eval_filter.py`), and `full-gate` (the exact old command) on every push to `main`.
+  `contract-tests` stays the required check name and becomes an aggregator over all of them. `tools/test_gate_tiers.py` proves
+  the tiers cover every stanza. See CONTRIBUTING.md "CI layout".
+
+### Added (2026-10-21, `tools/rule_cascade.py`)
+
+- Runs the generators a new rule needs (`technique_matrix.py --write-doc`, `evasion_cost.py --seed 7 --write-doc`, `--update-floor`
+  for a new stateful rule) and the cheap gates that fail first, then prints the manual checklist (producer fixture, coverage row,
+  waiver or storyline, probe template, F4 listing, oracle pins, rule counts). Never edits oracles, waivers or the ratchet.
+
 ### Added (2026-10-20, recall work part 4: the three owner-approved rules)
 
 - `win_office_spawns_shell` (T1204.002: document host -> shell/script host; Sysmon 1 and Windows 4688 now carry

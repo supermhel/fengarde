@@ -527,6 +527,12 @@ echo "== Phase 5 item 10 (2026-10-14): DCO check (per-commit, author-matched, fa
 $PY tools/test_check_dco.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 
 echo
+echo "== CI layout: tiers cover every stanza, eval path filter, new-rule cascade helper =="; LAST_HEADER="== CI layout: tiers cover every stanza, eval path filter, new-rule cascade helper =="
+$PY tools/test_gate_tiers.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+$PY tools/test_ci_eval_filter.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+$PY tools/test_rule_cascade.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+
+echo
 echo "== React console: typecheck + unit tests (services/ws7-dashboard/app) =="; LAST_HEADER="== React console: typecheck + unit tests (services/ws7-dashboard/app) =="
 # node is required: a console that cannot be typechecked must not pass the gate silently (R4-#69 stance).
 if command -v npm >/dev/null 2>&1; then

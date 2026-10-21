@@ -92,6 +92,23 @@ never fire at runtime. `check_rule_producers.py` catches the opposite trap: a
 rule keyed on a `class_uid`/field no shipped parser produces (a "dormant" rule
 that passes every unit test but can never match real data).
 
+A new rule also moves generated tables and pins in the eval harness (technique matrix,
+evasion-cost table and floor, producer fixture, coverage row, waivers or a storyline, rule
+counts). Run the helper instead of finding them one 30-minute gate run at a time:
+
+```sh
+python tools/rule_cascade.py               # new rule files = added vs origin/main, plus uncommitted
+python tools/rule_cascade.py --no-generate # report only, writes nothing
+```
+
+It runs the generators (`technique_matrix.py --write-doc`, `evasion_cost.py --seed 7
+--write-doc`, and `--update-floor` only when a *stateful* rule is new; never `--allow-lower`),
+then the cheap gates that fail first (`validate_rules`, `check_rule_producers`,
+`check_lane_coverage`, the technique matrix, the evasion-cost gate). It prints a checklist:
+`TODO` is proven missing by a gate, `CHECK` is a reminder no cheap gate can verify (oracle pins,
+rule counts in README/docs/index.html/console_e2e). It never edits an oracle, a waiver, the
+findings register, a fixture or the ratchet baseline: those are decisions and stay yours.
+
 ---
 
 ## Project scope — read this before filing a feature request
@@ -120,6 +137,34 @@ See [SSOT.md](SSOT.md) §3 for the full current doc index and each doc's trust
 level. The original v0.1 build plan is historical context only (it describes
 the project's first slice, not its current scope) and is no longer kept in
 this repo's working tree — see SSOT.md §4.
+
+---
+
+## CI layout
+
+`./run_all_tests.sh` is still the whole gate, and `make test` runs all of it. CI runs the same
+script as **tiers** (`GATE_TIER=<name>`; stanzas are wrapped in `tier_on` blocks, and
+`tools/test_gate_tiers.py` fails if a stanza sits in no tier, so the tiers together are the full gate):
+
+| Job (`.github/workflows/ci.yml`) | Runs | When |
+|---|---|---|
+| `fast-gate` | tier `fast`: contract validator, parsers, rules, services, producer and lane-coverage guards, DCO tests, console typecheck | every PR and push |
+| `eval-twin`, `eval-layers`, `eval-matrix` | tiers of the eval harness (`eval/twin`, `eval/adversarial`, `eval/detection_accuracy`), in parallel | PRs that touch an eval-affecting path |
+| `eval-report` | tier `eval-report`; downloads `eval-layers`' `matrix.latest.json` | after `eval-layers` |
+| `eval-gates` | ratchet check + baseline guard + scorecard check/lint; downloads every artifact above | after all four |
+| `full-gate` | the unmodified `bash run_all_tests.sh` | every push to `main`, and manual runs |
+| `contract-tests` | aggregator and the **required** check name: green only if every tier that should have run is green | always |
+
+Artifacts move between jobs with `actions/upload-artifact` / `download-artifact`
+(`eval/adversarial/out/`, `eval/twin/out/`, `eval/twin/report.latest.json`); they are stamped with
+`eval/twin/fingerprint.py`, so a stale one fails loudly. The eval jobs run when the diff touches
+`contracts/`, `services/ws2-normalization/`, `services/ws4-detection/`, `services/ws8-correlation/`,
+`services/shared/`, `eval/`, `tools/generate_scorecard.py`, `run_all_tests.sh` or the CI workflow
+(the list lives in `tools/ci_eval_filter.py`: the eval harness replays the real WS-2 to WS-8 path and
+fingerprints `contracts/` and `services/`, so the filter is wider than rules, parsers and detection).
+A docs-only or console-only PR skips them and `contract-tests` still goes green; `main` runs the
+full gate regardless. Run one tier locally with `GATE_TIER=eval-layers bash run_all_tests.sh`
+(tiers `eval-report` and `eval-gates` need the earlier tiers' artifacts in the same checkout).
 
 ---
 

@@ -20,7 +20,8 @@ GATE = (ROOT / "run_all_tests.sh").read_text(encoding="utf-8").split("\n")
 WF = yaml.safe_load((ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8"))
 problems: list[str] = []
 
-declared = next(re.search(r'GATE_TIERS="([^"]+)"', l).group(1).split() for l in GATE if l.startswith("GATE_TIERS="))  # type: ignore[union-attr]
+_m = next(re.search(r'GATE_TIERS="([^"]+)"', ln) for ln in GATE if ln.startswith("GATE_TIERS="))
+declared = _m.group(1).split() if _m else []
 blocks: list[tuple[str, int, int]] = []  # (tier, first line, last line), 1-indexed
 open_tier, start = None, 0
 for n, line in enumerate(GATE, 1):
@@ -70,9 +71,9 @@ for jid, job in jobs.items():
     for step in job.get("steps", []):
         if "run" in step and "run_all_tests.sh" in step["run"]:
             runs.setdefault(jid, []).append(str(step.get("env", {}).get("GATE_TIER", "")))
-tier_jobs = {t: next((j for j, v in runs.items() if t in v), None) for t in declared}
+tier_jobs = {t: next((j for j, v in runs.items() if t in v), "") for t in declared}
 for t, j in tier_jobs.items():
-    if j is None:
+    if not j:
         problems.append(f"ci.yml has no job running GATE_TIER={t}")
 if runs.get("full-gate") != [""]:
     problems.append(f"ci.yml full-gate must run run_all_tests.sh once with no GATE_TIER (got {runs.get('full-gate')})")
