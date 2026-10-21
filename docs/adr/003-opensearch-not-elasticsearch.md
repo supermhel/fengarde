@@ -9,11 +9,21 @@ full-text + structured query, reasonable ingest throughput, and an index
 lifecycle story. The default choice for most SIEM projects is the
 Elastic stack, but Elasticsearch/Kibana moved off an OSI-approved license
 to the SSPL in 2021 (Elastic-licensed features require a subscription past a
-certain point) — an asterisk that most "open-source SIEM" write-ups eventually
-get to in a footnote. (Correction 2026-10-20: this ADR originally said Wazuh
-inherits that asterisk. It does not - Wazuh's indexer is an OpenSearch fork
-too, as the README now says. Security Onion 2.x does sit on Elasticsearch and
-ships its own components under the Elastic License 2.0, per its docs.)
+certain point) -- an asterisk that most "open-source SIEM" write-ups eventually
+get to in a footnote. Elastic added AGPLv3 as a further licence option for
+Elasticsearch and Kibana in 2024 (not re-checked for this ADR); the choice of
+OpenSearch here rests on its Apache-2.0 licence and does not depend on how that
+licensing question is judged.
+
+Correction 2026-10-20: this ADR originally said Wazuh inherits that asterisk.
+For current Wazuh releases it does not: the Wazuh indexer is an OpenSearch fork
+too, as the README says (source: Wazuh's public documentation and the
+wazuh-indexer repository; the repository's LICENSE file itself was not read when
+this was written, so check it before quoting this elsewhere). Earlier Wazuh
+releases used Elasticsearch-based components (project history, not re-checked), so
+the statement is scoped to current releases. Security Onion 2.4 sits on Elasticsearch and ships its own
+components under the Elastic License 2.0, per https://docs.securityonion.net/en/2.4/license.html
+(2.4 only; other versions were not checked).
 
 ## Decision
 
