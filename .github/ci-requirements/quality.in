@@ -1,0 +1,6 @@
+ruff
+mypy
+coverage
+pyyaml==6.0.2
+types-PyYAML
+hypothesis

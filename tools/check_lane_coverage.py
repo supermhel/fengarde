@@ -701,6 +701,37 @@ def _require_hashes(pins: dict[str, str], req: Path) -> list[str]:
     return problems
 
 
+CI_REQUIREMENTS = ROOT / ".github" / "ci-requirements"
+_ANY_PIN_RE = re.compile(r"^([A-Za-z0-9_.-]+)==([\w.+!]+)\s*(?:;[^\\]*)?[\\]?\s*$")
+
+
+def _check_ci_requirements(service_pins: dict[str, dict[str, str]]) -> list[str]:
+    """Every ``pkg==ver`` line in .github/ci-requirements/*.txt is followed by a --hash=, and PyYAML/redis agree with
+    the single version the services pin. Missing directory is a failure, not a pass (vacuous green)."""
+    files = sorted(CI_REQUIREMENTS.glob("*.txt"))
+    if not files:
+        return ["[FAIL] A6(ci): .github/ci-requirements/*.txt not found -- CI installs are not hash-pinned"]
+    problems: list[str] = []
+    shipped: dict[str, set[str]] = {"PyYAML": set(), "redis": set()}
+    for svcpins in service_pins.values():
+        for pkg in shipped:
+            if pkg in svcpins:
+                shipped[pkg].add(svcpins[pkg])
+    for req in files:
+        lines = req.read_text(encoding="utf-8", errors="ignore").splitlines()
+        for i, line in enumerate(lines):
+            m = _ANY_PIN_RE.match(line)
+            if m is None:
+                continue
+            if not (i + 1 < len(lines) and "--hash=" in lines[i + 1]):
+                problems.append(f"[FAIL] A6(ci-hash): {m.group(1)}=={m.group(2)} in {req.name} has NO --hash= pin")
+            canon = {"pyyaml": "PyYAML", "redis": "redis"}.get(m.group(1).lower())
+            if canon and shipped[canon] and m.group(2) not in shipped[canon]:
+                problems.append(f"[FAIL] A6(ci-drift): {canon} {m.group(2)} in {req.name} but services ship "
+                                f"{', '.join(sorted(shipped[canon]))} -- CI would test a different build")
+    return problems
+
+
 def _assert_pin_consistency() -> list[str]:
     pins = _find_pins()
     if not pins:
@@ -730,6 +761,10 @@ def _assert_pin_consistency() -> list[str]:
     # 6b: every pinned pkg must carry a --hash=.
     for req in SERVICES.rglob("requirements*.txt"):
         problems += _require_hashes({}, req)
+
+    # 6b3 (2026-10-21, PR #110 review): the hash-pinned CI requirement files are checked too -- every pin carries a
+    # --hash= and PyYAML/redis match the version the services ship, so CI never tests a different build than runs.
+    problems += _check_ci_requirements(pins)
 
     # 6b2: intra-service pin collisions (PR #80 finding 8) -- two requirements
     # files inside ONE service pinning the same pkg to different versions.

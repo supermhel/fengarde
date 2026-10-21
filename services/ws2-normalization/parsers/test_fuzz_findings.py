@@ -73,6 +73,14 @@ for bad in ({"a": 1}, ["x"], 5):
     else:
         check(out is None, f"n8n_audit must reject a non-string eventType {bad!r}")
 
+# valid_ip: an IPv6 zone id with arbitrary text after '%' produced a schema-invalid endpoint (nightly fuzz, db_audit)
+from shared.ip_utils import valid_ip  # noqa: E402
+check(valid_ip("fe80::1%eth0") == "fe80::1", "zone id must be dropped, address kept")
+check(valid_ip("::%" + chr(0x8a) * 8) == "::", "garbage zone id must not survive")
+check(valid_ip("%eth0") is None and valid_ip("1.2.3.4%x") == "1.2.3.4", "bare zone rejected; IPv4 zone-like suffix dropped")
+ev = parse("db_audit", {"ip": "::%" + chr(0x8a) * 8, "operation": "SELECT", "object": "t", "user": "u", "host": "h"})
+check(ev is None or validate(ev) == [], f"db_audit with a zone-id ip must stay schema-valid: {ev and validate(ev)}")
+
 if FAILS:
     for f in FAILS:
         print("[FAIL]", f)

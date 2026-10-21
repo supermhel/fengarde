@@ -41,7 +41,7 @@ jobs:
         # `import redis` inside _RedisBus.__init__ raises ImportError before
         # the test's forced ValueError is ever reached, so the test can only
         # ever hit the fallback branch and always fails.
-        run: pip install pyyaml hypothesis redis
+        run: pip install --require-hashes -r .github/ci-requirements/yaml-hypothesis-redis.txt
       - name: Full zero-infra gate
         run: PYTHON=python3 bash run_all_tests.sh
 
@@ -58,7 +58,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install ratchet dependencies
-        run: pip install pyyaml
+        run: pip install --require-hashes -r .github/ci-requirements/yaml.txt
       - name: Phase 6 acceptance controls
         run: python eval/twin/test_ratchet.py
       - name: Phase 6 PR baseline guard
@@ -85,7 +85,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install deps
-        run: pip install pyyaml redis
+        run: pip install --require-hashes -r .github/ci-requirements/yaml-redis.txt
       - name: Runner ack + XAUTOCLAIM redelivery + DLQ on real Redis
         env:
           BUS_BACKEND: redis
@@ -162,7 +162,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install deps
-        run: pip install pyyaml redis
+        run: pip install --require-hashes -r .github/ci-requirements/yaml-redis.txt
       - name: hit_distinct Lua fallback on a real Redis 6.0
         env:
           FENGARDE_E2E_STRICT: "1"
@@ -195,7 +195,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install deps
-        run: pip install pyyaml
+        run: pip install --require-hashes -r .github/ci-requirements/yaml.txt
       - name: Live OpenSearch integration tests
         env:
           OPENSEARCH_URL: http://localhost:9200
@@ -327,6 +327,22 @@ jobs:
         if: always()
         run: docker compose -f infra/docker-compose.yml down -v
 
+  # React console (WS-7): the dev-tooling majors bumped in the supply-chain pin change (vite, vitest, plugin-react) are
+  # only exercised by a real install, type-check, build and test run -- nothing else in CI builds the console.
+  console:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/ws7-dashboard/app
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1  # v7.1.0
+        with:
+          node-version: "22"
+      - run: npm ci
+      - run: npm run build
+      - run: npm test
+
   # M2 code-quality floor (PLAN_C Tier 2.3). Lint blocks; coverage blocks at the
   # MEASURED baseline (see tools/coverage_gate.py) not the unmet-for-WS-3 85%
   # target -- see that file's docstring for why. mypy is BLOCKING as of
@@ -343,7 +359,7 @@ jobs:
         # hypothesis: the coverage gate runs parsers/test_property_hardening.py
         # (tools/coverage_gate.py line ~33), which imports it -- without it the
         # gate dies on ModuleNotFoundError before measuring anything.
-        run: pip install ruff mypy coverage pyyaml types-PyYAML hypothesis
+        run: pip install --require-hashes -r .github/ci-requirements/quality.txt
       - name: ruff (blocking)
         run: ruff check services/ tools/
       - name: mypy (blocking -- see pyproject.toml)
@@ -369,13 +385,13 @@ jobs:
       # against a number actually stored in [tool.mutmut]).
       - name: mutmut (informational, non-blocking -- see pyproject.toml [tool.mutmut])
         run: |
-          pip install mutmut
+          pip install --require-hashes -r .github/ci-requirements/mutmut.txt
           python -m mutmut run || true
           python -m mutmut results || true
           echo "mutmut survival rate is informational (pyproject.toml [tool.mutmut]) -- not blocking CI, no threshold parser exists yet"
       - name: SBOM freshness (blocking -- sbom.json must match requirements.txt)
         run: |
-          pip install cyclonedx-bom
+          pip install --require-hashes -r .github/ci-requirements/cyclonedx.txt
           python tools/generate_sbom.py --check
 
   # Dependency-vulnerability audit of every service's pinned requirements.txt.
@@ -395,7 +411,7 @@ jobs:
           python-version: "3.12"
       - name: Audit all pinned service dependencies
         run: |
-          pip install pip-audit
+          pip install --require-hashes -r .github/ci-requirements/pip-audit.txt
           failed=""
           for req in services/*/requirements.txt; do
             echo "=== $req ==="
@@ -493,7 +509,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install deps
-        run: pip install pyyaml
+        run: pip install --require-hashes -r .github/ci-requirements/yaml.txt
       - name: Coverage scorecard tests
         run: python eval/attack/test_coverage_layer.py
       - name: Build scorecard + Navigator layers

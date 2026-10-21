@@ -37,7 +37,7 @@ jobs:
       - name: Install deps
         # PyYAML: the twin scorecard + oracle.yaml loader need it. The
         # harness itself is stdlib-only.
-        run: pip install pyyaml
+        run: pip install --require-hashes -r .github/ci-requirements/yaml.txt
 
       # Deterministic Layer A matrix first -- mutation_robustness in the twin
       # scorecard reads it, and the adversary's grader reuses the same real
