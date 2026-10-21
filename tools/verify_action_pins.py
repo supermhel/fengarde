@@ -53,6 +53,14 @@ _SHA = re.compile(r"^[0-9a-f]{40}$")
 # Tag-shaped comments only: `# v4.37.3`, `# v4`. Anything else is prose.
 _TAGLIKE = re.compile(r"^v?\d[\w.\-]*$")
 
+# Reusable workflows that can ONLY be referenced by an exact release tag. The SLSA generator's builder fetch rejects a commit SHA
+# ("Invalid ref: <sha>. Expected ref of the form refs/tags/vX.Y.Z", seen on the v0.11.2 release run, 2026-10-21), so SHA pinning
+# makes provenance fail. Allowed ONLY as a full vMAJOR.MINOR.PATCH tag (never a branch or a floating major), and the tag must
+# exist upstream (checked online). A moved tag is the accepted residual risk; the signing identity that SECURITY.md verifies is
+# @refs/tags/<that tag>, so a substituted generator would not verify.
+TAG_ONLY_EXCEPTIONS = {"slsa-framework/slsa-github-generator"}
+_EXACT_TAG = re.compile(r"^v\d+\.\d+\.\d+$")
+
 
 def parse_uses(line: str) -> tuple[str, str, str] | None:
     """(repo, ref, comment) for an action reference, or None.
@@ -155,6 +163,14 @@ def main(argv: list[str]) -> int:
 
     for path, lineno, repo, ref, comment in refs:
         where = f"{path.relative_to(ROOT)}:{lineno}"
+        if repo in TAG_ONLY_EXCEPTIONS and _EXACT_TAG.match(ref):
+            if not offline:
+                by_commit = tags_by_commit(repo)
+                if by_commit is None:
+                    problems.append(f"{where}: could not reach github.com/{repo} to verify tag {ref}")
+                elif not any(ref in tags for tags in by_commit.values()):
+                    problems.append(f"{where}: {repo} has no release tag {ref} upstream")
+            continue
         if not _SHA.match(ref):
             problems.append(
                 f"{where}: {repo}@{ref} is not SHA-pinned -- a tag can be moved "
