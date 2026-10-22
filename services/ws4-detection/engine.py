@@ -55,6 +55,7 @@ if str(_SERVICES_DIR) not in sys.path:
     sys.path.insert(0, str(_SERVICES_DIR))
 
 from shared.envelope import valid_tenant_id  # noqa: E402
+from shared.identity_aliases import IdentityAliasError, canonical_account as _canonical_account, configure as _configure_aliases  # noqa: E402,F401
 from shared.log import get_logger  # noqa: E402
 from shared.window import DequeWindowCounter  # noqa: E402
 
@@ -89,6 +90,11 @@ def _event_tenant(event: dict) -> str:
 _MAX_CLOCK_SKEW_MS = 300_000  # 5 minutes of tolerated source clock drift
 # group_by paths that name an account; their window key is the ADR-009 canonical actor (F2)
 _ACCOUNT_GROUP_FIELDS = frozenset({"actor.user.name", "unmapped.target_user.name"})
+
+# F2 (2026-10-21): explicit per-tenant realm alias map, shared with WS-8/WS-9 (shared/identity_aliases.py).
+# load_rules() (re)loads it, so a malformed map stops rule loading (boot fails; hot reload keeps the
+# previous rules) instead of silently running without it. Empty map == strip+casefold only (unchanged).
+configure_identity_aliases = _configure_aliases
 
 
 def _get_path_parts(doc: dict, parts: tuple):
@@ -276,19 +282,87 @@ def _event_fingerprint(event: dict) -> str:
     return hashlib.sha1(blob.encode("utf-8", "replace")).hexdigest()[:16]
 
 
-def _window_time_of(event: dict, periodicity: bool):
-    """The raw timestamp that drives a stateful window (Q12, 2026-10-20).
+_WINDOW_TIME_MODES = ("clamp", "event", "ingest")
+_DEFAULT_WINDOW_SKEW_MS = 600_000  # F4: 10 min between record clock and receipt clock
+#: process-local count of events whose record clock was replaced by the receipt clock (F4 clamp);
+#: exported by the WS-4 /metrics provider as detection_time_clamped_total.
+CLAMP_STATS = {"time_clamped": 0}
+_env_warned: set = set()
 
-    Default ``event``: the record's own ``time`` (historical replay works, a forged record
-    clock can still stretch a burst - finding F4). ``FENGARDE_WINDOW_TIME_SOURCE=ingest``:
-    the WS-1 receipt time WS-2 stamped as ``siem.received_ms``; falls back to the record time
-    when absent. Periodicity rules always use the record time: their verdict IS the regularity
-    of the event times, and receipt jitter would destroy it."""
-    if not periodicity and os.environ.get("FENGARDE_WINDOW_TIME_SOURCE", "event").strip().lower() == "ingest":
-        recv = (event.get("siem") or {}).get("received_ms")
-        if isinstance(recv, int) and not isinstance(recv, bool):
-            return recv
-    return event.get("time", 0)
+
+def _warn_env_once(name: str, value: str, why: str) -> None:
+    if (name, value) not in _env_warned:
+        _env_warned.add((name, value))
+        _log.warn(f"{name}={value!r} ignored: {why}")
+
+
+def window_time_mode() -> str:
+    """``FENGARDE_WINDOW_TIME_SOURCE``: ``clamp`` (default), ``event`` (replay/backfill opt-out) or
+    ``ingest``. An unknown value falls back to the SAFE default (clamp), never to ``event``."""
+    raw = os.environ.get("FENGARDE_WINDOW_TIME_SOURCE", "clamp").strip().lower() or "clamp"
+    if raw not in _WINDOW_TIME_MODES:
+        _warn_env_once("FENGARDE_WINDOW_TIME_SOURCE", raw, f"not one of {_WINDOW_TIME_MODES}; using clamp")
+        return "clamp"
+    return raw
+
+
+def window_skew_ms() -> int:
+    """``FENGARDE_WINDOW_MAX_SKEW_SECONDS`` (default 600). Invalid/negative -> the default."""
+    raw = os.environ.get("FENGARDE_WINDOW_MAX_SKEW_SECONDS", "").strip()
+    if not raw:
+        return _DEFAULT_WINDOW_SKEW_MS
+    try:
+        secs = float(raw)
+        if secs < 0 or not math.isfinite(secs):
+            raise ValueError
+    except ValueError:
+        _warn_env_once("FENGARDE_WINDOW_MAX_SKEW_SECONDS", raw, "not a non-negative number; using 600")
+        return _DEFAULT_WINDOW_SKEW_MS
+    return int(secs * 1000)
+
+
+def effective_skew_ms(window_ms: int | None) -> int:
+    """Clamp limit for a rule with a ``window_ms`` window: min(global skew, window/2)."""
+    skew = window_skew_ms()
+    return skew if not window_ms else min(skew, window_ms // 2)
+
+
+def _window_time_of(event: dict, periodicity: bool, window_ms: int | None = None, stamp: bool = True):
+    """The raw timestamp that drives a stateful window (F4 clamp 2026-10-21, Q12 2026-10-20).
+
+    ``clamp`` (DEFAULT): the record's own ``time``, unless it differs from the WS-1 receipt time
+    (``siem.received_ms``, stamped by WS-2) by MORE than the skew limit in either direction -- then
+    the receipt time drives the window and the event is flagged ``siem.time_clamped``. The limit is
+    WINDOW-AWARE: ``min(global skew, window/2)``. Record times kept inside +-window/2 of receipt
+    span at most one window, so a burst that ARRIVES together is counted in one sliding window
+    whatever times the log author forges; beyond that the receipt time (which the author does not
+    control) is used. Exactly at the limit is still trusted. No usable ``received_ms`` -> the record time (cannot be measured).
+    ``event``: always the record time (the pre-clamp behaviour; the explicit opt-out for
+    historical replay / backfill, whose record times are legitimately far from receipt time).
+    ``ingest`` (Q12): always the receipt time.
+    Periodicity rules always use the record time: their verdict IS the regularity of the event
+    times, and receipt jitter would destroy it."""
+    t = event.get("time", 0)
+    if periodicity:
+        return t
+    mode = window_time_mode()
+    if mode == "event":
+        return t
+    siem = event.get("siem")
+    if not isinstance(siem, dict):
+        return t
+    recv = siem.get("received_ms")
+    if not isinstance(recv, int) or isinstance(recv, bool):
+        return t
+    if mode == "ingest":
+        return recv
+    if (isinstance(t, (int, float)) and not isinstance(t, bool) and math.isfinite(t)
+            and abs(t - recv) > effective_skew_ms(window_ms)):
+        if stamp and not siem.get("time_clamped"):
+            siem["time_clamped"] = True
+            CLAMP_STATS["time_clamped"] += 1
+        return recv
+    return t
 
 
 def _valid_window_time(value) -> int | None:
@@ -585,14 +659,15 @@ class Rule:
         is canonicalised with ``strip().casefold()``, the same canonical actor
         WS-8 uses. A raw key let one Windows account respelled "Admin" /
         "admin " (the same principal to the source) split one burst into two
-        windows that each stay under threshold. DOMAIN\\ / UPN forms are NOT
-        stripped (that would amend ADR-009); evasion_findings.yaml carries the
-        residual. Every alert_key of an account-grouped rule changes once."""
+        windows that each stay under threshold. DOMAIN\\ / UPN forms collapse ONLY
+        through the operator's explicit per-tenant alias map
+        (configure_identity_aliases, contracts/identity_aliases.yaml); without a
+        map they stay distinct (never guess two names are one person). Every alert_key of an account-grouped rule changes once."""
         value = _get_path_parts(event, self._group_by_parts)
         if value is None:
             return None
         if self.group_by in _ACCOUNT_GROUP_FIELDS and isinstance(value, str):
-            return value.strip().casefold()
+            return _canonical_account(_event_tenant(event), value)
         return str(value)
 
     def _selection_matches(self, compiled_sel: list, event: dict) -> bool:
@@ -721,8 +796,12 @@ class Rule:
             # alert always has a real group here -- str() of None can only
             # appear if alert_key is called for an event evaluate() rejected.
             group = str(self._group_of(event))
-            now = int(event.get("time", 0) or 0)
             window_ms = int(self.window_seconds) * 1000
+            # The bucket follows the SAME clock that drove the window (F4 clamp): a forged record
+            # time must not mint a different alert id, and a byte-identical redelivery of a forged
+            # burst (which can fire on an earlier event the second time) must land on the same id.
+            # Live-proof finding 2026-10-22: with the raw record time, redelivery duplicated the doc.
+            now = int(_window_time_of(event, bool(self.periodicity), window_ms, stamp=False) or 0)
             bucket = now // window_ms if window_ms else now
             # F1 follow-up (adversarial review of 6e3fbe4): the window COUNTER
             # key was namespaced by tenant in evaluate() above, but this id --
@@ -889,7 +968,7 @@ class Rule:
             # as every other malformed-input path in this evaluator.)
             return False
         group = group_value
-        raw_time = _window_time_of(event, bool(self.periodicity))
+        raw_time = _window_time_of(event, bool(self.periodicity), self.window_seconds * 1000)
         now = _valid_window_time(raw_time)
         if now is None:
             # Non-numeric/NaN/inf time would crash the counter arithmetic
@@ -1074,6 +1153,7 @@ def _validate_loaded_rule(raw: dict, path: Path) -> None:
 def load_rules(rules_dir: Path, allowlists_dir: Path | None = None, *, strict_empty: bool = False) -> list[Rule]:
     """``strict_empty``: raise instead of skipping a zero-byte/truncated rule file (used by hot reload so a bad
     edit keeps the PREVIOUS rule set live; boot keeps the lenient skip + warning). gap-hunt R4 #17."""
+    configure_identity_aliases()
     rules = []
     empty_files: list = []
     resolved_allowlists = allowlists_dir or (Path(rules_dir).parent / "allowlists")

@@ -6,8 +6,7 @@ rule_sets:
       clock_forgeable:
         basis: harness-measured
         better: min
-        open_finding: F4-record-clock-trust
-        value: true
+        value: false
       extra_seconds:
         basis: harness-measured
         better: max
@@ -25,6 +24,10 @@ rule_sets:
         better: max
         value: 3
       respelling_evades:
+        basis: harness-measured
+        better: min
+        value: false
+      respelling_evades_mapped:
         basis: harness-measured
         better: min
         value: false
@@ -47,8 +50,7 @@ rule_sets:
       clock_forgeable:
         basis: harness-measured
         better: min
-        open_finding: F4-record-clock-trust
-        value: true
+        value: false
       extra_seconds:
         basis: harness-measured
         better: max
@@ -66,6 +68,10 @@ rule_sets:
         better: max
         value: 3
       respelling_evades:
+        basis: harness-measured
+        better: min
+        value: false
+      respelling_evades_mapped:
         basis: harness-measured
         better: min
         value: false
@@ -106,6 +112,10 @@ rule_sets:
         better: max
         value: 2
       respelling_evades:
+        basis: harness-measured
+        better: min
+        value: false
+      respelling_evades_mapped:
         basis: harness-measured
         better: min
         value: false
@@ -179,6 +189,10 @@ rule_sets:
         basis: harness-measured
         better: min
         value: false
+      respelling_evades_mapped:
+        basis: harness-measured
+        better: min
+        value: false
       stealth_rate:
         basis: harness-measured
         better: min
@@ -214,8 +228,7 @@ rule_sets:
       clock_forgeable:
         basis: harness-measured
         better: min
-        open_finding: F4-record-clock-trust
-        value: true
+        value: false
       extra_seconds:
         basis: harness-measured
         better: max
@@ -233,6 +246,10 @@ rule_sets:
         better: max
         value: 3
       respelling_evades:
+        basis: harness-measured
+        better: min
+        value: false
+      respelling_evades_mapped:
         basis: harness-measured
         better: min
         value: false
@@ -277,6 +294,10 @@ rule_sets:
         better: max
         value: immune
       respelling_evades:
+        basis: harness-measured
+        better: min
+        value: false
+      respelling_evades_mapped:
         basis: harness-measured
         better: min
         value: false
@@ -336,6 +357,10 @@ rule_sets:
         basis: harness-measured
         better: min
         value: false
+      respelling_evades_mapped:
+        basis: harness-measured
+        better: min
+        value: false
       stealth_rate:
         basis: harness-measured
         better: min
@@ -355,8 +380,7 @@ rule_sets:
       clock_forgeable:
         basis: harness-measured
         better: min
-        open_finding: F4-record-clock-trust
-        value: true
+        value: false
       extra_seconds:
         basis: harness-measured
         better: max
@@ -382,6 +406,10 @@ rule_sets:
         better: min
         open_finding: F2-identity-canonicalisation
         value: true
+      respelling_evades_mapped:
+        basis: harness-measured
+        better: min
+        value: false
       stealth_rate:
         basis: harness-measured
         better: min
@@ -417,8 +445,7 @@ rule_sets:
       clock_forgeable:
         basis: harness-measured
         better: min
-        open_finding: F4-record-clock-trust
-        value: true
+        value: false
       extra_seconds:
         basis: harness-measured
         better: max
@@ -436,6 +463,10 @@ rule_sets:
         better: max
         value: 4
       respelling_evades:
+        basis: harness-measured
+        better: min
+        value: false
+      respelling_evades_mapped:
         basis: harness-measured
         better: min
         value: false
@@ -465,7 +496,7 @@ rule_sets:
       clock_forgeable:
         basis: harness-measured
         better: min
-        value: true
+        value: false
       extra_seconds:
         basis: harness-measured
         better: max
@@ -483,6 +514,10 @@ rule_sets:
         better: max
         value: 2
       respelling_evades:
+        basis: harness-measured
+        better: min
+        value: false
+      respelling_evades_mapped:
         basis: harness-measured
         better: min
         value: false
@@ -527,6 +562,10 @@ rule_sets:
         better: max
         value: immune
       respelling_evades:
+        basis: harness-measured
+        better: min
+        value: false
+      respelling_evades_mapped:
         basis: harness-measured
         better: min
         value: false
@@ -586,6 +625,10 @@ rule_sets:
         basis: harness-measured
         better: min
         value: false
+      respelling_evades_mapped:
+        basis: harness-measured
+        better: min
+        value: false
       stealth_rate:
         basis: harness-measured
         better: min
@@ -605,8 +648,7 @@ rule_sets:
       clock_forgeable:
         basis: harness-measured
         better: min
-        open_finding: F4-record-clock-trust
-        value: true
+        value: false
       extra_seconds:
         basis: harness-measured
         better: max
@@ -624,6 +666,10 @@ rule_sets:
         better: max
         value: 4
       respelling_evades:
+        basis: harness-measured
+        better: min
+        value: false
+      respelling_evades_mapped:
         basis: harness-measured
         better: min
         value: false
@@ -646,8 +692,7 @@ rule_sets:
       clock_forgeable:
         basis: harness-measured
         better: min
-        open_finding: F4-record-clock-trust
-        value: true
+        value: false
       extra_seconds:
         basis: harness-measured
         better: max
@@ -673,6 +718,10 @@ rule_sets:
         better: min
         open_finding: F2-identity-canonicalisation
         value: true
+      respelling_evades_mapped:
+        basis: harness-measured
+        better: min
+        value: false
       stealth_rate:
         basis: harness-measured
         better: min
@@ -708,8 +757,7 @@ rule_sets:
       clock_forgeable:
         basis: harness-measured
         better: min
-        open_finding: F4-record-clock-trust
-        value: true
+        value: false
       extra_seconds:
         basis: harness-measured
         better: max
@@ -727,6 +775,10 @@ rule_sets:
         better: max
         value: 4
       respelling_evades:
+        basis: harness-measured
+        better: min
+        value: false
+      respelling_evades_mapped:
         basis: harness-measured
         better: min
         value: false

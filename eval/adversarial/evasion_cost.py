@@ -160,6 +160,11 @@ def measure_set(probe: ps.FastProbe, rs: ax.RuleSet, burst: ax.Burst, tables: di
         o["class"] == "BUG" and o["ratified"] and o["control_split_without_respelling_detected"]
         for o in resp["ops"])
     agree &= all(o["agree"] for o in resp["ops"])
+    with ax.alias_map():          # F2 under the documented fixture map (the default row above is the residual)
+        resp_m = ax.respelling_axis(lab, tables)
+    row["respelling_mapped"] = {"ops": [{k: o[k] for k in ("source_type", "kind", "op", "evades", "class")}
+                                        for o in resp_m["ops"]]}
+    row["respelling_evades_mapped"] = bool(resp_m["respelling_evades"])
     forg = ax.forgery_axis(lab, tables)
     row["forgery"] = forg
     row["forgery_evades"] = bool(forg.get("forgery_evades"))
@@ -226,6 +231,7 @@ def field_values(row: dict) -> dict:
         out[f"min_keys.{kind}"] = (v["value"], "max")
     for name in TABLE_FIELDS:
         out[name] = (bool(row[name]), "min")
+    out["respelling_evades_mapped"] = (bool(row["respelling_evades_mapped"]), "min")
     return out
 
 
@@ -535,8 +541,8 @@ def doc_table(res: dict) -> str:
     with '| Rule |' -- tools/check_lane_coverage.py reads any such table as the
     rule scorecard and would union its first column into the covered rules."""
     head = ("| Rule-set (key) | Rules | Forgone events | Extra seconds | Stealth ev/s | Min keys | "
-            "Joint frontier | Respelling | Forgery | Clock | Production reachable |")
-    lines = [head, "|" + "---|" * 11]
+            "Joint frontier | Respelling | Respelling (alias map) | Forgery | Clock | Production reachable |")
+    lines = [head, "|" + "---|" * 12]
     for key, r in sorted(res["rule_sets"].items()):
         mk = ", ".join(f"{k}={v['value']}" for k, v in sorted(r["min_keys"].items())) or "n/a"
         jf = r.get("joint_frontier")
@@ -548,7 +554,8 @@ def doc_table(res: dict) -> str:
             str(sched.get("extra_seconds", "n/a")),
             str(sched.get("sustained_events_per_second", "n/a")),
             mk, jtxt,
-            "evades" if r["respelling_evades"] else "no", "evades" if r["forgery_evades"] else "no",
+            "evades" if r["respelling_evades"] else "no",
+            "evades" if r["respelling_evades_mapped"] else "no", "evades" if r["forgery_evades"] else "no",
             "forgeable" if r["clock_forgeable"] else "no",
             "yes" if r["production_reachable"] else "NO (sample map)"]) + " |")
     return "\n".join(lines)

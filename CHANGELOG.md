@@ -43,6 +43,34 @@ Tiered CI and the rule-cascade helper, the SLSA generator referenced by tag (the
   for a new stateful rule) and the cheap gates that fail first, then prints the manual checklist (producer fixture, coverage row,
   waiver or storyline, probe template, F4 listing, oracle pins, rule counts). Never edits oracles, waivers, the findings register or the ratchet baseline; its only writes are the generated blocks of `contracts/detection-coverage.md` and new keys in `eval/adversarial/evasion_floor.yaml` (guarded, see below).
 
+### Changed (2026-10-22, evasion findings F4 and F2; owner decisions)
+
+- **F4 closed: window-aware clamp is the new default window clock.** `FENGARDE_WINDOW_TIME_SOURCE` now defaults to `clamp`.
+  WS-4 drives a stateful window from the record time unless it is more than `min(FENGARDE_WINDOW_MAX_SKEW_SECONDS (600),
+  window/2)` away from `siem.received_ms`, in either direction; then the receipt time is used, `siem.time_clamped: true` is
+  set and `detection_time_clamped_total` counts it. Record times inside +-window/2 span at most one window, so a burst that
+  arrives together is counted whatever times the log author forges. Exactly at the limit is trusted; no `received_ms` means
+  the record time. **Replay / backfill must set `FENGARDE_WINDOW_TIME_SOURCE=event`** (the old behaviour) or historical
+  record times are replaced by "now". `ingest` unchanged. Periodicity rules keep record time (their verdict IS the spacing of
+  the record times, so a receipt clock cannot be substituted; no periodicity rule is among the nine F4 rule sets). Measured:
+  `clock_forgeable` no longer reproduces for any of the nine rule sets; the F4 register entry is deleted and the floors
+  tightened.
+- **F2 closed under a configured alias map; open by default (documented).** Per-tenant realm alias map
+  (`contracts/identity_aliases.yaml`, `$FENGARDE_IDENTITY_ALIASES`, `services/shared/identity_aliases.py`,
+  `contracts/identity-aliases.md`) now folds identity in WS-4 window groups and alert keys, WS-8 tracks / incident ids /
+  entity ids and WS-9 entity ids: `CORP\jdoe`, `jdoe@corp.example` and (with `default_realm`) bare `jdoe` are one identity for
+  a tenant that lists the realm. Shipped map is empty: absent map is byte-identical to before (no guessing). A malformed map
+  stops WS-4/8/9 from starting (fail closed). The harness now also measures F2 under a fixture map
+  (`respelling_evades_mapped`, ratcheted, false for every rule set); the unmapped default row still reproduces and is the
+  registered residual: deployments must configure their realms. `ws9-resolver/requirements.txt` gains PyYAML (found by the
+  live proof: the container crash-looped without it). Live Docker/Redis proof: `docs/live-proof-f2-f4-2026-10-22.md`.
+- **Live proof part 2 (real collectors, real OpenSearch, WS-8 incidents, vCenter/AD spellings)** found and fixed two more
+  bugs: `tools/agent_log_shipper.py` never stamped `meta.received_at`, so the F4 clamp had no trusted clock for shipped
+  records (now stamped, regression assertion in `tools/test_agent_log_shipper.py`); and the alert-id time bucket used the
+  raw record time, so a byte-identical redelivery of a forged burst created a second alert document (`Rule.alert_key` now
+  buckets on the same clock that drives the window; honest/unclamped events and `event` mode keep their previous ids;
+  regression in `test_window_time_source.py`). Transcript appended to `docs/live-proof-f2-f4-2026-10-22.md`.
+
 ## [0.11.2] - 2026-10-21
 
 Recall work (Windows/Sysmon/PowerShell/M365/mail parsers and rules, 36 -> 46 rules), fuzz-harness repair, gap-hunt closure, owner decisions Q2/Q8/Q12, supply-chain hash pins and the provenance-name fix. `git log v0.11.1..v0.11.2` is the exact list (PRs #109, #110, #111, #112).

@@ -1,0 +1,10 @@
+# Fixture alias map for the F2 "closed under a configured map" measurement (evasion_cost.py).
+# It is the map a deployment SHOULD ship for its realms: the harness respelling operators prefix
+# "CORP\" and suffix "@corp.local" to a name that otherwise appears bare, for the probe tenant "twin-chain" (probe_session.CHAIN_TENANT).
+# The default (no map) row stays the documented residual.
+version: 1
+tenants:
+  twin-chain:
+    default_realm: corp
+    realms:
+      - [CORP, corp.local]

@@ -36,6 +36,12 @@ Please include:
 
 ## Threat boundary
 
+> **Log-author trust (2026-10-22).** The record's own timestamp and account spelling are attacker-influenced. WS-4 clamps
+> the window clock to the receipt time beyond `min(600 s, window/2)` (`FENGARDE_WINDOW_TIME_SOURCE`, default `clamp`; replay
+> and backfill must use `event`). Account identity is folded only through an explicit per-tenant alias map that **operators
+> must configure** (`contracts/identity_aliases.yaml`): without it `DOMAIN\name` and `name@upn` remain distinct accounts.
+> See `contracts/identity-aliases.md`.
+
 FENGARDE is a **local, single-host development and demonstration stack**. It is
 **not** hardened for production or internet exposure. Sections below carry the
 milestone that introduced them (v0.1 network boundary → v0.4 opt-in shared-secret

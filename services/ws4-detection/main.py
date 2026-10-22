@@ -27,6 +27,7 @@ sys.path.insert(0, str(SERVICES))
 
 from shared.bus import Bus  # noqa: E402
 from shared.envelope import valid_tenant_id  # noqa: E402
+import engine as _engine  # noqa: E402
 from engine import load_rules  # noqa: E402
 from shared.window import DequeWindowCounter  # noqa: E402
 from scoring import Scorer  # noqa: E402
@@ -208,6 +209,7 @@ class Detector:
             "detection_alerts_total": self.stats["alerts"],
             "detection_ai_enqueued_total": self.stats["ai_enqueued"],
             "detection_classifier_enqueued_total": self.stats["classifier_enqueued"],
+            "detection_time_clamped_total": _engine.CLAMP_STATS["time_clamped"],
         })
         return out
 

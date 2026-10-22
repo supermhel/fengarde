@@ -1,0 +1,18 @@
+# Per-tenant identity alias map (finding F2). Empty by default: with no entry for a tenant WS-4
+# groups accounts exactly as before (strip + casefold) and never guesses two names are one person.
+#
+# Override the location with FENGARDE_IDENTITY_ALIASES=/path/to/file.yaml (then the file MUST exist).
+# A malformed file stops WS-4 from loading rules (a hot reload keeps the previous rules).
+#
+# Example (uncomment and edit; "acme" is the tenant id the collectors stamp as siem.tenant):
+#
+# tenants:
+#   acme:
+#     default_realm: corp           # optional: bare "jdoe" is taken to be in this realm
+#     realms:
+#       - [CORP, corp.example]      # CORP\jdoe == jdoe@corp.example == (default realm) jdoe
+#
+# Rules: one map per tenant; realm groups must be disjoint; no wildcard tenant, no global entries,
+# no tenant-qualified realm names. Description: contracts/identity-aliases.md
+version: 1
+tenants: {}
