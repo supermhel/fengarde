@@ -53,19 +53,29 @@
       radial-gradient(76rem 42rem at 50% 112%,rgba(79,70,229,.32),transparent 66%)}
   .atmos::before{content:"";position:absolute;inset:0;background-image:radial-gradient(rgba(170,179,204,.30) 1px,transparent 1.4px);background-size:22px 22px;
     -webkit-mask-image:linear-gradient(180deg,#000 0,rgba(0,0,0,.5) 40%,transparent 80%);mask-image:linear-gradient(180deg,#000 0,rgba(0,0,0,.5) 40%,transparent 80%)}
-  .atmos svg{position:absolute;inset:0;width:100%;height:100%;color:#3a5192}
-  .atmos .trk{fill:none;stroke:currentColor;stroke-width:2.2;stroke-linejoin:round;stroke-linecap:round;opacity:.72}
-  .atmos .stn{fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;opacity:.9}
-  .atmos .sig{fill:none;stroke:var(--ok);stroke-width:3.4;stroke-linecap:round;stroke-dasharray:140 860;stroke-dashoffset:140;opacity:.9;animation:run 16s linear infinite}
-  .atmos .sig.s2{animation-duration:23s;animation-delay:-9s;stroke:var(--brand);opacity:.6}
-  .atmos .sig.s3{animation-duration:29s;animation-delay:-17s;opacity:.5}
-  /* narrow screens: the diagram runs behind running text, so it steps back (contrast of body copy wins) */
-  @media (max-width:760px){.atmos .trk,.atmos .stn{opacity:.4}.atmos .sig{opacity:.55}.atmos::before{opacity:.7}}
-  body.is-replaying .atmos .sig{animation-duration:3.6s;opacity:.95}
-  body.is-replaying .atmos .sig.s2{animation-duration:4.8s}
-  body.is-replaying .atmos .sig.s3{animation-duration:6s}
-  @keyframes run{to{stroke-dashoffset:-1000}}
   main,footer,.closing,.ticker{position:relative;z-index:1}
+
+  /* ---- the rail yard: a night perspective scene behind the hero. Tracks converge on a distant headlight, signal lamps stand
+     beside them, a wave of light runs down the sleepers toward the viewer. During a replay the wave runs faster and the
+     third signal turns amber (an alarm needs a person). The departure board hangs in front of it as a frosted window. ---- */
+  .hero{position:relative}
+  .yard{position:absolute;z-index:-1;top:-8px;left:50%;width:100vw;transform:translateX(-50%);height:980px;pointer-events:none;overflow:hidden;
+    -webkit-mask-image:linear-gradient(180deg,#000 0,#000 62%,transparent 96%);mask-image:linear-gradient(180deg,#000 0,#000 62%,transparent 96%)}
+  .yard svg{position:absolute;inset:0;width:100%;height:100%}
+  .yard .rail{fill:none;stroke-linecap:round}
+  .yard .sl{stroke:#5470bd;stroke-linecap:round;opacity:.28;animation:wave 3.4s ease-in-out infinite;animation-delay:calc(var(--k) * -.17s)}
+  @keyframes wave{0%,100%{opacity:.14}45%{opacity:.85}}
+  .yard .headlight{transform-origin:var(--vx) var(--vy);animation:beam 5.5s ease-in-out infinite}
+  @keyframes beam{0%,100%{opacity:.7;transform:scale(1)}50%{opacity:1;transform:scale(1.22)}}
+  .yard .post{stroke:#35477f;stroke-linecap:round}
+  .yard .lamp{fill:var(--ok)}
+  .yard .lamp.al{fill:#5b6a96;transition:fill .4s}
+  body.is-replaying .yard .sl{animation-duration:1.5s}
+  body.is-replaying .yard .headlight{animation-duration:1.8s}
+  body.is-replaying .yard .lamp.al{fill:var(--alarm);animation:flick .9s steps(2,end) infinite}
+  @keyframes flick{50%{opacity:.35}}
+  .board-wrap{background:rgba(13,19,37,.66);-webkit-backdrop-filter:blur(9px);backdrop-filter:blur(9px)}
+  @media (max-width:760px){.yard{height:760px}}
   /* running copy never fights the diagram: the diagram dips behind letters through a halo in the ground colour (no panels, no patches) */
   .hero-grid h1,.closing h2{text-shadow:0 0 10px var(--ground),0 0 26px var(--ground)}
   .hero-grid .lede,.sec-head p,.closing p,footer p,footer a,.sec-head h2{text-shadow:0 0 3px var(--ground),0 0 8px var(--ground),0 0 16px var(--ground)}
@@ -308,24 +318,11 @@
     section.block::before{top:30px;left:16px;right:16px}
     .terminal iframe{height:80vh;min-height:560px}
   }
-  @media (prefers-reduced-motion:reduce){.atmos .sig{animation:none;opacity:0}.an rect{transition:none}.ticker-pause{display:none}.ticker-track{animation:none;flex-wrap:wrap;width:auto}html{scroll-behavior:auto}.fresh .ch{animation:none}.view{transition:none}}
+  @media (prefers-reduced-motion:reduce){.yard .sl,.yard .headlight,.yard .lamp.al{animation:none}.an rect{transition:none}.ticker-pause{display:none}.ticker-track{animation:none;flex-wrap:wrap;width:auto}html{scroll-behavior:auto}.fresh .ch{animation:none}.view{transition:none}}
 </style>
 </head>
 <body>
-<div class="atmos" aria-hidden="true">
-  <svg viewBox="0 0 1600 1000" preserveAspectRatio="xMidYMid slice" focusable="false">
-    <g>
-      <path class="trk" d="M-20 210H420L500 290H1180L1260 210H1620"/>
-      <path class="trk" d="M500 290L580 370H1020L1100 450H1620"/>
-      <path class="trk" d="M-20 640H260L340 560H900L980 640H1620"/>
-      <path class="trk" d="M-20 860H700L760 800H1620"/>
-      <path class="stn" d="M420 198v24M500 278v24M1180 278v24M1260 198v24M580 358v24M1020 358v24M260 628v24M340 548v24M900 548v24M980 628v24M700 848v24M760 788v24"/>
-    </g>
-    <path class="sig" pathLength="1000" d="M-20 210H420L500 290H1180L1260 210H1620"/>
-    <path class="sig s2" pathLength="1000" d="M-20 640H260L340 560H900L980 640H1620"/>
-    <path class="sig s3" pathLength="1000" d="M500 290L580 370H1020L1100 450H1620"/>
-  </svg>
-</div>
+<div class="atmos" aria-hidden="true"></div>
 
 <!--
 THESIS: A security tool's page should be its own status board: the visitor watches one real attack get announced, then checks the receipts. Refuses the dark-navy hero, three feature cards and a screenshot carousel.
@@ -358,6 +355,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
 
 <main id="top">
   <section class="hero wrap">
+    <div class="yard" aria-hidden="true"><svg id="yard" viewBox="0 0 1600 980" preserveAspectRatio="xMidYMin slice" focusable="false"></svg></div>
     <div class="hero-grid">
       <h1 class="cond" style="grid-area:h"><span data-i18n="h1a">Logs in.</span><br><em data-i18n="h1b">Evidence out.</em></h1>
       <div class="cta" style="grid-area:c">
@@ -891,6 +889,47 @@ next_h: "Sie haben die Pipeline laufen sehen. Jetzt machen Sie sie zu Ihrer.", n
   document.querySelectorAll("[data-lang]").forEach(function (b) { b.addEventListener("click", function () { lang = b.getAttribute("data-lang"); applyLang(); }); });
   var pad = function (n) { return String(n).padStart(2, "0"); };
   applyLang();
+})();
+</script>
+<script>
+/* the rail yard behind the hero: vanishing point, three tracks, signals; drawn with SVG primitives, no images */
+(function () {
+  var svg = document.getElementById("yard"); if (!svg) return;
+  var NS = "http://www.w3.org/2000/svg", VX = 1180, VY = 150, BY = 980, H = BY - VY;
+  function el(n, a, p) { var e = document.createElementNS(NS, n); for (var k in a) e.setAttribute(k, a[k]); (p || svg).appendChild(e); return e; }
+  var d = el("defs", {});
+  var g1 = el("radialGradient", { id: "yHorizon", cx: VX, cy: VY, r: 920, gradientUnits: "userSpaceOnUse" }, d);
+  [["0", "#2fd3bd", ".34"], ["0.28", "#4f46e5", ".26"], ["0.62", "#1d2552", ".18"], ["1", "#080c18", "0"]].forEach(function (s) { el("stop", { offset: s[0], "stop-color": s[1], "stop-opacity": s[2] }, g1); });
+  var g2 = el("radialGradient", { id: "yBloom", cx: VX, cy: VY, r: 120, gradientUnits: "userSpaceOnUse" }, d);
+  [["0", "#ffffff", "1"], ["0.14", "#b9fff2", ".85"], ["0.45", "#2fd3bd", ".28"], ["1", "#2fd3bd", "0"]].forEach(function (s) { el("stop", { offset: s[0], "stop-color": s[1], "stop-opacity": s[2] }, g2); });
+  var g3 = el("linearGradient", { id: "yRail", x1: 0, y1: VY, x2: 0, y2: BY, gradientUnits: "userSpaceOnUse" }, d);
+  [["0", "#9fb4ff", ".05"], ["0.35", "#8aa2f0", ".5"], ["1", "#b6c6ff", ".95"]].forEach(function (s) { el("stop", { offset: s[0], "stop-color": s[1], "stop-opacity": s[2] }, g3); });
+  var g4 = el("linearGradient", { id: "yBallast", x1: 0, y1: VY, x2: 0, y2: BY, gradientUnits: "userSpaceOnUse" }, d);
+  [["0", "#4f46e5", "0"], ["1", "#2b3a78", ".5"]].forEach(function (s) { el("stop", { offset: s[0], "stop-color": s[1], "stop-opacity": s[2] }, g4); });
+  el("rect", { x: 0, y: 0, width: 1600, height: BY, fill: "url(#yHorizon)" });
+  var tracks = [{ c: 1180, w: 190 }, { c: 330, w: 190 }, { c: 2030, w: 190 }];
+  function px(c, y) { return VX + (c - VX) * (y - VY) / H; }
+  tracks.forEach(function (t, ti) {
+    el("path", { d: "M" + VX + " " + VY + "L" + (t.c - t.w - 40) + " " + BY + "L" + (t.c + t.w + 40) + " " + BY + "Z", fill: "url(#yBallast)", opacity: ti ? ".5" : ".9" });
+    for (var k = 1; k <= 26; k++) {
+      var tt = k / 26, y = VY + H * Math.pow(tt, 2.25), half = (t.w + 26) * (y - VY) / H;
+      var l = el("line", { x1: px(t.c, y) - half, y1: y, x2: px(t.c, y) + half, y2: y, "stroke-width": (0.8 + 3.6 * tt).toFixed(2), "class": "sl" });
+      l.style.setProperty("--k", k);
+    }
+    [-1, 1].forEach(function (sd) {
+      el("line", { x1: VX, y1: VY, x2: t.c + sd * t.w, y2: BY, stroke: "url(#yRail)", "stroke-width": 3.4, "class": "rail" });
+    });
+  });
+  /* signal posts beside the centre track: two clear (mint), the third turns amber during a replay */
+  [[0.2, 0, "ok"], [0.42, 1, "ok"], [0.7, 2, "al"]].forEach(function (s) {
+    var y = VY + H * Math.pow(s[0], 2.25), sc = (y - VY) / H, x = px(1180, y) - (270 * sc + 30), top = y - 150 * sc - 20;
+    el("line", { x1: x, y1: y, x2: x, y2: top, "stroke-width": (1.5 + 5 * sc).toFixed(2), "class": "post" });
+    var r = 2.6 + 9 * sc;
+    el("circle", { cx: x, cy: top, r: r * 3.2, fill: s[2] === "ok" ? "#2fd3bd" : "#f2a900", opacity: ".07" });
+    el("circle", { cx: x, cy: top, r: r, "class": "lamp" + (s[2] === "al" ? " al" : "") });
+  });
+  var hl = el("g", { "class": "headlight" }); hl.style.setProperty("--vx", VX + "px"); hl.style.setProperty("--vy", VY + "px");
+  el("circle", { cx: VX, cy: VY, r: 120, fill: "url(#yBloom)" }, hl);
 })();
 </script>
 </body>
