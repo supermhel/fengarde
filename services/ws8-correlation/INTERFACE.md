@@ -299,7 +299,7 @@ unchanged by this view.
 ## Environment
 
 - `PORT` (default `8008`) — health/metrics listener port.
-- `BUS_BACKEND` (default `memory` for tests, `redis` in the Docker profile).
+- `BUS_BACKEND` (default `memory` for tests, `redis` in the Docker profile; `redis-sentinel` in the HA profile also selects the Redis-backed window, via `REDIS_SENTINEL_HOSTS`/`REDIS_SENTINEL_MASTER`/`REDIS_PASSWORD`; a missing `REDIS_SENTINEL_HOSTS` fails at startup).
 - `CORRELATION_HORIZON_SECONDS` (default `86400`).
 - `CORRELATION_MEMBER_CAP` (default `200`).
 

@@ -86,6 +86,9 @@ echo
 echo "== ws8 campaign view: shared-alert linking, tenant isolation, no entity-only merge =="; LAST_HEADER="== ws8 campaign view =="
 $PY services/ws8-correlation/test_campaigns.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
+echo "== ws8 window backend: redis-sentinel/redis select the Redis-backed counter (ws8:corr), memory the deque, state survives re-instantiation =="; LAST_HEADER="== ws8 window backend =="
+$PY services/ws8-correlation/test_window_backend.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+
 echo "== ws8 timeline (owner decision WS-8 B, 2026-10-14): read-side time order of an incident's member alerts =="; LAST_HEADER="== ws8 timeline (owner decision WS-8 B, 2026-10-14): read-side time order of an incident's member alerts =="
 $PY services/ws8-correlation/test_timeline.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo

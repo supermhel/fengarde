@@ -380,6 +380,44 @@ return n
 """
 
 
+def redis_client_for_backend(backend: str):
+    """Redis client for ``BUS_BACKEND`` in {redis, redis-sentinel}, from env.
+
+    Mirrors the client construction in ``ws4-detection/main.py`` (which still
+    builds its own inline): ``redis-sentinel`` uses ``Sentinel.master_for`` so
+    writes follow a failover (a pinned host:port client goes READONLY on the
+    demoted master); ``redis`` uses ``REDIS_URL``. ``decode_responses=True`` is
+    required by callers that compare members to ``str`` ids. Missing
+    ``REDIS_SENTINEL_HOSTS`` under redis-sentinel raises (same fail-loud rule
+    as ``shared.bus``) instead of silently running on a local counter.
+    """
+    import os
+    import redis  # type: ignore
+    if backend == "redis-sentinel":
+        from redis.sentinel import Sentinel  # type: ignore
+        hosts = []
+        for part in os.getenv("REDIS_SENTINEL_HOSTS", "").split(","):
+            part = part.strip()
+            if not part:
+                continue
+            host, _, port = part.partition(":")
+            hosts.append((host.strip(), int(port.strip()) if port.strip() else 26379))
+        if not hosts:
+            raise RuntimeError(
+                "BUS_BACKEND=redis-sentinel requested but REDIS_SENTINEL_HOSTS "
+                "is unset/empty; refusing to fall back to an in-process window")
+        password = os.getenv("REDIS_PASSWORD", "") or None
+        sentinel = Sentinel(hosts, password=password, socket_timeout=1,
+                            decode_responses=True)
+        return sentinel.master_for(os.getenv("REDIS_SENTINEL_MASTER", "mymaster"),
+                                   redis_class=redis.Redis, password=password,
+                                   decode_responses=True)
+    if backend == "redis":
+        return redis.Redis.from_url(
+            os.getenv("REDIS_URL", "redis://localhost:6379/0"), decode_responses=True)
+    raise ValueError(f"no Redis client for BUS_BACKEND={backend!r}")
+
+
 class RedisWindowCounter:
     """Global sliding window in a Redis sorted set per (rule, group).
 
