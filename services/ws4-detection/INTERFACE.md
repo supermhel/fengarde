@@ -29,7 +29,8 @@
   `_ALLOWLIST_CACHE` docstring), time-of-day (`outside_hours`), list membership
   (`in`, v0.4 P2), bounded substring (`contains`, v0.4 P2), Sigma-style
   wildcard (`glob` — `*`/`?`/`[seq]`/`[!seq]` via `fnmatch`, M7 2026-08-05,
-  explicitly not a regex layer per ADR-005) — non-eval, fail-closed. Grammar in
+  explicitly not a regex layer per ADR-005), field presence (`exists: true|false`,
+  boolean argument only) — non-eval, fail-closed. Grammar in
   `contracts/sigma-convention.md`.
 - `class_uid` prefilter: rules bucketed by a *necessary* equality class_uid so an
   event only evaluates candidate rules; multi-class/negation rules fall back to a
@@ -95,13 +96,21 @@
 - `python test_contract.py`  (memory bus; rule firing + stateful thresholds + funnel)
 
 ## Environment (read by `main.py` / `engine.py`)
-- `PORT` (default `8010`) — health/metrics listener port.
+- `PORT` (default `8004`, `main.py`) — health/metrics listener port.
 - `BUS_BACKEND` / `REDIS_URL` / `REDIS_PASSWORD` / `REDIS_SENTINEL_HOSTS` /
   `REDIS_SENTINEL_MASTER` — bus backend (memory / redis / redis-sentinel).
 - `FENGARDE_TENANT_FAIR_CONSUME` — per-tenant fair consume ordering (PR #55).
-  **Default on**; opt out with `=0`/`=false` (this entry said "opt-in,
-  default FIFO" until 2026-08-13, contradicting this file's own module
-  description above — `main.py:433`'s actual default is `"1"`).
+  **Default on** (`main.py` reads it with default `"1"`); opt out with
+  `=0`/`=false`/`=no`.
+- `FENGARDE_OPT_IN_RULES` — comma-separated rule ids of default-off rules
+  (`siem.default_enabled: false`) to enable for EVERY tenant; per-tenant opt-in is
+  `enabled_rules` in `contracts/tenants/<tenant>.yml`.
+- `FENGARDE_WINDOW_TIME_SOURCE` (`event` default | `ingest`) — which timestamp drives a
+  stateful window (`engine.py`, Q12). `event` uses the record's own `time` (historical
+  replay works; a forged record clock can still stretch a burst, finding F4); `ingest` uses
+  the receipt time WS-2 stamped as `siem.received_ms`, falling back to the record time when
+  absent. Periodicity rules always use the record time. This describes `main` as of
+  2026-10-22; a change to the default is in an open PR and is not documented here until merged.
 - `RULES_RELOAD_INTERVAL_S` (default `0` = off) — opt-in rule hot-reload poll
   interval (mtime-poll + atomic swap, B4).
 - `DETECTION_OUTPUT_DEPTH_WARN` — warn threshold for over-deep nested output.

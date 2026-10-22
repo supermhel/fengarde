@@ -4,8 +4,7 @@ FENGARDE itself does not terminate TLS anywhere. This is still true even
 though the rest of SECURITY.md §2's original v0.4 scope has moved well past
 "no users, roles" — real per-user accounts, roles, and RBAC shipped in M4.2
 (`services/shared/users.py`/`rbac.py`, part of the v0.5.0 release line; tags
-now go through v0.10.0 -- gap-hunt 2026-09-04, this line hadn't been updated
-since v0.5.0) and MFA/audit-logging landed
+now go through v0.11.3 as of 2026-10-22) and MFA/audit-logging landed
 since. TLS specifically stayed out of scope the whole time: none of that
 identity work terminates TLS either, so if analysts need to reach the
 dashboard from outside the machine it runs on, a reverse proxy is still the
@@ -30,8 +29,10 @@ Per `infra/docker-compose.yml` (v0.4 Track S) and `SECURITY.md`:
 
 So the starting point for "analysts need to reach this remotely" is: the
 dashboard's `8080` port needs to become reachable from outside `127.0.0.1`,
-and that exposure needs TLS + (at minimum) basic-auth in front of it, since
-FENGARDE's own auth story stops at a shared API key, not per-user identity.
+and that exposure needs TLS + (at minimum) basic-auth in front of it. FENGARDE's
+default auth is a shared API key, not per-user identity; per-user accounts,
+roles and MFA exist but are opt-in (`FENGARDE_RBAC_DB`, see "What this does NOT
+solve" below) and are off by default.
 
 ## Reverse-proxy TLS with Caddy
 

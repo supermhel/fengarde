@@ -98,6 +98,9 @@ undocumented. `services/ws6-inventory/` now has 7 substantive modules
   counters + the API's auth-failure slow counter; gap-hunt #8).
 - `FENGARDE_API_KEY` / `FENGARDE_API_KEYS` / `FENGARDE_API_KEY_PEPPER` — auth;
   `FENGARDE_API_KEYS` is the per-tenant map (`tenant:key,...`, `*:key` admin).
+- `FENGARDE_REQUIRE_AUTH` (`1`/`true`/`yes`) — fail-loud boot guard (`authz.py`, `require_auth_or_die`):
+  with an empty keystore (no key ever provisioned) WS-6 exits 1 instead of serving every
+  request unauthenticated. Honored independently of WS-3's check of the same variable.
 - `BUS_BACKEND` / `REDIS_URL` (and the shared Redis env set) — opt-in bus consumer
   backend; when `BUS_BACKEND=redis`, `bus_consumer.py` republishes
   `assets.updates` → `raw.events` (transparently skipped otherwise).

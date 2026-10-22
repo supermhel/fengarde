@@ -106,7 +106,7 @@ Now edit `acme_firewall.py`. The key pieces of a parser are:
 ### Edit 2 — register the parser
 
 Open `services/ws2-normalization/parsers/__init__.py` and register your class in the
-registry (the `_REGISTRY` dict, around **line 34**). Add the import and add an instance to the `_REGISTRY`
+registry (the `_REGISTRY` dict). Add the import and add an instance to the `_REGISTRY`
 comprehension:
 
 ```python
@@ -138,7 +138,7 @@ sample-driven. Two small additions:
    `services/ws2-normalization/mocks/raw_samples.json` (under `"samples"`), shaped like
    the existing entries: `{"source_type": "acme_firewall", "raw": "...", "meta": {...}}`.
 
-2. Add your source to the `expected` map in `test_contract.py` (around **line 39**),
+2. Add your source to the `expected` map in `test_contract.py` (the `expected = {` dict in `run()`),
    declaring the `(class_uid, sector)` your parser should produce:
 
    ```python

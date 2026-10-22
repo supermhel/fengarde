@@ -11,7 +11,14 @@ protect against today) and **how to report a vulnerability**.
 
 **Please do not open a public GitHub issue for security vulnerabilities.**
 
-you may use **Security → Report a vulnerability**.
+Report privately through GitHub: **Security → Report a vulnerability**
+(<https://github.com/supermhel/fengarde/security/advisories/new>; private
+vulnerability reporting is enabled on this repository). If you cannot use GitHub,
+email the maintainer at `dylandjomou@yahoo.de` (the contact also listed in
+[`SECURITY-INSIGHTS.yml`](SECURITY-INSIGHTS.yml)).
+
+Conduct problems (harassment, abuse) are not vulnerabilities: report them as
+described in [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md).
 
 Please include:
 
@@ -411,7 +418,7 @@ current release.
 
 ## Verifying release artifacts
 
-Every tagged release (`v*`) is signed **keylessly** with [Sigstore](https://www.sigstore.dev/)
+Every release from **v0.11.3** on is signed **keylessly** with [Sigstore](https://www.sigstore.dev/)
 cosign and carries **SLSA provenance** (the v0.2 predicate that `slsa-github-generator` v2.1.0 emits), and the signatures are published
 with the release so you can actually check them. The signing workflow
 (`.github/workflows/release.yml`) uses **no private key and no secret**: its
@@ -420,10 +427,18 @@ cosign signatures are bound to this repository's GitHub Actions OIDC identity
 A signature that could not be verified this way would be theatre — so here is
 exactly how to verify it.
 
+**Scope, honestly:** `v0.11.0` and `v0.11.1` have no verifiable signed provenance, and
+`v0.11.2`'s signatures carry the `refs/heads/main` identity rather than a tag
+identity, so the commands below do not verify them as written. Use `v0.11.3` or
+later. For `v0.11.3` the tarball bundle, the provenance and the
+`ws4-detection` image were checked as documented here (2026-10-22); the other
+nine images were not individually verified. Releases before `v0.11.0` have no
+signed or provenance assets that this section verifies.
+
 The commands below assume you have installed `cosign` (≥ v2, e.g. via
 [cosign-installer](https://github.com/sigstore/cosign-installer) or your
 package manager) and are using the latest release tag in place of `<VERSION>`
-(e.g. `v0.6.0`). A consumer verifies _before_ pulling the image or unpacking
+(e.g. `v0.11.3`). A consumer verifies _before_ pulling the image or unpacking
 the tarball.
 
 ### 1. Verify a signed container image (keyless)

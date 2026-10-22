@@ -54,8 +54,8 @@ so any piece can be scaled or replaced without rewriting the others.
   schema as Active Directory, Windows and your firewall, so the plant floor runs
   through the same detection engine, console and report path as the office
   network, not a second toolchain.
-- **AI triage that never leaves your network.** Local Ollama by default, with a
-  documented stub fallback. Alert data is never piped through a third-party LLM
+- **AI triage that never leaves your network.** Local Ollama when `OLLAMA_URL` is set; otherwise a
+  labelled deterministic stub. Alert data is never piped through a third-party LLM
   API, and the console names which engine actually ran.
 - **Evidence, not just alerts.** Incidents carry a typed causal graph and a
   Merkle hash-chain evidence package that the API verifies before serving it.
@@ -73,7 +73,7 @@ so any piece can be scaled or replaced without rewriting the others.
 
 | Way | Needs | What you get |
 |---|---|---|
-| **[The project page](https://supermhel.github.io/fengarde/)** | A browser | The real console on a *recording* of a lab run, with a replayable attack, the architecture, all 36 rules and four recorded walkthroughs. Static; writes stay in your browser ([`docs/console-demo.md`](docs/console-demo.md) says exactly what is real). |
+| **[The project page](https://supermhel.github.io/fengarde/)** | A browser | The real console on a *recording* of a lab run, with a replayable attack, the architecture, all 46 rules and four recorded walkthroughs. Static; writes stay in your browser ([`docs/console-demo.md`](docs/console-demo.md) says exactly what is real). |
 | **`make e2e`** | Python 3 | SSH brute-force to a real alert, idempotent under replay. No Docker, Redis or OpenSearch. |
 | **`make demo`** | Docker | The full live stack; a real brute-force alert appears in the console within about a minute. |
 
@@ -151,7 +151,7 @@ make ha-down  # stop the HA profile, remove its volumes
 ## The console
 
 After `make up` the console is at `http://localhost:8080` (React 18 and Vite; the previous
-single-file UI at `/legacy/` was retired on 2026-10-20). Twelve views in three groups:
+single-file UI at `/legacy/` was retired on 2026-10-20). Eleven views (ten in the sidebar plus Account) in three groups:
 
 | Group | Views |
 |---|---|
@@ -178,7 +178,7 @@ as admin, analyst and read-only, in both languages, in dark mode and at phone wi
 
 ## What is real
 
-Summary of `main` (last tagged release: `v0.11.0`). The itemized history is
+Summary of `main` (last tagged release: `v0.11.3`). The itemized history is
 [CHANGELOG.md](CHANGELOG.md); the authoritative, continuously updated status is
 [SSOT.md](SSOT.md). If they disagree with this table, SSOT wins. Measured,
 externally-usable detection numbers (macro-F1, per-rule TP/FP/FN/TN, twin
@@ -196,9 +196,9 @@ and released in v0.11.0. Phase 5 ([PR #92](https://github.com/supermhel/fengarde
 | Detection pipeline (collect, normalize, detect, index, console) | ✅ Works | End-to-end since v0.1 |
 | **Parsers (19)** | ✅ Works | Cisco ASA, Active Directory, VMware vSphere, Linux SSH, generic syslog, Windows Event Log, DB audit, MCP/AI-agent tool-call audit, OPC UA/OT audit, n8n audit, DNS query log, Kubernetes audit, CEF, AWS CloudTrail, Sysmon, Modbus/TCP anomaly detector, inventory-diff OT device detector, mail gateway, M365 audit; all to OCSF |
 | **Live syslog routing** (console rebuild) | ✅ Works | A forwarded sshd, Cisco ASA or CEF line (also behind a syslog header) reaches its own parser, not the generic one; proven by a real UDP burst that raised the brute-force alarm |
-| **Detection rules (46)** | ✅ Works (45 stable; impossible travel is experimental: it cannot fire on production traffic until a deployment supplies real egress prefixes or a GeoIP resolver. 7 of the 2026-10-20 Windows/spray/sweep rules are proven by unit tests and fire checks, not yet by a twin storyline) | Brute-force, port-scan, lateral movement, password spray, privileged-group grant, after-hours admin, impossible travel, bank DB privilege escalation, mass VM delete, AI-agent rules (credential files, tool-call burst, prompt injection, destructive command, non-allowlisted egress), OT rules (write outside maintenance, new engineering connection, config change, Modbus unauthorized write, new device on segment), n8n, DNS exfiltration, privileged container, cloud root login, mass DB read, rapid account churn, beaconing. The full list is on the [project page](https://supermhel.github.io/fengarde/) |
+| **Detection rules (46)** | ✅ Works (43 stable; 3 experimental: `common_impossible_travel` (cannot fire on production traffic until a deployment supplies real egress prefixes or a GeoIP resolver), `common_credential_stuffing_sustained` and `ot_opcua_write_unauthorized_node`. 7 of the 2026-10-20 Windows/spray/sweep rules are proven by unit tests and fire checks, not yet by a twin storyline) | Brute-force, port-scan, lateral movement, password spray, privileged-group grant, after-hours admin, impossible travel, bank DB privilege escalation, mass VM delete, AI-agent rules (credential files, tool-call burst, prompt injection, destructive command, non-allowlisted egress), OT rules (write outside maintenance, new engineering connection, config change, Modbus unauthorized write, new device on segment), n8n, DNS exfiltration, privileged container, cloud root login, mass DB read, rapid account churn, beaconing. The full list is on the [project page](https://supermhel.github.io/fengarde/) |
 | Rule grammar and prefilter | ✅ Works | Boolean logic, comparisons, allowlist suppression (CIDR and exact), time of day; fails closed on malformed input; rules bucketed by `class_uid` |
-| Anti-dormancy and rule-boundary guardrails | ✅ Works | CI proves every rule is satisfiable by a real parser's output and that declared thresholds are enforced (19/19 stateful, 17/17 stateless): engine-versus-declaration agreement, not a claim that thresholds are well chosen |
+| Anti-dormancy and rule-boundary guardrails | ✅ Works | CI proves every rule is satisfiable by a real parser's output and that declared thresholds are enforced (`python eval/attack/fire_check.py`, 2026-10-22: 20 stateful and 25 stateless rules held; all 45 MITRE-tagged rules fire; one untagged rule is unverified): engine-versus-declaration agreement, not a claim that thresholds are well chosen |
 | **Cross-alert correlation** (WS-8) | ✅ Works | Promotes an incident once an entity shows two or more distinct MITRE tactics; deterministic `incident_id`; bounded memory |
 | **Causal incident graph** | ✅ Works | Typed DAG per incident, each edge grounded in one alert's own evidence, never a transitive inference |
 | Entity resolution (WS-9) | ✅ Works | Deterministic entity ids, idempotent under redelivery |
@@ -209,10 +209,10 @@ and released in v0.11.0. Phase 5 ([PR #92](https://github.com/supermhel/fengarde
 
 | Capability | Status | Notes |
 |---|---|---|
-| **Console (React)** (console rebuild) | ✅ Works | Twelve views, DE/EN, light/dark, phone widths, MFA sign-in. `check.mjs` (90 checks across three roles) and `mfa.mjs` pass against the live stack |
+| **Console (React)** (console rebuild) | ✅ Works | Eleven views, DE/EN, light/dark, phone widths, MFA sign-in. `check.mjs` (90 checks across three roles) and `mfa.mjs` pass against the live stack |
 | **Static console demo** (console rebuild) | ✅ Works | `npm run build:demo`: the real console on a recording of a lab run (`docs/demo/`), with an attack replay; labelled as recorded data |
 | Triage workflow | ✅ Works | Status and note per alert; concurrent writes protected (lock plus OpenSearch optimistic concurrency) |
-| AI triage (local Ollama) | ✅ Works, opt-in | `OLLAMA_URL` (default `qwen2.5`); unset or unreachable degrades to a deterministic offline stub with no network calls; per-rule `llm_gate: false` opt-out; bounded concurrency |
+| AI triage (local Ollama) | ✅ Works, opt-in | `OLLAMA_URL` enables it (no default; unset means the stub), `OLLAMA_MODEL` picks the model (default `qwen2.5`); unset or unreachable degrades to a deterministic offline stub with no network calls; per-rule `llm_gate: false` opt-out; bounded concurrency |
 | Alert and incident reports | ✅ Works | Generic markdown draft and a deterministic German/English NIS2 Art. 23 / §32 BSIG draft (3 stages, 2 languages); entity-specific facts are explicit `[ANALYST MUST PROVIDE]` placeholders, never fabricated; incident-level draft built from the verified evidence package |
 | Evidence package | ✅ Works | Merkle hash chain over an incident's alerts, events and graph; the route verifies before serving (409 on failure, never a silent unverified 200) |
 | OT business context and exposure scoring | ✅ Works, opt-in | `contracts/ot-points/*.yml` adds plant, line, owner and criticality to OT alerts and real points to their score |
@@ -362,6 +362,8 @@ See **[CONTRIBUTING.md](CONTRIBUTING.md)** for the contribution workflow and
 (copy `linux_ssh.py`, make three small edits, verify). The parsers marked
 🚧 Planned above are the obvious first PRs — or propose a new detection rule via the
 [rule request template](.github/ISSUE_TEMPLATE/rule_request.md).
+
+Participation is governed by the [Code of Conduct](CODE_OF_CONDUCT.md).
 
 Monitoring AI agents/MCP servers? See **[docs/agent-monitoring.md](docs/agent-monitoring.md)**.
 

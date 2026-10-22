@@ -7,7 +7,7 @@
 - Contracts: B (bus topics).
 
 ## Produces
-- Topic `raw.events` — `{source_type, raw, meta}`, partition key = source IP (`meta.ip`).
+- Topic `raw.events` — `{source_type, raw, meta}`, partition key = source IP: the datagram's peer IP on the live UDP path (NOT written into `meta`, see below), `meta.ip` on the mock SNMP/NetFlow/sample-syslog path (`main.py`).
   - **UDP syslog listener specifics** (`collectors/syslog_udp_server.py::build_raw_event`):
     every datagram is produced with `source_type=generic_syslog` (the listener
     cannot know the product) and `meta = {received_at, ingest_id, trace_id,

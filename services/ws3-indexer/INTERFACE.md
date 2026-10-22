@@ -14,6 +14,13 @@
   multi-tenancy) gets its own index per family: `events-{family}-{tenant}-
   YYYY.MM.DD`, `alerts-{tenant}-YYYY.MM.DD` (`router.py`, `tenant_id` validated
   and rejected — never normalized — before it reaches an index name).
+- The other families (`router.py` `route()`): `incidents-YYYY.MM.DD` /
+  `incidents-{tenant}-YYYY.MM.DD` (WS-8 incidents, dated by `first_seen`),
+  and two flat, non-date-suffixed stores, `entities` / `entities-{tenant}`
+  (WS-9 `entity.updates`) and `incident-graphs` / `incident-graphs-{tenant}`
+  (WS-8 `incident.graph`). Generated reports (alert and incident) are written
+  by the triage API to `reports-YYYY.MM.DD` (`reporting._report_index()`),
+  pre-created at startup.
 
 ## Triage API — HTTP, separate listener (grown well past v0.3 C1; refreshed 2026-07-21)
 - `TRIAGE_PORT` (default `8013`), on its own thread alongside the bus consumer.
@@ -28,6 +35,8 @@
   generate one (`?template=nis2` for the M5 German/English NIS2 generator,
   otherwise the generic markdown backend). Every report is `status: "draft"` with
   a mandatory disclaimer.
+- `GET /incidents` — newest-first (by `last_seen`) correlated-incident listing
+  (WS-8 incidents), same bounded/filtered convention as `GET /alerts`.
 - `GET /entities/{id}` (Phase 5, 2026-09-04) — a WS-9-resolved entity's
   current canonical state (`entity.updates` topic, indexed).
 - `GET /incidents/{id}/graph` (Phase 5) — the typed causal DAG WS-8 emitted
@@ -36,8 +45,12 @@
   serves this incident's evidence package on demand
   (`evidence_package.py`'s first real HTTP consumer); 409 (never a silent
   200) if a freshly-built package fails `verify_evidence_package()`.
-- `/api/v1/...` (M4.3) — versioned aliases for `GET /alerts`, `GET /events`,
-  `GET /rules`, alongside the unchanged bare paths. Spec-vs-code drift is
+- `POST /incidents/{id}/report` — builds and verifies the incident's evidence
+  package, then renders and stores an incident-level draft report from it
+  (`route_post_incident_report`; the same draft/disclaimer rules as the alert report).
+- `/api/v1/...` (M4.3) — versioned aliases for every route above (`/alerts`,
+  `/incidents`, `/events`, `/rules`, `/audit`, `/auth/*`, the entity/graph/evidence
+  and admin routes), alongside the unchanged bare paths. Spec-vs-code drift is
   CI-tested against `contracts/triage-api.yaml`.
 - `POST /auth/login`, `POST /auth/logout`, `GET /auth/me` (M4.2, RBAC — see
   Auth below) — session cookie + `csrf_token`. Every session-authenticated
@@ -92,6 +105,13 @@
 - Idempotent on `siem.ingest_id` / `alert_id` (at-least-once delivery).
 
 ## Environment (read by `main.py` / `triage_api.py` / `audit.py` / `reporting.py`)
+- `STORAGE_BACKEND` (`memory` default | `opensearch`) — which storage adapter `main.py` builds.
+- `FENGARDE_OPT_IN_RULES` and `FENGARDE_PLUGIN_RULE_DIRS` — read by `rules_view.py` so
+  `GET /rules` and the rule switch show what WS-4 actually evaluates (default-off rules
+  opted in for every tenant; rules shipped in plugin packs). WS-4 reads the same two
+  variables for detection itself; keep the values in sync across both services.
+- `RATE_LIMIT_TRUST_PROXY_HEADER` (`1`/`true`/`yes`) — rate-limit per the client IP in the
+  proxy's forwarded header instead of the socket peer (nginx reverse-proxy topology).
 - `TRIAGE_PORT` (default `8013`) — HTTP listener port.
 - `PORT` — alias read by the runner for the health/metrics listener host/port
   wiring (see `shared/runner.py`).

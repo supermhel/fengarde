@@ -5,7 +5,8 @@ pivot-correlation (device: track) added 2026-08-19, zero-infra proven.
 2026-08-28: incident.graph (ADR-009/WP-2-C) added, zero-infra proven.
 2026-09-02 (WP-3-A): incident.graph upgraded to VERSION 2 — the typed causal
 DAG — zero-infra proven; v2 SUPERSEDES v1 on the topic.**
-Implements `docs/superpowers/specs/2026-08-18-ws8-correlation-build-plan.md`
+Implements the build plan of 2026-08-18 (the plan file is not kept in this repo; this
+file and `docs/adr/007-cross-alert-correlation-separate-service.md` are the record)
 and the approved design in `fengarde-sec`'s
 `docs/2026-08-11-cross-alert-correlation-design.md` (private repo — read
 that first for the full rationale; this file only states the shipped
@@ -268,6 +269,11 @@ unchanged by this view.
   rate default until it's tuned against real traffic). Redis `EXPIRE`
   self-cleans a quiet track; there is no separate reaper to test or get
   wrong.
+  **Caveat, true as of 2026-10-22:** `main.py::make_correlator()` builds the Redis-backed
+  counter only when `BUS_BACKEND` is exactly `redis`. Under `BUS_BACKEND=redis-sentinel` it
+  currently falls through to the in-process deque, so correlation tracks are lost on a
+  restart and are not shared across replicas even though the bus itself is HA. A code fix is
+  being made separately; this caveat is to be removed by that change.
 - **Tenant isolation**: tenant is part of the track key, not a filter
   (rejected-at-edge via the same `_validated_tenant`-style check
   `services/ws3-indexer/router.py` uses) — a tenant-agnostic key would
@@ -296,8 +302,6 @@ unchanged by this view.
 - `BUS_BACKEND` (default `memory` for tests, `redis` in the Docker profile).
 - `CORRELATION_HORIZON_SECONDS` (default `86400`).
 - `CORRELATION_MEMBER_CAP` (default `200`).
-- `FENGARDE_ALLOWLISTS_DIR` (default `contracts/allowlists`, same env every
-  other allowlist-consuming service already reads).
 
 ## Contract tests
 

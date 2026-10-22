@@ -41,15 +41,21 @@
   possible future standalone entity-browser view.
 - `/api/audit` (2026-08-20) → WS-3's `GET /audit`, admin-scoped by the backend's
   own session check — the "Audit" nav view.
-- `/api/ops/{ws1,ws2,ws3,ws4,ws8}` (2026-08-20) → each workstream's own
+- `/api/ops/{ws1,ws2,ws3,ws4,ws5,ws8}` (2026-08-20; `ws5` added later) → each workstream's own
   `GET /metrics` (`services/shared/runner.py`) — the "Ops" nav view. Gated by
   the same `FENGARDE_API_KEY` check `/api/alerts` uses, since these health
   ports were previously reachable only container-to-container.
+- `/api/events` and `/api/ai-triage` → OpenSearch directly, not via WS-3
+  (`events-*`, and `alerts-*` filtered to `alert_id` prefix `ai-`), both behind
+  the nginx `X-Api-Key` check like `/api/alerts`. `/api/config.js` serves the
+  browser runtime config (SECURITY.md explains why the key it carries is not an
+  access-control boundary).
 
 ## Produces
 - **The console (2026-10-15)** is a React + Vite + TypeScript app in `app/`,
-  built in the Dockerfile's first stage and served at `/`; the single-file UI
-  below is kept unchanged at `/legacy/` (linked from the nav). Views, grouped:
+  built in the Dockerfile's first stage and served at `/`. The old single-file
+  UI at `/legacy/` was retired on 2026-10-20 (nginx location and file removed).
+  Views, grouped:
   Detect (Overview, Alarms, Incidents), Investigate (Events log explorer,
   Coverage), Operate (Sources = how devices get connected, Inventory,
   Operations incl. System health from Prometheus, Audit, Settings), plus
@@ -61,14 +67,15 @@
   feature status is `docs/console-feature-matrix.md`.
 - **Demo build** (`npm run build:demo`, output `docs/demo/`): the same console with every `/api/*` call answered in the browser by `src/demo/adapter.ts` from `src/demo/fixtures.json`, a recording of a lab run made by `tools/console_e2e/record_fixtures.mjs`. Timestamps are shifted to now, writes are in-memory only, the attack is hidden until "Replay the attack", and the page that embeds it can start the replay and hears about alarms through `postMessage` (same origin). The normal build contains none of it (`import.meta.env.VITE_DEMO`). Details: `docs/console-demo.md`.
 - Sign-in: username, password and an optional MFA code (the backend answers a missing or wrong code with the same 401 as a wrong password). The page shows the host, whether WS-3 answers, and a warning on plain HTTP away from localhost.
-- Static single-file UI (`index.html`) served by nginx. No backend of its own.
-- **Deep-linkable nav** (2026-08-20): the URL hash (`#ops`, `#audit`, `#incidents`, ...)
-  selects the active view on load and via `hashchange` — bookmarkable/shareable
-  links to one tab, not just always-lands-on-Overview. Unknown/empty hash falls
-  back to Overview rather than erroring (`selectView()`).
-- All alert/triage/inventory/source-derived values are HTML-escaped via `esc()`
-  before injection (stored-XSS discipline); the report view renders as text,
-  never `innerHTML`.
+- The built bundle (`app/dist`, from `app/index.html`) is served as static files by nginx. No backend of its own.
+- **Deep-linkable nav**: the URL hash (`#incidents`, `#audit`, ...) selects the active view
+  on load and via `hashchange` (`app/src/App.tsx`) — bookmarkable/shareable links to one view;
+  the routable ids are `overview`, `alarms`, `incidents`, `events`, `coverage`, `sources`,
+  `inventory`, `operations`, `audit`, `account`, `settings` (see `tools/console_e2e/lib.mjs`).
+  An unknown or empty hash falls back to Overview.
+- Alert/triage/inventory/source-derived values are rendered through React, which escapes text
+  by default; the source (`services/ws7-dashboard/app/src`) has no `dangerouslySetInnerHTML`,
+  and the report view renders as text. (The `esc()` helper belonged to the retired single-file UI.)
 - **Login gate** (M3 remainder, opt-in): when `FENGARDE_RBAC_DB` is set on WS-3,
   a login form gates the app behind a real session (username + role + Sign out
   badge once authenticated); every session-write echoes the CSRF token WS-3
@@ -77,14 +84,16 @@
   pre-M3 deployment.
 
 ## Structure
-- **Vue globale** — device counts, critical alerts.
-- **Triage** — per-alert status dropdown + analyst note, wired to `/api/triage`;
-  a "Rapport" button per row generates/fetches the incident report.
-- **Inventaire** — search by IP or MAC → device detail with IP history.
-- **Sources** — events per protocol/source.
+- `app/` — the React + Vite + TypeScript console (`app/src/views/*.tsx` is one file per view
+  plus the sign-in screen; `app/src/lib/i18n.ts` holds the German/English strings).
+- `templates/default.conf.template` — nginx config, envsubst'd at container start.
+- `Dockerfile` — two stages: Node builds `app/`, nginx serves the output.
 
 ## Contract tests
-- `python test_contract.py`  (static checks: views present, API calls, mock shape)
+- `python test_contract.py`  (static checks of the Dockerfile and nginx proxy contract: the built
+  bundle is copied in, no `/legacy/` UI or location remains, the `/api` proxies exist, the
+  console source and lockfile are present)
 
 ## Run locally
-- open `index.html`, or `docker compose up dashboard` (nginx).
+- `docker compose -f infra/docker-compose.yml up ws7-dashboard` (nginx + the built console on :8080), or
+  for console development `cd services/ws7-dashboard/app && npm run dev`.

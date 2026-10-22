@@ -1,4 +1,4 @@
-# ADR 004: Seven-workstream split, bus-only coupling
+# ADR 004: Nine-workstream split (originally seven), bus-only coupling
 
 **Status:** Accepted, live. **Date:** v0.1 (2026-06); backfilled 2026-07-16.
 
@@ -16,8 +16,9 @@ breaking WS-3's contract at call time, not at a reviewable boundary).
 
 ## Decision
 
-Seven workstreams under `services/` (WS-1 collectors, WS-2 normalization,
-WS-3 indexer, WS-4 detection, WS-5 AI, WS-6 inventory, WS-7 dashboard),
+Seven workstreams under `services/` when this was decided (WS-1 collectors, WS-2 normalization,
+WS-3 indexer, WS-4 detection, WS-5 AI, WS-6 inventory, WS-7 dashboard); WS-8 correlation
+(ADR 007) and WS-9 resolver (ADR 009) were added later under the same rule, so there are nine today,
 coupled **only** through the message bus (ADR 001) — no service imports or
 calls another directly. Bus topics, payloads, and partition keys are frozen
 contracts (`contracts/bus-topics.md`), not implicit agreements discovered by
@@ -36,16 +37,17 @@ with zero hits (`SSOT.md` §2, "Bus-only coupling" row).
   because WS-2 has no compile-time or runtime dependency on WS-3/WS-4/etc.
   New parsers and rules are add-only changes to `services/ws2-normalization/parsers/`
   and `contracts/rules/`, never a cross-service edit.
-- **Trade-off:** debugging a single event's journey across seven independently-
+- **Trade-off:** debugging a single event's journey across independently-
   deployed services requires correlating logs/state across process
   boundaries — Envelope v1's `trace_id` (`contracts/bus-topics.md`) exists
   specifically to make that traceable, and is the foundation for M7's planned
   OpenTelemetry tracing (one trace = one event's journey collector → alert).
 - **Trade-off:** contract changes (a new bus-topic field, a new required OCSF
   property) are a coordination point across every consumer of that topic —
-  which is why bus-schema changes are explicitly gated behind human sign-off
-  in this project's standing guardrails (`CLAUDE.md`), not something a
-  single service's PR can silently widen.
+  which is why bus-schema changes are treated as maintainer-reviewed: the maintainer
+  convention is to ask before changing the bus message schema (it is not written in
+  the checked-in `CLAUDE.md`; `CONTRIBUTING.md` and `SECURITY.md` do not state it
+  either), so a single service's PR should not silently widen a topic.
 - **Verification discipline this decision requires:** `tools/validate_contract.py`
   (Contract A, OCSF), `tools/validate_rules.py` (Contract D shape),
   `tools/check_rule_producers.py` (cross-workstream satisfiability) all exist

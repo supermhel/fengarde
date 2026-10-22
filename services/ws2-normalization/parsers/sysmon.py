@@ -17,6 +17,9 @@ event types with a clean fit in Contract A's restricted OCSF profile:
                                        Priv-use (activity 2) under the SAME class,
                                        which Contract A leaves open for 0-99
                                        (see windows_eventlog.py's own comment).
+    EventID 10 (ProcessAccess)     -> 1002 Kernel/Process,   activity 5 (Process access)
+                                       -- added 2026-10-20 (T1003.001 LSASS access);
+                                       the caller is SourceImage / SourceProcessId.
     EventID 11 (FileCreate)        -> 1001 File System Activity, activity 1 (Create)
                                        -- the FIRST producer for class 1001,
                                        previously a documented total gap
@@ -28,7 +31,7 @@ covered 1864/3241 = 57.5% of Sysmon volume, stuck at that number since
 2026-08-19 (nobody had picked the item up, not a technical blocker -- see
 ``fengarde-sec``'s ``2026-08-27-forward-roadmap.md`` Part 4-D). Adding ID 5
 (46 events in that corpus) brings it to 1910/3241 = 58.9%. The remaining
-~41% is every OTHER Sysmon event type, deliberately left unmapped -- each
+~41% (as of 2026-09-10, before EventID 10 was mapped) is every OTHER Sysmon event type, deliberately left unmapped -- each
 checked individually against Contract A's 8-class restricted profile, not
 lumped together as "everything else, later":
 
@@ -44,8 +47,10 @@ lumped together as "everything else, later":
                                         processes in a cross-process relationship
                                         that doesn't fit Launch, Terminate, or
                                         Priv-use; no Process-Access class exists.
-    EventID 10 (ProcessAccess)      -- same cross-process shape as ID 8, same
-                                        gap.
+    EventID 10 (ProcessAccess)      -- WAS in this unmapped list; mapped 2026-10-20
+                                        (see the table above and _EVENT_MAP). The
+                                        2026-09-10 corpus percentages in this
+                                        paragraph predate that and exclude ID 10.
     EventID 12/13/14 (RegistryEvent/
                        RegistryValueSet/RegistryRename)
                                      -- no Registry Activity class in the

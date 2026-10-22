@@ -9,7 +9,19 @@ info:
     paths are not deprecated: the dashboard's nginx proxy (services/ws7-dashboard)
     targets them directly today. `/api/v1` is the documented surface for new
     integrations going forward, per the M4.3 "versioned REST API" milestone
-    (docs/superpowers/specs/2026-07-15-fengarde-combined-plan.md).
+    (the plan document is not kept in this repository).
+
+    Routes that exist in the code but are NOT yet described path-by-path in
+    this file (they are listed in `ROUTE_INVENTORY` in
+    services/ws3-indexer/triage_api.py and documented in
+    services/ws3-indexer/INTERFACE.md): GET /entities/{entity_id},
+    GET /incidents/{incident_id}/graph, GET /incidents/{incident_id}/evidence,
+    POST /incidents/{incident_id}/report, GET and POST /users,
+    PATCH /users/{username}, GET /webhooks, PUT /rules/{rule_id}/enabled and
+    POST /inventory/assets. The users, webhooks, rule-switch and inventory routes
+    exist only with RBAC on and need role admin. They are left out here because
+    the drift test (`test_api_v1.py`) probes every documented GET path against
+    an RBAC-off server, which cannot route the admin ones.
 
     Two independent, both opt-in auth layers may gate these routes (see
     SECURITY.md SS2): a shared `X-Api-Key` header (`FENGARDE_API_KEY`), and/or a
@@ -25,7 +37,9 @@ info:
     `detection.condition` -- SECURITY.md SS3 treats rule files as code an
     operator must review before trusting; an API that could read (or worse,
     write) conditions would let a caller inject detection logic without
-    review. There is no rule-mutation endpoint in this API by design.
+    review. The only rule write is the per-tenant on/off switch
+    (PUT /rules/{rule_id}/enabled, admin, RBAC on); no endpoint reads or writes
+    a rule's condition.
 servers:
   - url: http://ws3-indexer:8013
     description: Compose network (TRIAGE_PORT, default 8013)
@@ -152,7 +166,7 @@ paths:
       description: >
         A promoted entity track (>=2 distinct MITRE tactics on one actor or
         one IP within the correlation horizon) -- see
-        docs/superpowers/specs/2026-08-18-ws8-correlation-build-plan.md.
+        services/ws8-correlation/INTERFACE.md.
         Not free-text search, same bounded/filtered-listing convention as
         /api/v1/alerts.
       parameters:
@@ -209,11 +223,12 @@ paths:
         - { name: template, in: query, schema: { type: string, enum: [generic, nis2] },
             description: "Report renderer. Defaults to 'generic' if absent." }
         - { name: stage, in: query, schema: { type: string, enum: [early_warning, notification, final_report] },
-            description: "NIS2 stage (ignored unless template=nis2). Defaults to 'notification' if absent/invalid (code coerces with a loud warn)." }
+            description: "NIS2 stage (ignored unless template=nis2). Defaults to 'notification' if absent; an unknown value returns 400 (gap-hunt R3-43)." }
         - { name: lang, in: query, schema: { type: string, enum: [de, en] },
-            description: "NIS2 language (defaults to 'de' if absent/invalid, coerced with a warn)." }
+            description: "NIS2 language (defaults to 'de' if absent; an unknown value returns 400)." }
       responses:
         "200": { description: the generated report document }
+        "400": { description: "template=nis2 with an unknown stage or lang; the body lists the valid stages and langs" }
         "400": { description: alert_id/template/stage/lang invalid }
         "404": { description: alert not found / not visible }
     # CSRF note (corrected 2026-10-20, gap-hunt R3-#45): when RBAC login sessions are on

@@ -4,7 +4,7 @@ info:
   version: "1.0.0"
   description: >
     Asset inventory keyed by MAC (stable). IP is historised because it changes (DHCP).
-    Implemented by WS-6, consumed by WS-2 (enrichment) and WS-7 (dashboard).
+    Implemented by WS-6, consumed by WS-7 (dashboard). WS-2 enrichment does not call it (local files only).
 servers:
   - url: http://inventory:8000
 security:
