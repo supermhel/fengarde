@@ -4,7 +4,7 @@
 
 ## Context
 
-The seven workstreams communicate *only* through a message bus (`contracts/bus-topics.md`)
+The workstreams (seven when this was decided, nine today) communicate *only* through a message bus (`contracts/bus-topics.md`)
 — no service imports or calls another directly (ADR 004). That bus needs:
 at-least-once delivery, consumer groups (so WS-4 can scale detection workers
 horizontally without double-processing), a pending-entries mechanism for

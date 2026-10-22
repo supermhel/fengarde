@@ -22,6 +22,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Docs corrected: it writes `evasion_floor.yaml` (new keys only), it does not touch `baseline_scenarios.json`.
 - `tools/test_gate_tiers.py` also covers non-`$PY` stanzas (the console's npm/npx) and asserts `contract-tests` needs `changes`.
 
+## [0.11.3] - 2026-10-21
+
+Tiered CI and the rule-cascade helper, the SLSA generator referenced by tag (the cause of the failed `v0.11.2` provenance job), dependency bumps and release docs. `git log v0.11.2..v0.11.3` is the exact list (PRs #113, #115, #116, #117, #118).
+
+**Release integrity:** this is the first release that passes every documented verification step (tarball bundle `cosign verify-blob`, provenance `cosign verify-blob-attestation --bundle` with the SLSA v0.2 predicate, and `cosign verify` of the `ws4-detection` image; the other nine images were not individually verified). Use `v0.11.3`, not `v0.11.2`.
+
 ### Changed (2026-10-21, CI split + new-rule cascade helper)
 
 - **CI no longer runs the whole gate as one ~25-30 min serial step.** `run_all_tests.sh` gained `GATE_TIER` (unset = the full
@@ -36,6 +42,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Runs the generators a new rule needs (`technique_matrix.py --write-doc`, `evasion_cost.py --seed 7 --write-doc`, `--update-floor`
   for a new stateful rule) and the cheap gates that fail first, then prints the manual checklist (producer fixture, coverage row,
   waiver or storyline, probe template, F4 listing, oracle pins, rule counts). Never edits oracles, waivers, the findings register or the ratchet baseline; its only writes are the generated blocks of `contracts/detection-coverage.md` and new keys in `eval/adversarial/evasion_floor.yaml` (guarded, see below).
+
+## [0.11.2] - 2026-10-21
+
+Recall work (Windows/Sysmon/PowerShell/M365/mail parsers and rules, 36 -> 46 rules), fuzz-harness repair, gap-hunt closure, owner decisions Q2/Q8/Q12, supply-chain hash pins and the provenance-name fix. `git log v0.11.1..v0.11.2` is the exact list (PRs #109, #110, #111, #112).
+
+**Release integrity:** the tag-push Release run failed (the SLSA generator was referenced by commit SHA, which its builder rejects). A manual re-run attached provenance, but its signatures carry the `release.yml@refs/heads/main` identity, so they do not match the documented tag-anchored verification. Use `v0.11.3` instead.
 
 ### Added (2026-10-20, recall work part 4: the three owner-approved rules)
 
@@ -97,6 +109,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `lowered:` entry (any maintainer may lower, the reason must be recorded).
 - `CODE_OF_CONDUCT.md` (Contributor Covenant 2.1).
 - Q8 recorded: the deploying operator owns the OPC UA allowlist; the rule stays default-off.
+
+## [0.11.1] - 2026-10-20
+
+Release-pipeline and nightly-eval fixes after `v0.11.0`: cosign signing switched to `--bundle` (PR #105), the nightly `splunk_eval` fails only when no LFS file was pulled (PR #106), plus archived closed records and synced facts. `git log v0.11.0..v0.11.1` is the exact list.
+
+**Release integrity:** no verifiable signed provenance (per SSOT.md and SECURITY.md; use `v0.11.3`).
+
+## [0.11.0] - 2026-10-20
+
+Rebuilt React console, GitHub Pages demo and departure-board project page, 36 rules / 19 parsers, CI and DCO hardening. The itemised list is the set of entries directly below this paragraph, down to the `0.10.0` section (console rebuild, demo, project page, eval work); they shipped in this tag. Known at release: the cosign signing job failed (fix in PR #105), so this release has no signed artifact until re-run.
 
 ### Added (2026-10-15/16, console rebuild, demo and project page — `feat/dashboard-rebuild`)
 
@@ -400,10 +422,6 @@ A differential/property review in sandbox copies found real defects in code that
 - A genuinely separate incident-level NIS2 draft seam: `POST /incidents/{id}/report` (`report_id: "{incident_id}:incident-report"`, never collides with the alert-scoped `"{alert_id}:report"`), causal narrative ordered by the graph's own edge timestamps.
 - `tools/generate_trend_viewer.py` renders `eval/trend.jsonl`'s real nightly rows into a static `eval/trend_viewer.html`.
 - Two code-review rounds (`/code-review high` then `/code-review max`) found and fixed 13 issues total, including a WS-4 co-firing scoring bug (an `exposure_gate`-off rule co-firing with a same-weight/level ungated rule fully hid the ungated rule's exposure score) and a dashboard async state race on fast incident deselect/reselect. See `SSOT.md` §1's Phase 5 row for the full account.
-
-## [0.11.0] - 2026-10-20
-
-Rebuilt React console, GitHub Pages demo and departure-board project page, 36 rules / 19 parsers, CI and DCO hardening. See the entries under Unreleased above for the itemised list; they shipped in this tag. Known at release: the cosign signing job failed (fix in PR #105), so this release has no signed artifact until re-run.
 
 ## [0.10.0] - 2026-09-04
 
@@ -2370,5 +2388,8 @@ Full Docker stack (Docker Desktop 4.80.0 / engine 29.6.1): a real UDP syslog pac
 
 - **Apache-2.0 license** — permissive license; use in commercial products, fork freely.
 
-[Unreleased]: https://github.com/supermhel/fengarde/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/supermhel/fengarde/compare/v0.11.3...HEAD
+[0.11.3]: https://github.com/supermhel/fengarde/compare/v0.11.2...v0.11.3
+[0.11.2]: https://github.com/supermhel/fengarde/compare/v0.11.1...v0.11.2
+[0.11.1]: https://github.com/supermhel/fengarde/compare/v0.11.0...v0.11.1
 [0.1.0]: https://github.com/supermhel/fengarde/releases/tag/v0.1.0

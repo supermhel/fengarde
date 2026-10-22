@@ -177,7 +177,11 @@ Fixed for real, re-run against the same two real corpora:
   clean class fit in the current restricted OCSF profile — closing the gap
   further needs a schema decision (a Module/Process-Access/Registry class),
   not another parser tweak. Still 0 mismatches against the independent
-  oracle after the change.
+  oracle after the change. *(Update 2026-10-22: this paragraph is the
+  2026-09-10 state. Since 2026-10-20 `sysmon.py` also maps EventID 10
+  ProcessAccess to class 1002 activity 5, and the Windows parser maps
+  PowerShell 4104/4103/800; the percentages above predate that and were
+  not re-measured.)*
 - **splunk/attack_data lane**: the loader required the filename to contain
   "security" AND raw content to start `<Event` — the filename check was
   filtering on the wrong signal. `attack_techniques/` ships 57 genuinely
@@ -245,14 +249,16 @@ scenarios):
 | `MISS` | parser **and** rule exist, nothing in the family fired |
 
 `partial_parse` (+ `parsed_fraction`, `unparsed_event_ids`) flags a unit where
-some records had no parser class (e.g. Sysmon 10/13, PowerShell 4104), so a
+some records had no parser class (e.g. Sysmon 7/8/13; Sysmon 10 and PowerShell
+4104 were unmapped when this was written and are mapped since 2026-10-20), so a
 `MISS`/`NO_RULE` there may be missing telemetry rather than missing detection.
 Match rule: exact, or same parent with at least one side being the parent;
 **sibling sub-techniques never match**. `common_password_spray.yml` is T1110.004
 (credential stuffing) by documented design, and true one-source-many-accounts
-spraying (T1110.003) is a disclosed gap, so a T1110.003 dataset is at best
-`HIT_FAMILY` via the T1110 brute-force rules and is listed under
-"no exact rule". The rule index keeps rules with no `framework` key (default
+spraying (T1110.003) was a disclosed gap until `common_password_spray_by_source`
+(2026-10-20) closed it. Any run recorded before that rule existed shows a T1110.003
+dataset as `HIT_FAMILY` / "no exact rule"; this README's recorded numbers were not
+re-measured for this note. The rule index keeps rules with no `framework` key (default
 `attack`) and skips `atlas` / `attack-ics` / no-`mitre` rules.
 `oracle` is `agrees_no_fire` / `disagrees_oracle_expects_fire` **only** for a
 `MISS` whose family contains one of the six `ORACLE_RULES` ids; every other

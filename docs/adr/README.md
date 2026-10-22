@@ -10,16 +10,17 @@ posts were never published and moved out of this repo's working tree in the
 2026-07-31 doc audit — see SSOT.md §4.)
 
 New architecturally-significant decisions going forward get a new ADR here
-(per `CLAUDE.md`'s standing guardrail: ask the human before changing the bus
-message schema, adding heavyweight dependencies, or anything with this kind
-of blast radius — the ADR is where that conversation gets recorded once made).
+(by maintainer convention, not a rule in the checked-in `CLAUDE.md`: ask the
+maintainer before changing the bus message schema, adding heavyweight
+dependencies, or anything with this kind of blast radius — the ADR is where that
+conversation gets recorded once made).
 
 | # | Decision | Status |
 |---|---|---|
 | [001](001-redis-streams-as-the-bus.md) | Redis Streams as the message bus | Accepted, live |
 | [002](002-ocsf-as-the-only-normalized-shape.md) | OCSF as the only normalized event shape | Accepted, live |
 | [003](003-opensearch-not-elasticsearch.md) | OpenSearch, not Elasticsearch | Accepted, live |
-| [004](004-microservice-split-bus-only-coupling.md) | Seven-workstream split, bus-only coupling | Accepted, live |
+| [004](004-microservice-split-bus-only-coupling.md) | Nine-workstream split (originally seven), bus-only coupling | Accepted, live |
 | [005](005-fail-closed-rule-evaluation.md) | Fail-closed detection-rule evaluation | Accepted, live |
 | [006](006-local-first-llm-triage.md) | Local-first LLM triage (Ollama, optional) | Accepted, live |
 | [007](007-cross-alert-correlation-separate-service.md) | Cross-alert correlation as a separate service (WS-8) | Accepted, live |

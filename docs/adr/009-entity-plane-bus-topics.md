@@ -42,7 +42,7 @@ service** that owns entity resolution, per the owner's Option-2 ratification.
 ### Topic A — `entity.updates`
 | | |
 |---|---|
-| Producer | WS-9 (entity resolver); WS-6 Inventory (asset sightings) |
+| Producer | WS-9 (entity resolver); ~~WS-6 Inventory (asset sightings)~~ (planned second producer, never built — WS-6 does not produce this topic, `services/ws9-resolver/INTERFACE.md`) |
 | Consumers | WS-9 (self), WS-3 indexer (persist, `GET /entities/{id}` — Phase 5, 2026-09-04, this row's "future" delivered) |
 | Payload | `{entity_id, entity_type, tenant_id, entity_value, first_seen_ms, last_seen_ms, attributes}` |
 | Partition key | `entity_id` |
@@ -59,7 +59,7 @@ service** that owns entity resolution, per the owner's Option-2 ratification.
 ### Topic B — `incident.graph`
 | | |
 |---|---|
-| Producer | WS-8 Correlation (when it promotes/updates an incident), WS-9 |
+| Producer | WS-8 Correlation (when it promotes/updates an incident), ~~WS-9~~ (WS-9 does not produce this topic) |
 | Consumers | ~~WS-9 (entity resolver)~~ (never built — WS-9 does not consume this topic, confirmed 2026-09-04), WS-3 indexer (persist, `GET /incidents/{id}/graph` + `GET /incidents/{id}/evidence` — Phase 5, 2026-09-04) |
 | Payload | `{version: 1, incident_id, tenant_id, nodes: [type:value…], edges: [{from, to, kind, event_id, ts_ms}], tactic_sources}` |
 | Partition key | `incident_id` |

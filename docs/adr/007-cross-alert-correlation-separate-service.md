@@ -5,7 +5,7 @@
 ## Context
 
 Every detection rule evaluates independently against its own short window
-(`services/ws4-detection/window.py`). A low-and-slow attacker who paces each
+(`services/shared/window.py`, originally `services/ws4-detection/window.py`; moved the same day, see below). A low-and-slow attacker who paces each
 technique under its own rule's threshold produces N isolated alerts, never
 one aggregated incident — the top remaining detection-architecture gap named
 by the 2026-07-29 adversarial design review (Design-C, `SSOT.md` §2), which
@@ -18,7 +18,7 @@ The scope was fixed first in `fengarde-sec`'s
 `docs/2026-08-05-cross-alert-correlation-scope.md` (private repo — the
 failure-mode analysis: false-merge on NAT/DHCP reuse, tenant isolation,
 unbounded state growth), then decided in
-`docs/2026-08-11-cross-alert-correlation-design.md` (same repo). This ADR
+`docs/2026-08-11-cross-alert-correlation-design.md` (also in the private `fengarde-sec` repo). This ADR
 records the one decision from that design doc with the most architectural
 blast radius for THIS repo: where the correlation consumer lives.
 
@@ -47,7 +47,7 @@ compose entry, and health check for what is initially one consumer loop.
 ## A real cross-workstream-import risk this decision surfaced
 
 The design doc says WS-8 "reuses `services/ws4-detection/window.py`'s
-existing primitive" for its per-entity sliding-window state, but a literal
+existing primitive" (its path when the doc was written) for its per-entity sliding-window state, but a literal
 `from window import ...` sourced from `services/ws4-detection/` into
 `services/ws8-correlation/` would itself be a cross-workstream source
 import — the exact thing ADR 004 and `SSOT.md`'s "Bus-only coupling...
@@ -85,5 +85,5 @@ test suite, `tools/validate_rules.py`, and `tools/check_rule_producers.py`).
   cannot fail is not a test" bar `eval/attack/test_fire_check.py`
   established.
 
-See `docs/superpowers/specs/2026-08-18-ws8-correlation-build-plan.md` for
-the full phase-by-phase build record.
+The phase-by-phase build plan (2026-08-18) is not kept in this repository;
+`services/ws8-correlation/INTERFACE.md` states the shipped interface.
