@@ -102,12 +102,18 @@ python tools/rule_cascade.py --no-generate # report only, writes nothing
 ```
 
 It runs the generators (`technique_matrix.py --write-doc`, `evasion_cost.py --seed 7
---write-doc`, and `--update-floor` only when a *stateful* rule is new; never `--allow-lower`),
-then the cheap gates that fail first (`validate_rules`, `check_rule_producers`,
+--write-doc`, and `--update-floor` only when a *stateful* rule is new; never `--allow-lower`).
+The floor update goes through a guard: it runs on a scratch copy of `eval/adversarial/evasion_floor.yaml`
+and is written back only if it purely *adds* rule-set keys (a bare `--update-floor` also re-baselines the
+fingerprint of every other rule-set whose numbers did not get worse, so any change to an existing key is
+refused and listed). Then it runs the cheap gates that fail first (`validate_rules`, `check_rule_producers`,
 `check_lane_coverage`, the technique matrix, the evasion-cost gate). It prints a checklist:
 `TODO` is proven missing by a gate, `CHECK` is a reminder no cheap gate can verify (oracle pins,
-rule counts in README/docs/index.html/console_e2e). It never edits an oracle, a waiver, the
-findings register, a fixture or the ratchet baseline: those are decisions and stay yours.
+rule counts in README/docs/index.html/console_e2e). A generator or gate that fails (non-zero exit,
+timeout) is a `TODO` and a non-zero exit. The only files it writes are the two generated blocks of
+`contracts/detection-coverage.md` and new keys in `eval/adversarial/evasion_floor.yaml` (a ratchet
+*output*: review that diff). It never edits an oracle, a waiver, the findings register, a fixture or the
+ratchet baseline (`eval/twin/baseline_scenarios.json`): those are decisions and stay yours.
 
 ---
 
@@ -144,7 +150,7 @@ this repo's working tree — see SSOT.md §4.
 
 `./run_all_tests.sh` is still the whole gate, and `make test` runs all of it. CI runs the same
 script as **tiers** (`GATE_TIER=<name>`; stanzas are wrapped in `tier_on` blocks, and
-`tools/test_gate_tiers.py` fails if a stanza sits in no tier, so the tiers together are the full gate):
+`tools/test_gate_tiers.py` fails if any command between the first tier block and the pass/fail summary sits in no tier, so the tiers together are the full gate):
 
 | Job (`.github/workflows/ci.yml`) | Runs | When |
 |---|---|---|
@@ -157,12 +163,13 @@ script as **tiers** (`GATE_TIER=<name>`; stanzas are wrapped in `tier_on` blocks
 
 Artifacts move between jobs with `actions/upload-artifact` / `download-artifact`
 (`eval/adversarial/out/`, `eval/twin/out/`, `eval/twin/report.latest.json`); they are stamped with
-`eval/twin/fingerprint.py`, so a stale one fails loudly. The eval jobs run when the diff touches
-`contracts/`, `services/ws2-normalization/`, `services/ws4-detection/`, `services/ws8-correlation/`,
-`services/shared/`, `eval/`, `tools/generate_scorecard.py`, `run_all_tests.sh` or the CI workflow
-(the list lives in `tools/ci_eval_filter.py`: the eval harness replays the real WS-2 to WS-8 path and
-fingerprints `contracts/` and `services/`, so the filter is wider than rules, parsers and detection).
-A docs-only or console-only PR skips them and `contract-tests` still goes green; `main` runs the
+`eval/twin/fingerprint.py`, so a stale one fails loudly. The eval jobs run when the diff (both sides of a
+rename) touches anything `eval/twin/fingerprint.py` hashes (`contracts/` data, `services/**/*.py`, `eval/`
+sources, `tools/validate_contract.py`, `tools/validate_rules.py`, `tools/check_rule_producers.py`, ...), the whole
+`eval/` tree, `README.md` / `SSOT.md` (linted by the scorecard), `tools/generate_scorecard.py`,
+`run_all_tests.sh`, the CI workflow, or the filter itself. The list is DERIVED from the fingerprint in
+`tools/ci_eval_filter.py`, and its test fails if they diverge. A PR that touches none of those (docs, console
+sources, tests outside `eval/`) skips them and `contract-tests` still goes green; `main` runs the
 full gate regardless. Run one tier locally with `GATE_TIER=eval-layers bash run_all_tests.sh`
 (tiers `eval-report` and `eval-gates` need the earlier tiers' artifacts in the same checkout).
 
