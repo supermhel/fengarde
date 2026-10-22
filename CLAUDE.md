@@ -49,7 +49,7 @@ Pipeline stages and topic names (the WS-1..WS-4 naming you'll see in test output
 WS-1 collectors  --raw.events-->  WS-2 normalization  --normalized.events-->  WS-4 detection  --scored.events / alerts-->  WS-3 indexer --> OpenSearch
                                   (parsers -> OCSF)         |                       |--ai.requests--> WS-5 ai (triage)
                                                             +--> WS-6 inventory     |--alerts (cg-correlate)--> WS-8 correlation --incidents--> WS-3
-                                                                                    |--alerts (cg-entity)-----> WS-9 resolver --entity.updates (unconsumed)
+                                                                                    |--alerts (cg-entity)-----> WS-9 resolver --entity.updates (consumed by WS-3)
                                                                                     WS-7 dashboard reads alerts/incidents + WS-6 API
 ```
 

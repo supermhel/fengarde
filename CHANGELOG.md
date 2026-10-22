@@ -26,7 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Tiered CI and the rule-cascade helper, the SLSA generator referenced by tag (the cause of the failed `v0.11.2` provenance job), dependency bumps and release docs. `git log v0.11.2..v0.11.3` is the exact list (PRs #113, #115, #116, #117, #118).
 
-**Release integrity:** this is the first release that passes every documented verification step (tarball bundle `cosign verify-blob`, provenance `cosign verify-blob-attestation --bundle` with the SLSA v0.2 predicate, and `cosign verify` of the `ws4-detection` image; the other nine images were not individually verified). Use `v0.11.3`, not `v0.11.2`.
+**Release integrity:** this is the first release that passes every documented verification step (tarball bundle `cosign verify-blob`, provenance `cosign verify-blob-attestation --bundle` with the SLSA v0.2 predicate, and `cosign verify` of all ten service images, checked 2026-10-22 with cosign v3.0.2). Use `v0.11.3`, not `v0.11.2`.
 
 ### Changed (2026-10-21, CI split + new-rule cascade helper)
 
