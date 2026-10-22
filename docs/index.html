@@ -53,10 +53,10 @@
       radial-gradient(76rem 42rem at 50% 112%,rgba(79,70,229,.32),transparent 66%)}
   .atmos::before{content:"";position:absolute;inset:0;background-image:radial-gradient(rgba(170,179,204,.30) 1px,transparent 1.4px);background-size:22px 22px;
     -webkit-mask-image:linear-gradient(180deg,#000 0,rgba(0,0,0,.5) 40%,transparent 80%);mask-image:linear-gradient(180deg,#000 0,rgba(0,0,0,.5) 40%,transparent 80%)}
-  .atmos svg{position:absolute;inset:0;width:100%;height:100%;color:#3a5190}
-  .atmos .trk{fill:none;stroke:currentColor;stroke-width:2;stroke-linejoin:round;stroke-linecap:round;opacity:.9}
+  .atmos svg{position:absolute;inset:0;width:100%;height:100%;color:#3a5192}
+  .atmos .trk{fill:none;stroke:currentColor;stroke-width:2.2;stroke-linejoin:round;stroke-linecap:round;opacity:.72}
   .atmos .stn{fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;opacity:.9}
-  .atmos .sig{fill:none;stroke:var(--ok);stroke-width:2.5;stroke-linecap:round;stroke-dasharray:90 910;stroke-dashoffset:90;opacity:.9;animation:run 16s linear infinite}
+  .atmos .sig{fill:none;stroke:var(--ok);stroke-width:3.4;stroke-linecap:round;stroke-dasharray:140 860;stroke-dashoffset:140;opacity:.9;animation:run 16s linear infinite}
   .atmos .sig.s2{animation-duration:23s;animation-delay:-9s;stroke:var(--brand);opacity:.6}
   .atmos .sig.s3{animation-duration:29s;animation-delay:-17s;opacity:.5}
   /* narrow screens: the diagram runs behind running text, so it steps back (contrast of body copy wins) */
@@ -66,6 +66,17 @@
   body.is-replaying .atmos .sig.s3{animation-duration:6s}
   @keyframes run{to{stroke-dashoffset:-1000}}
   main,footer,.closing,.ticker{position:relative;z-index:1}
+  /* running copy never fights the diagram: the diagram dips behind letters through a halo in the ground colour (no panels, no patches) */
+  .hero-grid h1,.closing h2{text-shadow:0 0 10px var(--ground),0 0 26px var(--ground)}
+  .hero-grid .lede,.sec-head p,.closing p,footer p,footer a,.sec-head h2{text-shadow:0 0 3px var(--ground),0 0 8px var(--ground),0 0 16px var(--ground)}
+  /* platform edge: every chapter opens on a Bahnsteigkante, a mint lead-in on the safety line over a strip of tactile paving */
+  section.block{position:relative}
+  section.block::before{content:"";position:absolute;top:44px;left:32px;right:32px;height:12px;pointer-events:none;
+    background:linear-gradient(90deg,var(--ok) 0 96px,#33497f 96px) 0 0/100% 2px no-repeat,
+               repeating-linear-gradient(90deg,#33497f 0 2px,transparent 2px 22px) 0 6px/100% 6px no-repeat}
+  /* three chapters sit on a lifted band so the page has depth, not one long flat field */
+  #architecture::after,#detection::after,#run::after{content:"";position:absolute;z-index:-1;top:24px;bottom:-40px;left:50%;width:100vw;transform:translateX(-50%);
+    background:linear-gradient(180deg,rgba(24,34,66,0),rgba(24,34,66,.7) 110px,rgba(13,19,37,.4) 60%,rgba(13,19,37,0));pointer-events:none}
 
   /* ---- top bar ---- */
   .top{position:sticky;top:0;z-index:20;background:#080c18;border-bottom:1px solid var(--rule-soft)}
@@ -103,7 +114,7 @@
   kbd{font:700 11px/1 var(--mono);padding:3px 6px;border-radius:4px;border:1px solid currentColor;opacity:.75}
 
   /* ---- the board ---- */
-  .board-wrap{margin-top:34px;border:1px solid var(--rule);border-radius:12px;background:var(--panel);overflow:hidden}
+  .board-wrap{margin-top:34px;border:1px solid var(--rule);border-radius:12px;background:var(--panel);overflow:hidden;box-shadow:0 44px 90px -44px rgba(79,70,229,.6),0 0 0 1px rgba(143,147,251,.07)}
   .board-head{display:flex;align-items:center;gap:18px;padding:16px 22px;border-bottom:1px solid var(--rule);background:linear-gradient(180deg,var(--panel-2),var(--panel))}
   .board-head h2{margin:0;font-size:clamp(26px,3.4vw,40px);line-height:1}
   .board-head .sub{margin-left:auto;text-align:right}
@@ -294,6 +305,7 @@
     .board-head{padding:14px 16px}.board-foot{padding:12px 16px}
     .cap td.c-src{order:0;flex:1 1 100%;margin-bottom:2px}
     section.block{padding-top:76px}
+    section.block::before{top:30px;left:16px;right:16px}
     .terminal iframe{height:80vh;min-height:560px}
   }
   @media (prefers-reduced-motion:reduce){.atmos .sig{animation:none;opacity:0}.an rect{transition:none}.ticker-pause{display:none}.ticker-track{animation:none;flex-wrap:wrap;width:auto}html{scroll-behavior:auto}.fresh .ch{animation:none}.view{transition:none}}
