@@ -7,8 +7,8 @@
 # Bump header.last-updated/last-reviewed whenever a sourced fact changes.
 header:
   schema-version: 2.2.0
-  last-updated: "2026-10-20"
-  last-reviewed: "2026-10-20"
+  last-updated: "2026-10-22"
+  last-reviewed: "2026-10-22"
   url: https://raw.githubusercontent.com/supermhel/fengarde/main/SECURITY-INSIGHTS.yml
 
 project:
@@ -70,13 +70,13 @@ repository:
       - uri: https://ghcr.io/supermhel
         comment: Container images, one per workstream service, pushed and signed keyless
     attestations:
-      - name: SLSA v1 provenance (generator-generic) + keyless cosign signature
-        predicate-uri: https://slsa.dev/provenance/v1
+      - name: SLSA v0.2 provenance (generator-generic) + keyless cosign signature
+        predicate-uri: https://slsa.dev/provenance/v0.2
         location: https://github.com/supermhel/fengarde/releases
         comment: |
           Every release runs .github/workflows/release.yml: cosign KEYLESS
-          (OIDC) signing of the tarball and each image, SLSA v1 provenance
-          produced by the official SLSA generator's generic generate-provenance
+          (OIDC) signing of the tarball and each image, SLSA v0.2 provenance
+          (predicateType read from the v0.11.3 provenance) produced by the official SLSA generator's generic generate-provenance
           reusable workflow. No private key or secret is used. (SBOM freshness
           -- sbom.json must match every requirements.txt -- is gated in ci.yml
           on every PR, not in release.yml.)
@@ -93,19 +93,23 @@ repository:
           own comment block rather than deleting it).
       third-party:
         - evidence: https://api.securityscorecards.dev/projects/github.com/supermhel/fengarde
-          date: "2026-10-07"
+          date: "2026-10-22"
           name: OpenSSF Scorecard (live API)
           comment: |
-            Score 8.5/10 at commit 285ca72. Strong: Security-Policy, Token-
-            Permissions (least-privilege on all 7 workflows at that commit;
-            dco.yml, added since, is contents: read too), SAST (CodeQL on
-            every PR and push to main), Fuzzing (17 Atheris targets nightly), Vulnerabilities
-            (0 in pinned-deps audit), CI-Tests, Maintained. Weak: Code-Review
-            (0/2 approved changesets — by choice, single maintainer), Pinned-
-            Dependencies 7/10 (actions + images all SHA/digest-pinned; 8/20 pip
-            commands hash-pinned, remainder version-pinned with a pip-audit CVE
-            gate), CII-Best-Practices 2/10 (badge in progress). OpenSSF Best
-            Practices badge: 52%, owner-only form entry pending.
+            Score 8.6/10 at commit f9065dd (API read 2026-10-22). 10/10:
+            Security-Policy, Token-Permissions, SAST (CodeQL), Fuzzing (19
+            Atheris targets nightly), Vulnerabilities, CI-Tests, Maintained,
+            Dangerous-Workflow, Dependency-Update-Tool, Binary-Artifacts,
+            License, Packaging. Weaker, all disclosed: Code-Review 0 (0/8
+            approved changesets as read; single maintainer), Contributors 3 (one organization), Signed-Releases
+            6 (2 of the last 3 releases carried signed artifacts; releases
+            before v0.11.3 have no verifiable signed provenance, see
+            SECURITY.md), Pinned-Dependencies 9 (a dependency not pinned by
+            hash), CII-Best-Practices 5 (badge detected: Passing).
+            Branch-Protection returned an internal API error (-1), not a
+            score. OpenSSF Best Practices badge (project 14443): level
+            passing, 100% of the passing criteria as read from
+            bestpractices.dev on 2026-10-22.
     champions:
       - name: Mel Dylan Djomou
         email: dylandjomou@yahoo.de

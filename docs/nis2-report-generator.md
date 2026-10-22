@@ -35,8 +35,8 @@ zero AI/network dependency.
 - `services/ws3-indexer/nis2_template.py` — a deterministic renderer, zero
   LLM, zero paid dependency. `POST /alerts/{id}/report?template=nis2&stage=
   <stage>&lang=<de|en>` (see `contracts/reporting.md`'s "NIS2 template
-  mode" section) or the dashboard's "NIS2 (DE)" button.
-- `eval/report_generator/` — ≥10 synthetic incident scenarios, sourced from
+  mode" section) or the dashboard's "NIS2 draft" button ("NIS2-Entwurf" in German).
+- `eval/report_generator/` — 12 synthetic incident scenarios (`run_eval.py` fails below a floor of 10), sourced from
   this repo's own real rule set (`contracts/rules/*.yml`), each checked
   against a checklist (disclaimer present, status is draft, the input
   alert's facts are preserved verbatim, the scope caveat is present,

@@ -1,12 +1,12 @@
 # FENGARDE console — feature matrix (2026-10-16)
 
-Every capability the backend, the classic console and the open PRs provide, plus what Zabbix / Elestio / Splunk-class tools offer, checked against the new React console (`services/ws7-dashboard/app`, served at `/`; classic console at `/legacy/`).
+Every capability the backend, the classic console (retired) and the open PRs provided at the time, plus what Zabbix / Elestio / Splunk-class tools offer, checked against the new React console (`services/ws7-dashboard/app`, served at `/`). The classic console at `/legacy/` was retired on 2026-10-20, so the "Classic console" column below is historical (what it did before removal).
 
 States: **Built** (in the new console, not yet checked on the live stack), **Live-tested** (proven against the Docker stack), **Missing** (backend exists, no UI yet), **Needs backend** (no API exists; UI alone can't do it), **Decision** (needs the owner's call: security or scope).
 
 ## A. Existing backend capabilities
 
-| # | Feature | Backend | Classic console | New console | State |
+| # | Feature | Backend | Classic console (retired 2026-10-20) | New console | State |
 |---|---|---|---|---|---|
 | 1 | Sign-in / sign-out, RBAC roles (read_only, analyst, admin), login rate limit | `/auth/login`, `/auth/logout`, `/auth/me` | yes | Login screen, user chip, sign-out, read_only disables triage | Live-tested |
 | 2 | TOTP two-factor enrolment | `/auth/mfa/enable`, `/auth/mfa/verify` | yes | Account view | Live-tested (mfa.mjs: enrol, sign in with a TOTP code) |
@@ -54,7 +54,7 @@ States: **Built** (in the new console, not yet checked on the live stack), **Liv
 | PR | Feature | UI impact | State |
 |---|---|---|---|
 | #96 | Public detection benchmark (`benchmark/`, results + trend viewer), OpenSSF badge, DCO, funnel CTA | Detection-quality summary in the console; Pages site already links it | Merged in #96; console summary still Missing (no UI reads `benchmark/results.json`) |
-| #97 | Classic console keeps the open incident across the 10 s refresh | New console already keeps it; shows "incident left the loaded list" when it ages out | Merged in #97; Built (not asserted by a script) |
+| #97 | Classic console (since retired) keeps the open incident across the 10 s refresh | New console already keeps it; shows "incident left the loaded list" when it ages out | Merged in #97; Built (not asserted by a script) |
 | #93 | R3 injection-evasion hardening, eval phases 5–7 | none (backend + eval) | Merged; n/a |
 | #94, #95 | GitHub Actions bumps | none | Merged; n/a |
 

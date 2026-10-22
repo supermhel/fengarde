@@ -1,5 +1,11 @@
-# Phase 0 dev infrastructure: message bus + storage + provisioning.
-# Service containers (WS-1..WS-7) are added by each workstream skeleton.
+# FENGARDE dev/demo stack. Infrastructure: Redis (bus), OpenSearch (+ Dashboards,
+# provisioning). Workstream services: ws1-collectors, ws2-normalization,
+# ws3-indexer, ws4-detection, ws5-ai, ws6-inventory, ws7-dashboard, ws8-correlation,
+# ws9-resolver (ws1..ws9), plus one-shot init containers (ws1-spool-init,
+# ws3-indexer-init) and the one-shot devkit-feeder (injects a demo SSH brute-force
+# burst). The prometheus, grafana and goatcounter services are in the opt-in
+# `observability` profile. HA (Redis Sentinel, 3-node OpenSearch) is the separate
+# infra/docker-compose.ha.yml overlay; dashboard auth is infra/docker-compose.auth.yml.
 
 services:
   redis:
@@ -176,7 +182,7 @@ services:
       # R3-20: audit.jsonl (default /app/ws3-indexer/storage/audit.jsonl) and the
       # opt-in RBAC sqlite (FENGARDE_RBAC_DB) must survive a container recreate --
       # point both into the named volume mounted at /app/ws3-indexer/data below.
-      # RBAC stays UNOFFBIG (the pre-M4.2 default) unless the operator sets
+      # RBAC stays OFF (the pre-M4.2 default) unless the operator sets
       # FENGARDE_RBAC_DB to a path inside this same volume.
       - FENGARDE_AUDIT_LOG=/app/ws3-indexer/data/audit.jsonl
       # Admin "add device" (POST /inventory/assets, RBAC mode only) forwards to
@@ -187,7 +193,7 @@ services:
     # Deploy fix (same bug class as ws1's spool volume, live-docker-caught
     # 2026-08-21): a fresh named volume is created root:root, but this service
     # drops to uid 10001 (Dockerfile USER app) -- without a one-shot chown the
-    # FIRST audit write (and any RBAC sqlite) hits Permission denied. ws3-data-init
+    # FIRST audit write (and any RBAC sqlite) hits Permission denied. ws3-indexer-init
     # chowns /app/ws3-indexer/data to 10001 before the service starts.
     volumes:
       - ws3-indexer-data:/app/ws3-indexer/data

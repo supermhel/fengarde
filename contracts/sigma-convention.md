@@ -56,8 +56,9 @@ detection:
     score: {gt: 60}                       # gt|gte|lt|lte|ne — numeric, non-numeric operand => no match
     activity_id: {in: [1, 3]}             # list membership (bool != int; missing field => no match)
     api.operation: {contains: "credentials."} # bounded substring, both operands strings, NO regex
-    process.file.name: {glob: "svchost*.exe"} # Sigma-style */?/[seq] wildcard (A-Sigma; shipped in v0.5.0; tags now go through v0.10.0, gap-hunt 2026-09-04 fixed this stale claim), NOT regex
+    process.file.name: {glob: "svchost*.exe"} # Sigma-style */?/[seq] wildcard (A-Sigma; shipped in v0.5.0), NOT regex
     src_endpoint.ip: {not_in: corp_ranges} # suppress if value ∈ contracts/allowlists/corp_ranges.yml (CIDR + exact)
+    unmapped.ot.change_ticket_id: {exists: false} # presence / absence of a field
     time:                                  # time-of-day / day-of-week
       outside_hours:
         start: "08:00"                     # HH:MM, 24h
@@ -80,7 +81,12 @@ detection:
 - `contains` (v0.4): plain substring test — both operands must be strings and the
   needle is length-capped; it is **not** a regex (no ReDoS on contributor rules).
   A non-string operand or empty/oversized needle fails closed.
-- `glob` (A-Sigma; shipped in v0.5.0; tags now go through v0.10.0, gap-hunt 2026-09-04 fixed this stale claim): Sigma-style wildcard match (`*`, `?`, `[seq]`, `[!seq]`)
+- `exists`: `{exists: true}` matches when the field is populated (not `None`),
+  `{exists: false}` when it is missing or `None`. The argument must be a real
+  boolean: a truthy int or string fails closed (selection does not match).
+  Lets a rule key on a context field a parser only sometimes sets without listing
+  every possible value (`services/ws4-detection/engine.py`, `_KNOWN_OPS`).
+- `glob` (A-Sigma; shipped in v0.5.0): Sigma-style wildcard match (`*`, `?`, `[seq]`, `[!seq]`)
   via Python's `fnmatch`, the first step toward mechanical Sigma-rule portability
   (design-review finding D, 2026-07-29 — the rule grammar had no wildcard support
   at all). **Still not a regex**: `fnmatch` translates these four metacharacters
@@ -89,6 +95,26 @@ detection:
   regex* one; most of SigmaHQ's ~3,000 public rules still need a real translation
   layer, not just this operator. A non-string operand or empty/oversized
   (>200 char) pattern fails closed, same discipline as `contains`.
+
+## Rule switches in the `siem:` block
+
+Optional keys under `siem:` (read by `services/ws4-detection/engine.py`; shape-checked by
+`tools/validate_rules.py`):
+
+- `companion_of: <rule id>`: marks a rule that restates a sibling's behaviour on a different
+  key (for example brute force keyed on the account instead of the address) so a split attack
+  cannot slip under the sibling's threshold. Tenant disablement is by rule id, so disabling the
+  sibling also disables its companions. Absent for ordinary rules.
+- `default_enabled: false`: ships the rule default-OFF. It is not evaluated for a tenant until
+  that tenant opts in (`contracts/tenants/<tenant>.yml` `enabled_rules`, or
+  `FENGARDE_OPT_IN_RULES` for every tenant). A companion of a default-off sibling is default-off
+  too. Only a literal `false` switches the rule off; a non-bool value logs a warning and keeps
+  the rule ON. Absent means enabled.
+- `exposure_gate: false`: exempts the rule's funnel-routing decision from exposure-aware
+  scoring (the asset-criticality point-add in `contracts/scoring.yaml`). The alert still fires
+  and still shows its exposure-adjusted score to the analyst; only whether it is routed on to
+  the classifier/LLM funnel is unaffected by the exposure points. Only a literal `false` opts
+  out; absent means exposure applies.
 
 ## Importing SigmaHQ rules (M7 follow-up)
 
@@ -122,7 +148,7 @@ siem:
 The rule fires only when BOTH `count >= threshold` AND the coefficient of
 variation (stdev / mean) of the in-window events' inter-arrival deltas is
 `<= max_cv`. Fewer than 3 in-window events never fires (not enough data to
-judge regularity — see `services/ws4-detection/window.py`'s design note and
+judge regularity — see `services/shared/window.py`'s design note and
 `docs/superpowers/specs/2026-07-21-periodicity-primitive.md` for the full
 rationale and stated limitations, chiefly: trivially evaded by jitter, and
 `group_by` is single-field so it can't group by (src, dst) pairs).

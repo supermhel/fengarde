@@ -63,8 +63,9 @@ proof trail if you want to check any of it yourself):
 3. Provision their WS-6 inventory key: `python manage_keys.py provision acme`. Store the
    printed key now — it's shown once.
 4. (Optional) If they have their own RBAC users: `create_user(..., tenant_id="acme")`
-   against the RBAC DB (see `services/shared/users.py`), or your own provisioning wrapper
-   around it — there's no CLI for this yet, see the gap list below.
+   against the RBAC DB (see `services/shared/users.py`), or, with RBAC on, as an admin via
+   the `POST /users` API (`tenant_id` defaults to the admin's own tenant) or the console's
+   Settings user panel. There is no dedicated CLI for it.
 5. (Optional) If they want alerts routed to their own ticketing/SOAR: add
    `contracts/webhooks/acme-ticketing.yml` with `tenant_id: acme`, set the HMAC secret as
    an env var, restart `ws3-indexer`.
@@ -96,13 +97,15 @@ own technical claims:
   than relying on this.
 - **No tenant-provisioning admin UI.** Everything above is a CLI/YAML-file workflow. There
   is no dashboard "add a customer" wizard yet.
-- **OpenSearch's own high-availability profile (3-node) has never been live-failure-tested.**
-  Redis/Sentinel HA has been (kill-tested, proven). If uptime-under-node-failure is part of
-  your customer promise, verify this yourself before relying on it, or ask what's changed
-  since this doc was written.
-- **WS-5 AI triage is single-threaded.** Under heavy multi-tenant incident load it becomes
-  the throughput ceiling for LLM-based triage specifically (rule-based detection is
-  unaffected).
+- **OpenSearch's 3-node high-availability profile is live-kill-tested for write failover,
+  not beyond it.** Node-death failover was proven live on 2026-08-11
+  (`services/ws3-indexer/storage/test_opensearch_ha_failover_live.py`), as was Redis/Sentinel
+  failover. Not shown: behavior under longer outages, network partitions or rolling upgrades.
+  If uptime-under-failure is part of your customer promise, verify those yourself.
+- **WS-5 AI triage concurrency is bounded, not unlimited.** It runs a worker pool
+  (`AI_MAX_WORKERS`, default 4) with a bounded queue (`AI_QUEUE_CAP`, default 4). Under heavy
+  multi-tenant incident load the LLM is still the throughput ceiling for AI triage
+  specifically (rule-based detection is unaffected).
 
 ## Running this for customers today
 

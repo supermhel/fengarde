@@ -15,9 +15,11 @@
   module's own docstring for the honest scope.
 
 ## Produces
-- Topic `ai.results` — `{event_id, tier, verdict, summary, level, classification}`.
-  On the `"classifier"` tier, `verdict`/`summary` are `null` — the LLM was never
-  called, so nothing is fabricated in those fields.
+- Topic `ai.results` — `{event_id, tier, verdict, summary, level, classification, engine, model}`.
+  `engine` (`"ollama"` | `"stub"`) and `model` say which analyzer actually produced the
+  verdict (the console shows it). On the `"classifier"` tier, `verdict`/`summary` are
+  `null` and `engine`/`model` are `null` — the LLM was never called, so nothing is
+  fabricated in those fields.
 - Topic `alerts` — enriched AI alert. The classifier tier's alert carries no `ai`
   (LLM verdict/summary) block, only `classification`; its `level` is the
   classifier's own priority (low/medium/high), not an LLM verdict.
@@ -50,9 +52,12 @@
 
 ## Environment (read by `main.py` / `llm_adapter.py`)
 - `PORT` (default `8005`) — health/metrics listener port.
-- `OLLAMA_URL` (default `http://localhost:11434`) — Ollama endpoint; unset/unreachable
-  degrades to the documented passthrough `StubLLM` (zero infra).
-- `OLLAMA_MODEL` — model name to request from Ollama.
+- `OLLAMA_URL` (no default) — Ollama endpoint. `make_llm()` (`llm_adapter.py`) only
+  builds the Ollama client when this is set; unset means the deterministic `StubLLM`
+  (zero infra), and set-but-unreachable falls back to the stub too. (`OllamaLLM`'s own
+  constructor falls back to `http://localhost:11434`, but it is never reached while
+  `OLLAMA_URL` is unset.)
+- `OLLAMA_MODEL` (default `qwen2.5`) — model name to request from Ollama.
 - `FENGARDE_TENANT_FAIR_CONSUME` — per-tenant fair consume. **Default on**;
   opt out with `=0`/`=false` (this said "opt-in" until 2026-08-13, contradicting
   this file's own Consumes section above, which correctly says default on).

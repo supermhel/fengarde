@@ -71,6 +71,8 @@ _AD_EVENTIDS = {4624, 4634, 4647, 4625, 4768, 4771}
 # _AD_EVENTIDS or windows_eventlog._EVENT_MAP. Checked explicitly (not left to
 # the windows_eventlog fallback) so a sysmon.py-shaped payload without an
 # explicit source_type doesn't silently dead-letter through the wrong parser.
+# EventID 10 (ProcessAccess) is mapped by sysmon.py (2026-10-20) but is NOT in this sniff set: a record with EventID 10 and no
+# explicit source_type falls through to windows_eventlog (no mapping -> DLQ). Set source_type="sysmon" to reach the Sysmon parser.
 _SYSMON_EVENTIDS = {1, 3, 5, 11}  # 5 (ProcessTerminate) added 2026-09-10, see sysmon.py
 # operation verbs unique to each of the two class-sharing "operation" parsers.
 # Shared verbs (delete/update) are deliberately absent -- a bare "delete" with no

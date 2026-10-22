@@ -1,8 +1,8 @@
 # Contract B — Message Bus Topics
 
 The bus is the **only** coupling between workstreams. No service calls another directly.
-Abstraction: Redis Streams (the only implemented backend, in dev AND production —
-this is the same stack `infra/docker-compose.yml` runs). Kafka is a CANDIDATE for a
+Abstraction: Redis Streams (the only networked backend, in dev AND production —
+this is the same stack `infra/docker-compose.yml` runs), with an in-memory backend for tests. Kafka is a CANDIDATE for a
 future scaled/central tier, not implemented (there is no `_KafkaBus` in
 `services/shared/bus.py`) — this contract's topic names/payloads are chosen to be
 backend-agnostic so a third backend could slot in without a schema change, but
@@ -12,16 +12,16 @@ nothing here should be read as "Kafka already works."
 
 | Topic              | Producer        | Consumer(s)       | Payload                              | Partition key            |
 |--------------------|-----------------|-------------------|--------------------------------------|--------------------------|
-| `raw.events`       | WS-1 Collectors, WS-6 Inventory (M7 Track Y follow-up: a genuinely new device, `source_type=inventory_diff`) | WS-2 Normalization| `{source_type, raw, meta}`           | `src_endpoint.ip` (WS-1) / `mac` (WS-6) |
+| `raw.events`       | WS-1 Collectors, WS-6 Inventory (M7 Track Y follow-up: a genuinely new device, `source_type=inventory_diff`) | WS-2 Normalization| `{source_type, raw, meta}`           | `meta.ip` (WS-1: the UDP peer IP on the syslog path, `meta.ip` of the payload on the mock SNMP/NetFlow/syslog path; it is not `src_endpoint.ip`, which only exists after WS-2) / `mac` (WS-6) |
 | `normalized.events`| WS-2 Normalization | WS-3, WS-4       | OCSF event (Contract A)              | `src_endpoint.ip`        |
 | `scored.events`    | WS-4 Detection  | WS-3               | OCSF event + `siem.score`            | `src_endpoint.ip`        |
 | `ai.requests`      | WS-4 Detection  | WS-5 AI worker(s) | `{event_id, event, tier, reason}`    | `event_id`               |
 | `ai.results`       | WS-5 AI         | WS-3               | `{event_id, tier, verdict, summary, level, classification, engine, model}` (2026-08-20: `engine`/`model` added -- which analyzer actually produced this verdict, `"ollama"`+model name or `"stub"`; `None`/`None` on the classifier tier, which never calls an LLM) | `event_id` |
-| `alerts`           | WS-4, WS-5      | WS-3, WS-8 (2026-08-18, second consumer group `cg-correlate` on the same topic — the bus's consumer-group model already fans out one topic to multiple independent groups, confirmed against this file's own "Consumer groups: one group per workstream" line below), WS-9 (2026-08-28, third consumer group `cg-entity`, `services/ws9-resolver/main.py` — gap-hunt 2026-09-04: this row omitted it) | enriched alert | `alert_id` |
+| `alerts`           | WS-4, WS-5      | WS-3 (`cg-index`, plus `cg-webhook` for outbound webhooks), WS-8 (2026-08-18, second consumer group `cg-correlate` on the same topic — the bus's consumer-group model already fans out one topic to multiple independent groups, see "Delivery semantics" below), WS-9 (2026-08-28, group `cg-entity`, `services/ws9-resolver/main.py` — gap-hunt 2026-09-04: this row omitted it) | enriched alert | `alert_id` (WS-4: deterministic `alert_id`; WS-5: the bare event id from `_stable_event_id`, `services/ws5-ai/main.py`, not the `ai-` prefixed alert id) |
 | `incidents`        | WS-8 Correlation (2026-08-18, new) | WS-3            | correlated incident (entity track promoted on >=2 distinct MITRE tactics) | `incident_id` |
 | `entity.updates`   | WS-9 Resolver (2026-08-28, new — see ADR-009). WS-6 Inventory is ADR-009's planned second producer but does NOT produce this topic yet (2026-09-02 review: corrected, was listed as already producing) | WS-9 (self, `cg-entity-self`), **WS-3 (`cg-index`, Phase 5, 2026-09-04)** — indexed into a flat, non-date-suffixed `entities`/`entities-{tenant}` store, exposed at `GET /entities/{entity_id}` (`services/ws3-indexer/main.py`'s `TOPICS`, `router.py::route()`) | `{entity_id, entity_type, tenant_id, entity_value, first_seen_ms, last_seen_ms, attributes}` — deterministic `entity_id` = `sha256(tenant|type|canonical_value)`, idempotent under redelivery | `entity_id` |
 | `incident.graph`   | WS-8 Correlation (2026-08-28, new — see ADR-009; **upgraded to `version: 2` 2026-09-02, owner-ratified — see ADR-010**). WS-9 Resolver does NOT produce this topic (2026-09-02 review: corrected, was listed as a producer — see `services/ws9-resolver/INTERFACE.md`'s "Deliberately not built (this pass)") | **WS-3 (`cg-index`, Phase 5, 2026-09-04)** — indexed into a flat, non-date-suffixed `incident-graphs`/`incident-graphs-{tenant}` store, exposed at `GET /incidents/{incident_id}/graph`; also feeds `GET /incidents/{incident_id}/evidence`'s on-demand `evidence_package.build_evidence_package()` call (`services/ws3-indexer/main.py`'s `TOPICS`, `router.py::route()`, `triage_api.py::route_get_incident_graph`/`route_get_incident_evidence`). WS-9 still does not consume it | `{version: 2, incident_id, tenant_id, nodes: [{entity_id, entity_type, entity_value, label}…], edges: [{from, to, kind, event_id, ts_ms}], tactic_sources}` — **v2 (WP-3-A/ADR-010):** SUPERSEDES v1 as the emitted payload; nodes are WS-9-canonical sha256 `entity_id` digests (entity_type/entity_value/label preserved for readability); edges gain typed kinds `caused_by`/`invoked`/`authenticated_as`/`wrote_to`/`changed` alongside v1's `used_ip`/`used_device`/`seen_at_ip` — a typed kind is a label on a single-alert-evidenced edge, NEVER a transitive join; still no transitive inference; edges carry `event_id`+`ts_ms` provenance. v1 builder stays in code byte-for-byte as the compat reference (emission is v2 only; consumers distinguish by `version`) | `incident_id` |
-| `assets.updates`   | WS-1            | WS-6 Inventory    | `{mac, ip, hostname, seen_at}`       | `mac`                    |
+| `assets.updates`   | WS-1            | WS-6 Inventory    | `{mac, ip, hostname, seen_at}`       | `mac or ip or "unknown"` |
 | `<topic>.deadletter` | any consumer (`services/shared/runner.py`'s generic redelivery-cap logic), plus `raw.events.deadletter` produced directly by WS-2 on unparseable input | operator (`tools/dlq_peek.py`) | `{topic, group, id, delivery_count, payload}` | inherits the original message's key |
 
 **WS-3 and WS-7 do not have the same bus relationship.** WS-3 (indexer) is the
@@ -45,8 +45,7 @@ group semantics; WS-8 dying or lagging cannot block WS-3's indexing path.
 Reuses `services/shared/window.py`'s `RedisWindowCounter`/
 `DequeWindowCounter` primitive for per-entity sliding-window state (see
 `docs/adr/007-cross-alert-correlation-separate-service.md` and
-`docs/superpowers/specs/2026-08-18-ws8-correlation-build-plan.md` for the
-full design). Produces `incidents`, consumed only by WS-3. Full topic/
+`services/ws8-correlation/INTERFACE.md` for the design). Produces `incidents`, consumed only by WS-3. Full topic/
 payload/partition-key entries are in the table above.
 
 ## Envelope v1 (M1 correctness gate, additive)
@@ -94,13 +93,14 @@ spikes, add workers — nothing else changes. The LLM never sits inline on the l
 ## Delivery semantics
 
 At-least-once. Consumers must be idempotent on `ingest_id` / `event_id` / `alert_id`.
-Consumer groups: one group per workstream (`cg-normalize`, `cg-index`, `cg-detect`, ...).
+Consumer groups are per consuming role, not strictly one per workstream: `cg-normalize` (WS-2), `cg-detect` (WS-4), `cg-ai` (WS-5), `cg-inventory` (WS-6), `cg-index` and `cg-webhook` (both WS-3, the second so a slow webhook receiver cannot delay indexing), `cg-correlate` (WS-8), `cg-entity` and `cg-entity-self` (WS-9).
 
 ## Dev adapter
 
 `infra/docker-compose.yml` runs Redis (the same instance used in production, not a
 dev-only stand-in). The shared `bus.py` helper (provided in each service skeleton)
 exposes `produce(topic, key, payload)` and `consume(topic, group)`, with `BUS_BACKEND`
-selecting between the two IMPLEMENTED backends: `redis` (real deployments) and
-`memory` (zero-infra tests). See the note at the top of this file — Kafka is not one
+selecting between the three IMPLEMENTED values: `redis` (real deployments),
+`redis-sentinel` (HA, needs `REDIS_SENTINEL_HOSTS`) and `memory` (zero-infra tests,
+the default). See the note at the top of this file — Kafka is not one
 of the options `BUS_BACKEND` currently accepts.

@@ -13,9 +13,9 @@ detection rules. Update this file in the same PR as any parser or rule change.
 > two tools as the source of truth for "is a rule dormant", not this doc.
 >
 > **Rule filename convention (R3-#47, 2026-08-27):** the `<sector>_<name>.yml`
-> naming is a strong convention, not a validator-enforced invariant. 14 of the 33
-> shipped files use a rule-family prefix instead (`agent_*`, `cloud_*`, `n8n_*`,
-> `ot_*`) -- that's deliberate: the sector is DECLARED inside each file
+> naming is a strong convention, not a validator-enforced invariant. 23 of the 46
+> shipped files (counted 2026-10-22) use a rule-family prefix instead (`agent_*`,
+> `cloud_*`, `n8n_*`, `ot_*`, and since 2026-10-20 `win_*`, `email_*`, `m365_*`) -- that's deliberate: the sector is DECLARED inside each file
 > (`siem.sector`), never inferred from the filename, so the prefix is a grouping
 > convenience, not the source of truth. Do not "fix" these names to match a
 > `<sector>_` regex; the validator correctly does not enforce it.
@@ -25,13 +25,13 @@ detection rules. Update this file in the same PR as any parser or rule change.
 | class_uid | Class | Emitted by | Rules covering it |
 |---|---|---|---|
 | 1001 | File System Activity | sysmon (P0-3, 2026-07-21 audit fix plan — first producer, closes the long-standing gap below; EventID 11 FileCreate) | none yet — see "under-covered" below |
-| 1002 | Kernel/Process | generic_syslog, windows_eventlog (4688/4672; 7045/4697 service install, 1102/104 log cleared, 4104/4103/800 PowerShell added 2026-10-20), sysmon (P0-3, EventID 1 ProcessCreate; EventID 5 ProcessTerminate added 2026-09-10; EventID 10 ProcessAccess added 2026-10-20) | win_audit_log_cleared, win_service_installed_suspicious_path, win_lsass_access_suspicious, win_powershell_suspicious_script (2026-10-20), common_after_hours_admin (4672 activity 2) |
-| 3002 | Authentication | linux_ssh, active_directory, windows_eventlog (4624/4634/4647), opcua_audit (v0.4 P2, session events), n8n_audit (v0.4 P3, login/logout — no dedicated rule yet), cef (v0.5, auth-shaped extension keys), cloudtrail (v0.5, ConsoleLogin) | common_bruteforce, common_bruteforce_sourceless (P0-2, 2026-07-21 audit fix plan), common_lateral_movement, common_password_spray, common_credential_stuffing_sustained (Q16), common_impossible_travel (v0.4 P4), ot_new_engineering_connection, cloud_root_console_login (v0.5) |
+| 1002 | Kernel/Process | generic_syslog, windows_eventlog (4688/4672; 7045/4697 service install, 1102/104 log cleared, 4104/4103/800 PowerShell added 2026-10-20), sysmon (P0-3, EventID 1 ProcessCreate; EventID 5 ProcessTerminate added 2026-09-10; EventID 10 ProcessAccess added 2026-10-20) | win_audit_log_cleared, win_service_installed_suspicious_path, win_lsass_access_suspicious, win_powershell_suspicious_script (2026-10-20), win_office_spawns_shell (2026-10-20, T1204.002), common_after_hours_admin (4672 activity 2) |
+| 3002 | Authentication | linux_ssh, active_directory, windows_eventlog (4624/4634/4647), opcua_audit (v0.4 P2, session events), n8n_audit (v0.4 P3, login/logout — no dedicated rule yet), cef (v0.5, auth-shaped extension keys), cloudtrail (v0.5, ConsoleLogin), m365_audit (2026-10-14, `UserLoggedIn` activity 1 and `UserLoginFailed` activity 4; `parsers/m365_audit.py`) | common_bruteforce, common_bruteforce_by_account (2026-10-01), common_bruteforce_sourceless (P0-2, 2026-07-21 audit fix plan), common_lateral_movement, common_lateral_movement_by_source (2026-10-01), common_password_spray, common_password_spray_by_source (2026-10-20), common_credential_stuffing_sustained (Q16), common_impossible_travel (v0.4 P4), ot_new_engineering_connection, cloud_root_console_login (v0.5) |
 | 3003 | Account Change | windows_eventlog (4720/4722/4726/4728/4732, added v0.3; 5136 directory change added 2026-10-20) | common_priv_grant, common_rapid_account_lifecycle (v0.5), win_ad_sensitive_attribute_modified (2026-10-20) |
-| 4001 | Network Activity | cisco_asa, cef (v0.5, non-auth-shaped extension keys), sysmon (P0-3, EventID 3 NetworkConnect, always activity 7/Accept), modbus_anomaly (M7, 2026-07-22 — protocol-anomaly detector, NOT a vendor-log parser, see its module docstring), inventory_diff (M7 Track Y, 2026-08-05 — inventory worker's new-device notifications, OT-aware) | common_port_scan, common_beaconing (v0.5, periodicity primitive), ot_modbus_unauthorized_write (M7), ot_modbus_unauthorized_write_ticketed (2026-08-28, LOW downgrade companion), ot_new_device_on_segment (M7 Track Y) |
-| 4002 | DNS/HTTP Activity | dns_query (v0.5, first producer — closes the long-standing gap below) | common_dns_exfil (v0.5) |
+| 4001 | Network Activity | cisco_asa, cef (v0.5, non-auth-shaped extension keys), sysmon (P0-3, EventID 3 NetworkConnect, always activity 7/Accept), modbus_anomaly (M7, 2026-07-22 — protocol-anomaly detector, NOT a vendor-log parser, see its module docstring), inventory_diff (M7 Track Y, 2026-08-05 — inventory worker's new-device notifications, OT-aware) | common_port_scan, common_port_scan_by_target (2026-10-01), common_port_sweep (2026-10-20), common_beaconing (v0.5, periodicity primitive), ot_modbus_unauthorized_write (M7), ot_modbus_unauthorized_write_ticketed (2026-08-28, LOW downgrade companion), ot_new_device_on_segment (M7 Track Y) |
+| 4002 | DNS/HTTP Activity | dns_query (v0.5, first producer — closes the long-standing gap below) | common_dns_exfil (v0.5), common_dns_tunnel_by_domain (2026-10-01) |
 | 4009 | Email Activity | mail_gateway (2026-10-14, secure-email-gateway message log; attachment summary incl. macro-capable flag) | email_macro_attachment_delivered (2026-10-20); no other mail-shape rule yet (phishing_bec phish_delivery stays a declared gap, T1566.001) |
-| 6003 | API Activity | vmware_vsphere, m365_audit (2026-10-14, mailbox-rule facts under unmapped.m365.inbox_rule -- m365_inbox_rule_external_forward reads them since 2026-10-20 (T1114.003)), mcp_agent (v0.4 P1), opcua_audit (v0.4 P2, write/method events), n8n_audit (v0.4 P3), k8s_audit (v0.5, first k8s producer), cloudtrail (v0.5, non-ConsoleLogin management events) | dc_mass_vm_delete, agent_credential_file_access, agent_tool_call_burst, agent_prompt_injection_indicator, ot_write_outside_maintenance, ot_config_change, n8n_new_webhook_exposed, n8n_workflow_modified_after_hours, dc_privileged_container (v0.5) |
+| 6003 | API Activity | vmware_vsphere, m365_audit (2026-10-14, mailbox-rule facts under unmapped.m365.inbox_rule -- m365_inbox_rule_external_forward reads them since 2026-10-20 (T1114.003)), mcp_agent (v0.4 P1), opcua_audit (v0.4 P2, write/method events), n8n_audit (v0.4 P3), k8s_audit (v0.5, first k8s producer), cloudtrail (v0.5, non-ConsoleLogin management events) | dc_mass_vm_delete, dc_mass_vm_delete_by_source (2026-10-01), agent_credential_file_access, agent_tool_call_burst, agent_prompt_injection_indicator, agent_destructive_command, agent_egress_non_allowlisted_domain, ot_write_outside_maintenance, ot_config_change, ot_opcua_write_unauthorized_node (experimental, `siem.default_enabled: false`: off until a tenant opts in), n8n_new_webhook_exposed, n8n_workflow_modified_after_hours, dc_privileged_container (v0.5) |
 | 6005 | Datastore Activity | db_audit (v0.3 — fixed the dormancy below) | bank_db_priv_esc, bank_mass_card_read (v0.5) |
 
 ## Gaps — classes with NO parser producer at all
@@ -53,8 +53,12 @@ this is now a rule gap, not a parser gap.
   landed. Natural next rule: suspicious file-drop path (e.g. a process writing an
   executable to a temp/startup directory) or distinct-file-write burst per host.
 - **1002 (Kernel/Process):** process-launch (4688/sysmon EventID 1, activity 1)
-  anomaly detection (suspicious binary path, unexpected parent) is unbuilt; only
-  privilege-use (4672) has a rule (after-hours admin, added v0.3).
+  coverage is narrow, not absent: `win_office_spawns_shell` (document host spawning
+  a shell/script host, name heuristic, 2026-10-20), `win_audit_log_cleared`,
+  `win_service_installed_suspicious_path`, `win_lsass_access_suspicious` and
+  `win_powershell_suspicious_script` all read this class. Still unbuilt: general
+  suspicious-binary-path and unexpected-parent anomaly detection across arbitrary
+  launches.
 - **4001 (Network Activity, sysmon slice):** sysmon's EventID 3 producer feeds
   `common_port_scan`/`common_beaconing` structurally (same class/activity shape
   as cisco_asa), but neither rule has a dedicated fixture proving it fires on
@@ -110,7 +114,7 @@ this is now a rule gap, not a parser gap.
 | common_dns_tunnel_by_domain | class 4002, activity 1, group_by unmapped.dns.parent_domain, distinct dst_endpoint.hostname (parser-derived parent domain; immune to spreading across clients; added 2026-10-01; suppresses vendor-operated CDN/update/lookup parents listed in allowlists/dns_high_cardinality_parents.yml since 2026-10-02) | yes (dns_query) | ATT&CK T1071.004 / TA0011 |
 | dc_privileged_container | class 6003, activity 1, siem.source_type=k8s_audit, unmapped.k8s.is_privileged=true | yes (k8s_audit, added v0.5) | ATT&CK T1610 / TA0002 |
 | cloud_root_console_login | class 3002, activity 1, siem.source_type=cloudtrail, unmapped.cloud.identity_type=Root, unmapped.cloud.mfa_used=No | yes (cloudtrail, added v0.5) | ATT&CK T1078.004 / TA0001 |
-| bank_mass_card_read | class 6005, activity 1, siem.sector=bank, distinct unmapped.db.object | yes (db_audit, object field added v0.5) | ATT&CK T1005 / TA0009 |
+| bank_mass_card_read | class 6005, activity 1, siem.sector=bank, group_by unmapped.db.object, threshold 20 / 300 s (counts query EVENTS per object, no `distinct_field`; reshaped 2026-08-26, see the rule header) | yes (db_audit, object field added v0.5) | ATT&CK T1005 / TA0009 |
 | common_rapid_account_lifecycle | class 3003, activity in [1,4], group unmapped.target_user.name | yes (windows_eventlog 4720/4726) | ATT&CK T1136 / TA0003 |
 | common_beaconing | class 4001, activity 7, 20+ events (Q15, was 6), periodicity max_cv<=0.25 | yes (cisco_asa, existing producer; A3 periodicity primitive added v0.5) | ATT&CK T1071 / TA0011 |
 | ot_modbus_unauthorized_write | class 4001, unmapped.ot.anomaly_type=unauthorized_write | yes (modbus_anomaly, M7 OT expansion, 2026-07-22) | ATT&CK-ICS T0855 / TA0106 |

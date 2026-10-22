@@ -1,9 +1,9 @@
-# Gap-hunt 2026-08-26: current status of its findings (checked 2026-10-20)
+# Gap-hunt 2026-08-26: current status of its findings (read 2026-10-20 at `f236209`; closure list refreshed 2026-10-22)
 
 The original report is `docs/archive/reviews/gap_hunt_full_report_2026-08-26.md` (256 findings: 45 CRITICAL, 146 RISK,
 65 MINOR). This file is the tracker it never had. Method: three read-only reviewers read the CODE on `origin/main`
 (`f236209`) for every CRITICAL and RISK finding, not commit messages. Nothing was run, and "fixed" was not mutation-tested.
-MINOR findings (65) have NOT been triaged. Statuses are claims from that read, re-checked only where noted.
+MINOR findings (65) have NOT been triaged. Statuses are claims from that read, re-checked only where noted. The counts table below is as of the original read; findings closed afterwards are listed in the next table and are not subtracted from it.
 
 ## Counts
 
@@ -14,7 +14,7 @@ MINOR findings (65) have NOT been triaged. Statuses are claims from that read, r
 | RISK (second half) | 73 | 54 | 11 | 7 | 1 unverifiable (CHANGELOG gap, R4 #86) |
 | MINOR | 0 | not triaged | | | 65 |
 
-## Closed since the check (this branch, 2026-10-20)
+## Closed since the check (PR #112, work dated 2026-10-20, merged 2026-10-21)
 
 | Finding | Change |
 |---|---|
@@ -37,6 +37,7 @@ MINOR findings (65) have NOT been triaged. Statuses are claims from that read, r
 | R2-14 | `bus_error` counted on each failing path, mutation-checked |
 | fuzzing (new, not in the 2026-08-26 report) | the 19 atheris harnesses had no coverage feedback; repaired, and the repaired run found 5 parser bugs, all fixed (see CHANGELOG) |
 | R4-108 (part) | the live bench returns 1 when a latency run collects 0 samples (the fixed SSH-burst ids are still untagged) |
+| R4 #133 / #134 | `common_port_sweep` (T1046, one source denied across 15+ distinct hosts) and `common_password_spray_by_source` (T1110.003, one source across 8+ distinct accounts) |
 
 ## Still OPEN or PARTIAL (not fixed here), with the suggested fix
 
@@ -48,11 +49,9 @@ MINOR findings (65) have NOT been triaged. Statuses are claims from that read, r
 | R3-4, R3-6 | partial | WS-5 alerts never correlate (give them an entity or drop WS-5 from the producer list); accept/document the spoofable `device:` track |
 | R3-35 | partial | probe the outside-hours window per minute (1440 samples) |
 | R3-39 | partial | fail (not warn) in `fire_check` for a rule with no `mitre:` unless waived (one rule has none) |
-| R3-43 | partial | return 400 from the report route for an unknown NIS2 `stage`/`lang` |
 | R4 #33 | partial | add a test with a dribbling fake response asserting `TimeoutError` |
 | R4 #44 | partial | accepted/documented (lengthening the baseline never applies to existing devices) |
 | R4 #85 | partial | add the replay step to the SSOT MFA row |
 | R4 #107, #108 | partial / open | print and fail on `eps_dropped_majority`; tag the live bench SSH-burst ids with the run id |
 | R4 #120, #121 | open | add `backpressure_load_test.py` to the wiring check; run a baseline before `mutmut run \|\| true` |
-| R4 #133, #134 | partial | horizontal-sweep rule; true one-source spray rule (T1110.003) |
 | R4 #86 | unverifiable | check git history for 2026-08-22..25 CHANGELOG gaps |

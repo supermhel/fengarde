@@ -85,8 +85,9 @@ receiver agree.
 ## What this does NOT give you
 
 - No per-webhook UI — configuration is a file on disk, not a dashboard
-  form. A future entry-points-based extension mechanism (M4.5) doesn't
-  change this by itself.
+  form. The entry-points plugin mechanism that shipped later
+  ([`plugin-development.md`](plugin-development.md)) covers parsers and rule
+  packs, not webhook configuration, so this still holds.
 - No webhook-delivery history/audit log in FENGARDE itself — check your
   receiver's own logs, or `ws3-indexer`'s service log (delivery failures
   are currently silent past the retry budget; not wired to a metric yet,

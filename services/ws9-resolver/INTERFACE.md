@@ -1,6 +1,10 @@
 # WS-9 Entity Resolver — Interface Declaration
 
-**Status (2026-08-28): zero-infra proven (WP-2-B).** Implements the entity
+**Status (refreshed 2026-10-22): built 2026-08-28 and zero-infra proven (WP-2-B); since 2026-09-02
+it is also wired into `infra/docker-compose.yml`, `infra/prometheus.yml` and the chaos kill
+rotation (`tools/chaos_test.py` `KILL_TARGETS`), and WS-3 indexes its `entity.updates` output
+(`GET /entities/{id}`, Phase 5; SSOT.md Phase 2 and Phase 5 rows). This file does not claim a
+separate live-Docker run of WS-9 alone; SSOT.md is the record of what was proven live.** Implements the entity
 resolution workstream of `docs/adr/009-entity-plane-bus-topics.md` (ratified)
 and the `entity.updates` topic amendment in `contracts/bus-topics.md`. Adds
 the first persistent *entity identity* the pipeline had: a deterministic
@@ -89,7 +93,7 @@ spellings of one real-world identity hash to ONE `entity_id`:
 
 | type | rule | source |
 |---|---|---|
-| `ip` | `shared.ocsf.valid_ip` — collapses `::ffff:a.b.c.d` → `a.b.c.d`, rejects non-IPs → `None` (skipped) | shared/ocsf.py:54-84; identical to the parsers' edge (`parsers/cef.py:98-106`, `cloudtrail.py:96-98`) and therefore identical to what WS-8 keys on raw (`correlator.py:574`) |
+| `ip` | `shared.ip_utils.valid_ip` (re-exported by `shared.ocsf`) — collapses `::ffff:a.b.c.d` → `a.b.c.d`, rejects non-IPs → `None` (skipped) | `services/shared/ip_utils.py` (`valid_ip`); identical to the parsers' edge (`parsers/cef.py`, `parsers/cloudtrail.py`) and therefore identical to what WS-8 keys on raw (`correlator.py:574`) |
 | `device` | lowercased (`str.lower`) — MACs per ADR's "MACs lowercased"; the `hostname` fallback too (case-insensitive identifier, RFC 1035) | ADR-009:50-51 |
 | `actor` | case-folded (`str.casefold`) — `Alice` / `ALICE` / `alice` are one identity | ADR-009:51-52 |
 
