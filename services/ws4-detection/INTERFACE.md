@@ -105,12 +105,21 @@
 - `FENGARDE_OPT_IN_RULES` — comma-separated rule ids of default-off rules
   (`siem.default_enabled: false`) to enable for EVERY tenant; per-tenant opt-in is
   `enabled_rules` in `contracts/tenants/<tenant>.yml`.
-- `FENGARDE_WINDOW_TIME_SOURCE` (`event` default | `ingest`) — which timestamp drives a
-  stateful window (`engine.py`, Q12). `event` uses the record's own `time` (historical
-  replay works; a forged record clock can still stretch a burst, finding F4); `ingest` uses
-  the receipt time WS-2 stamped as `siem.received_ms`, falling back to the record time when
-  absent. Periodicity rules always use the record time. This describes `main` as of
-  2026-10-22; a change to the default is in an open PR and is not documented here until merged.
+- `FENGARDE_WINDOW_TIME_SOURCE` (`clamp` default | `event` | `ingest`) — which timestamp drives a
+  stateful window (`engine.py`, F4 clamp 2026-10-22, Q12). `clamp` uses the record's own `time`
+  unless it differs from the receipt time WS-2 stamped as `siem.received_ms` by MORE than
+  `min(FENGARDE_WINDOW_MAX_SKEW_SECONDS, window/2)` (either direction), then the receipt time
+  is used and the event is flagged `siem.time_clamped` (metric `detection_time_clamped_total`);
+  exactly at the limit is trusted, no `received_ms` means the record time. `event` is the old
+  record-time-only behaviour: **the explicit opt-out for historical replay / backfill**.
+  `ingest` always uses the receipt time. Periodicity rules always use the record time. An unknown
+  value falls back to `clamp`. The alert-id bucket follows the same clock. See
+  `contracts/identity-aliases.md`.
+- `FENGARDE_WINDOW_MAX_SKEW_SECONDS` (default `600`) — global cap of the clamp limit above; an
+  invalid or negative value falls back to 600 with a warning.
+- `FENGARDE_IDENTITY_ALIASES` — path of the per-tenant realm alias map (default the shipped, empty
+  `contracts/identity_aliases.yaml`). WS-4, WS-8 and WS-9 all load it at start and refuse to start on
+  a malformed or (when set) missing file. Absent map = accounts grouped by `strip().casefold()` only.
 - `RULES_RELOAD_INTERVAL_S` (default `0` = off) — opt-in rule hot-reload poll
   interval (mtime-poll + atomic swap, B4).
 - `DETECTION_OUTPUT_DEPTH_WARN` — warn threshold for over-deep nested output.
