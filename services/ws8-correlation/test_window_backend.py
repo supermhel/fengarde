@@ -21,8 +21,7 @@ assert _spec is not None and _spec.loader is not None
 main = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(main)
 from shared.window import DequeWindowCounter, RedisWindowCounter  # noqa: E402
-import redis  # noqa: E402
-import redis.sentinel  # noqa: E402
+import types  # noqa: E402
 
 STORE = _FakeRedis()
 CALLS: list = []
@@ -43,9 +42,23 @@ def _env(**kv):
     os.environ.update(kv)
 
 
+class _FakeRedisClass:
+    @classmethod
+    def from_url(cls, url, **kw):
+        CALLS.append(("url", url, kw))
+        return STORE
+
+
 def run():
-    redis.sentinel.Sentinel = _FakeSentinel
-    redis.Redis.from_url = classmethod(lambda cls, url, **kw: (CALLS.append(("url", url, kw)), STORE)[1])
+    # Fake redis-py entirely (the CI `quality` job has no redis installed, and
+    # nothing here needs a real client): shadow `redis` + `redis.sentinel`.
+    fake = types.ModuleType("redis")
+    fake.Redis = _FakeRedisClass  # type: ignore[attr-defined]
+    fake_s = types.ModuleType("redis.sentinel")
+    fake_s.Sentinel = _FakeSentinel  # type: ignore[attr-defined]
+    fake.sentinel = fake_s  # type: ignore[attr-defined]
+    sys.modules["redis"] = fake
+    sys.modules["redis.sentinel"] = fake_s
 
     _env(BUS_BACKEND="memory")
     assert isinstance(main.make_correlator().window_counter, DequeWindowCounter)
