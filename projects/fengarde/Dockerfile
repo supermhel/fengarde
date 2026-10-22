@@ -24,8 +24,8 @@ RUN git clone --depth 1 https://github.com/supermhel/fengarde fengarde
 # put the repo's relevant roots on PYTHONPATH.
 ENV PYTHONPATH="$SRC/fengarde/tools/fuzz:$SRC/fengarde:$SRC/fengarde/services:$SRC/fengarde/services/ws2-normalization"
 
-# Atheris is pre-installed on the base image, but pin the latest release
-# explicitly so the project does not silently depend on the base image tag.
+# Atheris is pre-installed on the base image; this upgrades it to whatever PyPI serves at build time. NOT pinned on purpose:
+# OSS-Fuzz's infrastructure rebuilds from floating base images, so a pin here would only freeze one of the two moving parts.
 RUN python3 -m pip install --upgrade atheris pyyaml
 
 COPY build.sh $SRC/build.sh
