@@ -33,12 +33,11 @@ counts, dead-letters and mismatches come from that run's CI log; the twin's 2/2 
 pairs, 12 investigation steps and 7 alerts → 2 incidents from the committed
 [`eval/twin/report.json`](../eval/twin/report.json) `context`.
 
-## Earlier snapshot: full corpus, 36 rules (kept, not re-measured)
+## Earlier snapshot: full corpus, 36 rules (2026-10-14)
 
-Both snapshots are real measured runs; they answer different questions and are **not comparable**. The table above is the
-latest nightly (46 rules, 57-file splunk subset, because the nightly pulls only the pre-registered Q13 LFS subset; a full
-clone is over 9 GB). The table below is the last run on the **full** splunk corpus, taken before the ten recall rules of
-PR #112, so it has **not** been re-measured on 46 rules.
+The table above is the latest nightly (46 rules, 57-file splunk subset, because the nightly pulls only the pre-registered Q13
+LFS subset; a full clone is over 9 GB), so it is **not comparable** with the table below, the last CI run on the **full**
+splunk corpus before the ten recall rules of PR #112. The full corpus has since been re-measured on 46 rules (next section).
 
 Run **2026-10-14**, nightly CI run 38619447630, pinned corpora EVTX `4ceed2f` / splunk `eac2f8f`, 36 rules.
 
@@ -49,26 +48,35 @@ Run **2026-10-14**, nightly CI run 38619447630, pinned corpora EVTX `4ceed2f` / 
 | Untested in the corpora | `password_spray` (graded only by the committed synthetic fixture) |
 | Detection macro-F1 / parser coverage | 0.875 (10-event canary, 4 scored rules) / 43.2% |
 
-### Indicative local run on 46 rules, near-full corpus (2026-10-23, not the source of truth)
+### Full corpus on the 46-rule build (measured 2026-10-23, Linux container)
 
-A local run of the same lanes on the 46-rule build, with all `.log` files under `attack_techniques` pulled (splunk pin
-`800ef65`, the current manifest pin, not the `eac2f8f` of the snapshot above). It is **incomplete**: Windows Defender
-quarantined 13 `.log` files during the Git LFS pull (malware-sample content), and the splunk lane graded **1,023** raw-XML
-files instead of 1,055 (the other 19 files are unexplained: different pin or a different counting basis, not diagnosed).
+The same lanes (`evtx_eval.py`, `splunk_eval.py`) on the 46-rule build of `main` plus PR #126, run inside a `python:3.12` Linux
+container (so no antivirus host can quarantine corpus files), with **every** `datasets/attack_techniques/**/*.log` Git LFS file pulled.
+Two Splunk pins were run, so the comparison with the 36-rule snapshot is on the **identical** corpus:
 
-| Metric | 36 rules, 2026-10-14 | 46 rules, this local run |
-|---|---|---|
-| Splunk raw-XML files / supported records | 1,055 / 263,322 | **1,023** / 263,217 |
-| Combined supported records (EVTX 2,082 + splunk) | 265,404 | 265,299 |
-| Dead-letters / oracle mismatches | 0 / 0 | 0 / 0 |
-| Per-rule TP (EVTX + splunk) | `bruteforce` 3, `lateral_movement` 3, `priv_grant` 5, `after_hours_admin` 12, `bruteforce_sourceless` 8 | identical: 3, 3, 5, 12, 8 |
-| FP / FN | 0 / 0 on the graded rules | 0 / 0 on the six graded rules |
+| Metric | 36 rules, 2026-10-14 (pin `eac2f8f`) | 46 rules, same pin `eac2f8f` | 46 rules, current manifest pin `800ef65` |
+|---|---|---|---|
+| EVTX files / supported records | 278 / 2,082 | 278 / 2,082 | 278 / 2,082 |
+| Splunk raw-XML files / supported records | 1,055 / 263,322 | **1,055 / 263,322** | 1,034 / 263,261 |
+| Dead-letters / oracle mismatches | 0 / 0 | 0 / 0 | 0 / 0 |
+| `bruteforce` / `lateral_movement` TP (splunk) | 3 / 3 | 3 / 3 | 3 / 3 |
+| `priv_grant` TP (EVTX + splunk) | 5 | 1 + 4 = 5 | 1 + 4 = 5 |
+| `after_hours_admin` TP (EVTX + splunk) | 12 | 4 + 8 = 12 | 4 + 8 = 12 |
+| `bruteforce_sourceless` TP (splunk) | 8 | 8 | 8 |
+| FP / FN | 0 / 0 | 0 / 0 | 0 / 0 |
+| `password_spray` | untested in the corpora | untested (TP=FP=FN=0) | untested (TP=FP=FN=0) |
 
-Read this correctly: both lanes grade only the six oracle-backed rules. The other 40 rules are **not graded against an
-oracle**; several fire on Sysmon files with no oracle label (neither TP nor FP), so "0 FP" holds for the six graded rules
-only, never for all 46. For a publishable full-corpus number, take a CI row from an ubuntu runner on the full corpus.
-To re-measure, run the corpus lanes with a full splunk checkout (see [`reproduction.md`](reproduction.md)); local runs on
-hosts with antivirus are not supported.
+Reading it:
+
+- On the identical corpus (middle column) the ten rules added since 2026-10-14 change **none** of the six graded results.
+- The 21-file difference between the middle and right columns is the splunk pin (`800ef65` vs `eac2f8f`): checking the same
+  container out at `eac2f8f` reproduces the snapshot's 1,055 files and 263,322 records exactly.
+- Both lanes grade only the six oracle-backed rules. The other 40 rules fire on Sysmon files with no oracle label (neither TP
+  nor FP), so "FP = 0" holds for the six graded rules only, never for all 46.
+- Commands: `fetch_corpora.py --corpus evtx-attack-samples --corpus splunk-attack-data --no-lfs`, then
+  `git lfs pull --include="datasets/attack_techniques/**/*.log"` in the splunk checkout, then `evtx_eval.py` and `splunk_eval.py`
+  (EVTX pin `4ceed2f`; about 17 min LFS pull, 7 min EVTX lane, 10 to 16 min splunk lane in the container).
+- Local runs on a Windows host with antivirus are not supported: Defender quarantined 13 of these `.log` files in an earlier attempt.
 
 ## The honest boundaries (full text in methodology.md)
 
