@@ -355,5 +355,22 @@ class TestHardeningGuards(unittest.TestCase):
             f"(prompt len {len(prompt)} > bound {bound})")
 
 
+class OllamaTimeoutEnvTests(unittest.TestCase):
+    def test_default_is_eight_seconds(self):
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("OLLAMA_TIMEOUT_SECONDS", None)
+            self.assertEqual(llm_adapter.OllamaLLM(url="http://x").timeout, 8.0)
+
+    def test_env_overrides_and_explicit_argument_wins(self):
+        with mock.patch.dict(os.environ, {"OLLAMA_TIMEOUT_SECONDS": "90"}):
+            self.assertEqual(llm_adapter.OllamaLLM(url="http://x").timeout, 90.0)
+            self.assertEqual(llm_adapter.OllamaLLM(url="http://x", timeout=3).timeout, 3)
+
+    def test_bad_values_fall_back_to_default(self):
+        for bad in ("", "abc", "0", "-5", "nan", "inf"):
+            with mock.patch.dict(os.environ, {"OLLAMA_TIMEOUT_SECONDS": bad}):
+                self.assertEqual(llm_adapter.OllamaLLM(url="http://x").timeout, 8.0, bad)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

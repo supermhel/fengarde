@@ -58,6 +58,9 @@
   constructor falls back to `http://localhost:11434`, but it is never reached while
   `OLLAMA_URL` is unset.)
 - `OLLAMA_MODEL` (default `qwen2.5`) — model name to request from Ollama.
+- `OLLAMA_TIMEOUT_SECONDS` (default `8`) — per-call limit for Ollama. Raise it on CPU-only hosts: a live run with a
+  0.5B model took 8 to 9 s per real WS-5 prompt, so the default sent every alert to the stub. Unset, zero, negative
+  or non-numeric values fall back to 8. After one timeout the adapter serves the stub until the next availability probe.
 - `FENGARDE_TENANT_FAIR_CONSUME` — per-tenant fair consume. **Default on**;
   opt out with `=0`/`=false` (this said "opt-in" until 2026-08-13, contradicting
   this file's own Consumes section above, which correctly says default on).

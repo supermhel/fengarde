@@ -235,6 +235,19 @@ class StubLLM:
                 "engine": "stub", "model": None}
 
 
+_DEFAULT_OLLAMA_TIMEOUT_S = 8.0
+
+
+def _env_timeout() -> float:
+    """OLLAMA_TIMEOUT_SECONDS (default 8): the per-call limit. A real WS-5 prompt on a CPU-only Ollama took 8 to 9 s even for
+    a 0.5B model (live proof 2026-10-23), so the old hardcoded 8 s sent every alert to the stub; unset or invalid -> 8."""
+    try:
+        v = float(os.getenv("OLLAMA_TIMEOUT_SECONDS", ""))
+    except ValueError:
+        return _DEFAULT_OLLAMA_TIMEOUT_S
+    return v if v > 0 and v == v and v != float("inf") else _DEFAULT_OLLAMA_TIMEOUT_S
+
+
 class OllamaLLM:
     """Local-LLM analyst backed by an Ollama server over its HTTP API.
 
@@ -243,10 +256,10 @@ class OllamaLLM:
     """
 
     def __init__(self, url: str | None = None, model: str | None = None,
-                 timeout: float = 8.0):
+                 timeout: float | None = None):
         self.url = (url or os.getenv("OLLAMA_URL") or "http://localhost:11434").rstrip("/")
         self.model = model or os.getenv("OLLAMA_MODEL", "qwen2.5")
-        self.timeout = timeout
+        self.timeout = timeout if timeout is not None else _env_timeout()
 
     def ping(self) -> bool:
         """Cheap reachability probe (GET /api/tags). Never raises."""
