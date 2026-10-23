@@ -101,5 +101,56 @@ def run():
     print("[OK] ws8 window backend selection (memory/redis/redis-sentinel) PASS")
 
 
+def run_failover_redelivery():
+    """A Sentinel failover makes the window write raise once: the shared runner must leave the message unacked,
+    the redelivery must succeed, and a further identical redelivery must not double-count (member = alert id)."""
+    from shared.runner import _process_message
+    from correlator import Correlator
+
+    class _Flaky(RedisWindowCounter):
+        calls = 0
+
+        def hit(self, *a, **kw):
+            type(self).calls += 1
+            if type(self).calls == 1:
+                raise ConnectionError("master failed over")
+            return super().hit(*a, **kw)
+
+    class _Bus:
+        def produce(self, *a, **kw):
+            pass
+
+    class _Msg:
+        id, key = "m1", "k"
+        payload = {"alert_id": "a-failover", "time": 1_750_000_000_000, "rule_id": "r1", "tenant_id": "acme",
+                   "level": "high", "mitre": {"tactic": "TA0006"}, "actor": {"user": {"name": "jdoe"}}}
+
+    class _ZFake(_FakeRedis):  # ws4's fake has no zrange; the correlator reads members back with it
+        def zrange(self, key, start, stop):
+            return list(self.store.get(key, {}))
+
+    store = _ZFake()
+    wc = _Flaky(store, namespace="ws8:corr")
+    handler = main.make_handler(_Bus(), Correlator(wc, horizon_s=3600, member_cap=100))
+    acked: list = []
+    ack = lambda m, g: acked.append(m)  # noqa: E731
+    msg = _Msg()
+    import contextlib
+    import io
+    with contextlib.redirect_stderr(io.StringIO()), contextlib.redirect_stdout(io.StringIO()):  # the runner logs the expected failure
+        r1 = _process_message(_Bus(), "alerts", "cg-correlate", msg, handler, 5, 1, ack_fn=ack)
+    assert r1 == "failed" and not acked, (r1, acked)
+    r2 = _process_message(_Bus(), "alerts", "cg-correlate", msg, handler, 5, 2, ack_fn=ack)
+    assert r2 == "acked" and len(acked) == 1, (r2, acked)
+    keys = [k for k in store.store if k.startswith("ws8:corr")]
+    assert keys, "the redelivery wrote no window state"
+    before = {k: len(wc.members(k.split("ws8:corr:", 1)[-1])) for k in keys}
+    r3 = _process_message(_Bus(), "alerts", "cg-correlate", msg, handler, 5, 3, ack_fn=ack)
+    after = {k: len(wc.members(k.split("ws8:corr:", 1)[-1])) for k in keys}
+    assert r3 == "acked" and before == after, ("duplicate redelivery changed the window", before, after)
+    print("[OK] ws8 failover: failed write -> unacked -> redelivered once, duplicate redelivery not double-counted PASS")
+
+
 if __name__ == "__main__":
     run()
+    run_failover_redelivery()
