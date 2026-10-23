@@ -33,6 +33,24 @@ counts, dead-letters and mismatches come from that run's CI log; the twin's 2/2 
 pairs, 12 investigation steps and 7 alerts → 2 incidents from the committed
 [`eval/twin/report.json`](../eval/twin/report.json) `context`.
 
+## Earlier snapshot: full corpus, 36 rules (kept, not re-measured)
+
+Both snapshots are real measured runs; they answer different questions and are **not comparable**. The table above is the
+latest nightly (46 rules, 57-file splunk subset, because the nightly pulls only the pre-registered Q13 LFS subset; a full
+clone is over 9 GB). The table below is the last run on the **full** splunk corpus, taken before the ten recall rules of
+PR #112, so it has **not** been re-measured on 46 rules.
+
+Run **2026-10-14**, nightly CI run 38619447630, pinned corpora EVTX `4ceed2f` / splunk `eac2f8f`, 36 rules.
+
+| Metric | Value |
+|---|---|
+| Corpus records replayed | **265,404** (EVTX 2,082 in 278 files + splunk 263,322 in 1,055 raw-XML files); 0 parser dead-letters, 0 oracle mismatches |
+| Per-rule confusion (corpus files) | `bruteforce` TP=3, `lateral_movement` TP=3, `priv_grant` TP=5, `after_hours_admin` TP=12, `bruteforce_sourceless` TP=8; **FP=0, FN=0 everywhere** |
+| Untested in the corpora | `password_spray` (graded only by the committed synthetic fixture) |
+| Detection macro-F1 / parser coverage | 0.875 (10-event canary, 4 scored rules) / 43.2% |
+
+To re-measure on the full corpus, run the corpus lanes with the full splunk checkout (see [`reproduction.md`](reproduction.md)).
+
 ## The honest boundaries (full text in methodology.md)
 
 - **Parser coverage (43.2% in this snapshot) is real and disclosed.** It
