@@ -10,7 +10,6 @@ For each ``contracts/rules/*.yml``: its ATT&CK/ATLAS/ICS technique(s), whether a
 from __future__ import annotations
 
 import glob
-import re
 import sys
 from pathlib import Path
 
