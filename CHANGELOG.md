@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed (2026-10-22, ws8 window state under HA)
+
+- `services/ws8-correlation` `make_correlator()` only used the Redis window counter for `BUS_BACKEND=redis`; under the HA profile's `redis-sentinel` it silently used the in-process deque, so even the window membership and TTL clock were per-process. It now builds a Sentinel-aware client (`shared.window.redis_client_for_backend`) and fails at startup if `REDIS_SENTINEL_HOSTS` is missing. Known gap, unchanged: ws8's per-track details (tactics, scores, incident cache) are still in-process (see ws8 `INTERFACE.md`). Regression: `services/ws8-correlation/test_window_backend.py`.
+
 ### Fixed (2026-10-22, hardening of the CI split + `rule_cascade` after an independent review)
 
 - **Path filter false negatives** (`tools/ci_eval_filter.py`, `ci.yml` `changes` job): `git diff` rename detection hid the old path of
