@@ -26,7 +26,13 @@ tenants:
 - **Fail closed.** A malformed or missing (env-pointed) map raises `IdentityAliasError` from `load_rules()`: boot fails,
   a hot reload keeps the previous rules AND the previous map. WS-4 never runs with a half-read map.
   An empty file, a file with only `version: 1`, or `tenants:` with no value counts as truncated and fails; the explicit
-  empty map is `version: 1` plus `tenants: {}`. The file is read by WS-4 on rule (re)load and by WS-8/WS-9 at start.
+  empty map is `version: 1` plus `tenants: {}`. The file is read by WS-4 on rule (re)load and by WS-8/WS-9 at start only,
+  so restart WS-8 and WS-9 after editing the map (until then their tracks and entity ids use the old one).
+  A map file that was loaded earlier and is now MISSING (rename-and-replace deploy, ConfigMap swap, remount) also raises and
+  keeps the previous map; a file cut in the middle of a multibyte character is an `IdentityAliasError` too. The map and the
+  rule set swap together: a reload that fails on a rule keeps the previous map as well as the previous rules. A truncated
+  file that still parses (cut after a complete group) cannot be detected, so deploy the file with an atomic write (write a
+  temp file, then rename it over the old one).
 - **Folded everywhere the canonical actor is used.** WS-4 window groups and alert keys, WS-8 actor tracks, incident ids,
   incident graph nodes and canonical entity ids, WS-9 entity ids (`shared.entity_helpers.canonical_entity_value(..., tenant)`).
   All three services load the same file at start (`shared.identity_aliases.configure()`) and refuse to start on a bad one.

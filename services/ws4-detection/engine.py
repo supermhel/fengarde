@@ -56,6 +56,7 @@ if str(_SERVICES_DIR) not in sys.path:
 
 from shared.envelope import valid_tenant_id  # noqa: E402
 from shared.identity_aliases import IdentityAliasError, canonical_account as _canonical_account, configure as _configure_aliases  # noqa: E402,F401
+from shared.identity_aliases import commit as _commit_aliases, prepare as _prepare_aliases  # noqa: E402
 from shared.log import get_logger  # noqa: E402
 from shared.window import DequeWindowCounter  # noqa: E402
 
@@ -1153,7 +1154,9 @@ def _validate_loaded_rule(raw: dict, path: Path) -> None:
 def load_rules(rules_dir: Path, allowlists_dir: Path | None = None, *, strict_empty: bool = False) -> list[Rule]:
     """``strict_empty``: raise instead of skipping a zero-byte/truncated rule file (used by hot reload so a bad
     edit keeps the PREVIOUS rule set live; boot keeps the lenient skip + warning). gap-hunt R4 #17."""
-    configure_identity_aliases()
+    # Load the alias map first (a bad map stops the load) but install it only after the rules loaded too, so a failed
+    # reload keeps the previous rules AND the previous map together.
+    prepared_aliases = _prepare_aliases()
     rules = []
     empty_files: list = []
     resolved_allowlists = allowlists_dir or (Path(rules_dir).parent / "allowlists")
@@ -1183,4 +1186,5 @@ def load_rules(rules_dir: Path, allowlists_dir: Path | None = None, *, strict_em
         rules.append(Rule(raw, allowlists_dir=resolved_allowlists))
     if strict_empty and empty_files:
         raise ValueError(f"rule file(s) parsed empty (zero-byte or truncated?): {empty_files}")
+    _commit_aliases(prepared_aliases)
     return rules

@@ -156,6 +156,69 @@ def run():
         good.unlink()
         half.unlink()
 
+    # review M1: the DEFAULT file vanishing during a reload (rename-and-replace deploy, ConfigMap swap) must not
+    # silently turn the map into "no map": configure() raises and the previous map stays active
+    import shared.identity_aliases as ia
+    os.environ.pop("FENGARDE_IDENTITY_ALIASES", None)
+    default_file = _write(MAP)
+    saved_defaults = ia._DEFAULT_FILES
+    try:
+        ia._DEFAULT_FILES = (default_file,)
+        ia.commit((ia.IdentityAliases(), None))
+        ia.configure()
+        check(ia.canonical_account("acme", "CORP" + chr(92) + "jdoe") == "jdoe@corp", "precondition: default file map loaded")
+        default_file.unlink()
+        try:
+            ia.configure()
+            check(False, "a vanished default alias file must raise, not silently drop the map")
+        except IdentityAliasError as exc:
+            check("missing" in str(exc), f"vanished-file error should say so: {exc}")
+        check(ia.canonical_account("acme", "CORP" + chr(92) + "jdoe") == "jdoe@corp",
+              "after the vanished-file failure the previous map must still be active")
+    finally:
+        ia._DEFAULT_FILES = saved_defaults
+        ia.commit((ia.IdentityAliases(), None))
+        if default_file.exists():
+            default_file.unlink()
+
+    # review L3: a file cut in the middle of a multibyte character is an IdentityAliasError, not a raw UnicodeDecodeError
+    cut = _write("")
+    cut.write_bytes("version: 1\ntenants:\n  acme:\n    realms: [[é, b]]\n".encode("utf-8")[:-4] + b"\xc3")
+    try:
+        ia.load(cut)
+        check(False, "a file with a cut multibyte character must raise")
+    except IdentityAliasError:
+        pass
+    except Exception as exc:
+        check(False, f"cut multibyte file must raise IdentityAliasError, got {type(exc).__name__}")
+    finally:
+        cut.unlink()
+
+    # review L1: a failed RULE reload must keep the previous map too (they swap together)
+    import shutil
+    new_map = _write("version: 1\ntenants:\n  acme:\n    default_realm: other\n    realms: [[OTHER, other.example]]\n")
+    rules_copy = Path(tempfile.mkdtemp())
+    try:
+        for f in (ROOT / "contracts" / "rules").glob("*.yml"):
+            shutil.copy(f, rules_copy / f.name)
+        os.environ["FENGARDE_IDENTITY_ALIASES"] = str(_write(MAP))
+        load_rules(rules_copy)
+        check(ia.canonical_account("acme", "CORP" + chr(92) + "jdoe") == "jdoe@corp", "precondition: first map active")
+        (rules_copy / "zz_truncated.yml").write_text("", encoding="utf-8")
+        os.environ["FENGARDE_IDENTITY_ALIASES"] = str(new_map)
+        try:
+            load_rules(rules_copy, strict_empty=True)
+            check(False, "a truncated rule file must fail the strict reload")
+        except ValueError:
+            pass
+        check(ia.canonical_account("acme", "CORP" + chr(92) + "jdoe") == "jdoe@corp",
+              "a failed rule reload must NOT install the new alias map (previous rules and map stay together)")
+    finally:
+        os.environ.pop("FENGARDE_IDENTITY_ALIASES", None)
+        new_map.unlink()
+        shutil.rmtree(rules_copy, ignore_errors=True)
+        ia.commit((ia.IdentityAliases(), None))
+
     bad = _write("version: 1\ntenants:\n  acme:\n    realms: oops\n")
     try:
         os.environ["FENGARDE_IDENTITY_ALIASES"] = str(bad)

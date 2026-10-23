@@ -158,7 +158,7 @@ def load(path: str | Path) -> IdentityAliases:
     p = Path(path)
     try:
         text = p.read_text(encoding="utf-8")
-    except OSError as exc:
+    except (OSError, UnicodeDecodeError) as exc:  # the latter: a file cut in the middle of a multibyte character
         raise IdentityAliasError(f"cannot read identity alias map {p}: {exc}") from exc
     try:
         doc = yaml.load(text, Loader=_UniqueKeyLoader)  # noqa: S506 - SafeLoader subclass
@@ -179,15 +179,37 @@ _DEFAULT_FILES = (Path(__file__).resolve().parent.parent / "contracts" / "identi
                   Path(__file__).resolve().parent.parent.parent / "contracts" / "identity_aliases.yaml")
 
 
-def configure(path=None) -> IdentityAliases:
-    """Load the active map: ``path``, else ``$FENGARDE_IDENTITY_ALIASES`` (must exist), else the shipped
-    ``contracts/identity_aliases.yaml`` if present. Raises IdentityAliasError and leaves the previous map
-    active; never installs a partial map. Every service that keys on an account calls this at start."""
-    global _ACTIVE
+#: file the active map was loaded from (None while the active map is empty). A map that was loaded from a path and whose
+#: file later VANISHES (rename-and-replace deploy, ConfigMap swap, remount) must not silently become "no map".
+_LOADED_FROM: Path | None = None
+
+
+def prepare(path=None) -> tuple[IdentityAliases, Path | None]:
+    """Resolve and load the map WITHOUT installing it: ``path``, else ``$FENGARDE_IDENTITY_ALIASES`` (must exist), else the
+    shipped ``contracts/identity_aliases.yaml`` if present. Raises IdentityAliasError (including when a map that was
+    loaded earlier has no file any more); the caller installs the result with :func:`commit`."""
     env = os.environ.get("FENGARDE_IDENTITY_ALIASES", "").strip()
     chosen = path or env or next((f for f in _DEFAULT_FILES if f.exists()), None)
-    _ACTIVE = load(chosen) if chosen else IdentityAliases()
+    if not chosen:
+        if _LOADED_FROM is not None:
+            raise IdentityAliasError(f"identity alias map {_LOADED_FROM} was loaded earlier and is now missing; keeping the "
+                                     f"previous map (restore the file, or set FENGARDE_IDENTITY_ALIASES)")
+        return IdentityAliases(), None
+    loaded = load(chosen)
+    return loaded, (Path(chosen) if loaded else None)
+
+
+def commit(prepared: tuple[IdentityAliases, Path | None]) -> IdentityAliases:
+    """Install a map returned by :func:`prepare`."""
+    global _ACTIVE, _LOADED_FROM
+    _ACTIVE, _LOADED_FROM = prepared
     return _ACTIVE
+
+
+def configure(path=None) -> IdentityAliases:
+    """prepare() + commit(): raises IdentityAliasError and leaves the previous map active; never installs a partial map.
+    Every service that keys on an account calls this at start; WS-4 splits it so the map and the rules swap together."""
+    return commit(prepare(path))
 
 
 def canonical_account(tenant: str, value: str) -> str:
