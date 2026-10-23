@@ -9,6 +9,9 @@ limitations in [`methodology.md`](methodology.md).
 > **Read the method first.** Macro-F1 here is *engine-vs-oracle agreement on
 > hand-labeled corpora*, not a field-trial detection rate. The benchmark's
 > credibility is exactly this boundary being stated, not blurred.
+>
+> **Scope:** the real-corpus numbers below grade **6 of the 46 rules**. What evidence exists for each rule, what is not
+> measured anywhere, and the plan to close the gap: [`rule-evidence.md`](rule-evidence.md).
 
 ## Current snapshot (corpus run **2026-10-22**, nightly CI run 39747085824 on `25f22ba` — the first nightly after the 46-rule build of PR #112 (the CI log reports `rules loaded : 46`); pinned corpora EVTX `4ceed2f` / splunk `800ef65`, the pre-registered Q13 LFS subset; twin run **2026-10-22T08:24Z**, same run)
 
