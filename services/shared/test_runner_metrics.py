@@ -95,7 +95,24 @@ def test_broken_depth_method_warns_once_across_topics():
           "the same (component, error type) must warn only once across topics")
 
 
+def test_bus_without_pel_cap_is_skipped_silently():
+    """The Redis buses have no pel_evicted(); that must not log a warning on every service."""
+    runner._metric_warned.clear()
+
+    class _RedisLikeBus:
+        def depth(self, topic):
+            return 2
+
+    holder = {}
+    out = _capture_stdout(lambda: holder.update(runner._serialize_metrics(
+        lambda: _RedisLikeBus(), {"t": ("g", None)}, None)))
+    check("pel_evicted" not in out, f"a bus without pel_evicted must not warn, got: {out!r}")
+    check(holder.get("t.deadletter_depth") == 2 and "t.pel_evicted" not in holder,
+          f"depth must still be reported and pel_evicted omitted, got {holder!r}")
+
+
 def main():
+    test_bus_without_pel_cap_is_skipped_silently()
     test_broken_bus_factory_warns_once_and_degrades_to_empty()
     test_broken_metrics_provider_warns_and_merges_rest()
     test_broken_depth_method_warns_once_across_topics()

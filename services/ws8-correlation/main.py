@@ -29,26 +29,27 @@ def make_correlator() -> Correlator:
     horizon_s = int(os.getenv("CORRELATION_HORIZON_SECONDS", str(DEFAULT_HORIZON_S)))
     member_cap = int(os.getenv("CORRELATION_MEMBER_CAP", str(DEFAULT_MEMBER_CAP)))
     window_counter = None
-    if os.getenv("BUS_BACKEND", "memory").lower() == "redis":
-        import redis
-        from shared.window import RedisWindowCounter
-        # decode_responses=True is required, not cosmetic: found live
-        # (2026-08-18) that without it, ZRANGE returns bytes from
-        # RedisWindowCounter.members(), which then never string-equal the
-        # plain-str alert_ids correlator.py's side table is keyed by --
-        # every track silently lost all its members on the next hit,
-        # so nothing ever promoted on real Redis (zero-infra tests never
-        # caught this: DequeWindowCounter preserves whatever type is
-        # given). Matches every other real-Redis client construction in
-        # this repo (services/ws4-detection/main.py x3, shared/bus.py x2).
-        client = redis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379/0"),
-                                 decode_responses=True)
-        # ws8's OWN Redis zset namespace -- NOT the ws4:win default. The
-        # reference review flagged the shared default as a latent collision
-        # (a future WS-4 rule group or WS-8 entity type could collide in the
-        # same zset); INTERFACE.md documents the key prefix as ws8:corr.
+    backend = os.getenv("BUS_BACKEND", "memory").lower()
+    # "redis-sentinel" (the HA compose) must be Redis-backed too: it used to
+    # fall through to the in-process deque, losing window state on restart and
+    # splitting it across replicas.
+    if backend in ("redis", "redis-sentinel"):
+        from shared.window import RedisWindowCounter, redis_client_for_backend
+        # decode_responses=True (inside the helper) is required, not cosmetic:
+        # found live (2026-08-18) that without it ZRANGE returns bytes from
+        # RedisWindowCounter.members(), which never string-equal the plain-str
+        # alert_ids correlator.py's side table is keyed by -- every track
+        # silently lost all its members, so nothing promoted on real Redis.
+        client = redis_client_for_backend(backend)
+        # ws8's OWN Redis zset namespace -- NOT the ws4:win default (latent
+        # collision); INTERFACE.md documents the key prefix as ws8:corr.
         window_counter = RedisWindowCounter(client, namespace="ws8:corr")
-    return Correlator(window_counter, horizon_s=horizon_s, member_cap=member_cap)
+    correlator = Correlator(window_counter, horizon_s=horizon_s, member_cap=member_cap)
+    # one line at startup: which window counter is live was invisible (found in the live HA proof)
+    from shared.log import get_logger
+    get_logger("ws8-correlation").info("window counter selected", backend=backend,
+                                       counter=type(correlator.window_counter).__name__)
+    return correlator
 
 
 def make_handler(bus, correlator: Correlator):

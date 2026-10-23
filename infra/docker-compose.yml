@@ -233,7 +233,8 @@ services:
     restart: unless-stopped
     environment: ["BUS_BACKEND=redis", "REDIS_PASSWORD=${REDIS_PASSWORD:-}", "REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0"]
     depends_on: { redis: { condition: service_healthy } }
-    # set OLLAMA_URL to enable the local LLM; otherwise StubLLM
+    # set OLLAMA_URL to enable the local LLM; otherwise StubLLM. On CPU-only hosts also set OLLAMA_TIMEOUT_SECONDS
+    # (default 8): a real prompt can take 8-9 s even on a 0.5B model and would otherwise fall back to the stub.
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8005/health', timeout=3)"]
       interval: 20s

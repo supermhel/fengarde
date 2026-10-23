@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed (2026-10-22, ws8 window state under HA)
+
+- `services/ws8-correlation` `make_correlator()` only used the Redis window counter for `BUS_BACKEND=redis`; under the HA profile's `redis-sentinel` it silently used the in-process deque, so even the window membership and TTL clock were per-process. It now builds a Sentinel-aware client (`shared.window.redis_client_for_backend`) and fails at startup if `REDIS_SENTINEL_HOSTS` is missing. Known gap, unchanged: ws8's per-track details (tactics, scores, incident cache) are still in-process (see ws8 `INTERFACE.md`). Regression: `services/ws8-correlation/test_window_backend.py`.
+
 ### Fixed (2026-10-22, hardening of the CI split + `rule_cascade` after an independent review)
 
 - **Path filter false negatives** (`tools/ci_eval_filter.py`, `ci.yml` `changes` job): `git diff` rename detection hid the old path of
@@ -26,7 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Tiered CI and the rule-cascade helper, the SLSA generator referenced by tag (the cause of the failed `v0.11.2` provenance job), dependency bumps and release docs. `git log v0.11.2..v0.11.3` is the exact list (PRs #113, #115, #116, #117, #118).
 
-**Release integrity:** this is the first release that passes every documented verification step (tarball bundle `cosign verify-blob`, provenance `cosign verify-blob-attestation --bundle` with the SLSA v0.2 predicate, and `cosign verify` of the `ws4-detection` image; the other nine images were not individually verified). Use `v0.11.3`, not `v0.11.2`.
+**Release integrity:** this is the first release that passes every documented verification step (tarball bundle `cosign verify-blob`, provenance `cosign verify-blob-attestation --bundle` with the SLSA v0.2 predicate, and `cosign verify` of all ten service images, checked 2026-10-22 with cosign v3.0.2). Use `v0.11.3`, not `v0.11.2`.
 
 ### Changed (2026-10-21, CI split + new-rule cascade helper)
 

@@ -269,11 +269,18 @@ unchanged by this view.
   rate default until it's tuned against real traffic). Redis `EXPIRE`
   self-cleans a quiet track; there is no separate reaper to test or get
   wrong.
-  **Caveat, true as of 2026-10-22:** `main.py::make_correlator()` builds the Redis-backed
-  counter only when `BUS_BACKEND` is exactly `redis`. Under `BUS_BACKEND=redis-sentinel` it
-  currently falls through to the in-process deque, so correlation tracks are lost on a
-  restart and are not shared across replicas even though the bus itself is HA. A code fix is
-  being made separately; this caveat is to be removed by that change.
+  **Known gap (what the Redis window does and does not persist):** under `BUS_BACKEND=redis`
+  or `redis-sentinel` only the window MEMBERSHIP (alert ids per track, and its TTL clock) lives in
+  Redis, shared across replicas and surviving a restart. The per-member details the correlator
+  decides on (`_sides`, `_side_meta`, `_last_touch`, `_last_incident`, `_incident_graphs`: tactics,
+  scores, first_seen, emitted-incident cache) stay in-process, so after a restart a track's
+  membership is still counted but its tactics are gone until new alerts arrive, and replicas do
+  not share them. Moving that state to Redis is not done.
+  **Practical consequence, measured live (2026-10-23, HA compose scaled to two ws8 replicas):** run ONE ws8
+  replica. A consumer group splits `alerts` between replicas with no key affinity, so the same two
+  alerts that form an incident on one replica form none when they land on different replicas (the
+  window membership is shared, the tactics that decide the incident are not). Scaling ws8 silently
+  weakens incident formation until the correlator state moves to Redis.
 - **Tenant isolation**: tenant is part of the track key, not a filter
   (rejected-at-edge via the same `_validated_tenant`-style check
   `services/ws3-indexer/router.py` uses) — a tenant-agnostic key would
@@ -299,7 +306,7 @@ unchanged by this view.
 ## Environment
 
 - `PORT` (default `8008`) — health/metrics listener port.
-- `BUS_BACKEND` (default `memory` for tests, `redis` in the Docker profile).
+- `BUS_BACKEND` (default `memory` for tests, `redis` in the Docker profile; `redis-sentinel` in the HA profile also selects the Redis-backed window, via `REDIS_SENTINEL_HOSTS`/`REDIS_SENTINEL_MASTER`/`REDIS_PASSWORD`; a missing `REDIS_SENTINEL_HOSTS` fails at startup).
 - `CORRELATION_HORIZON_SECONDS` (default `86400`).
 - `CORRELATION_MEMBER_CAP` (default `200`).
 

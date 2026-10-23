@@ -362,7 +362,7 @@ class WindowsEventLogParser(Parser):
     @staticmethod
     def _parse_pid(value) -> Optional[int]:
         """Windows logs PIDs as hex strings ("0x1f4") or plain ints."""
-        if value is None:
+        if value is None or isinstance(value, bool):  # True would pass isinstance(int) and fail the schema (pid: boolean)
             return None
         if isinstance(value, int):
             return value

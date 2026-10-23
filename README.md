@@ -302,10 +302,12 @@ One-command, reproducible by anyone with a clone — no Docker required.
 
 | Metric | Value |
 |---|---|
-| Sustained EPS (5,000 events, `linux_ssh` only) | ~985 events/sec |
-| Sustained EPS (20,000 events, mixed sources) | ~2,500-2,650 events/sec |
-| Peak resident memory (20,000-event run) | ~114 MB |
-| Rule prefilter vs. forced linear scan (36 rules, 20,000 events) | 1.12x faster |
+| Sustained EPS (5,000 events, `linux_ssh` only) | ~985 events/sec (earlier run; **unverified**, see note) |
+| Sustained EPS (20,000 events, mixed sources) | ~2,500-2,650 events/sec (earlier run; **unverified**, see note) |
+| Peak resident memory (20,000-event run) | ~114 MB (earlier run; **unverified**, see note) |
+| Rule prefilter vs. forced linear scan (46 rules, 20,000 events) | 1.09x faster (re-measured 2026-10-22; 1.11x on the 36-rule tag `v0.11.1`, same machine) |
+
+**Re-run 2026-10-22 on a Windows workstation with Docker Desktop and the compose stack running:** 240 events/sec (5,000 `linux_ssh`), 586 events/sec and 425 MB peak RSS (20,000 mixed), 46 rules. The 36-rule tag `v0.11.1` measured on the same machine in the same state gave 207 events/sec (5,000 `linux_ssh`), so the gap to the figures above is not caused by the 10 added rules; the earlier figures came from a different machine and were not reproduced here. Treat all three rows as machine-dependent until re-measured on an idle reference host.
 
 This is a **zero-infra CPU-bound baseline** (one process, in-memory bus) — it
 measures how fast the Python code processes a batch, excluding real Redis

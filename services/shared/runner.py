@@ -445,13 +445,14 @@ def _serialize_metrics(bus_factory, handlers, metrics_provider) -> dict:
                 _warn_once("deadletter_depth", exc)
             # gap-hunt (2026-08-26): _pel_evicted was counted since R3-54 but
             # never exposed -- a group that never acks silently drops its
-            # oldest pending work forever with zero signal. MemoryBus-only
-            # (RedisBus has no synthetic PEL cap); AttributeError on RedisBus
-            # is expected and logged like depth()'s own guard.
-            try:
-                depths[f"{topic}.pel_evicted"] = b.pel_evicted(topic)
-            except Exception as exc:
-                _warn_once("pel_evicted", exc)
+            # oldest pending work forever with zero signal. MemoryBus-only: the Redis buses (plain and
+            # Sentinel) have no synthetic PEL cap, so they are skipped instead of logging an
+            # AttributeError warning on every service (seen live in ws5/ws8 under redis-sentinel).
+            if hasattr(b, "pel_evicted"):
+                try:
+                    depths[f"{topic}.pel_evicted"] = b.pel_evicted(topic)
+                except Exception as exc:
+                    _warn_once("pel_evicted", exc)
     if metrics_provider is not None:
         try:
             depths.update(metrics_provider())

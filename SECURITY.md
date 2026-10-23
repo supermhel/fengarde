@@ -436,9 +436,8 @@ exactly how to verify it.
 **Scope, honestly:** `v0.11.0` and `v0.11.1` have no verifiable signed provenance, and
 `v0.11.2`'s signatures carry the `refs/heads/main` identity rather than a tag
 identity, so the commands below do not verify them as written. Use `v0.11.3` or
-later. For `v0.11.3` the tarball bundle, the provenance and the
-`ws4-detection` image were checked as documented here (2026-10-22); the other
-nine images were not individually verified. Releases before `v0.11.0` have no
+later. For `v0.11.3` the tarball bundle, the provenance and all ten service
+images were checked as documented here (2026-10-22, cosign v3.0.2). Releases before `v0.11.0` have no
 signed or provenance assets that this section verifies.
 
 The commands below assume you have installed `cosign` (≥ v2, e.g. via
