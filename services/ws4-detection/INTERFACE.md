@@ -36,6 +36,9 @@
   event only evaluates candidate rules; multi-class/negation rules fall back to a
   catch-all bucket (always evaluated).
 - Deterministic `alert_id` → idempotent alerts under at-least-once redelivery.
+- Alert `event_ids` are the window's contributing ingest ids, except for distinct-count rules, where they are the counted
+  values (ports, hosts). `trigger_event_id` is the ingest id of the event that tripped the rule (absent if the event has none);
+  it is what joins a WS-5 triage doc to a distinct-count alert (the dashboard uses it). Not mapped in `alerts-*` (kept in `_source`).
 - Rule gates (CI): `tools/validate_rules.py` (schema/condition/operator/reference)
   and `tools/check_rule_producers.py` (anti-dormancy).
 

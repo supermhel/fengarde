@@ -31,6 +31,7 @@ export interface Alert {
   actor?: { user?: { name?: string } };
   mitre?: Mitre | null;
   event_ids?: string[];
+  trigger_event_id?: string | null;
   triage?: { status?: string; note?: string; updated_by?: string; updated_at?: number };
   ai?: { engine?: string; level?: string; model?: string | null; summary?: string; verdict?: string };
 }

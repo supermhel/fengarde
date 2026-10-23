@@ -630,6 +630,10 @@ def make_alert(event, rule, score):
         # triggering id for non-stateful rules or when the counter has
         # nothing to report (never fabricates an id).
         "event_ids": event_ids,
+        # The id of the event that tripped the rule. A distinct-count alert's `event_ids` are the counted
+        # VALUES (ports, hosts), so a WS-5 triage doc (keyed by the triggering ingest id) could never be
+        # joined to it; this field is the join key for that case. None when the event carries no id.
+        "trigger_event_id": (event.get("siem") or {}).get("ingest_id"),
         # Gap-hunt (2026-08-26): WS-3's list_alerts filters on
         # {"term": {"triage.status": ...}} and the alerts mapping is
         # dynamic:false, so an ALERT MUST carry an explicit triage field

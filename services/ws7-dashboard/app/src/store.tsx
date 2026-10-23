@@ -3,6 +3,7 @@ import { DEMO } from "./demo/flag";
 import { api, setTenant, type Alert, type Incident, type OcsfEvent, type OpsMetrics, type Result, type Rule, type Session } from "./data/api";
 import { dicts, initialLang, type Dict, type Lang } from "./lib/i18n";
 import { RANGES, type RangeKey } from "./lib/time";
+import { attachAi } from "./lib/attachAi";
 
 const POLL_MS = DEMO ? 3_000 : 10_000;
 export const OPS_KEYS = ["ws1", "ws2", "ws4", "ws8", "ws3", "ws5"] as const;
@@ -61,19 +62,11 @@ export function ConsoleProvider({ session, rbac, setSession, children }: {
     const [rawAlerts, events, incidents, rules, ai, ...ops] = await Promise.all([
       api.alerts(gte), api.events(gte), api.incidents(), api.rules(), api.aiTriage(), ...OPS_KEYS.map((k) => api.ops(k)),
     ]);
-    // WS-5 verdicts are indexed as their own docs keyed by event, not by alert:
-    // join on shared event_ids, exactly like the classic console's attachAiTriage().
-    const byEvent = new Map<string, NonNullable<Alert["ai"]>>();
-    if (ai.ok) for (const d of ai.data) if (d.ai) for (const e of d.event_ids || []) byEvent.set(e, d.ai);
     // The alert/event routes proxy OpenSearch directly (no server-side tenant filter),
     // so an admin-chosen tenant scope is applied here; the other routes take ?tenant_id=.
     const inTenant = (x: { tenant_id?: string; siem?: { tenant?: string } }) => !tenant || (x.tenant_id || x.siem?.tenant || "default") === tenant;
     const alerts = rawAlerts.ok
-      ? { ...rawAlerts, data: rawAlerts.data.filter(inTenant).map((a) => {
-          if (a.ai) return a;
-          const hit = (a.event_ids || []).map((e) => byEvent.get(e)).find(Boolean);
-          return hit ? { ...a, ai: hit } : a;
-        }) }
+      ? { ...rawAlerts, data: attachAi(rawAlerts.data.filter(inTenant), ai.ok ? ai.data : []) }
       : rawAlerts;
     // Data refresh never touches view state (selection, open faceplate, built evidence).
     const scopedEvents = events.ok ? { ...events, data: events.data.filter(inTenant) } : events;
