@@ -387,6 +387,9 @@ echo
 echo "== ws2 timeutil (P1.6: epoch/ISO/FILETIME normalization) =="; LAST_HEADER="== ws2 timeutil (P1.6: epoch/ISO/FILETIME normalization) =="
 $PY services/ws2-normalization/parsers/test_timeutil.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
+echo "== ws2 extreme-value sweep (every parser's real fixtures, every field set to huge/inf/nan/NUL) =="; LAST_HEADER="== ws2 extreme-value sweep =="
+$PY services/ws2-normalization/parsers/test_extreme_values.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
 echo "== ws2 parsers: db_audit (v0.3, un-dormants bank_db_priv_esc.yml) =="; LAST_HEADER="== ws2 parsers: db_audit (v0.3, un-dormants bank_db_priv_esc.yml) =="
 $PY services/ws2-normalization/parsers/test_db_audit.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo

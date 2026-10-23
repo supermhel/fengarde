@@ -189,7 +189,9 @@ class Parser:
             "siem": {
                 "sector": sector or self.SECTOR,
                 "source_type": self.SOURCE_TYPE,
-                "ingest_id": ingest_id or str(uuid.uuid4()),
+                # a numeric source id (k8s auditID 123) is a valid id, not a type error; anything else non-string gets a fresh uuid
+                "ingest_id": (str(ingest_id) if isinstance(ingest_id, (int, float)) and not isinstance(ingest_id, bool)
+                              else ingest_id if isinstance(ingest_id, str) and ingest_id else str(uuid.uuid4())),
                 "trace_id": meta.get("trace_id") or new_trace_id(),
                 "tenant": meta.get("tenant_id") or default_tenant(),
             },
