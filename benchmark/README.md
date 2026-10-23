@@ -49,7 +49,26 @@ Run **2026-10-14**, nightly CI run 38619447630, pinned corpora EVTX `4ceed2f` / 
 | Untested in the corpora | `password_spray` (graded only by the committed synthetic fixture) |
 | Detection macro-F1 / parser coverage | 0.875 (10-event canary, 4 scored rules) / 43.2% |
 
-To re-measure on the full corpus, run the corpus lanes with the full splunk checkout (see [`reproduction.md`](reproduction.md)).
+### Indicative local run on 46 rules, near-full corpus (2026-10-23, not the source of truth)
+
+A local run of the same lanes on the 46-rule build, with all `.log` files under `attack_techniques` pulled (splunk pin
+`800ef65`, the current manifest pin, not the `eac2f8f` of the snapshot above). It is **incomplete**: Windows Defender
+quarantined 13 `.log` files during the Git LFS pull (malware-sample content), and the splunk lane graded **1,023** raw-XML
+files instead of 1,055 (the other 19 files are unexplained: different pin or a different counting basis, not diagnosed).
+
+| Metric | 36 rules, 2026-10-14 | 46 rules, this local run |
+|---|---|---|
+| Splunk raw-XML files / supported records | 1,055 / 263,322 | **1,023** / 263,217 |
+| Combined supported records (EVTX 2,082 + splunk) | 265,404 | 265,299 |
+| Dead-letters / oracle mismatches | 0 / 0 | 0 / 0 |
+| Per-rule TP (EVTX + splunk) | `bruteforce` 3, `lateral_movement` 3, `priv_grant` 5, `after_hours_admin` 12, `bruteforce_sourceless` 8 | identical: 3, 3, 5, 12, 8 |
+| FP / FN | 0 / 0 on the graded rules | 0 / 0 on the six graded rules |
+
+Read this correctly: both lanes grade only the six oracle-backed rules. The other 40 rules are **not graded against an
+oracle**; several fire on Sysmon files with no oracle label (neither TP nor FP), so "0 FP" holds for the six graded rules
+only, never for all 46. For a publishable full-corpus number, take a CI row from an ubuntu runner on the full corpus.
+To re-measure, run the corpus lanes with a full splunk checkout (see [`reproduction.md`](reproduction.md)); local runs on
+hosts with antivirus are not supported.
 
 ## The honest boundaries (full text in methodology.md)
 
