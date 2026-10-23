@@ -34,7 +34,10 @@ def to_epoch_ms(value) -> Optional[int]:
     if isinstance(value, bool):
         return None
     if isinstance(value, (int, float)):
-        v = float(value)
+        try:
+            v = float(value)
+        except OverflowError:     # an int past float range (fuzz finding): reject, never raise
+            return None
         if not math.isfinite(v):  # JSON Infinity/-Infinity/NaN: reject, never raise
             return None
         if v <= 0:

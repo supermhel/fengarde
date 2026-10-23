@@ -26,6 +26,12 @@ def check(cond, msg):
 
 
 def run():
+    # an int too large for float (fuzz-sysmon crash input, CI run 39829953986): None, never OverflowError
+    for huge in (10 ** 400, -(10 ** 400)):
+        try:
+            check(to_epoch_ms(huge) is None, f"huge int {str(huge)[:12]}... -> None")
+        except OverflowError:
+            check(False, "huge int raised OverflowError")
     # epoch seconds -> ms
     check(to_epoch_ms(1_750_000_000) == 1_750_000_000_000, "epoch seconds -> ms")
     # epoch millis -> unchanged
