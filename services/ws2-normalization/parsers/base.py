@@ -82,6 +82,21 @@ _FAILURE_TOKENS = frozenset({
 })
 
 
+def _ingest_id_str(value) -> str:
+    """The siem.ingest_id for a source-supplied id: a non-empty string is kept, a numeric id (k8s auditID 123) becomes
+    its decimal string (a valid id, not a schema type error), and anything else (None, bool, container, empty, or an int
+    past Python's 4300-digit str() limit) gets a fresh uuid. Numeric 1 and the string "1" therefore share one id, as two
+    equal string ids always did."""
+    if isinstance(value, str) and value:
+        return value
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        try:
+            return str(value)
+        except ValueError:  # int with more than 4300 digits
+            pass
+    return str(uuid.uuid4())
+
+
 def status_from_outcome(rec: dict,
                         keys=("status", "result", "outcome", "success"),
                         default: str = "Success") -> str:
@@ -189,9 +204,7 @@ class Parser:
             "siem": {
                 "sector": sector or self.SECTOR,
                 "source_type": self.SOURCE_TYPE,
-                # a numeric source id (k8s auditID 123) is a valid id, not a type error; anything else non-string gets a fresh uuid
-                "ingest_id": (str(ingest_id) if isinstance(ingest_id, (int, float)) and not isinstance(ingest_id, bool)
-                              else ingest_id if isinstance(ingest_id, str) and ingest_id else str(uuid.uuid4())),
+                "ingest_id": _ingest_id_str(ingest_id),
                 "trace_id": meta.get("trace_id") or new_trace_id(),
                 "tenant": meta.get("tenant_id") or default_tenant(),
             },

@@ -120,8 +120,9 @@ def run():
     check(len(norm_r) == len(norm_h) == len(samples),
           f"handler/run normalized counts diverged: {len(norm_r)} != {len(norm_h)}")
     # siem.ingest_id/siem.trace_id are FRESH UUIDs minted per parse when the
-    # fixture meta doesn't stamp them (base_event: `ingest_id or
-    # str(uuid.uuid4())`; WS-1 stamps them in production via envelope).
+    # fixture meta doesn't stamp them (base_event: `_ingest_id_str(ingest_id)`, a
+    # string id is kept, a numeric one stringified, anything else a fresh uuid;
+    # WS-1 stamps them in production via envelope).
     # Everything else -- keys, class, endpoints, enrichment -- must be
     # identical across the two entry points.
     def _canon_norm(m):

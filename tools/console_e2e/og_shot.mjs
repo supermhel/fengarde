@@ -1,10 +1,11 @@
 // Regenerates docs/img/og.png: the project page's first screen at 1200x630 (English).
 //   python -m http.server 8123 --directory docs     (in another shell)
 //   node og_shot.mjs [out.png]
-import { launch, sleep } from "./lib.mjs";
+import { launch, sleep, REPO } from "./lib.mjs";
+import path from "node:path";
 
 const URL = process.env.FENGARDE_PAGES_URL || "http://127.0.0.1:8123/";
-const out = process.argv[2] || "../../docs/img/og.png";
+const out = process.argv[2] || path.join(REPO, "docs", "img", "og.png");
 const b = await launch();
 const ctx = await b.newContext({ viewport: { width: 1200, height: 630 }, locale: "en-GB" });
 const page = await ctx.newPage();

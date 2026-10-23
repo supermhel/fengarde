@@ -236,16 +236,21 @@ class StubLLM:
 
 
 _DEFAULT_OLLAMA_TIMEOUT_S = 8.0
+# One WS-5 worker is held for the whole call and the startup probe uses the same value, so an unbounded setting could
+# stall the service behind a hung Ollama; larger values are clamped.
+_MAX_OLLAMA_TIMEOUT_S = 120.0
 
 
 def _env_timeout() -> float:
-    """OLLAMA_TIMEOUT_SECONDS (default 8): the per-call limit. A real WS-5 prompt on a CPU-only Ollama took 8 to 9 s even for
-    a 0.5B model (live proof 2026-10-23), so the old hardcoded 8 s sent every alert to the stub; unset or invalid -> 8."""
+    """OLLAMA_TIMEOUT_SECONDS (default 8, max 120): the per-call limit. A real WS-5 prompt on a CPU-only Ollama took 8 to 9 s
+    even for a 0.5B model (live proof 2026-10-23), so the old hardcoded 8 s sent every alert to the stub; unset or invalid -> 8."""
     try:
         v = float(os.getenv("OLLAMA_TIMEOUT_SECONDS", ""))
     except ValueError:
         return _DEFAULT_OLLAMA_TIMEOUT_S
-    return v if v > 0 and v == v and v != float("inf") else _DEFAULT_OLLAMA_TIMEOUT_S
+    if not (v > 0 and v == v and v != float("inf")):
+        return _DEFAULT_OLLAMA_TIMEOUT_S
+    return min(v, _MAX_OLLAMA_TIMEOUT_S)
 
 
 class OllamaLLM:

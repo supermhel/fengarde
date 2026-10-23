@@ -366,6 +366,13 @@ class OllamaTimeoutEnvTests(unittest.TestCase):
             self.assertEqual(llm_adapter.OllamaLLM(url="http://x").timeout, 90.0)
             self.assertEqual(llm_adapter.OllamaLLM(url="http://x", timeout=3).timeout, 3)
 
+    def test_huge_values_are_clamped_to_the_maximum(self):
+        for big in ("121", "1e9", "99999"):
+            with mock.patch.dict(os.environ, {"OLLAMA_TIMEOUT_SECONDS": big}):
+                self.assertEqual(llm_adapter.OllamaLLM(url="http://x").timeout, 120.0, big)
+        with mock.patch.dict(os.environ, {"OLLAMA_TIMEOUT_SECONDS": "120"}):
+            self.assertEqual(llm_adapter.OllamaLLM(url="http://x").timeout, 120.0)
+
     def test_bad_values_fall_back_to_default(self):
         for bad in ("", "abc", "0", "-5", "nan", "inf"):
             with mock.patch.dict(os.environ, {"OLLAMA_TIMEOUT_SECONDS": bad}):

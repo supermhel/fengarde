@@ -27,11 +27,15 @@ sys.path.insert(0, str(ROOT / "tools"))
 
 from check_rule_producers import FIXTURES  # noqa: E402
 from parsers import get_parser, known_sources  # noqa: E402
+from parsers.base import _ingest_id_str  # noqa: E402
 from shared.ocsf import validate as ocsf_validate  # noqa: E402
 
 BIG = 10 ** 400
 EXTREMES = [BIG, -BIG, 2 ** 64, 2 ** 63, -(2 ** 63), 1e308, -1e308, float("inf"), float("-inf"), float("nan"),
-            0, -1, "9" * 400, "-" + "9" * 400, "1" + "0" * 400, "\x00", "A" * 100_000]
+            0, -1, "9" * 400, "-" + "9" * 400, "1" + "0" * 400, "\x00", "A" * 100_000,
+            "9" * 5000,  # a 5000-digit STRING (an int that long cannot arrive: json.loads rejects ints over 4300 digits,
+            #              so no record from the bus can carry one; only ingest_id is guarded against it, in base.py)
+            True, False, None, [], {}, [1], {"a": 1}]  # bool is an int to isinstance(); containers where a scalar is expected
 DIGITS = re.compile(r"\d+")
 
 
@@ -66,7 +70,8 @@ def variants(raw):
         for ev in EXTREMES:
             mutated = copy.deepcopy(raw)
             set_path(mutated, path, ev)
-            yield f"{'.'.join(map(str, path))}={str(ev)[:12]!r}", mutated
+            shown = f"int({ev.bit_length()} bits)" if isinstance(ev, int) and not isinstance(ev, bool) else repr(ev)[:14]
+            yield f"{'.'.join(map(str, path))}={shown}", mutated
 
 
 def run():
@@ -90,6 +95,20 @@ def run():
                     errs = ocsf_validate(event)
                     if errs:
                         failures.append(f"{source_type}[{fi}] {label}: schema-invalid OCSF: {errs[:1]}")
+    # ingest_id coercion (base.py): never raises, numeric ids become strings, junk gets a fresh uuid
+    for given, want in ((123, "123"), (1.5, "1.5"), ("abc", "abc"), (0, "0")):
+        if _ingest_id_str(given) != want:
+            failures.append(f"_ingest_id_str({given!r}) -> {_ingest_id_str(given)!r}, want {want!r}")
+    for junk in (None, True, False, "", [], {}, 10 ** 5000, float("nan")):
+        try:
+            out = _ingest_id_str(junk)
+        except Exception as exc:
+            failures.append(f"_ingest_id_str({str(junk)[:10]!r}) raised {type(exc).__name__}")
+            continue
+        if junk is float("nan") or (isinstance(junk, float) and junk != junk):
+            continue  # nan -> "nan" is a valid string id
+        if not isinstance(out, str) or not out:
+            failures.append(f"_ingest_id_str(junk) returned {out!r}")
     return total, failures
 
 
