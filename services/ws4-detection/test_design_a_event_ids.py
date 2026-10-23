@@ -105,6 +105,11 @@ def run():
         check(set(alert2["event_ids"]) == {str(10000 + i) for i in range(15)},
               f"distinct-count contributing values must be the real dst ports, "
               f"got {alert2['event_ids']}")
+        # the WS-5 triage doc is keyed by the triggering ingest id, so the alert must carry it separately
+        check(alert2["trigger_event_id"] == fired_event2["siem"]["ingest_id"],
+              f"alert must carry the triggering ingest id, got {alert2.get('trigger_event_id')!r}")
+        check(alert2["trigger_event_id"] not in alert2["event_ids"],
+              "trigger_event_id is a separate join key, not one of the counted port values")
 
     # --- non-stateful rule: single id, unchanged behavior ---
     det3 = ws4.Detector()

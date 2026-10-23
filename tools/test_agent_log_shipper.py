@@ -79,6 +79,22 @@ def main():
     check(any("prompt-injection" in str(t).lower() or "injection" in str(t).lower() for t in titles),
           f"R3 (prompt injection) alert must be among the indexed alerts, got titles={titles}")
 
+    # F4: the shipper must stamp the receipt clock the window clamp is measured against
+    import time as _t
+    _spy: list = []
+
+    class _SpyBus:
+        def produce(self, topic, key=None, payload=None):
+            _spy.append(payload)
+
+    sys.path.insert(0, str(ROOT / "tools"))
+    import agent_log_shipper as _als
+    _t0 = int(_t.time())
+    _als.ship_line(_SpyBus(), '{"operation": "VM.Delete", "vm": "v1", "userName": "u"}', "vmware_vsphere")
+    _ra = (_spy[0] or {}).get("meta", {}).get("received_at") if _spy else None
+    check(isinstance(_ra, int) and abs(_ra - _t0) <= 5,
+          f"shipper must stamp meta.received_at (the F4 clamp's receipt clock), got {_ra!r}")
+
     if FAILS:
         print(f"[FAIL] agent_log_shipper e2e: {len(FAILS)} problem(s)")
         for f in FAILS:

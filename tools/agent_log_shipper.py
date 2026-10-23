@@ -75,7 +75,9 @@ def ship_line(bus, line: str, source_type: str) -> bool:
         print("[agent-log-shipper] skipping non-object JSON line", file=sys.stderr)
         return False
 
-    meta = stamp_meta({})
+    # received_at is the trusted receipt clock WS-2 turns into siem.received_ms; without it the F4
+    # window clamp cannot tell a forged record time from a real one (found by the live proof, 2026-10-22).
+    meta = stamp_meta({"received_at": int(time.time())})
     payload = {"source_type": source_type, "raw": rec, "meta": meta}
     bus.produce("raw.events", key=_partition_key(rec), payload=payload)
     return True

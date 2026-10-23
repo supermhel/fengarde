@@ -424,7 +424,7 @@ class EntityResolver:
         skipped = False
         seen_entity_ids: set[str] = set()
         for entity_type, raw in self.extract_entities(alert):
-            canonical = canonical_entity_value(entity_type, raw)
+            canonical = canonical_entity_value(entity_type, raw, tenant)
             if canonical is None:
                 skipped = True  # e.g. src_endpoint.ip that isn't a real IP
                 continue

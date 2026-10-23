@@ -35,7 +35,8 @@
             "ingest_id": { "type": "keyword" },
             "tenant": { "type": "keyword" },
             "score": { "type": "integer" },
-            "clock_skew_ms": { "type": "long" }
+            "clock_skew_ms": { "type": "long" },
+            "time_clamped": { "type": "boolean" }
           }
         }
       }

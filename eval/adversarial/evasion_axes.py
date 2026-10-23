@@ -43,6 +43,7 @@ import copy
 import hashlib
 import json
 import math
+import os
 import re
 import sys
 from collections import defaultdict
@@ -69,6 +70,7 @@ import scenario_registry as reg  # noqa: E402
 RULES_DIR = ROOT / "contracts" / "rules"
 ALLOWLISTS_DIR = ROOT / "contracts" / "allowlists"
 TABLES_PATH = ADVERSARIAL / "evasion_tables.yaml"
+ALIAS_FIXTURE = ADVERSARIAL / "evasion_alias_fixture.yaml"
 
 #: group_by OCSF path -> key KIND. A kind is a thing an attacker can multiply
 #: (addresses, accounts, domains ...). A group_by outside this table is reported
@@ -720,6 +722,29 @@ _RESPELLERS["target_account"] = _respell_target_account
 
 def source_types(burst: Burst) -> list:
     return sorted({p["source_type"] for _s, p in burst.payloads})
+
+
+class alias_map:
+    """Run a block with the documented fixture alias map active (F2 measured UNDER a configured map).
+    Goes through ``FENGARDE_IDENTITY_ALIASES`` so a ``load_rules()`` inside the block keeps it, and
+    restores the previous environment and the default map on exit."""
+
+    def __init__(self, path=ALIAS_FIXTURE):
+        self.path = str(path)
+
+    def __enter__(self):
+        import shared.identity_aliases as ia
+        self._ia, self._old = ia, os.environ.get("FENGARDE_IDENTITY_ALIASES")
+        os.environ["FENGARDE_IDENTITY_ALIASES"] = self.path
+        ia.configure()
+        return self
+
+    def __exit__(self, *exc):
+        if self._old is None:
+            os.environ.pop("FENGARDE_IDENTITY_ALIASES", None)
+        else:
+            os.environ["FENGARDE_IDENTITY_ALIASES"] = self._old
+        self._ia.configure()
 
 
 def respelling_axis(lab: Lab, tables: dict) -> dict:

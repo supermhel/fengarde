@@ -87,6 +87,7 @@ sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(SERVICES))
 
 from shared.allowlist import Allowlist, load_allowlist, invalidate_dir  # noqa: E402
+from shared.identity_aliases import alias_of as _alias_of  # noqa: E402
 from shared.entity_helpers import (  # noqa: E402
     InvalidTenant,  # noqa: F401 -- re-exported: test_contract.py imports it from here
     bounded_entity_value as _bounded_entity_value_fn,
@@ -233,6 +234,21 @@ def _canonical_ip(value) -> str:
 # transitive inference, never a fabricated causal label when no signal exists.
 
 
+def _fold_actor_alias(tenant: str, alert: dict) -> dict:
+    """F2: when the tenant's explicit alias map folds this alert's actor (``CORP-prefixed jdoe`` ->
+    ``jdoe@corp``), return a shallow copy carrying the folded name so every track, co-occurrence, incident
+    id and graph node sees ONE identity. No map / no match -> the SAME alert object, byte-identical."""
+    actor = alert.get("actor")
+    user = actor.get("user") if isinstance(actor, dict) else None
+    name = user.get("name") if isinstance(user, dict) else None
+    if not isinstance(name, str) or not isinstance(actor, dict) or not isinstance(user, dict):
+        return alert
+    folded = _alias_of(tenant, name)
+    if folded is None:
+        return alert
+    return {**alert, "actor": {**actor, "user": {**user, "name": folded}}}
+
+
 def canonical_entity_id(tenant: str, entity_type: str, entity_value) -> "str | None":
     """ADR-009 canonical entity identity: ``sha256("{tenant}|{entity_type}|
     {canonical_value}")``, where ``canonical_value`` is ``entity_value``
@@ -249,7 +265,7 @@ def canonical_entity_id(tenant: str, entity_type: str, entity_value) -> "str | N
     entity_types raise ValueError, exactly like
     ``shared.entity_helpers.canonical_entity_value``.
     """
-    canonical = _canonical_entity_value(entity_type, entity_value)
+    canonical = _canonical_entity_value(entity_type, entity_value, tenant)
     if canonical is None:
         return None
     return _compute_entity_id(tenant, entity_type, canonical)
@@ -1024,6 +1040,7 @@ class Correlator:
         WS-5's enrichment alerts are an observable no-op, never a silent
         one)."""
         tenant = _validated_tenant(alert.get("tenant_id"))
+        alert = _fold_actor_alias(tenant, alert)
         now_ms = self._now_ms()
         incidents: list[dict] = []
 

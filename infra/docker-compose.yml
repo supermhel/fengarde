@@ -214,7 +214,7 @@ services:
   ws4-detection:
     build: { context: .., dockerfile: services/ws4-detection/Dockerfile }
     restart: unless-stopped
-    environment: ["BUS_BACKEND=redis", "REDIS_PASSWORD=${REDIS_PASSWORD:-}", "REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0", "FENGARDE_OPT_IN_RULES=${FENGARDE_OPT_IN_RULES:-}", "RULES_RELOAD_INTERVAL_S=${RULES_RELOAD_INTERVAL_S:-5}"]
+    environment: ["BUS_BACKEND=redis", "REDIS_PASSWORD=${REDIS_PASSWORD:-}", "REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0", "FENGARDE_OPT_IN_RULES=${FENGARDE_OPT_IN_RULES:-}", "RULES_RELOAD_INTERVAL_S=${RULES_RELOAD_INTERVAL_S:-5}", "FENGARDE_WINDOW_TIME_SOURCE=${FENGARDE_WINDOW_TIME_SOURCE:-clamp}", "FENGARDE_WINDOW_MAX_SKEW_SECONDS=${FENGARDE_WINDOW_MAX_SKEW_SECONDS:-600}"]
     # Per-tenant disabled_rules, written by ws3-indexer's admin rule toggle; the
     # rule-reload watcher (RULES_RELOAD_INTERVAL_S, default 5s here) re-reads it
     # so a console toggle takes effect without restarting WS-4.

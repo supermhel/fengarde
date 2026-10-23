@@ -19,11 +19,13 @@ sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(SERVICES))
 
 from shared.bus import Bus  # noqa: E402
+from shared.identity_aliases import configure as configure_identity_aliases  # noqa: E402
 from shared.runner import serve  # noqa: E402
 from correlator import Correlator, DEFAULT_HORIZON_S, DEFAULT_MEMBER_CAP  # noqa: E402
 
 
 def make_correlator() -> Correlator:
+    configure_identity_aliases()  # F2: fail closed on a malformed alias map, same as WS-4
     horizon_s = int(os.getenv("CORRELATION_HORIZON_SECONDS", str(DEFAULT_HORIZON_S)))
     member_cap = int(os.getenv("CORRELATION_MEMBER_CAP", str(DEFAULT_MEMBER_CAP)))
     window_counter = None

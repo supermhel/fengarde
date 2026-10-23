@@ -700,6 +700,10 @@ $PY services/ws1-collectors/test_fix_metric_sources.py || { fail=1; FAILED="${FA
 echo
 echo "== ws1: fix-counters determinism (no double-count/race under concurrent produce) =="; LAST_HEADER="== ws1: fix-counters determinism (no double-count/race under concurrent produce) =="
 $PY services/ws1-collectors/test_fix_counters_deterministic.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo "== F2: per-tenant identity alias map (collapse, absent = unchanged, fail closed) =="; LAST_HEADER="== F2 identity alias map =="
+$PY services/ws4-detection/test_identity_aliases.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+$PY services/ws8-correlation/test_identity_aliases.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+$PY services/ws9-resolver/test_identity_aliases.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 fi  # tier: fast
 if tier_on eval-twin; then  # tier: eval-twin
 echo
@@ -711,10 +715,11 @@ fi  # tier: eval-twin
 if tier_on fast; then  # tier: fast
 echo "== Q2: evasion floor may not be lowered without a recorded reason =="; LAST_HEADER="== Q2 floor-lowering guard =="
 $PY tools/test_check_floor_lowering.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
-echo "== Q12: WS-4 window time source (event default, ingest opt-in) =="; LAST_HEADER="== Q12 window time source =="
+echo "== F4/Q12: WS-4 window time source (clamp default, event opt-out, ingest opt-in) =="; LAST_HEADER="== Q12 window time source =="
 $PY services/ws4-detection/test_window_time_source.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 fi  # tier: fast
 if tier_on eval-twin; then  # tier: eval-twin
+
 echo
 echo "== blind-recall lane: synthetic controls (label from the dataset, never from FENGARDE; NOT a third-party measurement) =="; LAST_HEADER="== blind-recall lane: synthetic controls (label from the dataset, never from FENGARDE; NOT a third-party measurement) =="
 $PY eval/detection_accuracy/test_blind_recall.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }

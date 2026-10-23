@@ -28,6 +28,7 @@ import json
 import math
 
 from shared.envelope import valid_tenant_id
+from shared.identity_aliases import canonical_account
 from shared.ip_utils import valid_ip
 
 DEFAULT_TENANT = "default"
@@ -106,7 +107,7 @@ ENTITY_TYPE_DEVICE = "device"
 ENTITY_TYPES = frozenset({ENTITY_TYPE_ACTOR, ENTITY_TYPE_IP, ENTITY_TYPE_DEVICE})
 
 
-def canonical_entity_value(entity_type: str, raw) -> str | None:
+def canonical_entity_value(entity_type: str, raw, tenant: str | None = None) -> str | None:
     """Normalize one raw alert value to the ADR-009 canonical form, else None.
 
     ``raw`` is whatever the alert carried (attacker-controlled, and not
@@ -120,6 +121,10 @@ def canonical_entity_value(entity_type: str, raw) -> str | None:
       * ``actor``  -> ``strip().casefold()`` -- ``Alice``/``ALICE``/``alice``
                       are ONE identity.
       * ``device`` -> ``strip().lower()`` -- MACs and hostnames lowercased.
+
+    F2 (2026-10-22): with ``tenant`` given, an ``actor`` additionally goes through that tenant's explicit
+    realm alias map (:mod:`shared.identity_aliases`), so ``CORP-prefixed jdoe`` and ``jdoe@corp.example`` are one
+    entity where the operator listed them. No map / no tenant => exactly ``strip().casefold()``.
     """
     if raw is None:
         return None
@@ -141,7 +146,7 @@ def canonical_entity_value(entity_type: str, raw) -> str | None:
             return None
         return v.lower()
     if entity_type == ENTITY_TYPE_ACTOR:
-        return s.strip().casefold()
+        return canonical_account(tenant, s) if tenant else s.strip().casefold()
     if entity_type == ENTITY_TYPE_DEVICE:
         return s.strip().lower()
     raise ValueError(f"unknown entity_type {entity_type!r} (known: {sorted(ENTITY_TYPES)})")

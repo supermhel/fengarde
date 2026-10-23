@@ -422,8 +422,19 @@ def test_clock() -> None:
     _check("F1 linux_ssh trusts the RECEIPT clock (the record carries none)",
            ssh["authority"] == "receipt" and ssh["receipt_clock_moves_event_time"], str(ssh))
     cf = ax.clock_forgeable(_lab("common_lateral_movement"))
-    _check("F2 positive: forging only the record clock stretches the Windows burst past the window for free",
-           cf["clock_forgeable"], str(cf))
+    _check("F2 fixed (2026-10-22): the window-aware clamp makes the Windows record-clock forgery detected",
+           not cf["clock_forgeable"], str(cf))
+    old_src = os.environ.get("FENGARDE_WINDOW_TIME_SOURCE")
+    os.environ["FENGARDE_WINDOW_TIME_SOURCE"] = "event"      # the replay opt-out: the old trust model
+    try:
+        ce = ax.clock_forgeable(_lab("common_lateral_movement"))
+    finally:
+        if old_src is None:
+            os.environ.pop("FENGARDE_WINDOW_TIME_SOURCE", None)
+        else:
+            os.environ["FENGARDE_WINDOW_TIME_SOURCE"] = old_src
+    _check("F2 positive (SEARCH CAN FAIL): with the clamp opted out the same forgery evades for free",
+           ce["clock_forgeable"], str(ce))
     cn = ax.clock_forgeable(_lab("common_bruteforce"))
     _check("F2 negative: the same forgery has no effect on a receipt-clock source", not cn["clock_forgeable"], str(cn))
 
@@ -716,18 +727,24 @@ def test_evasion_classifications() -> None:
     _check("I2 attribution forgery carries BUG when it evades",
            forg.get("classification") in {None, "BUG"}
            and (forg.get("classification") == "BUG") == bool(forg.get("forgery_evades")), str(forg))
+    os.environ["FENGARDE_WINDOW_TIME_SOURCE"] = "event"      # opt out of the clamp to exercise the classifier
+    try:
+        clk = ax.clock_forgeable(lab)
+        _check("I2 record-clock evasion carries TRUST_MODEL (clamp opted out)",
+               clk.get("classification") == "TRUST_MODEL" and clk["clock_forgeable"], str(clk))
+        import evasion_cost as ec  # noqa: PLC0415
+        row = ec.measure_set(_probe(), lab.rs, lab.burst, tables)
+        classes = row.get("classifications") or {}
+        _check("I3 the cost vector publishes classes for each measured evasion axis",
+               classes.get("forgone_events") == "INHERENT"
+               and classes.get("timing") == "INHERENT"
+               and classes.get("clock") == "TRUST_MODEL",
+               str(classes))
+    finally:
+        os.environ.pop("FENGARDE_WINDOW_TIME_SOURCE", None)
     clk = ax.clock_forgeable(lab)
-    _check("I2 record-clock evasion carries TRUST_MODEL",
-           clk.get("classification") == "TRUST_MODEL" and clk["clock_forgeable"], str(clk))
-
-    import evasion_cost as ec  # noqa: PLC0415
-    row = ec.measure_set(_probe(), lab.rs, lab.burst, tables)
-    classes = row.get("classifications") or {}
-    _check("I3 the cost vector publishes classes for each measured evasion axis",
-           classes.get("forgone_events") == "INHERENT"
-           and classes.get("timing") == "INHERENT"
-           and classes.get("clock") == "TRUST_MODEL",
-           str(classes))
+    _check("I2 with the default clamp the record-clock evasion is gone (no class reported)",
+           not clk["clock_forgeable"] and clk.get("classification") is None, str(clk))
 
 
 SECTIONS = (test_fast_probe, test_rule_probes, test_timing, test_spread, test_obfuscation, test_clock,

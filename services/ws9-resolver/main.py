@@ -42,12 +42,14 @@ sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(SERVICES))
 
 from shared.bus import Bus  # noqa: E402
+from shared.identity_aliases import configure as configure_identity_aliases  # noqa: E402
 from shared.runner import serve  # noqa: E402
 
 from resolver import DEFAULT_HORIZON_S, DEFAULT_MEMBER_CAP, EntityResolver  # noqa: E402
 
 
 def make_resolver() -> EntityResolver:
+    configure_identity_aliases()  # F2: fail closed on a malformed alias map, same as WS-4
     member_cap = int(os.getenv("ENTITY_MEMBER_CAP", str(DEFAULT_MEMBER_CAP)))
     # 2026-09-02 review: this used to be undocumented-dead -- INTERFACE.md
     # documented ENTITY_HORIZON_S as a real operational knob, but this
