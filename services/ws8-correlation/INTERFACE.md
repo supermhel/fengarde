@@ -269,11 +269,13 @@ unchanged by this view.
   rate default until it's tuned against real traffic). Redis `EXPIRE`
   self-cleans a quiet track; there is no separate reaper to test or get
   wrong.
-  **Caveat, true as of 2026-10-22:** `main.py::make_correlator()` builds the Redis-backed
-  counter only when `BUS_BACKEND` is exactly `redis`. Under `BUS_BACKEND=redis-sentinel` it
-  currently falls through to the in-process deque, so correlation tracks are lost on a
-  restart and are not shared across replicas even though the bus itself is HA. A code fix is
-  being made separately; this caveat is to be removed by that change.
+  **Known gap (what the Redis window does and does not persist):** under `BUS_BACKEND=redis`
+  or `redis-sentinel` only the window MEMBERSHIP (alert ids per track, and its TTL clock) lives in
+  Redis, shared across replicas and surviving a restart. The per-member details the correlator
+  decides on (`_sides`, `_side_meta`, `_last_touch`, `_last_incident`, `_incident_graphs`: tactics,
+  scores, first_seen, emitted-incident cache) stay in-process, so after a restart a track's
+  membership is still counted but its tactics are gone until new alerts arrive, and replicas do
+  not share them. Moving that state to Redis is not done.
 - **Tenant isolation**: tenant is part of the track key, not a filter
   (rejected-at-edge via the same `_validated_tenant`-style check
   `services/ws3-indexer/router.py` uses) — a tenant-agnostic key would

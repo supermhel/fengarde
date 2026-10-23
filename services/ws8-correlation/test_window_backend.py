@@ -75,6 +75,16 @@ def run():
     assert isinstance(wc, RedisWindowCounter) and wc.ns == "ws8:corr", type(wc)
     assert CALLS[0][1] == [("s1", 26379), ("s2", 26379)], CALLS[0]
     assert CALLS[1][1] == "m1" and CALLS[1][2]["decode_responses"] is True
+    ws4_src = (HERE.parent / "ws4-detection" / "main.py").read_text(encoding="utf-8")
+    for needle in ("Sentinel(sentinel_hosts, password=password,", "socket_timeout=1, decode_responses=True)",
+                   "redis_class=redis.Redis,"):
+        assert needle in ws4_src, f"ws4 Sentinel wiring changed ({needle!r}); re-sync the helper"
+    # Same kwargs as ws4-detection/main.py (Sentinel(socket_timeout=1,
+    # decode_responses=True, password); master_for(redis_class, password,
+    # decode_responses)) so this fake cannot drift from the real wiring.
+    assert CALLS[0][2] == {"password": None, "socket_timeout": 1, "decode_responses": True}, CALLS[0]
+    assert CALLS[1][2] == {"redis_class": _FakeRedisClass, "password": None,
+                           "decode_responses": True}, CALLS[1]
 
     # state lives in the shared store: a fresh correlator ("restart") sees it
     wc.hit("k", 1_000, 60_000, member="a")
