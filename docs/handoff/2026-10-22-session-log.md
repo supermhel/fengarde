@@ -31,7 +31,7 @@ session, in the Reality Map format (DONE needs PROVEN evidence, anything unverif
 |------|-------|----------|
 | v0.11.3 release: tarball bundle, SLSA provenance, image signature pass the documented commands | DONE | PROVEN: cosign v3.0.2 `verify-blob`, `verify-blob-attestation --bundle`, `verify` on `ws4-detection:v0.11.3` all "Verified OK"; provenance subject digests match the tarball hash and the pulled image digest |
 | v0.11.2 release signatures | OPEN (superseded) | PROVEN broken: its re-run by `workflow_dispatch` signs as `@refs/heads/main`, which the documented tag-anchored checks reject; use v0.11.3 |
-| Other nine v0.11.3 image signatures | OPEN | ASSUMED: only `ws4-detection` was verified |
+| All ten v0.11.3 image signatures | DONE | PROVEN: documented `cosign verify` (cosign v3.0.2 in Docker) on all ten `ghcr.io/supermhel/fengarde-*:v0.11.3` images, exit 0 each, tag-anchored identity |
 | OSS-Fuzz `build_fuzzers` + `check_build`, 19 targets | DONE | PROVEN: Docker run against merged `main`, 19 of 19 pass |
 | OSS-Fuzz accepts the project | OPEN | not submitted; the decision is theirs |
 | A long fuzzing run | OPEN | only 25 s per target were run |

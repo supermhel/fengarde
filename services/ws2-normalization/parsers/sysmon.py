@@ -309,7 +309,7 @@ class SysmonParser(Parser):
         """Sysmon logs ProcessId as a plain decimal string or int (unlike
         Windows Security's occasional hex "0x1f4" -- ProcessId here is
         always decimal in real Sysmon output)."""
-        if value is None:
+        if value is None or isinstance(value, bool):  # True would pass isinstance(int) and fail the schema (pid: boolean)
             return None
         if isinstance(value, int):
             return value
