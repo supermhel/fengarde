@@ -13,7 +13,6 @@ Run: python services/ws2-normalization/parsers/test_extreme_values.py
 from __future__ import annotations
 
 import copy
-import json
 import re
 import sys
 from pathlib import Path
