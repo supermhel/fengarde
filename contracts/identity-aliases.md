@@ -38,6 +38,12 @@ tenants:
   harness reports that unmapped row as the registered residual and, separately, `respelling_evades_mapped` under a fixture map
   (`eval/adversarial/evasion_alias_fixture.yaml`), which is false for every rule set.
 - Changing a tenant's map changes the `alert_key` of that tenant's mapped accounts once.
+- **Cut-over for live incidents (measured 2026-10-23, same alert stream with the map off and on).** An incident that
+  already exists keeps its id and members but is never updated again: from the switch on, that identity's alerts feed a
+  NEW incident under the folded id (`acme:actor:jdoe:20749` stays frozen, `acme:actor:jdoe@corp:20749` starts empty and
+  needs its own two-tactic evidence). Unmapped actors keep their ids unchanged. So turning the map on for a tenant with open
+  incidents splits each affected identity's incident once and leaves the old one orphaned; there is no automatic merge or
+  re-key. Introduce the map at a quiet time, or accept one split per mapped identity and close the old incidents by hand.
 
 ## F4: window clock (`FENGARDE_WINDOW_TIME_SOURCE`)
 
