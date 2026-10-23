@@ -55,6 +55,14 @@ Tiered CI and the rule-cascade helper, the SLSA generator referenced by tag (the
   the record times, so a receipt clock cannot be substituted; no periodicity rule is among the nine F4 rule sets). Measured:
   `clock_forgeable` no longer reproduces for any of the nine rule sets; the F4 register entry is deleted and the floors
   tightened.
+- **Review follow-ups on this change (2026-10-23):** an empty, version-only or `tenants:`-less alias file now FAILS
+  closed (it used to load as an empty map, so a half-written file silently dropped every alias on hot reload; the
+  previous map and rules now stay live and `detection_rule_reload_failed_total` counts it; `tenants: {}` is the explicit
+  empty map); an unhashable YAML key raises `IdentityAliasError`. Documented residuals of the clamp (no behaviour change):
+  delayed/backfilled batches are clamped to receipt time and can form a false-positive burst (opt out with
+  `FENGARDE_WINDOW_TIME_SOURCE=event`; `docker-compose.yml` now passes the two `FENGARDE_WINDOW_*` variables to ws4, not
+  the alias variable); the alert id of a clamped event is not stable across re-shipped logs; the clamp is off for events
+  without a usable `meta.received_at` / integer `time`; the alias file is not hot-reloaded on its own.
 - **F2 closed under a configured alias map; open by default (documented).** Per-tenant realm alias map
   (`contracts/identity_aliases.yaml`, `$FENGARDE_IDENTITY_ALIASES`, `services/shared/identity_aliases.py`,
   `contracts/identity-aliases.md`) now folds identity in WS-4 window groups and alert keys, WS-8 tracks / incident ids /

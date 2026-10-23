@@ -18,6 +18,11 @@
 #
 # PRODUCT FIXES ARE OUT OF SCOPE for the lane that wrote this file (it measures). Fix owners
 # and schedules are owner decisions, not made here.
+# F4 (record-clock trust) was CLOSED 2026-10-22 and its entry deleted because clock_forgeable no longer reproduces for any
+# rule-set. Residuals that are NOT evasions and so are not register entries (see services/ws4-detection/INTERFACE.md):
+# delayed/backfilled batches are clamped to receipt time and can form a false-positive burst (opt out with
+# FENGARDE_WINDOW_TIME_SOURCE=event); alert ids of clamped events are not stable across re-shipped logs; the clamp is off
+# for events without a usable meta.received_at.
 version: 1
 findings:
   - id: F2-identity-canonicalisation

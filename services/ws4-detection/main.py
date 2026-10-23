@@ -130,7 +130,7 @@ class Detector:
         # BOTH paths (run() and detect_one/_emit) feed the same gauges, exposed
         # via metrics()/main()'s metrics_provider.
         self.stats: dict[str, int] = {"scored": 0, "alerts": 0,
-                                      "ai_enqueued": 0, "classifier_enqueued": 0}
+                                      "ai_enqueued": 0, "classifier_enqueued": 0, "reload_failed": 0}
         # R4-26 (2026-08-27): reload() swaps `rules` and `_by_class_uid` as a
         # TORN-READ-SAFE pair. `process()`/`rule_health_metrics` read each of
         # these attributes independently (a single LOAD_ATTR is atomic), but
@@ -210,6 +210,7 @@ class Detector:
             "detection_ai_enqueued_total": self.stats["ai_enqueued"],
             "detection_classifier_enqueued_total": self.stats["classifier_enqueued"],
             "detection_time_clamped_total": _engine.CLAMP_STATS["time_clamped"],
+            "detection_rule_reload_failed_total": self.stats["reload_failed"],
         })
         return out
 
@@ -271,6 +272,7 @@ class Detector:
         try:
             new_rules, new_by_class_uid = self._load(strict_empty=True)   # R4 #17: an empty rule file is a bad edit
         except Exception as exc:
+            self.stats["reload_failed"] += 1      # includes a malformed/empty alias map (F2): previous rules + map stay live
             from shared.log import get_logger
             get_logger("ws4-detection").warn(
                 "rule reload failed, keeping previous rule set", error=repr(exc))

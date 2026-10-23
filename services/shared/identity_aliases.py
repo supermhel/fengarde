@@ -110,7 +110,8 @@ class IdentityAliases:
 
 def parse(doc) -> IdentityAliases:
     if doc is None:
-        return IdentityAliases()
+        raise IdentityAliasError("the file is empty (truncated or half-written?); an intentionally empty map is "
+                                 "'version: 1' plus 'tenants: {}'")
     if not isinstance(doc, dict) or set(doc) - _TOP_KEYS:
         raise IdentityAliasError(
             f"top level must be a mapping with only {sorted(_TOP_KEYS)}; got "
@@ -119,10 +120,9 @@ def parse(doc) -> IdentityAliases:
     if doc.get("version") != 1:
         raise IdentityAliasError(f"version must be 1, got {doc.get('version')!r}")
     tenants = doc.get("tenants")
-    if tenants is None:
-        return IdentityAliases()
     if not isinstance(tenants, dict):
-        raise IdentityAliasError("'tenants' must be a mapping of tenant id -> map")
+        raise IdentityAliasError("'tenants' must be a mapping of tenant id -> map "
+                                 "(missing or null looks like a truncated file; use 'tenants: {}' for no aliases)")
     out: dict[str, TenantMap] = {}
     for tid, body in tenants.items():
         if not valid_tenant_id(tid):
@@ -164,6 +164,8 @@ def load(path: str | Path) -> IdentityAliases:
         doc = yaml.load(text, Loader=_UniqueKeyLoader)  # noqa: S506 - SafeLoader subclass
     except yaml.YAMLError as exc:
         raise IdentityAliasError(f"identity alias map {p} is not valid YAML: {exc}") from exc
+    except TypeError as exc:      # e.g. an unhashable mapping key ("? [a]")
+        raise IdentityAliasError(f"identity alias map {p} has an invalid mapping key: {exc}") from exc
     try:
         return parse(doc)
     except IdentityAliasError as exc:

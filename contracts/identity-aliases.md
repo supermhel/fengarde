@@ -24,7 +24,9 @@ tenants:
   tenant-qualified realm (`:` `/` `*` `\` `@` or whitespace in a realm is rejected), realm groups of one tenant must be
   disjoint. Window keys and alert ids stay tenant-namespaced, so a map cannot mix tenants.
 - **Fail closed.** A malformed or missing (env-pointed) map raises `IdentityAliasError` from `load_rules()`: boot fails,
-  a hot reload keeps the previous rules. WS-4 never runs with a half-read map.
+  a hot reload keeps the previous rules AND the previous map. WS-4 never runs with a half-read map.
+  An empty file, a file with only `version: 1`, or `tenants:` with no value counts as truncated and fails; the explicit
+  empty map is `version: 1` plus `tenants: {}`. The file is read by WS-4 on rule (re)load and by WS-8/WS-9 at start.
 - **Folded everywhere the canonical actor is used.** WS-4 window groups and alert keys, WS-8 actor tracks, incident ids,
   incident graph nodes and canonical entity ids, WS-9 entity ids (`shared.entity_helpers.canonical_entity_value(..., tenant)`).
   All three services load the same file at start (`shared.identity_aliases.configure()`) and refuse to start on a bad one.

@@ -146,7 +146,7 @@ def run():
         k2 = {lat.alert_key(_logon(i, 1)) for i in range(5)}
     finally:
         os.environ.pop("FENGARDE_WINDOW_TIME_SOURCE", None)
-    check(len(k2) >= 1, "event mode still keys on record time (unchanged opt-out)")
+    check(len(k2) == 2, f"event mode keeps the record-time bucket: 400 s spread = two 300 s buckets, got {len(k2)}")
 
     # --- configuration ---
     os.environ["FENGARDE_WINDOW_MAX_SKEW_SECONDS"] = "10"

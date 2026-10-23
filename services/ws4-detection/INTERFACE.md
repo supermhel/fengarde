@@ -120,6 +120,19 @@
 - `FENGARDE_IDENTITY_ALIASES` — path of the per-tenant realm alias map (default the shipped, empty
   `contracts/identity_aliases.yaml`). WS-4, WS-8 and WS-9 all load it at start and refuse to start on
   a malformed or (when set) missing file. Absent map = accounts grouped by `strip().casefold()` only.
+  **Known residuals of the clamp (documented, behaviour unchanged):** (a) a legitimately delayed or backfilled
+  batch (an agent reconnecting after being offline, a shipper flush) is clamped to its receipt time, so records
+  that were minutes apart can land in one window and form a burst (false positive); set
+  `FENGARDE_WINDOW_TIME_SOURCE=event` on the WS-4 that handles such data. `infra/docker-compose.yml` passes
+  `FENGARDE_WINDOW_TIME_SOURCE` and `FENGARDE_WINDOW_MAX_SKEW_SECONDS` through to ws4-detection; it does NOT pass
+  `FENGARDE_IDENTITY_ALIASES` (the alias file must be baked into `contracts/` or mounted AND the variable set on
+  ws4, ws8 and ws9). (b) The alert id of a CLAMPED event is bucketed on the receipt time, so re-shipping old logs
+  (new receipt time) can create a new alert id; byte-identical redelivery is stable. (c) The clamp is silently off
+  for an event with no usable `meta.received_at` (WS-2 only stamps `siem.received_ms` when it parses and the parsed
+  `time` is an integer); any producer that writes to `raw.events` must set `received_at`.
+  (d) The alias file is read by WS-4 on rule (re)load and by WS-8/WS-9 at start only; editing it does not trigger a
+  WS-4 reload by itself (restart all three, or touch a rule), so the services can disagree until then. A truncated or
+  empty file fails the (re)load and the previous map and rules stay live (`detection_rule_reload_failed_total`).
 - `RULES_RELOAD_INTERVAL_S` (default `0` = off) — opt-in rule hot-reload poll
   interval (mtime-poll + atomic swap, B4).
 - `DETECTION_OUTPUT_DEPTH_WARN` — warn threshold for over-deep nested output.

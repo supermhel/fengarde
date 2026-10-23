@@ -122,6 +122,40 @@ def run():
     _expect_error("version: 1\ntenants:\n  acme:\n    realms: [[a, b]]\n    default_realm: zzz",
                   "default_realm", "default realm outside the groups")
     _expect_error("version: 1\ntenants:\n  acme:\n    realms: [[a, b]]\n    extra: 1", "only", "unknown key")
+    # a configured-but-empty / truncated file must FAIL CLOSED (a half-written file on hot reload used to
+    # silently drop every alias): zero bytes, only the version line, tenants key with no value
+    _expect_error("", "empty", "zero-byte file")
+    _expect_error("version: 1\n", "tenants", "version line only (truncated)")
+    _expect_error("version: 1\ntenants:\n", "tenants", "tenants key with no value (truncated)")
+    _expect_error("? [a]\n: 1\n", "invalid mapping key", "unhashable mapping key raises IdentityAliasError, not TypeError")
+    ok = _write("version: 1\ntenants: {}\n")           # an intentionally empty map still loads
+    try:
+        engine.configure_identity_aliases(ok)
+    except IdentityAliasError as exc:
+        check(False, f"the explicit empty map must load: {exc}")
+    finally:
+        ok.unlink()
+    # hot reload: a truncated file keeps the PREVIOUS map live and load_rules() raises (Detector.reload keeps old rules)
+    good = _write(MAP)
+    half = _write("version: 1\ntenants:\n")
+    try:
+        os.environ["FENGARDE_IDENTITY_ALIASES"] = str(good)
+        load_rules(ROOT / "contracts" / "rules")
+        check(_fires(split), "precondition: the good map folds the spellings")
+        os.environ["FENGARDE_IDENTITY_ALIASES"] = str(half)
+        try:
+            load_rules(ROOT / "contracts" / "rules")
+            check(False, "load_rules must raise on a truncated alias file")
+        except IdentityAliasError:
+            pass
+        from shared.identity_aliases import canonical_account
+        check(canonical_account("acme", "CORP" + chr(92) + "jdoe") == "jdoe@corp",
+              "after the failed reload the previous map must still be active (not silently emptied)")
+    finally:
+        os.environ.pop("FENGARDE_IDENTITY_ALIASES", None)
+        good.unlink()
+        half.unlink()
+
     bad = _write("version: 1\ntenants:\n  acme:\n    realms: oops\n")
     try:
         os.environ["FENGARDE_IDENTITY_ALIASES"] = str(bad)
