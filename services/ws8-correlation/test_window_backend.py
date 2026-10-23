@@ -71,8 +71,13 @@ def run():
     CALLS.clear()
     _env(BUS_BACKEND="redis-sentinel",
          REDIS_SENTINEL_HOSTS="s1:26379, s2", REDIS_SENTINEL_MASTER="m1")
-    wc = main.make_correlator().window_counter
+    import contextlib
+    import io
+    startup = io.StringIO()
+    with contextlib.redirect_stdout(startup):
+        wc = main.make_correlator().window_counter
     assert isinstance(wc, RedisWindowCounter) and wc.ns == "ws8:corr", type(wc)
+    assert "window counter selected" in startup.getvalue() and "RedisWindowCounter" in startup.getvalue(), startup.getvalue()
     assert CALLS[0][1] == [("s1", 26379), ("s2", 26379)], CALLS[0]
     assert CALLS[1][1] == "m1" and CALLS[1][2]["decode_responses"] is True
     ws4_src = (HERE.parent / "ws4-detection" / "main.py").read_text(encoding="utf-8")

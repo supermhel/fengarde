@@ -276,6 +276,11 @@ unchanged by this view.
   scores, first_seen, emitted-incident cache) stay in-process, so after a restart a track's
   membership is still counted but its tactics are gone until new alerts arrive, and replicas do
   not share them. Moving that state to Redis is not done.
+  **Practical consequence, measured live (2026-10-23, HA compose scaled to two ws8 replicas):** run ONE ws8
+  replica. A consumer group splits `alerts` between replicas with no key affinity, so the same two
+  alerts that form an incident on one replica form none when they land on different replicas (the
+  window membership is shared, the tactics that decide the incident are not). Scaling ws8 silently
+  weakens incident formation until the correlator state moves to Redis.
 - **Tenant isolation**: tenant is part of the track key, not a filter
   (rejected-at-edge via the same `_validated_tenant`-style check
   `services/ws3-indexer/router.py` uses) — a tenant-agnostic key would

@@ -42,7 +42,12 @@ def make_correlator() -> Correlator:
         # ws8's OWN Redis zset namespace -- NOT the ws4:win default (latent
         # collision); INTERFACE.md documents the key prefix as ws8:corr.
         window_counter = RedisWindowCounter(client, namespace="ws8:corr")
-    return Correlator(window_counter, horizon_s=horizon_s, member_cap=member_cap)
+    correlator = Correlator(window_counter, horizon_s=horizon_s, member_cap=member_cap)
+    # one line at startup: which window counter is live was invisible (found in the live HA proof)
+    from shared.log import get_logger
+    get_logger("ws8-correlation").info("window counter selected", backend=backend,
+                                       counter=type(correlator.window_counter).__name__)
+    return correlator
 
 
 def make_handler(bus, correlator: Correlator):
