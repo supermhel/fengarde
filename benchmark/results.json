@@ -2,7 +2,7 @@
   "caveats": [
     "macro_f1 is engine-vs-oracle agreement on a hand-labeled quality canary (10 events, 4 scored rules), not field detection fidelity; see docs/detection-quality.md.",
     "per-rule confusion counts are graded per corpus FILE, not per event.",
-    "per-rule expected-positives are corpus-composition-dependent (this row read corpus commits {'evtx': '4ceed2f4706daf601c212a8f91c113dd85349a2c', 'splunk': 'eac2f8f675ec31a6618003399dcc53641524e673'}; a newer upstream corpus is a pin bump in a PR): on this snapshot's run password_spray had zero expected-positive files in every corpus (reported as untested); eval/attack/fire_check.py separately proves every MITRE-tagged rule fires on its own real producer fixture.",
+    "per-rule expected-positives are corpus-composition-dependent (this row read corpus commits {'evtx': '4ceed2f4706daf601c212a8f91c113dd85349a2c', 'splunk': '800ef65739e6d2ed61043ccb313623441a3778ae'}; a newer upstream corpus is a pin bump in a PR): on this snapshot's run bruteforce, password_spray, lateral_movement had zero expected-positive files in every corpus (reported as untested); eval/attack/fire_check.py separately proves every MITRE-tagged rule fires on its own real producer fixture.",
     "password_spray: graded on committed synthetic fixtures (eval/detection_accuracy/attack_fixtures.py), published only in fixture_per_rule_confusion -- never in per_rule_confusion, corpus_records or parser_coverage_pct.",
     "parser_coverage_pct is a corpus-shape measurement: it means 'that share of THIS EVTX corpus's Security+Sysmon records parse', not 'that share of all log formats FENGARDE can ingest'; most of the 19 shipped parsers cover IT/OT formats these corpora do not contain.",
     "twin metrics are harness-measured on a deterministic in-process plc simulator replay (seed 7, basis=harness-measured); null fields were not measured in that run, not zero.",
@@ -16,13 +16,13 @@
     ],
     "corpus_commits": {
       "evtx": "4ceed2f4706daf601c212a8f91c113dd85349a2c",
-      "splunk": "eac2f8f675ec31a6618003399dcc53641524e673"
+      "splunk": "800ef65739e6d2ed61043ccb313623441a3778ae"
     },
     "corpus_files": {
       "evtx": 278,
-      "splunk": 1055
+      "splunk": 57
     },
-    "corpus_records": 265404,
+    "corpus_records": 3317,
     "fixture_per_rule_confusion": {
       "2e3d4c5b-6f70-4819-9b02-1c2d3e4f5061": {
         "fn": 0,
@@ -70,38 +70,38 @@
       "2e3d4c5b-6f70-4819-9b02-1c2d3e4f5061": {
         "fn": 0,
         "fp": 0,
-        "tn": 779,
-        "tp": 3
+        "tn": 218,
+        "tp": 0
       },
       "4f8a2c61-9e3d-4b57-8a1c-6d2e5f7a8b90": {
         "fn": 0,
         "fp": 0,
-        "tn": 782,
+        "tn": 218,
         "tp": 0
       },
       "6f1c8a2e-0d3b-4c11-9a21-7b5e2f9a1c01": {
         "fn": 0,
         "fp": 0,
-        "tn": 779,
-        "tp": 3
+        "tn": 218,
+        "tp": 0
       },
       "7d3e9a52-1f6c-4a88-9b3d-2e5c8f1a6d40": {
         "fn": 0,
         "fp": 0,
-        "tn": 777,
-        "tp": 5
+        "tn": 215,
+        "tp": 3
       },
       "8c2f5a91-4d16-4e8b-9c3a-1f6b2e7d5a83": {
         "fn": 0,
         "fp": 0,
-        "tn": 774,
-        "tp": 8
+        "tn": 216,
+        "tp": 2
       },
       "9b5f2d18-3c7a-4e61-8f24-5a1d7c3e9b06": {
         "fn": 0,
         "fp": 0,
-        "tn": 770,
-        "tp": 12
+        "tn": 214,
+        "tp": 4
       }
     },
     "quality_corpus_events": 10,
@@ -114,15 +114,17 @@
       "9b5f2d18-3c7a-4e61-8f24-5a1d7c3e9b06": "after_hours_admin"
     },
     "untested_rules": [
-      "password_spray"
+      "bruteforce",
+      "password_spray",
+      "lateral_movement"
     ]
   },
-  "generated_at": "2026-10-20T11:33:57+00:00",
+  "generated_at": "2026-10-22T17:41:08+00:00",
   "schema_version": "1.0",
   "source": {
-    "corpus_row_date": "2026-10-14",
+    "corpus_row_date": "2026-10-22",
     "file": "eval/trend.jsonl",
-    "twin_row_date": "2026-10-14T19:06:34+00:00"
+    "twin_row_date": "2026-10-22T08:24:13+00:00"
   },
   "twin": {
     "alert_reduction_ratio": 0.7143,
@@ -131,7 +133,7 @@
     "evidence_completeness": 0.9375,
     "false_correlation_rate": 1.0,
     "fpr": 0.0,
-    "incident_reconstruction_time_ms": 0.768,
+    "incident_reconstruction_time_ms": 0.4266,
     "mttd_seconds": 60.0,
     "mtti_seconds": 360.0,
     "mttr_seconds": null,

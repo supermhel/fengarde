@@ -31,8 +31,10 @@ bash eval/detection_accuracy/fetch_corpora.sh     # both corpora at the PINNED c
 pip install --require-hashes -r eval/requirements.txt   # pyyaml + python-evtx, hash-pinned
 ```
 
-Both corpora are pinned to the exact commits the published snapshot was
-measured on (EVTX-ATTACK-SAMPLES `4ceed2f`, splunk/attack_data `eac2f8f`),
+The nightly fetches both corpora at the commits in `eval/detection_accuracy/corpus_manifest.json` via `fetch_corpora.py`
+(EVTX-ATTACK-SAMPLES `4ceed2f`, splunk/attack_data `800ef65`, only the pre-registered LFS subset: 57 raw-XML files).
+`fetch_corpora.sh` (full splunk corpus at `eac2f8f`, multi-GB) is the route to the older 2026-10-14 full-corpus snapshot.
+Both corpora are pinned to commits,
 and every trend row records the commits its lanes actually read
 (`corpus_commits`). New upstream splunk data arrives only through a PR that
 bumps the pin in `fetch_corpora.sh`; that PR's nightly run shows the change.
@@ -42,7 +44,7 @@ the `.log` files are pointer stubs, and `splunk_eval.py` fails loudly on
 them. It also fails loudly when tracked `.log` files are missing from the
 checkout (sparse/partial clone, or **antivirus quarantine**: Windows Defender
 removed 23 attack-sample `.log` files from a local clone on 2026-10-14). The
-row's `lane_files` should match the published snapshot (278 evtx / 1,055
+row's `lane_files` should match the published snapshot (278 evtx / 57
 splunk files). **The corpus lanes are run in CI only** (the nightly
 workflow on `ubuntu-latest`, or `workflow_dispatch` on a branch); that row is
 the source of truth. Local runs are not supported on Windows hosts whose

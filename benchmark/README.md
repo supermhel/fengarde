@@ -10,14 +10,14 @@ limitations in [`methodology.md`](methodology.md).
 > hand-labeled corpora*, not a field-trial detection rate. The benchmark's
 > credibility is exactly this boundary being stated, not blurred.
 
-## Current snapshot (corpus run **2026-10-14**, nightly CI run 38619447630, pinned corpora EVTX `4ceed2f` / splunk `eac2f8f`; twin run **2026-10-14T19:06Z**, same run)
+## Current snapshot (corpus run **2026-10-22**, nightly CI run 39747085824 on `25f22ba` — the first nightly after the 46-rule build of PR #112 (the CI log reports `rules loaded : 46`); pinned corpora EVTX `4ceed2f` / splunk `800ef65`, the pre-registered Q13 LFS subset; twin run **2026-10-22T08:24Z**, same run)
 
 | Metric | Value | Meaning (see methodology.md) |
 |---|---|---|
 | Detection macro-F1 | **0.875** | unweighted mean per-rule F1, engine-vs-labels, 10-event canary (4 scored rules) |
-| Corpus records replayed | **265,404** | EVTX-ATTACK-SAMPLES 2,082 (278 files) + splunk/attack_data 263,322 (1,055 raw-XML files) supported records; 0 parser dead-letters, 0 oracle mismatches |
-| Per-rule confusion (corpus files) | `bruteforce` TP=3, `lateral_movement` TP=3, `priv_grant` TP=5, `after_hours_admin` TP=12, `bruteforce_sourceless` TP=8; **FP=0, FN=0 everywhere** | TP/FP/FN/TN per rule, counted in corpus FILES (not events); synthetic fixtures excluded |
-| Untested in the corpora | `password_spray` | zero expected-positive files in either corpus — graded only by a committed synthetic fixture (below) |
+| Corpus records replayed | **3,317** | EVTX-ATTACK-SAMPLES 2,082 (278 files) + splunk/attack_data 1,235 (57 raw-XML files, the pre-registered Q13 subset) supported records; 0 parser dead-letters, 0 oracle mismatches. **Not comparable to the earlier 265,404-record snapshot (2026-10-14, 36 rules, full 1,055-file splunk corpus)**: the nightly no longer reads that corpus, and no full-corpus run on the 46-rule build exists |
+| Per-rule confusion (corpus files) | `priv_grant` TP=3, `after_hours_admin` TP=4, `bruteforce_sourceless` TP=2; **FP=0, FN=0 everywhere** | TP/FP/FN/TN per rule, counted in corpus FILES (not events); synthetic fixtures excluded |
+| Untested in the corpora | `bruteforce`, `password_spray`, `lateral_movement` | zero expected-positive files in the 57-file splunk subset or the EVTX corpus. `password_spray` is graded only by a committed synthetic fixture (below); `bruteforce` and `lateral_movement` were TP=3 each on the full 1,055-file corpus (2026-10-14, 36 rules) and have **not** been re-measured at that scale on the 46-rule build |
 | Parser coverage | **43.2%** | % of Security+Sysmon records in the EVTX corpus a parser can normalize (corpus-shape-limited — stated plainly) |
 | Twin TPR / FPR | **1.0 / 0.0** | deterministic PLC-sim replay, seed 7 |
 | Twin time to detect | **60 s** | chain start → first expected detection, seed-derived timestamps of one scenario |

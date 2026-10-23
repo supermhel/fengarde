@@ -53,8 +53,11 @@ caught real brute-force false negatives in 2026-07). Corpora:
 - **splunk/attack_data** (own terms, not vendored): real brute-force/spray
   volume. Its datasets are **Git LFS objects** — a clone without `git-lfs`
   leaves pointer stubs, and the splunk lane now fails loudly on them. The
-  lane reads every raw-XML `.log` export (1,055 files in this snapshot's
-  nightly run); plaintext/JSON exports are a documented, disclosed gap.
+  lane reads every raw-XML `.log` export that is present: 57 files in the
+  current snapshot (the pre-registered Q13 LFS subset the nightly fetches at
+  the commit pinned in `eval/detection_accuracy/corpus_manifest.json`), 1,055
+  files in the 2026-10-14 snapshot, which read the full corpus. Plaintext/JSON
+  exports are a documented, disclosed gap.
 
 Each trend row records `lane_files` (how many files each lane read) so a
 partial checkout can never pass as the full corpus. This is not
@@ -69,13 +72,15 @@ A rule with `tp+fn == 0` across all corpus files is reported as `untested`
 — surfaced, never implied passing. **Expected-positives are
 corpus-composition-dependent**: both corpora are pinned to fixed commits
 (`eval/detection_accuracy/fetch_corpora.sh`; EVTX-ATTACK-SAMPLES `4ceed2f`,
-static since 2023; splunk/attack_data `eac2f8f`, 2026-10-13), and each row
+static since 2023; splunk/attack_data `800ef65` in the current manifest; `eac2f8f`, 2026-10-13, in the older 2026-10-14 snapshot), and each row
 records the commits read (`corpus_commits`). splunk/attack_data keeps
 growing upstream; adopting newer data is a pin bump in a PR, so which rules
 see attack-shaped volume can only change with a commit. In this snapshot
-only `password_spray` is untested.
-`eval/attack/fire_check.py` is the compensating check: it proves all 28
-MITRE-tagged rules (of 29 shipped; one rule carries no MITRE tag and is
+`bruteforce`, `password_spray` and `lateral_movement` are untested (the 57-file
+splunk subset holds no expected-positive file for the first and last; on the
+full corpus both were TP=3 on 2026-10-14).
+`eval/attack/fire_check.py` is the compensating check: it proves all 45
+MITRE-tagged rules (of 46 shipped; one rule carries no MITRE tag and is
 reported as unverified by that gate) fire on their own real producer
 fixtures, including the 12 stateful ones — so an `untested` here means "this
 corpus composition didn't exercise it", not "the rule does not work".
@@ -123,7 +128,7 @@ artifact.** The published snapshot's value (see `results.json` and
 **Why this is published instead of hidden.** The benchmark's purpose is
 credibility. A methodology section that omitted its own weakest number would
 defeat it; the number is stated with its definition so a reader can judge it.
-The earliest trend rows (2026-08-28: 42.3%) and this snapshot (2026-10-14:
+The earliest trend rows (2026-08-28: 42.3%) and this snapshot (2026-10-22:
 43.2%, 2,082 of 4,818 Security+Sysmon records) differ only in the small
 Sysmon-EventID-5 parser addition — the number has not been gamed, it has been
 moved by real parser coverage work.
