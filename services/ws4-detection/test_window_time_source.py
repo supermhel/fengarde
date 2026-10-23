@@ -148,6 +148,20 @@ def run():
         os.environ.pop("FENGARDE_WINDOW_TIME_SOURCE", None)
     check(len(k2) == 2, f"event mode keeps the record-time bucket: 400 s spread = two 300 s buckets, got {len(k2)}")
 
+    # --- shipper RE-RUN (same records, NEW receipt time) is a different ingestion, not a redelivery -------------
+    # Documented residual: the alert id of a CLAMPED event buckets on its receipt time. A re-run whose receipt time
+    # lands in the same 300 s bucket reuses the id; one that lands in the next bucket mints a new id.
+    base = wall + 10_000                                  # wall is a bucket start (see above)
+    def _clamped(recv_ms):
+        return {"class_uid": 3002, "activity_id": 1, "status": "Success", "time": base - 3_000_000,   # 50 min old record
+                "actor": {"user": {"name": "mallory"}}, "dst_endpoint": {"hostname": "fs00"},
+                "siem": {"ingest_id": "rerun", "tenant": "acme", "received_ms": recv_ms}}
+    k_first = lat.alert_key(_clamped(base))
+    check(lat.alert_key(_clamped(base + 120_000)) == k_first,
+          "re-run inside the same 300 s bucket keeps the alert id (idempotent)")
+    check(lat.alert_key(_clamped(base + 300_000)) != k_first,
+          "KNOWN RESIDUAL: a re-run whose receipt time falls in the next 300 s bucket gets a NEW alert id")
+
     # --- configuration ---
     os.environ["FENGARDE_WINDOW_MAX_SKEW_SECONDS"] = "10"
     check(engine.effective_skew_ms(3_600_000) == 10_000, "env skew caps a long window")

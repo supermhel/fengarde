@@ -284,3 +284,131 @@ document; the two-spelling case gives one incident / one entity with the map and
 burst split over SSO and AD spellings is missed without the map and detected with it; WS-1's syslog listener path reaches an
 indexed alert. **Still not proven:** a real vCenter or Windows log sample carrying these spellings; ADR-009 case-folding of a
 case-sensitive local part; the HA (Sentinel) window backend; WS-5 (AI triage) and the dashboard in the loop.
+
+---
+
+# Part 3: HA (Sentinel) window backend, WS-5 triage, the dashboard, shipper re-run across a bucket (2026-10-23)
+
+**What ran.** A third isolated compose project (`f2f4proof3`, removed afterwards; no container, volume, image or network left;
+the pre-existing stack was not touched): Redis primary + 2 replicas + 3 Sentinels built as in `infra/docker-compose.ha.yml`
+(static IPs, `--min-replicas-to-write 1`, the repo's `redis-sentinel-entrypoint.sh`), a single OpenSearch node provisioned
+with `infra/provision.sh`, and WS-2, WS-3, WS-4, WS-5 (`StubLLM`, no Ollama), WS-8, WS-9 and the **real WS-7 dashboard**
+(its nginx config, published on an ephemeral loopback port), every service on `BUS_BACKEND=redis-sentinel`. Default clamp, no
+alias map. The Redis password is a random test value generated for the run. Not included: WS-1, WS-6.
+
+## HA / Sentinel window backend
+```
+##### HA: Redis primary+2 replicas+3 Sentinels, all services via Sentinel, default clamp, no alias map
+[ha] sentinel master address: 172.28.0.11 6379
+[ha] sentinel replicas: 2 known replica record(s)
+[ha] redis-1 replication: role:master | connected_slaves:2 | slave0:ip=172.28.0.12,port=6379,state=online,offset=42486,lag=1 | slave1:ip=172.28.0.13,port=6379,state=online,offset=42349,lag=1
+[ha] window keys on the primary matching 'mallory': 0
+[ha] sentinel master address: 172.28.0.11 6379
+[ha] sentinel replicas: 2 known replica record(s)
+[ha] redis-1 replication: role:master | connected_slaves:2 | slave0:ip=172.28.0.12,port=6379,state=online,offset=79176,lag=0 | slave1:ip=172.28.0.13,port=6379,state=online,offset=79039,lag=1
+[ha] window keys on the primary matching 'mallory': 1
+    ws4:win:d:2e3d4c5b-6f70-4819-9b02-1c2d3e4f5061:live-a:7:mallory ZCARD(primary) = 5  ZCARD(redis-2 replica) = 5  ZCARD(redis-3 replica) = 5
+```
+- Sentinel reports the primary `172.28.0.11` with 2 replicas, both `state=online`.
+- After the forged burst the WS-4 window key `ws4:win:d:<rule>:live-a:7:mallory` exists on the primary with 5 members and the
+  **same 5 members on both replicas**: the `RedisWindowCounter` runs on the Sentinel-managed topology and replicates.
+- The forged burst alerted (1 doc) with the clamp metric at 3.
+
+### Failover in the middle of a burst
+```
+##### HA FAILOVER: 3 of 5 forged events, kill the Redis primary, Sentinel promotes, last 2 events, alert must still fire
+master before: 172.28.0.11 6379 
+produced via Sentinel: fo1 fs00
+produced via Sentinel: fo1 fs01
+produced via Sentinel: fo1 fs02
+window ZCARD on primary before the kill: ws4:win:d:2e3d4c5b-6f70-4819-9b02-1c2d3e4f5061:live-f:3:fo1
+ Container f2f4proof3-redis-1-1 Stopping 
+ Container f2f4proof3-redis-1-1 Stopped 
+master after failover: 172.28.0.12 6379 
+produced via Sentinel: fo1 fs03
+produced via Sentinel: fo1 fs04
+##### after failover
+alerts-live-f-* docs: 1
+   2e3d4c5b-6f70-4819-9b02-1c2d3e4f5061:live-f:3:fo1:5975872 _version 1 rule 2e3d4c5b
+role:master connected_slaves:1 
+window key on NEW primary: ws4:win:d:2e3d4c5b-6f70-4819-9b02-1c2d3e4f5061:live-f:3:fo1 ZCARD=5
+```
+Three of five forged events were produced, the primary (`redis-1`) was stopped, Sentinel promoted `redis-2`
+(`172.28.0.12`), the last two events were produced through the Sentinel-aware bus client, and the alert fired: the new
+primary holds the window key with all 5 members and `alerts-live-f-*` has the alert (`_version` 1). (The `AUTH failed` lines in
+the raw output are my status helper calling a password-less Sentinel with `-a`; they do not affect the run.) This is one
+failover with a small window; it shows state survives a promotion, not a soak test, and `min-replicas-to-write` means the
+primary refuses writes while no replica is connected.
+
+## WS-5 triage and the dashboard
+```
+##### HA: Redis primary+2 replicas+3 Sentinels, all services via Sentinel, default clamp, no alias map
+[dash] GET / -> 200 (789 bytes of the real dashboard page)
+[dash] POST /api/alerts -> 200: 1 alert(s), 1 for tenant live-a
+    {"alert_id": "2e3d4c5b-6f70-4819-9b02-1c2d3e4f5061:live-a:7:mallory:5975871", "rule_title": "Lateral movement (one account auth success to many distinct hosts)", "score": 70, "level": "high"} | ai block: False
+[dash] POST /api/ai-triage -> 200: 1 triage doc(s), 0 for tenant live-a
+[dash] GET /api/incidents -> 200: {"incidents": [], "count": 0}
+```
+- **WS-5 ran**: an `ai-...` triage document landed in `alerts-2026.10.23` with `ai.verdict = "suspicious"`, `engine = "stub"`,
+  summary "common event scored 70; triggered: Lateral movement ...". The engine is `StubLLM` (no Ollama in this stack), so this
+  proves WS-5 is wired into the loop, not the quality of a real LLM verdict.
+- **The dashboard served the real data**: its nginx returned the page (200) and `POST /api/alerts` returned the indexed
+  lateral-movement alert (`rule_title`, score 70, level high); `GET /api/incidents` returned the incident below once one existed.
+- **A finding, not caused by this change**: the triage document's `event_ids` is the triggering event's `ingest_id`
+  (`22cca0f3-...`), but the distinct-count alert's own `event_ids` are the distinct VALUES it counted
+  (`['fs03','fs04','fs00','fs01','fs02']`), so the dashboard's join "triage doc -> alert by `event_ids`" cannot attach the AI
+  verdict to a distinct-count alert (`/api/ai-triage` returned the triage doc, 0 for the tenant). I only looked at this one
+  rule; I did not check other rules or fix it (out of scope for F2/F4).
+
+## Dashboard incident, single spelling
+```
+##### HA stack: shipper RE-RUN over the same file (new receipt time), then a single-spelling incident for the dashboard
+[incident] tenant=live-d: 5 logons as CORP\jdoe9 (TA0008) + log clear as jdoe9@corp.example (TA0005)
+[incident] OpenSearch alerts-live-d-*: 2 doc(s)
+   alerts-live-d-2026.10.23 _id=2e3d4c5b-6f70-4819-9b02-1c2d3e4f5061:live-d:10:corp\jdoe9:5975871 _version=1 rule=2e3d4c5b actor='CORP\\jdoe9' tactic=TA0008
+   alerts-live-d-2026.10.23 _id=17dcc2b9-4d62-4fc2-9833-83954bf1b902:live-d:80daa88c-0ecb-4b38-94e4-2e077d5d1f7a _version=1 rule=17dcc2b9 actor='CORP\\jdoe9' tactic=TA0005
+[incident] OpenSearch incidents-live-d-*: 1 doc(s)
+   INCIDENT {"incident_id": "live-d:actor:CORP\\jdoe9:20749", "entity_type": "actor", "entity_value": "CORP\\jdoe9", "tactics": ["TA0005", "TA0008"], "member_alert_ids": ["17dcc2b9-4d62-4fc2-9833-83954bf1b902:live-d:80daa88c-0ecb-4b38-94e4-2e077d5d1f
+[incident] alerts-live-d-* _count = 2   ws4 clamp metric: {'detection_time_clamped_total': 7}
+[incident] WS-9 actor entities seen on entity.updates for tenant live-d: {"31a0147b1568": "corp\\jdoe9"}
+[dash] GET / -> 200 (789 bytes of the real dashboard page)
+[dash] POST /api/alerts -> 200: 3 alert(s), 2 for tenant live-d
+    {"alert_id": "2e3d4c5b-6f70-4819-9b02-1c2d3e4f5061:live-d:10:corp\\jdoe9:5975871", "rule_title": "Lateral movement (one account auth success to many distinct hosts)", "score": 70, "level": "high"} | ai block: False
+    {"alert_id": "17dcc2b9-4d62-4fc2-9833-83954bf1b902:live-d:80daa88c-0ecb-4b38-94e4-2e077d5d1f7a", "rule_title": "Windows audit log cleared", "score": 75, "level": "high"} | ai block: False
+[dash] POST /api/ai-triage -> 200: 3 triage doc(s), 0 for tenant live-d
+[dash] GET /api/incidents -> 200: {"incidents": [{"incident_id": "live-d:actor:CORP\\jdoe9:20749", "tenant_id": "live-d", "entity_type": "actor", "entity_value": "CORP\\jdoe9", "first_seen": 1792761492955, "last_seen": 1792761492955, "tactics": ["TA0
+```
+`GET /api/incidents` through the dashboard returned the WS-8 incident `live-d:actor:CORP\\jdoe9:20749` (tactics TA0005 +
+TA0008, both alerts as members). This stack had no alias map and the two logs used the same spelling (the unmapped
+two-spelling case is in Part 2).
+
+## Shipper re-run idempotency across a 300 s bucket boundary
+```
+##### HA stack: shipper re-run ACROSS a 300 s alert bucket boundary
+[forged] tenant=live-e: 5 logons by 'm5', record times now-400s..now (receipt = now)
+  shipper: [agent-log-shipper] shipped 5 event(s) to raw.events (source_type=windows_eventlog)
+[forged] OpenSearch alerts-live-e-*: 1 doc(s) for rule 2e3d4c5b
+   alerts-live-e-2026.10.23 _id=2e3d4c5b-6f70-4819-9b02-1c2d3e4f5061:live-e:2:m5:5975871 _version=1 rule=2e3d4c5b actor='m5' tactic=TA0008
+[forged] OpenSearch incidents-live-e-*: 0 doc(s)
+[forged] alerts-live-e-* _count = 1   ws4 clamp metric: {'detection_time_clamped_total': 10}
+[bucket] sleeping 40s to cross the 300 s boundary
+[replay] tenant=live-e: shipping the identical file again (f2f4_forged_live-e.jsonl)
+  shipper: [agent-log-shipper] shipped 5 event(s) to raw.events (source_type=windows_eventlog)
+[replay] OpenSearch alerts-live-e-*: 2 doc(s) for rule 2e3d4c5b
+   alerts-live-e-2026.10.23 _id=2e3d4c5b-6f70-4819-9b02-1c2d3e4f5061:live-e:2:m5:5975872 _version=4 rule=2e3d4c5b actor='m5' tactic=TA0008
+   alerts-live-e-2026.10.23 _id=2e3d4c5b-6f70-4819-9b02-1c2d3e4f5061:live-e:2:m5:5975871 _version=2 rule=2e3d4c5b actor='m5' tactic=TA0008
+[replay] OpenSearch incidents-live-e-*: 0 doc(s)
+[replay] alerts-live-e-* _count = 2   ws4 clamp metric: {'detection_time_clamped_total': 14}
+```
+Same records, the shipper run twice. **Inside one 300 s alert bucket** (earlier run in this stack, `mallory`): the re-run
+re-indexed the existing document (`...:mallory:5975871`, `_version` 1 -> 6), `_count` stayed 1. **Across a bucket boundary**
+(`m5`, re-run 40 s later, after the boundary): a second document `...:m5:5975872` appeared next to `...:m5:5975871`
+(`_count` 1 -> 2). That is the documented residual: the alert id of a clamped event buckets on its receipt time, and a
+re-ship is a new ingestion with a new receipt time. Byte-identical redelivery of the same bus message stays idempotent (Part
+2). The unit test `test_window_time_source.py` now pins both halves (same bucket = same id, next bucket = new id).
+
+## Status after Part 3
+Proven live: Sentinel-managed window backend incl. a primary failover mid-burst; WS-5 (stub engine) and the real dashboard in the
+loop; the bucket-boundary behaviour. **Still unproven:** a real LLM (Ollama) verdict; the dashboard's AI-verdict join for
+distinct-count alerts (looks broken, not investigated); OpenSearch 3-node HA; WS-6 inventory in the loop; a soak of repeated
+failovers.

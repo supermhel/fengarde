@@ -63,6 +63,7 @@ Tiered CI and the rule-cascade helper, the SLSA generator referenced by tag (the
   `FENGARDE_WINDOW_TIME_SOURCE=event`; `docker-compose.yml` now passes the two `FENGARDE_WINDOW_*` variables to ws4, not
   the alias variable); the alert id of a clamped event is not stable across re-shipped logs; the clamp is off for events
   without a usable `meta.received_at` / integer `time`; the alias file is not hot-reloaded on its own.
+- **Live proof part 3 (HA/Sentinel window backend, WS-5, dashboard)**: the clamp and the window counter were exercised on a Redis primary + 2 replicas + 3 Sentinels, including a primary failover in the middle of a forged burst (alert still fired); WS-5 (StubLLM) and the real dashboard were in the loop; a shipper re-run across a 300 s alert bucket mints a second alert document (documented residual, pinned by a unit test). Transcript in `docs/live-proof-f2-f4-2026-10-22.md` Part 3.
 - **F2 closed under a configured alias map; open by default (documented).** Per-tenant realm alias map
   (`contracts/identity_aliases.yaml`, `$FENGARDE_IDENTITY_ALIASES`, `services/shared/identity_aliases.py`,
   `contracts/identity-aliases.md`) now folds identity in WS-4 window groups and alert keys, WS-8 tracks / incident ids /
