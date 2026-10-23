@@ -43,6 +43,14 @@ def run() -> None:
     # segment must stay silent.
     os.environ["INVENTORY_BASELINE_SECONDS"] = "3600"
     store = InventoryStore(":memory:")
+    import contextlib
+    import io
+    logged = io.StringIO()
+    with contextlib.redirect_stdout(logged):
+        first_flag = store.upsert_with_diff(_obs("AA:BB:CC:00:00:99"))[1]
+    check(first_flag is False, "first sighting inside the baseline window does not alert")
+    check("baseline window opened" in logged.getvalue() and '"baseline_seconds": 3600' in logged.getvalue(),
+          f"opening a baseline window must be logged, got {logged.getvalue()!r}")
     flags = [store.upsert_with_diff(_obs(f"AA:BB:CC:00:00:{i:02X}"))[1] for i in range(5)]
     check(not any(flags),
           "cold start inside the baseline window does not alert on existing devices")

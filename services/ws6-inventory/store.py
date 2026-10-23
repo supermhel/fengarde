@@ -412,6 +412,11 @@ class InventoryStore:
                 "INSERT INTO tenant_state(tenant_id, baseline_until) VALUES(?,?)",
                 (tenant_id, until.isoformat()),
             )
+            if seconds > 0:
+                # Otherwise invisible: devices first seen in this window are inventory only, they raise no
+                # new-device event for ws2/ws4 (found in the live proof 2026-10-23).
+                _log.info("new-device baseline window opened: first sightings are inventory only, not alerts",
+                          tenant=tenant_id, baseline_seconds=seconds, until=until.isoformat())
             return seconds <= 0
         try:
             until_stored = _parse(row["baseline_until"])
