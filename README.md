@@ -321,18 +321,23 @@ are retired.
 python tools/fengarde_loadtest_live.py --rates 25 50 75 100 150 200 --step-s 60 --out benchmark/raw/live-ramp
 ```
 
-| Live stack (Redis streams + OpenSearch, one replica each) | Value |
-|---|---|
-| Sustained for 12 min, bounded consumer-group lag | **20 events/s** |
-| Saturation | falls behind from ~25 events/s; backlog drained at ~70 indexer messages/s (~30 events/s) |
-| Bottleneck | `ws3-indexer` writes one document per HTTP request (~50 docs/s on this host; `_bulk` on the same OpenSearch: ~4,700 docs/s) |
-| OpenSearch heap (512 MB) during soak | 69-78% |
+| Live stack (Redis streams + OpenSearch, one replica each) | Before: per-document writes (`dd6f7d0`) | After: `/_bulk` batched writes |
+|---|---|---|
+| Held for 12 min | 20 events/s | **60 events/s** (stage rates = offered rate, no loss) |
+| Starts falling behind | ~25 events/s | ~100 events/s (WS-4 98.5/s at 100; ~75-95/s beyond) |
+| `ws3-indexer` throughput | ~55-70 messages/s (ceiling) | ~500 messages/s at 400 events/s, not saturated |
+| Limiting stage | `ws3-indexer`: one HTTP request per document (~50 docs/s on this host; `_bulk` on the same OpenSearch ~4,700 docs/s) | WS-4 consume path (~75-100 events/s, not CPU-bound, not profiled); alert CAS path drifts slowly |
+| OpenSearch heap (512 MB) | 69-78% | 71-77% |
 
-**This is a laptop-scale result, not SIEM-scale.** The live stack as shipped
-does not sustain more than a few tens of events/s on this host; nothing above
-200 events/s offered, no multi-replica or multi-node run, and nothing longer than
+`index_failed` on the OpenSearch node counted create-only 409 conflicts (by
+design, not failures); evidence in `benchmark/loadtest.md` section 3c.
+
+**This is a laptop-scale result, not SIEM-scale.** One laptop shared with other
+Docker projects, one replica per service, 512 MB OpenSearch heap. The live stack
+holds tens of events/s (60 tested for 12 minutes), not thousands. Nothing above
+400 events/s offered, no multi-replica or multi-node run, and nothing longer than
 12 minutes was tested. The older `tools/fengarde_bench_live.py` (~43.9 events/s,
-5,000-event drain) is consistent with this and remains a manual one-shot.
+5,000-event drain, pre-bulk) remains a manual one-shot.
 
 ---
 

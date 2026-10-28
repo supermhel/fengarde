@@ -48,6 +48,103 @@ def make_store():
     return MemoryStore()
 
 
+class BatchIndexHandler:
+    """Daemon handler for ONE topic. Callable per payload (``handler(payload)``,
+    the original one-write-per-message path, kept for MemoryStore and as the
+    kill switch) and, when the store supports ``bulk_write``, batch-capable via
+    :meth:`handle_batch` so ``shared.runner`` hands it a whole read pass and
+    the batch goes out as ONE ``/_bulk`` request.
+
+    Semantics are the per-document ones, item by item:
+
+    * ``create_only`` (``normalized.events``): bulk ``create``; a per-item 409
+      means "already stored" and is a SUCCESS (never clobbers the scored copy).
+    * everything else: bulk ``index`` (idempotent upsert on the deterministic id).
+    * alerts (``alert_id``, not create-only) stay on the per-document CAS path
+      (:func:`_index_alert_preserving_triage`): it must read-modify-write to
+      preserve analyst ``triage``, which a blind bulk upsert would clobber.
+      Alert volume is a small fraction of event volume, so this costs little.
+    * unroutable docs are dropped (success), as in the single path.
+
+    Result contract for the runner: a list parallel to the input, ``None`` =
+    written/suppressed (ack), an Exception = leave unacked (redelivery). Items
+    that fail with 429/5xx are retried in-process a bounded number of times
+    (``WS3_BULK_RETRIES``) before being reported failed, so a transient
+    OpenSearch back-pressure blip does not wait out the 60 s claim window. A
+    whole-request failure fails every item that was in that request. Ordering:
+    bulk applies items in order, so two writes to one id inside a batch land
+    in message order, same as sequential PUTs.
+    """
+
+    _RETRYABLE = frozenset({429, 500, 502, 503, 504})
+
+    def __init__(self, store, *, create_only: bool = False,
+                 batch_max: int | None = None, retries: int | None = None,
+                 backoff_s: float = 0.2):
+        self.store = store
+        self.create_only = create_only
+        self.batch_max = batch_max if batch_max is not None else int(
+            os.getenv("WS3_BULK_MAX", "500"))
+        self.retries = retries if retries is not None else int(
+            os.getenv("WS3_BULK_RETRIES", "3"))
+        self.backoff_s = backoff_s
+        self.stats = {"bulk_requests": 0, "bulk_docs": 0, "conflicts_409": 0,
+                      "retried_items": 0, "failed_items": 0}
+
+    def __call__(self, payload: dict) -> None:
+        try:
+            index_doc(self.store, payload, create_only=self.create_only)
+        except ValueError:
+            pass  # unroutable doc -> drop, matches run()
+
+    def handle_batch(self, payloads: list) -> list:
+        results: list = [None] * len(payloads)
+        pending: list = []  # (position, op, index, doc_id, doc)
+        for i, payload in enumerate(payloads):
+            try:
+                index, doc_id = route(payload)
+            except ValueError:
+                continue  # unroutable -> drop (success)
+            if not self.create_only and "alert_id" in payload:
+                try:
+                    _index_alert_preserving_triage(self.store, index, doc_id, payload)
+                except Exception as exc:  # noqa: BLE001 - per-item failure -> unacked
+                    results[i] = exc
+                continue
+            pending.append((i, "create" if self.create_only else "index",
+                            index, doc_id, payload))
+        attempt = 0
+        while pending:
+            try:
+                outcomes = self.store.bulk_write(
+                    [(op, index, doc_id, doc) for _, op, index, doc_id, doc in pending])
+                self.stats["bulk_requests"] += 1
+                self.stats["bulk_docs"] += len(pending)
+            except Exception as exc:  # noqa: BLE001 - whole request failed
+                outcomes = [{"status": 503, "error_type": f"request_failed:{type(exc).__name__}",
+                             "exc": exc}] * len(pending)
+            retry: list = []
+            for item, out in zip(pending, outcomes):
+                pos, op = item[0], item[1]
+                status = out["status"]
+                if status < 300 or (status == 409 and op == "create"):
+                    if status == 409:
+                        self.stats["conflicts_409"] += 1
+                    continue
+                if status in self._RETRYABLE and attempt < self.retries:
+                    retry.append(item)
+                    continue
+                self.stats["failed_items"] += 1
+                results[pos] = out.get("exc") or RuntimeError(
+                    f"bulk item rejected: HTTP {status} {out.get('error_type')}")
+            pending = retry
+            if pending:
+                self.stats["retried_items"] += len(pending)
+                time.sleep(self.backoff_s * (2 ** attempt))
+                attempt += 1
+        return results
+
+
 def build_handlers(store, group: str = "cg-index") -> dict:
     """Per-topic ``{topic: (group, handler)}`` map for the live daemon.
 
@@ -58,23 +155,30 @@ def build_handlers(store, group: str = "cg-index") -> dict:
     regression here -- pointing `normalized.events` at the plain handler --
     silently reintroduces the score-stripping double-index race, so it gets a
     test (`test_double_index_order.py::test_normalized_topic_is_wired_create_only`).
+
+    Every handler is a :class:`BatchIndexHandler`; ``shared.runner`` uses its
+    ``handle_batch`` (one ``/_bulk`` per read pass) only when the store has
+    ``bulk_write``. ``WS3_BULK=0`` is the kill switch: it wraps each handler
+    in a plain per-document callable, which has no ``handle_batch`` and so
+    keeps the pre-bulk behavior. ``WS3_BULK_MAX`` (default 500) bounds a batch.
     """
+    bulk = os.getenv("WS3_BULK", "1").lower() not in ("0", "false", "no") \
+        and callable(getattr(store, "bulk_write", None))
+    out = {}
+    for t in TOPICS:
+        h = BatchIndexHandler(store, create_only=(t == "normalized.events"))
+        if not bulk:
+            h = _single_only(h)
+        out[t] = (group, h)
+    return out
+
+
+def _single_only(h: "BatchIndexHandler"):
+    """Per-document-only view of ``h`` (no ``handle_batch``), for the
+    ``WS3_BULK=0`` kill switch and stores without ``bulk_write``."""
     def handler(payload: dict) -> None:
-        try:
-            index_doc(store, payload)
-        except ValueError:
-            pass  # unroutable doc (e.g. ai.results) -> drop, matches run()
-
-    def normalized_handler(payload: dict) -> None:
-        """`normalized.events` writes create-only -- it must never clobber the
-        scored copy of the same event (index_doc's own docstring)."""
-        try:
-            index_doc(store, payload, create_only=True)
-        except ValueError:
-            pass  # unroutable doc -> drop, same as handler()
-
-    return {t: (group, normalized_handler if t == "normalized.events" else handler)
-            for t in TOPICS}
+        h(payload)
+    return handler
 
 
 _ALERT_CAS_MAX_RETRIES = 5
@@ -348,8 +452,13 @@ def main():
 
     handlers = build_handlers(store)
     try:
+        def bulk_metrics() -> dict:
+            return {"bulk": {t: dict(h.stats) for t, (_g, h) in handlers.items()
+                             if isinstance(h, BatchIndexHandler)}}
+
         serve(handlers, health_port=int(os.getenv("PORT", "8003")),
-              service_name="ws3-indexer", shutdown=shutdown)
+              service_name="ws3-indexer", shutdown=shutdown,
+              metrics_provider=bulk_metrics)
     finally:
         shutdown.set()
         if reaper is not None:

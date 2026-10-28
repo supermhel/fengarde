@@ -1,16 +1,21 @@
 # FENGARDE load test: throughput, latency, saturation
 
-Measured 2026-10-28 on one laptop, commit `33e340f` plus the harness in this
-change. Raw outputs: [`raw/`](raw/). Everything below is a measured number for
+Measured 2026-10-28 on one laptop: "before" at commit `dd6f7d0` (harness on top
+of `33e340f`), "after" with the bulk-write change that follows it. Raw outputs: [`raw/`](raw/). Everything below is a measured number for
 **this machine only**; nothing here is a statement about SIEM-scale capacity.
 
-**Headline.** On the live stack (Redis bus + OpenSearch), the pipeline sustains
-**~20 events/s for 12 minutes with bounded lag, and falls behind from ~25
-events/s**. The bottleneck is `ws3-indexer`'s one-HTTP-request-per-document
-write path (OpenSearch accepts ~50-58 such PUTs/s here, versus ~4,700 docs/s
-via `_bulk`). WS-2 and WS-4 are not the limiter below ~100 events/s. The
-zero-infra CPU ceiling is far higher (~900-1,500 events/s end to end for a
-realistic mix), so the live number is set by I/O design, not Python speed.
+**Headline (updated after the bulk-write fix).** On the live stack (Redis bus +
+OpenSearch) the first measurement (per-document writes, commit `dd6f7d0`) held
+**20 events/s for 12 min and fell behind from ~25 events/s**; the bottleneck was
+`ws3-indexer`'s one-HTTP-request-per-document write path. After batching those
+writes through `/_bulk` (this change), the same stack **holds 60 events/s for 12
+min** (all stage rates equal the offered rate), ws3 throughput rose ~7x
+(~55 -> ~370 messages/s in a short smoke, up to ~500 messages/s in the ramp), and
+the next limits are WS-4's consume path (~75-100 events/s) and, slowly, the
+per-document CAS path for alerts. The zero-infra CPU ceiling (~900-1,500
+events/s end to end) is still far above the live number, so the live rate remains
+set by I/O design, not Python speed. Laptop-scale result only; see the limits at
+the end.
 
 ## Machine
 
@@ -75,6 +80,8 @@ events would exercise more rules. Wall-clock timing on a shared laptop is noisy
 
 ## 2. Live stack (Redis streams + OpenSearch): `tools/fengarde_loadtest_live.py`
 
+Sections 2a-2c below are the **before** measurement (per-document writes, `dd6f7d0`). The **after** measurement is section 3.
+
 Isolated compose project `fgloadtest` (overlay
 [`infra/docker-compose.loadtest.yml`](../infra/docker-compose.loadtest.yml):
 no fixed container names, ports 16379/19200) with redis, opensearch,
@@ -120,7 +127,7 @@ single capacity number: the indexer, working flat out, clears ~70 messages/s
 (~30 events/s). OpenSearch heap peaked at 75-77% of 512 MB; the node stats
 did not expose a write-queue rejection count.
 
-### Bottleneck: `ws3-indexer` single-document writes
+### Bottleneck before the fix: `ws3-indexer` single-document writes
 
 `tools/fengarde_os_probe.py`, run against the idle stack:
 
@@ -134,8 +141,8 @@ The daemon's observed 47-75 messages/s matches the single-PUT ceiling, while
 OpenSearch has ~80x headroom via bulk. In the ramp, `ws3-indexer` itself used
 only 10-17% CPU (it is waiting on round trips), and OpenSearch used 95-185% of a
 core. The module docstring in `services/ws3-indexer/storage/opensearch.py`
-already says the daemon path is deliberately not batched; the batch path
-(`run()`, used by tests and `demo_e2e`) is. Why each PUT costs ~17-20 ms on
+said at the time that the daemon path was deliberately not batched (the batch
+path, `run()`, used by tests and `demo_e2e`, was). Why each PUT costs ~17-20 ms on
 this host (request-level translog fsync on Docker Desktop's disk is the
 likely cause) was **not** investigated.
 
@@ -150,23 +157,131 @@ likely cause) was **not** investigated.
 | OpenSearch heap | 69-78% of 512 MB (401 MB max), no upward trend |
 | Redis memory | max 19 MB |
 | CPU (mean) | opensearch 44%, ws3 22%, ws4 16%, ws2 12%, redis 20% |
-| `index_failed` counter | 183 by end of run (OpenSearch stat; the create-only `normalized.events` writes return 409 when the scored copy won the race, so this is probably expected; not verified) |
+| `index_failed` counter | 183 by end of run; shown to be create-only 409s, see section 3c |
 
 20 events/s is the highest rate **tested and held** for >=10 minutes. Rates
 between 20 and 25 events/s were not run; 25 events/s showed lag growth in a
 60 s window, not a long soak.
 
+## 3. After: batched daemon writes (`/_bulk`)
+
+Change: `ws3-indexer`'s daemon now gathers each read pass (up to `WS3_BULK_MAX`
+= 500 messages) and writes it with ONE `/_bulk` request
+(`BatchIndexHandler` in `services/ws3-indexer/main.py`, `OpenSearchStore.bulk_write`,
+batch path in `services/shared/runner.py`). Semantics kept: `normalized.events`
+use bulk `create` (a per-item 409 is success), other topics bulk `index` (idempotent
+upsert on the deterministic id); alerts stay on the per-document CAS path so analyst
+`triage` is preserved; messages are acked only after the bulk response is known,
+per item (failed items stay unacked for redelivery, 429/5xx items are retried
+in-process up to `WS3_BULK_RETRIES`=3, a whole-request failure acks nothing);
+`WS3_BULK=0` restores the old path. Contract test:
+`services/ws3-indexer/test_bulk_handler.py`.
+
+Same procedure and same isolated project as section 2 (rebuilt images, fresh
+volumes). Neighbours during these runs: the `infra` compose project (all services
+idle, 0-5% CPU each) and no other active Docker project at the start of the
+runs (`docker ps`); other editor sessions may have been running. The "before"
+runs had the same neighbours, so the comparison is like for like to the extent a
+shared laptop allows.
+
+### 3a. Ramp (45 s per step, then drain)
+
+```sh
+python tools/fengarde_loadtest_live.py --rates 25 50 100 150 200 300 400 --step-s 45 --drain-timeout-s 1800 --out benchmark/raw/live-ramp-bulk-2026-10-28
+```
+
+| Offered ev/s | WS-2 read/s | WS-4 read/s | ws3 msgs/s | OpenSearch `events-*` docs/s | Total lag at step end |
+|---|---|---|---|---|---|
+| 25 | 25 | 25 | 68 | 25 | 4 |
+| 50 | 50 | 50 | 135 | 50 | 17 |
+| 100 | 100 | 98.5 | 260 | 100 | 705 |
+| 150 | 150 | 90 | 293 | 151 | 3,904 |
+| 200 | 203 | 78 | 334 | 204 | 9,496 |
+| 300 | 274 | 82 | 397 | 275 | 18,163 |
+| 400 | 341 | 94 | 498 | 345 | 32,718 |
+
+Reading it: up to 50 events/s everything keeps pace; at 100 it is at the edge
+(WS-4 98.5/s, lag 705); beyond that WS-4 reads only ~78-94 events/s while WS-2
+and the indexer keep going, so `normalized.events` backs up (lag 26,573 of the
+32,718 at 400/s). `ws3-indexer` is no longer the limiter: at 400 events/s it
+handled ~500 messages/s using 45% CPU, versus a hard ceiling of ~55-75
+messages/s before. WS-2 itself starts to trail at 300-400 events/s (274, 341).
+After the producer stopped, the 32,718-message backlog drained in 431 s, with
+WS-4 draining at ~74 events/s using ~62% CPU and Redis ~31%: WS-4 looks
+latency-bound on its per-message bus round trips here rather than CPU-bound
+(zero-infra WS-4 does ~4,500 events/s); this was not profiled further.
+
+| | Before (per-doc, section 2) | After (bulk) |
+|---|---|---|
+| ws3 messages/s achieved | 47-75 (ceiling ~70) | 68 at 25 ev/s up to 498 at 400 ev/s (not saturated) |
+| Highest offered rate with near-zero lag growth | below 25 events/s (lag already 1,318 at the end of the 25/s step; 20/s was the soak rate) | 50 events/s (lag 17); 100 borderline (lag 705, WS-4 98.5/s) |
+| Backlog drain | ~70 ws3 messages/s (~30 events/s): 67,519 msgs in 1,103 s | ~74 events/s (WS-4-bound): 32,718 msgs in 431 s |
+| Limiting stage | ws3-indexer (single PUT per doc) | WS-4 consume path, ~75-100 events/s |
+
+### 3b. Soak: 60 events/s for 12 minutes
+
+```sh
+python tools/fengarde_loadtest_live.py --rates --soak-rate 60 --soak-min 12 --out benchmark/raw/live-soak-bulk-2026-10-28
+```
+
+| | |
+|---|---|
+| Offered / produced | 60.0 events/s, 43,206 events |
+| WS-2 and WS-4 | 60.0 events/s each (WS-4 54.4 in one minute, 59.9-61.3 otherwise) |
+| OpenSearch `events-*` growth | 60.0 docs/s mean (57.9-60.9 per minute) |
+| Total lag | rose from ~230 to ~1,600 in the first 7 minutes, then ~1,550-1,650 for the remaining 5; cleared 86 s after the producer stopped |
+| Where the lag sits | `alerts` stream, `cg-index` group (1,361 mid-run, 1,779 near the end): alerts still use the per-document CAS path (GET + conditional PUT); event streams stayed at 0-60 |
+| OpenSearch heap | 71-77% of 512 MB (398 MB max) |
+| Redis memory | max 52 MB |
+| CPU (mean) | opensearch 87%, ws4 54%, redis 52%, ws2 31%, ws3 30% |
+| Bulk counters (ws3 `/metrics`, whole session) | 0 failed items, 0 retried items |
+
+So 60 events/s was held for 12 minutes with stage rates equal to the offered rate
+and OpenSearch growth equal to the offered rate (no loss), but with a small
+backlog in the alert path that grew from ~1,361 to ~1,779 across the second half
+of the run, so a flat lag is only shown for the event path. Rates between 60 and
+100 events/s were not soaked. The claim is 3x the "before" soak rate (20 -> 60
+events/s), not more.
+
+### 3c. `index_failed` = 183 (before) explained
+
+The OpenSearch node stat `indexing.index_failed` was 183 after the first soak with
+no errors in service logs. Evidence it is create-only 409s, not real failures:
+
+1. `tools/fengarde_os_conflict_probe.py` against the live node
+   (`raw/os-conflict-probe-2026-10-28.json`): `op_type=create` on a new id: HTTP
+   201, counter +0; the same create again: HTTP 409
+   `version_conflict_engine_exception`, counter **+1**; a plain index of an
+   existing id: 200, +0; a `_bulk` create of [existing id, new id]: statuses
+   [409, 201], counter **+1**. (A mapping-violating write returned 400
+   `mapper_parsing_exception` and did NOT move the counter, so this counter does
+   not reflect that kind of failure at all.)
+2. In the bulk build ws3 counts per-item 409s itself. After the soak the
+   `normalized.events` `conflicts_409` was 12,083 for the soak while the node's
+   `index_failed` ended at 12,085 (+2 from the probe's own two deliberate
+   conflicts; the ramp's 845 conflicts were already in the counter at the start of
+   the soak). `failed_items` = 0 and `retried_items` = 0.
+3. Why 409s happen: `normalized.events` and `scored.events` are written by
+   independent threads to the same document id; when the scored copy lands
+   first, the normalized create-only write conflicts and is (by design) dropped.
+   In the soak that was 12,083 of 43,206 events (28%).
+
+So the 183 were conflicts of the intended kind: noise in an OpenSearch counter,
+not lost writes. A dashboard alerting on `index_failed` would false-alarm.
+
 ## What this does and does not show
 
 * Measured: zero-infra CPU ceilings per stage and end to end; live-stack
-  saturation (~25 events/s on this laptop), a 12-minute hold at 20 events/s,
-  consumer-group lag, OpenSearch heap and indexing, and the bottleneck.
-* Not measured: any rate above ~200 events/s on the live stack (the producer
-  was stopped there; offered load beyond that only deepens the backlog), more
+  saturation before (~25 events/s) and after (~75-100 events/s) the bulk change,
+  12-minute holds at 20 events/s (before) and 60 events/s (after), consumer-group
+  lag, OpenSearch heap and indexing, and where the bottleneck moved.
+* Not measured: any rate above 400 events/s offered on the live stack (200 in the
+  before run), soaks above 60 events/s, more
   than one replica per service, a multi-node OpenSearch, real WS-1 UDP ingest,
   a Windows/Sysmon-heavy mix, an idle reference host, runs longer than 12
   minutes. **This is not evidence of SIEM-scale (thousands of events/s)
   capacity; the live stack as shipped does not reach it on this host.**
-* Likely fix (not done here, out of scope): batch the `ws3-indexer` daemon
-  writes via `bulk_index`. The probe suggests ~two orders of magnitude of
-  headroom in OpenSearch; the gain end to end would still need a re-run.
+* Next bottlenecks, not fixed here: WS-4's live consume path (~75-100 events/s,
+  not CPU-bound, cause not profiled) and the per-document alert CAS path in
+  ws3 (slow lag growth at 60 events/s). Nothing has been measured above ~100
+  events/s sustained.

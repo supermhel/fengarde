@@ -1,0 +1,147 @@
+{
+  "date_utc": "2026-10-28T11:25:04Z",
+  "run_tag": "e5467d8a",
+  "params": {
+    "redis_port": 16379,
+    "os_port": 19200,
+    "project": "fgloadtest",
+    "rates": [],
+    "step_s": 60,
+    "soak_rate": 60,
+    "soak_min": 12.0,
+    "sample_s": 3,
+    "drain_timeout_s": 900,
+    "out": "benchmark\\raw\\live-soak-bulk-2026-10-28"
+  },
+  "steps": [],
+  "drain": {
+    "backlog_msgs_at_stop": null,
+    "drain_seconds": 6.0
+  },
+  "soak": {
+    "offered_eps": 60,
+    "minutes": 12.0,
+    "events_sent": 43206,
+    "window_s": 707.2,
+    "produced_eps": 60.0,
+    "ws2_normalize_eps": 60.0,
+    "ws4_detect_eps": 60.0,
+    "ws3_index_msgs_per_s": 163.9,
+    "os_events_docs_per_s": 60.0,
+    "os_alert_docs_per_s": 0.3,
+    "os_index_ops_per_s": 148.4,
+    "lag_start": 234,
+    "lag_end": 2103,
+    "raw_lag_end": 0,
+    "norm_lag_end": 17,
+    "os_heap_pct_max": 77,
+    "os_heap_used_mb_max": 398,
+    "os_index_failed_end": 12071,
+    "os_write_rejected_end": null,
+    "redis_mem_mb_max": 51.5,
+    "container_cpu_pct": {
+      "redis": {
+        "mean": 51.5,
+        "max": 151.5
+      },
+      "opensearch": {
+        "mean": 87.4,
+        "max": 264.7
+      },
+      "ws2-normalization": {
+        "mean": 30.9,
+        "max": 103.5
+      },
+      "ws3-indexer": {
+        "mean": 30.3,
+        "max": 89.3
+      },
+      "ws4-detection": {
+        "mean": 54.2,
+        "max": 188.7
+      },
+      "ws5-ai": {
+        "mean": 2.3,
+        "max": 34.9
+      },
+      "ws8-correlation": {
+        "mean": 25.8,
+        "max": 123.2
+      },
+      "ws9-resolver": {
+        "mean": 36.7,
+        "max": 145.6
+      }
+    },
+    "per_minute": [
+      {
+        "os_events_docs_per_s": 58.9,
+        "ws4_detect_eps": 60.1,
+        "lag_end": 300,
+        "heap_pct_max": 74
+      },
+      {
+        "os_events_docs_per_s": 60.3,
+        "ws4_detect_eps": 60.1,
+        "lag_end": 379,
+        "heap_pct_max": 77
+      },
+      {
+        "os_events_docs_per_s": 60.5,
+        "ws4_detect_eps": 60.0,
+        "lag_end": 426,
+        "heap_pct_max": 77
+      },
+      {
+        "os_events_docs_per_s": 57.9,
+        "ws4_detect_eps": 54.4,
+        "lag_end": 1128,
+        "heap_pct_max": 73
+      },
+      {
+        "os_events_docs_per_s": 59.1,
+        "ws4_detect_eps": 61.3,
+        "lag_end": 1161,
+        "heap_pct_max": 76
+      },
+      {
+        "os_events_docs_per_s": 59.7,
+        "ws4_detect_eps": 59.9,
+        "lag_end": 1387,
+        "heap_pct_max": 77
+      },
+      {
+        "os_events_docs_per_s": 59.9,
+        "ws4_detect_eps": 60.1,
+        "lag_end": 1602,
+        "heap_pct_max": 77
+      },
+      {
+        "os_events_docs_per_s": 59.7,
+        "ws4_detect_eps": 60.2,
+        "lag_end": 1589,
+        "heap_pct_max": 75
+      },
+      {
+        "os_events_docs_per_s": 60.9,
+        "ws4_detect_eps": 59.9,
+        "lag_end": 1558,
+        "heap_pct_max": 71
+      },
+      {
+        "os_events_docs_per_s": 59.3,
+        "ws4_detect_eps": 59.9,
+        "lag_end": 1590,
+        "heap_pct_max": 77
+      },
+      {
+        "os_events_docs_per_s": 60.2,
+        "ws4_detect_eps": 60.1,
+        "lag_end": 1646,
+        "heap_pct_max": 76
+      }
+    ],
+    "post_drain_seconds": 86.5
+  },
+  "total_events_sent": 43206
+}
