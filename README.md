@@ -294,40 +294,45 @@ For historical design context: [`docs/archive/PHASE0_README.md`](docs/archive/PH
 
 ## Performance
 
-```sh
-python tools/fengarde_bench.py --events 20000 --mixed
-```
-
-One-command, reproducible by anyone with a clone — no Docker required.
-
-| Metric | Value |
-|---|---|
-| Sustained EPS (5,000 events, `linux_ssh` only) | ~985 events/sec (earlier run; **unverified**, see note) |
-| Sustained EPS (20,000 events, mixed sources) | ~2,500-2,650 events/sec (earlier run; **unverified**, see note) |
-| Peak resident memory (20,000-event run) | ~114 MB (earlier run; **unverified**, see note) |
-| Rule prefilter vs. forced linear scan (46 rules, 20,000 events) | 1.09x faster (re-measured 2026-10-22; 1.11x on the 36-rule tag `v0.11.1`, same machine) |
-
-**Re-run 2026-10-22 on a Windows workstation with Docker Desktop and the compose stack running:** 240 events/sec (5,000 `linux_ssh`), 586 events/sec and 425 MB peak RSS (20,000 mixed), 46 rules. The 36-rule tag `v0.11.1` measured on the same machine in the same state gave 207 events/sec (5,000 `linux_ssh`), so the gap to the figures above is not caused by the 10 added rules; the earlier figures came from a different machine and were not reproduced here. Treat all three rows as machine-dependent until re-measured on an idle reference host.
-
-This is a **zero-infra CPU-bound baseline** (one process, in-memory bus) — it
-measures how fast the Python code processes a batch, excluding real Redis
-network I/O and OpenSearch indexing latency. Not a "handles N events/sec in
-production" claim on its own — see the live-stack numbers below for that.
+Measured 2026-10-28 on one laptop (Intel i5-8365U, 4C/8T, 15 GB, Windows 11,
+Docker Desktop 8 vCPU / 7.9 GB), shared with other running Docker projects.
+Full method, tables, raw outputs and limits: **[`benchmark/loadtest.md`](benchmark/loadtest.md)**.
 
 ```sh
-python tools/fengarde_bench_live.py   # needs `make up` / Docker running
+python tools/fengarde_loadtest.py --repeat 3 --max-events 20000   # zero-infra, no Docker
+python tools/fengarde_bench.py --events 20000 --mixed             # older one-shot batch baseline
 ```
 
-| Metric | Value |
+| Zero-infra (46 rules, in-memory bus, realistic mix, median of 3) | Value |
 |---|---|
-| Live sustained EPS (5,000 mixed events, real Redis + real OpenSearch) | ~43.9 events/sec |
-| Ingest→alert latency, p50 / p99 (10 brute-force bursts) | ~2,045 ms / ~2,063 ms |
+| WS-2 normalize, events/s (p50 / p95 per event) | ~2,100 (0.34 ms / 1.1 ms) |
+| WS-4 detect, events/s (p50 / p95 per event) | ~4,500 (0.08 ms / 0.6 ms) |
+| End to end, paced: highest rate sustained | 500 events/s (p50 3.5 ms, p95 22 ms); 1,000 events/s was not sustained |
+| End to end, unpaced ceiling | ~1,160 events/s (range 870-1,460) |
+| Alert-heavy stress mix (~1.3 alerts per event), unpaced ceiling | ~250 events/s |
+| Peak resident memory, 20,000 events | <100 MB |
 
-An order of magnitude below the zero-infra number, as expected once real
-network I/O and indexing latency (including OpenSearch's 1s default
-`refresh_interval`) are in the loop — this is the "closer to production"
-number, the batch number above is the CPU-bound ceiling. Neither ran on a
-fixed reference box; both ran on whatever machine invoked them.
+These are CPU-bound single-process ceilings for this host (no Redis or OpenSearch
+I/O). The previous rows (~985 / ~2,500 events/s, ~114 MB) did not reproduce and
+are retired.
+
+```sh
+# live stack: isolated compose project, procedure in benchmark/loadtest.md
+python tools/fengarde_loadtest_live.py --rates 25 50 75 100 150 200 --step-s 60 --out benchmark/raw/live-ramp
+```
+
+| Live stack (Redis streams + OpenSearch, one replica each) | Value |
+|---|---|
+| Sustained for 12 min, bounded consumer-group lag | **20 events/s** |
+| Saturation | falls behind from ~25 events/s; backlog drained at ~70 indexer messages/s (~30 events/s) |
+| Bottleneck | `ws3-indexer` writes one document per HTTP request (~50 docs/s on this host; `_bulk` on the same OpenSearch: ~4,700 docs/s) |
+| OpenSearch heap (512 MB) during soak | 69-78% |
+
+**This is a laptop-scale result, not SIEM-scale.** The live stack as shipped
+does not sustain more than a few tens of events/s on this host; nothing above
+200 events/s offered, no multi-replica or multi-node run, and nothing longer than
+12 minutes was tested. The older `tools/fengarde_bench_live.py` (~43.9 events/s,
+5,000-event drain) is consistent with this and remains a manual one-shot.
 
 ---
 

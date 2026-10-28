@@ -1,0 +1,23 @@
+# Isolation overlay for the live-stack load test (benchmark/loadtest.md).
+# Lets the dev stack run NEXT TO another compose project on the same Docker
+# host: drops the fixed container_name values (the base file pins siem-bus,
+# siem-store, ...) and remaps the published ports to LT_* variables.
+# Needs Docker Compose >= 2.24 (`!reset` / `!override`).
+#
+#   COMPOSE_PROJECT_NAME=fgloadtest LT_REDIS_PORT=16379 LT_OS_PORT=19200 \
+#   docker compose -f infra/docker-compose.yml -f infra/docker-compose.loadtest.yml \
+#     up -d redis opensearch provision ws2-normalization ws3-indexer ws4-detection \
+#           ws5-ai ws8-correlation ws9-resolver
+services:
+  redis:
+    container_name: !reset null
+    ports: !override ["127.0.0.1:${LT_REDIS_PORT:-16379}:6379"]
+  opensearch:
+    container_name: !reset null
+    ports: !override ["127.0.0.1:${LT_OS_PORT:-19200}:9200"]
+  provision:
+    container_name: !reset null
+  ws1-spool-init:
+    container_name: !reset null
+  ws3-indexer-init:
+    container_name: !reset null

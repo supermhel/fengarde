@@ -1,0 +1,411 @@
+{
+  "date_utc": "2026-10-28T09:37:33Z",
+  "run_tag": "f1e31da7",
+  "params": {
+    "redis_port": 16379,
+    "os_port": 19200,
+    "project": "fgloadtest",
+    "rates": [
+      25,
+      50,
+      75,
+      100,
+      150,
+      200
+    ],
+    "step_s": 60.0,
+    "soak_rate": 0,
+    "soak_min": 10,
+    "sample_s": 3,
+    "drain_timeout_s": 1500.0,
+    "out": "benchmark\\raw\\live-ramp-2026-10-28"
+  },
+  "steps": [
+    {
+      "offered_eps": 25,
+      "events_sent": 1502,
+      "window_s": 52.3,
+      "produced_eps": 25.0,
+      "ws2_normalize_eps": 25.0,
+      "ws4_detect_eps": 25.0,
+      "ws3_index_msgs_per_s": 47.7,
+      "os_events_docs_per_s": 16.3,
+      "os_alert_docs_per_s": 0.2,
+      "os_index_ops_per_s": 49.5,
+      "lag_start": 306,
+      "lag_end": 1318,
+      "raw_lag_end": 0,
+      "norm_lag_end": 0,
+      "os_heap_pct_max": 75,
+      "os_heap_used_mb_max": 385,
+      "os_index_failed_end": 3,
+      "os_write_rejected_end": null,
+      "redis_mem_mb_max": 6.0,
+      "container_cpu_pct": {
+        "redis": {
+          "mean": 19.8,
+          "max": 25.7
+        },
+        "opensearch": {
+          "mean": 96.5,
+          "max": 159.6
+        },
+        "ws2-normalization": {
+          "mean": 13.8,
+          "max": 17.9
+        },
+        "ws3-indexer": {
+          "mean": 9.3,
+          "max": 16.1
+        },
+        "ws4-detection": {
+          "mean": 53.8,
+          "max": 104.7
+        },
+        "ws5-ai": {
+          "mean": 23.7,
+          "max": 74.0
+        },
+        "ws8-correlation": {
+          "mean": 28.5,
+          "max": 74.3
+        },
+        "ws9-resolver": {
+          "mean": 19.5,
+          "max": 56.4
+        }
+      }
+    },
+    {
+      "offered_eps": 50,
+      "events_sent": 3005,
+      "window_s": 52.2,
+      "produced_eps": 50.0,
+      "ws2_normalize_eps": 50.0,
+      "ws4_detect_eps": 50.0,
+      "ws3_index_msgs_per_s": 64.0,
+      "os_events_docs_per_s": 16.7,
+      "os_alert_docs_per_s": 0.2,
+      "os_index_ops_per_s": 62.5,
+      "lag_start": 1776,
+      "lag_end": 5488,
+      "raw_lag_end": 0,
+      "norm_lag_end": 0,
+      "os_heap_pct_max": 71,
+      "os_heap_used_mb_max": 367,
+      "os_index_failed_end": 3,
+      "os_write_rejected_end": null,
+      "redis_mem_mb_max": 12.6,
+      "container_cpu_pct": {
+        "redis": {
+          "mean": 29.2,
+          "max": 40.3
+        },
+        "opensearch": {
+          "mean": 110.4,
+          "max": 151.2
+        },
+        "ws2-normalization": {
+          "mean": 15.6,
+          "max": 23.0
+        },
+        "ws3-indexer": {
+          "mean": 13.8,
+          "max": 19.8
+        },
+        "ws4-detection": {
+          "mean": 34.9,
+          "max": 47.9
+        },
+        "ws5-ai": {
+          "mean": 9.8,
+          "max": 37.6
+        },
+        "ws8-correlation": {
+          "mean": 10.5,
+          "max": 29.3
+        },
+        "ws9-resolver": {
+          "mean": 15.5,
+          "max": 17.0
+        }
+      }
+    },
+    {
+      "offered_eps": 75,
+      "events_sent": 4508,
+      "window_s": 50.5,
+      "produced_eps": 75.0,
+      "ws2_normalize_eps": 75.0,
+      "ws4_detect_eps": 75.0,
+      "ws3_index_msgs_per_s": 75.3,
+      "os_events_docs_per_s": 18.7,
+      "os_alert_docs_per_s": 0.4,
+      "os_index_ops_per_s": 76.7,
+      "lag_start": 6741,
+      "lag_end": 13147,
+      "raw_lag_end": 0,
+      "norm_lag_end": 0,
+      "os_heap_pct_max": 72,
+      "os_heap_used_mb_max": 369,
+      "os_index_failed_end": 3,
+      "os_write_rejected_end": null,
+      "redis_mem_mb_max": 23.4,
+      "container_cpu_pct": {
+        "redis": {
+          "mean": 41.4,
+          "max": 56.3
+        },
+        "opensearch": {
+          "mean": 93.9,
+          "max": 195.3
+        },
+        "ws2-normalization": {
+          "mean": 29.1,
+          "max": 54.1
+        },
+        "ws3-indexer": {
+          "mean": 13.5,
+          "max": 16.3
+        },
+        "ws4-detection": {
+          "mean": 50.9,
+          "max": 62.4
+        },
+        "ws5-ai": {
+          "mean": 7.9,
+          "max": 37.3
+        },
+        "ws8-correlation": {
+          "mean": 9.9,
+          "max": 14.7
+        },
+        "ws9-resolver": {
+          "mean": 25.8,
+          "max": 40.5
+        }
+      }
+    },
+    {
+      "offered_eps": 100,
+      "events_sent": 6010,
+      "window_s": 51.3,
+      "produced_eps": 100.0,
+      "ws2_normalize_eps": 100.0,
+      "ws4_detect_eps": 93.4,
+      "ws3_index_msgs_per_s": 46.9,
+      "os_events_docs_per_s": 11.4,
+      "os_alert_docs_per_s": 0.3,
+      "os_index_ops_per_s": 46.9,
+      "lag_start": 14901,
+      "lag_end": 26299,
+      "raw_lag_end": 0,
+      "norm_lag_end": 340,
+      "os_heap_pct_max": 77,
+      "os_heap_used_mb_max": 398,
+      "os_index_failed_end": 4,
+      "os_write_rejected_end": null,
+      "redis_mem_mb_max": 37.5,
+      "container_cpu_pct": {
+        "redis": {
+          "mean": 50.3,
+          "max": 60.0
+        },
+        "opensearch": {
+          "mean": 103.6,
+          "max": 160.8
+        },
+        "ws2-normalization": {
+          "mean": 31.6,
+          "max": 43.5
+        },
+        "ws3-indexer": {
+          "mean": 11.5,
+          "max": 20.4
+        },
+        "ws4-detection": {
+          "mean": 74.4,
+          "max": 86.4
+        },
+        "ws5-ai": {
+          "mean": 1.6,
+          "max": 3.7
+        },
+        "ws8-correlation": {
+          "mean": 19.4,
+          "max": 26.0
+        },
+        "ws9-resolver": {
+          "mean": 41.5,
+          "max": 49.3
+        }
+      }
+    },
+    {
+      "offered_eps": 150,
+      "events_sent": 9000,
+      "window_s": 42.1,
+      "produced_eps": 150.1,
+      "ws2_normalize_eps": 150.1,
+      "ws4_detect_eps": 104.6,
+      "ws3_index_msgs_per_s": 73.7,
+      "os_events_docs_per_s": 17.7,
+      "os_alert_docs_per_s": 0.3,
+      "os_index_ops_per_s": 72.5,
+      "lag_start": 30433,
+      "lag_end": 43091,
+      "raw_lag_end": 0,
+      "norm_lag_end": 2890,
+      "os_heap_pct_max": 69,
+      "os_heap_used_mb_max": 354,
+      "os_index_failed_end": 4,
+      "os_write_rejected_end": null,
+      "redis_mem_mb_max": 51.1,
+      "container_cpu_pct": {
+        "redis": {
+          "mean": 50.2,
+          "max": 61.0
+        },
+        "opensearch": {
+          "mean": 185.5,
+          "max": 322.3
+        },
+        "ws2-normalization": {
+          "mean": 41.4,
+          "max": 54.5
+        },
+        "ws3-indexer": {
+          "mean": 16.5,
+          "max": 22.6
+        },
+        "ws4-detection": {
+          "mean": 70.2,
+          "max": 75.9
+        },
+        "ws5-ai": {
+          "mean": 11.7,
+          "max": 50.1
+        },
+        "ws8-correlation": {
+          "mean": 24.5,
+          "max": 60.1
+        },
+        "ws9-resolver": {
+          "mean": 37.2,
+          "max": 43.4
+        }
+      }
+    },
+    {
+      "offered_eps": 200,
+      "events_sent": 12020,
+      "window_s": 48.6,
+      "produced_eps": 199.8,
+      "ws2_normalize_eps": 199.8,
+      "ws4_detect_eps": 88.4,
+      "ws3_index_msgs_per_s": 63.7,
+      "os_events_docs_per_s": 15.4,
+      "os_alert_docs_per_s": 0.3,
+      "os_index_ops_per_s": 63.5,
+      "lag_start": 48065,
+      "lag_end": 67519,
+      "raw_lag_end": 0,
+      "norm_lag_end": 9680,
+      "os_heap_pct_max": 75,
+      "os_heap_used_mb_max": 388,
+      "os_index_failed_end": 4,
+      "os_write_rejected_end": null,
+      "redis_mem_mb_max": 53.5,
+      "container_cpu_pct": {
+        "redis": {
+          "mean": 59.3,
+          "max": 161.2
+        },
+        "opensearch": {
+          "mean": 111.8,
+          "max": 186.8
+        },
+        "ws2-normalization": {
+          "mean": 67.4,
+          "max": 121.1
+        },
+        "ws3-indexer": {
+          "mean": 15.3,
+          "max": 20.2
+        },
+        "ws4-detection": {
+          "mean": 72.8,
+          "max": 82.4
+        },
+        "ws5-ai": {
+          "mean": 1.5,
+          "max": 2.5
+        },
+        "ws8-correlation": {
+          "mean": 18.3,
+          "max": 31.1
+        },
+        "ws9-resolver": {
+          "mean": 39.3,
+          "max": 55.1
+        }
+      }
+    }
+  ],
+  "drain": {
+    "backlog_msgs_at_stop": 67519,
+    "drain_seconds": 1103.4,
+    "window_s": 1099.4,
+    "produced_eps": 0.0,
+    "ws2_normalize_eps": 0.0,
+    "ws4_detect_eps": 9.0,
+    "ws3_index_msgs_per_s": 69.7,
+    "os_events_docs_per_s": 27.7,
+    "os_alert_docs_per_s": 0.1,
+    "os_index_ops_per_s": 69.9,
+    "lag_start": 69311,
+    "lag_end": 0,
+    "raw_lag_end": 0,
+    "norm_lag_end": 0,
+    "os_heap_pct_max": 78,
+    "os_heap_used_mb_max": 400,
+    "os_index_failed_end": 7,
+    "os_write_rejected_end": null,
+    "redis_mem_mb_max": 69.1,
+    "container_cpu_pct": {
+      "redis": {
+        "mean": 10.9,
+        "max": 247.8
+      },
+      "opensearch": {
+        "mean": 50.2,
+        "max": 268.7
+      },
+      "ws2-normalization": {
+        "mean": 3.1,
+        "max": 58.6
+      },
+      "ws3-indexer": {
+        "mean": 13.9,
+        "max": 76.5
+      },
+      "ws4-detection": {
+        "mean": 9.0,
+        "max": 113.2
+      },
+      "ws5-ai": {
+        "mean": 2.0,
+        "max": 29.1
+      },
+      "ws8-correlation": {
+        "mean": 4.5,
+        "max": 56.9
+      },
+      "ws9-resolver": {
+        "mean": 4.6,
+        "max": 67.2
+      }
+    }
+  },
+  "total_events_sent": 36045
+}
