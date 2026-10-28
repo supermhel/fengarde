@@ -269,18 +269,20 @@ unchanged by this view.
   rate default until it's tuned against real traffic). Redis `EXPIRE`
   self-cleans a quiet track; there is no separate reaper to test or get
   wrong.
-  **Known gap (what the Redis window does and does not persist):** under `BUS_BACKEND=redis`
-  or `redis-sentinel` only the window MEMBERSHIP (alert ids per track, and its TTL clock) lives in
-  Redis, shared across replicas and surviving a restart. The per-member details the correlator
-  decides on (`_sides`, `_side_meta`, `_last_touch`, `_last_incident`, `_incident_graphs`: tactics,
-  scores, first_seen, emitted-incident cache) stay in-process, so after a restart a track's
-  membership is still counted but its tactics are gone until new alerts arrive, and replicas do
-  not share them. Moving that state to Redis is not done.
-  **Practical consequence, measured live (2026-10-23, HA compose scaled to two ws8 replicas):** run ONE ws8
-  replica. A consumer group splits `alerts` between replicas with no key affinity, so the same two
-  alerts that form an incident on one replica form none when they land on different replicas (the
-  window membership is shared, the tactics that decide the incident are not). Scaling ws8 silently
-  weakens incident formation until the correlator state moves to Redis.
+  **Shared correlator state (2026-10-28):** under `BUS_BACKEND=redis` or `redis-sentinel` the
+  per-track state the correlator decides on (tactics, first_seen, truncated flag, member entries with
+  score/time/co-occurrence, incident claim) lives in Redis too (`track_state.py::RedisTrackState`, keys
+  `ws8:state:{side,meta,tac}:<track>` and `ws8:state:inc:<incident_id>`, TTL horizon+1s), so a restarted
+  replica resumes mid-chain and replicas converge on the same incident id (deterministic id; WS-3 CAS
+  collapses double emission). `BUS_BACKEND=memory` keeps the in-process dicts. Design:
+  `docs/ws8-shared-correlator-state-design.md`. Still process-local by design: the `incident.graph` cache
+  (rebuilt from the shared members) and the sweep clock. **Proof:** zero-infra `test_shared_state.py`;
+  live on plain Redis in an isolated compose project (`tools/ws8_shared_state_live_proof.sh`): incident formed
+  across a SIGKILL+restart, and 10 chains split over two replicas gave 10 incident ids, 2 members each.
+  **Not live-proven:** the `redis-sentinel` path (same client helper, covered only by fake-Sentinel tests)
+  and a failover mid-chain. Residual: if two replicas promote one track while an earlier-stamped alert from a
+  peer is still in flight and the stamps straddle a horizon boundary, the early emission can carry a different
+  bucket id (pre-existing out-of-order behaviour, not new).
 - **Tenant isolation**: tenant is part of the track key, not a filter
   (rejected-at-edge via the same `_validated_tenant`-style check
   `services/ws3-indexer/router.py` uses) — a tenant-agnostic key would

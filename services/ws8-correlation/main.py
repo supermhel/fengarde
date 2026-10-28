@@ -29,6 +29,7 @@ def make_correlator() -> Correlator:
     horizon_s = int(os.getenv("CORRELATION_HORIZON_SECONDS", str(DEFAULT_HORIZON_S)))
     member_cap = int(os.getenv("CORRELATION_MEMBER_CAP", str(DEFAULT_MEMBER_CAP)))
     window_counter = None
+    track_state = None
     backend = os.getenv("BUS_BACKEND", "memory").lower()
     # "redis-sentinel" (the HA compose) must be Redis-backed too: it used to
     # fall through to the in-process deque, losing window state on restart and
@@ -44,11 +45,17 @@ def make_correlator() -> Correlator:
         # ws8's OWN Redis zset namespace -- NOT the ws4:win default (latent
         # collision); INTERFACE.md documents the key prefix as ws8:corr.
         window_counter = RedisWindowCounter(client, namespace="ws8:corr")
-    correlator = Correlator(window_counter, horizon_s=horizon_s, member_cap=member_cap)
+        # Per-track tactics/scores/members + incident claims live in the SAME
+        # store (restart-survivable, shared across replicas); memory otherwise.
+        from track_state import RedisTrackState
+        track_state = RedisTrackState(client, ttl_s=horizon_s + 1)
+    correlator = Correlator(window_counter, horizon_s=horizon_s, member_cap=member_cap,
+                            track_state=track_state)
     # one line at startup: which window counter is live was invisible (found in the live HA proof)
     from shared.log import get_logger
     get_logger("ws8-correlation").info("window counter selected", backend=backend,
-                                       counter=type(correlator.window_counter).__name__)
+                                       counter=type(correlator.window_counter).__name__,
+                                       track_state=type(correlator.state).__name__)
     return correlator
 
 
