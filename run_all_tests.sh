@@ -132,6 +132,9 @@ echo
 echo "== ws3 P1-4 (2026-07-21 audit): OpenSearch _bulk API (NDJSON, partial-failure parsing) =="; LAST_HEADER="== ws3 P1-4 (2026-07-21 audit): OpenSearch _bulk API (NDJSON, partial-failure parsing) =="
 $PY services/ws3-indexer/test_bulk_index.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
+echo "== ws3-indexer daemon bulk writes (ack order, partial failure, redelivery, 409, CAS alerts) =="; LAST_HEADER="== ws3-indexer daemon bulk writes (ack order, partial failure, redelivery, 409, CAS alerts) =="
+$PY services/ws3-indexer/test_bulk_handler.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
 echo "== ws3 P1-4 remainder: normalized/scored double-index is order-independent =="; LAST_HEADER="== ws3 P1-4 remainder: normalized/scored double-index is order-independent =="
 $PY services/ws3-indexer/test_double_index_order.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
