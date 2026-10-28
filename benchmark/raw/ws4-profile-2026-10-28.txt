@@ -1,0 +1,42 @@
+events=2999 profile=realistic window_counter=redis
+events/s (under cProfile): 177   ms/event: 5.65
+redis round trips/event: 1.67
+         4021574 function calls (4000810 primitive calls) in 16.921 seconds
+   Ordered by: cumulative time
+   List reduced from 195 to 14 due to restriction <14>
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+     2999    0.024    0.000   16.919    0.006 /repo/services/ws4-detection/main.py:657(detect_one)
+     2999    0.160    0.000   16.429    0.005 /repo/services/ws4-detection/main.py:288(process)
+    21817    0.067    0.000   16.092    0.001 /repo/services/ws4-detection/engine.py:941(evaluate)
+     5646    0.213    0.000   15.118    0.003 /repo/services/ws4-detection/engine.py:959(_evaluate_stateful)
+     4999    0.229    0.000   13.255    0.003 /usr/local/lib/python3.12/site-packages/redis/client.py:2198(execute)
+    10034    0.041    0.000   10.926    0.001 /usr/local/lib/python3.12/site-packages/redis/retry.py:101(call_with_retry)
+     4999    0.029    0.000   10.817    0.002 /usr/local/lib/python3.12/site-packages/redis/client.py:2234(<lambda>)
+     4999    0.469    0.000   10.788    0.002 /usr/local/lib/python3.12/site-packages/redis/client.py:2015(_execute_transaction)
+     3705    0.149    0.000   10.267    0.003 /repo/services/shared/window.py:463(hit_distinct)
+    29994    0.184    0.000    5.720    0.000 /usr/local/lib/python3.12/site-packages/redis/client.py:2141(parse_response)
+    30012    0.251    0.000    5.548    0.000 /usr/local/lib/python3.12/site-packages/redis/client.py:928(parse_response)
+    30012    0.226    0.000    5.024    0.000 /usr/local/lib/python3.12/site-packages/redis/connection.py:1393(read_response)
+    30012    0.228    0.000    4.655    0.000 /usr/local/lib/python3.12/site-packages/redis/_parsers/resp3.py:32(read_response)
+50188/30012    0.401    0.000    4.051    0.000 /usr/local/lib/python3.12/site-packages/redis/_parsers/resp3.py:59(_read_response)
+events=2999 profile=realistic window_counter=deque
+events/s (under cProfile): 788   ms/event: 1.27
+redis round trips/event: 0.00
+         967635 function calls (967047 primitive calls) in 3.786 seconds
+   Ordered by: cumulative time
+   List reduced from 94 to 14 due to restriction <14>
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+     2999    0.038    0.000    3.786    0.001 /repo/services/ws4-detection/main.py:657(detect_one)
+     2999    0.183    0.000    3.115    0.001 /repo/services/ws4-detection/main.py:288(process)
+    21817    0.071    0.000    2.775    0.000 /repo/services/ws4-detection/engine.py:941(evaluate)
+     5646    0.216    0.000    1.516    0.000 /repo/services/ws4-detection/engine.py:959(_evaluate_stateful)
+    21817    0.304    0.000    1.188    0.000 /repo/services/ws4-detection/engine.py:744(_eval_condition)
+     2999    0.046    0.000    0.632    0.000 /repo/services/ws4-detection/main.py:416(_emit)
+     3011    0.111    0.000    0.551    0.000 /repo/services/shared/bus.py:195(produce)
+     5017    0.094    0.000    0.491    0.000 /repo/services/ws4-detection/engine.py:331(_window_time_of)
+    21817    0.052    0.000    0.449    0.000 /repo/services/ws4-detection/engine.py:1061(_parse_or)
+    22993    0.167    0.000    0.392    0.000 /repo/services/ws4-detection/engine.py:674(_selection_matches)
+    21817    0.050    0.000    0.390    0.000 /repo/services/ws4-detection/engine.py:1069(_parse_and)
+     3011    0.014    0.000    0.381    0.000 /usr/local/lib/python3.12/json/__init__.py:183(dumps)
+     3011    0.057    0.000    0.367    0.000 /usr/local/lib/python3.12/json/encoder.py:183(encode)
+23581/22993    0.077    0.000    0.313    0.000 /repo/services/ws4-detection/engine.py:1077(_parse_not)

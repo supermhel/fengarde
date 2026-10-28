@@ -1,0 +1,10 @@
+--- before soak 18:24:23
+siem-store-ha-1 cpu=70.15%
+siem-store-ha-3 cpu=57.67%
+ws8haproof-ws3-indexer-1 cpu=46.61%
+siem-store-ha-2 cpu=45.40%
+--- after soak 18:36:45
+ws8sentproof-redis-1-1 cpu=8.71%
+siem-bus cpu=5.98%
+ws8sentproof-redis-2-1 cpu=5.78%
+ws8sentproof-redis-3-1 cpu=5.42%

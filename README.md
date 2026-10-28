@@ -321,22 +321,24 @@ are retired.
 python tools/fengarde_loadtest_live.py --rates 25 50 75 100 150 200 --step-s 60 --out benchmark/raw/live-ramp
 ```
 
-| Live stack (Redis streams + OpenSearch, one replica each) | Before: per-document writes (`dd6f7d0`) | After: `/_bulk` batched writes |
-|---|---|---|
-| Held for 12 min | 20 events/s | **60 events/s** (stage rates = offered rate, no loss) |
-| Starts falling behind | ~25 events/s | ~100 events/s (WS-4 98.5/s at 100; ~75-95/s beyond) |
-| `ws3-indexer` throughput | ~55-70 messages/s (ceiling) | ~500 messages/s at 400 events/s, not saturated |
-| Limiting stage | `ws3-indexer`: one HTTP request per document (~50 docs/s on this host; `_bulk` on the same OpenSearch ~4,700 docs/s) | WS-4 consume path (~75-100 events/s, not CPU-bound, not profiled); alert CAS path drifts slowly |
-| OpenSearch heap (512 MB) | 69-78% | 71-77% |
+| Live stack (Redis streams + OpenSearch) | Held for 12 min | Falls behind | Limiting stage |
+|---|---|---|---|
+| Original: ws3 writes one document per HTTP request | 20 events/s | ~25 events/s | `ws3-indexer` (~50 docs/s per OpenSearch single PUT vs ~4,700 via `_bulk`) |
+| + ws3 bulk writes, 1 WS-4 replica | 60 events/s (alert backlog drifted up) | ~100 events/s | WS-4 consume path: Redis window-counter round trips (~78% of its per-event time) |
+| + batched alert writes, **3 WS-4 replicas** | **100 events/s, alert backlog flat** | not found; 200 events/s kept pace, 300-400 inconclusive (neighbour load) | not reached |
 
 `index_failed` on the OpenSearch node counted create-only 409 conflicts (by
-design, not failures); evidence in `benchmark/loadtest.md` section 3c.
+design, not failures); evidence in `benchmark/loadtest.md` section 3c. Scaling
+WS-4 is `docker compose up -d --scale ws4-detection=3` (the window counter is
+global in Redis for exactly this); it trades strict per-source event order for
+throughput.
 
 **This is a laptop-scale result, not SIEM-scale.** One laptop shared with other
 Docker projects, one replica per service, 512 MB OpenSearch heap. The live stack
-holds tens of events/s (60 tested for 12 minutes), not thousands. Nothing above
-400 events/s offered, no multi-replica or multi-node run, and nothing longer than
-12 minutes was tested. The older `tools/fengarde_bench_live.py` (~43.9 events/s,
+holds on the order of 100 events/s with three WS-4 replicas (tested for 12
+minutes), not thousands. Nothing above 400 events/s offered, no multi-node
+OpenSearch, ran under other Docker projects' load, and nothing longer than 12
+minutes was tested. The older `tools/fengarde_bench_live.py` (~43.9 events/s,
 5,000-event drain, pre-bulk) remains a manual one-shot.
 
 ---

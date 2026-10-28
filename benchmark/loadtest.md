@@ -4,18 +4,23 @@ Measured 2026-10-28 on one laptop: "before" at commit `dd6f7d0` (harness on top
 of `33e340f`), "after" with the bulk-write change that follows it. Raw outputs: [`raw/`](raw/). Everything below is a measured number for
 **this machine only**; nothing here is a statement about SIEM-scale capacity.
 
-**Headline (updated after the bulk-write fix).** On the live stack (Redis bus +
-OpenSearch) the first measurement (per-document writes, commit `dd6f7d0`) held
-**20 events/s for 12 min and fell behind from ~25 events/s**; the bottleneck was
-`ws3-indexer`'s one-HTTP-request-per-document write path. After batching those
-writes through `/_bulk` (this change), the same stack **holds 60 events/s for 12
-min** (all stage rates equal the offered rate), ws3 throughput rose ~7x
-(~55 -> ~370 messages/s in a short smoke, up to ~500 messages/s in the ramp), and
-the next limits are WS-4's consume path (~75-100 events/s) and, slowly, the
-per-document CAS path for alerts. The zero-infra CPU ceiling (~900-1,500
-events/s end to end) is still far above the live number, so the live rate remains
-set by I/O design, not Python speed. Laptop-scale result only; see the limits at
-the end.
+**Headline (updated after the second round).** Three live-stack states, same
+laptop, isolated compose project:
+
+| | Held for 12 min | Started falling behind |
+|---|---|---|
+| Original (one PUT per document in ws3, `dd6f7d0`) | 20 events/s | ~25 events/s |
+| + ws3 bulk writes (`f734d3a`), 1 WS-4 replica | 60 events/s (alert backlog drifted up) | ~100 events/s |
+| + ws3 batched alert writes, **3 WS-4 replicas** | **100 events/s, alert backlog flat** | not found: 200 events/s still kept pace; 300-400 inconclusive (neighbour contention) |
+
+What moved: first the `ws3-indexer` one-request-per-document writes, then the
+alert read-modify-write path, and WS-4 turned out to be bound by Redis round
+trips of its window counter (4.4 of ~5.7 ms per event), which scale-out
+(`--scale ws4-detection=3`, the replica design the global window counter exists
+for) removes. The zero-infra CPU ceiling (~900-1,500 events/s end to end) is
+still far above the live number. Laptop-scale result only; see the limits at the
+end. Sections: 1 zero-infra, 2 original live runs, 3 bulk writes, 4 WS-4
+profile, alert batching and replicas.
 
 ## Machine
 
@@ -269,19 +274,122 @@ no errors in service logs. Evidence it is create-only 409s, not real failures:
 So the 183 were conflicts of the intended kind: noise in an OpenSearch counter,
 not lost writes. A dashboard alerting on `index_failed` would false-alarm.
 
+## 4. Round two: WS-4 profile, batched alert writes, WS-4 replicas
+
+### 4a. Why WS-4 stops near 75-100 events/s
+
+`tools/fengarde_ws4_profile.py` runs the real `Detector` one event at a time
+against a real Redis (window counter on Redis, as the daemon wires it), from
+inside the compose network (`raw/ws4-profile-2026-10-28.txt`):
+
+| WS-4 per-event path | events/s (under cProfile) | ms/event | Redis round trips/event |
+|---|---|---|---|
+| window counter on Redis (as deployed) | 177 | 5.65 | 1.67 (window ops only) |
+| window counter in-process (deque) | 788 | 1.27 | 0 |
+
+So ~4.4 of 5.65 ms per event (78%) is the stateful rules' window-counter calls:
+`_evaluate_stateful` is 89% of the profile, mostly `hit_distinct` (1.2 calls per
+event: the password-spray / credential-stuffing rules evaluate on every auth
+event) and `hit`. Each call is a separate Redis `MULTI` pipeline round trip. The
+Redis round trip itself is slow on this host (`tools/fengarde_redis_rtt.py`,
+`raw/redis-rtt-2026-10-28.txt`): PING 0.48 ms, the current 4-command `MULTI`
+pipeline 1.42 ms, the same four steps as one `EVALSHA` 0.76 ms (the no-`MULTI`
+pipeline did not help: 1.42 ms). ws4's container CPU stayed at 55-75% while its
+throughput was capped: it waits on Redis; it is not computing.
+
+What I did NOT change: moving the window ops to a Lua script would cut each call
+~45% on this host, but `RedisWindowCounter` is shared with ws8 and has five test
+fakes built around the pipeline call shape, and other branches are editing it
+(`ws8-*`), so it is a separate, riskier change; per-event batching of all rules'
+window ops into one pipeline needs an engine restructure. Both are listed under
+open items. Instead I measured the supported scale-out: the window counter is
+global in Redis precisely so that several WS-4 replicas share one count
+(`main.py`, T6 comment), and the work is round-trip-bound, so replicas overlap it.
+
+### 4b. Batched alert writes in ws3
+
+Alert messages used to take the per-document read-modify-write path (GET, then a
+conditional PUT, plus a cross-index search for unknown ids), and one burst
+re-emits the same `alert_id` for every event past the threshold, so they were the
+lagging stream at 60 events/s (lag 1,361 -> 1,779 in the earlier soak). Now a
+batch is collapsed to the last payload per `alert_id`, read with one `_mget`,
+and the known ids are written as one conditional bulk (`if_seq_no` /
+`if_primary_term`) with the analyst's `triage` carried over; a stale version
+(someone triaged in between) comes back as a per-item 409 and re-runs the old
+per-document CAS path; unknown ids still use the old path (which also does the
+routing-drift check). Tests: `test_bulk_handler.py` (triage survives, repeats
+collapse to one mget and one conditional item, a triage written during the race
+survives, a failed read leaves the alert unacked).
+
+### 4c. Ramps (40 s steps). Neighbour state matters here
+
+A different session's HA proof stack was running during these runs
+(`siem-store-ha-*` OpenSearch nodes at 30-99% CPU, `ws8haproof-*`), listed per
+run in `raw/neighbours-*.txt`. Treat single steps as noisy.
+
+| Offered ev/s | 1 WS-4 replica: WS-4 read/s, total lag | 3 WS-4 replicas: WS-4 read/s, total lag |
+|---|---|---|
+| 50 | 49.9, 17 | |
+| 75 | 74.8, 47 (alerts lag 0) | |
+| 100 | 63.3, 1,180 | 100.1, 10 |
+| 150 | 115.5, 2,583 | 151.3, 30 |
+| 200 | 78.5, 6,710 | 199.8, 180 |
+| 300 | | 105.0, 7,005 (WS-2 itself fell to 119/s) |
+| 400 | | 51.1, 20,261 (WS-2 at 58/s) |
+
+One replica again tops out at ~65-115 events/s depending on neighbour load.
+Three replicas keep pace through 200 events/s. At 300 and 400 even WS-2, which
+the replica count does not touch, fell to 119 and 58 events/s while the
+neighbour's OpenSearch nodes were at 60-99% CPU, so those two steps measure the
+contended laptop, not the pipeline, and are not a capacity number. After the
+400/s step, the backlog drained with WS-4 at ~140 events/s and ws3 at ~380
+messages/s.
+
+### 4d. Soak: 100 events/s for 12 minutes, 3 WS-4 replicas
+
+```sh
+COMPOSE_PROJECT_NAME=fgloadtest LT_REDIS_PORT=16379 LT_OS_PORT=19200 docker compose -f infra/docker-compose.yml -f infra/docker-compose.loadtest.yml up -d --no-recreate --scale ws4-detection=3 ws4-detection
+python tools/fengarde_loadtest_live.py --rates --soak-rate 100 --soak-min 12 --out benchmark/raw/live-soak-alerts-ws4x3-2026-10-28
+```
+
+| | 60 events/s soak, bulk only (section 3b) | 100 events/s soak, + alert batching, 3 WS-4 replicas |
+|---|---|---|
+| Events produced | 43,206 | 72,010 |
+| WS-2 / WS-4 rate | 60.0 / 60.0 | 99.7 / 99.6 |
+| OpenSearch `events-*` growth | 60.0 docs/s | 99.6 docs/s (99.3-108 per minute) |
+| `alerts` stream lag (cg-index) | 1,361 mid-run, 1,779 near end | 0-3 throughout |
+| Total lag | ~230 -> ~1,600 plateau, ~2,100 at the end | 52 at start, 19-402 per minute, 424 at the end (event path, transient), cleared 10 s after stop |
+| Alert path counters | n/a (per-document) | 18,166 alert docs in 15,617 bulk requests, 0 CAS conflicts, 0 failed, 0 retried |
+| OpenSearch heap | 71-77% | 66-77% (398 MB max) |
+| CPU (mean) | opensearch 87%, ws4 54%, redis 52% | opensearch 64%, ws4 73% (3 replicas summed), redis 43%, ws3 34% |
+| `index_failed` vs `conflicts_409` | 12,085 vs 12,083 (+2 probe) | 16,416 vs 16,430 for the whole session (within 14: the two reads were taken a few events apart) |
+
+So: 100 events/s held for 12 minutes with no loss, the alert backlog stays flat,
+and the node's `index_failed` counter again equals ws3's own 409 count.
+Neighbour state during the soak: the other session's HA OpenSearch nodes were at
+45-70% CPU at the start and a Sentinel proof at 5-9% per container at the end
+(`raw/neighbours-soak.txt`), so these are not idle-host numbers either.
+
 ## What this does and does not show
 
 * Measured: zero-infra CPU ceilings per stage and end to end; live-stack
-  saturation before (~25 events/s) and after (~75-100 events/s) the bulk change,
-  12-minute holds at 20 events/s (before) and 60 events/s (after), consumer-group
-  lag, OpenSearch heap and indexing, and where the bottleneck moved.
-* Not measured: any rate above 400 events/s offered on the live stack (200 in the
-  before run), soaks above 60 events/s, more
+  saturation at each stage (~25, ~100, and 200+ events/s with 3 WS-4 replicas),
+  12-minute holds at 20, 60 and 100 events/s, consumer-group lag, OpenSearch
+  heap and indexing, and where the bottleneck moved each time.
+* Not measured: any clean rate above 200 events/s on the live stack, soaks above
+  100 events/s, more
   than one replica per service, a multi-node OpenSearch, real WS-1 UDP ingest,
   a Windows/Sysmon-heavy mix, an idle reference host, runs longer than 12
   minutes. **This is not evidence of SIEM-scale (thousands of events/s)
   capacity; the live stack as shipped does not reach it on this host.**
-* Next bottlenecks, not fixed here: WS-4's live consume path (~75-100 events/s,
-  not CPU-bound, cause not profiled) and the per-document alert CAS path in
-  ws3 (slow lag growth at 60 events/s). Nothing has been measured above ~100
-  events/s sustained.
+* Next bottlenecks, not fixed here: (1) the WS-4 window counter makes one Redis
+  round trip per stateful rule per event (a Lua `EVALSHA` is ~45% cheaper per call
+  here; batching all rules' window ops into one pipeline per event would be a
+  further step; both touch code shared with ws8 and several test fakes), (2) the
+  300-400 events/s region was only reached under neighbour contention, so there
+  is no clean capacity number above 200 events/s, (3) the soak is 12 minutes with
+  3 WS-4 replicas on one laptop; one replica holds ~60-75 events/s.
+* Scale-out caveat: with several WS-4 replicas the same consumer group is shared,
+  so events of one source are no longer processed strictly in order. The global
+  Redis window counter makes the threshold count correct, and alert ids are
+  deterministic (idempotent), but strict per-source ordering is not preserved.

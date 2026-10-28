@@ -10,7 +10,9 @@ Pins the guarantees that made batching the daemon's writes safe to ship:
   * a whole-request failure acks nothing;
   * redelivery of an already-written batch is idempotent (no duplicate docs, the
     scored copy's score is never stripped by a replayed normalized event);
-  * alerts keep the per-document CAS path (analyst triage survives a batch);
+  * alerts are read in bulk (_mget) and written with conditional bulk items,
+    repeats collapsed, a stale version falls back to the per-document CAS path
+    (analyst triage survives a batch, even one racing the write);
   * delivery_count > max_redeliveries still dead-letters without a write;
   * the runner worker honors batch_max when gathering a read pass.
 
@@ -61,16 +63,28 @@ class FakeBulkStore(MemoryStore):
         self.calls: list[list[tuple]] = []
         self.log: list[str] = []
 
+    def mget_versioned(self, keys):
+        self.mgets = getattr(self, "mgets", []) + [list(keys)]
+        if getattr(self, "mget_down", False):
+            raise ConnectionError("mget down")
+        return {k: self.get_versioned(*k) for k in keys if self.get_versioned(*k) is not None}
+
     def bulk_write(self, items):
         self.calls.append(list(items))
         self.log.append("bulk")
         if getattr(self, "down", False):
             raise ConnectionError("opensearch down")
         out = []
-        for op, index, doc_id, doc in items:
+        for item in items:
+            op, index, doc_id, doc = item[:4]
+            version = item[4] if len(item) > 4 else None
             forced = self.script(len(self.calls), op, doc_id) if self.script else None
             if forced is not None:
                 out.append({"status": forced, "error_type": "forced"})
+                continue
+            if version is not None:
+                ok = self.index_cas(index, doc_id, doc, version)
+                out.append({"status": 200 if ok else 409, "error_type": None if ok else "version_conflict"})
                 continue
             if op == "create":
                 created = self.index_if_absent(index, doc_id, doc)
@@ -210,22 +224,64 @@ def test_redelivery_is_idempotent():
           "replayed create-only normalized batch stripped a score")
 
 
-def test_alert_keeps_cas_path_and_triage():
+def _alert(i=1, n=0):
+    return {"alert_id": f"a-{i}", "time": 1_700_000_000_000 + n, "rule_id": "r", "level": "high",
+            "siem": {"sector": "common", "tenant": "default"}, "src_endpoint": {"ip": "203.0.113.9"}}
+
+
+def test_alert_batch_preserves_triage_and_collapses_repeats():
     store = FakeBulkStore()
-    alert = {"alert_id": "a-1", "time": 1_700_000_000_000, "rule_id": "r", "level": "high",
-             "siem": {"sector": "common", "tenant": "default"}, "src_endpoint": {"ip": "203.0.113.9"}}
     h = BatchIndexHandler(store)
-    drive(store, h, [alert])
-    idx, did = route(alert)
+    drive(store, h, [_alert(1)])                       # brand-new id -> per-document create path
+    idx, did = route(_alert(1))
     stored = store.get(idx, did)
     stored["triage"] = {"status": "investigating", "by": "analyst"}   # analyst wrote triage
     store.index(idx, did, stored)
-    drive(store, h, [dict(alert), ev(5, 40)])                          # replay inside a mixed batch
-    check(store.get(idx, did).get("triage", {}).get("status") == "investigating",
-          "batched replay of an alert clobbered analyst triage")
-    check(len(store.calls) == 1 and all(it[0] == "index" and "alert_id" not in it[3]
-                                        for c in store.calls for it in c),
-          "alerts must not go through the blind bulk upsert")
+    store.calls.clear()
+    store.mgets = []
+    # a burst: the same alert_id three times plus another event, one batch
+    bus, counts = drive(store, h, [_alert(1, 1), _alert(1, 2), _alert(1, 3), ev(5, 40)])
+    check(counts["acked"] == 4 and counts["failed"] == 0, f"all four acked: {counts}")
+    doc = store.get(idx, did)
+    check(doc.get("triage", {}).get("status") == "investigating", "batched alert update clobbered analyst triage")
+    check(doc["time"] == 1_700_000_000_003, "end state is the LAST payload of the burst")
+    check(len(store.mgets) == 1 and len(store.mgets[0]) == 1, f"one mget, repeats collapsed: {store.mgets}")
+    sent = [it for c in store.calls for it in c]
+    alert_items = [it for it in sent if it[3].get("alert_id")]
+    check(len(alert_items) == 1 and alert_items[0][4] is not None,
+          f"one conditional (versioned) bulk item for the burst: {alert_items}")
+
+
+def test_alert_stale_version_falls_back_to_cas_and_keeps_triage():
+    store = FakeBulkStore()
+    h = BatchIndexHandler(store)
+    drive(store, h, [_alert(2)])
+    idx, did = route(_alert(2))
+    real_mget = store.mget_versioned
+
+    def racing_mget(keys):
+        out = real_mget(keys)
+        # between the read and the bulk write an analyst triages the alert
+        doc = store.get(idx, did)
+        doc["triage"] = {"status": "closed", "by": "analyst"}
+        store.index(idx, did, doc)
+        return out
+
+    store.mget_versioned = racing_mget
+    bus, counts = drive(store, h, [_alert(2, 9)])
+    check(counts["acked"] == 1, f"acked after CAS fallback: {counts}")
+    check(h.stats["cas_conflicts"] == 1, f"stale version counted: {h.stats}")
+    doc = store.get(idx, did)
+    check(doc.get("triage", {}).get("status") == "closed" and doc["time"] == 1_700_000_000_009,
+          "analyst triage written during the race must survive and the new alert data must land")
+
+
+def test_alert_read_failure_leaves_unacked():
+    store = FakeBulkStore()
+    store.mget_down = True
+    bus, counts = drive(store, BatchIndexHandler(store), [_alert(3), ev(1, 10)])
+    check(counts == {"acked": 1, "failed": 1, "deadlettered": 0},
+          f"alert unacked when its read failed, event still acked: {counts}")
 
 
 def test_unroutable_dropped_and_dead_letter_cap():
@@ -332,6 +388,22 @@ def test_opensearch_bulk_write_wire_format():
     check(headers["Content-Type"] == "application/x-ndjson", "ndjson content type")
     check(json.loads(lines[0]) == {"create": {"_index": "events-x", "_id": "a"}}, f"create action: {lines[0]}")
     check(json.loads(lines[4]) == {"index": {"_index": "events-x", "_id": "c"}}, f"index action: {lines[4]}")
+    # versioned item -> conditional bulk action; mget_versioned parses _seq_no/_primary_term
+    conn_cas = Conn(Resp(200, {"items": [{"index": {"_id": "a", "status": 409,
+                                                    "error": {"type": "version_conflict_engine_exception"}}}]}))
+    os_store._connection = lambda: conn_cas
+    out = os_store.bulk_write([("index", "alerts-x", "a", {"n": 1}, (7, 2))])
+    action = json.loads(conn_cas.reqs[0][2].decode().split("\n")[0])
+    check(action == {"index": {"_index": "alerts-x", "_id": "a", "if_seq_no": 7, "if_primary_term": 2}},
+          f"CAS bulk action: {action}")
+    check(out[0]["status"] == 409, "stale CAS item reported as 409")
+    conn_mg = Conn(Resp(200, {"docs": [
+        {"_index": "alerts-x", "_id": "a", "found": True, "_seq_no": 3, "_primary_term": 1, "_source": {"k": 1}},
+        {"_index": "alerts-x", "_id": "b", "found": False}]}))
+    os_store._connection = lambda: conn_mg
+    got = os_store.mget_versioned([("alerts-x", "a"), ("alerts-x", "b")])
+    check(got == {("alerts-x", "a"): ({"k": 1}, (3, 1))}, f"mget_versioned: {got}")
+    check(conn_mg.reqs[0][0:2] == ("POST", "/_mget"), f"one POST /_mget: {conn_mg.reqs[0][0:2]}")
     # request-level failure raises (caller leaves the whole batch unacked)
     os_store._connection = lambda: Conn(Resp(503, {}))
     raised = False
@@ -354,7 +426,9 @@ def main() -> int:
     for fn in (test_ack_only_after_bulk_result, test_partial_failure_per_item,
                test_transient_item_recovers_in_process, test_create_only_409_is_success,
                test_whole_request_failure_acks_nothing, test_redelivery_is_idempotent,
-               test_alert_keeps_cas_path_and_triage, test_unroutable_dropped_and_dead_letter_cap,
+               test_alert_batch_preserves_triage_and_collapses_repeats,
+               test_alert_stale_version_falls_back_to_cas_and_keeps_triage,
+               test_alert_read_failure_leaves_unacked, test_unroutable_dropped_and_dead_letter_cap,
                test_worker_respects_batch_max, test_build_handlers_wiring_and_kill_switch,
                test_opensearch_bulk_write_wire_format):
         before = len(FAILS)
