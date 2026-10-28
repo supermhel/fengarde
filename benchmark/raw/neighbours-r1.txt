@@ -1,0 +1,12 @@
+--- neighbours before R1 18:10:53
+siem-store-ha-2 cpu=90.10% mem=1.022GiB / 7.43GiB
+ws8haproof-ws7-dashboard-1 cpu=7.66% mem=6.859MiB / 7.43GiB
+siem-sentinel-ha-1 cpu=6.85% mem=3.477MiB / 7.43GiB
+siem-bus-ha-1 cpu=3.58% mem=12.63MiB / 7.43GiB
+ws8haproof-ws3-indexer-1 cpu=25.57% mem=32.14MiB / 7.43GiB
+siem-sentinel-ha-2 cpu=2.67% mem=3.281MiB / 7.43GiB
+--- neighbours after R1 18:16:14
+siem-bus-ha-1 cpu=7.24%
+ws8haproof-ws2-normalization-1 cpu=61.14%
+siem-store-ha-1 cpu=46.71%
+siem-bus-ha-2 cpu=3.83%

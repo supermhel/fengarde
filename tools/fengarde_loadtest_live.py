@@ -115,7 +115,11 @@ class Sampler(threading.Thread):
                     continue
                 svc = j["Name"][len(self.project) + 1:].rsplit("-", 1)[0]
                 mem = j["MemUsage"].split("/")[0].strip()
-                d[svc] = {"cpu_pct": float(j["CPUPerc"].rstrip("%")), "mem": mem}
+                cpu = float(j["CPUPerc"].rstrip("%"))
+                if svc in d:  # several replicas of one service: sum CPU
+                    d[svc] = {"cpu_pct": d[svc]["cpu_pct"] + cpu, "mem": d[svc]["mem"] + "+" + mem}
+                else:
+                    d[svc] = {"cpu_pct": cpu, "mem": mem}
             self._docker = d
         except Exception as exc:  # noqa: BLE001 - sampler must never die
             self._docker = {"error": str(exc)[:100]}

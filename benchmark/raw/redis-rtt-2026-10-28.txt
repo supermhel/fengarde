@@ -1,0 +1,4 @@
+PING                                           2102 calls/s   0.476 ms/call
+MULTI pipeline (current)                        703 calls/s   1.423 ms/call
+pipeline, no MULTI/EXEC                         704 calls/s   1.421 ms/call
+EVALSHA (one command, same 4 steps)            1316 calls/s   0.760 ms/call

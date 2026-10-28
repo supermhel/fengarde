@@ -60,10 +60,12 @@ class BatchIndexHandler:
     * ``create_only`` (``normalized.events``): bulk ``create``; a per-item 409
       means "already stored" and is a SUCCESS (never clobbers the scored copy).
     * everything else: bulk ``index`` (idempotent upsert on the deterministic id).
-    * alerts (``alert_id``, not create-only) stay on the per-document CAS path
-      (:func:`_index_alert_preserving_triage`): it must read-modify-write to
-      preserve analyst ``triage``, which a blind bulk upsert would clobber.
-      Alert volume is a small fraction of event volume, so this costs little.
+    * alerts (``alert_id``, not create-only) must read-modify-write to preserve
+      analyst ``triage``, which a blind bulk upsert would clobber. With a store
+      that has ``mget_versioned`` the batch does that in bulk (see
+      :meth:`_plan_alerts`: one ``_mget``, one conditional bulk write, per-item
+      409 -> the per-document CAS path); otherwise every alert takes
+      :func:`_index_alert_preserving_triage`.
     * unroutable docs are dropped (success), as in the single path.
 
     Result contract for the runner: a list parallel to the input, ``None`` =
@@ -89,7 +91,8 @@ class BatchIndexHandler:
             os.getenv("WS3_BULK_RETRIES", "3"))
         self.backoff_s = backoff_s
         self.stats = {"bulk_requests": 0, "bulk_docs": 0, "conflicts_409": 0,
-                      "retried_items": 0, "failed_items": 0}
+                      "retried_items": 0, "failed_items": 0,
+                      "cas_conflicts": 0}
 
     def __call__(self, payload: dict) -> None:
         try:
@@ -99,25 +102,71 @@ class BatchIndexHandler:
 
     def handle_batch(self, payloads: list) -> list:
         results: list = [None] * len(payloads)
-        pending: list = []  # (position, op, index, doc_id, doc)
+        # pending item: [positions, op, index, doc_id, doc, version]
+        pending: list = []
+        alerts: dict = {}     # (index, doc_id) -> [positions, last payload]
+        fallback: list = []   # (positions, index, doc_id, payload) -> per-doc CAS path
+        alerts_bulk = callable(getattr(self.store, "mget_versioned", None))
         for i, payload in enumerate(payloads):
             try:
                 index, doc_id = route(payload)
             except ValueError:
                 continue  # unroutable -> drop (success)
             if not self.create_only and "alert_id" in payload:
-                try:
-                    _index_alert_preserving_triage(self.store, index, doc_id, payload)
-                except Exception as exc:  # noqa: BLE001 - per-item failure -> unacked
-                    results[i] = exc
+                if alerts_bulk:
+                    g = alerts.setdefault((index, doc_id), [[], None])
+                    g[0].append(i)
+                    g[1] = payload
+                else:
+                    fallback.append(([i], index, doc_id, payload))
                 continue
-            pending.append((i, "create" if self.create_only else "index",
-                            index, doc_id, payload))
+            pending.append([[i], "create" if self.create_only else "index",
+                            index, doc_id, payload, None])
+        if alerts:
+            self._plan_alerts(alerts, pending, fallback, results)
+        self._flush(pending, results, fallback)
+        for positions, index, doc_id, payload in fallback:
+            try:
+                _index_alert_preserving_triage(self.store, index, doc_id, payload)
+            except Exception as exc:  # noqa: BLE001 - per-item failure -> unacked
+                for pos in positions:
+                    results[pos] = exc
+        return results
+
+    def _plan_alerts(self, alerts: dict, pending: list, fallback: list, results: list) -> None:
+        """Alerts need read-modify-write (keep the analyst's ``triage``), but one
+        burst re-emits the SAME alert_id for every event past a threshold. So:
+        collapse repeats inside the batch to the last payload (the end state a
+        sequential pass would reach), read all current versions with ONE
+        ``_mget``, and write the known ones as ONE conditional bulk (``if_seq_no``
+        / ``if_primary_term``; a stale version = per-item 409 -> per-document CAS
+        retry). Alert ids never seen before take the per-document path, which
+        also runs the cross-index routing-drift check."""
+        try:
+            existing = self.store.mget_versioned(list(alerts))
+        except Exception as exc:  # noqa: BLE001 - whole read failed -> unacked
+            for positions, _payload in alerts.values():
+                for pos in positions:
+                    results[pos] = exc
+            return
+        for key, (positions, payload) in alerts.items():
+            found = existing.get(key)
+            if found is None or found[1] is None:
+                fallback.append((positions, key[0], key[1], payload))
+                continue
+            current, version = found
+            merged = dict(payload)
+            if current.get("triage") is not None:
+                merged["triage"] = current["triage"]
+            pending.append([positions, "index", key[0], key[1], merged, version])
+
+    def _flush(self, pending: list, results: list, fallback: list) -> None:
         attempt = 0
         while pending:
             try:
                 outcomes = self.store.bulk_write(
-                    [(op, index, doc_id, doc) for _, op, index, doc_id, doc in pending])
+                    [(op, index, doc_id, doc, version)
+                     for _p, op, index, doc_id, doc, version in pending])
                 self.stats["bulk_requests"] += 1
                 self.stats["bulk_docs"] += len(pending)
             except Exception as exc:  # noqa: BLE001 - whole request failed
@@ -125,24 +174,31 @@ class BatchIndexHandler:
                              "exc": exc}] * len(pending)
             retry: list = []
             for item, out in zip(pending, outcomes):
-                pos, op = item[0], item[1]
+                positions, op, index, doc_id, doc, version = item
                 status = out["status"]
                 if status < 300 or (status == 409 and op == "create"):
                     if status == 409:
                         self.stats["conflicts_409"] += 1
                     continue
+                if status == 409 and version is not None:
+                    # stale CAS version: someone (analyst triage / another
+                    # writer) got in between -> per-document read-merge-retry
+                    self.stats["cas_conflicts"] += 1
+                    fallback.append((positions, index, doc_id, doc))
+                    continue
                 if status in self._RETRYABLE and attempt < self.retries:
                     retry.append(item)
                     continue
                 self.stats["failed_items"] += 1
-                results[pos] = out.get("exc") or RuntimeError(
+                err = out.get("exc") or RuntimeError(
                     f"bulk item rejected: HTTP {status} {out.get('error_type')}")
+                for pos in positions:
+                    results[pos] = err
             pending = retry
             if pending:
                 self.stats["retried_items"] += len(pending)
                 time.sleep(self.backoff_s * (2 ** attempt))
                 attempt += 1
-        return results
 
 
 def build_handlers(store, group: str = "cg-index") -> dict:

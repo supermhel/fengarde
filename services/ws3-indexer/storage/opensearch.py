@@ -333,9 +333,12 @@ class OpenSearchStore(StorageAdapter):
 
     def bulk_write(self, items: "list[tuple[str, str, str, dict]]") -> "list[dict]":
         """Live-daemon batch write: ONE ``/_bulk`` request for many
-        ``(op, index, doc_id, document)`` tuples, ``op`` being ``"index"``
-        (idempotent upsert, same as :meth:`index`) or ``"create"`` (create-only,
-        same as :meth:`index_if_absent`).
+        ``(op, index, doc_id, document[, version])`` tuples, ``op`` being
+        ``"index"`` (idempotent upsert, same as :meth:`index`) or ``"create"``
+        (create-only, same as :meth:`index_if_absent`). An optional ``version``
+        ``(seq_no, primary_term)`` as returned by :meth:`get_versioned` /
+        :meth:`mget_versioned` makes the item conditional (:meth:`index_cas`
+        semantics): a stale version comes back as HTTP 409 for that item.
 
         Returns one ``{"status": int, "error_type": str | None}`` per input
         item, IN INPUT ORDER (the bulk API guarantees this), so the caller can
@@ -351,10 +354,14 @@ class OpenSearchStore(StorageAdapter):
         if not items:
             return []
         lines = []
-        for op, index, doc_id, document in items:
+        for item in items:
+            op, index, doc_id, document = item[:4]
             if op not in ("index", "create"):
                 raise ValueError(f"unsupported bulk op {op!r}")
-            lines.append(json.dumps({op: {"_index": index, "_id": str(doc_id)}}))
+            meta = {"_index": index, "_id": str(doc_id)}
+            if len(item) > 4 and item[4] is not None:  # optional (seq_no, primary_term): CAS
+                meta["if_seq_no"], meta["if_primary_term"] = int(item[4][0]), int(item[4][1])
+            lines.append(json.dumps({op: meta}))
             lines.append(json.dumps(document))
         body = ("\n".join(lines) + "\n").encode("utf-8")
         headers = {"Content-Type": "application/x-ndjson"}
@@ -385,6 +392,27 @@ class OpenSearchStore(StorageAdapter):
                         "error_type": err.get("type") if isinstance(err, dict) else None})
         if len(out) != len(items):
             raise RuntimeError(f"bulk response has {len(out)} items for {len(items)} requested")
+        return out
+
+    def mget_versioned(self, keys: "list[tuple[str, str]]") -> dict:
+        """Batch twin of :meth:`get_versioned`: ONE ``/_mget`` for many
+        ``(index, doc_id)`` pairs. Returns ``{(index, doc_id): (source, version)}``
+        for the documents that exist (``version`` = ``(seq_no, primary_term)``);
+        missing ones are absent from the result. Real-time like a doc GET (mget
+        reads the live document, not the refreshed search view)."""
+        if not keys:
+            return {}
+        body = {"docs": [{"_index": i, "_id": str(d)} for i, d in keys]}
+        result = self._request("POST", "/_mget", body)
+        docs = result.get("docs", [])
+        if len(docs) != len(keys):
+            raise RuntimeError(f"mget returned {len(docs)} docs for {len(keys)} requested")
+        out = {}
+        for key, doc in zip(keys, docs):
+            source = doc.get("_source")
+            if doc.get("found") and isinstance(source, dict) and source:
+                out[key] = (source, (doc.get("_seq_no"), doc.get("_primary_term"))
+                            if doc.get("_seq_no") is not None else None)
         return out
 
     # -- StorageAdapter ----------------------------------------------------
