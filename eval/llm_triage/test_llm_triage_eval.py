@@ -184,6 +184,12 @@ class VariantSplit(unittest.TestCase):
         self.assertFalse(scored_dev & held, "a holdout case was scored during variant selection")
         self.assertFalse(scored_dev & set(d["fewshot_case_ids"]), "few-shot examples must not be scored")
 
+    def test_every_variant_file_matches_the_labelled_set(self):
+        files = sorted(variants.HERE.joinpath("results").glob("variants*.json"))
+        self.assertTrue(files)
+        for f in files:
+            self.assertEqual(json.loads(f.read_text(encoding="utf-8"))["labelled_set_sha256"], run_eval.cases_sha(), f.name)
+
     def test_every_variant_builds_a_prompt(self):
         shots = [c for c in DOC["cases"][:4]]
         for name, (build, *_rest) in variants.VARIANTS.items():
@@ -196,7 +202,7 @@ class CommittedResults(unittest.TestCase):
         self.assertEqual(have, render_results.render(), "RESULTS.md stale: run render_results.py")
 
     def test_results_match_committed_labelled_set(self):
-        files = sorted(f for f in render_results.RESULTS.glob("*.json") if f.name != "variants.json")
+        files = sorted(f for f in render_results.RESULTS.glob("*.json") if not f.name.startswith("variants"))
         self.assertTrue(files, "no committed results")
         latest = json.loads(files[-1].read_text(encoding="utf-8"))
         self.assertEqual(latest["labelled_set_sha256"], run_eval.cases_sha(),

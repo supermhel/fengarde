@@ -32,7 +32,12 @@ sys.path.insert(0, str(HERE.parents[1] / "services"))
 import run_eval  # noqa: E402
 import llm_adapter  # noqa: E402
 
-OUT = HERE / "results" / "variants.json"
+def out_path(model: str) -> Path:
+    """3B keeps the original file name; any other model gets its own file so runs never overwrite each other."""
+    return HERE / "results" / ("variants.json" if model == "qwen2.5:3b" else "variants_" + model.replace(":", "-").replace("/", "_") + ".json")
+
+
+OUT = out_path("qwen2.5:3b")
 _VERDICT_3 = ["benign", "suspicious", "malicious"]
 _LEVELS = ["low", "medium", "high", "critical"]
 
@@ -102,6 +107,7 @@ VARIANTS = {
     "C_definitions_t0":    (_defs,     "json",                         0,    "verdict definitions, temperature 0"),
     "D_definitions_schema": (_defs,    _schema(_VERDICT_3),            0,    "definitions + JSON schema enum (3 verdicts), t0"),
     "E_binary_schema":     (_defs,     _schema(["benign", "malicious"]), 0,  "definitions + schema forcing benign|malicious (diagnostic: removes the abstain option)"),
+    "E_binary_schema_sampled": (_defs, _schema(["benign", "malicious"]), None, "same prompt/schema as E but Ollama default sampling (shows run-to-run variance; E itself is seeded)"),
     "F_fewshot_t0":        (_fewshot,  "json",                         0,    "definitions + 4 DEV examples, temperature 0"),
 }
 
@@ -141,11 +147,12 @@ def run_variant(name: str, cases: list[dict], shots: list[dict], url: str, model
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--stage", choices=["dev", "holdout"], required=True)
+    ap.add_argument("--stage", choices=["dev", "holdout", "repeat"], required=True)
     ap.add_argument("--ollama-url", required=True)
     ap.add_argument("--model", required=True)
     ap.add_argument("--timeout", type=float, default=120)
     ap.add_argument("--variants", nargs="*", default=None)
+    ap.add_argument("--repeats", type=int, default=3, help="repeat stage: runs per variant")
     ap.add_argument("--pick", help="holdout: the DEV-selected variant name")
     a = ap.parse_args(argv)
     cases = run_eval.load_cases()["cases"]
@@ -153,7 +160,8 @@ def main(argv=None) -> int:
     shots = [next(c for c in dev if c["label"] == "true_positive"), [c for c in dev if c["label"] == "true_positive"][7],
              next(c for c in dev if c["label"] == "false_positive"), [c for c in dev if c["label"] == "false_positive"][3]]
     shot_ids = {s["case_id"] for s in shots}
-    doc = json.loads(OUT.read_text(encoding="utf-8")) if OUT.exists() else {}
+    out = out_path(a.model)
+    doc = json.loads(out.read_text(encoding="utf-8")) if out.exists() else {}
     doc.update({"date": datetime.date.today().isoformat(), "model": a.model,
                 "split": {"dev": len(dev), "holdout": len(hold),
                           "holdout_by_label": {k: sum(c["label"] == k for c in hold) for k in run_eval.CLASSES},
@@ -172,7 +180,22 @@ def main(argv=None) -> int:
             print(f"DEV {n:<24} n={m['n']} acc={m['accuracy']} abstain={m['abstain_rate']} err={m['error_rate']} "
                   f"TPrec={m['per_class']['true_positive']['precision']} TPrec/rec fp_rec={m['per_class']['false_positive']['recall']} "
                   f"p50={m['latency_ms']['p50']}")
-            OUT.write_text(json.dumps(doc, indent=1) + "\n", encoding="utf-8", newline="\n")
+            out.write_text(json.dumps(doc, indent=1) + "\n", encoding="utf-8", newline="\n")
+    elif a.stage == "repeat":
+        # Same HOLDOUT cases, same settings, fresh calls: how much does a variant move between runs?
+        names = a.variants or ["A_shipped_default", "B_shipped_t0", "E_binary_schema", "E_binary_schema_sampled"]
+        doc.setdefault("repeats", {})
+        for n in names:
+            reps = 1 if n.endswith("_t0") and n.startswith("B") else a.repeats
+            doc["repeats"][n] = []
+            for k in range(reps):
+                r = run_variant(n, hold, shots, a.ollama_url, a.model, a.timeout)
+                r.pop("raw", None)
+                doc["repeats"][n].append(r)
+                m = r["metrics"]
+                print(f"REPEAT {n} run{k + 1} acc={m['accuracy']} abstain={m['abstain_rate']} tp_rec={m['per_class']['true_positive']['recall']} "
+                      f"fp_rec={m['per_class']['false_positive']['recall']} p50={m['latency_ms']['p50']}", flush=True)
+                out.write_text(json.dumps(doc, indent=1) + "\n", encoding="utf-8", newline="\n")
     else:
         pick = a.pick or max(doc["dev"], key=lambda n: (doc["dev"][n]["metrics"]["accuracy"] or 0,
                                                        -(doc["dev"][n]["metrics"]["abstain_rate"] or 1)))
@@ -185,7 +208,7 @@ def main(argv=None) -> int:
             doc["holdout"][n] = r
             m = r["metrics"]
             print(f"HOLDOUT {n:<24} n={m['n']} acc={m['accuracy']} abstain={m['abstain_rate']} err={m['error_rate']}")
-        OUT.write_text(json.dumps(doc, indent=1) + "\n", encoding="utf-8", newline="\n")
+        out.write_text(json.dumps(doc, indent=1) + "\n", encoding="utf-8", newline="\n")
     return 0
 
 

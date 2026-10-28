@@ -73,7 +73,7 @@ def _run_block(r: dict) -> list[str]:
     return out + [""]
 
 
-def _variants_section(d: dict) -> list[str]:
+def _dev_holdout_section(d: dict) -> list[str]:
     sp = d["split"]
     out = ["## Diagnosis: is the poor `qwen2.5:3b` result the prompt, the labels or the model?", "",
            f"Generated from `results/variants.json` (`variants.py`, {d['date']}, model `{d['model']}`). Direct Ollama calls, so "
@@ -105,11 +105,73 @@ def _variants_section(d: dict) -> list[str]:
     return out
 
 
+def _repeats_section(d: dict) -> list[str]:
+    """Same HOLDOUT cases, same settings, fresh calls. The spread (min to max over runs) is the yardstick
+    for whether a difference between variants is more than noise."""
+    out = [f"### Run-to-run spread on HOLDOUT, model `{d['model']}` ({d['split']['holdout']} cases)", ""]
+    if d.get("ram_note"):
+        out += [f"Memory: {d['ram_note']}", ""]
+    out += ["| variant | run | accuracy | abstain | error | TP recall | TP precision | FP recall | FP precision | stub share | latency p50 / p95 ms |",
+            "|---|---|---|---|---|---|---|---|---|---|---|"]
+    span = {}
+    allruns = {}
+    for name, runs in d["repeats"].items():
+        # The earlier holdout-stage run of the same variant on the same cases counts as run 1.
+        allruns[name] = ([d["holdout"][name]] if name in d.get("holdout", {}) else []) + runs
+    for name, runs in allruns.items():
+        for i, r in enumerate(runs, 1):
+            m = r["metrics"]; t, f = m["per_class"]["true_positive"], m["per_class"]["false_positive"]
+            out.append(f"| {name} | {i} | {_f(m['accuracy'], True)} | {_f(m['abstain_rate'], True)} | {_f(m['error_rate'], True)} | "
+                       f"{_f(t['recall'], True)} | {_f(t['precision'], True)} | {_f(f['recall'], True)} | {_f(f['precision'], True)} | "
+                       f"{_f(m['stub_share'], True)} | {m['latency_ms']['p50']} / {m['latency_ms']['p95']} |")
+        accs = [r["metrics"]["accuracy"] for r in runs]
+        span[name] = (min(accs), max(accs))
+    out += ["", "Run 1 of a variant that also appears under HOLDOUT above is that earlier holdout-stage run (same cases, same settings).",
+            "", "| variant | runs | accuracy min to max |", "|---|---|---|"]
+    for name, (lo, hi) in span.items():
+        out.append(f"| {name} | {len(allruns[name])} | {_f(lo, True)} to {_f(hi, True)} |")
+    names = list(span)
+    out.append("")
+    for i, a in enumerate(names):
+        for b in names[i + 1:]:
+            (alo, ahi), (blo, bhi) = span[a], span[b]
+            verdict = "ranges DO NOT overlap (difference exceeds the run-to-run spread)" if ahi < blo or bhi < alo else "ranges overlap (difference is within the run-to-run spread)"
+            out.append(f"- `{a}` vs `{b}`: {verdict}")
+    return out + ["", "Reading: " + d.get("repeats_reading", ""), ""]
+
+
+def _variants_section(d: dict) -> list[str]:
+    out = _dev_holdout_section(d) if "dev" in d else []
+    if "repeats" in d:
+        out += _repeats_section(d)
+    return out
+
+
+def _cross_model(docs: list[dict]) -> list[str]:
+    """Same HOLDOUT cases and prompts, every model that has a spread: min to max over its runs."""
+    out = ["### Model comparison on the same HOLDOUT cases (min to max over runs)", "",
+           "| model | variant | runs | accuracy | TP recall | FP recall | stub share | latency p50 ms (min to max) |", "|---|---|---|---|---|---|---|---|"]
+    for d in docs:
+        for name in ("A_shipped_default", "E_binary_schema"):
+            runs = ([d["holdout"][name]] if name in d.get("holdout", {}) else []) + d.get("repeats", {}).get(name, [])
+            if not runs:
+                continue
+            col = lambda f: [f(r["metrics"]) for r in runs]
+            rng = lambda xs, pct=True: f"{_f(min(xs), pct)} to {_f(max(xs), pct)}"
+            out.append(f"| {d['model']} | {name} | {len(runs)} | {rng(col(lambda m: m['accuracy']))} | "
+                       f"{rng(col(lambda m: m['per_class']['true_positive']['recall']))} | {rng(col(lambda m: m['per_class']['false_positive']['recall']))} | "
+                       f"{rng(col(lambda m: m['stub_share']))} | {rng(col(lambda m: m['latency_ms']['p50']), False)} |")
+    return out + ["", "The always-malicious baseline on these 17 cases is 82.4%.", ""]
+
+
 def render(results_dir: Path = RESULTS) -> str:
-    files = sorted((f for f in results_dir.glob("*.json") if f.name != "variants.json"), reverse=True)
+    files = sorted((f for f in results_dir.glob("*.json") if not f.name.startswith("variants")), reverse=True)
     lines = [HEADER]
-    if (results_dir / "variants.json").exists():
-        lines += _variants_section(json.loads((results_dir / "variants.json").read_text(encoding="utf-8")))
+    vdocs = [json.loads(vf.read_text(encoding="utf-8")) for vf in sorted(results_dir.glob("variants*.json"))]
+    for vd in vdocs:
+        lines += _variants_section(vd)
+    if len([v for v in vdocs if "repeats" in v]) > 1:
+        lines += _cross_model([v for v in vdocs if "repeats" in v])
     if not files:
         lines.append("No results committed yet.\n")
     for f in files:
