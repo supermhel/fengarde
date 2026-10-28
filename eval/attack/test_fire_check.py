@@ -672,6 +672,71 @@ def test_gate_fails_when_every_rule_loses_its_mitre_block():
           "gate did not explain that zero rules were checked")
 
 
+def _untagged_ids() -> list[str]:
+    """Ids of every shipped rule with no mitre.technique, read from the rules."""
+    return [rid for rid, r in fresh_rules().items()
+            if not (isinstance(r.raw.get("mitre"), dict) and r.raw["mitre"].get("technique"))]
+
+
+def _run_main_with_untagged_mutated(mutate, patch_try_fire=None) -> tuple[int, str]:
+    """main() with ``mutate(rule)`` applied to every untagged rule the Detector loads
+    (optionally also replacing ``fc._try_fire``), stdout captured."""
+    real_detector, real_try = fc.Detector, fc._try_fire
+    untagged = set(_untagged_ids())
+
+    def mutated_detector(*args, **kwargs):
+        detector = real_detector(*args, **kwargs)
+        for r in detector.rules:
+            if r.id in untagged:
+                mutate(r)
+        return detector
+
+    fc.Detector = mutated_detector
+    if patch_try_fire is not None:
+        fc._try_fire = patch_try_fire(real_try, untagged)
+    try:
+        return _run_main_capturing()
+    finally:
+        fc.Detector, fc._try_fire = real_detector, real_try
+
+
+def test_gate_exits_nonzero_on_a_too_loose_untagged_rule():
+    """Dropping `+ untagged_results` from the too_loose gate must turn this red."""
+    rc, out = _run_main_with_untagged_mutated(_make_too_loose)
+    check(rc == 1, f"gate exited {rc} with a too-loose untagged rule loaded; expected 1")
+    tail = out.split("fire BELOW their declared boundary")[-1]
+    check("fire BELOW their declared boundary" in out and all(i in tail for i in _untagged_ids()),
+          "gate did not name the too-loose untagged rule")
+    check("(untagged)" in tail, "the failure line must say the rule is untagged, not '(none)'")
+
+
+def test_gate_exits_nonzero_on_a_never_firing_untagged_rule():
+    """Dropping `+ untagged_results` from the tagged_not_firing gate must turn this red."""
+    def dead(rule):
+        rule.evaluate = lambda event: False
+
+    rc, out = _run_main_with_untagged_mutated(dead)
+    check(rc == 1, f"gate exited {rc} with a never-firing untagged rule loaded; expected 1")
+    check("never fire on their own producer fixture" in out and "declare a MITRE technique" not in out,
+          "never-fire failure must not claim the rule declares a MITRE technique")
+    check("(untagged)" in out and "(none)" not in out, "untagged rule must be labelled 'untagged'")
+
+
+def test_gate_exits_nonzero_on_a_harness_blocked_untagged_rule():
+    """Dropping `+ untagged_results` from the harness_blocked gate must turn this red."""
+    def blocked(real_try, untagged):
+        def fake(rule, events, *a, **k):
+            if rule.id in untagged:
+                return False, "HARNESS forced block", None, True
+            return real_try(rule, events, *a, **k)
+        return fake
+
+    rc, out = _run_main_with_untagged_mutated(lambda r: None, patch_try_fire=blocked)
+    check(rc == 1, f"gate exited {rc} with a harness-blocked untagged rule; expected 1")
+    check("could not be exercised by THIS HARNESS" in out and "(untagged)" in out,
+          "harness-blocked untagged rule must be reported as a harness defect")
+
+
 def test_unverified_and_untagged_rules_are_warned_not_claimed_passing():
     """R3-#39 + NEW-hunt (2026-08-27): a rule negatively verified by NEITHER
     half, and a rule with NO mitre.technique, used to be silently invisible
@@ -688,11 +753,13 @@ def test_unverified_and_untagged_rules_are_warned_not_claimed_passing():
     wording returns, so a green line can never come from skipping it."""
     rc, out = _run_main_capturing()
     check(rc == 0, f"real rule set must still exit 0 (unverified != failed), got {rc}")
-    check("(untagged) 2b3c4d5e-6f70-4899-8a1b-2c3d4e5f6a7c" in out,
+    untagged_ids = _untagged_ids()
+    check(untagged_ids, "the real rule set must contain at least one untagged rule for this test to mean anything")
+    check(all(f"(untagged) {i}" in out for i in untagged_ids),
           "the untagged agent_tool_call_burst rule must be exercised and named, not skipped")
     check("under_threshold: held" in out and "window_overrun: held" in out,
           "the untagged rule's below-threshold and window-overrun probes must run and hold")
-    check("1 fired AND held their negative half" in out,
+    check(f"{len(untagged_ids)} fired AND held their negative half" in out,
           "the output must state that the untagged rule fired and held its negative half")
     check("negatively verified by NEITHER half -- untested, not passing -- see"
           not in out, "the old [OK]-under-unverified phrasing must be gone")
@@ -878,6 +945,9 @@ def main():
     test_gate_exits_nonzero_end_to_end_on_a_stateless_rule_ignoring_a_predicate()
     test_gate_fails_when_zero_rules_are_checked()
     test_gate_fails_when_every_rule_loses_its_mitre_block()
+    test_gate_exits_nonzero_on_a_too_loose_untagged_rule()
+    test_gate_exits_nonzero_on_a_never_firing_untagged_rule()
+    test_gate_exits_nonzero_on_a_harness_blocked_untagged_rule()
     test_unverified_and_untagged_rules_are_warned_not_claimed_passing()
     test_near_miss_probe_verifies_an_exists_predicate()
     test_near_miss_probe_verifies_a_negated_conjunct()

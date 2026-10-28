@@ -3,7 +3,11 @@
 ``coverage_layer.py`` (in this same directory) proves a rule CLAIMS a
 technique (parses its `mitre:` block). It says nothing about whether the
 rule actually FIRES. This tool closes that specific, narrow gap: for every
-rule carrying a `mitre:` tag, replay its own anti-dormancy producer fixture
+rule carrying a `mitre:` tag (and, since 2026-10-28, for the untagged
+`agent_tool_call_burst` too: the probes key on the rule and its own fixture,
+never on the technique, so it runs the same positive / boundary / near-miss
+probes, is written to `fire_check_untagged.json` and feeds the same failure
+gates), replay its own anti-dormancy producer fixture
 (the same real parser -> enrich pipeline `tools/check_rule_producers.py`
 already proves is satisfiable) through the real WS-4 `Rule.evaluate()` and
 record whether it actually fires.
@@ -87,8 +91,8 @@ throughout it, because the fixtures and the evaluate() path are both healthy;
 it is the rules that vanished.
 
 `_canary_check` is about ATTRIBUTION, not detection. A dead fixture pipeline
-already turned this gate red before it existed (all 27 tagged rules must
-fire, including the 15 stateless ones -- so those DO have a blocking positive
+already turned this gate red before it existed (every rule, 27 tagged ones
+when this was written, must fire, including the 15 stateless ones -- so those DO have a blocking positive
 replay of their own, contrary to this docstring's first version). What the
 canary changes is that the failure reads "the harness is broken" instead of
 "27 rules are dead-on-arrival". See its own docstring for what it does not
@@ -240,7 +244,7 @@ def _canary_check(events: list[dict]) -> tuple[bool, str]:
     **What this is and is not.** An adversarial review corrected the original
     claim here, which was wrong and is worth recording: this does NOT close a
     detection blind spot, because there was no blind spot of that shape. Every
-    one of the 27 tagged rules -- including all 15 stateless ones -- must fire
+    one of the rules (27 tagged ones when written) -- including all 15 stateless ones -- must fire
     on its own fixture or `main()` returns 1 at `tagged_not_firing`. So the
     stateless rules DO have a blocking positive replay of their own, and a
     dead fixture pipeline or a broken `Rule.evaluate()` already turned the
@@ -507,6 +511,11 @@ def _overrun_step_ms(rule, reps: int) -> int:
     window_ms = int((rule.window_seconds or 60) * 1000)
     span_ms = window_ms + max(1000, window_ms // 100)
     return span_ms // (reps - 1) + 1
+
+
+def _label(result: dict) -> str:
+    """The technique id, or 'untagged' for a rule that carries none."""
+    return "untagged" if result["technique"] == "(none)" else result["technique"]
 
 
 def _try_fire(rule, events: list[dict],
@@ -1132,15 +1141,15 @@ def main() -> int:
               f"THIS HARNESS -- the defect is in fire_check.py, not in the rule; "
               f"do not go hunting the rule:")
         for r in harness_blocked:
-            print(f"    {r['id']} ({r['technique']}): {r['note']}")
+            print(f"    {r['id']} ({_label(r)}): {r['note']}")
         return 1
 
     if tagged_not_firing:
-        print(f"\n[FAIL] {len(tagged_not_firing)} rule(s) declare a MITRE technique "
-              f"but never fire on their own producer fixture -- a real defect "
+        print(f"\n[FAIL] {len(tagged_not_firing)} rule(s) (tagged or untagged) "
+              f"never fire on their own producer fixture -- a real defect "
               f"(dead-on-arrival detection), not silently passed:")
         for r in tagged_not_firing:
-            print(f"    {r['id']} ({r['technique']}): {r['note']}")
+            print(f"    {r['id']} ({_label(r)}): {r['note']}")
         return 1
 
     if too_loose:
@@ -1149,9 +1158,9 @@ def main() -> int:
               f"positive fire check both pass silently:")
         for r in too_loose:
             for name in r["boundary"].get("too_loose", []):
-                print(f"    {r['id']} ({r['technique']}): {name} fired when it must not")
+                print(f"    {r['id']} ({_label(r)}): {name} fired when it must not")
             for name in r["near_miss"].get("too_loose", []):
-                print(f"    {r['id']} ({r['technique']}): near-miss {name} fired with "
+                print(f"    {r['id']} ({_label(r)}): near-miss {name} fired with "
                       f"that predicate violated -- the predicate is not load-bearing")
         return 1
 
