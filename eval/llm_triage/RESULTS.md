@@ -26,7 +26,9 @@ Do not edit by hand; the contract test (`test_llm_triage_eval.py`) fails on any 
 
 - hardware: Windows-11-10.0.26200-SP0; Intel64 Family 6 Model 142 Stepping 12, GenuineIntel; 8 logical CPUs; 15.3 GB RAM; GPU: not probed (assume none unless the operator says otherwise)
 - labelled set sha256 `13340f708cfe20dc...`, counts {'false_positive': 10, 'n': 54, 'reach_llm_tier_in_prod': 42, 'true_positive': 44}
-- **real-model run: BLOCKED. Ollama not installed on this host: 'ollama' command not found and nothing answered on localhost:11434 (probed once by hand 2026-10-28); no model could be run. Nothing was pulled (no Ollama to pull into).**
+- **real-model run: performed (see per-model blocks)**
+
+- notes: Ollama model qwen2.5:3b (Q4_K_M, 3.1B), CPU-only as far as known (GPU not probed). Docker load tests ran on the same laptop during the Ollama runs, so latencies are inflated by CPU contention. One run per path, no repeats: run-to-run variance not measured. --timeout 120.
 
 ### `stub`
 
@@ -35,7 +37,7 @@ Do not edit by hand; the contract test (`test_llm_triage_eval.py`) fails on any 
 - **accuracy 24.1%** (95% Wilson 14.6% to 37.0%); abstain 57.4%; error 0.0%; accuracy when decisive 56.5% (coverage 42.6%); llm-tier subset n=42 accuracy 23.8%
 - **engine mix: {'stub': 54}; stub share 100.0%**; answered by a model: 0 (accuracy on those: n/a)
 - severity (vs rule-declared level, 54 scored): exact 64.8%, within one level 85.2%
-- latency per case (ms): mean 0.3, p50 0.2, p95 0.7, max 1.9
+- latency per case (ms): mean 0.7, p50 0.2, p95 3.8, max 5.9
 
 | class | support | predicted | precision | recall | f1 |
 |---|---|---|---|---|---|
@@ -48,3 +50,45 @@ Confusion matrix (rows = label, columns = prediction):
 |---|---|---|---|---|
 | true_positive | 10 | 9 | 25 | 0 |
 | false_positive | 1 | 3 | 6 | 0 |
+
+### `ollama:qwen2.5:3b`
+
+- adapter: `FallbackLLM`; model: `qwen2.5:3b`; timeout: `120.0`; wall time 1532.5 s; adapter fallback counter: `0`
+- **n = 54**  (44 true_positive, 10 false_positive); majority-class baseline accuracy 81.5%
+- **accuracy 1.8%** (95% Wilson 0.3% to 9.8%); abstain 96.3%; error 0.0%; accuracy when decisive 50.0% (coverage 3.7%); llm-tier subset n=42 accuracy 0.0%
+- **engine mix: {'ollama': 54}; stub share 0.0%**; answered by a model: 54 (accuracy on those: 1.8%)
+- severity (vs rule-declared level, 54 scored): exact 25.9%, within one level 81.5%
+- latency per case (ms): mean 28379.2, p50 27431.5, p95 34619.9, max 54375.4
+
+| class | support | predicted | precision | recall | f1 |
+|---|---|---|---|---|---|
+| true_positive | 44 | 0 | n/a | 0.0% | n/a |
+| false_positive | 10 | 2 | 50.0% | 10.0% | 0.1667 |
+
+Confusion matrix (rows = label, columns = prediction):
+
+| label \ predicted | true_positive | false_positive | needs_review | error |
+|---|---|---|---|---|
+| true_positive | 0 | 1 | 43 | 0 |
+| false_positive | 0 | 1 | 9 | 0 |
+
+### `ollama:qwen2.5:3b:direct`
+
+- adapter: `OllamaLLM(direct)`; model: `qwen2.5:3b`; timeout: `120.0`; wall time 924.4 s; adapter fallback counter: `None`
+- **n = 54**  (44 true_positive, 10 false_positive); majority-class baseline accuracy 81.5%
+- **accuracy 1.8%** (95% Wilson 0.3% to 9.8%); abstain 96.3%; error 0.0%; accuracy when decisive 50.0% (coverage 3.7%); llm-tier subset n=42 accuracy 2.4%
+- **engine mix: {'ollama': 54}; stub share 0.0%**; answered by a model: 54 (accuracy on those: 1.8%)
+- severity (vs rule-declared level, 54 scored): exact 24.1%, within one level 88.9%
+- latency per case (ms): mean 17118.1, p50 20806.0, p95 25471.5, max 28012.1
+
+| class | support | predicted | precision | recall | f1 |
+|---|---|---|---|---|---|
+| true_positive | 44 | 1 | 100.0% | 2.3% | 0.0444 |
+| false_positive | 10 | 1 | 0.0% | 0.0% | 0.0 |
+
+Confusion matrix (rows = label, columns = prediction):
+
+| label \ predicted | true_positive | false_positive | needs_review | error |
+|---|---|---|---|---|
+| true_positive | 1 | 1 | 42 | 0 |
+| false_positive | 0 | 0 | 10 | 0 |

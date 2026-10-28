@@ -85,6 +85,8 @@ def render(results_dir: Path = RESULTS) -> str:
                   f"- hardware: {hw['platform']}; {hw['cpu']}; {hw['logical_cpus']} logical CPUs; {hw['ram_gb']} GB RAM; GPU: {hw['gpu']}",
                   f"- labelled set sha256 `{d['labelled_set_sha256'][:16]}...`, counts {d['labelled_set_counts']}",
                   f"- **real-model run: {'BLOCKED. ' + d['ollama_blocked'] if d.get('ollama_blocked') else 'performed (see per-model blocks)'}**", ""]
+        if d.get("notes"):
+            lines += [f"- notes: {d['notes']}", ""]
         for r in d["runs"]:
             lines += _run_block(r)
     return "\n".join(lines).rstrip() + "\n"

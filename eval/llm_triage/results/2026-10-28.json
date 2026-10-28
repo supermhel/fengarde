@@ -15,7 +15,7 @@
   "reach_llm_tier_in_prod": 42,
   "true_positive": 44
  },
- "ollama_blocked": "Ollama not installed on this host: 'ollama' command not found and nothing answered on localhost:11434 (probed once by hand 2026-10-28); no model could be run. Nothing was pulled (no Ollama to pull into).",
+ "ollama_blocked": null,
  "runs": [
   {
    "label": "stub",
@@ -88,10 +88,10 @@
      "accuracy": 0.2381
     },
     "latency_ms": {
-     "mean": 0.3,
+     "mean": 0.7,
      "p50": 0.2,
-     "p95": 0.7,
-     "max": 1.9
+     "p95": 3.8,
+     "max": 5.9
     }
    },
    "rows": [
@@ -105,7 +105,7 @@
      "engine": "stub",
      "error": null,
      "model": null,
-     "latency_ms": 1.929400023072958,
+     "latency_ms": 5.882399855181575,
      "pred": "true_positive"
     },
     {
@@ -118,7 +118,7 @@
      "engine": "stub",
      "error": null,
      "model": null,
-     "latency_ms": 0.23950007744133472,
+     "latency_ms": 0.29719993472099304,
      "pred": "true_positive"
     },
     {
@@ -131,7 +131,7 @@
      "engine": "stub",
      "error": null,
      "model": null,
-     "latency_ms": 0.23820018395781517,
+     "latency_ms": 0.1689000055193901,
      "pred": "needs_review"
     },
     {
@@ -144,7 +144,7 @@
      "engine": "stub",
      "error": null,
      "model": null,
-     "latency_ms": 0.15780003741383553,
+     "latency_ms": 0.14409981667995453,
      "pred": "true_positive"
     },
     {
@@ -157,7 +157,7 @@
      "engine": "stub",
      "error": null,
      "model": null,
-     "latency_ms": 0.14810007996857166,
+     "latency_ms": 0.1558999065309763,
      "pred": "needs_review"
     },
     {
@@ -170,7 +170,7 @@
      "engine": "stub",
      "error": null,
      "model": null,
-     "latency_ms": 0.16709999181330204,
+     "latency_ms": 0.19529997371137142,
      "pred": "needs_review"
     },
     {
@@ -183,7 +183,7 @@
      "engine": "stub",
      "error": null,
      "model": null,
-     "latency_ms": 0.17530005425214767,
+     "latency_ms": 0.1534000039100647,
      "pred": "needs_review"
     },
     {
@@ -196,7 +196,7 @@
      "engine": "stub",
      "error": null,
      "model": null,
-     "latency_ms": 0.32640015706419945,
+     "latency_ms": 0.14050002209842205,
      "pred": "needs_review"
     },
     {
@@ -209,7 +209,7 @@
      "engine": "stub",
      "error": null,
      "model": null,
-     "latency_ms": 0.2810000441968441,
+     "latency_ms": 0.1338999718427658,
      "pred": "needs_review"
     },
     {
@@ -222,7 +222,7 @@
      "engine": "stub",
      "error": null,
      "model": null,
-     "latency_ms": 0.23179990239441395,
+     "latency_ms": 0.1463000662624836,
      "pred": "false_positive"
     },
     {
@@ -235,7 +235,7 @@
      "engine": "stub",
      "error": null,
      "model": null,
-     "latency_ms": 0.20660017617046833,
+     "latency_ms": 0.1370999962091446,
      "pred": "needs_review"
     },
     {
@@ -248,7 +248,7 @@
      "engine": "stub",
      "error": null,
      "model": null,
-     "latency_ms": 0.682199839502573,
+     "latency_ms": 0.14510005712509155,
      "pred": "needs_review"
     },
     {
@@ -261,7 +261,7 @@
      "engine": "stub",
      "error": null,
      "model": null,
-     "latency_ms": 0.28449995443224907,
+     "latency_ms": 0.13489997945725918,
      "pred": "true_positive"
     },
     {
@@ -274,7 +274,7 @@
      "engine": "stub",
      "error": null,
      "model": null,
-     "latency_ms": 0.19090017303824425,
+     "latency_ms": 0.15150010585784912,
      "pred": "needs_review"
     },
     {
@@ -287,7 +287,7 @@
      "engine": "stub",
      "error": null,
      "model": null,
-     "latency_ms": 0.48539997078478336,
+     "latency_ms": 0.14219991862773895,
      "pred": "true_positive"
     },
     {
@@ -300,7 +300,7 @@
      "engine": "stub",
      "error": null,
      "model": null,
-     "latency_ms": 0.5008000880479813,
+     "latency_ms": 0.1583998091518879,
      "pred": "true_positive"
     },
     {
@@ -313,7 +313,7 @@
      "engine": "stub",
      "error": null,
      "model": null,
-     "latency_ms": 0.2437999937683344,
+     "latency_ms": 0.1316999550908804,
      "pred": "needs_review"
     },
     {
@@ -326,7 +326,7 @@
      "engine": "stub",
      "error": null,
      "model": null,
-     "latency_ms": 0.19200006499886513,
+     "latency_ms": 0.19859988242387772,
      "pred": "needs_review"
     },
     {
@@ -339,7 +339,7 @@
      "engine": "stub",
      "error": null,
      "model": null,
-     "latency_ms": 0.3437998238950968,
+     "latency_ms": 0.1789000816643238,
      "pred": "true_positive"
     },
     {
@@ -352,7 +352,7 @@
      "engine": "stub",
      "error": null,
      "model": null,
-     "latency_ms": 0.21079997532069683,
+     "latency_ms": 0.16080006025731564,
      "pred": "needs_review"
     },
     {
@@ -365,7 +365,7 @@
      "engine": "stub",
      "error": null,
      "model": null,
-     "latency_ms": 0.16649998724460602,
+     "latency_ms": 0.20399992354214191,
      "pred": "needs_review"
     },
     {
@@ -378,7 +378,7 @@
      "engine": "stub",
      "error": null,
      "model": null,
-     "latency_ms": 0.19529997371137142,
+     "latency_ms": 0.8332999423146248,
      "pred": "needs_review"
     },
     {
@@ -391,7 +391,7 @@
      "engine": "stub",
      "error": null,
      "model": null,
-     "latency_ms": 0.19910000264644623,
+     "latency_ms": 0.2766998950392008,
      "pred": "false_positive"
     },
     {
@@ -404,7 +404,7 @@
      "engine": "stub",
      "error": null,
      "model": null,
-     "latency_ms": 0.1900000497698784,
+     "latency_ms": 0.45950012281537056,
      "pred": "needs_review"
     },
     {
@@ -417,7 +417,7 @@
      "engine": "stub",
      "error": null,
      "model": null,
-     "latency_ms": 0.18480001017451286,
+     "latency_ms": 0.7971001323312521,
      "pred": "true_positive"
     },
     {
@@ -430,7 +430,7 @@
      "engine": "stub",
      "error": null,
      "model": null,
-     "latency_ms": 0.1705000177025795,
+     "latency_ms": 0.5902999546378851,
      "pred": "false_positive"
     },
     {
@@ -443,7 +443,7 @@
      "engine": "stub",
      "error": null,
      "model": null,
-     "latency_ms": 0.18480001017451286,
+     "latency_ms": 5.30409999191761,
      "pred": "false_positive"
     },
     {
@@ -456,7 +456,7 @@
      "engine": "stub",
      "error": null,
      "model": null,
-     "latency_ms": 0.9274999611079693,
+     "latency_ms": 2.2662999108433723,
      "pred": "false_positive"
     },
     {
@@ -469,7 +469,7 @@
      "engine": "stub",
      "error": null,
      "model": null,
-     "latency_ms": 0.24949992075562477,
+     "latency_ms": 0.32410002313554287,
      "pred": "needs_review"
     },
     {
@@ -482,7 +482,7 @@
      "engine": "stub",
      "error": null,
      "model": null,
-     "latency_ms": 0.2117999829351902,
+     "latency_ms": 1.5048999339342117,
      "pred": "false_positive"
     },
     {
@@ -495,7 +495,7 @@
      "engine": "stub",
      "error": null,
      "model": null,
-     "latency_ms": 0.17939996905624866,
+     "latency_ms": 0.722500029951334,
      "pred": "needs_review"
     },
     {
@@ -508,7 +508,7 @@
      "engine": "stub",
      "error": null,
      "model": null,
-     "latency_ms": 0.1605998259037733,
+     "latency_ms": 0.4064000677317381,
      "pred": "needs_review"
     },
     {
@@ -521,7 +521,7 @@
      "engine": "stub",
      "error": null,
      "model": null,
-     "latency_ms": 0.15829992480576038,
+     "latency_ms": 0.382099999114871,
      "pred": "needs_review"
     },
     {
@@ -534,7 +534,7 @@
      "engine": "stub",
      "error": null,
      "model": null,
-     "latency_ms": 0.17010001465678215,
+     "latency_ms": 0.7467998657375574,
      "pred": "needs_review"
     },
     {
@@ -547,7 +547,7 @@
      "engine": "stub",
      "error": null,
      "model": null,
-     "latency_ms": 0.16320007853209972,
+     "latency_ms": 0.21730014123022556,
      "pred": "needs_review"
     },
     {
@@ -560,7 +560,7 @@
      "engine": "stub",
      "error": null,
      "model": null,
-     "latency_ms": 0.24310010485351086,
+     "latency_ms": 0.2788000274449587,
      "pred": "needs_review"
     },
     {
@@ -573,7 +573,7 @@
      "engine": "stub",
      "error": null,
      "model": null,
-     "latency_ms": 0.22680009715259075,
+     "latency_ms": 0.6973999552428722,
      "pred": "needs_review"
     },
     {
@@ -586,7 +586,7 @@
      "engine": "stub",
      "error": null,
      "model": null,
-     "latency_ms": 0.20199990831315517,
+     "latency_ms": 0.38989982567727566,
      "pred": "needs_review"
     },
     {
@@ -599,7 +599,7 @@
      "engine": "stub",
      "error": null,
      "model": null,
-     "latency_ms": 0.1925998367369175,
+     "latency_ms": 0.3154999576508999,
      "pred": "true_positive"
     },
     {
@@ -612,7 +612,7 @@
      "engine": "stub",
      "error": null,
      "model": null,
-     "latency_ms": 0.21860003471374512,
+     "latency_ms": 0.3970998805016279,
      "pred": "needs_review"
     },
     {
@@ -625,7 +625,7 @@
      "engine": "stub",
      "error": null,
      "model": null,
-     "latency_ms": 0.193500192835927,
+     "latency_ms": 0.18119998276233673,
      "pred": "needs_review"
     },
     {
@@ -638,7 +638,7 @@
      "engine": "stub",
      "error": null,
      "model": null,
-     "latency_ms": 0.17949985340237617,
+     "latency_ms": 0.20110001787543297,
      "pred": "false_positive"
     },
     {
@@ -651,7 +651,7 @@
      "engine": "stub",
      "error": null,
      "model": null,
-     "latency_ms": 0.19910000264644623,
+     "latency_ms": 0.26340014301240444,
      "pred": "needs_review"
     },
     {
@@ -664,7 +664,7 @@
      "engine": "stub",
      "error": null,
      "model": null,
-     "latency_ms": 0.18199998885393143,
+     "latency_ms": 0.21389988251030445,
      "pred": "true_positive"
     },
     {
@@ -677,7 +677,7 @@
      "engine": "stub",
      "error": null,
      "model": null,
-     "latency_ms": 0.17170002683997154,
+     "latency_ms": 0.3652998711913824,
      "pred": "needs_review"
     },
     {
@@ -690,7 +690,7 @@
      "engine": "stub",
      "error": null,
      "model": null,
-     "latency_ms": 0.20539993420243263,
+     "latency_ms": 0.19499985501170158,
      "pred": "false_positive"
     },
     {
@@ -703,7 +703,7 @@
      "engine": "stub",
      "error": null,
      "model": null,
-     "latency_ms": 0.20350003615021706,
+     "latency_ms": 0.2022001426666975,
      "pred": "false_positive"
     },
     {
@@ -716,7 +716,7 @@
      "engine": "stub",
      "error": null,
      "model": null,
-     "latency_ms": 0.25889999233186245,
+     "latency_ms": 0.17819995991885662,
      "pred": "false_positive"
     },
     {
@@ -729,7 +729,7 @@
      "engine": "stub",
      "error": null,
      "model": null,
-     "latency_ms": 0.34900009632110596,
+     "latency_ms": 0.17539993859827518,
      "pred": "false_positive"
     },
     {
@@ -742,7 +742,7 @@
      "engine": "stub",
      "error": null,
      "model": null,
-     "latency_ms": 0.4833000712096691,
+     "latency_ms": 3.5019000060856342,
      "pred": "true_positive"
     },
     {
@@ -755,7 +755,7 @@
      "engine": "stub",
      "error": null,
      "model": null,
-     "latency_ms": 0.6837998516857624,
+     "latency_ms": 1.8970000091940165,
      "pred": "needs_review"
     },
     {
@@ -768,7 +768,7 @@
      "engine": "stub",
      "error": null,
      "model": null,
-     "latency_ms": 0.34909998066723347,
+     "latency_ms": 1.9972000736743212,
      "pred": "needs_review"
     },
     {
@@ -781,7 +781,7 @@
      "engine": "stub",
      "error": null,
      "model": null,
-     "latency_ms": 0.4197999369353056,
+     "latency_ms": 0.26819994673132896,
      "pred": "needs_review"
     },
     {
@@ -794,10 +794,1575 @@
      "engine": "stub",
      "error": null,
      "model": null,
-     "latency_ms": 0.30499999411404133,
+     "latency_ms": 3.7579000927507877,
      "pred": "false_positive"
     }
    ]
+  },
+  {
+   "label": "ollama:qwen2.5:3b",
+   "adapter": "FallbackLLM",
+   "model": "qwen2.5:3b",
+   "ollama_url": "http://localhost:11434",
+   "direct": false,
+   "timeout_seconds": "120.0",
+   "adapter_fallback_counter": 0,
+   "wall_seconds": 1532.5,
+   "metrics": {
+    "n": 54,
+    "support": {
+     "true_positive": 44,
+     "false_positive": 10
+    },
+    "majority_class_baseline_accuracy": 0.8148,
+    "accuracy": 0.0185,
+    "accuracy_ci95": [
+     0.0033,
+     0.0977
+    ],
+    "abstain_rate": 0.963,
+    "error_rate": 0.0,
+    "decisive_coverage": 0.037,
+    "accuracy_when_decisive": 0.5,
+    "per_class": {
+     "true_positive": {
+      "support": 44,
+      "predicted": 0,
+      "precision": null,
+      "recall": 0.0,
+      "f1": null
+     },
+     "false_positive": {
+      "support": 10,
+      "predicted": 2,
+      "precision": 0.5,
+      "recall": 0.1,
+      "f1": 0.1667
+     }
+    },
+    "confusion_matrix": {
+     "true_positive": {
+      "true_positive": 0,
+      "false_positive": 1,
+      "needs_review": 43,
+      "error": 0
+     },
+     "false_positive": {
+      "true_positive": 0,
+      "false_positive": 1,
+      "needs_review": 9,
+      "error": 0
+     }
+    },
+    "engine_counts": {
+     "ollama": 54
+    },
+    "stub_share": 0.0,
+    "model_answered": 54,
+    "accuracy_on_model_answered": 0.0185,
+    "severity": {
+     "scored": 54,
+     "exact": 0.2593,
+     "within_one": 0.8148
+    },
+    "llm_tier_subset": {
+     "n": 42,
+     "accuracy": 0.0
+    },
+    "latency_ms": {
+     "mean": 28379.2,
+     "p50": 27431.5,
+     "p95": 34619.9,
+     "max": 54375.4
+    }
+   },
+   "rows": [
+    {
+     "case_id": "twin-ai_to_ot:n8n_execution:01",
+     "label": "true_positive",
+     "expected_level": "medium",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 54375.43240003288,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-ai_to_ot:agent_mcp_tool_call:02",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "high",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 34452.86949980073,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-ai_to_ot:credential_use:03",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 34619.91410003975,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-ai_to_ot:modbus_write:04",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 24456.769299926236,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-ai_to_ot:process_anomaly:05",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "high",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 26016.836299793795,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-it_intrusion:recon_port_scan:01",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 24347.538799978793,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-it_intrusion:ssh_bruteforce:02",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 25704.613900044933,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-it_intrusion:lateral_movement:03",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "high",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 25234.32970000431,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-it_intrusion:priv_grant:04",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 25387.857800116763,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-it_intrusion:dns_exfil:05",
+     "label": "true_positive",
+     "expected_level": "medium",
+     "prod_tier": "classifier",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 25329.138800036162,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "decoy-it_intrusion:decoy_scanner:01",
+     "label": "false_positive",
+     "expected_level": "low",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 28171.889699995518,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "decoy-it_intrusion:decoy_admin_maintenance:02",
+     "label": "false_positive",
+     "expected_level": "low",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "high",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 27128.10410000384,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-infra_takeover:cloud_root_login:01",
+     "label": "true_positive",
+     "expected_level": "critical",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 25789.54519983381,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-infra_takeover:privileged_container:02",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "high",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 25418.611499946564,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-infra_takeover:mass_vm_delete:03",
+     "label": "true_positive",
+     "expected_level": "critical",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 24788.420400116593,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "decoy-infra_takeover:decoy_decommission:01",
+     "label": "false_positive",
+     "expected_level": "low",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "high",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 24751.94080010988,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-cloud_iam_abuse:attacker_console_login:01",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 27431.487699970603,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "decoy-cloud_iam_abuse:decoy_vpn_roaming:01",
+     "label": "false_positive",
+     "expected_level": "low",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 33071.32600015029,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-insider_exfil:grant_self_access:01",
+     "label": "true_positive",
+     "expected_level": "critical",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "high",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 27124.618000118062,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-insider_exfil:bulk_table_read:02",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 27816.344500053674,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "decoy-insider_exfil:decoy_report_job:01",
+     "label": "false_positive",
+     "expected_level": "low",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 29681.19170004502,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-ot_opcua_sabotage:rogue_device:01",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 29612.14919993654,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "twin-ot_opcua_sabotage:engineering_sessions:02",
+     "label": "true_positive",
+     "expected_level": "medium",
+     "prod_tier": "classifier",
+     "verdict": "suspicious",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 28066.763899987563,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-ot_opcua_sabotage:process_write_night:03",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "high",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 32509.27329994738,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-ot_opcua_sabotage:setpoint_tamper:04",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "high",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 32052.43399995379,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-ot_opcua_sabotage:forged_ticket_write:05",
+     "label": "true_positive",
+     "expected_level": "low",
+     "prod_tier": "store",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 24387.03320012428,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "decoy-ot_opcua_sabotage:decoy_shift_handover:01",
+     "label": "false_positive",
+     "expected_level": "low",
+     "prod_tier": "classifier",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 28979.127099970356,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-phishing_bec:phish_delivery:01",
+     "label": "true_positive",
+     "expected_level": "medium",
+     "prod_tier": "classifier",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 28919.27820001729,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-phishing_bec:user_execution:02",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 33522.4324001465,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-phishing_bec:c2_beacon:03",
+     "label": "true_positive",
+     "expected_level": "medium",
+     "prod_tier": "classifier",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 29711.377799976617,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-phishing_bec:proxy_pool_logins:04",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "high",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 28101.985500194132,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-phishing_bec:foreign_login:05",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 26520.281499950215,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-phishing_bec:inbox_rule:06",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "high",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 35814.31090016849,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "decoy-phishing_bec:decoy_vpn_roaming:01",
+     "label": "false_positive",
+     "expected_level": "low",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "high",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 29763.995399931446,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-ransomware:cred_spray:01",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 29647.87820004858,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-ransomware:admin_privilege_use:02",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 29158.832299988717,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-ransomware:lateral_spread:03",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 26426.48020014167,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-ransomware:backdoor_account:04",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 25014.627799857408,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-ransomware:mass_vm_delete:05",
+     "label": "true_positive",
+     "expected_level": "critical",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 32038.080499973148,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "decoy-ransomware:decoy_patch_admin:01",
+     "label": "false_positive",
+     "expected_level": "low",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 25743.260000133887,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-supply_chain_ci:ci_secret_read:01",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 28985.827199881896,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-supply_chain_ci:agent_runaway:02",
+     "label": "true_positive",
+     "expected_level": "medium",
+     "prod_tier": "classifier",
+     "verdict": "suspicious",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 31961.615900043398,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-supply_chain_ci:artifact_exfil:03",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 24799.829500028864,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-supply_chain_ci:pipeline_sabotage:04",
+     "label": "true_positive",
+     "expected_level": "critical",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 25606.12120013684,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-supply_chain_ci:privileged_runner:05",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 24062.05979990773,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "decoy-supply_chain_ci:decoy_refactor_session:01",
+     "label": "false_positive",
+     "expected_level": "low",
+     "prod_tier": "classifier",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 30532.20840007998,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "corpus-b:c01-plain-injection:01",
+     "label": "true_positive",
+     "expected_level": "medium",
+     "prod_tier": "classifier",
+     "verdict": "suspicious",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 24832.75939989835,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "corpus-b:c02-delimited-injection:01",
+     "label": "true_positive",
+     "expected_level": "medium",
+     "prod_tier": "classifier",
+     "verdict": "suspicious",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 27039.83650007285,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "corpus-b:c03-confusable-injection:01",
+     "label": "true_positive",
+     "expected_level": "medium",
+     "prod_tier": "classifier",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 28024.993100203574,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "corpus-b:c04-destructive-command:01",
+     "label": "true_positive",
+     "expected_level": "critical",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 28479.816499864683,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "corpus-b:c05-credential-scan:01",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 27916.593400062993,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "corpus-b:c06-egress-exfil:01",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 27400.79310000874,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "corpus-b:c07-unauthorized-modbus-write:01",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 24053.77130000852,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "negctl-neg-maintenance:benign_write:01",
+     "label": "false_positive",
+     "expected_level": "low",
+     "prod_tier": "store",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 21694.50360001065,
+     "pred": "needs_review"
+    }
+   ]
+  },
+  {
+   "label": "ollama:qwen2.5:3b:direct",
+   "adapter": "OllamaLLM(direct)",
+   "model": "qwen2.5:3b",
+   "ollama_url": "http://localhost:11434",
+   "direct": true,
+   "timeout_seconds": "120.0",
+   "adapter_fallback_counter": null,
+   "wall_seconds": 924.4,
+   "metrics": {
+    "n": 54,
+    "support": {
+     "true_positive": 44,
+     "false_positive": 10
+    },
+    "majority_class_baseline_accuracy": 0.8148,
+    "accuracy": 0.0185,
+    "accuracy_ci95": [
+     0.0033,
+     0.0977
+    ],
+    "abstain_rate": 0.963,
+    "error_rate": 0.0,
+    "decisive_coverage": 0.037,
+    "accuracy_when_decisive": 0.5,
+    "per_class": {
+     "true_positive": {
+      "support": 44,
+      "predicted": 1,
+      "precision": 1.0,
+      "recall": 0.0227,
+      "f1": 0.0444
+     },
+     "false_positive": {
+      "support": 10,
+      "predicted": 1,
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0
+     }
+    },
+    "confusion_matrix": {
+     "true_positive": {
+      "true_positive": 1,
+      "false_positive": 1,
+      "needs_review": 42,
+      "error": 0
+     },
+     "false_positive": {
+      "true_positive": 0,
+      "false_positive": 0,
+      "needs_review": 10,
+      "error": 0
+     }
+    },
+    "engine_counts": {
+     "ollama": 54
+    },
+    "stub_share": 0.0,
+    "model_answered": 54,
+    "accuracy_on_model_answered": 0.0185,
+    "severity": {
+     "scored": 54,
+     "exact": 0.2407,
+     "within_one": 0.8889
+    },
+    "llm_tier_subset": {
+     "n": 42,
+     "accuracy": 0.0238
+    },
+    "latency_ms": {
+     "mean": 17118.1,
+     "p50": 20806.0,
+     "p95": 25471.5,
+     "max": 28012.1
+    }
+   },
+   "rows": [
+    {
+     "case_id": "twin-ai_to_ot:n8n_execution:01",
+     "label": "true_positive",
+     "expected_level": "medium",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 28012.097000144422,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-ai_to_ot:agent_mcp_tool_call:02",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "high",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 8387.186700012535,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-ai_to_ot:credential_use:03",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 8542.699299985543,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-ai_to_ot:modbus_write:04",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "malicious",
+     "level": "high",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 21108.42219996266,
+     "pred": "true_positive"
+    },
+    {
+     "case_id": "twin-ai_to_ot:process_anomaly:05",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "high",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 23352.915700059384,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-it_intrusion:recon_port_scan:01",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 23968.49560015835,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-it_intrusion:ssh_bruteforce:02",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "high",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 21404.366799863055,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-it_intrusion:lateral_movement:03",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 22247.985299909487,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-it_intrusion:priv_grant:04",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 21070.511400001124,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-it_intrusion:dns_exfil:05",
+     "label": "true_positive",
+     "expected_level": "medium",
+     "prod_tier": "classifier",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 22347.659399965778,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "decoy-it_intrusion:decoy_scanner:01",
+     "label": "false_positive",
+     "expected_level": "low",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "high",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 23406.901200069115,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "decoy-it_intrusion:decoy_admin_maintenance:02",
+     "label": "false_positive",
+     "expected_level": "low",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 25471.47150011733,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-infra_takeover:cloud_root_login:01",
+     "label": "true_positive",
+     "expected_level": "critical",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "high",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 20387.431500013918,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-infra_takeover:privileged_container:02",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 23214.676800183952,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-infra_takeover:mass_vm_delete:03",
+     "label": "true_positive",
+     "expected_level": "critical",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "high",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 22913.216599961743,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "decoy-infra_takeover:decoy_decommission:01",
+     "label": "false_positive",
+     "expected_level": "low",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "high",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 22605.295700021088,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-cloud_iam_abuse:attacker_console_login:01",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 20805.977900046855,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "decoy-cloud_iam_abuse:decoy_vpn_roaming:01",
+     "label": "false_positive",
+     "expected_level": "low",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "high",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 24262.50519999303,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-insider_exfil:grant_self_access:01",
+     "label": "true_positive",
+     "expected_level": "critical",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "high",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 24529.51560006477,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-insider_exfil:bulk_table_read:02",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "high",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 23324.736600043252,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "decoy-insider_exfil:decoy_report_job:01",
+     "label": "false_positive",
+     "expected_level": "low",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 22705.097200116143,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-ot_opcua_sabotage:rogue_device:01",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 9111.953600076959,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "twin-ot_opcua_sabotage:engineering_sessions:02",
+     "label": "true_positive",
+     "expected_level": "medium",
+     "prod_tier": "classifier",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 26256.623999914154,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-ot_opcua_sabotage:process_write_night:03",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 10657.80850010924,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-ot_opcua_sabotage:setpoint_tamper:04",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 11392.641599988565,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-ot_opcua_sabotage:forged_ticket_write:05",
+     "label": "true_positive",
+     "expected_level": "low",
+     "prod_tier": "store",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 17880.483700195327,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "decoy-ot_opcua_sabotage:decoy_shift_handover:01",
+     "label": "false_positive",
+     "expected_level": "low",
+     "prod_tier": "classifier",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 24390.527700074017,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-phishing_bec:phish_delivery:01",
+     "label": "true_positive",
+     "expected_level": "medium",
+     "prod_tier": "classifier",
+     "verdict": "suspicious",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 7594.819300109521,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-phishing_bec:user_execution:02",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 8884.734499966726,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-phishing_bec:c2_beacon:03",
+     "label": "true_positive",
+     "expected_level": "medium",
+     "prod_tier": "classifier",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 8789.371100021526,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-phishing_bec:proxy_pool_logins:04",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 22741.972900228575,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-phishing_bec:foreign_login:05",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 19871.079900069162,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-phishing_bec:inbox_rule:06",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 8351.21180000715,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "decoy-phishing_bec:decoy_vpn_roaming:01",
+     "label": "false_positive",
+     "expected_level": "low",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 23206.19890000671,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-ransomware:cred_spray:01",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 9138.257700018585,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-ransomware:admin_privilege_use:02",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 20653.939000098035,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-ransomware:lateral_spread:03",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 24104.11880002357,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-ransomware:backdoor_account:04",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 22419.587099924684,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-ransomware:mass_vm_delete:05",
+     "label": "true_positive",
+     "expected_level": "critical",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 22331.592899980024,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "decoy-ransomware:decoy_patch_admin:01",
+     "label": "false_positive",
+     "expected_level": "low",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 22272.240800084546,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-supply_chain_ci:ci_secret_read:01",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 7308.829999994487,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-supply_chain_ci:agent_runaway:02",
+     "label": "true_positive",
+     "expected_level": "medium",
+     "prod_tier": "classifier",
+     "verdict": "suspicious",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 11618.902700021863,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-supply_chain_ci:artifact_exfil:03",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 8120.188300032169,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-supply_chain_ci:pipeline_sabotage:04",
+     "label": "true_positive",
+     "expected_level": "critical",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "high",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 8789.44700001739,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-supply_chain_ci:privileged_runner:05",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 21465.9929999616,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "decoy-supply_chain_ci:decoy_refactor_session:01",
+     "label": "false_positive",
+     "expected_level": "low",
+     "prod_tier": "classifier",
+     "verdict": "suspicious",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 9149.107299977913,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "corpus-b:c01-plain-injection:01",
+     "label": "true_positive",
+     "expected_level": "medium",
+     "prod_tier": "classifier",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 7528.38969998993,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "corpus-b:c02-delimited-injection:01",
+     "label": "true_positive",
+     "expected_level": "medium",
+     "prod_tier": "classifier",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 7175.782300066203,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "corpus-b:c03-confusable-injection:01",
+     "label": "true_positive",
+     "expected_level": "medium",
+     "prod_tier": "classifier",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 9468.752499902621,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "corpus-b:c04-destructive-command:01",
+     "label": "true_positive",
+     "expected_level": "critical",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "high",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 7484.441099921241,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "corpus-b:c05-credential-scan:01",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 8357.080199988559,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "corpus-b:c06-egress-exfil:01",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 8893.891899846494,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "corpus-b:c07-unauthorized-modbus-write:01",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 11353.95700018853,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "negctl-neg-maintenance:benign_write:01",
+     "label": "false_positive",
+     "expected_level": "low",
+     "prod_tier": "store",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "model": "qwen2.5:3b",
+     "latency_ms": 23545.237800106406,
+     "pred": "needs_review"
+    }
+   ]
   }
- ]
+ ],
+ "notes": "Ollama model qwen2.5:3b (Q4_K_M, 3.1B), CPU-only as far as known (GPU not probed). Docker load tests ran on the same laptop during the Ollama runs, so latencies are inflated by CPU contention. One run per path, no repeats: run-to-run variance not measured. --timeout 120."
 }
