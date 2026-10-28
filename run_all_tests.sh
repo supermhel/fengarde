@@ -51,6 +51,9 @@ echo
 echo "== tools: dns_cardinality_report (measures the UNVERIFIED DNS allowlist; never edits it) =="; LAST_HEADER="== tools: dns_cardinality_report (measures the UNVERIFIED DNS allowlist; never edits it) =="
 $PY tools/test_dns_cardinality_report.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
+echo "== tools: fengarde_loadtest harness (percentiles + realistic profile stays alert-light) =="; LAST_HEADER="== tools: fengarde_loadtest harness (percentiles + realistic profile stays alert-light) =="
+$PY tools/test_fengarde_loadtest.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
 echo "== coverage gate floor/buffer tests (was orphaned -- only run directly) =="; LAST_HEADER="== coverage gate floor/buffer tests (was orphaned -- only run directly) =="
 $PY tools/test_coverage_gate.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
