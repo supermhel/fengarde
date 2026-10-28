@@ -39,12 +39,12 @@ services:
     networks: { ha: { ipv4_address: 172.29.88.11 } }
   redis-2:
     <<: *redis
-    command: sh -c 'exec redis-server --appendonly yes --replicaof 172.29.88.11 6379 --masterauth "$$REDIS_PASSWORD" --requirepass "$$REDIS_PASSWORD"'
+    command: sh -c 'exec redis-server --appendonly yes --replicaof 172.29.88.11 6379 --masterauth "$$REDIS_PASSWORD" --requirepass "$$REDIS_PASSWORD" --min-replicas-to-write 1 --min-replicas-max-lag 10'
     depends_on: { redis-1: { condition: service_healthy } }
     networks: { ha: { ipv4_address: 172.29.88.12 } }
   redis-3:
     <<: *redis
-    command: sh -c 'exec redis-server --appendonly yes --replicaof 172.29.88.11 6379 --masterauth "$$REDIS_PASSWORD" --requirepass "$$REDIS_PASSWORD"'
+    command: sh -c 'exec redis-server --appendonly yes --replicaof 172.29.88.11 6379 --masterauth "$$REDIS_PASSWORD" --requirepass "$$REDIS_PASSWORD" --min-replicas-to-write 1 --min-replicas-max-lag 10'
     depends_on: { redis-1: { condition: service_healthy } }
     networks: { ha: { ipv4_address: 172.29.88.13 } }
   sentinel-1: { <<: *sentinel, networks: { ha: { ipv4_address: 172.29.88.21 } } }
@@ -55,6 +55,15 @@ services:
     networks: [ha]
   ws8b:
     <<: *ws8
+    networks: [ha]
+  # >2 replicas: start with `up -d ws8c ws8d` (profile keeps the default stack at two)
+  ws8c:
+    <<: *ws8
+    profiles: [many]
+    networks: [ha]
+  ws8d:
+    <<: *ws8
+    profiles: [many]
     networks: [ha]
 networks:
   ha:

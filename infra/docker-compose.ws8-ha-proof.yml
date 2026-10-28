@@ -5,7 +5,7 @@
 #   export COMPOSE_PROJECT_NAME=ws8haproof REDIS_PASSWORD=proofpw
 #   docker compose -f infra/docker-compose.yml -f infra/docker-compose.ha.yml -f infra/docker-compose.ws8-ha-proof.yml \
 #     --profile ha up -d --build <services>
-#   python tools/ws8_ha_stack_proof.py
+#   python tools/ws8_ha_stack_proof.py   # or tools/ws8_ha_load_proof.py (add --scale ws8-correlation=2 to the up command)
 services:
   ws1-collectors:
     ports: !override ["127.0.0.1:15514:5514/udp"]
@@ -26,3 +26,7 @@ services:
   opensearch-3:
     environment:
       - "OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m"
+  # per-alert trace (which replica handled which alert) for tools/ws8_ha_load_proof.py; scale with --scale ws8-correlation=N
+  ws8-correlation:
+    environment:
+      - WS8_TRACE_ALERTS=1

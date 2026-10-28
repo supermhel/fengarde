@@ -111,7 +111,10 @@ services:
     command: >
       sh -c '
       if [ -n "$$REDIS_PASSWORD" ]; then
-        exec redis-server --appendonly yes --replicaof ${REDIS_PRIMARY_IP:-172.28.0.11} 6379 --masterauth "$$REDIS_PASSWORD" --requirepass "$$REDIS_PASSWORD";
+        # FIX 23 must survive promotion: a replica ignores min-replicas-* while it
+        # is a replica and enforces it the moment Sentinel promotes it, so every
+        # data node carries the same flags (tools/check_ha_min_replicas.py gates it).
+        exec redis-server --appendonly yes --replicaof ${REDIS_PRIMARY_IP:-172.28.0.11} 6379 --masterauth "$$REDIS_PASSWORD" --requirepass "$$REDIS_PASSWORD" --min-replicas-to-write 1 --min-replicas-max-lag 10;
       else
         echo "REDIS_PASSWORD must be set for HA" >&2; exit 1;
       fi'
@@ -135,7 +138,10 @@ services:
     command: >
       sh -c '
       if [ -n "$$REDIS_PASSWORD" ]; then
-        exec redis-server --appendonly yes --replicaof ${REDIS_PRIMARY_IP:-172.28.0.11} 6379 --masterauth "$$REDIS_PASSWORD" --requirepass "$$REDIS_PASSWORD";
+        # FIX 23 must survive promotion: a replica ignores min-replicas-* while it
+        # is a replica and enforces it the moment Sentinel promotes it, so every
+        # data node carries the same flags (tools/check_ha_min_replicas.py gates it).
+        exec redis-server --appendonly yes --replicaof ${REDIS_PRIMARY_IP:-172.28.0.11} 6379 --masterauth "$$REDIS_PASSWORD" --requirepass "$$REDIS_PASSWORD" --min-replicas-to-write 1 --min-replicas-max-lag 10;
       else
         echo "REDIS_PASSWORD must be set for HA" >&2; exit 1;
       fi'

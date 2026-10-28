@@ -295,9 +295,11 @@ unchanged by this view.
   errors, acked nothing (group pending 0, lag 1), and after the replicas returned the incident completed once (2 members).
   **Incident id** is bound to the track (`TrackState.bind_incident_id`, first promoter wins), which closes the old horizon-boundary
   limit (regression test `test_horizon_boundary_does_not_fork_the_incident_id`, fails on the previous commit).
-  **Not proven:** failover rates above ~9.5 alerts/s or with the whole app stack under that load; the ws8 proofs in the load runs used
-  two ws8 replicas only. Pre-existing HA config observation (not changed here, not verified live): only `redis-1` carries
-  `--min-replicas-to-write`, so a promoted replica does not.
+  **Follow-up proofs (2026-10-28):**
+  - *Min-replicas on every node:* `docker-compose.ha.yml` (and the proof compose) now start redis-1/2/3 all with `--min-replicas-to-write 1 --min-replicas-max-lag 10`; `tools/check_ha_min_replicas.py` (in `run_all_tests.sh`) fails if a data node lacks it. Live (`ws8_failover_load_proof.py promoted`): after 2 promotions the promoted master (redis-2) refused writes (`NOREPLICAS`) 0.8 s after losing both replicas; the control with the flag forced to 0 accepted the write. `outage` against that promoted master: ws8 0 restarts, 16 error lines, second alert unread/unacked (lag 1, pending 0), one incident with both tactics after recovery, group lag 0 / pending 0.
+  - *3 and 4 ws8 replicas* (350 chains/700 alerts, 4 master kills, failover 3.6-5.7 s): 3 replicas ok 350/350, lost 0, forked 0, wrong members 0, 179 chains split across replicas; 4 replicas ok 350/350, lost 0, forked 0, wrong 0, 183 split chains; 0 duplicate alert messages.
+  - *Full HA stack under load* (`tools/ws8_ha_load_proof.py`, ws1..ws9 + 3 Sentinels + 3-node OpenSearch, 2 ws8 replicas, 100 raw events/s through ws2/ws4/ws3, 3 master kills; verdict from OpenSearch): target 20/50/100 alerts/s -> achieved 10.1/17.4/10.4 alerts/s (the producers plus one 8-CPU host shared by ~25 containers are the limit, not ws8); chains 160/400/800: lost 0, forked 0, wrong members 0, alerts indexed = acked (320/800/1600); 39/151/364 chains split across replicas. Failover 5.0-5.5 s, 6.4-7.4 s, and 2.9/5.8/44.9 s (the 44.9 s one: Sentinel split vote under host CPU saturation).
+  **Not proven:** a sustained >17 alerts/s (the harness could not generate it); more than 4 ws8 replicas; hardware other than the one 8-CPU/7.4 GB Docker Desktop host; a bound on Sentinel failover time under CPU saturation (44.9 s observed, an earlier aborted run saw >60 s).
 - **Tenant isolation**: tenant is part of the track key, not a filter
   (rejected-at-edge via the same `_validated_tenant`-style check
   `services/ws3-indexer/router.py` uses) — a tenant-agnostic key would

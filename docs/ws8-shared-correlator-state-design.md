@@ -134,7 +134,7 @@ the pre-change run), so this does not show behaviour at higher rates or with the
 ## Live proof, both Redis replicas lost (2026-10-28, isolated project ws8sentproof)
 
 `python tools/ws8_failover_load_proof.py outage`: first tactic processed; ws8a/ws8b stopped; second tactic produced; BOTH replicas
-killed, so the primary (`redis-1`, the only node started with `--min-replicas-to-write 1`) refuses writes; ws8 started against it
+killed, so the primary (`redis-1`; at the time of that run the only node started with `--min-replicas-to-write 1`, since fixed, see the follow-up section) refuses writes; ws8 started against it
 and observed for 40 s; replicas restarted. (An earlier attempt used `docker compose start`, which also started the killed
 replicas through `depends_on`; the script now uses `docker start`.)
 
@@ -185,3 +185,40 @@ as raw events into ws2; ws8 killed between the two tactics.
 ws8 reported 4 member alert ids, all of which are indexed alert documents (the script checks this); each rule shows two alert documents,
 which was not investigated further here. The `docker kill` of ws8 was followed by the script waiting up to 40 s for the restart policy and then
 starting the container itself, so the restart count of 0 does not show a policy restart.
+
+## Follow-up live proofs (2026-10-28): min-replicas on every node, 3/4 replicas, full stack under load
+
+**HA config gap closed.** Only `redis-1` used to carry `--min-replicas-to-write 1`; a replica ignores the setting while replicating and
+enforces it when promoted, so after a failover the new master would have accepted unreplicated writes. redis-2/redis-3 now carry the
+same flags (`docker-compose.ha.yml`, `docker-compose.ws8-sentinel-proof.yml`) and `tools/check_ha_min_replicas.py` (wired into
+`run_all_tests.sh`, with a self-test) fails when a `redis-server` line lacks them.
+`ws8_failover_load_proof.py promoted`: flags on all three nodes read back as 1; two promotions (redis-1 -> redis-3 in 4.9 s, redis-3 ->
+redis-2 in 4.3 s, killed node restarted and re-synced each time); the promoted master accepted a write with two replicas, then returned
+`NOREPLICAS` 0.8 s after both replicas were killed. Control (same node with the flag forced to 0, i.e. what an unflagged node does):
+write accepted. `ws8_failover_load_proof.py outage` against that promoted master (redis-2): refused after 0.8 s, ws8a/ws8b 0 restarts,
+16 error lines, second alert unread and unacked (lag 1, pending 0), one incident `[TA0006, TA0008]` with 2 members after recovery, group lag 0 / pending 0.
+
+**3 and 4 ws8 replicas** (`load --chains 350 --kills 4 --rate 10`, 74 s, fresh stack per run): 3 replicas ok 350/350, lost 0, forked ids 0,
+wrong member sets 0, 700 alerts handled once each (207/297/196 per replica), 179 chains had their tactics on different replicas; 4 replicas
+ok 350/350, lost 0, forked 0, wrong 0, 187/234/94/185 per replica, 183 split chains; duplicate alert messages 0; 350 incident ids and 350
+emissions in both runs; failover 3.6-5.7 s (3 replicas) and 4.4-5.3 s (4 replicas).
+
+**Full HA stack under load** (`tools/ws8_ha_load_proof.py`; stack beside the dev stack; two ws8 replicas; chains injected on `alerts`, plus 100
+benign raw events/s through ws2 -> ws4 -> ws3; 3 master kills per run; verdict read from OpenSearch because `shared/bus.py trim_acked` removes
+acked stream prefixes):
+
+| target alerts/s | achieved | chains | lost | forked ids | wrong members | alerts indexed/acked | split chains | failovers (s) |
+|---|---|---|---|---|---|---|---|---|
+| 20 | 10.1 | 160 | 0 | 0 | 0 | 320/320 | 39 | 5.0, 5.5, 5.1 |
+| 50 | 17.4 | 400 | 0 | 0 | 0 | 800/800 | 151 | 6.8, 7.4, 6.4 |
+| 100 | 10.4 | 800 | 0 | 0 | 0 | 1600/1600 | 364 | 2.9, 5.8, 44.9 |
+
+Where it breaks: not in correctness. The producers (docker-exec Python on the same 8-CPU / 7.4 GB host as ~25 containers, 3 OpenSearch nodes)
+could not reach the target rate, and ws3 indexing lags far behind ws8 under backlog (ws8 had emitted 1200 incident ids while ws3 had indexed a
+few hundred documents); the pipeline drained to lag 0 / pending 0 each time. Sentinel failover stretched to 44.9 s once under CPU
+saturation (split vote), and an aborted earlier 100/s attempt saw a failover not complete within 65 s three times. ws8 replicas handled more
+alert deliveries than alerts (e.g. 1846 for 1600) because unacked messages are reclaimed after a failover; no duplicate incident ids resulted.
+Harness bugs found and fixed along the way: a failed OpenSearch read was counted as "0 documents" (one invalid 50/s run reported 400 lost
+chains while OpenSearch held all 400 incidents), and the bus streams cannot be used as the verdict after the drain.
+
+Not proven: a sustained rate above ~17 alerts/s, more than 4 ws8 replicas, other hardware, a bound on Sentinel failover time when the host is saturated.

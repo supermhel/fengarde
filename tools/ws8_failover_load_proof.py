@@ -142,6 +142,23 @@ def collect(chains):
     return json.loads(r.stdout.strip().splitlines()[-1])
 
 
+def replica_split(replicas, chains):
+    """From the per-alert trace logs: alerts handled per ws8 replica, chains whose two tactics ran on different
+    replicas (the case that needs shared state), and alerts handled by more than one replica (redelivery)."""
+    import re
+    seen = {}
+    for svc in replicas:
+        for ln in dc("logs", "--no-log-prefix", svc).stdout.splitlines():
+            m = re.search(r'"msg": "handled alert", "alert_id": "(l-\d+-[12])"', ln)
+            if m:
+                seen.setdefault(m.group(1), set()).add(svc)
+    per = {svc: sum(svc in v for v in seen.values()) for svc in replicas}
+    split = sum(1 for i in range(chains) if seen.get(f"l-{i}-1") and seen.get(f"l-{i}-2")
+                and seen[f"l-{i}-1"].isdisjoint(seen[f"l-{i}-2"]))
+    return {"alerts_traced": len(seen), "per_replica": per, "chains_split_across_replicas": split,
+            "alerts_on_multiple_replicas": sum(len(v) > 1 for v in seen.values())}
+
+
 def cmd_load(a):
     log = lambda *x: print(f"[{time.strftime('%H:%M:%S')}]", *x, flush=True)  # noqa: E731
     sh(COMPOSE + ["exec", "-T", "ws8a", "sh", "-c", "cat > /tmp/gen.py"], input=GEN)
@@ -178,6 +195,7 @@ def cmd_load(a):
         if stable >= 2 and pend == 0:
             break
     res["kills"] = kills
+    res["replicas"] = replica_split(a.replicas.split(","), a.chains)
     res["producer"] = gen
     print("RESULT_JSON " + json.dumps(res))
     c = res["chains"]
@@ -185,7 +203,8 @@ def cmd_load(a):
     print(f"SUMMARY chains={a.chains} eligible={c['eligible']} ok={c['ok']} lost={c['lost']} forked_ids={c['forked']} "
           f"wrong_members={c['wrong_members']} bus_lost_alerts={c['bus_lost_alerts']} "
           f"duplicate_alert_msgs={res['duplicate_alert_messages']} incident_ids={res['incident_ids']} "
-          f"emissions={res['incident_emissions']} kills={len(kills)} producer_failed={len(gen['failed'])}")
+          f"emissions={res['incident_emissions']} kills={len(kills)} producer_failed={len(gen['failed'])} "
+          f"replicas={res['replicas']} producer_s={gen['seconds']}")
     if a.expect_loss:
         print("RESULT load (informational, pre-change comparison)")
         return 0
@@ -210,41 +229,42 @@ def cmd_outage(a):
                  " if 'dave' in json.loads(f['payload'])['incident_id']]")
     master = master_ip()
     log(f"master={master}; sending the first tactic and letting it complete")
-    assert master == "172.29.88.11", "outage proof needs the original primary (the only node with min-replicas-to-write)"
+    msvc = IP_TO_SERVICE[master]
+    others = [v for v in IP_TO_SERVICE.values() if v != msvc]
     exec_py("ws8a", send, "o-1", "TA0006")
     time.sleep(4)
     log("stopping ws8a/ws8b so the second tactic sits unprocessed on the bus, then losing BOTH replicas")
     dc("stop", "ws8a", "ws8b")
     # produce from a throw-away container on the proof network (ws8a/ws8b are stopped)
     dc("run", "--rm", "-T", "--no-deps", "--entrypoint", "python", "ws8a", "-c", send, "o-2", "TA0008")
-    dc("kill", "redis-2", "redis-3")
+    dc("kill", *others)
     t0 = time.time()
     refused = None
     while time.time() - t0 < 60:
-        r = dc("exec", "-T", "redis-1", "redis-cli", "-a", os.environ.get("REDIS_PASSWORD", "proofpw"),
+        r = dc("exec", "-T", msvc, "redis-cli", "-a", os.environ.get("REDIS_PASSWORD", "proofpw"),
                "--no-auth-warning", "set", "probe", "1")
         if "NOREPLICAS" in r.stdout + r.stderr:
             refused = round(time.time() - t0, 1)
             break
         time.sleep(1)
-    log(f"primary refuses writes (NOREPLICAS) after {refused}s")
+    log(f"master {msvc} refuses writes (NOREPLICAS) after {refused}s")
     docker_start("ws8a", "ws8b")
-    log("ws8 restarted against a read-only primary; observing 40 s")
+    log("ws8 restarted against a read-only master; observing 40 s")
     time.sleep(40)
     state = {s: sh(["docker", "inspect", "-f", "{{.State.Status}} restarts={{.RestartCount}} exit={{.State.ExitCode}}",
                     dc("ps", "-q", s).stdout.strip()]).stdout.strip() for s in ("ws8a", "ws8b")}
     log("ws8 containers during the outage:", state)
-    # reading the group needs no write; do it straight from redis-1
-    g = dc("exec", "-T", "redis-1", "redis-cli", "-a", os.environ.get("REDIS_PASSWORD", "proofpw"), "--no-auth-warning",
+    # reading the group needs no write; do it straight from the master
+    g = dc("exec", "-T", msvc, "redis-cli", "-a", os.environ.get("REDIS_PASSWORD", "proofpw"), "--no-auth-warning",
            "xinfo", "groups", "alerts").stdout.replace("\n", " ")
     log("alerts consumer group during outage:", g)
-    during = dc("exec", "-T", "redis-1", "redis-cli", "-a", os.environ.get("REDIS_PASSWORD", "proofpw"),
+    during = dc("exec", "-T", msvc, "redis-cli", "-a", os.environ.get("REDIS_PASSWORD", "proofpw"),
                 "--no-auth-warning", "xlen", "incidents").stdout.strip()
     errs = sh(COMPOSE + ["logs", "--no-log-prefix", "--since", "50s", "ws8a", "ws8b"]).stdout
     err_lines = [ln for ln in errs.splitlines() if '"level": "error"' in ln or "NOREPLICAS" in ln or "Traceback" in ln]
     log(f"ws8 error/warn lines during outage: {len(err_lines)}; sample: {(err_lines[:1] or [''])[0][:220]}")
-    log("recovering: restart redis-2, redis-3")
-    docker_start("redis-2", "redis-3")
+    log(f"recovering: restart {others}")
+    docker_start(*others)
     out = ""
     t0 = time.time()
     while time.time() - t0 < 180:
@@ -260,9 +280,58 @@ def cmd_outage(a):
     ids = {ln.split()[0] for ln in out.splitlines()}
     good = (refused is not None and len(ids) == 1 and out.endswith("2") and "TA0006" in out and "TA0008" in out
             and all("running" in v and "restarts=0" in v for v in state2.values()))
-    print(f"SUMMARY primary_refused_writes_after={refused}s ws8_during={state} incidents_stream_len_during={during} "
+    print(f"SUMMARY master={msvc} refused_writes_after={refused}s ws8_during={state} incidents_stream_len_during={during} "
           f"error_lines_during={len(err_lines)} incident_after_recovery={out!r} ws8_after={state2}")
     print("RESULT outage: " + ("PASS" if good else "FAIL"))
+    return 0 if good else 1
+
+
+def rcli(svc, *args):
+    r = dc("exec", "-T", svc, "redis-cli", "-a", os.environ.get("REDIS_PASSWORD", "proofpw"), "--no-auth-warning", *args)
+    return (r.stdout + r.stderr).strip()
+
+
+def cmd_promoted(a):
+    """Every data node carries --min-replicas-to-write 1, so a PROMOTED replica must also go read-only when it
+    loses all its replicas. Promote `a.promotions` times (killed node restarted and re-synced each time), then
+    kill the new master's replicas and probe a write on the new master. Control: the same probe with
+    min-replicas-to-write forced to 0 (what a node started without the flag would do) is accepted."""
+    log = lambda *x: print(f"[{time.strftime('%H:%M:%S')}]", *x, flush=True)  # noqa: E731
+    flags = {s: rcli(s, "config", "get", "min-replicas-to-write").split() for s in ("redis-1", "redis-2", "redis-3")}
+    log("min-replicas-to-write per node:", flags)
+    for n in range(a.promotions):
+        old = master_ip()
+        svc = IP_TO_SERVICE[old]
+        dc("kill", svc)
+        new, took = wait_new_master(old)
+        log(f"promotion {n + 1}: killed {svc}, new master {new} ({IP_TO_SERVICE.get(new)}) after {took}s")
+        docker_start(svc)
+        t0 = time.time()
+        while time.time() - t0 < 90 and "connected_slaves:2" not in rcli(IP_TO_SERVICE[new], "info", "replication"):
+            time.sleep(2)
+        log(f"  {svc} rejoined as replica after {round(time.time() - t0)}s")
+    m = master_ip()
+    msvc = IP_TO_SERVICE[m]
+    ok_before = rcli(msvc, "set", "probe", "1")
+    log(f"master {msvc} (promoted, original primary is redis-1) write with 2 replicas: {ok_before}")
+    others = [v for v in IP_TO_SERVICE.values() if v != msvc]
+    dc("kill", *others)
+    t0 = time.time()
+    refused = None
+    while time.time() - t0 < 60:
+        if "NOREPLICAS" in rcli(msvc, "set", "probe", "2"):
+            refused = round(time.time() - t0, 1)
+            break
+        time.sleep(1)
+    log(f"promoted master {msvc} refuses writes (NOREPLICAS) {refused}s after losing both replicas")
+    rcli(msvc, "config", "set", "min-replicas-to-write", "0")
+    control = rcli(msvc, "set", "probe", "3")
+    rcli(msvc, "config", "set", "min-replicas-to-write", "1")
+    log(f"control (flag forced to 0, = a node started without it): {control}")
+    docker_start(*others)
+    good = refused is not None and ok_before == "OK" and control == "OK" and all(v[-1] == "1" for v in flags.values())
+    print(f"SUMMARY flags={flags} promotions={a.promotions} refused_after={refused}s control_without_flag={control}")
+    print("RESULT promoted: " + ("PASS" if good else "FAIL"))
     return 0 if good else 1
 
 
@@ -275,12 +344,15 @@ def main():
     l.add_argument("--rate", type=float, default=10.0, help="alerts per second")
     l.add_argument("--kill-interval", type=float, default=15.0)
     l.add_argument("--drain-s", type=int, default=240)
+    l.add_argument("--replicas", default="ws8a,ws8b", help="ws8 services to read traces from")
     l.add_argument("--expect-loss", action="store_true")
     sub.add_parser("outage")
+    pr = sub.add_parser("promoted")
+    pr.add_argument("--promotions", type=int, default=2)
     a = ap.parse_args()
     os.environ.setdefault("COMPOSE_PROJECT_NAME", "ws8sentproof")
     os.environ.setdefault("REDIS_PASSWORD", "proofpw")
-    return {"load": cmd_load, "outage": cmd_outage}[a.cmd](a)
+    return {"load": cmd_load, "outage": cmd_outage, "promoted": cmd_promoted}[a.cmd](a)
 
 
 if __name__ == "__main__":
