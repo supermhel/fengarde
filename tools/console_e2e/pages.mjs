@@ -66,6 +66,24 @@ for (const [name, w, h] of [["desktop", 1440, 900], ["mobile", 390, 844]]) {
   await shot("de");
   await page.click('[data-lang="en"]');
 
+  // second replay: the generated AI-to-OT chain (synthetic input, real pipeline code), started from the page's own button
+  ok(`${name}: two replay buttons, the AI-to-OT one is labelled`, (await page.textContent("#replayAiLabel")).includes("AI-to-OT") && !(await page.$("#replayAi:disabled")));
+  await page.evaluate(() => { window.__msgs = []; window.addEventListener("message", (e) => { if (e.data && e.data.source === "fengarde-demo") window.__msgs.push(e.data); }); });
+  await page.click("#replayAi");
+  await page.waitForFunction(() => /finished/i.test(document.querySelector("#boardState")?.textContent || "") && window.__msgs.some((m) => m.type === "replay-done"), null, { timeout: 90000 });
+  const msgs = await page.evaluate(() => window.__msgs);
+  const rules = msgs.filter((m) => m.type === "alarm").map((m) => m.rule);
+  const incs = msgs.filter((m) => m.type === "incident");
+  ok(`${name}: AI-to-OT replay raises 7 alarms with the chain's titles`, rules.length === 7 && ["n8n new webhook exposed", "outside business hours", "prompt-injection indicator", "non-allowlisted domain", "credential material", "Modbus/TCP write"].every((x) => rules.some((r) => r.includes(x))), rules.join(" | "));
+  ok(`${name}: AI-to-OT replay announces two incidents (7 and 5 alarms)`, incs.length === 2 && incs.map((i) => i.alerts).sort().join() === "5,7", JSON.stringify(incs.map((i) => [i.entity, i.alerts])));
+  ok(`${name}: board and terminal say synthetic input, not recorded`, /synthetic/i.test(await page.textContent("#boardTag")) && /synthetic/i.test(await page.textContent("#termSub")) && !/recorded/i.test(await page.textContent("#termSub")));
+  ok(`${name}: WS-1 stays ready (no collector ran in the AI-to-OT scenario)`, await page.evaluate(() => [...document.querySelectorAll("#boardBody tr")].some((r) => r.textContent.includes("WS-1") && r.querySelector(".st.idle"))));
+  ok(`${name}: the embedded console shows the AI-to-OT alarms`, (await page.frameLocator("#frame").locator(".chip.demo").textContent()).toLowerCase().includes("synthetic"));
+  await shot("ai-ot");
+  await page.click('[data-lang="de"]'); await sleep(400);
+  ok(`${name}: DE labels the finished AI-to-OT replay, the other button and the board tag`, (await page.textContent("#replayAiLabel")).includes("Erneut") && (await page.textContent("#replayLabel")).includes("Angriff abspielen") && /synthetisch/i.test(await page.textContent("#boardTag")) && /synthetisch/i.test(await page.textContent("#termSub")));
+  await page.click('[data-lang="en"]');
+
   // the recordings: four chapters, each loads and plays
   ok(`${name}: four chapters listed`, (await page.$$("#chapters button")).length === 4);
   for (let i = 0; i < 4; i++) {

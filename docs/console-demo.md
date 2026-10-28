@@ -40,6 +40,11 @@ domain and reads credential material, then a Modbus/TCP write outside the PLC ad
   incident graph joins on shared entities and is order-blind (`eval/SCORECARD.md`). It is not IT-to-OT correlation
   across different hosts and not a causal graph. The web-proxy step has no parser (dead-lettered), and the Modbus
   read that follows the first write raises no alarm: seven alarms, as in the twin.
+- **The project page** (`docs/index.html`) has two replay buttons: "Replay the attack" (key `R`, the recorded lab
+  scenario) and "Replay the AI-to-OT chain". The second posts `scenario: "ai-ot"` to the embedded console. While it
+  plays, the board tag and the terminal caption read "synthetic input, real pipeline output" instead of "recorded
+  lab data", and WS-1 stays "ready" on the board (no collector ran: raw records are injected). The board shows the
+  newest three rows; the page receives 7 `alarm` messages and 2 `incident` messages (7 and 5 alarms).
 - Regenerate with `python tools/build_ai_ot_fixtures.py`; `tools/test_build_ai_ot_fixtures.py` fails when the
   committed `fixtures-ai-ot.json` is stale (it ignores only wall-clock stamps).
 
@@ -73,6 +78,7 @@ python ../console_tour_traffic.py 127.0.0.1 5514 203.0.113.50   # one fresh atta
 node record_fixtures.mjs 203.0.113.50                    # writes src/demo/fixtures.json
 cd ../../services/ws7-dashboard/app && npm run build:demo
 node ../../../tools/console_e2e/demo.mjs                 # 37 checks against docs/demo (both scenarios, EN and DE)
+node ../../../tools/console_e2e/pages.mjs                # 71 checks against docs/ (project page, both replays, EN/DE, phone width)
 ```
 
 Needs a running stack with RBAC and the three test accounts (see `tools/console_e2e/README.md`). Local lab

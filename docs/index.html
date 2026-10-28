@@ -4,11 +4,11 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>FENGARDE · Logs in. Evidence out.</title>
-<meta name="description" content="FENGARDE is an open-source, self-hosted security pipeline for IT, AI and OT. Press replay: a recorded lab attack runs through the real console and the departure board announces it.">
+<meta name="description" content="FENGARDE is an open-source, self-hosted security pipeline for IT, AI and OT. Press replay: a recorded lab attack, or a generated AI-to-OT chain, runs through the real console and the departure board announces it.">
 <meta name="color-scheme" content="dark">
 <meta property="og:type" content="website">
 <meta property="og:title" content="FENGARDE: Logs in. Evidence out.">
-<meta property="og:description" content="Open-source, self-hosted security pipeline for IT, AI and OT. Replay a recorded attack through the real console.">
+<meta property="og:description" content="Open-source, self-hosted security pipeline for IT, AI and OT. Replay a recorded attack or a generated AI-to-OT chain through the real console.">
 <meta property="og:url" content="https://supermhel.github.io/fengarde/">
 <meta property="og:image" content="https://supermhel.github.io/fengarde/img/og.png">
 <meta name="twitter:card" content="summary_large_image">
@@ -310,6 +310,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
       <h1 class="cond" style="grid-area:h"><span data-i18n="h1a">Logs in.</span><br><em data-i18n="h1b">Evidence out.</em></h1>
       <div class="cta" style="grid-area:c">
         <button class="btn primary" id="replay" type="button"><span class="play" aria-hidden="true"></span><span id="replayLabel">Replay the attack</span> <kbd>R</kbd></button>
+        <button class="btn" id="replayAi" type="button"><span class="play" aria-hidden="true"></span><span id="replayAiLabel">Replay the AI-to-OT chain</span></button>
         <a class="btn" href="demo/" data-i18n="cta_console">Open console</a>
         <a class="btn" href="#tour" data-i18n="cta_tour">Watch the recordings</a>
         <a class="btn" href="https://github.com/supermhel/fengarde"><svg class="gh-ic" width="17" height="17" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2C6.48 2 2 6.58 2 12.25c0 4.53 2.87 8.37 6.84 9.73.5.1.68-.22.68-.5 0-.24-.01-1.04-.01-1.88-2.78.62-3.37-1.21-3.37-1.21-.46-1.19-1.11-1.51-1.11-1.51-.91-.63.07-.62.07-.62 1 .07 1.53 1.05 1.53 1.05.89 1.56 2.34 1.11 2.91.85.09-.66.35-1.11.63-1.37-2.22-.26-4.56-1.14-4.56-5.06 0-1.12.39-2.03 1.03-2.75-.1-.26-.45-1.3.1-2.71 0 0 .84-.28 2.75 1.05a9.3 9.3 0 0 1 5 0c1.9-1.33 2.74-1.05 2.74-1.05.55 1.41.2 2.45.1 2.71.64.72 1.03 1.63 1.03 2.75 0 3.93-2.34 4.79-4.57 5.05.36.32.68.94.68 1.9 0 1.37-.01 2.48-.01 2.81 0 .28.18.61.69.5A10.26 10.26 0 0 0 22 12.25C22 6.58 17.52 2 12 2z"/></svg>GitHub</a>
@@ -320,7 +321,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
     <div class="board-wrap" id="boardwrap">
       <div class="board-head">
         <h2 class="cond" data-i18n="board_title">Departures</h2>
-        <span class="tiny" data-i18n="board_tag">pipeline · lab stack</span>
+        <span class="tiny" id="boardTag">pipeline · lab stack</span>
         <span class="sub tiny" id="boardState" data-i18n="state_idle">Idle: nothing replayed</span>
       </div>
       <table class="board" id="board">
@@ -338,10 +339,10 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
     <div class="terminal" id="console">
       <div class="terminal-bar">
         <span class="tiny" data-i18n="term_title">Information terminal · the real console</span>
-        <span class="sub" data-i18n="term_sub">recorded lab data · changes are not saved</span>
+        <span class="sub" id="termSub">recorded lab data · changes are not saved</span>
         <a class="ext" href="demo/" target="_blank" rel="noopener" data-i18n="term_open">Open full screen</a>
       </div>
-      <iframe id="frame" title="FENGARDE console, demo build on recorded lab data" data-src="demo/" loading="lazy" referrerpolicy="no-referrer"></iframe>
+      <iframe id="frame" title="FENGARDE console, demo build on recorded lab data and one generated scenario" data-src="demo/" loading="lazy" referrerpolicy="no-referrer"></iframe>
     </div>
   </section>
 
@@ -487,9 +488,10 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
       kicker: "Open-source security pipeline for IT, AI and OT · Apache-2.0 · self-hosted",
       clock_lbl: "Time", clock_sub: "local time",
       h1a: "Logs in.", h1b: "Evidence out.",
-      lede: "FENGARDE is an open-source, self-hosted security pipeline for IT, AI and OT. It turns a raw log line into a <b>verified incident</b> and a <b>draft NIS2 notification</b>. Press replay: a recorded lab attack runs through the real console below, and the board announces it as the console raises it.",
+      lede: "FENGARDE is an open-source, self-hosted security pipeline for IT, AI and OT. It turns a raw log line into a <b>verified incident</b> and a <b>draft NIS2 notification</b>. Press replay: a recorded lab attack, or an AI-agent-to-OT chain generated from synthetic input by the real pipeline code, runs through the real console below, and the board announces it as the console raises it.",
       cta_console: "Open console", cta_tour: "Watch the recordings",
-      replay: "Replay the attack", replaying: "Replaying…", again: "Replay again",
+      replay: "Replay the attack", replaying: "Replaying…", again: "Replay again", replay_ai: "Replay the AI-to-OT chain",
+      board_tag_ai: "pipeline · real code, synthetic input", term_sub_ai: "synthetic input, real pipeline output · changes are not saved",
       board_title: "Departures", board_tag: "pipeline · lab stack",
       state_idle: "Idle: nothing replayed", state_run: "Replay running", state_done: "Replay finished",
       board_cap: "Departure board: pipeline stages and the alarms raised by the replayed attack",
@@ -508,7 +510,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
       run_l2: "The console, its checks and this page's video all come from the repository: <code>services/ws7-dashboard/app</code>, <code>tools/console_e2e</code>.",
       run_l3: "The UDP syslog listener is unauthenticated: expose port 5514 on a trusted network or VPN only.",
       run_l4: "Status, proven versus claimed: <a href=\"https://github.com/supermhel/fengarde/blob/main/SSOT.md\">SSOT.md</a>. Features per view: <a href=\"https://github.com/supermhel/fengarde/blob/main/docs/console-feature-matrix.md\">console feature matrix</a>.",
-      foot_p: "<b>Lab data.</b> The attack is generated by <code>tools/console_tour_traffic.py</code> with documentation-range addresses and sent to a stack on the author's machine. The demo console serves a recording of that run; its timestamps are shifted to now.",
+      foot_p: "<b>Lab data.</b> The attack is generated by <code>tools/console_tour_traffic.py</code> with documentation-range addresses and sent to a stack on the author's machine. The demo console serves a recording of that run; its timestamps are shifted to now. <b>AI-to-OT chain.</b> Not recorded from a live stack: the evaluation twin's synthetic raw records run through the real WS-2/4/5/8/9/3 code in one process (<code>tools/build_ai_ot_fixtures.py</code>). AI verdicts come from the stub backend, the 60 s between steps is replayed 12 times faster, and the incidents join on shared entities (one host, one actor), not across hosts.",
       foot_fonts: "Fonts: Archivo and JetBrains Mono (OFL-1.1), self-hosted. No third-party trackers, no third-party requests. An optional, self-hosted visit counter (GoatCounter) ships in the observability profile: nothing leaves your network.",
       ev_incident: "Incident: {n} tactics, {a} alarms", src_incident: "INCIDENT",
       live_alarm: "New alarm: {r} from {ip}", live_incident: "Incident raised for {e}", live_verified: "Evidence package verified, {b} blocks",
@@ -550,9 +552,10 @@ next_h: "You've seen the pipeline run. Now make it yours.", next_p: "The 10-minu
       kicker: "Quelloffene Security-Pipeline für IT, KI und OT · Apache-2.0 · selbst gehostet",
       clock_lbl: "Zeit", clock_sub: "Ortszeit",
       h1a: "Logs rein.", h1b: "Belege raus.",
-      lede: "FENGARDE ist eine quelloffene, selbst gehostete Security-Pipeline für IT, KI und OT. Sie macht aus einer rohen Logzeile einen <b>geprüften Vorfall</b> und einen <b>NIS2-Meldungsentwurf</b>. Drücken Sie Abspielen: Ein aufgezeichneter Laborangriff läuft durch die echte Konsole unten, und die Tafel kündigt ihn an, sobald die Konsole ihn meldet.",
+      lede: "FENGARDE ist eine quelloffene, selbst gehostete Security-Pipeline für IT, KI und OT. Sie macht aus einer rohen Logzeile einen <b>geprüften Vorfall</b> und einen <b>NIS2-Meldungsentwurf</b>. Drücken Sie Abspielen: Ein aufgezeichneter Laborangriff oder eine KI-Agent-zu-OT-Kette, aus synthetischer Eingabe vom echten Pipeline-Code erzeugt, läuft durch die echte Konsole unten, und die Tafel kündigt ihn an, sobald die Konsole ihn meldet.",
       cta_console: "Konsole öffnen", cta_tour: "Aufzeichnungen ansehen",
-      replay: "Angriff abspielen", replaying: "Spielt ab…", again: "Erneut abspielen",
+      replay: "Angriff abspielen", replaying: "Spielt ab…", again: "Erneut abspielen", replay_ai: "KI-zu-OT-Kette abspielen",
+      board_tag_ai: "Pipeline · echter Code, synthetische Eingabe", term_sub_ai: "synthetische Eingabe, echte Pipeline-Ausgabe · Änderungen werden nicht gespeichert",
       board_title: "Abfahrt", board_tag: "Pipeline · Laborstack",
       state_idle: "Ruhe: nichts abgespielt", state_run: "Wiedergabe läuft", state_done: "Wiedergabe beendet",
       board_cap: "Abfahrtstafel: Pipeline-Stufen und die Alarme des abgespielten Angriffs",
@@ -571,7 +574,7 @@ next_h: "You've seen the pipeline run. Now make it yours.", next_p: "The 10-minu
       run_l2: "Die Konsole, ihre Prüfungen und das Video dieser Seite stammen aus dem Repository: <code>services/ws7-dashboard/app</code>, <code>tools/console_e2e</code>.",
       run_l3: "Der UDP-Syslog-Listener ist nicht authentifiziert: Port 5514 nur in einem vertrauenswürdigen Netz oder per VPN erreichbar machen.",
       run_l4: "Stand, belegt statt behauptet: <a href=\"https://github.com/supermhel/fengarde/blob/main/SSOT.md\">SSOT.md</a>. Funktionen je Ansicht: <a href=\"https://github.com/supermhel/fengarde/blob/main/docs/console-feature-matrix.md\">Konsolen-Funktionsmatrix</a>.",
-      foot_p: "<b>Labordaten.</b> Der Angriff wird von <code>tools/console_tour_traffic.py</code> mit Adressen aus dem Dokumentationsbereich erzeugt und an einen Stack auf dem Rechner des Autors gesendet. Die Demo-Konsole liefert eine Aufzeichnung dieses Laufs; ihre Zeitstempel sind auf jetzt verschoben.",
+      foot_p: "<b>Labordaten.</b> Der Angriff wird von <code>tools/console_tour_traffic.py</code> mit Adressen aus dem Dokumentationsbereich erzeugt und an einen Stack auf dem Rechner des Autors gesendet. Die Demo-Konsole liefert eine Aufzeichnung dieses Laufs; ihre Zeitstempel sind auf jetzt verschoben. <b>KI-zu-OT-Kette.</b> Nicht an einem Live-Stack aufgezeichnet: die synthetischen Rohdaten des Evaluations-Twins laufen durch den echten Code von WS-2/4/5/8/9/3 in einem Prozess (<code>tools/build_ai_ot_fixtures.py</code>). Die KI-Urteile stammen vom Stub-Backend, die 60 s zwischen den Schritten laufen 12-fach schneller, und die Vorfälle verbinden über gemeinsame Entitäten (ein Host, ein Akteur), nicht über Hosts hinweg.",
       foot_fonts: "Schriften: Archivo und JetBrains Mono (OFL-1.1), selbst gehostet. Keine Drittanbieter-Tracker, keine Fremdanfragen. Ein optionaler, selbst gehosteter Besuchszähler (GoatCounter) liegt im Observability-Profil bereit: Nichts verlässt Ihr Netz.",
       ev_incident: "Vorfall: {n} Taktiken, {a} Alarme", src_incident: "VORFALL",
       live_alarm: "Neuer Alarm: {r} von {ip}", live_incident: "Vorfall für {e} gemeldet", live_verified: "Beweispaket geprüft, {b} Blöcke",
@@ -627,6 +630,7 @@ next_h: "Sie haben die Pipeline laufen sehen. Jetzt machen Sie sie zu Ihrer.", n
   var stageOn = {};                // a stage turns "on time" only once the replay has actually passed through it
   var dyn = [];                    // newest first: alarm and incident rows from the replay
   var replayState = "idle";
+  var scenario = "lab";            // which scenario the embedded console is replaying: "lab" (recorded) or "ai-ot" (generated)
   var MAX_DYN = 3;
 
   function flapHtml(text, base) {
@@ -774,8 +778,13 @@ next_h: "Sie haben die Pipeline laufen sehen. Jetzt machen Sie sie zu Ihrer.", n
     try { localStorage.setItem("fg.site.lang", lang); localStorage.setItem("fg.lang", lang); } catch (e) { /* storage blocked */ }
   }
   function setReplayUi() {
-    $("#replayLabel").textContent = replayState === "running" || replayState === "starting" ? t("replaying") : replayState === "done" ? t("again") : t("replay");
-    $("#replay").disabled = replayState === "running" || replayState === "starting";
+    var busy = replayState === "running" || replayState === "starting";
+    [["lab", "#replayLabel", "replay"], ["ai-ot", "#replayAiLabel", "replay_ai"]].forEach(function (b) {
+      $(b[1]).textContent = scenario === b[0] ? (busy ? t("replaying") : replayState === "done" ? t("again") : t(b[2])) : t(b[2]);
+    });
+    $("#replay").disabled = busy; $("#replayAi").disabled = busy;
+    $("#boardTag").textContent = t(scenario === "ai-ot" ? "board_tag_ai" : "board_tag");
+    $("#termSub").textContent = t(scenario === "ai-ot" ? "term_sub_ai" : "term_sub");
     $("#boardState").textContent = replayState === "running" || replayState === "starting" ? t("state_run") : replayState === "done" ? t("state_done") : t("state_idle");
   }
   function announce(msg) { $("#live").textContent = msg; }
@@ -793,29 +802,31 @@ next_h: "Sie haben die Pipeline laufen sehen. Jetzt machen Sie sie zu Ihrer.", n
   } else loadFrame();
 
   var retry = null;
-  function startReplay() {
+  function startReplay(scn) {
     if (replayState === "running" || replayState === "starting") return;
+    scenario = scn === "ai-ot" ? "ai-ot" : "lab";
     replayState = "starting"; setReplayUi();
     whenFrame(function () {
       var tries = 0;
       clearInterval(retry);
       retry = setInterval(function () {            // the demo registers its listener after its first API call: retry until it acks
         if (replayState !== "starting" || ++tries > 40) { clearInterval(retry); if (replayState === "starting") { replayState = "idle"; setReplayUi(); } return; }
-        frame.contentWindow.postMessage({ source: "fengarde-page", type: "replay" }, ORIGIN);
+        frame.contentWindow.postMessage({ source: "fengarde-page", type: "replay", scenario: scenario }, ORIGIN);
       }, 300);
     });
     $("#console").scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" });
   }
-  $("#replay").addEventListener("click", startReplay);
+  $("#replay").addEventListener("click", function () { startReplay("lab"); });
+  $("#replayAi").addEventListener("click", function () { startReplay("ai-ot"); });
   document.addEventListener("keydown", function (e) {
-    if ((e.key === "r" || e.key === "R") && !e.ctrlKey && !e.metaKey && !e.altKey && !/^(INPUT|TEXTAREA|SELECT)$/.test((e.target || {}).tagName || "")) startReplay();
+    if ((e.key === "r" || e.key === "R") && !e.ctrlKey && !e.metaKey && !e.altKey && !/^(INPUT|TEXTAREA|SELECT)$/.test((e.target || {}).tagName || "")) startReplay("lab");
   });
 
   window.addEventListener("message", function (e) {
     var d = e.data;
     if (e.origin !== location.origin && location.origin !== "null") return;
     if (!d || d.source !== "fengarde-demo") return;
-    if (d.type === "replay-start") { clearInterval(retry); replayState = "running"; dyn = []; stageOn = {}; setReplayUi(); renderBoard(); announce(""); light(["ws1"], 1500); setTimeout(function () { light(["ws2"], 1500); }, 350); setTimeout(function () { light(["ws4"], 1500); }, 900); }
+    if (d.type === "replay-start") { clearInterval(retry); replayState = "running"; if (d.scenario) scenario = d.scenario; dyn = []; stageOn = {}; setReplayUi(); renderBoard(); announce(""); if (scenario === "lab") light(["ws1"], 1500); /* ai-ot injects raw records, no collector runs */ setTimeout(function () { light(["ws2"], 1500); }, 350); setTimeout(function () { light(["ws4"], 1500); }, 900); }
     else if (d.type === "alarm") {
       dyn.unshift({ kind: "alarm", at: d.at, src: d.ip || "—", ev: d.rule, track: d.tactic || "—", st: "check", fresh: true });
       dyn = dyn.slice(0, MAX_DYN); renderBoard(); announce(fmt(t("live_alarm"), { r: d.rule, ip: d.ip })); light(["ws4", "ws3"], 1900);
@@ -826,6 +837,7 @@ next_h: "Sie haben die Pipeline laufen sehen. Jetzt machen Sie sie zu Ihrer.", n
       dyn.forEach(function (r) { if (r.kind === "incident" && r.id === d.incident && r.st !== "verified") { r.st = "verified"; r.fresh = true; } });
       renderBoard(); announce(fmt(t("live_verified"), { b: d.blocks })); light(["ws3"], 2200);
     } else if (d.type === "replay-done") { replayState = "done"; setReplayUi(); }
+    else if (d.type === "scenario") { scenario = d.id; setReplayUi(); }
     else if (d.type === "reset") { replayState = "idle"; dyn = []; stageOn = {}; setReplayUi(); renderBoard(); }
   });
 

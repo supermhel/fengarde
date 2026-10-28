@@ -220,7 +220,7 @@ export function replayState(): ReplayState {
 export function startReplay() {
   resetReplay(false);
   replayStart = Date.now();
-  emit({ type: "replay-start" });
+  emit({ type: "replay-start", scenario: SCENARIO });
   const at = (ms: number, fn: () => void) => timers.push(window.setTimeout(fn, Math.max(0, ms)));
   for (const a of hits(FX.alerts).map((h) => h._source).filter((x) => x.time >= T0 && x.rule_title)) {
     at((a.time - T0) / SCALE + DELAY.alert, () => {
@@ -257,6 +257,7 @@ export function setScenario(id: ScenarioId) {
   if (id === SCENARIO) return;
   resetReplay(false);
   activate(id);
+  if (/^#\/[^/]+\/./.test(location.hash)) location.hash = location.hash.replace(/^(#\/[^/]+)\/.*/, "$1"); // a selection from the other scenario no longer exists
   emit({ type: "scenario", id });
 }
 const fromUrl = new URLSearchParams(location.search).get("scenario");
