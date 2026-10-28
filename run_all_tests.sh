@@ -451,6 +451,9 @@ echo
 echo "== WP-3-D: ws5 bounded-LLM concurrency (pool overlap, admission bound, dedup under concurrency) =="; LAST_HEADER="== WP-3-D: ws5 bounded-LLM concurrency (pool overlap, admission bound, dedup under concurrency) =="
 $PY services/ws5-ai/test_concurrency.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
+echo "== ws5 triage verdict-quality harness (labelled set, scoring, stub baseline, silent-fallback measurement) =="; LAST_HEADER="== ws5 triage verdict-quality harness =="
+$PY eval/llm_triage/test_llm_triage_eval.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
 echo "== ws1 syslog UDP listener (v0.2) =="; LAST_HEADER="== ws1 syslog UDP listener (v0.2) =="
 $PY services/ws1-collectors/test_syslog_udp.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
@@ -593,6 +596,9 @@ $PY eval/twin/test_oracle_crosscheck.py || { fail=1; FAILED="${FAILED} ${LAST_HE
 echo
 echo "== twin: the oracle mutation instrument ITSELF (waiver table + inert-key table + ratchet over every storyline) =="; LAST_HEADER="== twin: the oracle mutation instrument itself =="
 $PY eval/twin/oracle_mutate.py --seed 7 || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
+echo "== ws5 triage eval: committed labelled set still equals what the current rules/parsers/storylines produce =="; LAST_HEADER="== ws5 triage eval: labelled set not stale =="
+$PY eval/llm_triage/build_labelled_set.py --check || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 fi  # tier: eval-twin
 if tier_on eval-matrix; then  # tier: eval-matrix
 echo

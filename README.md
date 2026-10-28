@@ -56,7 +56,9 @@ so any piece can be scaled or replaced without rewriting the others.
   network, not a second toolchain.
 - **AI triage that never leaves your network.** Local Ollama when `OLLAMA_URL` is set; otherwise a
   labelled deterministic stub. Alert data is never piped through a third-party LLM
-  API, and the console names which engine actually ran.
+  API, and the console names which engine actually ran. How good the verdicts are is
+  not yet measured with a real model; the harness and the stub baseline are in
+  [`eval/llm_triage/RESULTS.md`](eval/llm_triage/RESULTS.md).
 - **Evidence, not just alerts.** Incidents carry a typed causal graph and a
   Merkle hash-chain evidence package that the API verifies before serving it.
 - **Honest status.** What is proven, what is claimed and what is stubbed is
@@ -212,7 +214,7 @@ and released in v0.11.0. Phase 5 ([PR #92](https://github.com/supermhel/fengarde
 | **Console (React)** (console rebuild) | ✅ Works | Eleven views, DE/EN, light/dark, phone widths, MFA sign-in. `check.mjs` (90 checks across three roles) and `mfa.mjs` pass against the live stack |
 | **Static console demo** (console rebuild) | ✅ Works | `npm run build:demo`: the real console on a recording of a lab run (`docs/demo/`), with an attack replay; labelled as recorded data |
 | Triage workflow | ✅ Works | Status and note per alert; concurrent writes protected (lock plus OpenSearch optimistic concurrency) |
-| AI triage (local Ollama) | ✅ Works, opt-in | `OLLAMA_URL` enables it (no default; unset means the stub), `OLLAMA_MODEL` picks the model (default `qwen2.5`); unset or unreachable degrades to a deterministic offline stub with no network calls; per-rule `llm_gate: false` opt-out; bounded concurrency |
+| AI triage (local Ollama) | ⚠️ Wired and local-only; verdict quality NOT measured with a real model | `OLLAMA_URL` enables it (no default; unset means the stub), `OLLAMA_MODEL` picks the model (default `qwen2.5`); unset or unreachable degrades to a deterministic offline stub with no network calls; per-rule `llm_gate: false` opt-out; bounded concurrency. Measured so far: the offline stub scores 24% on 54 labelled alerts (below the 81% always-malicious baseline); no Ollama model has been evaluated yet, and on slow CPUs a timeout silently serves the stub ([`eval/llm_triage/RESULTS.md`](eval/llm_triage/RESULTS.md)) |
 | Alert and incident reports | ✅ Works | Generic markdown draft and a deterministic German/English NIS2 Art. 23 / §32 BSIG draft (3 stages, 2 languages); entity-specific facts are explicit `[ANALYST MUST PROVIDE]` placeholders, never fabricated; incident-level draft built from the verified evidence package |
 | Evidence package | ✅ Works | Merkle hash chain over an incident's alerts, events and graph; the route verifies before serving (409 on failure, never a silent unverified 200) |
 | OT business context and exposure scoring | ✅ Works, opt-in | `contracts/ot-points/*.yml` adds plant, line, owner and criticality to OT alerts and real points to their score |
