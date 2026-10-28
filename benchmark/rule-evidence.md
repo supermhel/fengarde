@@ -9,7 +9,7 @@ comes from several instruments, each with a different scope. This page says whic
 | Instrument | What it proves | Scope |
 |---|---|---|
 | Producer fixtures + near-miss probes (`eval/attack/fire_check.py`, gate) | each rule fires on a record built to trip it, and stays silent on near-misses of each declared predicate | the 45 rules that carry a technique tag; the one untagged rule (`agent_tool_call_burst`) is reported UNVERIFIED by the negative half |
-| Twin storylines (`eval/twin/oracle*.yaml`, 9 storylines) | the rule fires inside an attack chain through the real pipeline, and mutated chains (volume, jitter, drops, IP rotation) lose or keep it | 38 of 46 rules are named in a storyline oracle (table below) |
+| Twin storylines (`eval/twin/oracle*.yaml`, 11 storylines) | the rule fires inside an attack chain through the real pipeline, and mutated chains (volume, jitter, drops, IP rotation) lose or keep it | all 46 of 46 rules are named in a storyline oracle (table below; the last 8 were closed 2026-10-28 by `win_credential_theft` and `network_credential_abuse`). `agent_tool_call_burst` has no technique tag, so its near-miss half is carried by the `supply_chain_ci` negative twin `burst_49_of_50_calls` (49 calls silent, 50 fires) |
 | Adversarial evasion floors and the mutation ratchet | how cheaply an attacker can evade each stateful rule, ratcheted so a change cannot make it easier | stateful rules, per rule |
 | Real-corpus lanes (`evtx_eval.py`, `splunk_eval.py`) | engine-vs-oracle agreement on third-party attack logs (EVTX-ATTACK-SAMPLES, splunk/attack_data) | **6 rules** with a hand-built oracle: `bruteforce`, `password_spray`, `lateral_movement`, `priv_grant`, `after_hours_admin`, `bruteforce_sourceless`; the other 40 fire on these files with no label, so a firing is neither TP nor FP |
 | Blind recall (`blind_recall.py`) | does the engine catch attacks nobody on the team labelled (labels from the dataset authors) | first pass 2026-10-14: 1,509 labelled units, 325 fetched, 12 hits; 26 techniques have a rule, 4 had a hit. It is not a recall figure (78% of units were never fetched, 184 fetched units had no parser, 79 no rule) |
@@ -20,7 +20,7 @@ storylines, evasion) shows the rules work as designed, not how they perform in a
 
 ## Plan on record to close the gap
 
-1. Every rule exercised end to end by a storyline (P1): 38 of 46 now; the 8 below are the remainder
+1. Every rule exercised end to end by a storyline (P1): **done, 46 of 46** (2026-10-28; the previous 38 plus the last 8)
    (`docs/handoff/2026-10-14-p1-coverage-map.md` holds the design).
 2. Grow the real-data funnel (P2): fetch more of the labelled units, add parsers for the 184 no-parser units, add rules for
    the 79 no-rule units (`docs/handoff/2026-10-14-p2-blind-recall-funnel.md`).
@@ -45,17 +45,17 @@ storylines, evasion) shows the rules work as designed, not how they perform in a
 | `common_bruteforce` | T1110 | yes | yes |
 | `common_bruteforce_by_account` | T1110 | yes | no |
 | `common_bruteforce_sourceless` | T1110 | yes | yes |
-| `common_credential_stuffing_sustained` | T1110.004 | **no** | no |
+| `common_credential_stuffing_sustained` | T1110.004 | yes | no |
 | `common_dns_exfil` | T1071.004 | yes | no |
 | `common_dns_tunnel_by_domain` | T1071.004 | yes | no |
 | `common_impossible_travel` | T1078 | yes | no |
 | `common_lateral_movement` | T1021 | yes | yes |
 | `common_lateral_movement_by_source` | T1021 | yes | no |
 | `common_password_spray` | T1110.004 | yes | yes |
-| `common_password_spray_by_source` | T1110.003 | **no** | no |
+| `common_password_spray_by_source` | T1110.003 | yes | no |
 | `common_port_scan` | T1046 | yes | no |
 | `common_port_scan_by_target` | T1046 | yes | no |
-| `common_port_sweep` | T1046 | **no** | no |
+| `common_port_sweep` | T1046 | yes | no |
 | `common_priv_grant` | T1098 | yes | yes |
 | `common_rapid_account_lifecycle` | T1136 | yes | no |
 | `dc_mass_vm_delete` | T1485 | yes | no |
@@ -72,11 +72,11 @@ storylines, evasion) shows the rules work as designed, not how they perform in a
 | `ot_new_engineering_connection` | T0864 | yes | no |
 | `ot_opcua_write_unauthorized_node` | T0855 | yes | no |
 | `ot_write_outside_maintenance` | T0836 | yes | no |
-| `win_ad_sensitive_attribute_modified` | T1098 | **no** | no |
-| `win_audit_log_cleared` | T1070.001 | **no** | no |
-| `win_lsass_access_suspicious` | T1003.001 | **no** | no |
+| `win_ad_sensitive_attribute_modified` | T1098 | yes | no |
+| `win_audit_log_cleared` | T1070.001 | yes | no |
+| `win_lsass_access_suspicious` | T1003.001 | yes | no |
 | `win_office_spawns_shell` | T1204.002 | yes | no |
-| `win_powershell_suspicious_script` | T1059.001 | **no** | no |
-| `win_service_installed_suspicious_path` | T1543.003 | **no** | no |
+| `win_powershell_suspicious_script` | T1059.001 | yes | no |
+| `win_service_installed_suspicious_path` | T1543.003 | yes | no |
 
-46 rules; 38 named in a twin oracle; 6 graded on real corpora; 1 without a technique tag.
+46 rules; 46 named in a twin oracle; 6 graded on real corpora; 1 without a technique tag.

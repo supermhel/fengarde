@@ -190,10 +190,12 @@ VOLATILE: tuple[str, ...] = (
 #: cannot silently disappear from the card. It is a deliberate snapshot: every
 #: storyline that lands must extend this list in the same commit (5th storyline
 #: ``ot_opcua_sabotage``, 2026-10-14; P1 storylines 6-9 ``ransomware``, ``insider_exfil``,
-#: ``cloud_iam_abuse``, ``supply_chain_ci``, 2026-10-14).
+#: ``cloud_iam_abuse``, ``supply_chain_ci``, 2026-10-14; storylines 10-11 ``win_credential_theft``,
+#: ``network_credential_abuse``, 2026-10-28, which name the last 8 rules no oracle named).
 STORYLINES: tuple[str, ...] = ("ai_to_ot", "it_intrusion", "infra_takeover",
                                "phishing_bec", "ot_opcua_sabotage", "ransomware",
-                               "insider_exfil", "cloud_iam_abuse", "supply_chain_ci")
+                               "insider_exfil", "cloud_iam_abuse", "supply_chain_ci",
+                               "win_credential_theft", "network_credential_abuse")
 
 #: ``eval/twin/report.latest.json`` and ``matrix.latest.json`` cover this
 #: storyline only; every twin-only metric reads ``twin_only``.
