@@ -107,6 +107,9 @@ class FakeRedis:
     def smembers(self, k):
         return set(self.d.get(k, set()))
 
+    def get(self, k):
+        return self.d.get(k)
+
     def set(self, k, v, nx=False, ex=None):
         if nx and k in self.d:
             return None
@@ -201,6 +204,24 @@ def test_no_duplicate_incidents_under_redelivery_and_double_promotion():
                       f"redelivery changed the incident: {out}")
     total = sum(r.metrics()["ws8_promotions_total"] for r in reps)
     check(total == 1, f"an incident must be counted as promoted ONCE across replicas, got {total}")
+
+
+def test_horizon_boundary_does_not_fork_the_incident_id():
+    """Two alerts of one chain straddle a horizon boundary and arrive out of order: before the sticky id,
+    the late early-stamped alert lowered first_seen into the previous bucket and minted a second id."""
+    for shared in (True, False):                  # shared Redis state (two replicas) and plain memory
+        store = FakeRedis()
+        r1 = _replica(store, shared=shared)
+        r2 = _replica(store, shared=shared) if shared else r1
+        edge = (NOW[0] // r1.horizon_ms) * r1.horizon_ms   # a boundary in the past (future stamps are rejected)
+        out = r1.ingest_alert(_alert("b", "TA0008", t=edge + 1)) + r1.ingest_alert(_alert("c", "TA0006", t=edge + 2))
+        out += r2.ingest_alert(_alert("a", "TA0006", t=edge - 1))   # late, stamped in the previous bucket
+        out += r1.ingest_alert(_alert("a", "TA0006", t=edge - 1))   # redelivery on the other replica
+        ids = {i["incident_id"] for i in out if i["entity_type"] == "actor"}
+        check(len(ids) == 1, f"horizon boundary (shared={shared}): one chain minted ids {sorted(ids)}")
+        last = [i for i in out if i["entity_type"] == "actor"][-1]
+        check(last["first_seen"] == edge - 1 and last["member_count"] == 3,
+              f"horizon boundary (shared={shared}): payload must still carry the true min / all members: {last}")
 
 
 def test_first_seen_is_min_across_replicas():

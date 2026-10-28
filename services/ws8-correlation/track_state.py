@@ -50,6 +50,7 @@ class MemoryTrackState:
         self.sides: dict[str, dict] = {}
         self.metas: dict[str, dict] = {}
         self._claimed: set = set()
+        self.cids: dict[str, str] = {}
 
     def record(self, key: str, member: str, entry: dict, now_ms: int) -> None:
         self.sides.setdefault(key, {})[member] = entry
@@ -77,9 +78,13 @@ class MemoryTrackState:
         self._claimed.add(incident_id)
         return True
 
+    def bind_incident_id(self, key: str, candidate: str) -> str:
+        return self.cids.setdefault(key, candidate)
+
     def forget_track(self, key: str) -> None:
         self.sides.pop(key, None)
         self.metas.pop(key, None)
+        self.cids.pop(key, None)
 
     def forget_incident(self, incident_id: str) -> None:
         self._claimed.discard(incident_id)
@@ -136,6 +141,15 @@ class RedisTrackState:
         pipe.set(k, "1", nx=True, ex=self.ttl_s)
         pipe.expire(k, self.ttl_s)
         return bool(pipe.execute()[0])
+
+    def bind_incident_id(self, key: str, candidate: str) -> str:
+        """First promoter's id wins for the track's lifetime (SET NX), so replicas never mint two ids."""
+        k = self._k("cid", key)
+        pipe = self.r.pipeline()
+        pipe.set(k, candidate, nx=True, ex=self.ttl_s)
+        pipe.get(k)
+        pipe.expire(k, self.ttl_s)
+        return pipe.execute()[1]
 
     def forget_track(self, key: str) -> None:
         pass  # EXPIRE reclaims abandoned tracks

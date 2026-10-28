@@ -33,9 +33,18 @@ Design (`services/ws8-correlation/track_state.py`):
   stays process-local; it is rebuilt from the shared side table after a restart.
 - Failure: a Redis error raises out of the handler -> runner leaves the message unacked ->
   redelivery re-records the same member id (idempotent). Same path as #124's Sentinel work.
-- Known limit kept: first_seen is min over what has been recorded; a replica promoting before
-  an earlier-stamped alert from a peer lands could emit under a different bucket id only when
-  the two timestamps straddle a horizon boundary (pre-existing out-of-order behaviour).
+- Sticky incident id (2026-10-28, closes the old horizon-boundary limit): the id was `bucket(first_seen)` and
+  `first_seen` is the min over what has been recorded so far, so two alerts of one chain whose stamps straddle a
+  horizon boundary, arriving out of order, could mint two ids (one before, one after the early alert landed),
+  on one replica or two. Fix: the id is bound to the TRACK, not recomputed. `TrackState.bind_incident_id(track,
+  candidate)` stores the first candidate (Redis `SET NX EX`, key `ws8:state:cid:<track>`, same TTL basis as the
+  track; memory: a dict dropped with the track) and returns the stored one, so every replica and every
+  redelivery emits the id the first promoter minted. Race: two replicas promoting at once both offer a
+  candidate, SET NX picks one, both read it back. `first_seen` in the payload stays the true min.
+- Trade-off: the id is now fixed by the FIRST promotion's `first_seen` bucket, not by the final min, so it is
+  order-dependent across different arrival orders of the same alert set (it was already, between promotions);
+  it is identical across replicas and redeliveries, which is what WS-3's CAS needs. A track that goes idle past
+  the TTL starts a new id, as before.
 
 ## Live proof (2026-10-28, isolated compose project ws8proof, plain Redis 7)
 

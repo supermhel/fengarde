@@ -936,7 +936,10 @@ class Correlator:
         # so the id stays anchored to the track's earliest evidence for as
         # long as the track itself stays live.
         first_seen = meta["first_seen"]
-        incident_id = self._incident_id(tenant, entity_type, entity_value, first_seen)
+        # Bound to the track (first promoter wins, shared across replicas): a late alert that lowers
+        # first_seen across a horizon boundary must not mint a second id for the same chain.
+        incident_id = self.state.bind_incident_id(
+            key, self._incident_id(tenant, entity_type, entity_value, first_seen))
         incident = {
             "incident_id": incident_id,
             "tenant_id": tenant,
