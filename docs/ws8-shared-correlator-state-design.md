@@ -53,4 +53,35 @@ name cg-correlate-1-140667156129472 pending 0 idle 128733 inactive 136984
 distinct incident ids for 10 chains: 10 ; emissions with both members: 10
 RESULT B: PASS (one incident per chain, 2 members each)
 ```
-Not covered: redis-sentinel profile live, failover mid-chain.
+
+## Live proof, Sentinel path (2026-10-28, isolated project ws8sentproof)
+
+`infra/docker-compose.ws8-sentinel-proof.yml`: 1 primary + 2 replicas + 3 Sentinels (same flags, static IPs and
+`redis-sentinel-entrypoint.sh` as `docker-compose.ha.yml`), two ws8 replicas, `BUS_BACKEND=redis-sentinel`,
+`WS8_TRACE_ALERTS=1`. The per-alert lines (`  b-N-x -> [replica]`) are trimmed here; the script prints all 40.
+
+```
+master at start: 172.29.88.11
+ws8a: track_state": "RedisTrackState"
+ws8b: track_state": "RedisTrackState"
+
+### B. two replicas, per-alert trace (20 chains = 40 alerts)
+alerts traced: 40; per replica: {'ws8a': 23, 'ws8b': 17}; chains split across replicas: 13 [1, 2, 4, 5, 6, 7, 10, 11, 12, 13, 17, 18, 20]
+distinct incident ids: 20 ; emissions with both members: 20
+RESULT B: PASS (both replicas handled alerts, 13
+ chains had their tactics on different replicas, one incident per chain)
+
+### A. kill the Redis MASTER between the two tactics
+ws8b {"ts": "2026-10-28T11:09:17Z", "level": "info", "service": "ws8-correlation", "trace_id": "1793185757948-0", "msg": "handled alert", "alert_id": "c-1", "replica": "35bc440bf304"}
+state keys for carol before the kill:
+['ws8:state:meta:acme:actor:carol', 'ws8:state:side:acme:actor:carol', 'ws8:state:tac:acme:actor:carol']
+ Container ws8sentproof-redis-1-1 Killing 
+ Container ws8sentproof-redis-1-1 Killed 
+redis-1 (master 172.29.88.11) KILLED at 12:09:29
+new master: 172.29.88.12 (after ~2s of polling)
+ws8a {"ts": "2026-10-28T11:09:39Z", "level": "info", "service": "ws8-correlation", "trace_id": "1793185777486-0", "msg": "handled alert", "alert_id": "c-2", "replica": "b33b00e6f8e9"}
+acme:actor:carol:20754 ['TA0006', 'TA0008'] members=2
+carol emissions=1 distinct incident ids=1
+RESULT A: PASS (master killed mid-chain, failover to 172.29.88.12, one incident id with 2 members, emissions=1)
+```
+Not covered: the full docker-compose.ha.yml stack, failover under load, loss of both replicas. One failover, one chain.

@@ -60,7 +60,14 @@ def make_correlator() -> Correlator:
 
 
 def make_handler(bus, correlator: Correlator):
+    trace = os.getenv("WS8_TRACE_ALERTS") == "1"  # live proofs: which replica handled which alert
+    if trace:
+        import socket
+        from shared.log import get_logger
+        log = get_logger("ws8-correlation")
     def handle_alert(payload: dict) -> None:
+        if trace:
+            log.info("handled alert", alert_id=payload.get("alert_id"), replica=socket.gethostname())
         for incident in correlator.ingest_alert(payload):
             bus.produce("incidents", key=incident["incident_id"], payload=incident)
             # WP-2-C / ADR-009: emit the incident's relationship graph on its

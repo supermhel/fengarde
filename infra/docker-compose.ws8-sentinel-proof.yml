@@ -1,0 +1,62 @@
+# Isolated Sentinel live proof for WS-8 shared correlator state (same topology and redis/sentinel flags as
+# docker-compose.ha.yml: 1 primary + 2 replicas + 3 Sentinels, static IPs, min-replicas-to-write).
+# Own project name, own subnet, no container_name, no host ports -> cannot clash with the dev/HA stacks.
+#   COMPOSE_PROJECT_NAME=ws8sentproof docker compose -f infra/docker-compose.ws8-sentinel-proof.yml up -d --build
+#   bash tools/ws8_sentinel_live_proof.sh
+x-redis: &redis
+  image: redis:7-alpine
+  environment: ["REDIS_PASSWORD=${REDIS_PASSWORD:-proofpw}"]
+  healthcheck: { test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" --no-auth-warning ping"], interval: 2s, timeout: 3s, retries: 15 }
+x-sentinel: &sentinel
+  image: redis:7-alpine
+  command: ["sh", "/redis-sentinel-entrypoint.sh"]
+  environment:
+    - REDIS_PASSWORD=${REDIS_PASSWORD:-proofpw}
+    - REDIS_SENTINEL_PRIMARY_HOST=172.29.88.11
+    - REDIS_SENTINEL_DOWN_AFTER_MS=3000
+    - REDIS_SENTINEL_FAILOVER_TIMEOUT_MS=10000
+  volumes: ["./redis-sentinel-entrypoint.sh:/redis-sentinel-entrypoint.sh:ro"]
+  depends_on:
+    redis-1: { condition: service_healthy }
+    redis-2: { condition: service_healthy }
+    redis-3: { condition: service_healthy }
+x-ws8: &ws8
+  build: { context: .., dockerfile: services/ws8-correlation/Dockerfile }
+  environment:
+    - BUS_BACKEND=redis-sentinel
+    - REDIS_SENTINEL_HOSTS=sentinel-1:26379,sentinel-2:26379,sentinel-3:26379
+    - REDIS_SENTINEL_MASTER=mymaster
+    - REDIS_PASSWORD=${REDIS_PASSWORD:-proofpw}
+    - WS8_TRACE_ALERTS=1
+  depends_on:
+    sentinel-1: { condition: service_started }
+    sentinel-2: { condition: service_started }
+    sentinel-3: { condition: service_started }
+services:
+  redis-1:
+    <<: *redis
+    command: sh -c 'exec redis-server --appendonly yes --requirepass "$$REDIS_PASSWORD" --masterauth "$$REDIS_PASSWORD" --min-replicas-to-write 1 --min-replicas-max-lag 10'
+    networks: { ha: { ipv4_address: 172.29.88.11 } }
+  redis-2:
+    <<: *redis
+    command: sh -c 'exec redis-server --appendonly yes --replicaof 172.29.88.11 6379 --masterauth "$$REDIS_PASSWORD" --requirepass "$$REDIS_PASSWORD"'
+    depends_on: { redis-1: { condition: service_healthy } }
+    networks: { ha: { ipv4_address: 172.29.88.12 } }
+  redis-3:
+    <<: *redis
+    command: sh -c 'exec redis-server --appendonly yes --replicaof 172.29.88.11 6379 --masterauth "$$REDIS_PASSWORD" --requirepass "$$REDIS_PASSWORD"'
+    depends_on: { redis-1: { condition: service_healthy } }
+    networks: { ha: { ipv4_address: 172.29.88.13 } }
+  sentinel-1: { <<: *sentinel, networks: { ha: { ipv4_address: 172.29.88.21 } } }
+  sentinel-2: { <<: *sentinel, networks: { ha: { ipv4_address: 172.29.88.22 } } }
+  sentinel-3: { <<: *sentinel, networks: { ha: { ipv4_address: 172.29.88.23 } } }
+  ws8a:
+    <<: *ws8
+    networks: [ha]
+  ws8b:
+    <<: *ws8
+    networks: [ha]
+networks:
+  ha:
+    driver: bridge
+    ipam: { config: [{ subnet: 172.29.88.0/24, ip_range: 172.29.88.128/25 }] }

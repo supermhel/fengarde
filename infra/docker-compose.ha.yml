@@ -12,8 +12,9 @@
 # `container_name`s (siem-bus-ha-N, siem-sentinel-ha-N, siem-store-ha-N, ...), so a second HA project
 # (another `-p` name) on the same host collides. A previously exited `siem-ws3-indexer-init` of the
 # single-node stack also collides with the one-shot init container of this stack: remove it first.
-# ws8-correlation state is shared via Redis since 2026-10-28; multi-replica proven on plain Redis only,
-# not yet on this Sentinel profile (see services/ws8-correlation/INTERFACE.md, "Shared correlator state").
+# ws8-correlation state is shared via Redis since 2026-10-28; multi-replica and master-kill mid-chain were proven live
+# on this profile's Redis/Sentinel topology with ws8 alone (tools/ws8_sentinel_live_proof.sh), not on this full stack
+# (see services/ws8-correlation/INTERFACE.md, "Shared correlator state").
 #
 # The profile:
 # - adds 1 Redis primary + 2 replicas + 3 Sentinels on an internal `ha` network

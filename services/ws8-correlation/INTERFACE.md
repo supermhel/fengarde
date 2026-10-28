@@ -279,8 +279,12 @@ unchanged by this view.
   (rebuilt from the shared members) and the sweep clock. **Proof:** zero-infra `test_shared_state.py`;
   live on plain Redis in an isolated compose project (`tools/ws8_shared_state_live_proof.sh`): incident formed
   across a SIGKILL+restart, and 10 chains split over two replicas gave 10 incident ids, 2 members each.
-  **Not live-proven:** the `redis-sentinel` path (same client helper, covered only by fake-Sentinel tests)
-  and a failover mid-chain. Residual: if two replicas promote one track while an earlier-stamped alert from a
+  **Sentinel, live (2026-10-28, `tools/ws8_sentinel_live_proof.sh`, own compose project, HA-profile Redis/Sentinel
+  topology and flags):** the Redis master was killed between the two tactics of one chain, a replica was promoted,
+  and the incident formed once (one id, 2 members); 20 chains over two replicas with a per-alert trace
+  (`WS8_TRACE_ALERTS=1` logs `handled alert` + replica hostname) gave 20 incident ids, 13 chains split across replicas.
+  **Not proven:** the complete `docker-compose.ha.yml` stack (only ws8 + Redis/Sentinel were run), failover under
+  load with many in-flight alerts, and loss of both replicas (primary goes read-only by design). Residual: if two replicas promote one track while an earlier-stamped alert from a
   peer is still in flight and the stamps straddle a horizon boundary, the early emission can carry a different
   bucket id (pre-existing out-of-order behaviour, not new).
 - **Tenant isolation**: tenant is part of the track key, not a filter
