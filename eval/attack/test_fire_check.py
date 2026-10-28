@@ -676,22 +676,40 @@ def test_unverified_and_untagged_rules_are_warned_not_claimed_passing():
     """R3-#39 + NEW-hunt (2026-08-27): a rule negatively verified by NEITHER
     half, and a rule with NO mitre.technique, used to be silently invisible
     under an `[OK] n rule(s)` line -- the exact 'nothing tested, looks green'
-    shape this repo keeps killing. Both must now surface as [WARN] and be
-    counted UNVERIFIED, never claimed *passing*, while the positive fire check
-    still holds (rc stays 0 on the real set -- these are open gaps, not
-    failures, and the gate's exit-0 pinning makes that explicit)."""
+    shape this repo keeps killing. Both must surface, never be claimed
+    *passing* unless actually probed.
+
+    2026-10-28: an untagged rule is no longer skipped. The probes key on the
+    rule and its fixture, not the technique, so agent_tool_call_burst (no
+    ATT&CK mapping, on purpose) now runs the same positive / boundary probes.
+    POSITIVE: on the real set it fires, its threshold-1 and window-overrun
+    probes hold, and the output says so. NEGATIVE: with its negative half
+    made unconstructible the old [WARN] / UNVERIFIED / `NO mitre.technique`
+    wording returns, so a green line can never come from skipping it."""
     rc, out = _run_main_capturing()
     check(rc == 0, f"real rule set must still exit 0 (unverified != failed), got {rc}")
-    check("[WARN]" in out, "unverified/untagged rules must be [WARN]ed, not [OK]ed")
-    check("UNVERIFIED" in out.upper(),
-          "unverified rules must be labelled UNVERIFIED, not claimed passing")
-    # The old bug line opened with "[OK] {n} rule(s) negatively verified by
-    # NEITHER half" -- its exact wording must be gone.
+    check("(untagged) 2b3c4d5e-6f70-4899-8a1b-2c3d4e5f6a7c" in out,
+          "the untagged agent_tool_call_burst rule must be exercised and named, not skipped")
+    check("under_threshold: held" in out and "window_overrun: held" in out,
+          "the untagged rule's below-threshold and window-overrun probes must run and hold")
+    check("1 fired AND held their negative half" in out,
+          "the output must state that the untagged rule fired and held its negative half")
     check("negatively verified by NEITHER half -- untested, not passing -- see"
           not in out, "the old [OK]-under-unverified phrasing must be gone")
-    check("NO mitre.technique" in out,
-          "rules without a mitre.technique must be named as UNVERIFIED, not "
-          "silently `continue`d past")
+
+    real_boundary, real_near = fc._boundary_probe, fc._near_miss_probe
+    fc._boundary_probe = lambda rule, ev, blocked=False: {"applicable": False, "reason": "forced skip"}
+    fc._near_miss_probe = lambda rule, ev, blocked=False: {"applicable": False, "reason": "forced skip"}
+    try:
+        rc2, out2 = _run_main_capturing()
+    finally:
+        fc._boundary_probe, fc._near_miss_probe = real_boundary, real_near
+    check(rc2 == 0, f"unverified is a warning, not a failure, got {rc2}")
+    check("[WARN]" in out2, "unverified/untagged rules must be [WARN]ed, not [OK]ed")
+    check("UNVERIFIED" in out2.upper(),
+          "unverified rules must be labelled UNVERIFIED, not claimed passing")
+    check("NO mitre.technique" in out2,
+          "an untagged rule whose negative half did not hold must be named as UNVERIFIED")
 
 
 def test_canary_is_green_while_zero_rules_are_checked():

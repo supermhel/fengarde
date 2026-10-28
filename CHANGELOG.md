@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `eval/twin/storyline_network_credential_abuse.py` + `oracle_network_credential_abuse.yaml`: horizontal sweep -> password spray from the
   same source -> slow credential stuffing. Names `common_port_sweep`, `common_password_spray_by_source`,
   `common_credential_stuffing_sustained`; the 300 s burst rule and the vertical port-scan rule are declared `must_not_fire` there.
+- `eval/attack/fire_check.py` no longer skips the one rule without a `mitre.technique` (`agent_tool_call_burst`): the probes never needed the
+  technique, so it now runs the positive, threshold-1 and window-overrun probes (fires at 50, silent at 49 and at 61 s). Separate
+  `fire_check_untagged.json`; the tagged results and every consumer keyed on technique are unchanged. `test_fire_check.py` updated
+  (positive on the real set, negative with the probes forced to skip).
 - Both oracles were authored from rule intent before the first run; the reconciler agrees with no accepted entry. Each declares a genuine
   entity-disjoint forbidden pair (a bystander that no join reaches), so `false_correlation_rate` is 0.0 on both. Seven negative twins.
 - Harness bookkeeping, no behaviour change: scorecard registry + test counts, `technique_waivers.yaml` emptied (8 stale waivers),
