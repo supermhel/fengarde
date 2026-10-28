@@ -37,6 +37,7 @@ LIVE_ONLY_ORPHANS = {
     "services/ws3-indexer/test_mfa_live_e2e.py",                             # CI ws3-mfa live job
     "services/ws4-detection/test_window_sentinel_failover_live.py",          # tools/sentinel_failover_live.py
     "services/ws4-detection/test_window_redis_live.py",                      # CI redis-integration (Q11 Lua fallback)
+    "services/ws4-detection/test_window_lua_live.py",                        # CI redis-integration (EVALSHA vs pipeline parity)
     # mutmut execution targets (NOT standalone gate suites): `make mutation-test`
     # / CI's `mutmut run` invokes them as the mutation-testing harness on the
     # configured source set. They are not run by run_all_tests.sh by design --
