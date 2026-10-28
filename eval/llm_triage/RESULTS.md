@@ -22,6 +22,34 @@ Do not edit by hand; the contract test (`test_llm_triage_eval.py`) fails on any 
 - Every case is sent with `tier=llm` so each exercises `analyze()`; production would route only
   `score >= 60` there (the `llm tier subset` column).
 
+## Diagnosis: is the poor `qwen2.5:3b` result the prompt, the labels or the model?
+
+Generated from `results/variants.json` (`variants.py`, 2026-10-28, model `qwen2.5:3b`). Direct Ollama calls, so stub share is 0% by construction and no row was a timeout or parse error unless the error column says so.
+
+Protocol: per label, sorted by case_id, every 3rd -> holdout. DEV 37 cases (variants compared here only; 4 are few-shot examples and are not scored, leaving 33), HOLDOUT 17 cases (14 true_positive, 3 false_positive: the false-positive numbers rest on a handful of cases). The variant picked on DEV (best accuracy) was run once on HOLDOUT.
+
+**Label ceiling.** Alerts are single events plus rule titles. In 9 of 33 distinct (rule, source) signatures a true and a false positive share the same rule and source (e.g. a scanner decoy and the attacker's scan are the same ASA deny line from different, equally private addresses), so a verdict from (rule, source) alone is capped at 44/54 = 81.5%, the always-malicious baseline. Telling them apart needs entity/baseline context the model is not given.
+
+### DEV (scored cases only)
+
+| variant | n | accuracy | abstain | error | TP recall | TP precision | FP recall | FP precision | p50 latency ms |
+|---|---|---|---|---|---|---|---|---|---|
+| A_shipped_default: shipped prompt, Ollama default sampling (the original direct run) | 33 | 3.0% | 97.0% | 0.0% | 3.6% | 100.0% | 0.0% | n/a | 27434.1 |
+| B_shipped_t0: shipped prompt, temperature 0 | 33 | 0.0% | 100.0% | 0.0% | 0.0% | n/a | 0.0% | n/a | 23388.7 |
+| C_definitions_t0: verdict definitions, temperature 0 | 33 | 27.3% | 27.3% | 0.0% | 17.9% | 83.3% | 80.0% | 22.2% | 25232.4 |
+| D_definitions_schema: definitions + JSON schema enum (3 verdicts), t0 | 33 | 27.3% | 27.3% | 0.0% | 17.9% | 83.3% | 80.0% | 22.2% | 21767.3 |
+| E_binary_schema: definitions + schema forcing benign|malicious (diagnostic: removes the abstain option) | 33 | 39.4% | 0.0% | 0.0% | 32.1% | 90.0% | 80.0% | 17.4% | 9786.9 |
+| F_fewshot_t0: definitions + 4 DEV examples, temperature 0 | 33 | 21.2% | 0.0% | 0.0% | 7.1% | 100.0% | 100.0% | 16.1% | 26072.0 |
+
+### HOLDOUT (picked on DEV: `E_binary_schema`)
+
+| variant | n | accuracy (95% Wilson) | abstain | TP recall | TP precision | FP recall | FP precision | always-malicious baseline |
+|---|---|---|---|---|---|---|---|---|
+| A_shipped_default | 17 | 0.0% (0.0% to 18.4%) | 94.1% | 0.0% | n/a | 0.0% | 0.0% | 82.3% |
+| E_binary_schema | 17 | 47.1% (26.2% to 69.0%) | 0.0% | 35.7% | 100.0% | 100.0% | 25.0% | 82.3% |
+
+Reading: the shipped prompt makes this model answer `suspicious` (needs-review) on 94-100% of alerts, so the prompt is a real cause: definitions that discourage `suspicious` (C, D) cut abstention to 27% and a forced benign/malicious schema (E) to 0%. But fixing the prompt does not make the model a usable triager: the best variant (E) is still below the always-malicious baseline on DEV and on HOLDOUT, it leans `benign` (it called 12 of 17 held-out alerts benign, missing 9 of 14 real attacks: a SIEM-unsafe error), and a temperature-0 few-shot variant (F) did not help. Its `malicious` calls were right, but few. So the remaining weakness is the model's discrimination plus labels that a single event cannot decide, not the output format or parsing. E removes the abstain option, a product change not adopted here; nothing in WS-5 was changed. Single run per variant, no repeats; Docker load tests may have shared the CPU, so latencies are indicative only.
+
 ## Run 2026-10-28  (`results/2026-10-28.json`)
 
 - hardware: Windows-11-10.0.26200-SP0; Intel64 Family 6 Model 142 Stepping 12, GenuineIntel; 8 logical CPUs; 15.3 GB RAM; GPU: not probed (assume none unless the operator says otherwise)

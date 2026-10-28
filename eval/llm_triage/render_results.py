@@ -73,9 +73,43 @@ def _run_block(r: dict) -> list[str]:
     return out + [""]
 
 
+def _variants_section(d: dict) -> list[str]:
+    sp = d["split"]
+    out = ["## Diagnosis: is the poor `qwen2.5:3b` result the prompt, the labels or the model?", "",
+           f"Generated from `results/variants.json` (`variants.py`, {d['date']}, model `{d['model']}`). Direct Ollama calls, so "
+           "stub share is 0% by construction and no row was a timeout or parse error unless the error column says so.", "",
+           f"Protocol: {sp['rule']}. DEV {sp['dev']} cases (variants compared here only; {len(d['fewshot_case_ids'])} are few-shot examples "
+           f"and are not scored, leaving {d['dev_n_scored']}), HOLDOUT {sp['holdout']} cases "
+           f"({sp['holdout_by_label']['true_positive']} true_positive, {sp['holdout_by_label']['false_positive']} false_positive: "
+           "the false-positive numbers rest on a handful of cases). The variant picked on DEV (best accuracy) was run once on HOLDOUT.", "",
+           "**Label ceiling.** Alerts are single events plus rule titles. In 9 of 33 distinct (rule, source) signatures a true and a "
+           "false positive share the same rule and source (e.g. a scanner decoy and the attacker's scan are the same ASA deny line "
+           "from different, equally private addresses), so a verdict from (rule, source) alone is capped at 44/54 = 81.5%, the "
+           "always-malicious baseline. Telling them apart needs entity/baseline context the model is not given.", "",
+           "### DEV (scored cases only)", "",
+           "| variant | n | accuracy | abstain | error | TP recall | TP precision | FP recall | FP precision | p50 latency ms |",
+           "|---|---|---|---|---|---|---|---|---|---|"]
+    for n, r in d["dev"].items():
+        m = r["metrics"]; t, f = m["per_class"]["true_positive"], m["per_class"]["false_positive"]
+        out.append(f"| {n}: {r['note']} | {m['n']} | {_f(m['accuracy'], True)} | {_f(m['abstain_rate'], True)} | {_f(m['error_rate'], True)} | "
+                   f"{_f(t['recall'], True)} | {_f(t['precision'], True)} | {_f(f['recall'], True)} | {_f(f['precision'], True)} | {m['latency_ms']['p50']} |")
+    out += ["", f"### HOLDOUT (picked on DEV: `{d['picked_on_dev']}`)", "",
+            "| variant | n | accuracy (95% Wilson) | abstain | TP recall | TP precision | FP recall | FP precision | always-malicious baseline |",
+            "|---|---|---|---|---|---|---|---|---|"]
+    for n, r in d["holdout"].items():
+        m = r["metrics"]; t, f = m["per_class"]["true_positive"], m["per_class"]["false_positive"]
+        out.append(f"| {n} | {m['n']} | {_f(m['accuracy'], True)} ({_f(m['accuracy_ci95'][0], True)} to {_f(m['accuracy_ci95'][1], True)}) | "
+                   f"{_f(m['abstain_rate'], True)} | {_f(t['recall'], True)} | {_f(t['precision'], True)} | {_f(f['recall'], True)} | "
+                   f"{_f(f['precision'], True)} | {_f(m['majority_class_baseline_accuracy'], True)} |")
+    out += ["", "Reading: " + d.get("reading", ""), ""]
+    return out
+
+
 def render(results_dir: Path = RESULTS) -> str:
-    files = sorted(results_dir.glob("*.json"), reverse=True)
+    files = sorted((f for f in results_dir.glob("*.json") if f.name != "variants.json"), reverse=True)
     lines = [HEADER]
+    if (results_dir / "variants.json").exists():
+        lines += _variants_section(json.loads((results_dir / "variants.json").read_text(encoding="utf-8")))
     if not files:
         lines.append("No results committed yet.\n")
     for f in files:

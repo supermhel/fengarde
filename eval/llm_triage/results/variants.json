@@ -1,0 +1,4362 @@
+{
+ "date": "2026-10-28",
+ "model": "qwen2.5:3b",
+ "split": {
+  "dev": 37,
+  "holdout": 17,
+  "holdout_by_label": {
+   "true_positive": 14,
+   "false_positive": 3
+  },
+  "rule": "per label, sorted by case_id, every 3rd -> holdout"
+ },
+ "fewshot_case_ids": [
+  "corpus-b:c01-plain-injection:01",
+  "decoy-cloud_iam_abuse:decoy_vpn_roaming:01",
+  "decoy-it_intrusion:decoy_scanner:01",
+  "twin-ai_to_ot:n8n_execution:01"
+ ],
+ "labelled_set_sha256": "13340f708cfe20dc2288ed686af13be1f258fbc72f3b2f6272d982d45749e4bd",
+ "hardware": {
+  "platform": "Windows-11-10.0.26200-SP0",
+  "cpu": "Intel64 Family 6 Model 142 Stepping 12, GenuineIntel",
+  "logical_cpus": 8,
+  "ram_gb": 15.3,
+  "gpu": "not probed (assume none unless the operator says otherwise)"
+ },
+ "dev": {
+  "A_shipped_default": {
+   "variant": "A_shipped_default",
+   "note": "shipped prompt, Ollama default sampling (the original direct run)",
+   "n": 33,
+   "metrics": {
+    "n": 33,
+    "support": {
+     "true_positive": 28,
+     "false_positive": 5
+    },
+    "majority_class_baseline_accuracy": 0.8485,
+    "accuracy": 0.0303,
+    "accuracy_ci95": [
+     0.0054,
+     0.1532
+    ],
+    "abstain_rate": 0.9697,
+    "error_rate": 0.0,
+    "decisive_coverage": 0.0303,
+    "accuracy_when_decisive": 1.0,
+    "per_class": {
+     "true_positive": {
+      "support": 28,
+      "predicted": 1,
+      "precision": 1.0,
+      "recall": 0.0357,
+      "f1": 0.0689
+     },
+     "false_positive": {
+      "support": 5,
+      "predicted": 0,
+      "precision": null,
+      "recall": 0.0,
+      "f1": null
+     }
+    },
+    "confusion_matrix": {
+     "true_positive": {
+      "true_positive": 1,
+      "false_positive": 0,
+      "needs_review": 27,
+      "error": 0
+     },
+     "false_positive": {
+      "true_positive": 0,
+      "false_positive": 0,
+      "needs_review": 5,
+      "error": 0
+     }
+    },
+    "engine_counts": {
+     "ollama": 33
+    },
+    "stub_share": 0.0,
+    "model_answered": 33,
+    "accuracy_on_model_answered": 0.0303,
+    "severity": {
+     "scored": 33,
+     "exact": 0.3333,
+     "within_one": 0.9091
+    },
+    "llm_tier_subset": {
+     "n": 26,
+     "accuracy": 0.0385
+    },
+    "latency_ms": {
+     "mean": 28105.4,
+     "p50": 27434.1,
+     "p95": 33517.5,
+     "max": 34334.7
+    }
+   },
+   "rows": [
+    {
+     "case_id": "corpus-b:c02-delimited-injection:01",
+     "label": "true_positive",
+     "expected_level": "medium",
+     "prod_tier": "classifier",
+     "verdict": "suspicious",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 27198.207199806347,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "corpus-b:c04-destructive-command:01",
+     "label": "true_positive",
+     "expected_level": "critical",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "high",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 28963.608500082046,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "corpus-b:c05-credential-scan:01",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 29598.9596999716,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "corpus-b:c07-unauthorized-modbus-write:01",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 27889.4442000892,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-ai_to_ot:agent_mcp_tool_call:02",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "high",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 33425.18669995479,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-ai_to_ot:modbus_write:04",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "malicious",
+     "level": "high",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 26933.23770002462,
+     "pred": "true_positive"
+    },
+    {
+     "case_id": "twin-cloud_iam_abuse:attacker_console_login:01",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 26099.715899908915,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-infra_takeover:cloud_root_login:01",
+     "label": "true_positive",
+     "expected_level": "critical",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 24161.86029999517,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-infra_takeover:privileged_container:02",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "high",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 22653.98809988983,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-insider_exfil:bulk_table_read:02",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 25395.491800038144,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-it_intrusion:dns_exfil:05",
+     "label": "true_positive",
+     "expected_level": "medium",
+     "prod_tier": "classifier",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 26934.557999949902,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-it_intrusion:lateral_movement:03",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 26873.940099962056,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-it_intrusion:recon_port_scan:01",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "high",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 25530.157000059262,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-it_intrusion:ssh_bruteforce:02",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "high",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 25733.306600013748,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-ot_opcua_sabotage:forged_ticket_write:05",
+     "label": "true_positive",
+     "expected_level": "low",
+     "prod_tier": "store",
+     "verdict": "suspicious",
+     "level": "high",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 26754.356200108305,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-ot_opcua_sabotage:process_write_night:03",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 30398.915500147268,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-ot_opcua_sabotage:setpoint_tamper:04",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 24624.128900002688,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-phishing_bec:c2_beacon:03",
+     "label": "true_positive",
+     "expected_level": "medium",
+     "prod_tier": "classifier",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 28577.954800100997,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-phishing_bec:inbox_rule:06",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "high",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 32567.215600050986,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-phishing_bec:phish_delivery:01",
+     "label": "true_positive",
+     "expected_level": "medium",
+     "prod_tier": "classifier",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 27434.1257000342,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-phishing_bec:user_execution:02",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 28636.53020001948,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-ransomware:admin_privilege_use:02",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 21450.309100095183,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-ransomware:cred_spray:01",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 22465.152600081638,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-ransomware:lateral_spread:03",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 28379.432399990037,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-supply_chain_ci:agent_runaway:02",
+     "label": "true_positive",
+     "expected_level": "medium",
+     "prod_tier": "classifier",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 33517.46580004692,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-supply_chain_ci:artifact_exfil:03",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "high",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 30412.383900023997,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-supply_chain_ci:pipeline_sabotage:04",
+     "label": "true_positive",
+     "expected_level": "critical",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "high",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 32363.458199892193,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-supply_chain_ci:privileged_runner:05",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 25482.386299874634,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "decoy-infra_takeover:decoy_decommission:01",
+     "label": "false_positive",
+     "expected_level": "low",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 34334.74519988522,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "decoy-it_intrusion:decoy_admin_maintenance:02",
+     "label": "false_positive",
+     "expected_level": "low",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 30290.722399950027,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "decoy-phishing_bec:decoy_vpn_roaming:01",
+     "label": "false_positive",
+     "expected_level": "low",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 32693.15109984018,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "decoy-ransomware:decoy_patch_admin:01",
+     "label": "false_positive",
+     "expected_level": "low",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 33287.930600112304,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "negctl-neg-maintenance:benign_write:01",
+     "label": "false_positive",
+     "expected_level": "low",
+     "prod_tier": "store",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 26416.702799964696,
+     "pred": "needs_review"
+    }
+   ],
+   "raw": [
+    {
+     "case_id": "corpus-b:c02-delimited-injection:01",
+     "raw": "{\"verdict\": \"suspicious\", \"level\": \"low\", \"summary\": \"The event triggers a detection rule indicating prompt injection, which is suspicious.\"}"
+    },
+    {
+     "case_id": "corpus-b:c04-destructive-command:01",
+     "raw": "{\"verdict\": \"suspicious\", \"level\": \"high\", \"summary\": \"The activity_id 2 event contains a destructive command (rm -rf /opt/ot) indicating potential malicious intent.\"}"
+    },
+    {
+     "case_id": "corpus-b:c05-credential-scan:01",
+     "raw": "{\"verdict\": \"suspicious\", \"level\": \"low\", \"summary\": \"The event triggered a detection rule related to accessing credential material, which could be benign but warrants further review.\"}"
+    },
+    {
+     "case_id": "corpus-b:c07-unauthorized-modbus-write:01",
+     "raw": "{\"verdict\": \"suspicious\", \"level\": \"medium\", \"summary\": \"Modbus/TCP function 5 unit 1 address 41999 is an unauthorized write, which is a suspicious activity.\"}"
+    },
+    {
+     "case_id": "twin-ai_to_ot:agent_mcp_tool_call:02",
+     "raw": "{\n\"verdict\": \"suspicious\",\n\"level\": \"high\",\n\"summary\": \"The event triggered by the detection rules is indicative of a non-allowlisted domain and an injection indicator, suggesting potential malicious intent.\"\n}"
+    },
+    {
+     "case_id": "twin-ai_to_ot:modbus_write:04",
+     "raw": "{\"verdict\": \"malicious\", \"level\": \"high\", \"summary\": \"Modbus/TCP function 5 unit 1 address 1 -- unauthorized_write indicates a potential security breach with high severity\"}"
+    },
+    {
+     "case_id": "twin-cloud_iam_abuse:attacker_console_login:01",
+     "raw": "{\n  \"verdict\": \"suspicious\",\n  \"level\": \"medium\",\n  \"summary\": \"User from Russia attempted to sign in from the same AWS account, which is a potential security concern.\"\n}"
+    },
+    {
+     "case_id": "twin-infra_takeover:cloud_root_login:01",
+     "raw": "{\"verdict\": \"suspicious\", \"level\": \"medium\", \"summary\": \"Root user logged in via CloudTrail ConsoleLogin with no MFA, triggered by detection rule.\"}"
+    },
+    {
+     "case_id": "twin-infra_takeover:privileged_container:02",
+     "raw": "{\"verdict\": \"suspicious\", \"level\": \"high\", \"summary\": \"Privileged container created via the Kubernetes API by platform-admin\"}"
+    },
+    {
+     "case_id": "twin-insider_exfil:bulk_table_read:02",
+     "raw": "{\"verdict\": \"suspicious\", \"level\": \"medium\", \"summary\": \"SELECT activity from cardholder_data, triggered by bank sector rules\"}"
+    },
+    {
+     "case_id": "twin-it_intrusion:dns_exfil:05",
+     "raw": "{\"verdict\": \"suspicious\", \"level\": \"medium\", \"summary\": \"High DNS query volume to a single domain from a single IP, matching a known anomaly detection rule.\"}"
+    },
+    {
+     "case_id": "twin-it_intrusion:lateral_movement:03",
+     "raw": "{\"verdict\": \"suspicious\", \"level\": \"medium\", \"summary\": \"Logon from a single known user to a single host with a score above the threshold and a detection rule triggered.\"}"
+    },
+    {
+     "case_id": "twin-it_intrusion:recon_port_scan:01",
+     "raw": "{\"verdict\": \"suspicious\", \"level\": \"high\", \"summary\": \"Deny tcp event triggered by Port scan from single source (many distinct destination ports) detection rule\"}"
+    },
+    {
+     "case_id": "twin-it_intrusion:ssh_bruteforce:02",
+     "raw": "{\"verdict\": \"suspicious\", \"level\": \"high\", \"summary\": \"SSH attempt from a known user to a specific IP, triggering a detection rule for brute-force attempts.\"}"
+    },
+    {
+     "case_id": "twin-ot_opcua_sabotage:forged_ticket_write:05",
+     "raw": "{\"verdict\": \"suspicious\", \"level\": \"high\", \"summary\": \"Modbus/TCP function 6 unit 1 address 41999 -- unauthorized_write\"}"
+    },
+    {
+     "case_id": "twin-ot_opcua_sabotage:process_write_night:03",
+     "raw": "{\"verdict\": \"suspicious\", \"level\": \"medium\", \"summary\": \"Event triggered by a known OPC UA operation but lacks specific details indicating if the node was authorized or if the write was outside the maintenance window.\"}"
+    },
+    {
+     "case_id": "twin-ot_opcua_sabotage:setpoint_tamper:04",
+     "raw": "{\"verdict\": \"suspicious\", \"level\": \"medium\", \"summary\": \"AuditWriteUpdateEventType triggered by a known user but involves an OPC UA node not explicitly listed in detection rules\"}"
+    },
+    {
+     "case_id": "twin-phishing_bec:c2_beacon:03",
+     "raw": "{\"verdict\": \"suspicious\", \"level\": \"medium\", \"summary\": \"Regular outbound connection detected from public user directory to a remote host, with no prior context of benign activities.\"}"
+    },
+    {
+     "case_id": "twin-phishing_bec:inbox_rule:06",
+     "raw": "{\"verdict\": \"suspicious\", \"level\": \"high\", \"summary\": \"An M365 New-InboxRule was created that forwards mail to an external address, which is unexpected and suspicious.\"}"
+    },
+    {
+     "case_id": "twin-phishing_bec:phish_delivery:01",
+     "raw": "{\"verdict\": \"suspicious\", \"level\": \"medium\", \"summary\": \"The email contains a macro-capable attachment that was delivered, which is suspicious.\"}"
+    },
+    {
+     "case_id": "twin-phishing_bec:user_execution:02",
+     "raw": "{\"verdict\": \"suspicious\", \"level\": \"medium\", \"summary\": \"The detection rule triggered due to a process that spawned PowerShell with a potentially malicious command line.\"}"
+    },
+    {
+     "case_id": "twin-ransomware:admin_privilege_use:02",
+     "raw": "{\"verdict\": \"suspicious\", \"level\": \"medium\", \"summary\": \"Alert triggered by privileged logon outside business hours\"}"
+    },
+    {
+     "case_id": "twin-ransomware:cred_spray:01",
+     "raw": "{\"verdict\": \"suspicious\", \"level\": \"medium\", \"summary\": \"Authentication failure from a known user with a suspicious timestamp\"}"
+    },
+    {
+     "case_id": "twin-ransomware:lateral_spread:03",
+     "raw": "{\"verdict\": \"suspicious\", \"level\": \"medium\", \"summary\": \"User s.okafor successfully logged in from a new host (10.60.2.131), triggering a detection rule for lateral movement.\"}"
+    },
+    {
+     "case_id": "twin-supply_chain_ci:agent_runaway:02",
+     "raw": "{\"verdict\": \"suspicious\", \"level\": \"medium\", \"summary\": \"The activity_id 2 involves a read_file operation triggered by a build agent, which might be indicative of automated testing or scanning, potentially suspicious if no legitimate use case is known.\"}"
+    },
+    {
+     "case_id": "twin-supply_chain_ci:artifact_exfil:03",
+     "raw": "{\"verdict\": \"suspicious\", \"level\": \"high\", \"summary\": \"The MCP Agent tool called a non-allowlisted domain (drop.evil.example.invalid), which is suspicious.\"}"
+    },
+    {
+     "case_id": "twin-supply_chain_ci:pipeline_sabotage:04",
+     "raw": "{\"verdict\": \"suspicious\", \"level\": \"high\", \"summary\": \"The activity_id 2 event triggered by the MCP Agent Gateway indicates a destructive command ('rm -rf /workspace/dist') was executed, and the corresponding detection rule identifies this as a destructive command pattern.\"}"
+    },
+    {
+     "case_id": "twin-supply_chain_ci:privileged_runner:05",
+     "raw": "{\n  \"verdict\": \"suspicious\",\n  \"level\": \"medium\",\n  \"summary\": \"The event triggered by a privileged container creation via the Kubernetes API, which is suspicious due to potential misuse\"\n}"
+    },
+    {
+     "case_id": "decoy-infra_takeover:decoy_decommission:01",
+     "raw": "{\"verdict\": \"suspicious\", \"level\": \"medium\", \"summary\": \"The VM deletion was by a legitimate user (svc_decom) but the detection rule triggered, suggesting unusual behavior.\"}"
+    },
+    {
+     "case_id": "decoy-it_intrusion:decoy_admin_maintenance:02",
+     "raw": "{\"verdict\": \"suspicious\", \"level\": \"medium\", \"summary\": \"High score and detection rule trigger suggest potential lateral movement from a single account to multiple hosts\"}"
+    },
+    {
+     "case_id": "decoy-phishing_bec:decoy_vpn_roaming:01",
+     "raw": "{\"verdict\": \"suspicious\", \"level\": \"medium\", \"summary\": \"Suspicious activity involving user 'sales.vpn' from different countries within a short time frame, indicating possible account misuse or compromised credentials.\"}"
+    },
+    {
+     "case_id": "decoy-ransomware:decoy_patch_admin:01",
+     "raw": "{\n\"verdict\": \"suspicious\",\n\"level\": \"medium\",\n\"summary\": \"Alert triggered by a successful logon to a single distinct host (app05) from a known user (patch.admin), aligning with a detection rule for lateral movement, but low likelihood of malicious intent without additional context.\"\n}"
+    },
+    {
+     "case_id": "negctl-neg-maintenance:benign_write:01",
+     "raw": "{\"verdict\": \"suspicious\", \"level\": \"medium\", \"summary\": \"Unauthorized write detected on Modbus/TCP function 5 with address 0, potential insider threat or anomaly.\"}"
+    }
+   ]
+  },
+  "B_shipped_t0": {
+   "variant": "B_shipped_t0",
+   "note": "shipped prompt, temperature 0",
+   "n": 33,
+   "metrics": {
+    "n": 33,
+    "support": {
+     "true_positive": 28,
+     "false_positive": 5
+    },
+    "majority_class_baseline_accuracy": 0.8485,
+    "accuracy": 0.0,
+    "accuracy_ci95": [
+     0.0,
+     0.1043
+    ],
+    "abstain_rate": 1.0,
+    "error_rate": 0.0,
+    "decisive_coverage": 0.0,
+    "accuracy_when_decisive": null,
+    "per_class": {
+     "true_positive": {
+      "support": 28,
+      "predicted": 0,
+      "precision": null,
+      "recall": 0.0,
+      "f1": null
+     },
+     "false_positive": {
+      "support": 5,
+      "predicted": 0,
+      "precision": null,
+      "recall": 0.0,
+      "f1": null
+     }
+    },
+    "confusion_matrix": {
+     "true_positive": {
+      "true_positive": 0,
+      "false_positive": 0,
+      "needs_review": 28,
+      "error": 0
+     },
+     "false_positive": {
+      "true_positive": 0,
+      "false_positive": 0,
+      "needs_review": 5,
+      "error": 0
+     }
+    },
+    "engine_counts": {
+     "ollama": 33
+    },
+    "stub_share": 0.0,
+    "model_answered": 33,
+    "accuracy_on_model_answered": 0.0,
+    "severity": {
+     "scored": 33,
+     "exact": 0.2121,
+     "within_one": 0.9091
+    },
+    "llm_tier_subset": {
+     "n": 26,
+     "accuracy": 0.0
+    },
+    "latency_ms": {
+     "mean": 21086.4,
+     "p50": 23388.7,
+     "p95": 35467.8,
+     "max": 36845.2
+    }
+   },
+   "rows": [
+    {
+     "case_id": "corpus-b:c02-delimited-injection:01",
+     "label": "true_positive",
+     "expected_level": "medium",
+     "prod_tier": "classifier",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 28939.023999962956,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "corpus-b:c04-destructive-command:01",
+     "label": "true_positive",
+     "expected_level": "critical",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "high",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 9627.7407000307,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "corpus-b:c05-credential-scan:01",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 10160.1781998761,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "corpus-b:c07-unauthorized-modbus-write:01",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 26961.72480005771,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-ai_to_ot:agent_mcp_tool_call:02",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 11853.833199944347,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-ai_to_ot:modbus_write:04",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "high",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 25545.54730001837,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-cloud_iam_abuse:attacker_console_login:01",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 26126.355699962005,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-infra_takeover:cloud_root_login:01",
+     "label": "true_positive",
+     "expected_level": "critical",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 26861.989199882373,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-infra_takeover:privileged_container:02",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 21594.347900012508,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-insider_exfil:bulk_table_read:02",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 23201.329000061378,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-it_intrusion:dns_exfil:05",
+     "label": "true_positive",
+     "expected_level": "medium",
+     "prod_tier": "classifier",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 9485.443399986252,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-it_intrusion:lateral_movement:03",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 30097.106599947438,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-it_intrusion:recon_port_scan:01",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 28748.310700058937,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-it_intrusion:ssh_bruteforce:02",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 27307.645400054753,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-ot_opcua_sabotage:forged_ticket_write:05",
+     "label": "true_positive",
+     "expected_level": "low",
+     "prod_tier": "store",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 26550.753900082782,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-ot_opcua_sabotage:process_write_night:03",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 15676.218000007793,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-ot_opcua_sabotage:setpoint_tamper:04",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "high",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 13972.402899991721,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-phishing_bec:c2_beacon:03",
+     "label": "true_positive",
+     "expected_level": "medium",
+     "prod_tier": "classifier",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 11232.048999983817,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-phishing_bec:inbox_rule:06",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 13325.056500034407,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-phishing_bec:phish_delivery:01",
+     "label": "true_positive",
+     "expected_level": "medium",
+     "prod_tier": "classifier",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 9355.911600170657,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-phishing_bec:user_execution:02",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 9326.912499964237,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-ransomware:admin_privilege_use:02",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 23388.66739999503,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-ransomware:cred_spray:01",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 24498.309299815446,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-ransomware:lateral_spread:03",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 10787.991299992427,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-supply_chain_ci:agent_runaway:02",
+     "label": "true_positive",
+     "expected_level": "medium",
+     "prod_tier": "classifier",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 29472.206800011918,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-supply_chain_ci:artifact_exfil:03",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 12109.391400124878,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-supply_chain_ci:pipeline_sabotage:04",
+     "label": "true_positive",
+     "expected_level": "critical",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 10037.382600130513,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-supply_chain_ci:privileged_runner:05",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 23171.97909997776,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "decoy-infra_takeover:decoy_decommission:01",
+     "label": "false_positive",
+     "expected_level": "low",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "high",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 30910.89090006426,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "decoy-it_intrusion:decoy_admin_maintenance:02",
+     "label": "false_positive",
+     "expected_level": "low",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 35467.83400001004,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "decoy-phishing_bec:decoy_vpn_roaming:01",
+     "label": "false_positive",
+     "expected_level": "low",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 36845.22229991853,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "decoy-ransomware:decoy_patch_admin:01",
+     "label": "false_positive",
+     "expected_level": "low",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 28241.783399833366,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "negctl-neg-maintenance:benign_write:01",
+     "label": "false_positive",
+     "expected_level": "low",
+     "prod_tier": "store",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 24968.477099901065,
+     "pred": "needs_review"
+    }
+   ],
+   "raw": [
+    {
+     "case_id": "corpus-b:c02-delimited-injection:01",
+     "raw": "{\"verdict\": \"suspicious\", \"level\": \"medium\", \"summary\": \"The detection rule indicates prompt injection, which is suspicious.\"}"
+    },
+    {
+     "case_id": "corpus-b:c04-destructive-command:01",
+     "raw": "{\"verdict\": \"suspicious\", \"level\": \"high\", \"summary\": \"The event triggered by a destructive command pattern in a tool call, indicating potential malicious activity.\"}"
+    },
+    {
+     "case_id": "corpus-b:c05-credential-scan:01",
+     "raw": "{\"verdict\": \"suspicious\", \"level\": \"medium\", \"summary\": \"The MCP tool accessed a credential file path, which is suspicious as it triggered a detection rule related to accessing credential material.\"}"
+    },
+    {
+     "case_id": "corpus-b:c07-unauthorized-modbus-write:01",
+     "raw": "{\"verdict\": \"suspicious\", \"level\": \"medium\", \"summary\": \"Modbus/TCP function 5 unit 1 address 41999 -- unauthorized_write, triggered by a detection rule\"}"
+    },
+    {
+     "case_id": "twin-ai_to_ot:agent_mcp_tool_call:02",
+     "raw": "{\"verdict\": \"suspicious\", \"level\": \"medium\", \"summary\": \"The event triggered by a detection rule indicating a prompt-injection indicator and a non-allowlisted domain, suggesting potential malicious intent.\"}"
+    },
+    {
+     "case_id": "twin-ai_to_ot:modbus_write:04",
+     "raw": "{\"verdict\": \"suspicious\", \"level\": \"high\", \"summary\": \"Modbus/TCP function 5 unit 1 address 1 -- unauthorized_write, triggered by a detection rule\"}"
+    },
+    {
+     "case_id": "twin-cloud_iam_abuse:attacker_console_login:01",
+     "raw": "{\"verdict\": \"suspicious\", \"level\": \"medium\", \"summary\": \"Alert triggered by a user logging in from a different country than their usual location, which could indicate suspicious activity.\"}"
+    },
+    {
+     "case_id": "twin-infra_takeover:cloud_root_login:01",
+     "raw": "{\"verdict\": \"suspicious\", \"level\": \"medium\", \"summary\": \"Alert triggered by AWS root console login without MFA, which is suspicious as it should require MFA for security compliance.\"}"
+    },
+    {
+     "case_id": "twin-infra_takeover:privileged_container:02",
+     "raw": "{\"verdict\": \"suspicious\", \"level\": \"medium\", \"summary\": \"Privileged container creation via Kubernetes API with elevated user\"}"
+    },
+    {
+     "case_id": "twin-insider_exfil:bulk_table_read:02",
+     "raw": "{\"verdict\": \"suspicious\", \"level\": \"medium\", \"summary\": \"SELECT query from a known user to a sensitive database object (cardholder_data)\"}"
+    },
+    {
+     "case_id": "twin-it_intrusion:dns_exfil:05",
+     "raw": "{\n  \"verdict\": \"suspicious\",\n  \"level\": \"medium\",\n  \"summary\": \"DNS query to a known exfiltration domain with high detection rule score\"\n}"
+    },
+    {
+     "case_id": "twin-it_intrusion:lateral_movement:03",
+     "raw": "{\n\"verdict\": \"suspicious\",\n\"level\": \"medium\",\n\"summary\": \"Alert triggered by a successful logon from a known user to multiple distinct hosts, which is indicative of lateral movement.\"\n}"
+    },
+    {
+     "case_id": "twin-it_intrusion:recon_port_scan:01",
+     "raw": "{\"verdict\": \"suspicious\", \"level\": \"medium\", \"summary\": \"Deny tcp event triggered by a detection rule indicating port scan, suggesting potential malicious activity.\"}"
+    },
+    {
+     "case_id": "twin-it_intrusion:ssh_bruteforce:02",
+     "raw": "{\"verdict\": \"suspicious\", \"level\": \"medium\", \"summary\": \"SSH login attempt from a known user with a suspicious source IP\"}"
+    },
+    {
+     "case_id": "twin-ot_opcua_sabotage:forged_ticket_write:05",
+     "raw": "{\"verdict\": \"suspicious\", \"level\": \"medium\", \"summary\": \"Unauthorized Modbus/TCP write to address 41999, with a valid change ticket, but still unusual for the system.\"}"
+    },
+    {
+     "case_id": "twin-ot_opcua_sabotage:process_write_night:03",
+     "raw": "{\"verdict\": \"suspicious\", \"level\": \"medium\", \"summary\": \"AuditWriteUpdateEventType triggered by user eng-marco on OPC UA server, but no specific rule matches the event directly. The event is related to a node not on the authorised-node list, which could indicate unauthorized access.\"}"
+    },
+    {
+     "case_id": "twin-ot_opcua_sabotage:setpoint_tamper:04",
+     "raw": "{\n  \"verdict\": \"suspicious\",\n  \"level\": \"high\",\n  \"summary\": \"AuditWriteUpdateEventType on a critical PLC node by a known user, with no indication of maintenance window or unauthorized node change, suggesting potential unauthorized access or configuration change.\"\n}"
+    },
+    {
+     "case_id": "twin-phishing_bec:c2_beacon:03",
+     "raw": "{\"verdict\": \"suspicious\", \"level\": \"medium\", \"summary\": \"Outbound connection from a known user to a suspicious IP, triggered by a detection rule for beaconing.\"}"
+    },
+    {
+     "case_id": "twin-phishing_bec:inbox_rule:06",
+     "raw": "{\"verdict\": \"suspicious\", \"level\": \"medium\", \"summary\": \"The detection rule triggered indicates a mailbox rule forwards mail to an external address, which is suspicious as it could indicate a security misconfiguration or potential data exfiltration attempt.\"}"
+    },
+    {
+     "case_id": "twin-phishing_bec:phish_delivery:01",
+     "raw": "{\"verdict\": \"suspicious\", \"level\": \"medium\", \"summary\": \"Macro-capable attachment in an inbound email delivered by Secure Email Gateway\"}"
+    },
+    {
+     "case_id": "twin-phishing_bec:user_execution:02",
+     "raw": "{\"verdict\": \"suspicious\", \"level\": \"medium\", \"summary\": \"The detection rule triggered due to a process launch with suspicious command line parameters.\"}"
+    },
+    {
+     "case_id": "twin-ransomware:admin_privilege_use:02",
+     "raw": "{\"verdict\": \"suspicious\", \"level\": \"medium\", \"summary\": \"Privileged access granted at an unusual time\"}"
+    },
+    {
+     "case_id": "twin-ransomware:cred_spray:01",
+     "raw": "{\"verdict\": \"suspicious\", \"level\": \"medium\", \"summary\": \"Suspicious failed logon attempt from a known user with a specific IP address\"}"
+    },
+    {
+     "case_id": "twin-ransomware:lateral_spread:03",
+     "raw": "{\"verdict\": \"suspicious\", \"level\": \"medium\", \"summary\": \"User s.okafor logged on from a new IP address, triggering a detection rule for potential lateral movement.\"}"
+    },
+    {
+     "case_id": "twin-supply_chain_ci:agent_runaway:02",
+     "raw": "{\"verdict\": \"suspicious\", \"level\": \"medium\", \"summary\": \"The MCP tool read_file called by the ci-build-agent has a high detection rule score and is triggered by a detection rule for AI agent tool-call burst.\"}"
+    },
+    {
+     "case_id": "twin-supply_chain_ci:artifact_exfil:03",
+     "raw": "{\"verdict\": \"suspicious\", \"level\": \"medium\", \"summary\": \"The MCP tool called a non-allowlisted domain (drop.evil.example.invalid) which triggered a detection rule.\"}"
+    },
+    {
+     "case_id": "twin-supply_chain_ci:pipeline_sabotage:04",
+     "raw": "{\"verdict\": \"suspicious\", \"level\": \"medium\", \"summary\": \"The event triggered a detection rule indicating a destructive command pattern, suggesting potential malicious activity.\"}"
+    },
+    {
+     "case_id": "twin-supply_chain_ci:privileged_runner:05",
+     "raw": "{\"verdict\": \"suspicious\", \"level\": \"medium\", \"summary\": \"Privileged container creation via Kubernetes API with elevated privileges\"}"
+    },
+    {
+     "case_id": "decoy-infra_takeover:decoy_decommission:01",
+     "raw": "{\"verdict\": \"suspicious\", \"level\": \"high\", \"summary\": \"The event triggers a detection rule for mass VM deletion via hypervisor API, which could indicate ransomware or sabotage activities.\"}"
+    },
+    {
+     "case_id": "decoy-it_intrusion:decoy_admin_maintenance:02",
+     "raw": "{\"verdict\": \"suspicious\", \"level\": \"medium\", \"summary\": \"Alert triggered by a successful logon event from a single user to multiple distinct hosts, which is suspicious based on the detection rule.\"}"
+    },
+    {
+     "case_id": "decoy-phishing_bec:decoy_vpn_roaming:01",
+     "raw": "{\"verdict\": \"suspicious\", \"level\": \"medium\", \"summary\": \"The detection rule triggered due to a user from China (botnet category) logging in from a different country (CN) within a short time window, which is unusual for a successful login event.\"}"
+    },
+    {
+     "case_id": "decoy-ransomware:decoy_patch_admin:01",
+     "raw": "{\"verdict\": \"suspicious\", \"level\": \"medium\", \"summary\": \"Alert triggered by a successful logon event from a single IP to multiple distinct hosts, which is indicative of lateral movement.\"}"
+    },
+    {
+     "case_id": "negctl-neg-maintenance:benign_write:01",
+     "raw": "{\"verdict\": \"suspicious\", \"level\": \"medium\", \"summary\": \"Unauthorized Modbus/TCP write to address 0, triggered by a detection rule for expected anomalies.\"}"
+    }
+   ]
+  },
+  "C_definitions_t0": {
+   "variant": "C_definitions_t0",
+   "note": "verdict definitions, temperature 0",
+   "n": 33,
+   "metrics": {
+    "n": 33,
+    "support": {
+     "true_positive": 28,
+     "false_positive": 5
+    },
+    "majority_class_baseline_accuracy": 0.8485,
+    "accuracy": 0.2727,
+    "accuracy_ci95": [
+     0.1507,
+     0.4422
+    ],
+    "abstain_rate": 0.2727,
+    "error_rate": 0.0,
+    "decisive_coverage": 0.7273,
+    "accuracy_when_decisive": 0.375,
+    "per_class": {
+     "true_positive": {
+      "support": 28,
+      "predicted": 6,
+      "precision": 0.8333,
+      "recall": 0.1786,
+      "f1": 0.2942
+     },
+     "false_positive": {
+      "support": 5,
+      "predicted": 18,
+      "precision": 0.2222,
+      "recall": 0.8,
+      "f1": 0.3478
+     }
+    },
+    "confusion_matrix": {
+     "true_positive": {
+      "true_positive": 5,
+      "false_positive": 14,
+      "needs_review": 9,
+      "error": 0
+     },
+     "false_positive": {
+      "true_positive": 1,
+      "false_positive": 4,
+      "needs_review": 0,
+      "error": 0
+     }
+    },
+    "engine_counts": {
+     "ollama": 33
+    },
+    "stub_share": 0.0,
+    "model_answered": 33,
+    "accuracy_on_model_answered": 0.2727,
+    "severity": {
+     "scored": 33,
+     "exact": 0.2121,
+     "within_one": 0.3939
+    },
+    "llm_tier_subset": {
+     "n": 26,
+     "accuracy": 0.3077
+    },
+    "latency_ms": {
+     "mean": 25387.2,
+     "p50": 25232.4,
+     "p95": 32057.8,
+     "max": 38202.9
+    }
+   },
+   "rows": [
+    {
+     "case_id": "corpus-b:c02-delimited-injection:01",
+     "label": "true_positive",
+     "expected_level": "medium",
+     "prod_tier": "classifier",
+     "verdict": "suspicious",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 38202.85780006088,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "corpus-b:c04-destructive-command:01",
+     "label": "true_positive",
+     "expected_level": "critical",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 26761.342599987984,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "corpus-b:c05-credential-scan:01",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 27073.78409989178,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "corpus-b:c07-unauthorized-modbus-write:01",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "malicious",
+     "level": "high",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 27138.51620000787,
+     "pred": "true_positive"
+    },
+    {
+     "case_id": "twin-ai_to_ot:agent_mcp_tool_call:02",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 32057.784100063145,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-ai_to_ot:modbus_write:04",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "malicious",
+     "level": "high",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 24762.208699947223,
+     "pred": "true_positive"
+    },
+    {
+     "case_id": "twin-cloud_iam_abuse:attacker_console_login:01",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 28901.180499931797,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "twin-infra_takeover:cloud_root_login:01",
+     "label": "true_positive",
+     "expected_level": "critical",
+     "prod_tier": "llm",
+     "verdict": "malicious",
+     "level": "high",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 26924.643400125206,
+     "pred": "true_positive"
+    },
+    {
+     "case_id": "twin-infra_takeover:privileged_container:02",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 27704.23090015538,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "twin-insider_exfil:bulk_table_read:02",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 26714.305100031197,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-it_intrusion:dns_exfil:05",
+     "label": "true_positive",
+     "expected_level": "medium",
+     "prod_tier": "classifier",
+     "verdict": "suspicious",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 25232.44070005603,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-it_intrusion:lateral_movement:03",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 24904.199700104073,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "twin-it_intrusion:recon_port_scan:01",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 25881.929100025445,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-it_intrusion:ssh_bruteforce:02",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 23902.76460000314,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "twin-ot_opcua_sabotage:forged_ticket_write:05",
+     "label": "true_positive",
+     "expected_level": "low",
+     "prod_tier": "store",
+     "verdict": "malicious",
+     "level": "high",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 24207.431600196287,
+     "pred": "true_positive"
+    },
+    {
+     "case_id": "twin-ot_opcua_sabotage:process_write_night:03",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 26316.972899949178,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "twin-ot_opcua_sabotage:setpoint_tamper:04",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 24357.420299900696,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "twin-phishing_bec:c2_beacon:03",
+     "label": "true_positive",
+     "expected_level": "medium",
+     "prod_tier": "classifier",
+     "verdict": "suspicious",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 23807.575299870223,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-phishing_bec:inbox_rule:06",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "malicious",
+     "level": "high",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 26390.112799825147,
+     "pred": "true_positive"
+    },
+    {
+     "case_id": "twin-phishing_bec:phish_delivery:01",
+     "label": "true_positive",
+     "expected_level": "medium",
+     "prod_tier": "classifier",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 27898.561799898744,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "twin-phishing_bec:user_execution:02",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 31233.035000041127,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "twin-ransomware:admin_privilege_use:02",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 25058.427899843082,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "twin-ransomware:cred_spray:01",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 24181.703499983996,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "twin-ransomware:lateral_spread:03",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 23938.983800122514,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "twin-supply_chain_ci:agent_runaway:02",
+     "label": "true_positive",
+     "expected_level": "medium",
+     "prod_tier": "classifier",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 27565.124599961564,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "twin-supply_chain_ci:artifact_exfil:03",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 25461.10270009376,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-supply_chain_ci:pipeline_sabotage:04",
+     "label": "true_positive",
+     "expected_level": "critical",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 23653.48290000111,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-supply_chain_ci:privileged_runner:05",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 19536.95649979636,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "decoy-infra_takeover:decoy_decommission:01",
+     "label": "false_positive",
+     "expected_level": "low",
+     "prod_tier": "llm",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 18819.230099907145,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "decoy-it_intrusion:decoy_admin_maintenance:02",
+     "label": "false_positive",
+     "expected_level": "low",
+     "prod_tier": "llm",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 19928.18129993975,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "decoy-phishing_bec:decoy_vpn_roaming:01",
+     "label": "false_positive",
+     "expected_level": "low",
+     "prod_tier": "llm",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 19337.380399927497,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "decoy-ransomware:decoy_patch_admin:01",
+     "label": "false_positive",
+     "expected_level": "low",
+     "prod_tier": "llm",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 19858.33219997585,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "negctl-neg-maintenance:benign_write:01",
+     "label": "false_positive",
+     "expected_level": "low",
+     "prod_tier": "store",
+     "verdict": "malicious",
+     "level": "high",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 20066.999499918893,
+     "pred": "true_positive"
+    }
+   ],
+   "raw": [
+    {
+     "case_id": "corpus-b:c02-delimited-injection:01",
+     "raw": "{\n  \"verdict\": \"suspicious\",\n  \"level\": \"low\",\n  \"summary\": \"Tool call with injection indicator, low confidence\"\n}"
+    },
+    {
+     "case_id": "corpus-b:c04-destructive-command:01",
+     "raw": "{\"verdict\": \"suspicious\", \"level\": \"low\", \"summary\": \"Insufficient information to determine if the event is malicious or benign.\"}"
+    },
+    {
+     "case_id": "corpus-b:c05-credential-scan:01",
+     "raw": "{\n  \"verdict\": \"benign\",\n  \"level\": \"low\",\n  \"summary\": \"Scheduled job reading SSH key file\"\n}"
+    },
+    {
+     "case_id": "corpus-b:c07-unauthorized-modbus-write:01",
+     "raw": "{\"verdict\": \"malicious\", \"level\": \"high\", \"summary\": \"Unauthorized Modbus/TCP write from local network\"}"
+    },
+    {
+     "case_id": "twin-ai_to_ot:agent_mcp_tool_call:02",
+     "raw": "{\n  \"verdict\": \"suspicious\",\n  \"level\": \"low\",\n  \"summary\": \"Insufficient information to determine if attack or benign\"\n}"
+    },
+    {
+     "case_id": "twin-ai_to_ot:modbus_write:04",
+     "raw": "{\n  \"verdict\": \"malicious\",\n  \"level\": \"high\",\n  \"summary\": \"Unauthorized Modbus/TCP write detected\"\n}"
+    },
+    {
+     "case_id": "twin-cloud_iam_abuse:attacker_console_login:01",
+     "raw": "{\n  \"verdict\": \"benign\",\n  \"level\": \"low\",\n  \"summary\": \"User login from different country, no travel detected\"\n}"
+    },
+    {
+     "case_id": "twin-infra_takeover:cloud_root_login:01",
+     "raw": "{\n  \"verdict\": \"malicious\",\n  \"level\": \"high\",\n  \"summary\": \"Root user logged in via console without MFA\"\n}"
+    },
+    {
+     "case_id": "twin-infra_takeover:privileged_container:02",
+     "raw": "{\n  \"verdict\": \"benign\",\n  \"level\": \"low\",\n  \"summary\": \"Normal Kubernetes API activity for privileged container creation\"\n}"
+    },
+    {
+     "case_id": "twin-insider_exfil:bulk_table_read:02",
+     "raw": "{\n  \"verdict\": \"suspicious\",\n  \"level\": \"low\",\n  \"summary\": \"Insufficient information to determine if the event is malicious or benign.\"\n}"
+    },
+    {
+     "case_id": "twin-it_intrusion:dns_exfil:05",
+     "raw": "{\n  \"verdict\": \"suspicious\",\n  \"level\": \"low\",\n  \"summary\": \"Insufficient information to determine if benign or malicious\"\n}"
+    },
+    {
+     "case_id": "twin-it_intrusion:lateral_movement:03",
+     "raw": "{\n  \"verdict\": \"benign\",\n  \"level\": \"low\",\n  \"summary\": \"Single successful logon event from known endpoint\"\n}"
+    },
+    {
+     "case_id": "twin-it_intrusion:recon_port_scan:01",
+     "raw": "{\n  \"verdict\": \"suspicious\",\n  \"level\": \"low\",\n  \"summary\": \"Insufficient information to determine if the event is malicious or benign.\"\n}"
+    },
+    {
+     "case_id": "twin-it_intrusion:ssh_bruteforce:02",
+     "raw": "{\n  \"verdict\": \"benign\",\n  \"level\": \"low\",\n  \"summary\": \"User login attempt from known scanner IP\"\n}"
+    },
+    {
+     "case_id": "twin-ot_opcua_sabotage:forged_ticket_write:05",
+     "raw": "{\"verdict\": \"malicious\", \"level\": \"high\", \"summary\": \"Unauthorized Modbus/TCP write detected\"}"
+    },
+    {
+     "case_id": "twin-ot_opcua_sabotage:process_write_night:03",
+     "raw": "{\n  \"verdict\": \"benign\",\n  \"level\": \"low\",\n  \"summary\": \"OPC UA audit event for pump enable by expected user\"\n}"
+    },
+    {
+     "case_id": "twin-ot_opcua_sabotage:setpoint_tamper:04",
+     "raw": "{\n  \"verdict\": \"benign\",\n  \"level\": \"low\",\n  \"summary\": \"OPC UA audit event for a configuration change by a known user\"\n}"
+    },
+    {
+     "case_id": "twin-phishing_bec:c2_beacon:03",
+     "raw": "{\"verdict\": \"suspicious\", \"level\": \"low\", \"summary\": \"Insufficient information to determine if benign or malicious\"}"
+    },
+    {
+     "case_id": "twin-phishing_bec:inbox_rule:06",
+     "raw": "{\"verdict\": \"malicious\", \"level\": \"high\", \"summary\": \"Suspicious mailbox rule creation with external forwarding\"}"
+    },
+    {
+     "case_id": "twin-phishing_bec:phish_delivery:01",
+     "raw": "{\n  \"verdict\": \"benign\",\n  \"level\": \"low\",\n  \"summary\": \"Email with macro-capable attachment delivered by Secure Email Gateway\"\n}"
+    },
+    {
+     "case_id": "twin-phishing_bec:user_execution:02",
+     "raw": "{\n  \"verdict\": \"benign\",\n  \"level\": \"low\",\n  \"summary\": \"PowerShell execution by user, likely for legitimate purposes\"\n}"
+    },
+    {
+     "case_id": "twin-ransomware:admin_privilege_use:02",
+     "raw": "{\n  \"verdict\": \"benign\",\n  \"level\": \"low\",\n  \"summary\": \"User granted special privileges during normal working hours\"\n}"
+    },
+    {
+     "case_id": "twin-ransomware:cred_spray:01",
+     "raw": "{\n  \"verdict\": \"benign\",\n  \"level\": \"low\",\n  \"summary\": \"User failed logon from known internal IP\"\n}"
+    },
+    {
+     "case_id": "twin-ransomware:lateral_spread:03",
+     "raw": "{\n  \"verdict\": \"benign\",\n  \"level\": \"low\",\n  \"summary\": \"Single successful logon event from known user to known host\"\n}"
+    },
+    {
+     "case_id": "twin-supply_chain_ci:agent_runaway:02",
+     "raw": "{\n  \"verdict\": \"benign\",\n  \"level\": \"low\",\n  \"summary\": \"CI-build-agent is a legitimate automation tool reading a file.\"\n}"
+    },
+    {
+     "case_id": "twin-supply_chain_ci:artifact_exfil:03",
+     "raw": "{\n  \"verdict\": \"suspicious\",\n  \"level\": \"low\",\n  \"summary\": \"Event lacks sufficient details to determine if it's malicious or benign.\"\n}"
+    },
+    {
+     "case_id": "twin-supply_chain_ci:pipeline_sabotage:04",
+     "raw": "{\n  \"verdict\": \"suspicious\",\n  \"level\": \"low\",\n  \"summary\": \"Insufficient information to determine if the event is malicious or benign.\"\n}"
+    },
+    {
+     "case_id": "twin-supply_chain_ci:privileged_runner:05",
+     "raw": "{\n  \"verdict\": \"benign\",\n  \"level\": \"low\",\n  \"summary\": \"Build-bot creating pods in a privileged namespace\"\n}"
+    },
+    {
+     "case_id": "decoy-infra_takeover:decoy_decommission:01",
+     "raw": "{\"verdict\": \"benign\", \"level\": \"low\", \"summary\": \"Scheduled VM deletion by service account\"}"
+    },
+    {
+     "case_id": "decoy-it_intrusion:decoy_admin_maintenance:02",
+     "raw": "{\n  \"verdict\": \"benign\",\n  \"level\": \"low\",\n  \"summary\": \"Single successful logon event from known user to known host\"\n}"
+    },
+    {
+     "case_id": "decoy-phishing_bec:decoy_vpn_roaming:01",
+     "raw": "{\n  \"verdict\": \"benign\",\n  \"level\": \"low\",\n  \"summary\": \"User login from known malicious IP with normal activity details\"\n}"
+    },
+    {
+     "case_id": "decoy-ransomware:decoy_patch_admin:01",
+     "raw": "{\n  \"verdict\": \"benign\",\n  \"level\": \"low\",\n  \"summary\": \"Single successful logon event from known user to known host\"\n}"
+    },
+    {
+     "case_id": "negctl-neg-maintenance:benign_write:01",
+     "raw": "{\n  \"verdict\": \"malicious\",\n  \"level\": \"high\",\n  \"summary\": \"Unauthorized Modbus/TCP write detected\"\n}"
+    }
+   ]
+  },
+  "D_definitions_schema": {
+   "variant": "D_definitions_schema",
+   "note": "definitions + JSON schema enum (3 verdicts), t0",
+   "n": 33,
+   "metrics": {
+    "n": 33,
+    "support": {
+     "true_positive": 28,
+     "false_positive": 5
+    },
+    "majority_class_baseline_accuracy": 0.8485,
+    "accuracy": 0.2727,
+    "accuracy_ci95": [
+     0.1507,
+     0.4422
+    ],
+    "abstain_rate": 0.2727,
+    "error_rate": 0.0,
+    "decisive_coverage": 0.7273,
+    "accuracy_when_decisive": 0.375,
+    "per_class": {
+     "true_positive": {
+      "support": 28,
+      "predicted": 6,
+      "precision": 0.8333,
+      "recall": 0.1786,
+      "f1": 0.2942
+     },
+     "false_positive": {
+      "support": 5,
+      "predicted": 18,
+      "precision": 0.2222,
+      "recall": 0.8,
+      "f1": 0.3478
+     }
+    },
+    "confusion_matrix": {
+     "true_positive": {
+      "true_positive": 5,
+      "false_positive": 14,
+      "needs_review": 9,
+      "error": 0
+     },
+     "false_positive": {
+      "true_positive": 1,
+      "false_positive": 4,
+      "needs_review": 0,
+      "error": 0
+     }
+    },
+    "engine_counts": {
+     "ollama": 33
+    },
+    "stub_share": 0.0,
+    "model_answered": 33,
+    "accuracy_on_model_answered": 0.2727,
+    "severity": {
+     "scored": 33,
+     "exact": 0.2121,
+     "within_one": 0.3939
+    },
+    "llm_tier_subset": {
+     "n": 26,
+     "accuracy": 0.3077
+    },
+    "latency_ms": {
+     "mean": 17445.4,
+     "p50": 21767.3,
+     "p95": 26327.7,
+     "max": 27059.4
+    }
+   },
+   "rows": [
+    {
+     "case_id": "corpus-b:c02-delimited-injection:01",
+     "label": "true_positive",
+     "expected_level": "medium",
+     "prod_tier": "classifier",
+     "verdict": "suspicious",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 25043.362099910155,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "corpus-b:c04-destructive-command:01",
+     "label": "true_positive",
+     "expected_level": "critical",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 7575.436800019816,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "corpus-b:c05-credential-scan:01",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 7602.436699904501,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "corpus-b:c07-unauthorized-modbus-write:01",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "malicious",
+     "level": "high",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 24481.942099984735,
+     "pred": "true_positive"
+    },
+    {
+     "case_id": "twin-ai_to_ot:agent_mcp_tool_call:02",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 8401.659799972549,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-ai_to_ot:modbus_write:04",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "malicious",
+     "level": "high",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 25403.094600187615,
+     "pred": "true_positive"
+    },
+    {
+     "case_id": "twin-cloud_iam_abuse:attacker_console_login:01",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 24985.561900073662,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "twin-infra_takeover:cloud_root_login:01",
+     "label": "true_positive",
+     "expected_level": "critical",
+     "prod_tier": "llm",
+     "verdict": "malicious",
+     "level": "high",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 23734.93909998797,
+     "pred": "true_positive"
+    },
+    {
+     "case_id": "twin-infra_takeover:privileged_container:02",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 25260.83939988166,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "twin-insider_exfil:bulk_table_read:02",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 26327.741799876094,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-it_intrusion:dns_exfil:05",
+     "label": "true_positive",
+     "expected_level": "medium",
+     "prod_tier": "classifier",
+     "verdict": "suspicious",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 10392.237999942154,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-it_intrusion:lateral_movement:03",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 22696.196499979123,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "twin-it_intrusion:recon_port_scan:01",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 23672.104299999774,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-it_intrusion:ssh_bruteforce:02",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 21767.303799977526,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "twin-ot_opcua_sabotage:forged_ticket_write:05",
+     "label": "true_positive",
+     "expected_level": "low",
+     "prod_tier": "store",
+     "verdict": "malicious",
+     "level": "high",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 22817.102700006217,
+     "pred": "true_positive"
+    },
+    {
+     "case_id": "twin-ot_opcua_sabotage:process_write_night:03",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 7643.746500136331,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "twin-ot_opcua_sabotage:setpoint_tamper:04",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 9508.308400167152,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "twin-phishing_bec:c2_beacon:03",
+     "label": "true_positive",
+     "expected_level": "medium",
+     "prod_tier": "classifier",
+     "verdict": "suspicious",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 7497.92469991371,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-phishing_bec:inbox_rule:06",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "malicious",
+     "level": "high",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 6572.4269999191165,
+     "pred": "true_positive"
+    },
+    {
+     "case_id": "twin-phishing_bec:phish_delivery:01",
+     "label": "true_positive",
+     "expected_level": "medium",
+     "prod_tier": "classifier",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 7044.628700008616,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "twin-phishing_bec:user_execution:02",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 7599.923799978569,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "twin-ransomware:admin_privilege_use:02",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 21626.437100116163,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "twin-ransomware:cred_spray:01",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 22710.446800105274,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "twin-ransomware:lateral_spread:03",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 7970.988699933514,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "twin-supply_chain_ci:agent_runaway:02",
+     "label": "true_positive",
+     "expected_level": "medium",
+     "prod_tier": "classifier",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 27059.449200052768,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "twin-supply_chain_ci:artifact_exfil:03",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 8379.73659997806,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-supply_chain_ci:pipeline_sabotage:04",
+     "label": "true_positive",
+     "expected_level": "critical",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 7760.589300189167,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-supply_chain_ci:privileged_runner:05",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 19639.54700017348,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "decoy-infra_takeover:decoy_decommission:01",
+     "label": "false_positive",
+     "expected_level": "low",
+     "prod_tier": "llm",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 20542.426300002262,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "decoy-it_intrusion:decoy_admin_maintenance:02",
+     "label": "false_positive",
+     "expected_level": "low",
+     "prod_tier": "llm",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 23526.244499953464,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "decoy-phishing_bec:decoy_vpn_roaming:01",
+     "label": "false_positive",
+     "expected_level": "low",
+     "prod_tier": "llm",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 22618.315200088546,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "decoy-ransomware:decoy_patch_admin:01",
+     "label": "false_positive",
+     "expected_level": "low",
+     "prod_tier": "llm",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 23889.88889986649,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "negctl-neg-maintenance:benign_write:01",
+     "label": "false_positive",
+     "expected_level": "low",
+     "prod_tier": "store",
+     "verdict": "malicious",
+     "level": "high",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 23946.127799805254,
+     "pred": "true_positive"
+    }
+   ],
+   "raw": [
+    {
+     "case_id": "corpus-b:c02-delimited-injection:01",
+     "raw": "{\n  \"verdict\": \"suspicious\",\n  \"level\": \"low\",\n  \"summary\": \"Tool call with injection indicator, low confidence\"\n}"
+    },
+    {
+     "case_id": "corpus-b:c04-destructive-command:01",
+     "raw": "{\n  \"verdict\": \"suspicious\",\n  \"level\": \"low\",\n  \"summary\": \"Insufficient information to determine if the event is malicious or benign.\"\n}"
+    },
+    {
+     "case_id": "corpus-b:c05-credential-scan:01",
+     "raw": "{\n  \"verdict\": \"benign\",\n  \"level\": \"low\",\n  \"summary\": \"Agent read file for MCP tool, no credential access\"\n}"
+    },
+    {
+     "case_id": "corpus-b:c07-unauthorized-modbus-write:01",
+     "raw": "{\"verdict\": \"malicious\", \"level\": \"high\", \"summary\": \"Unauthorized Modbus/TCP write from local endpoint\"}"
+    },
+    {
+     "case_id": "twin-ai_to_ot:agent_mcp_tool_call:02",
+     "raw": "{\n  \"verdict\": \"suspicious\",\n  \"level\": \"low\",\n  \"summary\": \"Insufficient information to determine if the event is malicious or benign.\"\n}"
+    },
+    {
+     "case_id": "twin-ai_to_ot:modbus_write:04",
+     "raw": "{\n  \"verdict\": \"malicious\",\n  \"level\": \"high\",\n  \"summary\": \"Unauthorized Modbus/TCP write detected\"\n}"
+    },
+    {
+     "case_id": "twin-cloud_iam_abuse:attacker_console_login:01",
+     "raw": "{\n  \"verdict\": \"benign\",\n  \"level\": \"low\",\n  \"summary\": \"User login from different country, no travel detected\"\n}"
+    },
+    {
+     "case_id": "twin-infra_takeover:cloud_root_login:01",
+     "raw": "{\n  \"verdict\": \"malicious\",\n  \"level\": \"high\",\n  \"summary\": \"Root user logged in via console without MFA\"\n}"
+    },
+    {
+     "case_id": "twin-infra_takeover:privileged_container:02",
+     "raw": "{\n  \"verdict\": \"benign\",\n  \"level\": \"low\",\n  \"summary\": \"Normal Kubernetes API activity for privileged container creation\"\n}"
+    },
+    {
+     "case_id": "twin-insider_exfil:bulk_table_read:02",
+     "raw": "{\n  \"verdict\": \"suspicious\",\n  \"level\": \"low\",\n  \"summary\": \"Insufficient information to determine if the event is malicious or benign.\"\n}"
+    },
+    {
+     "case_id": "twin-it_intrusion:dns_exfil:05",
+     "raw": "{\n  \"verdict\": \"suspicious\",\n  \"level\": \"low\",\n  \"summary\": \"Insufficient information to determine if benign or malicious\"\n}"
+    },
+    {
+     "case_id": "twin-it_intrusion:lateral_movement:03",
+     "raw": "{\n  \"verdict\": \"benign\",\n  \"level\": \"low\",\n  \"summary\": \"Single successful logon event from known endpoint\"\n}"
+    },
+    {
+     "case_id": "twin-it_intrusion:recon_port_scan:01",
+     "raw": "{\n  \"verdict\": \"suspicious\",\n  \"level\": \"low\",\n  \"summary\": \"Insufficient information to determine if the event is malicious or benign.\"\n}"
+    },
+    {
+     "case_id": "twin-it_intrusion:ssh_bruteforce:02",
+     "raw": "{\n  \"verdict\": \"benign\",\n  \"level\": \"low\",\n  \"summary\": \"User login attempt from known scanner IP\"\n}"
+    },
+    {
+     "case_id": "twin-ot_opcua_sabotage:forged_ticket_write:05",
+     "raw": "{\"verdict\": \"malicious\", \"level\": \"high\", \"summary\": \"Unauthorized Modbus/TCP write detected\"}"
+    },
+    {
+     "case_id": "twin-ot_opcua_sabotage:process_write_night:03",
+     "raw": "{\n  \"verdict\": \"benign\",\n  \"level\": \"low\",\n  \"summary\": \"OPC UA event from known user in normal operation\"\n}"
+    },
+    {
+     "case_id": "twin-ot_opcua_sabotage:setpoint_tamper:04",
+     "raw": "{\n  \"verdict\": \"benign\",\n  \"level\": \"low\",\n  \"summary\": \"OPC UA audit event for a configuration change by a known user\"\n}"
+    },
+    {
+     "case_id": "twin-phishing_bec:c2_beacon:03",
+     "raw": "{\"verdict\": \"suspicious\", \"level\": \"low\", \"summary\": \"Insufficient information to determine if the event is malicious or benign.\"}"
+    },
+    {
+     "case_id": "twin-phishing_bec:inbox_rule:06",
+     "raw": "{\"verdict\": \"malicious\", \"level\": \"high\", \"summary\": \"Suspicious mailbox rule creation with external forwarding\"}"
+    },
+    {
+     "case_id": "twin-phishing_bec:phish_delivery:01",
+     "raw": "{\"verdict\": \"benign\", \"level\": \"low\", \"summary\": \"Email with macro-capable attachment delivered as expected\"}"
+    },
+    {
+     "case_id": "twin-phishing_bec:user_execution:02",
+     "raw": "{\n  \"verdict\": \"benign\",\n  \"level\": \"low\",\n  \"summary\": \"PowerShell execution by user for legitimate task\"\n}"
+    },
+    {
+     "case_id": "twin-ransomware:admin_privilege_use:02",
+     "raw": "{\n  \"verdict\": \"benign\",\n  \"level\": \"low\",\n  \"summary\": \"User granted special privileges during normal working hours\"\n}"
+    },
+    {
+     "case_id": "twin-ransomware:cred_spray:01",
+     "raw": "{\n  \"verdict\": \"benign\",\n  \"level\": \"low\",\n  \"summary\": \"User failed logon from known internal IP\"\n}"
+    },
+    {
+     "case_id": "twin-ransomware:lateral_spread:03",
+     "raw": "{\n  \"verdict\": \"benign\",\n  \"level\": \"low\",\n  \"summary\": \"User logon from known internal IP to internal host\"\n}"
+    },
+    {
+     "case_id": "twin-supply_chain_ci:agent_runaway:02",
+     "raw": "{\n  \"verdict\": \"benign\",\n  \"level\": \"low\",\n  \"summary\": \"CI-build-agent is a legitimate automation tool reading a file.\"\n}"
+    },
+    {
+     "case_id": "twin-supply_chain_ci:artifact_exfil:03",
+     "raw": "{\n  \"verdict\": \"suspicious\",\n  \"level\": \"low\",\n  \"summary\": \"Event lacks sufficient details to determine if it's malicious or benign.\"\n}"
+    },
+    {
+     "case_id": "twin-supply_chain_ci:pipeline_sabotage:04",
+     "raw": "{\n  \"verdict\": \"suspicious\",\n  \"level\": \"low\",\n  \"summary\": \"Insufficient information to determine if the event is malicious or benign.\"\n}"
+    },
+    {
+     "case_id": "twin-supply_chain_ci:privileged_runner:05",
+     "raw": "{\n  \"verdict\": \"benign\",\n  \"level\": \"low\",\n  \"summary\": \"Build-bot creating pods in a privileged namespace\"\n}"
+    },
+    {
+     "case_id": "decoy-infra_takeover:decoy_decommission:01",
+     "raw": "{\"verdict\": \"benign\", \"level\": \"low\", \"summary\": \"Scheduled VM deletion by service account\"}"
+    },
+    {
+     "case_id": "decoy-it_intrusion:decoy_admin_maintenance:02",
+     "raw": "{\n  \"verdict\": \"benign\",\n  \"level\": \"low\",\n  \"summary\": \"Single successful logon event from known user to known host\"\n}"
+    },
+    {
+     "case_id": "decoy-phishing_bec:decoy_vpn_roaming:01",
+     "raw": "{\n  \"verdict\": \"benign\",\n  \"level\": \"low\",\n  \"summary\": \"User login from known malicious IP with normal activity details\"\n}"
+    },
+    {
+     "case_id": "decoy-ransomware:decoy_patch_admin:01",
+     "raw": "{\n  \"verdict\": \"benign\",\n  \"level\": \"low\",\n  \"summary\": \"Single successful logon event from known user to known host\"\n}"
+    },
+    {
+     "case_id": "negctl-neg-maintenance:benign_write:01",
+     "raw": "{\n  \"verdict\": \"malicious\",\n  \"level\": \"high\",\n  \"summary\": \"Unauthorized Modbus/TCP write detected\"\n}"
+    }
+   ]
+  },
+  "E_binary_schema": {
+   "variant": "E_binary_schema",
+   "note": "definitions + schema forcing benign|malicious (diagnostic: removes the abstain option)",
+   "n": 33,
+   "metrics": {
+    "n": 33,
+    "support": {
+     "true_positive": 28,
+     "false_positive": 5
+    },
+    "majority_class_baseline_accuracy": 0.8485,
+    "accuracy": 0.3939,
+    "accuracy_ci95": [
+     0.2468,
+     0.5632
+    ],
+    "abstain_rate": 0.0,
+    "error_rate": 0.0,
+    "decisive_coverage": 1.0,
+    "accuracy_when_decisive": 0.3939,
+    "per_class": {
+     "true_positive": {
+      "support": 28,
+      "predicted": 10,
+      "precision": 0.9,
+      "recall": 0.3214,
+      "f1": 0.4737
+     },
+     "false_positive": {
+      "support": 5,
+      "predicted": 23,
+      "precision": 0.1739,
+      "recall": 0.8,
+      "f1": 0.2857
+     }
+    },
+    "confusion_matrix": {
+     "true_positive": {
+      "true_positive": 9,
+      "false_positive": 19,
+      "needs_review": 0,
+      "error": 0
+     },
+     "false_positive": {
+      "true_positive": 1,
+      "false_positive": 4,
+      "needs_review": 0,
+      "error": 0
+     }
+    },
+    "engine_counts": {
+     "ollama": 33
+    },
+    "stub_share": 0.0,
+    "model_answered": 33,
+    "accuracy_on_model_answered": 0.3939,
+    "severity": {
+     "scored": 33,
+     "exact": 0.2727,
+     "within_one": 0.5152
+    },
+    "llm_tier_subset": {
+     "n": 26,
+     "accuracy": 0.4615
+    },
+    "latency_ms": {
+     "mean": 14499.7,
+     "p50": 9786.9,
+     "p95": 26245.3,
+     "max": 29684.0
+    }
+   },
+   "rows": [
+    {
+     "case_id": "corpus-b:c02-delimited-injection:01",
+     "label": "true_positive",
+     "expected_level": "medium",
+     "prod_tier": "classifier",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 8980.662300018594,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "corpus-b:c04-destructive-command:01",
+     "label": "true_positive",
+     "expected_level": "critical",
+     "prod_tier": "llm",
+     "verdict": "malicious",
+     "level": "high",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 9149.727399926633,
+     "pred": "true_positive"
+    },
+    {
+     "case_id": "corpus-b:c05-credential-scan:01",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 10318.051100010052,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "corpus-b:c07-unauthorized-modbus-write:01",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "malicious",
+     "level": "high",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 24919.36290008016,
+     "pred": "true_positive"
+    },
+    {
+     "case_id": "twin-ai_to_ot:agent_mcp_tool_call:02",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "malicious",
+     "level": "high",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 8383.351200027391,
+     "pred": "true_positive"
+    },
+    {
+     "case_id": "twin-ai_to_ot:modbus_write:04",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "malicious",
+     "level": "high",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 24046.79029993713,
+     "pred": "true_positive"
+    },
+    {
+     "case_id": "twin-cloud_iam_abuse:attacker_console_login:01",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 22501.38260005042,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "twin-infra_takeover:cloud_root_login:01",
+     "label": "true_positive",
+     "expected_level": "critical",
+     "prod_tier": "llm",
+     "verdict": "malicious",
+     "level": "high",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 22891.09790022485,
+     "pred": "true_positive"
+    },
+    {
+     "case_id": "twin-infra_takeover:privileged_container:02",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 9774.929699953645,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "twin-insider_exfil:bulk_table_read:02",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 9663.445999845862,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "twin-it_intrusion:dns_exfil:05",
+     "label": "true_positive",
+     "expected_level": "medium",
+     "prod_tier": "classifier",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 7980.3190000820905,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "twin-it_intrusion:lateral_movement:03",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 8725.352900102735,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "twin-it_intrusion:recon_port_scan:01",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "malicious",
+     "level": "high",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 26245.294299907982,
+     "pred": "true_positive"
+    },
+    {
+     "case_id": "twin-it_intrusion:ssh_bruteforce:02",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 21395.58110013604,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "twin-ot_opcua_sabotage:forged_ticket_write:05",
+     "label": "true_positive",
+     "expected_level": "low",
+     "prod_tier": "store",
+     "verdict": "malicious",
+     "level": "high",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 23087.39380002953,
+     "pred": "true_positive"
+    },
+    {
+     "case_id": "twin-ot_opcua_sabotage:process_write_night:03",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 8587.836500024423,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "twin-ot_opcua_sabotage:setpoint_tamper:04",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 10482.802599901333,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "twin-phishing_bec:c2_beacon:03",
+     "label": "true_positive",
+     "expected_level": "medium",
+     "prod_tier": "classifier",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 6977.959500160068,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "twin-phishing_bec:inbox_rule:06",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "malicious",
+     "level": "high",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 7607.234600000083,
+     "pred": "true_positive"
+    },
+    {
+     "case_id": "twin-phishing_bec:phish_delivery:01",
+     "label": "true_positive",
+     "expected_level": "medium",
+     "prod_tier": "classifier",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 8584.988600108773,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "twin-phishing_bec:user_execution:02",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 8982.416699873284,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "twin-ransomware:admin_privilege_use:02",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 24077.8655000031,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "twin-ransomware:cred_spray:01",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 25198.265800019726,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "twin-ransomware:lateral_spread:03",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 9786.88000002876,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "twin-supply_chain_ci:agent_runaway:02",
+     "label": "true_positive",
+     "expected_level": "medium",
+     "prod_tier": "classifier",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 29684.0230000671,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "twin-supply_chain_ci:artifact_exfil:03",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 10587.456400040537,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "twin-supply_chain_ci:pipeline_sabotage:04",
+     "label": "true_positive",
+     "expected_level": "critical",
+     "prod_tier": "llm",
+     "verdict": "malicious",
+     "level": "high",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 8327.9944001697,
+     "pred": "true_positive"
+    },
+    {
+     "case_id": "twin-supply_chain_ci:privileged_runner:05",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 10186.671599978581,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "decoy-infra_takeover:decoy_decommission:01",
+     "label": "false_positive",
+     "expected_level": "low",
+     "prod_tier": "llm",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 23288.606399903074,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "decoy-it_intrusion:decoy_admin_maintenance:02",
+     "label": "false_positive",
+     "expected_level": "low",
+     "prod_tier": "llm",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 9009.263399988413,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "decoy-phishing_bec:decoy_vpn_roaming:01",
+     "label": "false_positive",
+     "expected_level": "low",
+     "prod_tier": "llm",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 7707.590100122616,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "decoy-ransomware:decoy_patch_admin:01",
+     "label": "false_positive",
+     "expected_level": "low",
+     "prod_tier": "llm",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 8540.26099992916,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "negctl-neg-maintenance:benign_write:01",
+     "label": "false_positive",
+     "expected_level": "low",
+     "prod_tier": "store",
+     "verdict": "malicious",
+     "level": "high",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 22808.946599951014,
+     "pred": "true_positive"
+    }
+   ],
+   "raw": [
+    {
+     "case_id": "corpus-b:c02-delimited-injection:01",
+     "raw": "{\n  \"verdict\": \"benign\",\n  \"level\": \"low\",\n  \"summary\": \"MCP Agent Gateway tool call with prompt injection indicator\"\n}"
+    },
+    {
+     "case_id": "corpus-b:c04-destructive-command:01",
+     "raw": "{\n  \"verdict\": \"malicious\",\n  \"level\": \"high\",\n  \"summary\": \"Suspicious destructive command in MCP Agent tool call\"\n}"
+    },
+    {
+     "case_id": "corpus-b:c05-credential-scan:01",
+     "raw": "{\n  \"verdict\": \"benign\",\n  \"level\": \"low\",\n  \"summary\": \"Agent read file for MCP tool, no credential access\"\n}"
+    },
+    {
+     "case_id": "corpus-b:c07-unauthorized-modbus-write:01",
+     "raw": "{\"verdict\": \"malicious\", \"level\": \"high\", \"summary\": \"Unauthorized Modbus/TCP write from local endpoint\"}"
+    },
+    {
+     "case_id": "twin-ai_to_ot:agent_mcp_tool_call:02",
+     "raw": "{\n  \"verdict\": \"malicious\",\n  \"level\": \"high\",\n  \"summary\": \"Suspicious tool call to known malicious domain with prompt injection\"\n}"
+    },
+    {
+     "case_id": "twin-ai_to_ot:modbus_write:04",
+     "raw": "{\n  \"verdict\": \"malicious\",\n  \"level\": \"high\",\n  \"summary\": \"Unauthorized Modbus/TCP write detected\"\n}"
+    },
+    {
+     "case_id": "twin-cloud_iam_abuse:attacker_console_login:01",
+     "raw": "{\n  \"verdict\": \"benign\",\n  \"level\": \"low\",\n  \"summary\": \"User login from a known account in a different country\"\n}"
+    },
+    {
+     "case_id": "twin-infra_takeover:cloud_root_login:01",
+     "raw": "{\n  \"verdict\": \"malicious\",\n  \"level\": \"high\",\n  \"summary\": \"Root user logged in via console without MFA\"\n}"
+    },
+    {
+     "case_id": "twin-infra_takeover:privileged_container:02",
+     "raw": "{\n  \"verdict\": \"benign\",\n  \"level\": \"low\",\n  \"summary\": \"Event is a normal Kubernetes operation by a privileged user\"\n}"
+    },
+    {
+     "case_id": "twin-insider_exfil:bulk_table_read:02",
+     "raw": "{\n  \"verdict\": \"benign\",\n  \"level\": \"low\",\n  \"summary\": \"User queried cardholder data for audit purposes\"\n}"
+    },
+    {
+     "case_id": "twin-it_intrusion:dns_exfil:05",
+     "raw": "{\n  \"verdict\": \"benign\",\n  \"level\": \"low\",\n  \"summary\": \"DNS query from local source appears routine activity\"\n}"
+    },
+    {
+     "case_id": "twin-it_intrusion:lateral_movement:03",
+     "raw": "{\n  \"verdict\": \"benign\",\n  \"level\": \"low\",\n  \"summary\": \"Single successful logon event from known endpoint\"\n}"
+    },
+    {
+     "case_id": "twin-it_intrusion:recon_port_scan:01",
+     "raw": "{\n  \"verdict\": \"malicious\",\n  \"level\": \"high\",\n  \"summary\": \"Deny rule triggered for multiple destination ports from a single source IP\"\n}"
+    },
+    {
+     "case_id": "twin-it_intrusion:ssh_bruteforce:02",
+     "raw": "{\n  \"verdict\": \"benign\",\n  \"level\": \"low\",\n  \"summary\": \"User login attempt from known scanner IP\"\n}"
+    },
+    {
+     "case_id": "twin-ot_opcua_sabotage:forged_ticket_write:05",
+     "raw": "{\"verdict\": \"malicious\", \"level\": \"high\", \"summary\": \"Unauthorized Modbus/TCP write detected\"}"
+    },
+    {
+     "case_id": "twin-ot_opcua_sabotage:process_write_night:03",
+     "raw": "{\n  \"verdict\": \"benign\",\n  \"level\": \"low\",\n  \"summary\": \"OPC UA event from known user in normal operation\"\n}"
+    },
+    {
+     "case_id": "twin-ot_opcua_sabotage:setpoint_tamper:04",
+     "raw": "{\n  \"verdict\": \"benign\",\n  \"level\": \"low\",\n  \"summary\": \"OPC UA audit event for a configuration change by a known user\"\n}"
+    },
+    {
+     "case_id": "twin-phishing_bec:c2_beacon:03",
+     "raw": "{\"verdict\": \"benign\", \"level\": \"low\", \"summary\": \"Routine outbound connection from service account.\"}"
+    },
+    {
+     "case_id": "twin-phishing_bec:inbox_rule:06",
+     "raw": "{\"verdict\": \"malicious\", \"level\": \"high\", \"summary\": \"Suspicious mailbox rule creation with external forwarding\"}"
+    },
+    {
+     "case_id": "twin-phishing_bec:phish_delivery:01",
+     "raw": "{\"verdict\": \"benign\", \"level\": \"low\", \"summary\": \"Email with macro-capable attachment delivered as expected\"}"
+    },
+    {
+     "case_id": "twin-phishing_bec:user_execution:02",
+     "raw": "{\n  \"verdict\": \"benign\",\n  \"level\": \"low\",\n  \"summary\": \"PowerShell execution by user for legitimate task\"\n}"
+    },
+    {
+     "case_id": "twin-ransomware:admin_privilege_use:02",
+     "raw": "{\n  \"verdict\": \"benign\",\n  \"level\": \"low\",\n  \"summary\": \"User granted special privileges during normal working hours\"\n}"
+    },
+    {
+     "case_id": "twin-ransomware:cred_spray:01",
+     "raw": "{\n  \"verdict\": \"benign\",\n  \"level\": \"low\",\n  \"summary\": \"User failed logon from known internal IP\"\n}"
+    },
+    {
+     "case_id": "twin-ransomware:lateral_spread:03",
+     "raw": "{\n  \"verdict\": \"benign\",\n  \"level\": \"low\",\n  \"summary\": \"User logon from known internal IP to internal host\"\n}"
+    },
+    {
+     "case_id": "twin-supply_chain_ci:agent_runaway:02",
+     "raw": "{\n  \"verdict\": \"benign\",\n  \"level\": \"low\",\n  \"summary\": \"CI-build-agent is a legitimate automation tool reading a file.\"\n}"
+    },
+    {
+     "case_id": "twin-supply_chain_ci:artifact_exfil:03",
+     "raw": "{\n  \"verdict\": \"benign\",\n  \"level\": \"low\",\n  \"summary\": \"CI-build-agent is a legitimate tool making a normal API call to a known domain.\"\n}"
+    },
+    {
+     "case_id": "twin-supply_chain_ci:pipeline_sabotage:04",
+     "raw": "{\n  \"verdict\": \"malicious\",\n  \"level\": \"high\",\n  \"summary\": \"Agent executing destructive command\"\n}"
+    },
+    {
+     "case_id": "twin-supply_chain_ci:privileged_runner:05",
+     "raw": "{\n  \"verdict\": \"benign\",\n  \"level\": \"low\",\n  \"summary\": \"Build-bot creating pods for CI/CD pipeline\"\n}"
+    },
+    {
+     "case_id": "decoy-infra_takeover:decoy_decommission:01",
+     "raw": "{\"verdict\": \"benign\", \"level\": \"low\", \"summary\": \"Scheduled VM deletion by service account\"}"
+    },
+    {
+     "case_id": "decoy-it_intrusion:decoy_admin_maintenance:02",
+     "raw": "{\n  \"verdict\": \"benign\",\n  \"level\": \"low\",\n  \"summary\": \"Single successful logon event from known user to known host\"\n}"
+    },
+    {
+     "case_id": "decoy-phishing_bec:decoy_vpn_roaming:01",
+     "raw": "{\n  \"verdict\": \"benign\",\n  \"level\": \"low\",\n  \"summary\": \"User login from known compromised IP in China\"\n}"
+    },
+    {
+     "case_id": "decoy-ransomware:decoy_patch_admin:01",
+     "raw": "{\n  \"verdict\": \"benign\",\n  \"level\": \"low\",\n  \"summary\": \"Single successful logon event from known user to known host\"\n}"
+    },
+    {
+     "case_id": "negctl-neg-maintenance:benign_write:01",
+     "raw": "{\n  \"verdict\": \"malicious\",\n  \"level\": \"high\",\n  \"summary\": \"Unauthorized Modbus/TCP write detected\"\n}"
+    }
+   ]
+  },
+  "F_fewshot_t0": {
+   "variant": "F_fewshot_t0",
+   "note": "definitions + 4 DEV examples, temperature 0",
+   "n": 33,
+   "metrics": {
+    "n": 33,
+    "support": {
+     "true_positive": 28,
+     "false_positive": 5
+    },
+    "majority_class_baseline_accuracy": 0.8485,
+    "accuracy": 0.2121,
+    "accuracy_ci95": [
+     0.1068,
+     0.3775
+    ],
+    "abstain_rate": 0.0,
+    "error_rate": 0.0,
+    "decisive_coverage": 1.0,
+    "accuracy_when_decisive": 0.2121,
+    "per_class": {
+     "true_positive": {
+      "support": 28,
+      "predicted": 2,
+      "precision": 1.0,
+      "recall": 0.0714,
+      "f1": 0.1333
+     },
+     "false_positive": {
+      "support": 5,
+      "predicted": 31,
+      "precision": 0.1613,
+      "recall": 1.0,
+      "f1": 0.2778
+     }
+    },
+    "confusion_matrix": {
+     "true_positive": {
+      "true_positive": 2,
+      "false_positive": 26,
+      "needs_review": 0,
+      "error": 0
+     },
+     "false_positive": {
+      "true_positive": 0,
+      "false_positive": 5,
+      "needs_review": 0,
+      "error": 0
+     }
+    },
+    "engine_counts": {
+     "ollama": 33
+    },
+    "stub_share": 0.0,
+    "model_answered": 33,
+    "accuracy_on_model_answered": 0.2121,
+    "severity": {
+     "scored": 33,
+     "exact": 0.2121,
+     "within_one": 0.3636
+    },
+    "llm_tier_subset": {
+     "n": 26,
+     "accuracy": 0.2308
+    },
+    "latency_ms": {
+     "mean": 29116.0,
+     "p50": 26072.0,
+     "p95": 35425.3,
+     "max": 114964.2
+    }
+   },
+   "rows": [
+    {
+     "case_id": "corpus-b:c02-delimited-injection:01",
+     "label": "true_positive",
+     "expected_level": "medium",
+     "prod_tier": "classifier",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 114964.19139998034,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "corpus-b:c04-destructive-command:01",
+     "label": "true_positive",
+     "expected_level": "critical",
+     "prod_tier": "llm",
+     "verdict": "malicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 29719.59690004587,
+     "pred": "true_positive"
+    },
+    {
+     "case_id": "corpus-b:c05-credential-scan:01",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 30119.74780005403,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "corpus-b:c07-unauthorized-modbus-write:01",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 29765.091799898073,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "twin-ai_to_ot:agent_mcp_tool_call:02",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "malicious",
+     "level": "high",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 35425.28650001623,
+     "pred": "true_positive"
+    },
+    {
+     "case_id": "twin-ai_to_ot:modbus_write:04",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 26640.254799975082,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "twin-cloud_iam_abuse:attacker_console_login:01",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 24905.53420013748,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "twin-infra_takeover:cloud_root_login:01",
+     "label": "true_positive",
+     "expected_level": "critical",
+     "prod_tier": "llm",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 23061.995500000194,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "twin-infra_takeover:privileged_container:02",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 23661.0014999751,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "twin-insider_exfil:bulk_table_read:02",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 25078.43879982829,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "twin-it_intrusion:dns_exfil:05",
+     "label": "true_positive",
+     "expected_level": "medium",
+     "prod_tier": "classifier",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 27437.148099998012,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "twin-it_intrusion:lateral_movement:03",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 26411.842599976808,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "twin-it_intrusion:recon_port_scan:01",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 25624.274299945682,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "twin-it_intrusion:ssh_bruteforce:02",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 22892.046900000423,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "twin-ot_opcua_sabotage:forged_ticket_write:05",
+     "label": "true_positive",
+     "expected_level": "low",
+     "prod_tier": "store",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 25673.096100101247,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "twin-ot_opcua_sabotage:process_write_night:03",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 27178.498500026762,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "twin-ot_opcua_sabotage:setpoint_tamper:04",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 28418.489799834788,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "twin-phishing_bec:c2_beacon:03",
+     "label": "true_positive",
+     "expected_level": "medium",
+     "prod_tier": "classifier",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 28133.98619997315,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "twin-phishing_bec:inbox_rule:06",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 28008.26819986105,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "twin-phishing_bec:phish_delivery:01",
+     "label": "true_positive",
+     "expected_level": "medium",
+     "prod_tier": "classifier",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 26071.96979993023,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "twin-phishing_bec:user_execution:02",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 27199.80200007558,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "twin-ransomware:admin_privilege_use:02",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 23147.76619989425,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "twin-ransomware:cred_spray:01",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 24391.401099972427,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "twin-ransomware:lateral_spread:03",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 25670.241199899465,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "twin-supply_chain_ci:agent_runaway:02",
+     "label": "true_positive",
+     "expected_level": "medium",
+     "prod_tier": "classifier",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 28778.950599953532,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "twin-supply_chain_ci:artifact_exfil:03",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 26922.72219993174,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "twin-supply_chain_ci:pipeline_sabotage:04",
+     "label": "true_positive",
+     "expected_level": "critical",
+     "prod_tier": "llm",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 25395.071499980986,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "twin-supply_chain_ci:privileged_runner:05",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 22825.756799895316,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "decoy-infra_takeover:decoy_decommission:01",
+     "label": "false_positive",
+     "expected_level": "low",
+     "prod_tier": "llm",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 25196.307300124317,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "decoy-it_intrusion:decoy_admin_maintenance:02",
+     "label": "false_positive",
+     "expected_level": "low",
+     "prod_tier": "llm",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 24339.525799965486,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "decoy-phishing_bec:decoy_vpn_roaming:01",
+     "label": "false_positive",
+     "expected_level": "low",
+     "prod_tier": "llm",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 22721.234899945557,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "decoy-ransomware:decoy_patch_admin:01",
+     "label": "false_positive",
+     "expected_level": "low",
+     "prod_tier": "llm",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 24973.20310003124,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "negctl-neg-maintenance:benign_write:01",
+     "label": "false_positive",
+     "expected_level": "low",
+     "prod_tier": "store",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 30074.055999983102,
+     "pred": "false_positive"
+    }
+   ],
+   "raw": [
+    {
+     "case_id": "corpus-b:c02-delimited-injection:01",
+     "raw": "{\"verdict\": \"benign\", \"level\": \"low\", \"summary\": \"example\"}"
+    },
+    {
+     "case_id": "corpus-b:c04-destructive-command:01",
+     "raw": "{\"verdict\": \"malicious\", \"level\": \"medium\", \"summary\": \"Example\"}"
+    },
+    {
+     "case_id": "corpus-b:c05-credential-scan:01",
+     "raw": "{\"verdict\": \"benign\", \"level\": \"low\", \"summary\": \"example\"}"
+    },
+    {
+     "case_id": "corpus-b:c07-unauthorized-modbus-write:01",
+     "raw": "{\"verdict\": \"benign\", \"level\": \"low\", \"summary\": \"Example\"}"
+    },
+    {
+     "case_id": "twin-ai_to_ot:agent_mcp_tool_call:02",
+     "raw": "{\"verdict\": \"malicious\", \"level\": \"high\", \"summary\": \"Example\"}"
+    },
+    {
+     "case_id": "twin-ai_to_ot:modbus_write:04",
+     "raw": "{\"verdict\": \"benign\", \"level\": \"low\", \"summary\": \"Example\"}"
+    },
+    {
+     "case_id": "twin-cloud_iam_abuse:attacker_console_login:01",
+     "raw": "{\"verdict\": \"benign\", \"level\": \"low\", \"summary\": \"Example\"}"
+    },
+    {
+     "case_id": "twin-infra_takeover:cloud_root_login:01",
+     "raw": "{\"verdict\": \"benign\", \"level\": \"low\", \"summary\": \"example\"}"
+    },
+    {
+     "case_id": "twin-infra_takeover:privileged_container:02",
+     "raw": "{\"verdict\": \"benign\", \"level\": \"low\", \"summary\": \"Example\"}"
+    },
+    {
+     "case_id": "twin-insider_exfil:bulk_table_read:02",
+     "raw": "{\"verdict\": \"benign\", \"level\": \"low\", \"summary\": \"Example\"}"
+    },
+    {
+     "case_id": "twin-it_intrusion:dns_exfil:05",
+     "raw": "{\"verdict\": \"benign\", \"level\": \"low\", \"summary\": \"Example DNS query from internal IP\"}"
+    },
+    {
+     "case_id": "twin-it_intrusion:lateral_movement:03",
+     "raw": "{\"verdict\": \"benign\", \"level\": \"low\", \"summary\": \"Example\"}"
+    },
+    {
+     "case_id": "twin-it_intrusion:recon_port_scan:01",
+     "raw": "{\"verdict\": \"benign\", \"level\": \"low\", \"summary\": \"Example\"}"
+    },
+    {
+     "case_id": "twin-it_intrusion:ssh_bruteforce:02",
+     "raw": "{\"verdict\": \"benign\", \"level\": \"low\", \"summary\": \"Example\"}"
+    },
+    {
+     "case_id": "twin-ot_opcua_sabotage:forged_ticket_write:05",
+     "raw": "{\"verdict\": \"benign\", \"level\": \"low\", \"summary\": \"example\"}"
+    },
+    {
+     "case_id": "twin-ot_opcua_sabotage:process_write_night:03",
+     "raw": "{\"verdict\": \"benign\", \"level\": \"low\", \"summary\": \"example\"}"
+    },
+    {
+     "case_id": "twin-ot_opcua_sabotage:setpoint_tamper:04",
+     "raw": "{\"verdict\": \"benign\", \"level\": \"low\", \"summary\": \"example\"}"
+    },
+    {
+     "case_id": "twin-phishing_bec:c2_beacon:03",
+     "raw": "{\"verdict\": \"benign\", \"level\": \"low\", \"summary\": \"Example\"}"
+    },
+    {
+     "case_id": "twin-phishing_bec:inbox_rule:06",
+     "raw": "{\"verdict\": \"benign\", \"level\": \"low\", \"summary\": \"example\"}"
+    },
+    {
+     "case_id": "twin-phishing_bec:phish_delivery:01",
+     "raw": "{\"verdict\": \"benign\", \"level\": \"low\", \"summary\": \"example\"}"
+    },
+    {
+     "case_id": "twin-phishing_bec:user_execution:02",
+     "raw": "{\"verdict\": \"benign\", \"level\": \"low\", \"summary\": \"Example\"}"
+    },
+    {
+     "case_id": "twin-ransomware:admin_privilege_use:02",
+     "raw": "{\"verdict\": \"benign\", \"level\": \"low\", \"summary\": \"Example\"}"
+    },
+    {
+     "case_id": "twin-ransomware:cred_spray:01",
+     "raw": "{\"verdict\": \"benign\", \"level\": \"low\", \"summary\": \"Example\"}"
+    },
+    {
+     "case_id": "twin-ransomware:lateral_spread:03",
+     "raw": "{\"verdict\": \"benign\", \"level\": \"low\", \"summary\": \"Example\"}"
+    },
+    {
+     "case_id": "twin-supply_chain_ci:agent_runaway:02",
+     "raw": "{\"verdict\": \"benign\", \"level\": \"low\", \"summary\": \"Example\"}"
+    },
+    {
+     "case_id": "twin-supply_chain_ci:artifact_exfil:03",
+     "raw": "{\"verdict\": \"benign\", \"level\": \"low\", \"summary\": \"example\"}"
+    },
+    {
+     "case_id": "twin-supply_chain_ci:pipeline_sabotage:04",
+     "raw": "{\"verdict\": \"benign\", \"level\": \"low\", \"summary\": \"example\"}"
+    },
+    {
+     "case_id": "twin-supply_chain_ci:privileged_runner:05",
+     "raw": "{\"verdict\": \"benign\", \"level\": \"low\", \"summary\": \"example\"}"
+    },
+    {
+     "case_id": "decoy-infra_takeover:decoy_decommission:01",
+     "raw": "{\"verdict\": \"benign\", \"level\": \"low\", \"summary\": \"Example\"}"
+    },
+    {
+     "case_id": "decoy-it_intrusion:decoy_admin_maintenance:02",
+     "raw": "{\"verdict\": \"benign\", \"level\": \"low\", \"summary\": \"Example\"}"
+    },
+    {
+     "case_id": "decoy-phishing_bec:decoy_vpn_roaming:01",
+     "raw": "{\"verdict\": \"benign\", \"level\": \"low\", \"summary\": \"example\"}"
+    },
+    {
+     "case_id": "decoy-ransomware:decoy_patch_admin:01",
+     "raw": "{\"verdict\": \"benign\", \"level\": \"low\", \"summary\": \"Patch account routine logon\"}"
+    },
+    {
+     "case_id": "negctl-neg-maintenance:benign_write:01",
+     "raw": "{\"verdict\": \"benign\", \"level\": \"low\", \"summary\": \"Modbus/TCP function 5 unit 1 address 0 -- authorized change\"}"
+    }
+   ]
+  }
+ },
+ "dev_n_scored": 33,
+ "picked_on_dev": "E_binary_schema",
+ "holdout": {
+  "A_shipped_default": {
+   "variant": "A_shipped_default",
+   "note": "shipped prompt, Ollama default sampling (the original direct run)",
+   "n": 17,
+   "metrics": {
+    "n": 17,
+    "support": {
+     "true_positive": 14,
+     "false_positive": 3
+    },
+    "majority_class_baseline_accuracy": 0.8235,
+    "accuracy": 0.0,
+    "accuracy_ci95": [
+     0.0,
+     0.1843
+    ],
+    "abstain_rate": 0.9412,
+    "error_rate": 0.0,
+    "decisive_coverage": 0.0588,
+    "accuracy_when_decisive": 0.0,
+    "per_class": {
+     "true_positive": {
+      "support": 14,
+      "predicted": 0,
+      "precision": null,
+      "recall": 0.0,
+      "f1": null
+     },
+     "false_positive": {
+      "support": 3,
+      "predicted": 1,
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0
+     }
+    },
+    "confusion_matrix": {
+     "true_positive": {
+      "true_positive": 0,
+      "false_positive": 1,
+      "needs_review": 13,
+      "error": 0
+     },
+     "false_positive": {
+      "true_positive": 0,
+      "false_positive": 0,
+      "needs_review": 3,
+      "error": 0
+     }
+    },
+    "engine_counts": {
+     "ollama": 17
+    },
+    "stub_share": 0.0,
+    "model_answered": 17,
+    "accuracy_on_model_answered": 0.0,
+    "severity": {
+     "scored": 17,
+     "exact": 0.2353,
+     "within_one": 0.7059
+    },
+    "llm_tier_subset": {
+     "n": 13,
+     "accuracy": 0.0
+    },
+    "latency_ms": {
+     "mean": 25488.7,
+     "p50": 25260.7,
+     "p95": 31111.0,
+     "max": 31111.0
+    }
+   },
+   "rows": [
+    {
+     "case_id": "corpus-b:c03-confusable-injection:01",
+     "label": "true_positive",
+     "expected_level": "medium",
+     "prod_tier": "classifier",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 31110.975199844688,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "corpus-b:c06-egress-exfil:01",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 28526.788499904796,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-ai_to_ot:credential_use:03",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 27336.454999865964,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-ai_to_ot:process_anomaly:05",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 25412.4075002037,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-infra_takeover:mass_vm_delete:03",
+     "label": "true_positive",
+     "expected_level": "critical",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 24144.683100050315,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-insider_exfil:grant_self_access:01",
+     "label": "true_positive",
+     "expected_level": "critical",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 21777.362799970433,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-it_intrusion:priv_grant:04",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 24904.755599796772,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-ot_opcua_sabotage:engineering_sessions:02",
+     "label": "true_positive",
+     "expected_level": "medium",
+     "prod_tier": "classifier",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 28294.041499961168,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-ot_opcua_sabotage:rogue_device:01",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 24587.90130005218,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "twin-phishing_bec:foreign_login:05",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 21348.52400003001,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-phishing_bec:proxy_pool_logins:04",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 22976.21289989911,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-ransomware:backdoor_account:04",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 21758.620499866083,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-ransomware:mass_vm_delete:05",
+     "label": "true_positive",
+     "expected_level": "critical",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 26363.7383999303,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "twin-supply_chain_ci:ci_secret_read:01",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "medium",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 25153.295799857005,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "decoy-insider_exfil:decoy_report_job:01",
+     "label": "false_positive",
+     "expected_level": "low",
+     "prod_tier": "llm",
+     "verdict": "suspicious",
+     "level": "high",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 25737.02619993128,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "decoy-ot_opcua_sabotage:decoy_shift_handover:01",
+     "label": "false_positive",
+     "expected_level": "low",
+     "prod_tier": "classifier",
+     "verdict": "suspicious",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 25260.70429990068,
+     "pred": "needs_review"
+    },
+    {
+     "case_id": "decoy-supply_chain_ci:decoy_refactor_session:01",
+     "label": "false_positive",
+     "expected_level": "low",
+     "prod_tier": "classifier",
+     "verdict": "suspicious",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 28613.885599887,
+     "pred": "needs_review"
+    }
+   ],
+   "raw": [
+    {
+     "case_id": "corpus-b:c03-confusable-injection:01",
+     "raw": "{\"verdict\": \"suspicious\", \"level\": \"medium\", \"summary\": \"Detection rule triggered indicates a potential prompt injection attack in a security tool call\"}"
+    },
+    {
+     "case_id": "corpus-b:c06-egress-exfil:01",
+     "raw": "{\"verdict\": \"suspicious\", \"level\": \"medium\", \"summary\": \"The MCP tool run_query called a non-allowlisted domain (evil.example.com)\"}"
+    },
+    {
+     "case_id": "twin-ai_to_ot:credential_use:03",
+     "raw": "{\n\"verdict\": \"suspicious\", \n\"level\": \"medium\", \n\"summary\": \"The MCP Agent Gateway tool accessed a credential file, triggering a detection rule indicating potential credential access.\"\n}"
+    },
+    {
+     "case_id": "twin-ai_to_ot:process_anomaly:05",
+     "raw": "{\"verdict\": \"suspicious\", \"level\": \"medium\", \"summary\": \"Modbus/TCP function 6 unit 1 address 41999 -- unauthorized_write, triggered by detection rules\"}"
+    },
+    {
+     "case_id": "twin-infra_takeover:mass_vm_delete:03",
+     "raw": "{\"verdict\": \"suspicious\", \"level\": \"medium\", \"summary\": \"The alert involves a deletion by a privileged user, raising suspicion due to the detected pattern of mass VM deletion.\"}"
+    },
+    {
+     "case_id": "twin-insider_exfil:grant_self_access:01",
+     "raw": "{\"verdict\": \"suspicious\", \"level\": \"medium\", \"summary\": \"Privileged operation on a sensitive database, detected as suspicious\"}"
+    },
+    {
+     "case_id": "twin-it_intrusion:priv_grant:04",
+     "raw": "{\"verdict\": \"suspicious\", \"level\": \"medium\", \"summary\": \"A user (ci-runner) added a new member to a privileged security group (backdoor-svc), which is unusual and should be reviewed.\"}"
+    },
+    {
+     "case_id": "twin-ot_opcua_sabotage:engineering_sessions:02",
+     "raw": "{\n  \"verdict\": \"suspicious\",\n  \"level\": \"medium\",\n  \"summary\": \"Activity involving OPC UA AuditCreateSessionEventType for user eng-marco on a specific PLC (plc-line4) within the datacenter sector. Detection rule indicates potential concurrent connections which could be malicious.\"\n}"
+    },
+    {
+     "case_id": "twin-ot_opcua_sabotage:rogue_device:01",
+     "raw": "{\"verdict\": \"benign\", \"level\": \"low\", \"summary\": \"This is a benign new device registration with no malicious behavior indicated.\"}"
+    },
+    {
+     "case_id": "twin-phishing_bec:foreign_login:05",
+     "raw": "{\"verdict\": \"suspicious\", \"level\": \"medium\", \"summary\": \"User from Russia successfully logged in from a US IP, indicating possible account compromise or misuse.\"}"
+    },
+    {
+     "case_id": "twin-phishing_bec:proxy_pool_logins:04",
+     "raw": "{\"verdict\": \"suspicious\", \"level\": \"medium\", \"summary\": \"Suspicious user login failure from a reputation marked as a botnet IP with a high score\"}"
+    },
+    {
+     "case_id": "twin-ransomware:backdoor_account:04",
+     "raw": "{\"verdict\": \"suspicious\", \"level\": \"medium\", \"summary\": \"User account deletion followed by an account creation event, raising suspicion\"}"
+    },
+    {
+     "case_id": "twin-ransomware:mass_vm_delete:05",
+     "raw": "{\"verdict\": \"suspicious\", \"level\": \"medium\", \"summary\": \"VM deletion activity triggered by a user ('s.okafor') with a high detection score, indicative of potential sabotage or unauthorized action.\"}"
+    },
+    {
+     "case_id": "twin-supply_chain_ci:ci_secret_read:01",
+     "raw": "{\"verdict\": \"suspicious\", \"level\": \"medium\", \"summary\": \"The MCP tool accessed a credential-related path, which could indicate potential sensitive data exposure.\"}"
+    },
+    {
+     "case_id": "decoy-insider_exfil:decoy_report_job:01",
+     "raw": "{\n  \"verdict\": \"suspicious\",\n  \"level\": \"high\",\n  \"summary\": \"The actor (svc_report) queried fx_rates, a suspicious activity in a banking sector database, triggered by a detection rule for mass data read.\"\n}"
+    },
+    {
+     "case_id": "decoy-ot_opcua_sabotage:decoy_shift_handover:01",
+     "raw": "{\"verdict\": \"suspicious\", \"level\": \"low\", \"summary\": \"The alert involves a single user connecting to a PLC, which could be an expected activity or part of a pattern that warrants further investigation.\"}"
+    },
+    {
+     "case_id": "decoy-supply_chain_ci:decoy_refactor_session:01",
+     "raw": "{\"verdict\": \"suspicious\", \"level\": \"low\", \"summary\": \"The MCP tool attempting to read a Python file from a workspace location is suspicious due to the lack of context about its purpose.\"}"
+    }
+   ]
+  },
+  "E_binary_schema": {
+   "variant": "E_binary_schema",
+   "note": "definitions + schema forcing benign|malicious (diagnostic: removes the abstain option)",
+   "n": 17,
+   "metrics": {
+    "n": 17,
+    "support": {
+     "true_positive": 14,
+     "false_positive": 3
+    },
+    "majority_class_baseline_accuracy": 0.8235,
+    "accuracy": 0.4706,
+    "accuracy_ci95": [
+     0.2616,
+     0.6904
+    ],
+    "abstain_rate": 0.0,
+    "error_rate": 0.0,
+    "decisive_coverage": 1.0,
+    "accuracy_when_decisive": 0.4706,
+    "per_class": {
+     "true_positive": {
+      "support": 14,
+      "predicted": 5,
+      "precision": 1.0,
+      "recall": 0.3571,
+      "f1": 0.5263
+     },
+     "false_positive": {
+      "support": 3,
+      "predicted": 12,
+      "precision": 0.25,
+      "recall": 1.0,
+      "f1": 0.4
+     }
+    },
+    "confusion_matrix": {
+     "true_positive": {
+      "true_positive": 5,
+      "false_positive": 9,
+      "needs_review": 0,
+      "error": 0
+     },
+     "false_positive": {
+      "true_positive": 0,
+      "false_positive": 3,
+      "needs_review": 0,
+      "error": 0
+     }
+    },
+    "engine_counts": {
+     "ollama": 17
+    },
+    "stub_share": 0.0,
+    "model_answered": 17,
+    "accuracy_on_model_answered": 0.4706,
+    "severity": {
+     "scored": 17,
+     "exact": 0.2941,
+     "within_one": 0.5294
+    },
+    "llm_tier_subset": {
+     "n": 13,
+     "accuracy": 0.3846
+    },
+    "latency_ms": {
+     "mean": 21749.2,
+     "p50": 20842.6,
+     "p95": 27314.1,
+     "max": 27314.1
+    }
+   },
+   "rows": [
+    {
+     "case_id": "corpus-b:c03-confusable-injection:01",
+     "label": "true_positive",
+     "expected_level": "medium",
+     "prod_tier": "classifier",
+     "verdict": "malicious",
+     "level": "high",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 27314.13449998945,
+     "pred": "true_positive"
+    },
+    {
+     "case_id": "corpus-b:c06-egress-exfil:01",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "malicious",
+     "level": "high",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 26067.31149996631,
+     "pred": "true_positive"
+    },
+    {
+     "case_id": "twin-ai_to_ot:credential_use:03",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 24331.78919996135,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "twin-ai_to_ot:process_anomaly:05",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "malicious",
+     "level": "high",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 19582.03070005402,
+     "pred": "true_positive"
+    },
+    {
+     "case_id": "twin-infra_takeover:mass_vm_delete:03",
+     "label": "true_positive",
+     "expected_level": "critical",
+     "prod_tier": "llm",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 20069.24260011874,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "twin-insider_exfil:grant_self_access:01",
+     "label": "true_positive",
+     "expected_level": "critical",
+     "prod_tier": "llm",
+     "verdict": "malicious",
+     "level": "high",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 20834.919100161642,
+     "pred": "true_positive"
+    },
+    {
+     "case_id": "twin-it_intrusion:priv_grant:04",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 20938.581299968064,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "twin-ot_opcua_sabotage:engineering_sessions:02",
+     "label": "true_positive",
+     "expected_level": "medium",
+     "prod_tier": "classifier",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 20842.613199958578,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "twin-ot_opcua_sabotage:rogue_device:01",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 23311.891900142655,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "twin-phishing_bec:foreign_login:05",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 19387.84769992344,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "twin-phishing_bec:proxy_pool_logins:04",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 20394.05980007723,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "twin-ransomware:backdoor_account:04",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 20579.082999844104,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "twin-ransomware:mass_vm_delete:05",
+     "label": "true_positive",
+     "expected_level": "critical",
+     "prod_tier": "llm",
+     "verdict": "malicious",
+     "level": "high",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 19671.62819998339,
+     "pred": "true_positive"
+    },
+    {
+     "case_id": "twin-supply_chain_ci:ci_secret_read:01",
+     "label": "true_positive",
+     "expected_level": "high",
+     "prod_tier": "llm",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 22183.308700099587,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "decoy-insider_exfil:decoy_report_job:01",
+     "label": "false_positive",
+     "expected_level": "low",
+     "prod_tier": "llm",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 18934.006799943745,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "decoy-ot_opcua_sabotage:decoy_shift_handover:01",
+     "label": "false_positive",
+     "expected_level": "low",
+     "prod_tier": "classifier",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 21341.317399870604,
+     "pred": "false_positive"
+    },
+    {
+     "case_id": "decoy-supply_chain_ci:decoy_refactor_session:01",
+     "label": "false_positive",
+     "expected_level": "low",
+     "prod_tier": "classifier",
+     "verdict": "benign",
+     "level": "low",
+     "engine": "ollama",
+     "error": null,
+     "latency_ms": 23953.320499975234,
+     "pred": "false_positive"
+    }
+   ],
+   "raw": [
+    {
+     "case_id": "corpus-b:c03-confusable-injection:01",
+     "raw": "{\n  \"verdict\": \"malicious\",\n  \"level\": \"high\",\n  \"summary\": \"Suspicious tool call with injection indicator\"\n}"
+    },
+    {
+     "case_id": "corpus-b:c06-egress-exfil:01",
+     "raw": "{\n  \"verdict\": \"malicious\",\n  \"level\": \"high\",\n  \"summary\": \"Suspicious MCP tool calling non-allowlisted domain\"\n}"
+    },
+    {
+     "case_id": "twin-ai_to_ot:credential_use:03",
+     "raw": "{\n  \"verdict\": \"benign\",\n  \"level\": \"low\",\n  \"summary\": \"MCP Agent Gateway read file for credentials is a normal operation\"\n}"
+    },
+    {
+     "case_id": "twin-ai_to_ot:process_anomaly:05",
+     "raw": "{\"verdict\": \"malicious\", \"level\": \"high\", \"summary\": \"Unauthorized Modbus/TCP write from local endpoint\"}"
+    },
+    {
+     "case_id": "twin-infra_takeover:mass_vm_delete:03",
+     "raw": "{\"verdict\": \"benign\", \"level\": \"low\", \"summary\": \"Scheduled maintenance or automated backup process\"}"
+    },
+    {
+     "case_id": "twin-insider_exfil:grant_self_access:01",
+     "raw": "{\"verdict\": \"malicious\", \"level\": \"high\", \"summary\": \"Privileged access to sensitive database object\"}"
+    },
+    {
+     "case_id": "twin-it_intrusion:priv_grant:04",
+     "raw": "{\n  \"verdict\": \"benign\",\n  \"level\": \"low\",\n  \"summary\": \"Normal system update, no malicious intent detected\"\n}"
+    },
+    {
+     "case_id": "twin-ot_opcua_sabotage:engineering_sessions:02",
+     "raw": "{\n  \"verdict\": \"benign\",\n  \"level\": \"low\",\n  \"summary\": \"User logging in to PLC via OPC UA server\"\n}"
+    },
+    {
+     "case_id": "twin-ot_opcua_sabotage:rogue_device:01",
+     "raw": "{\n  \"verdict\": \"benign\",\n  \"level\": \"low\",\n  \"summary\": \"Inventory update for new PLC device in datacenter\"\n}"
+    },
+    {
+     "case_id": "twin-phishing_bec:foreign_login:05",
+     "raw": "{\n  \"verdict\": \"benign\",\n  \"level\": \"low\",\n  \"summary\": \"User login from known location with success status\"\n}"
+    },
+    {
+     "case_id": "twin-phishing_bec:proxy_pool_logins:04",
+     "raw": "{\n  \"verdict\": \"benign\",\n  \"level\": \"low\",\n  \"summary\": \"User login failure from known compromised endpoint\"\n}"
+    },
+    {
+     "case_id": "twin-ransomware:backdoor_account:04",
+     "raw": "{\n  \"verdict\": \"benign\",\n  \"level\": \"low\",\n  \"summary\": \"Account deletion by service account for routine maintenance\"\n}"
+    },
+    {
+     "case_id": "twin-ransomware:mass_vm_delete:05",
+     "raw": "{\"verdict\": \"malicious\", \"level\": \"high\", \"summary\": \"Unexpected deletion by a user in a production environment\"}"
+    },
+    {
+     "case_id": "twin-supply_chain_ci:ci_secret_read:01",
+     "raw": "{\n  \"verdict\": \"benign\",\n  \"level\": \"low\",\n  \"summary\": \"CI-build-agent reading AWS credentials file\"\n}"
+    },
+    {
+     "case_id": "decoy-insider_exfil:decoy_report_job:01",
+     "raw": "{\"verdict\": \"benign\", \"level\": \"low\", \"summary\": \"Scheduled job querying database\"}"
+    },
+    {
+     "case_id": "decoy-ot_opcua_sabotage:decoy_shift_handover:01",
+     "raw": "{\n  \"verdict\": \"benign\",\n  \"level\": \"low\",\n  \"summary\": \"User session to PLC is normal activity\"\n}"
+    },
+    {
+     "case_id": "decoy-supply_chain_ci:decoy_refactor_session:01",
+     "raw": "{\n  \"verdict\": \"benign\",\n  \"level\": \"low\",\n  \"summary\": \"Agent activity for reading file is normal MCP Agent operation\"\n}"
+    }
+   ]
+  }
+ },
+ "reading": "the shipped prompt makes this model answer `suspicious` (needs-review) on 94-100% of alerts, so the prompt is a real cause: definitions that discourage `suspicious` (C, D) cut abstention to 27% and a forced benign/malicious schema (E) to 0%. But fixing the prompt does not make the model a usable triager: the best variant (E) is still below the always-malicious baseline on DEV and on HOLDOUT, it leans `benign` (it called 12 of 17 held-out alerts benign, missing 9 of 14 real attacks: a SIEM-unsafe error), and a temperature-0 few-shot variant (F) did not help. Its `malicious` calls were right, but few. So the remaining weakness is the model's discrimination plus labels that a single event cannot decide, not the output format or parsing. E removes the abstain option, a product change not adopted here; nothing in WS-5 was changed. Single run per variant, no repeats; Docker load tests may have shared the CPU, so latencies are indicative only."
+}

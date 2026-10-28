@@ -24,6 +24,7 @@ sys.path.insert(0, str(HERE))
 
 import run_eval  # noqa: E402
 import render_results  # noqa: E402
+import variants  # noqa: E402
 
 DOC = run_eval.load_cases()
 
@@ -162,13 +163,40 @@ class OllamaPaths(unittest.TestCase):
         self.assertEqual(r["metrics"]["stub_share"], 1.0)
 
 
+class VariantSplit(unittest.TestCase):
+    def test_split_is_disjoint_stratified_and_about_a_third(self):
+        dev, hold = variants.split(DOC["cases"])
+        ids = lambda xs: {c["case_id"] for c in xs}
+        self.assertFalse(ids(dev) & ids(hold))
+        self.assertEqual(ids(dev) | ids(hold), ids(DOC["cases"]))
+        self.assertGreaterEqual(len(hold), len(DOC["cases"]) // 3 - 1)
+        self.assertTrue({c["label"] for c in hold} == set(run_eval.CLASSES))
+        self.assertEqual(variants.split(DOC["cases"]), (dev, hold), "split must be deterministic")
+
+    def test_committed_variant_run_used_this_split_and_set(self):
+        d = json.loads(variants.OUT.read_text(encoding="utf-8"))
+        _dev, hold = variants.split(DOC["cases"])
+        self.assertEqual(d["labelled_set_sha256"], run_eval.cases_sha())
+        self.assertEqual(d["split"]["holdout"], len(hold))
+        held = {r["case_id"] for r in next(iter(d["holdout"].values()))["rows"]}
+        self.assertEqual(held, {c["case_id"] for c in hold})
+        scored_dev = {r["case_id"] for r in next(iter(d["dev"].values()))["rows"]}
+        self.assertFalse(scored_dev & held, "a holdout case was scored during variant selection")
+        self.assertFalse(scored_dev & set(d["fewshot_case_ids"]), "few-shot examples must not be scored")
+
+    def test_every_variant_builds_a_prompt(self):
+        shots = [c for c in DOC["cases"][:4]]
+        for name, (build, *_rest) in variants.VARIANTS.items():
+            self.assertIn("alert", build(DOC["cases"][0], shots).lower(), name)
+
+
 class CommittedResults(unittest.TestCase):
     def test_results_md_is_the_render(self):
         have = render_results.OUT.read_text(encoding="utf-8").replace("\r\n", "\n")
         self.assertEqual(have, render_results.render(), "RESULTS.md stale: run render_results.py")
 
     def test_results_match_committed_labelled_set(self):
-        files = sorted(render_results.RESULTS.glob("*.json"))
+        files = sorted(f for f in render_results.RESULTS.glob("*.json") if f.name != "variants.json")
         self.assertTrue(files, "no committed results")
         latest = json.loads(files[-1].read_text(encoding="utf-8"))
         self.assertEqual(latest["labelled_set_sha256"], run_eval.cases_sha(),
