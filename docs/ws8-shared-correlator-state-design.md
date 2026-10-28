@@ -221,4 +221,42 @@ alert deliveries than alerts (e.g. 1846 for 1600) because unacked messages are r
 Harness bugs found and fixed along the way: a failed OpenSearch read was counted as "0 documents" (one invalid 50/s run reported 400 lost
 chains while OpenSearch held all 400 incidents), and the bus streams cannot be used as the verdict after the drain.
 
-Not proven: a sustained rate above ~17 alerts/s, more than 4 ws8 replicas, other hardware, a bound on Sentinel failover time when the host is saturated.
+(The not-proven items of this section were worked in the second round below; what remains is listed there.)
+
+## Second round (2026-10-28): real high rates, 6/8 replicas, Sentinel failover distribution
+
+**Generator fixed.** The first-round producers (one `Bus.produce` per alert from `docker exec` Python) topped out at 10-17 alerts/s. They now pipeline
+XADD of the same `{key, payload}` shape straight into the `alerts` stream (`tools/ws8_ha_load_proof.py`, 3-12 processes, catch-up batches), so the target
+rate is actually driven. Same full HA stack, 2 ws8 replicas, 100 raw events/s through ws2 -> ws4 -> ws3, 3 master kills per run, verdict from OpenSearch:
+
+| target alerts/s | achieved | chains | lost | forked ids | wrong members | alerts indexed/acked | split chains | failovers (s) | producer retries |
+|---|---|---|---|---|---|---|---|---|---|
+| 50 | 49.7 | 400 | 0 | 0 | 0 | 800/800 | 135 | 2.4, 6.2, 7.1 | 22 |
+| 100 | 99.4 | 800 | 0 | 0 | 0 | 1600/1600 | 275 | 5.6, 45.5, 6.1 | 8 |
+| 200 | 200.0 | 1600 | 0 | 0 | 0 | 3200/3200 | 620 | 5.9, 2.0, 6.0 | 26 |
+| 400 | 229.4 | 3200 | 0 | 0 | 0 | 6400/6400 | 1427 | 4.9, 1.7, 7.6 | 234 |
+
+The 400 target was not reached: producers ran 25-28 s instead of 16 s; at that point the producer container (ws2) sat at 82% CPU and the OpenSearch nodes at
+~120% each, host total ~520% of 800%. The limiting resource was not isolated beyond that sample. During the 100-400 runs another session's Docker stack
+(`fgloadtest-*`, its OpenSearch ~115% CPU) shared the host, so these are not clean-room numbers. The pipeline drained to lag 0 / pending 0 after each run.
+
+**6 and 8 replicas** (`load --chains 350 --kills 4 --rate 10`, fresh stack per run): 6 replicas ok 350/350, lost 0, forked 0, wrong 0 (alerts per replica
+65/142/146/53/142/153), 202 chains split across replicas, 1 alert delivered to two replicas; 8 replicas ok 350/350, lost 0, forked 0, wrong 0
+(46/35/130/320/41/45/43/42), 194 split chains, 2 alerts on two replicas, 351 emissions for 350 ids (one reclaimed redelivery, same incident id).
+Failovers 3.5-6.2 s.
+
+**Sentinel failover under CPU saturation.** `tools/ws8_sentinel_failover_dist.py`: 3 Redis + 3 Sentinels, 16 busy-loop containers on the 8-CPU host, kill the master, time
+until the new master accepts a write (includes ~3-4 s of `docker exec` probe overhead; Sentinel's own `+switch-master` was ~6 s), restart, wait for resync, 12 rounds per config.
+
+| down-after / failover-timeout | min | median | p90 | max | rounds with `-failover-abort-not-elected` | TILT |
+|---|---|---|---|---|---|---|
+| 5000 / 20000 (old default) | 8.7 | 10.2 | 11.5 | 50.8 | 3 of 12 | 0 |
+| 5000 / 5000 (new default) | 9.9 | 10.65 | 11.9 | 22.6 | 3 of 12 | 0 |
+
+Cause of the outliers: under CPU contention the three Sentinels reach ODOWN within milliseconds of each other, split the vote, nobody is elected, and Sentinel gates the
+next attempt at 2x failover-timeout (40 s vs 10 s) - matching the 44.9 s, 45.5 s and 50.8 s rounds. Not the cause: ws8's reconnect (it follows the master change) and TILT (0 events).
+`infra/redis-sentinel-entrypoint.sh` now defaults to failover-timeout 5000. Observed bound: 22.6 s worst of 12 rounds under 16 hogs; 12 rounds are a sample, not a guarantee, and the
+5 s setting was not re-run inside the full-stack load test. Trade-off: failover-timeout also limits how long a failover may spend reconfiguring replicas, so a replica with a
+large dataset may need a higher value (not tested).
+
+Remaining limits: other hardware (cannot be closed on this host); the 400 alerts/s target (229.4 reached); failover-timeout 5000 with large datasets; more than 8 replicas.

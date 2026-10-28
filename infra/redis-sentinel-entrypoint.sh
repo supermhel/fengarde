@@ -129,7 +129,7 @@ esac
 # comment. "yes" reintroduces blocking DNS on Sentinel's event loop and with it
 # the perpetual-tilt failover deadlock.
 #
-# failover-timeout is 20s, not the 60s this script used to carry. Sentinel's
+# failover-timeout was 20s (now 5s, see below), not the 60s this script used to carry. Sentinel's
 # leader election is Raft-like and CAN split: measured live (2026-08-05) on this
 # exact 3-node setup, all three Sentinels saw the master go objectively down
 # within ~80ms of each other, each voted for itself, none reached the 2-vote
@@ -141,6 +141,12 @@ esac
 # elected is under 3s, so 20s keeps a wide margin for a slow replica sync while
 # capping the split-vote penalty at ~40s. Raise it if your replicas carry enough
 # data that promotion is slow.
+#
+# 2026-10-28 (tools/ws8_sentinel_failover_dist.py, 16 CPU-hog containers on an 8-CPU host, 12 master kills per config): with
+# failover-timeout 20000 the median time until the new master was writable was 10.2 s but one round took 50.8 s (3 of 12 rounds
+# hit -failover-abort-not-elected; the retry is gated at 2x failover-timeout = 40 s). With 5000 the median was 10.65 s and the worst
+# round 22.6 s (3 of 12 rounds still aborted, the retry now waits 10 s). 5000 is therefore the default. It also caps how long a
+# failover may take to reconfigure replicas, so raise it if a replica's full resync can exceed ~5 s (not tested with large datasets).
 #
 # NOTE: this rationale lives out here as shell comments on purpose. The heredoc
 # below is unquoted (it has to be -- it interpolates the password and master
@@ -156,7 +162,7 @@ sentinel monitor ${MASTER_NAME} ${PRIMARY_IP} ${RAW_PORT} 2
 sentinel auth-pass ${MASTER_NAME} ${REDIS_PASSWORD}
 sentinel down-after-milliseconds ${MASTER_NAME} ${REDIS_SENTINEL_DOWN_AFTER_MS:-5000}
 sentinel parallel-syncs ${MASTER_NAME} 1
-sentinel failover-timeout ${MASTER_NAME} ${REDIS_SENTINEL_FAILOVER_TIMEOUT_MS:-20000}
+sentinel failover-timeout ${MASTER_NAME} ${REDIS_SENTINEL_FAILOVER_TIMEOUT_MS:-5000}
 EOF
 # The file carries the Redis password; keep it off other users on the volume.
 chmod 600 "$SENTINEL_CONF"

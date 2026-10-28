@@ -32,32 +32,41 @@ WS3 = f"{PROJ}-ws3-indexer-1"
 
 GEN = r'''
 import json, sys, time
-from shared.bus import Bus
+from shared.window import redis_client_for_backend
 tag, n, rate, gap, k, procs = sys.argv[1], int(sys.argv[2]), float(sys.argv[3]), int(sys.argv[4]), int(sys.argv[5]), int(sys.argv[6])
-bus = Bus()
-acked, failed, retries = 0, [], 0
-def send(i, part, tactic):
-    global acked, retries
-    aid = f"{tag}-{i}-{part}"
+r = redis_client_for_backend("redis-sentinel")   # master-aware client; XADD pipelined straight into the alerts stream
+mine = [i for i in range(n) if i % procs == k]
+sched = []
+for s in range(len(mine) + gap):
+    if s < len(mine):
+        sched.append((mine[s], 1, "TA0006"))
+    if s >= gap:
+        sched.append((mine[s - gap], 2, "TA0008"))
+per_proc = rate / procs
+acked, failed, retries, idx, t0 = 0, [], 0, 0, time.time()
+while idx < len(sched):
+    due = min(len(sched), int((time.time() - t0) * per_proc) + 1)
+    if due <= idx:
+        time.sleep(0.005)
+        continue
+    batch = sched[idx:due]
     for _ in range(120):
         try:
-            bus.produce("alerts", key=f"u{i}", payload={"alert_id": aid, "tenant_id": tag, "time": int(time.time() * 1000) - 5000,
-                "rule_id": "r", "level": "high", "score": 10, "mitre": {"tactic": tactic}, "actor": {"user": {"name": f"u{i}"}}})
-            acked += 1
-            return
+            p = r.pipeline(transaction=False)
+            now = int(time.time() * 1000) - 5000
+            for i, part, tactic in batch:
+                p.xadd("alerts", {"key": f"u{i}", "payload": json.dumps({"alert_id": f"{tag}-{i}-{part}", "tenant_id": tag, "time": now,
+                    "rule_id": "r", "level": "high", "score": 10, "mitre": {"tactic": tactic}, "actor": {"user": {"name": f"u{i}"}}})})
+            p.execute()
+            acked += len(batch)
+            break
         except Exception:
             retries += 1
             time.sleep(0.5)
-    failed.append(aid)
-mine = [i for i in range(n) if i % procs == k]
-slot = 2.0 / (rate / procs)
-t0 = time.time()
-for s in range(len(mine) + gap):
-    if s < len(mine):
-        send(mine[s], 1, "TA0006")
-    if s >= gap:
-        send(mine[s - gap], 2, "TA0008")
-    time.sleep(max(0.0, t0 + (s + 1) * slot - time.time()))
+            r = redis_client_for_backend("redis-sentinel")
+    else:
+        failed += [f"{tag}-{i}-{part}" for i, part, _ in batch]
+    idx = due
 print(json.dumps({"acked": acked, "failed": failed, "retries": retries, "seconds": round(time.time() - t0, 1)}))
 '''
 
@@ -177,6 +186,15 @@ def main():
     if a.raw_rate > 0:
         raw = subprocess.Popen(["docker", "exec", "-i", WS2, "python", "-c", RAW, tag, str(a.raw_rate), str(run_s)],
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    stats = {}
+
+    def sample_stats():
+        time.sleep(run_s * 0.5)
+        out = sh("docker", "stats", "--no-stream", "--format", "{{.Name}} {{.CPUPerc}} {{.MemPerc}}").stdout.splitlines()
+        rows = sorted(((float(l.split()[1].rstrip('%')), l.split()[0]) for l in out if len(l.split()) == 3), reverse=True)
+        stats["top_cpu"] = [f"{n} {c}%" for c, n in rows[:6]]
+        stats["total_cpu_pct"] = round(sum(c for c, _ in rows), 0)
+    threading.Thread(target=sample_stats, daemon=True).start()
     kills = []
     interval = a.kill_interval or run_s / (a.kills + 1)
     t_start = time.time()
@@ -266,13 +284,13 @@ def main():
     res = {"rate": a.rate, "chains": a.chains, "eligible": elig, "lost": len(lost), "forked": len(forked), "wrong_members": len(wrong),
            "acked_not_indexed": bus_lost, "producer_failed": len(failed), "os_incident_docs": len(inc_docs), "os_incident_ids": len(os_ids),
            "os_full_incidents": os_full, "os_alerts_indexed": al_n, "alerts_acked": acked, "kills": kills,
-           "ws8_per_replica": per, "achieved_alerts_per_s": round(acked / max(g["seconds"] for g in gen), 1), "chains_split_across_replicas": split, "raw": rawo,
+           "ws8_per_replica": per, "host_cpu_sample": stats, "achieved_alerts_per_s": round(acked / max(g["seconds"] for g in gen), 1), "chains_split_across_replicas": split, "raw": rawo,
            "groups_end": {t: v for t, v in c["groups"].items()}}
     print("RESULT_JSON " + json.dumps(res))
     good = not lost and not forked and not wrong and not failed and elig > 0 and not bus_lost
     print(f"SUMMARY rate={a.rate}/s chains={a.chains} eligible={elig} lost={len(lost)} forked={len(forked)} wrong_members={len(wrong)} "
           f"acked_not_indexed={bus_lost} producer_failed={len(failed)} os_incident_ids={len(os_ids)} os_full={os_full} os_alerts={al_n}/{acked} "
-          f"achieved={round(acked / max(g['seconds'] for g in gen), 1)}/s split_chains={split} per_replica={per} kills={[k['failover_s'] for k in kills]}")
+          f"achieved={round(acked / max(g['seconds'] for g in gen), 1)}/s split_chains={split} per_replica={per} cpu={stats} kills={[k['failover_s'] for k in kills]}")
     print("RESULT ha-load: " + ("PASS" if good else "FAIL"))
     return 0 if good else 1
 
