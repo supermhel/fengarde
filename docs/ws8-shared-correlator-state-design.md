@@ -93,4 +93,95 @@ acme:actor:carol:20754 ['TA0006', 'TA0008'] members=2
 carol emissions=1 distinct incident ids=1
 RESULT A: PASS (master killed mid-chain, failover to 172.29.88.12, one incident id with 2 members, emissions=1)
 ```
-Not covered: the full docker-compose.ha.yml stack, failover under load, loss of both replicas. One failover, one chain.
+Closed by the sections below (full stack, load, outage).
+
+## Live proof, failover under load (2026-10-28, isolated project ws8sentproof)
+
+`python tools/ws8_failover_load_proof.py load --chains 350 --kills 4`: 350 two-alert chains (700 alerts, steady ~9.5/s, 74 s)
+produced through the real bus while the Redis MASTER is killed four times (the killed node is restarted 3 s later and rejoins as a
+replica), two ws8 replicas, HA-profile Redis/Sentinel topology. Chains are counted only if both alerts reached the bus, so
+bus-level loss is separated from ws8 correctness.
+
+```
+[13:49:16] KILL 1/4: master 172.29.88.11 (redis-1)
+[13:49:22]   new master 172.29.88.12 after 5.6s
+[13:49:31] KILL 2/4: master 172.29.88.12 (redis-2)
+[13:49:35]   new master 172.29.88.13 after 4.0s
+[13:49:46] KILL 3/4: master 172.29.88.13 (redis-3)
+[13:49:51]   new master 172.29.88.11 after 5.5s
+[13:50:01] KILL 4/4: master 172.29.88.11 (redis-1)
+[13:50:07]   new master 172.29.88.12 after 5.4s
+[13:50:15] producer: {'acked': 700, 'failed': [], 'producer_retries': 0, 'seconds': 74.0}
+[13:51:10]   drain: ok=350/350 pending=0 emissions=351
+[13:51:22]   drain: ok=350/350 pending=0 emissions=351
+[13:51:33]   drain: ok=350/350 pending=0 emissions=351
+SUMMARY chains=350 eligible=350 ok=350 lost=0 forked_ids=0 wrong_members=0 bus_lost_alerts=0 duplicate_alert_msgs=0 incident_ids=350 emissions=351 kills=4 producer_failed=0
+RESULT load: PASS
+```
+
+Detail (`incident_emissions` 351 vs 350 ids = one alert left pending by a failover and reclaimed after the 60 s idle limit; re-handled
+under the same id, so WS-3's CAS sees one document): `{"chains": {"eligible": 350, "ok": 350, "lost": 0, "forked": 0, "wrong_members": 0, "bus_lost_alerts": 0}, "lost_chains": [], "forked_chains": [], "wrong_member_chains": [], "alert_messages_in_stream": 700, "duplicate_alert_messages": 0, "incident_ids": 350, "incident_emissions": 351, "extra_emissions_same_id": 1, "groups": [{"name": "cg-correlate", "pending": 0, "lag": 0, "entries-read": 700}], "producer": {"acked": 700, "failed": [], "producer_retries": 0, "seconds": 74.0}}`
+
+Same load, same topology, the PRE-CHANGE ws8 image (commit 33e340f, window membership in Redis but tactics/scores in process memory):
+
+```
+SUMMARY chains=350 eligible=350 ok=238 lost=112 forked_ids=0 wrong_members=0 bus_lost_alerts=0 duplicate_alert_msgs=0 incident_ids=238 emissions=238 kills=4 producer_failed=0
+```
+112 of 350 chains never promoted: their two tactics landed on different replicas, so neither replica held both.
+Limits: ~9.5 alerts/s for 74 s with four failovers; the producer saw 0 errors with the shared state (4 retried produce calls in
+the pre-change run), so this does not show behaviour at higher rates or with the full app stack under load.
+
+## Live proof, both Redis replicas lost (2026-10-28, isolated project ws8sentproof)
+
+`python tools/ws8_failover_load_proof.py outage`: first tactic processed; ws8a/ws8b stopped; second tactic produced; BOTH replicas
+killed, so the primary (`redis-1`, the only node started with `--min-replicas-to-write 1`) refuses writes; ws8 started against it
+and observed for 40 s; replicas restarted. (An earlier attempt used `docker compose start`, which also started the killed
+replicas through `depends_on`; the script now uses `docker start`.)
+
+```
+[13:58:29] master=172.29.88.11; sending the first tactic and letting it complete
+[13:58:41] primary refuses writes (NOREPLICAS) after 0.6s
+[13:59:25] ws8 containers during the outage: {'ws8a': 'running restarts=0 exit=0', 'ws8b': 'running restarts=0 exit=0'}
+[13:59:25] alerts consumer group during outage: name cg-correlate consumers 2 pending 0 last-delivered-id 1793192310760-0 entries-read 1 lag 1 
+[13:59:27] ws8 error/warn lines during outage: 16; sample: Traceback (most recent call last):
+[13:59:40] incident after recovery (11s): "acme:actor:dave:20754 ['TA0006', 'TA0008'] 2"
+[13:59:46] alerts group after recovery: [{"name": "cg-correlate", "pending": 0, "lag": 0, "entries-read": 2}]
+SUMMARY primary_refused_writes_after=0.6s ws8_during={'ws8a': 'running restarts=0 exit=0', 'ws8b': 'running restarts=0 exit=0'} incidents_stream_len_during=0 error_lines_during=16 incident_after_recovery="acme:actor:dave:20754 ['TA0006', 'TA0008'] 2" ws8_after={'ws8a': 'running restarts=0', 'ws8b': 'running restarts=0'}
+RESULT outage: PASS
+```
+During the outage the second alert stayed unread and unacked (group lag 1, pending 0), ws8 logged `NOREPLICAS` tracebacks and kept
+running (0 restarts); after recovery it was consumed once and the incident formed with both tactics.
+
+## Live proof, full docker-compose.ha.yml stack (2026-10-28, isolated project ws8haproof)
+
+`docker-compose.ha.yml` + `infra/docker-compose.ws8-ha-proof.yml` (host ports/fixed names/heap only), ws1..ws9, Redis primary + 2 replicas
++ 3 Sentinels, 3-node OpenSearch. `python tools/ws8_ha_stack_proof.py`: 20 denied ports then 12 ssh failures from one source IP,
+as raw events into ws2; ws8 killed between the two tactics.
+
+```
+[14:07:08] OpenSearch cluster: status=green nodes=3
+[14:07:08] Redis master via Sentinel: 172.28.0.11
+[14:07:09] ws8 startup: _id": "-", "msg": "window counter selected", "backend": "redis-sentinel", "counter": "RedisWindowCounter", "track_state": "RedisTrackState"}
+[14:07:09]   ws1-collectors: running/healthy
+[14:07:09]   ws2-normalization: running/healthy
+[14:07:09]   ws3-indexer: running/healthy
+[14:07:10]   ws4-detection: running/healthy
+[14:07:10]   ws5-ai: running/healthy
+[14:07:10]   ws6-inventory: running/healthy
+[14:07:10]   ws7-dashboard: running/healthy
+[14:07:11]   ws8-correlation: running/healthy
+[14:07:11]   ws9-resolver: running/healthy
+[14:07:11] tenant ws8ha-261b3450: tactic 1 = port scan (20 denied ports from 203.0.113.9)
+[14:07:17] port-scan alert indexed after 5s
+[14:07:17] alert: {'alert_id': '1d2c3b4a-5e6f-4708-8a91-0b1c2d3e4f05:ws8ha-261b3450:11:203.0.113.9:29886546', 'rule_id': '1d2c3b4a-5e6f-4708-8a91-0b1c2d3e4f05', 'mitre': {'tactic': 'TA0007', 'technique': 'T1046'}}
+[14:07:17] incident docs after tactic 1: 0 (a single tactic must not promote)
+[14:07:17] killing ws8-correlation between the two tactics
+[14:08:16] ws8 state: running restarts=0
+[14:08:16] tactic 2 = ssh brute force (12 failures from 203.0.113.9)
+[14:08:23] ip incident indexed after 5s
+[14:08:23] alerts indexed: [('1d2c3b4a-5e6f-4708-8a91-0b1c2d3e4f05', 'TA0007'), ('1d2c3b4a-5e6f-4708-8a91-0b1c2d3e4f05', 'TA0007'), ('6f1c8a2e-0d3b-4c11-9a21-7b5e2f9a1c01', 'TA0006'), ('6f1c8a2e-0d3b-4c11-9a21-7b5e2f9a1c01', 'TA0006')]
+[14:08:23] incident doc(s): [{'incident_id': 'ws8ha-261b3450:ip:203.0.113.9:20754', 'entity_type': 'ip', 'entity_value': '203.0.113.9', 'tactics': ['TA0006', 'TA0007'], 'member_count': 4}]
+```
+ws8 reported 4 member alert ids, all of which are indexed alert documents (the script checks this); each rule shows two alert documents,
+which was not investigated further here. The `docker kill` of ws8 was followed by the script waiting up to 40 s for the restart policy and then
+starting the container itself, so the restart count of 0 does not show a policy restart.

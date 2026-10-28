@@ -1,0 +1,28 @@
+# Override for running the FULL docker-compose.ha.yml stack as an isolated proof next to the default dev stack
+# (docs/ws8-shared-correlator-state-design.md, "Live proof, full HA stack"). Only host-side collisions are changed:
+# published ports of ws1/ws6/ws7, the two fixed-name one-shot init containers the dev stack also owns, and a smaller
+# OpenSearch heap so three nodes fit beside it. Nothing about the topology or the services changes.
+#   export COMPOSE_PROJECT_NAME=ws8haproof REDIS_PASSWORD=proofpw
+#   docker compose -f infra/docker-compose.yml -f infra/docker-compose.ha.yml -f infra/docker-compose.ws8-ha-proof.yml \
+#     --profile ha up -d --build <services>
+#   python tools/ws8_ha_stack_proof.py
+services:
+  ws1-collectors:
+    ports: !override ["127.0.0.1:15514:5514/udp"]
+  ws6-inventory:
+    ports: !override ["127.0.0.1:18000:8000"]
+  ws7-dashboard:
+    ports: !override ["127.0.0.1:18080:80"]
+  ws1-spool-init:
+    container_name: !reset null
+  ws3-indexer-init:
+    container_name: !reset null
+  opensearch-1:
+    environment:
+      - "OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m"
+  opensearch-2:
+    environment:
+      - "OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m"
+  opensearch-3:
+    environment:
+      - "OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m"

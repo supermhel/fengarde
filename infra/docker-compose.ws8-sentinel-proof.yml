@@ -21,7 +21,7 @@ x-sentinel: &sentinel
     redis-2: { condition: service_healthy }
     redis-3: { condition: service_healthy }
 x-ws8: &ws8
-  build: { context: .., dockerfile: services/ws8-correlation/Dockerfile }
+  build: { context: "${WS8_BUILD_CONTEXT:-..}", dockerfile: services/ws8-correlation/Dockerfile }
   environment:
     - BUS_BACKEND=redis-sentinel
     - REDIS_SENTINEL_HOSTS=sentinel-1:26379,sentinel-2:26379,sentinel-3:26379

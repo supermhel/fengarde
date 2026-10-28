@@ -283,10 +283,21 @@ unchanged by this view.
   topology and flags):** the Redis master was killed between the two tactics of one chain, a replica was promoted,
   and the incident formed once (one id, 2 members); 20 chains over two replicas with a per-alert trace
   (`WS8_TRACE_ALERTS=1` logs `handled alert` + replica hostname) gave 20 incident ids, 13 chains split across replicas.
-  **Not proven:** the complete `docker-compose.ha.yml` stack (only ws8 + Redis/Sentinel were run), failover under
-  load with many in-flight alerts, and loss of both replicas (primary goes read-only by design). Residual: if two replicas promote one track while an earlier-stamped alert from a
-  peer is still in flight and the stamps straddle a horizon boundary, the early emission can carry a different
-  bucket id (pre-existing out-of-order behaviour, not new).
+  **Full HA stack, live (2026-10-28, `tools/ws8_ha_stack_proof.py`, `infra/docker-compose.ws8-ha-proof.yml`):** `docker-compose.ha.yml`
+  with ws1..ws9, Redis primary + 2 replicas + 3 Sentinels, 3-node OpenSearch (green): a port scan (TA0007) then an ssh brute force
+  (TA0006) from one source IP through raw.events -> ws2 -> ws4 -> ws8 -> ws3 gave ONE `incidents-<tenant>` document (tactics
+  TA0006+TA0007, members = indexed alerts) with ws8 killed between the two tactics.
+  **Under load, live (`tools/ws8_failover_load_proof.py load`, ws8 x2 + Redis/Sentinel):** 350 two-alert chains (700 alerts, ~9.5/s,
+  74 s) with the Redis master killed 4 times (failover 4.0-5.6 s each): 0 lost chains, 0 forked ids, 0 wrong member sets,
+  0 alerts lost on the bus, 350 incident ids, 351 emissions (1 reclaimed redelivery, same id). The pre-change code under the
+  same load lost 112 of 350 chains (never promoted: tactics split across replicas).
+  **Both Redis replicas lost, live (`... outage`):** the primary refused writes (NOREPLICAS); ws8 stayed up (0 restarts), logged the
+  errors, acked nothing (group pending 0, lag 1), and after the replicas returned the incident completed once (2 members).
+  **Incident id** is bound to the track (`TrackState.bind_incident_id`, first promoter wins), which closes the old horizon-boundary
+  limit (regression test `test_horizon_boundary_does_not_fork_the_incident_id`, fails on the previous commit).
+  **Not proven:** failover rates above ~9.5 alerts/s or with the whole app stack under that load; the ws8 proofs in the load runs used
+  two ws8 replicas only. Pre-existing HA config observation (not changed here, not verified live): only `redis-1` carries
+  `--min-replicas-to-write`, so a promoted replica does not.
 - **Tenant isolation**: tenant is part of the track key, not a filter
   (rejected-at-edge via the same `_validated_tenant`-style check
   `services/ws3-indexer/router.py` uses) — a tenant-agnostic key would
