@@ -76,7 +76,7 @@ def test_registry_and_integrity() -> None:
                f"oracle={oracle['expected_sequence']} steps={[s.label for s in sd.steps]}")
         r1 = reg.run(sd, SEED)
         r2 = reg.run(sd, SEED)
-        expect = {s.label: s.parse_expected for s in sd.steps}
+        expect = {s.label: s.parse_expected for s in tuple(sd.steps) + tuple(sd.decoy_steps)}
         _check(f"(a) {sd.name}: every raw event parses on its REAL parser, and exactly the "
                "DECLARED gaps (steps with no registered parser) are the ones that don't",
                not r1.check_failures and all(e.parsed == expect[e.step] for e in r1.events),

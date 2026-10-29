@@ -3,7 +3,11 @@
 ``coverage_layer.py`` (in this same directory) proves a rule CLAIMS a
 technique (parses its `mitre:` block). It says nothing about whether the
 rule actually FIRES. This tool closes that specific, narrow gap: for every
-rule carrying a `mitre:` tag, replay its own anti-dormancy producer fixture
+rule carrying a `mitre:` tag (and, since 2026-10-28, for the untagged
+`agent_tool_call_burst` too: the probes key on the rule and its own fixture,
+never on the technique, so it runs the same positive / boundary / near-miss
+probes, is written to `fire_check_untagged.json` and feeds the same failure
+gates), replay its own anti-dormancy producer fixture
 (the same real parser -> enrich pipeline `tools/check_rule_producers.py`
 already proves is satisfiable) through the real WS-4 `Rule.evaluate()` and
 record whether it actually fires.
@@ -87,8 +91,8 @@ throughout it, because the fixtures and the evaluate() path are both healthy;
 it is the rules that vanished.
 
 `_canary_check` is about ATTRIBUTION, not detection. A dead fixture pipeline
-already turned this gate red before it existed (all 27 tagged rules must
-fire, including the 15 stateless ones -- so those DO have a blocking positive
+already turned this gate red before it existed (every rule, 27 tagged ones
+when this was written, must fire, including the 15 stateless ones -- so those DO have a blocking positive
 replay of their own, contrary to this docstring's first version). What the
 canary changes is that the failure reads "the harness is broken" instead of
 "27 rules are dead-on-arrival". See its own docstring for what it does not
@@ -240,7 +244,7 @@ def _canary_check(events: list[dict]) -> tuple[bool, str]:
     **What this is and is not.** An adversarial review corrected the original
     claim here, which was wrong and is worth recording: this does NOT close a
     detection blind spot, because there was no blind spot of that shape. Every
-    one of the 27 tagged rules -- including all 15 stateless ones -- must fire
+    one of the rules (27 tagged ones when written) -- including all 15 stateless ones -- must fire
     on its own fixture or `main()` returns 1 at `tagged_not_firing`. So the
     stateless rules DO have a blocking positive replay of their own, and a
     dead fixture pipeline or a broken `Rule.evaluate()` already turned the
@@ -507,6 +511,11 @@ def _overrun_step_ms(rule, reps: int) -> int:
     window_ms = int((rule.window_seconds or 60) * 1000)
     span_ms = window_ms + max(1000, window_ms // 100)
     return span_ms // (reps - 1) + 1
+
+
+def _label(result: dict) -> str:
+    """The technique id, or 'untagged' for a rule that carries none."""
+    return "untagged" if result["technique"] == "(none)" else result["technique"]
 
 
 def _try_fire(rule, events: list[dict],
@@ -1031,6 +1040,7 @@ def main() -> int:
 
     results = []
     untagged: list[dict] = []
+    untagged_results: list[dict] = []
     for rule in detector.rules:
         mitre = rule.raw.get("mitre")
         if not isinstance(mitre, dict) or not mitre.get("technique"):
@@ -1041,6 +1051,17 @@ def main() -> int:
             # empirically checked without a declared technique to key the
             # fixture on), reported at the end, not silently dropped.
             untagged.append({"id": rule.id, "title": rule.title})
+            # 2026-10-28: the probes below key on the rule and its fixture, never on the technique, so an
+            # untagged rule (agent_tool_call_burst: no solid ATT&CK mapping, omitted on purpose) goes through the
+            # SAME positive / boundary / near-miss probes. Its results live in a separate list and artifact so the
+            # tagged results (and every consumer keyed on technique) are unchanged.
+            u_fired, u_note, u_fixture, u_blocked = _try_fire(rule, events)
+            untagged_results.append({
+                "id": rule.id, "title": rule.title, "technique": "(none)",
+                "fired": u_fired, "note": u_note, "harness_blocked": u_blocked,
+                "boundary": _boundary_probe(rule, u_fixture, u_blocked),
+                "near_miss": _near_miss_probe(rule, u_fixture, u_blocked),
+            })
             continue  # coverage_layer.py independently reports undeclared rules
         fired, note, fixture, blocked = _try_fire(rule, events)
         results.append({
@@ -1052,12 +1073,12 @@ def main() -> int:
             "near_miss": _near_miss_probe(rule, fixture, blocked),
         })
 
-    tagged_not_firing = [r for r in results if not r["fired"] and not r["harness_blocked"]]
-    harness_blocked = [r for r in results if r["harness_blocked"]]
+    tagged_not_firing = [r for r in results + untagged_results if not r["fired"] and not r["harness_blocked"]]
+    harness_blocked = [r for r in results + untagged_results if r["harness_blocked"]]
     # Both negative halves feed ONE too-loose gate. They answer the same
     # question (does this rule fire when it must not?) by different
     # constructions, and a rule that fails either one is equally shipped-broken.
-    too_loose = [r for r in results
+    too_loose = [r for r in results + untagged_results
                  if r["boundary"].get("too_loose") or r["near_miss"].get("too_loose")]
     fully_held = [r for r in results if r["boundary"].get("fully_held")]
     # Partly probed = at least one probe held and at least one was skipped.
@@ -1089,8 +1110,15 @@ def main() -> int:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     out_path = OUT_DIR / "fire_check.json"
     out_path.write_text(json.dumps(results, indent=2))
+    (OUT_DIR / "fire_check_untagged.json").write_text(json.dumps(untagged_results, indent=2))
     _write_fingerprint()
     print(f"\nwrote {out_path}")
+    for r in untagged_results:
+        print(f"  [{'FIRED ' if r['fired'] else 'SILENT'}] (untagged) {r['id']}: {r['note']}")
+        for name, verdict in r["boundary"].get("probes", {}).items():
+            print(f"           |- {name}: {verdict['status']} -- {verdict['detail']}")
+        for name, verdict in r["near_miss"].get("probes", {}).items():
+            print(f"           |- near-miss {name}: {verdict['status']} -- {verdict['detail']}")
 
     # The actual "the suite silently stopped testing anything" failure, and
     # the one the canary does NOT catch: zero rules reached the loop at all.
@@ -1113,15 +1141,15 @@ def main() -> int:
               f"THIS HARNESS -- the defect is in fire_check.py, not in the rule; "
               f"do not go hunting the rule:")
         for r in harness_blocked:
-            print(f"    {r['id']} ({r['technique']}): {r['note']}")
+            print(f"    {r['id']} ({_label(r)}): {r['note']}")
         return 1
 
     if tagged_not_firing:
-        print(f"\n[FAIL] {len(tagged_not_firing)} rule(s) declare a MITRE technique "
-              f"but never fire on their own producer fixture -- a real defect "
+        print(f"\n[FAIL] {len(tagged_not_firing)} rule(s) (tagged or untagged) "
+              f"never fire on their own producer fixture -- a real defect "
               f"(dead-on-arrival detection), not silently passed:")
         for r in tagged_not_firing:
-            print(f"    {r['id']} ({r['technique']}): {r['note']}")
+            print(f"    {r['id']} ({_label(r)}): {r['note']}")
         return 1
 
     if too_loose:
@@ -1130,9 +1158,9 @@ def main() -> int:
               f"positive fire check both pass silently:")
         for r in too_loose:
             for name in r["boundary"].get("too_loose", []):
-                print(f"    {r['id']} ({r['technique']}): {name} fired when it must not")
+                print(f"    {r['id']} ({_label(r)}): {name} fired when it must not")
             for name in r["near_miss"].get("too_loose", []):
-                print(f"    {r['id']} ({r['technique']}): near-miss {name} fired with "
+                print(f"    {r['id']} ({_label(r)}): near-miss {name} fired with "
                       f"that predicate violated -- the predicate is not load-bearing")
         return 1
 
@@ -1151,17 +1179,22 @@ def main() -> int:
     if synthetic:
         print(f"[WARN] {len(synthetic)} distinct-count rule(s) passed their positive fire check on SYNTHETIC distinct "
               f"values (the fixture pool was too small for real ones; gap-hunt R4-132): {', '.join(synthetic)}")
-    unverified = untested + len(untagged)
+    u_held = [r for r in untagged_results
+              if r["fired"] and (r["boundary"].get("fully_held") or r["near_miss"].get("fully_held"))]
+    if untagged_results:
+        print(f"[OK] {len(untagged_results)} untagged rule(s) checked on their own producer fixture with the "
+              f"same probes as the tagged rules; {len(u_held)} fired AND held their negative half")
+    unverified = untested + len(untagged) - len(u_held)
     if untested:
         print(f"[WARN] {untested} MITRE-tagged rule(s) negatively verified by "
               f"NEITHER half -- UNVERIFIED, NOT passing (NEW-hunt): a rule with "
               f"no held near-miss/boundary is silently negative until one is "
               f"constructed. See 'boundary'/'near_miss' in the JSON.")
-    if untagged:
-        print(f"[WARN] {len(untagged)} rule(s) have NO mitre.technique and are "
-              f"therefore UNVERIFIED by this empirical check (R3-#39) -- not "
-              f"silently dropped, not counted as passing: "
-              f"{', '.join(str(r['id']) for r in untagged)}")
+    left = [r for r in untagged if r["id"] not in {u["id"] for u in u_held}]
+    if left:
+        print(f"[WARN] {len(left)} rule(s) have NO mitre.technique and their negative half did not "
+              f"fully hold -- UNVERIFIED (R3-#39) -- not silently dropped, not counted as passing: "
+              f"{', '.join(str(r['id']) for r in left)}")
     if unverified:
         print(f"      ({unverified} total rule(s) remain UNVERIFIED by this "
               f"gate's negative half -- declared-coverage and positive-fire "

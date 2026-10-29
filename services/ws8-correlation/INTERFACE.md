@@ -269,18 +269,43 @@ unchanged by this view.
   rate default until it's tuned against real traffic). Redis `EXPIRE`
   self-cleans a quiet track; there is no separate reaper to test or get
   wrong.
-  **Known gap (what the Redis window does and does not persist):** under `BUS_BACKEND=redis`
-  or `redis-sentinel` only the window MEMBERSHIP (alert ids per track, and its TTL clock) lives in
-  Redis, shared across replicas and surviving a restart. The per-member details the correlator
-  decides on (`_sides`, `_side_meta`, `_last_touch`, `_last_incident`, `_incident_graphs`: tactics,
-  scores, first_seen, emitted-incident cache) stay in-process, so after a restart a track's
-  membership is still counted but its tactics are gone until new alerts arrive, and replicas do
-  not share them. Moving that state to Redis is not done.
-  **Practical consequence, measured live (2026-10-23, HA compose scaled to two ws8 replicas):** run ONE ws8
-  replica. A consumer group splits `alerts` between replicas with no key affinity, so the same two
-  alerts that form an incident on one replica form none when they land on different replicas (the
-  window membership is shared, the tactics that decide the incident are not). Scaling ws8 silently
-  weakens incident formation until the correlator state moves to Redis.
+  **Shared correlator state (2026-10-28):** under `BUS_BACKEND=redis` or `redis-sentinel` the
+  per-track state the correlator decides on (tactics, first_seen, truncated flag, member entries with
+  score/time/co-occurrence, incident claim) lives in Redis too (`track_state.py::RedisTrackState`, keys
+  `ws8:state:{side,meta,tac}:<track>` and `ws8:state:inc:<incident_id>`, TTL horizon+1s), so a restarted
+  replica resumes mid-chain and replicas converge on the same incident id (deterministic id; WS-3 CAS
+  collapses double emission). `BUS_BACKEND=memory` keeps the in-process dicts. Design:
+  `docs/ws8-shared-correlator-state-design.md`. Still process-local by design: the `incident.graph` cache
+  (rebuilt from the shared members) and the sweep clock. **Proof:** zero-infra `test_shared_state.py`;
+  live on plain Redis in an isolated compose project (`tools/ws8_shared_state_live_proof.sh`): incident formed
+  across a SIGKILL+restart, and 10 chains split over two replicas gave 10 incident ids, 2 members each.
+  **Sentinel, live (2026-10-28, `tools/ws8_sentinel_live_proof.sh`, own compose project, HA-profile Redis/Sentinel
+  topology and flags):** the Redis master was killed between the two tactics of one chain, a replica was promoted,
+  and the incident formed once (one id, 2 members); 20 chains over two replicas with a per-alert trace
+  (`WS8_TRACE_ALERTS=1` logs `handled alert` + replica hostname) gave 20 incident ids, 13 chains split across replicas.
+  **Full HA stack, live (2026-10-28, `tools/ws8_ha_stack_proof.py`, `infra/docker-compose.ws8-ha-proof.yml`):** `docker-compose.ha.yml`
+  with ws1..ws9, Redis primary + 2 replicas + 3 Sentinels, 3-node OpenSearch (green): a port scan (TA0007) then an ssh brute force
+  (TA0006) from one source IP through raw.events -> ws2 -> ws4 -> ws8 -> ws3 gave ONE `incidents-<tenant>` document (tactics
+  TA0006+TA0007, members = indexed alerts) with ws8 killed between the two tactics.
+  **Under load, live (`tools/ws8_failover_load_proof.py load`, ws8 x2 + Redis/Sentinel):** 350 two-alert chains (700 alerts, ~9.5/s,
+  74 s) with the Redis master killed 4 times (failover 4.0-5.6 s each; Sentinel settings of the proof compose: down-after 3000 ms, failover-timeout 10000 ms): 0 lost chains, 0 forked ids, 0 wrong member sets,
+  0 alerts lost on the bus, 350 incident ids, 351 emissions (1 reclaimed redelivery, same id). The pre-change code under the
+  same load lost 112 of 350 chains (never promoted: tactics split across replicas).
+  **Both Redis replicas lost, live (`... outage`):** the primary refused writes (NOREPLICAS); ws8 stayed up (0 restarts), logged the
+  errors, acked nothing (group pending 0, lag 1), and after the replicas returned the incident completed once (2 members).
+  **Incident id** is bound to the track (`TrackState.bind_incident_id`, first promoter wins), which closes the old horizon-boundary
+  limit (regression test `test_horizon_boundary_does_not_fork_the_incident_id`, fails on the previous commit).
+  **Follow-up proofs (2026-10-28):**
+  - *Min-replicas on every node:* `docker-compose.ha.yml` (and the proof compose) now start redis-1/2/3 all with `--min-replicas-to-write 1 --min-replicas-max-lag 10`; `tools/check_ha_min_replicas.py` (in `run_all_tests.sh`) fails if a data node lacks it. Live (`ws8_failover_load_proof.py promoted`): after 2 promotions the promoted master (redis-2) refused writes (`NOREPLICAS`) 0.8 s after losing both replicas; the control with the flag forced to 0 accepted the write. `outage` against that promoted master: ws8 0 restarts, 16 error lines, second alert unread/unacked (lag 1, pending 0), one incident with both tactics after recovery, group lag 0 / pending 0.
+  - *3 and 4 ws8 replicas* (350 chains/700 alerts, 4 master kills, failover 3.6-5.7 s on the proof-compose Sentinel settings down-after 3000 / failover-timeout 10000, the shipped HA compose uses down-after 5000 / failover-timeout 20000): 3 replicas ok 350/350, lost 0, forked 0, wrong members 0, 179 chains split across replicas; 4 replicas ok 350/350, lost 0, forked 0, wrong 0, 183 split chains; 0 duplicate alert messages.
+  - *Full HA stack under load* (`tools/ws8_ha_load_proof.py`, ws1..ws9 + 3 Sentinels + 3-node OpenSearch, 2 ws8 replicas, background load only (benign raw events through ws2 -> ws4 -> ws3, target 100/s, 261-1950 actually sent per run, never forming an alert; the chains' alerts are injected straight into the `alerts` stream, so ws2/ws4 are not on the alert path), 3 master kills; verdict from OpenSearch): target 20/50/100 alerts/s -> achieved 10.1/17.4/10.4 alerts/s (the producers plus one 8-CPU host shared by ~25 containers bounded those runs; where ws8 itself saturates was not measured); chains 160/400/800: lost 0, forked 0, wrong members 0, alerts indexed = acked (320/800/1600); 39/151/364 chains split across replicas. Failover 5.0-5.5 s, 6.4-7.4 s, and 2.9/5.8/44.9 s (the 44.9 s one: Sentinel split vote under host CPU saturation).
+  - *Second round (same day), the items the first round could not reach:*
+    - **Higher rate, full HA stack** (generator now pipelines XADD straight into `alerts` from 3-12 processes; background load only (benign raw events through ws2 -> ws4 -> ws3, target 100/s, 261-1950 actually sent per run, never forming an alert; the chains' alerts are injected straight into the `alerts` stream, so ws2/ws4 are not on the alert path); 3 master kills per run; verdict from OpenSearch): achieved 49.7, 99.4, 200.0 and 229.4 alerts/s (targets 50/100/200/400; 400 was not reached) on 400/800/1600/3200 chains: lost 0, forked ids 0, wrong members 0, alerts indexed = acked (800/1600/3200/6400), 135/275/620/1427 chains split across the 2 replicas. Sampled hot spots at peak: OpenSearch nodes 80-280% CPU, the producer container (ws2) 82% at the 400 target; host total 440-610% of 800%. A second Docker stack of another session (`fgloadtest-*`, OpenSearch ~115% CPU) ran on the same host during the 100-400 runs.
+    - **6 and 8 ws8 replicas** (350 chains, 4 master kills, failover 3.5-6.2 s): 6 replicas ok 350/350, lost 0, forked 0, wrong 0, 202 chains split across replicas, 1 alert delivered to two replicas (reclaimed redelivery); 8 replicas ok 350/350, lost 0, forked 0, wrong 0, 194 split chains, 2 alerts on two replicas, 351 emissions for 350 ids (one reclaimed redelivery under the same incident id).
+    - **Sentinel failover under CPU saturation** (`tools/ws8_sentinel_failover_dist.py`, 16 busy-loop containers on the 8-CPU host, time until the new master accepts a write, includes ~3-4 s of `docker exec` probe latency): down-after 5000 / failover-timeout 20000: 12 kills, min 8.7, median 10.2, p90 11.5, max 50.8 s; down-after 5000 / failover-timeout 5000: 12 kills, min 9.9, median 10.65, p90 11.9, max 22.6 s. Both samples logged 3 `-failover-abort-not-elected` lines, counted as log lines, not per round, so how many rounds aborted is not known; the long rounds are consistent with a split vote (retry gated at 2x failover-timeout, 40 s vs 10 s) but that link was not established per round. The script now counts aborts and TILTs per round. A 20-round rerun per config was started and aborted because another session's load made every round take 2-3 minutes. Conclusion: with 12 rounds each, the median is unchanged and the tail may be shorter with 5000; this is NOT shown, so the shipped default stays 20000 (`infra/redis-sentinel-entrypoint.sh`). 5000 is an unproven candidate (it also bounds replica reconfiguration time, untested with large datasets).
+    - **Hot track and ws8 consume rate:** ws8 alone, 2 replicas, 3000 alerts injected straight into `alerts` as fast as one pipeline writes (`tools/ws8_hot_track_cost.py`, shared host, another session's load running): every alert its own actor (1-member tracks) drained at 105.5 and 50.2 alerts/s; every alert on ONE actor (one track at the member cap of 200, both replicas hitting it) drained at 17.9 and 13.7 alerts/s, i.e. 3-8x slower (each alert reads the whole side table: HGETALL + json.loads of up to 200 entries), and emitted ~3000 incident updates for the one incident. So the per-alert cost is O(member_cap) and a hot track limits ws8 to roughly 14-18 alerts/s on this host with two replicas; the 200 alerts/s full-stack runs used one track per alert pair and say nothing about hot tracks. `achieved` in the load tables is the XADD producer rate. ws8's consume rate and drain time were NOT measured in the full-stack runs (the harness now records them but the runs were not repeated); the only ws8-alone consume figures are the 50-105 alerts/s (spread) and 14-18 alerts/s (hot track) above, so at 200 alerts/s injected ws8 was backlogged and caught up afterwards (every run ended at lag 0 / pending 0); nothing is claimed about ws8 not being the limit.
+  **Not proven / limits:** other hardware (not closable on this host); the 400 alerts/s target (229.4 reached); ws8 consume/drain time inside the full-stack load; hot-track cost on a quiet host (the numbers above are from a contended one); whether failover-timeout 5000 beats the shipped 20000; failover time under saturation is unbounded in practice (50.8 s observed); more than 8 replicas.
+- **Metrics on shared state:** `ws8_active_tracks` is per replica (tracks that replica touched within the horizon), not a cluster total; a track touched by both replicas is counted by both, so do not sum it across replicas. `ws8_promotions_total` counts a promotion once cluster-wide (`claim_incident`), on the replica that won the claim.
 - **Tenant isolation**: tenant is part of the track key, not a filter
   (rejected-at-edge via the same `_validated_tenant`-style check
   `services/ws3-indexer/router.py` uses) — a tenant-agnostic key would

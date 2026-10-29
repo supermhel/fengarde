@@ -6,3 +6,7 @@
 13d5ca91f786190b52f0650b9abafd0db2b53584:eval/twin/oracle_ransomware.yaml:generic-api-key:34
 13d5ca91f786190b52f0650b9abafd0db2b53584:eval/twin/oracle_supply_chain_ci.yaml:generic-api-key:22
 dc73471cdb354a3cb8f180a2a70ee03441ecd24b:eval/twin/oracle_phishing_bec.yaml:generic-api-key:51
+e27ba0fc86255fcafb8c12df163f22c532c350f6:eval/twin/oracle_win_credential_theft.yaml:generic-api-key:41
+e27ba0fc86255fcafb8c12df163f22c532c350f6:eval/twin/oracle_network_credential_abuse.yaml:generic-api-key:50
+e27ba0fc86255fcafb8c12df163f22c532c350f6:eval/twin/oracle_network_credential_abuse.yaml:generic-api-key:51
+e27ba0fc86255fcafb8c12df163f22c532c350f6:eval/twin/oracle_network_credential_abuse.yaml:generic-api-key:52
