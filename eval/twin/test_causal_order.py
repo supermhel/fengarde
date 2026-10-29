@@ -331,7 +331,10 @@ def _test_real() -> dict:
               "phishing_bec": (4, 1.0), "ot_opcua_sabotage": (4, 1.0),
               # 2026-10-14, first run of P1 storylines 6-9 (measured, not tuned)
               "ransomware": (6, 0.8333), "insider_exfil": (5, 0.8), "cloud_iam_abuse": (6, None),
-              "supply_chain_ci": (3, 1.0)}
+              "supply_chain_ci": (3, 1.0),
+              # 2026-10-28, first run of storylines 10-11 (measured, not tuned). network_credential_abuse's
+              # 0.5: the ASA sweep evidences only an address, so the sweep -> spray pair has no edge.
+              "win_credential_theft": (4, 0.75), "network_credential_abuse": (2, 0.5)}
     # 2026-10-03: measured on the first run of the 4th storyline; 2026-10-14: the 5th (ot_opcua_sabotage)
     got = {n: (g["causal_order"]["graded"], g["causal_order"]["causal_order_fidelity"]) for n, g in out.items()}
     _check("(c) identity causal_order_fidelity / graded-pair counts (seed 7) match the measured values",
