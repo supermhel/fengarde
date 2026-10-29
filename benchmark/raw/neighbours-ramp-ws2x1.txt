@@ -1,0 +1,8 @@
+--- before ramp ws2x1 ws4x3 11:43:55 hostCPU=34% freeGB=1,1
+infra-ws2-normalization-1 cpu=16.54%
+siem-bus cpu=1.78%
+siem-store cpu=1.44%
+--- after 11:46:14 hostCPU=20% freeGB=1,2
+siem-bus cpu=6.32%
+infra-ws3-indexer-1 cpu=3.80%
+siem-store cpu=1.86%

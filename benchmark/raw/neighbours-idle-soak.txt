@@ -1,0 +1,8 @@
+--- before soak 500 ev/s ws2x2 ws4x3 15:55:41 hostCPU=27% freeGB=0,6
+siem-bus cpu=5.91%
+infra-ws3-indexer-1 cpu=5.26%
+infra-ws5-ai-1 cpu=2.17%
+--- after 16:08:46 hostCPU=28% freeGB=1,2
+siem-bus cpu=1.69%
+siem-store cpu=1.34%
+infra-ws8-correlation-1 cpu=0.81%

@@ -381,6 +381,16 @@ def _valid_window_time(value) -> int | None:
     return now
 
 
+
+class _WindowPlan:
+    """One stateful rule's pending window-counter call (kind: "hit",
+    "distinct" or "periodic"), computed by ``Rule._plan_stateful``."""
+    __slots__ = ("kind", "key", "now", "window_ms", "value", "member")
+
+    def __init__(self, kind, key, now, window_ms, value, member):
+        self.kind, self.key, self.now, self.window_ms = kind, key, now, window_ms
+        self.value, self.member = value, member
+
 class Rule:
     def __init__(self, raw: dict, allowlists_dir: Path | None = None):
         self.raw = raw
@@ -966,9 +976,32 @@ class Rule:
         except (TypeError, ValueError):
             return False
 
-    def _evaluate_stateful(self, event: dict) -> bool:
-        """Stateful threshold path. Caller wraps this in a TypeError/ValueError
-        guard (FIX 2(a)); f(n) must never let window arithmetic raise."""
+    def begin_evaluate(self, event: dict):
+        """First half of :meth:`evaluate` for the batched window path. Returns a
+        final ``bool`` (stateless rule, condition false, or a stateful rule that
+        fails closed) or a ``_WindowPlan`` whose single counter call the caller
+        runs (possibly pipelined with other rules' plans) and hands to
+        :meth:`finish_evaluate`. Same TypeError/ValueError fail-closed guard as
+        :meth:`evaluate`."""
+        if not self._eval_condition(event):
+            return False
+        if not self.stateful:
+            return True
+        try:
+            plan = self._plan_stateful(event)
+        except (TypeError, ValueError):
+            return False
+        return plan if plan is not None else False
+
+    def finish_evaluate(self, plan, count) -> bool:
+        try:
+            return self._finish_stateful(plan, count)
+        except (TypeError, ValueError):
+            return False
+
+    def _plan_stateful(self, event: dict):
+        """Everything :meth:`_evaluate_stateful` does BEFORE its one counter call.
+        Returns None (fail closed -> False) or a ``_WindowPlan``."""
         group_value = self._group_of(event)
         if group_value is None:
             # An event without the group_by field cannot be attributed to any
@@ -977,7 +1010,7 @@ class Rule:
             # session_id would sum toward one burst threshold, fabricating a
             # correlation. Fail closed: no group, no count. (Same convention
             # as every other malformed-input path in this evaluator.)
-            return False
+            return None
         group = group_value
         raw_time = _window_time_of(event, bool(self.periodicity), self.window_seconds * 1000)
         now = _valid_window_time(raw_time)
@@ -999,7 +1032,7 @@ class Rule:
                     f"beyond {_MAX_CLOCK_SKEW_MS}ms clock-skew guard, not driving "
                     f"stateful window"
                 )
-            return False
+            return None
         # WINDOW-POISONING GUARD (2026-10-01). The eviction horizon is
         # ``now - window``, so an event stamped ``wall + 299 s`` -- inside the
         # 5-minute skew allowance above -- moved the horizon to ``wall + 239 s``
@@ -1044,21 +1077,46 @@ class Rule:
                 # unenriched events alone could satisfy any distinct threshold
                 # (e.g. impossible-travel firing on 2 logins with no geo
                 # enrichment). Fail closed on both.
-                return False
-            count = self._counter.hit_distinct(window_key, now,
-                                               window_ms, value, member)
-        elif self.periodicity:
-            count, cv = self._counter.hit_periodic(window_key, now,
-                                                   window_ms, member)
+                return None
+            return _WindowPlan("distinct", window_key, now, window_ms, value, member)
+        if self.periodicity:
+            return _WindowPlan("periodic", window_key, now, window_ms, None, member)
+        return _WindowPlan("hit", window_key, now, window_ms, None, member)
+
+    def _finish_unbatched(self, plan) -> bool:
+        """Run one plan's counter call on its own, with evaluate()'s guard."""
+        try:
+            return self._finish_stateful(plan, self._run_plan(plan))
+        except (TypeError, ValueError):
+            return False
+
+    def _run_plan(self, plan):
+        """The one counter call a plan stands for, issued on its own."""
+        if plan.kind == "distinct":
+            return self._counter.hit_distinct(plan.key, plan.now, plan.window_ms,
+                                              plan.value, plan.member)
+        if plan.kind == "periodic":
+            return self._counter.hit_periodic(plan.key, plan.now, plan.window_ms, plan.member)
+        return self._counter.hit(plan.key, plan.now, plan.window_ms, plan.member)
+
+    def _finish_stateful(self, plan, result) -> bool:
+        if plan.kind == "periodic":
+            count, cv = result
             if cv is None:
                 # Fewer than 3 events in-window yet -- not enough data to judge
                 # regularity. Fail closed: never treat "can't tell" as "is
                 # periodic" (that would fabricate a beacon signal from noise).
                 return False
             return count >= self.threshold and cv <= self.periodicity.get("max_cv", 1.0)
-        else:
-            count = self._counter.hit(window_key, now, window_ms, member)
-        return count >= self.threshold
+        return result >= self.threshold
+
+    def _evaluate_stateful(self, event: dict) -> bool:
+        """Stateful threshold path. Caller wraps this in a TypeError/ValueError
+        guard (FIX 2(a)); f(n) must never let window arithmetic raise."""
+        plan = self._plan_stateful(event)
+        if plan is None:
+            return False
+        return self._finish_stateful(plan, self._run_plan(plan))
 
 
 # --- T4 boolean expression evaluator (replaces eval) -------------------------

@@ -56,7 +56,8 @@ class Detector:
                  allowlists_dir: Path | None = None,
                  plugin_rule_dirs: list[Path] | None = None,
                  force_linear_scan: bool = False,
-                 opt_in_rules=()):
+                 opt_in_rules=(),
+                 pipeline_window_ops: bool | None = None):
         """``plugin_rule_dirs``: directories of extra rule YAML to merge in,
         same shape as ``contracts/rules/*.yml``. Defaults to whatever
         ``plugins.discover_rule_pack_dirs()`` finds installed via the
@@ -82,6 +83,11 @@ class Detector:
         with ``enabled_rules`` in contracts/tenants/<tenant>.yml. ``disabled_rules``
         always wins over every opt-in."""
         self._force_linear_scan = force_linear_scan
+        # One Redis round trip for all of an event's window ops (see
+        # _evaluate_candidates). None = on unless FENGARDE_WINDOW_PIPELINE=0.
+        self._pipeline_window_ops = (
+            os.getenv("FENGARDE_WINDOW_PIPELINE", "1").strip().lower() not in ("0", "false", "no")
+            if pipeline_window_ops is None else bool(pipeline_window_ops))
         self._opt_in_rules = frozenset(
             i.strip() for i in (list(opt_in_rules or ())
                                 + os.environ.get("FENGARDE_OPT_IN_RULES", "").split(","))
@@ -327,7 +333,7 @@ class Detector:
         if any(r.opt_in_required for r in candidates):
             opted = self._opt_in_rules | load_enabled_rules(self.tenants_dir, tenant)
             candidates = [r for r in candidates if not r.opt_in_required or r.id in opted]
-        matched = [r for r in candidates if r.evaluate(event)]
+        matched = self._evaluate_candidates(candidates, event)
         # A companion exists to catch the attack its sibling cannot see (same
         # behaviour, other key). When the sibling ALSO matched this event, it has
         # already raised the alert: emitting the companion too would double the
@@ -388,6 +394,65 @@ class Detector:
         # above is unaffected either way.
         action = self.scorer.route(self.scorer.routing_score(matched, event))
         return event, matched, action
+
+    def _evaluate_candidates(self, candidates: list, event: dict) -> list:
+        """``[r for r in candidates if r.evaluate(event)]``, but with every
+        count/distinct stateful rule's window op sent in ONE Redis round trip.
+
+        Rules' windows are keyed by rule id, so their ops are independent and
+        issuing them as one batch (in rule order) leaves exactly the state, and
+        the verdicts, sequential evaluation would. Falls back to the plain
+        sequential loop when batching is off (``FENGARDE_WINDOW_PIPELINE=0``),
+        when no counter exposes ``hit_many`` (the deque counter, test fakes),
+        or when only one rule has a window op to run."""
+        if not getattr(self, "_pipeline_window_ops", False):  # absent on Detectors built without __init__ (tests)
+            return [r for r in candidates if r.evaluate(event)]
+        verdict: list = []          # per candidate: bool, or a (rule, plan) to resolve
+        todo: list = []
+        counter = None
+        for r in candidates:
+            if not r.stateful or "evaluate" in r.__dict__:
+                # stateless rules (and any rule whose evaluate() was replaced on
+                # the instance) keep the plain entry point
+                verdict.append(r.evaluate(event))
+                continue
+            out = r.begin_evaluate(event)
+            if isinstance(out, bool):
+                verdict.append(out)
+                continue
+            c = r._counter
+            many = getattr(c, "hit_many", None)
+            if out.kind == "periodic" or many is None or (counter is not None and c is not counter):
+                verdict.append(r._finish_unbatched(out))
+                continue
+            counter = counter or c
+            verdict.append(len(todo))
+            todo.append((r, out))
+        if todo:
+            if len(todo) == 1:
+                r, plan = todo[0]
+                results = [r._run_plan(plan)]
+            else:
+                try:
+                    assert counter is not None
+                    results = counter.hit_many([
+                        ("distinct", p.key, p.now, p.window_ms, p.value) if p.kind == "distinct"
+                        else ("hit", p.key, p.now, p.window_ms, p.member) for _r, p in todo])
+                except (TypeError, ValueError):
+                    # keep evaluate()'s per-rule fail-closed guard: re-run singly
+                    results = [None if (ok := r._finish_unbatched(p)) is None else ok for r, p in todo]
+                    return [r for r, v in zip(candidates, verdict)
+                            if (v if isinstance(v, bool) else results[v])]
+        out_list = []
+        for r, v in zip(candidates, verdict):
+            if isinstance(v, bool):
+                ok = v
+            else:  # index into todo
+                rr, plan = todo[v]
+                ok = rr.finish_evaluate(plan, results[v])
+            if ok:
+                out_list.append(r)
+        return out_list
 
     def _funnel_fresh(self, event: dict, matched: list) -> bool:
         """FIX 22: gate an ``ai.requests`` enqueue. Returns True when at least

@@ -143,6 +143,8 @@ class Sampler(threading.Thread):
         try:
             s["streams"] = self.groups()
             s["redis_mem_mb"] = round(self.r.info("memory")["used_memory"] / 1048576, 1)
+            s["redis_ops_per_s"] = int(self.r.info("stats")["instantaneous_ops_per_sec"])
+            s["redis_slowlog_len"] = self.r.slowlog_len()
             s["events_docs"] = os_count(self.base, "events-*")
             s["alerts_docs"] = os_count(self.base, "alerts-*")
             ns = os_get(self.base, "/_nodes/stats/jvm,indices")["nodes"]
@@ -247,6 +249,9 @@ def window_rates(samples: list[dict], t_lo: float, t_hi: float) -> dict:
         "os_index_failed_end": b["os_index_failed"],
         "os_write_rejected_end": b.get("os_write_rejected"),
         "redis_mem_mb_max": max(s["redis_mem_mb"] for s in w),
+        "redis_ops_per_s_mean": round(statistics.mean(s.get("redis_ops_per_s", 0) for s in w)),
+        "redis_ops_per_s_max": max(s.get("redis_ops_per_s", 0) for s in w),
+        "redis_slowlog_len_end": b.get("redis_slowlog_len"),
         "container_cpu_pct": cpu,
     }
 

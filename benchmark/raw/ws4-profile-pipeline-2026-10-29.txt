@@ -1,0 +1,3 @@
+events=2999 profile=realistic window_counter=redis lua=True capped_evidence=True
+events/s (under cProfile): 452   ms/event: 2.21
+redis round trips/event: 1.83

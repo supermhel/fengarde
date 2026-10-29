@@ -1,0 +1,12 @@
+FENGARDE_WINDOW_PIPELINE=0
+events/s (under cProfile): 447   ms/event: 2.24
+redis round trips/event: 2.68
+FENGARDE_WINDOW_PIPELINE=1
+events/s (under cProfile): 517   ms/event: 1.93
+redis round trips/event: 1.83
+FENGARDE_WINDOW_PIPELINE=0
+events/s (under cProfile): 486   ms/event: 2.06
+redis round trips/event: 2.68
+FENGARDE_WINDOW_PIPELINE=1
+events/s (under cProfile): 572   ms/event: 1.75
+redis round trips/event: 1.83
