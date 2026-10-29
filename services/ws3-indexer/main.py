@@ -96,13 +96,13 @@ class BatchIndexHandler:
 
     def __call__(self, payload: dict) -> None:
         try:
-            index_doc(self.store, payload, create_only=self.create_only)
+            index_doc(self.store, payload, create_only=self.create_only, strict=True)
         except ValueError:
             pass  # unroutable doc -> drop, matches run()
 
     def handle_batch(self, payloads: list) -> list:
         results: list = [None] * len(payloads)
-        # pending item: [positions, op, index, doc_id, doc, version]
+        # pending item: [positions, op, index, doc_id, doc, version, original payload]
         pending: list = []
         alerts: dict = {}     # (index, doc_id) -> [positions, last payload]
         fallback: list = []   # (positions, index, doc_id, payload) -> per-doc CAS path
@@ -121,17 +121,39 @@ class BatchIndexHandler:
                     fallback.append(([i], index, doc_id, payload))
                 continue
             pending.append([[i], "create" if self.create_only else "index",
-                            index, doc_id, payload, None])
+                            index, doc_id, payload, None, payload])
+        pending = self._coalesce(pending)
         if alerts:
             self._plan_alerts(alerts, pending, fallback, results)
         self._flush(pending, results, fallback)
         for positions, index, doc_id, payload in fallback:
             try:
-                _index_alert_preserving_triage(self.store, index, doc_id, payload)
+                _index_alert_preserving_triage(self.store, index, doc_id, payload, strict=True)
             except Exception as exc:  # noqa: BLE001 - per-item failure -> unacked
                 for pos in positions:
                     results[pos] = exc
         return results
+
+    @staticmethod
+    def _coalesce(pending: list) -> list:
+        """One item per (index, doc_id) per batch. "Current state" topics
+        (incidents, entity.updates, incident.graph) can carry several versions of
+        one id in a read pass; sending them separately lets an in-process retry of
+        an EARLIER version land after a later one succeeded and overwrite it. The
+        last payload wins for an upsert (the end state sequential writes reach);
+        create-only keeps the first (later creates would only 409). All their
+        messages share the one outcome."""
+        merged: dict = {}
+        for item in pending:
+            key = (item[2], item[3])
+            prev = merged.get(key)
+            if prev is None:
+                merged[key] = item
+                continue
+            prev[0].extend(item[0])
+            if item[1] == "index":
+                prev[4], prev[6] = item[4], item[6]
+        return list(merged.values())
 
     def _plan_alerts(self, alerts: dict, pending: list, fallback: list, results: list) -> None:
         """Alerts need read-modify-write (keep the analyst's ``triage``), but one
@@ -158,7 +180,7 @@ class BatchIndexHandler:
             merged = dict(payload)
             if current.get("triage") is not None:
                 merged["triage"] = current["triage"]
-            pending.append([positions, "index", key[0], key[1], merged, version])
+            pending.append([positions, "index", key[0], key[1], merged, version, payload])
 
     def _flush(self, pending: list, results: list, fallback: list) -> None:
         attempt = 0
@@ -166,7 +188,7 @@ class BatchIndexHandler:
             try:
                 outcomes = self.store.bulk_write(
                     [(op, index, doc_id, doc, version)
-                     for _p, op, index, doc_id, doc, version in pending])
+                     for _p, op, index, doc_id, doc, version, _orig in pending])
                 self.stats["bulk_requests"] += 1
                 self.stats["bulk_docs"] += len(pending)
             except Exception as exc:  # noqa: BLE001 - whole request failed
@@ -174,7 +196,7 @@ class BatchIndexHandler:
                              "exc": exc}] * len(pending)
             retry: list = []
             for item, out in zip(pending, outcomes):
-                positions, op, index, doc_id, doc, version = item
+                positions, op, index, doc_id, doc, version, orig = item
                 status = out["status"]
                 if status < 300 or (status == 409 and op == "create"):
                     if status == 409:
@@ -182,9 +204,12 @@ class BatchIndexHandler:
                     continue
                 if status == 409 and version is not None:
                     # stale CAS version: someone (analyst triage / another
-                    # writer) got in between -> per-document read-merge-retry
+                    # writer) got in between -> per-document read-merge-retry.
+                    # Hand over the ORIGINAL payload: `doc` carries the triage we
+                    # read earlier, which would resurrect a triage the analyst
+                    # has since cleared.
                     self.stats["cas_conflicts"] += 1
-                    fallback.append((positions, index, doc_id, doc))
+                    fallback.append((positions, index, doc_id, orig))
                     continue
                 if status in self._RETRYABLE and attempt < self.retries:
                     retry.append(item)
@@ -240,7 +265,15 @@ def _single_only(h: "BatchIndexHandler"):
 _ALERT_CAS_MAX_RETRIES = 5
 
 
-def _index_alert_preserving_triage(store, index: str, doc_id: str, doc: dict) -> bool:
+class AlertCasExhausted(RuntimeError):
+    """The alert's compare-and-swap lost every retry: the write did NOT land.
+    Raised only in ``strict`` mode (the daemon), so the message stays unacked and
+    is redelivered, then dead-lettered at the redelivery cap, instead of being
+    acked as if written."""
+
+
+def _index_alert_preserving_triage(store, index: str, doc_id: str, doc: dict,
+                                   strict: bool = False) -> bool:
     """`alerts`-topic write for an alert_id that may already be indexed.
 
     Same failure SHAPE as the normalized/scored siem.score clobber (P1-4),
@@ -325,10 +358,12 @@ def _index_alert_preserving_triage(store, index: str, doc_id: str, doc: dict) ->
         f"alert {doc_id} in {index}: exhausted {_ALERT_CAS_MAX_RETRIES} CAS "
         f"retries under contention -- this write did NOT land (no-write, not "
         f"a clobber, but distinct from a benign duplicate)")
+    if strict:
+        raise AlertCasExhausted(f"alert {doc_id} in {index}: CAS retries exhausted")
     return False
 
 
-def index_doc(store, doc: dict, *, create_only: bool = False) -> bool:
+def index_doc(store, doc: dict, *, create_only: bool = False, strict: bool = False) -> bool:
     """Route ``doc`` and write it.
 
     ``create_only=True`` writes only when nothing is stored under that id yet
@@ -348,7 +383,7 @@ def index_doc(store, doc: dict, *, create_only: bool = False) -> bool:
     if create_only:
         return store.index_if_absent(index, doc_id, doc)
     if "alert_id" in doc:
-        return _index_alert_preserving_triage(store, index, doc_id, doc)
+        return _index_alert_preserving_triage(store, index, doc_id, doc, strict=strict)
     return store.index(index, doc_id, doc)
 
 

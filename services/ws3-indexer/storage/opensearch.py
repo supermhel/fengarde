@@ -386,7 +386,7 @@ class OpenSearchStore(StorageAdapter):
         result = json.loads(payload) if payload else {}
         out = []
         for item in result.get("items", []):
-            entry = next(iter(item.values()), {}) if isinstance(item, dict) else {}
+            entry: dict = next(iter(item.values()), {}) if isinstance(item, dict) else {}
             err = entry.get("error")
             out.append({"status": entry.get("status", 500),
                         "error_type": err.get("type") if isinstance(err, dict) else None})
