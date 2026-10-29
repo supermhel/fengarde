@@ -4,7 +4,7 @@
 
 COMPOSE := docker compose -f infra/docker-compose.yml
 
-.PHONY: help preflight demo test adversarial e2e nis2-demo up down ha-up ha-down chaos test-live ha-verify attack-scorecard eval-detection eval-blind-recall mutation-test bench scorecard scorecard-run
+.PHONY: help preflight demo test adversarial e2e nis2-demo up down ha-up ha-down chaos test-live ha-verify attack-scorecard eval-detection eval-blind-recall mutation-test bench loadtest scorecard scorecard-run
 
 PYTHON ?= python3
 
@@ -200,6 +200,12 @@ mutation-test:
 # as `make test-live`/`make chaos`.
 bench:
 	@$(PYTHON) tools/fengarde_bench.py --events 2000
+
+# Zero-infra per-stage + paced end-to-end load test (46 rules). Results and the
+# live-stack procedure: benchmark/loadtest.md. `make loadtest` is a quick smoke;
+# the committed numbers used `--repeat 3 --max-events 20000`.
+loadtest:
+	@$(PYTHON) tools/fengarde_loadtest.py --quick
 
 # Step 7 scorecard. `scorecard` checks the committed card against the artifacts
 # the last gate run produced (cheap; this is the in-gate path). `scorecard-run`

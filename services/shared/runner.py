@@ -322,11 +322,93 @@ def _process_message(bus, topic, group, msg, handler, max_redeliveries,
     return "acked"
 
 
+def _process_batch(bus, topic, group, entries, handler, max_redeliveries,
+                   metrics: "Metrics | None" = None, ack_fn=None):
+    """Batch twin of :func:`_process_message` for handlers that expose
+    ``handle_batch(payloads) -> list[Exception | None]`` (and optionally a
+    ``batch_max`` int bounding how many messages are gathered per call).
+
+    ``entries`` is ``[(msg, delivery_count), ...]``. Same per-message outcomes
+    as the single path, decided PER ITEM:
+
+    * ``delivery_count > max_redeliveries`` -> dead-lettered + acked, without
+      calling the handler (identical to the single path).
+    * handler result ``None`` -> acked.
+    * handler result an Exception, or ``handle_batch`` itself raised -> NOT
+      acked (left in the PEL for redelivery, which re-enters this function via
+      claim_pending with the real delivery count).
+
+    Acks happen strictly AFTER ``handle_batch`` returns, so a message is never
+    acked before its write outcome is known. Returns per-outcome counts.
+    """
+    do_ack = ack_fn if ack_fn is not None else bus.ack
+    counts = {"acked": 0, "failed": 0, "deadlettered": 0}
+    live = []
+    for msg, delivered in entries:
+        if delivered > max_redeliveries:
+            bus.produce(f"{topic}.deadletter", key=msg.key,
+                        payload={"topic": topic, "group": group, "id": msg.id,
+                                 "delivery_count": delivered,
+                                 "payload": msg.payload})
+            do_ack(msg, group)
+            counts["deadlettered"] += 1
+            if metrics is not None:
+                metrics.incr(topic, "deadlettered")
+        else:
+            live.append(msg)
+    if not live:
+        return counts
+    try:
+        results = handler.handle_batch([m.payload for m in live])
+        if len(results) != len(live):
+            raise RuntimeError(f"handle_batch returned {len(results)} results "
+                               f"for {len(live)} messages")
+    except Exception as exc:  # whole batch failed -> nothing acked
+        results = [exc] * len(live)
+    for msg, res in zip(live, results):
+        if res is None:
+            do_ack(msg, group)
+            counts["acked"] += 1
+            if metrics is not None:
+                metrics.incr(topic, "acked")
+        else:
+            try:  # traceback.print_exc() needs an active exception
+                raise res
+            except Exception as raised:  # noqa: BLE001
+                _throttled_print_exc(topic, raised)
+            counts["failed"] += 1
+            if metrics is not None:
+                metrics.incr(topic, "failed")
+    return counts
+
+
+def _flush_gathered(bus, topic, group, batch_entries, handler, max_redeliveries, metrics, pending_acks):
+    """A bus error in the middle of a read pass must not strand the messages
+    already gathered for a batch (they would sit unprocessed in the PEL until
+    the 60 s claim window): process them now and ack best-effort. A failed ack
+    just leaves them to be redelivered, which the idempotent handler absorbs."""
+    if not batch_entries:
+        return
+    try:
+        _process_batch(bus, topic, group, batch_entries, handler, max_redeliveries,
+                       metrics, ack_fn=lambda m, g: pending_acks.append(m))
+        if pending_acks:
+            bus.ack_batch(pending_acks, group)
+    except Exception as exc:  # noqa: BLE001 - bus is already failing; PEL redelivery covers it
+        _throttled_print_exc(topic, exc)
+
+
 def _topic_worker(bus_factory, topic, group, handler, *, max_redeliveries,
                   shutdown, claim_idle_ms, idle_sleep_s, consume_block_ms,
                   service_name, state=None, metrics=None):
     """Own the consume loop for ONE topic until shutdown is set."""
     bus = bus_factory()
+    # Batch-capable handler (ws3-indexer's bulk writer): gather the messages of
+    # one read pass and hand them over together. The flush interval is the read
+    # cadence itself -- consume() returns when the block expires or the read
+    # drains -- so a lone message waits at most one read, never a timer.
+    batched = callable(getattr(handler, "handle_batch", None))
+    batch_max = max(1, int(getattr(handler, "batch_max", 100) or 100))
     while not shutdown.is_set():
         did_work = False
 
@@ -344,21 +426,36 @@ def _topic_worker(bus_factory, topic, group, handler, *, max_redeliveries,
         # redelivery," never a silent double-ack or a lost ack.
         pending_acks: list = []
         bus_error_this_iter = False
+        batch_entries: list = []
         try:
             for msg, times_delivered in bus.claim_pending(
                     topic, group, claim_idle_ms, max_redeliveries):
                 did_work = True
-                _process_message(bus, topic, group, msg, handler,
-                                 max_redeliveries, times_delivered, metrics,
-                                 ack_fn=lambda m, g: pending_acks.append(m))
+                if batched:
+                    batch_entries.append((msg, times_delivered))
+                    if len(batch_entries) >= batch_max:
+                        _process_batch(bus, topic, group, batch_entries, handler,
+                                       max_redeliveries, metrics,
+                                       ack_fn=lambda m, g: pending_acks.append(m))
+                        batch_entries = []
+                else:
+                    _process_message(bus, topic, group, msg, handler,
+                                     max_redeliveries, times_delivered, metrics,
+                                     ack_fn=lambda m, g: pending_acks.append(m))
                 if shutdown.is_set():
                     break
+            if batch_entries:
+                _process_batch(bus, topic, group, batch_entries, handler,
+                               max_redeliveries, metrics,
+                               ack_fn=lambda m, g: pending_acks.append(m))
             if pending_acks:
                 bus.ack_batch(pending_acks, group)
             if state is not None:
                 state.mark_ok()
         except Exception as exc:
             bus_error_this_iter = True
+            _flush_gathered(bus, topic, group, batch_entries, handler,
+                            max_redeliveries, metrics, pending_acks)
             if state is not None:
                 state.mark_error(exc)  # bus unreachable -> /health reports degraded
             # Gap-hunt finding (2026-08-23): this update /health (above) but
@@ -382,23 +479,38 @@ def _topic_worker(bus_factory, topic, group, handler, *, max_redeliveries,
         # loop matches the read side instead of paying a round-trip per
         # message on the write side too.
         pending_acks = []
+        batch_entries = []
         try:
             for msg in bus.consume(topic, group=group, block_ms=consume_block_ms):
                 did_work = True
                 # First delivery == count 1 (the PEL/XPENDING counter starts at 1
                 # once a message is read into a group). Redeliveries are handled by
                 # the claim_pending branch above, which carries the real count.
-                _process_message(bus, topic, group, msg, handler,
-                                 max_redeliveries, 1, metrics,
-                                 ack_fn=lambda m, g: pending_acks.append(m))
+                if batched:
+                    batch_entries.append((msg, 1))
+                    if len(batch_entries) >= batch_max:
+                        _process_batch(bus, topic, group, batch_entries, handler,
+                                       max_redeliveries, metrics,
+                                       ack_fn=lambda m, g: pending_acks.append(m))
+                        batch_entries = []
+                else:
+                    _process_message(bus, topic, group, msg, handler,
+                                     max_redeliveries, 1, metrics,
+                                     ack_fn=lambda m, g: pending_acks.append(m))
                 if shutdown.is_set():
                     break
+            if batch_entries:
+                _process_batch(bus, topic, group, batch_entries, handler,
+                               max_redeliveries, metrics,
+                               ack_fn=lambda m, g: pending_acks.append(m))
             if pending_acks:
                 bus.ack_batch(pending_acks, group)
             if state is not None:
                 state.mark_ok()
         except Exception as exc:
             bus_error_this_iter = True
+            _flush_gathered(bus, topic, group, batch_entries, handler,
+                            max_redeliveries, metrics, pending_acks)
             if state is not None:
                 state.mark_error(exc)
             _throttled_print_exc(topic, exc)

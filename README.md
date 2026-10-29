@@ -295,40 +295,52 @@ For historical design context: [`docs/archive/PHASE0_README.md`](docs/archive/PH
 
 ## Performance
 
-```sh
-python tools/fengarde_bench.py --events 20000 --mixed
-```
-
-One-command, reproducible by anyone with a clone — no Docker required.
-
-| Metric | Value |
-|---|---|
-| Sustained EPS (5,000 events, `linux_ssh` only) | ~985 events/sec (earlier run; **unverified**, see note) |
-| Sustained EPS (20,000 events, mixed sources) | ~2,500-2,650 events/sec (earlier run; **unverified**, see note) |
-| Peak resident memory (20,000-event run) | ~114 MB (earlier run; **unverified**, see note) |
-| Rule prefilter vs. forced linear scan (46 rules, 20,000 events) | 1.09x faster (re-measured 2026-10-22; 1.11x on the 36-rule tag `v0.11.1`, same machine) |
-
-**Re-run 2026-10-22 on a Windows workstation with Docker Desktop and the compose stack running:** 240 events/sec (5,000 `linux_ssh`), 586 events/sec and 425 MB peak RSS (20,000 mixed), 46 rules. The 36-rule tag `v0.11.1` measured on the same machine in the same state gave 207 events/sec (5,000 `linux_ssh`), so the gap to the figures above is not caused by the 10 added rules; the earlier figures came from a different machine and were not reproduced here. Treat all three rows as machine-dependent until re-measured on an idle reference host.
-
-This is a **zero-infra CPU-bound baseline** (one process, in-memory bus) — it
-measures how fast the Python code processes a batch, excluding real Redis
-network I/O and OpenSearch indexing latency. Not a "handles N events/sec in
-production" claim on its own — see the live-stack numbers below for that.
+Measured 2026-10-28 on one laptop (Intel i5-8365U, 4C/8T, 15 GB, Windows 11,
+Docker Desktop 8 vCPU / 7.9 GB), shared with other running Docker projects.
+Full method, tables, raw outputs and limits: **[`benchmark/loadtest.md`](benchmark/loadtest.md)**.
 
 ```sh
-python tools/fengarde_bench_live.py   # needs `make up` / Docker running
+python tools/fengarde_loadtest.py --repeat 3 --max-events 20000   # zero-infra, no Docker
+python tools/fengarde_bench.py --events 20000 --mixed             # older one-shot batch baseline
 ```
 
-| Metric | Value |
+| Zero-infra (46 rules, in-memory bus, realistic mix, median of 3) | Value |
 |---|---|
-| Live sustained EPS (5,000 mixed events, real Redis + real OpenSearch) | ~43.9 events/sec |
-| Ingest→alert latency, p50 / p99 (10 brute-force bursts) | ~2,045 ms / ~2,063 ms |
+| WS-2 normalize, events/s (p50 / p95 per event) | ~2,100 (0.34 ms / 1.1 ms) |
+| WS-4 detect, events/s (p50 / p95 per event) | ~4,500 (0.08 ms / 0.6 ms) |
+| End to end, paced: highest rate sustained | 500 events/s (p50 3.5 ms, p95 22 ms); 1,000 events/s was not sustained |
+| End to end, unpaced ceiling | ~1,160 events/s (range 870-1,460) |
+| Alert-heavy stress mix (~1.3 alerts per event), unpaced ceiling | ~250 events/s |
+| Peak resident memory, 20,000 events | <100 MB |
 
-An order of magnitude below the zero-infra number, as expected once real
-network I/O and indexing latency (including OpenSearch's 1s default
-`refresh_interval`) are in the loop — this is the "closer to production"
-number, the batch number above is the CPU-bound ceiling. Neither ran on a
-fixed reference box; both ran on whatever machine invoked them.
+These are CPU-bound single-process ceilings for this host (no Redis or OpenSearch
+I/O). The previous rows (~985 / ~2,500 events/s, ~114 MB) did not reproduce and
+are retired.
+
+```sh
+# live stack: isolated compose project, procedure in benchmark/loadtest.md
+python tools/fengarde_loadtest_live.py --rates 25 50 75 100 150 200 --step-s 60 --out benchmark/raw/live-ramp
+```
+
+| Live stack (Redis streams + OpenSearch) | Held for 12 min | Falls behind | Limiting stage |
+|---|---|---|---|
+| Original: ws3 writes one document per HTTP request | 20 events/s | ~25 events/s | `ws3-indexer` (~50 docs/s per OpenSearch single PUT vs ~4,700 via `_bulk`) |
+| + ws3 bulk writes, 1 WS-4 replica | 60 events/s (alert backlog drifted up) | ~100 events/s | WS-4 consume path: Redis window-counter round trips (~78% of its per-event time) |
+| + batched alert writes, **3 WS-4 replicas** | **100 events/s, alert backlog flat** | not found; 200 events/s kept pace, 300-400 inconclusive (neighbour load) | not reached |
+
+`index_failed` on the OpenSearch node counted create-only 409 conflicts (by
+design, not failures); evidence in `benchmark/loadtest.md` section 3c. Scaling
+WS-4 is `docker compose up -d --scale ws4-detection=3` (the window counter is
+global in Redis for exactly this); it trades strict per-source event order for
+throughput.
+
+**This is a laptop-scale result, not SIEM-scale.** One laptop shared with other
+Docker projects, one replica per service, 512 MB OpenSearch heap. The live stack
+holds on the order of 100 events/s with three WS-4 replicas (tested for 12
+minutes), not thousands. Nothing above 400 events/s offered, no multi-node
+OpenSearch, ran under other Docker projects' load, and nothing longer than 12
+minutes was tested. The older `tools/fengarde_bench_live.py` (~43.9 events/s,
+5,000-event drain, pre-bulk) remains a manual one-shot.
 
 ---
 

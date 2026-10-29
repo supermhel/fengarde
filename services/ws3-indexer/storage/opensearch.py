@@ -24,15 +24,12 @@ P1-4 (2026-07-21 audit): two perf fixes, one deliberately NOT attempted here:
     path (``services/ws3-indexer/main.py``'s ``run()``, used by
     ``tools/integration_e2e.py``/``demo_e2e.py``/tests), which drains a whole
     topic before returning and has no per-message ack semantics to preserve.
-  - **NOT attempted: cross-message batching in the live daemon handler**
-    (which would also fix the normalized.events/scored.events double-index).
-    The daemon acks each message individually right after its handler
-    returns (``shared/runner.py``'s ``_process_message``) -- correctness-
-    critical for at-least-once redelivery. Batching indexes across MULTIPLE
-    messages before acking any of them needs a runner-level redesign (buffer
-    N payloads, bulk-index, ack all N together, handle a partial-bulk-
-    failure correctly) that this pass does not attempt, to avoid risking the
-    completeness guarantee for a perf win. Tracked as future work.
+  - **Cross-message batching in the live daemon** was deferred at the time
+    and is now done (load test 2026-10-28, benchmark/loadtest.md: the
+    one-PUT-per-document path capped the whole pipeline near 25 events/s):
+    :meth:`bulk_write` plus ``shared.runner``'s batch path and ws3 main.py's
+    ``BatchIndexHandler`` -- gather a read pass, one ``/_bulk``, ack only after
+    the per-item results are known, partial failures left unacked per item.
 """
 from __future__ import annotations
 
@@ -333,6 +330,90 @@ class OpenSearchStore(StorageAdapter):
             results.append({"_id": entry.get("_id"), "ok": ok,
                             "created": entry.get("result") == "created"})
         return {"indexed": indexed, "errors": errors, "results": results}
+
+    def bulk_write(self, items: "list[tuple[str, str, str, dict]]") -> "list[dict]":
+        """Live-daemon batch write: ONE ``/_bulk`` request for many
+        ``(op, index, doc_id, document[, version])`` tuples, ``op`` being
+        ``"index"`` (idempotent upsert, same as :meth:`index`) or ``"create"``
+        (create-only, same as :meth:`index_if_absent`). An optional ``version``
+        ``(seq_no, primary_term)`` as returned by :meth:`get_versioned` /
+        :meth:`mget_versioned` makes the item conditional (:meth:`index_cas`
+        semantics): a stale version comes back as HTTP 409 for that item.
+
+        Returns one ``{"status": int, "error_type": str | None}`` per input
+        item, IN INPUT ORDER (the bulk API guarantees this), so the caller can
+        decide per item: 2xx = written; 409 on ``create`` = already present
+        (the success path of create-only, not an error); 429/5xx = retryable;
+        any other 4xx = permanent (bad document/mapping). A partial failure
+        never raises. Whole-request failures (connection down on every node,
+        HTTP error status for the request itself) DO raise, so the caller
+        leaves every message of the batch unacked.
+
+        Unlike :meth:`bulk_index` this rotates through ``self._nodes`` on a
+        connection-level failure, like :meth:`_request` (multi-node HA)."""
+        if not items:
+            return []
+        lines = []
+        for item in items:
+            op, index, doc_id, document = item[:4]
+            if op not in ("index", "create"):
+                raise ValueError(f"unsupported bulk op {op!r}")
+            meta = {"_index": index, "_id": str(doc_id)}
+            if len(item) > 4 and item[4] is not None:  # optional (seq_no, primary_term): CAS
+                meta["if_seq_no"], meta["if_primary_term"] = int(item[4][0]), int(item[4][1])
+            lines.append(json.dumps({op: meta}))
+            lines.append(json.dumps(document))
+        body = ("\n".join(lines) + "\n").encode("utf-8")
+        headers = {"Content-Type": "application/x-ndjson"}
+        payload = b""
+        max_attempts = len(self._nodes) * 2
+        for attempt in range(max_attempts):
+            conn = self._connection()
+            try:
+                conn.request("POST", "/_bulk", body=body, headers=headers)
+                resp = conn.getresponse()
+                payload = resp.read()
+            except (http.client.HTTPException, OSError) as exc:
+                self._rotate_node()
+                if attempt == max_attempts - 1:
+                    raise urllib.error.URLError(exc) from exc
+                continue
+            if resp.status >= 400:
+                if resp.status >= 500:
+                    self._reset_connection()
+                raise _HTTPError(resp.status, resp.reason, payload)
+            break
+        result = json.loads(payload) if payload else {}
+        out = []
+        for item in result.get("items", []):
+            entry: dict = next(iter(item.values()), {}) if isinstance(item, dict) else {}
+            err = entry.get("error")
+            out.append({"status": entry.get("status", 500),
+                        "error_type": err.get("type") if isinstance(err, dict) else None})
+        if len(out) != len(items):
+            raise RuntimeError(f"bulk response has {len(out)} items for {len(items)} requested")
+        return out
+
+    def mget_versioned(self, keys: "list[tuple[str, str]]") -> dict:
+        """Batch twin of :meth:`get_versioned`: ONE ``/_mget`` for many
+        ``(index, doc_id)`` pairs. Returns ``{(index, doc_id): (source, version)}``
+        for the documents that exist (``version`` = ``(seq_no, primary_term)``);
+        missing ones are absent from the result. Real-time like a doc GET (mget
+        reads the live document, not the refreshed search view)."""
+        if not keys:
+            return {}
+        body = {"docs": [{"_index": i, "_id": str(d)} for i, d in keys]}
+        result = self._request("POST", "/_mget", body)
+        docs = result.get("docs", [])
+        if len(docs) != len(keys):
+            raise RuntimeError(f"mget returned {len(docs)} docs for {len(keys)} requested")
+        out = {}
+        for key, doc in zip(keys, docs):
+            source = doc.get("_source")
+            if doc.get("found") and isinstance(source, dict) and source:
+                out[key] = (source, (doc.get("_seq_no"), doc.get("_primary_term"))
+                            if doc.get("_seq_no") is not None else None)
+        return out
 
     # -- StorageAdapter ----------------------------------------------------
     def ensure_template(self, name: str, template: dict) -> None:

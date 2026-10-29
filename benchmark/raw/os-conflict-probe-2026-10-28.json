@@ -1,0 +1,38 @@
+[
+  {
+    "write": "create new id (op_type=create)",
+    "http_status": 201,
+    "error_type": null,
+    "index_failed_delta": 0
+  },
+  {
+    "write": "create SAME id again (op_type=create)",
+    "http_status": 409,
+    "error_type": "version_conflict_engine_exception",
+    "index_failed_delta": 1
+  },
+  {
+    "write": "index (upsert) same id",
+    "http_status": 200,
+    "error_type": null,
+    "index_failed_delta": 0
+  },
+  {
+    "write": "index doc violating the mapping",
+    "http_status": 400,
+    "error_type": "mapper_parsing_exception",
+    "index_failed_delta": 0
+  },
+  {
+    "write": "_bulk create [existing id, new id]",
+    "http_status": [
+      409,
+      201
+    ],
+    "error_type": [
+      "version_conflict_engine_exception",
+      null
+    ],
+    "index_failed_delta": 1
+  }
+]

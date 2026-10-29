@@ -1,0 +1,10 @@
+--- before R3 18:17:34
+siem-bus-ha-3 cpu=7.81%
+siem-store-ha-3 cpu=58.29%
+siem-store-ha-1 cpu=37.06%
+siem-store-ha-2 cpu=28.94%
+--- after R3 18:23:43
+siem-store-ha-2 cpu=98.76%
+ws8haproof-ws3-indexer-1 cpu=61.17%
+siem-sentinel-ha-1 cpu=6.94%
+siem-store-ha-1 cpu=55.62%
