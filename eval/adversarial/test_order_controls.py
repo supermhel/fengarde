@@ -94,6 +94,15 @@ LEGACY_EXPECT = {
                         "directional_discrimination": None, "incident_count": 0},
     "supply_chain_ci": {"tpr": 1.0, "chain_fidelity": 0.6667, "false_correlation_rate": 1.0,
                         "directional_discrimination": 0.0, "incident_count": 2},
+
+    # 2026-10-28: measured on the first run of storylines 10-11 (seed 7, not tuned). Both carry a GENUINE
+    # entity-disjoint forbidden pair (a bystander no join reaches), so false_correlation_rate is 0.0 -- the
+    # first storylines where it is. network_credential_abuse's 0.5 fidelity is the ASA-first class
+    # (it_intrusion, ransomware): the sweep evidences only an address, so sweep -> spray has no actor edge.
+    "win_credential_theft": {"tpr": 1.0, "chain_fidelity": 1.0, "false_correlation_rate": 0.0,
+                             "directional_discrimination": 0.0, "incident_count": 3},
+    "network_credential_abuse": {"tpr": 1.0, "chain_fidelity": 0.5, "false_correlation_rate": 0.0,
+                                 "directional_discrimination": 0.0, "incident_count": 1},
 }
 
 #: ONE alert-raising step (cloud_iam_abuse): no alert order exists to grade, so the order checks

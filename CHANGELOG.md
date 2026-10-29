@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (2026-10-28, storylines 10-11: every rule is named by a twin storyline oracle)
+
+- `eval/twin/storyline_win_credential_theft.py` + `oracle_win_credential_theft.yaml`: PowerShell cradle -> LSASS read -> sensitive AD
+  attribute write -> service from a user-writable path -> Security log cleared. Names `win_powershell_suspicious_script`,
+  `win_lsass_access_suspicious`, `win_ad_sensitive_attribute_modified`, `win_service_installed_suspicious_path`, `win_audit_log_cleared`.
+- `eval/twin/storyline_network_credential_abuse.py` + `oracle_network_credential_abuse.yaml`: horizontal sweep -> password spray from the
+  same source -> slow credential stuffing. Names `common_port_sweep`, `common_password_spray_by_source`,
+  `common_credential_stuffing_sustained`; the 300 s burst rule and the vertical port-scan rule are declared `must_not_fire` there.
+- `eval/attack/fire_check.py` no longer skips the one rule without a `mitre.technique` (`agent_tool_call_burst`): the probes never needed the
+  technique, so it now runs the positive, threshold-1 and window-overrun probes (fires at 50, silent at 49 and at 61 s). Separate
+  `fire_check_untagged.json`; the tagged results and every consumer keyed on technique are unchanged. `test_fire_check.py` updated
+  (positive on the real set, negative with the probes forced to skip).
+- Both oracles were authored from rule intent before the first run; the reconciler agrees with no accepted entry. Each declares a genuine
+  entity-disjoint forbidden pair (a bystander that no join reaches), so `false_correlation_rate` is 0.0 on both. Seven negative twins.
+- Harness bookkeeping, no behaviour change: scorecard registry + test counts, `technique_waivers.yaml` emptied (8 stale waivers),
+  `oracle_mutate.py` waivers (same mechanisms as the older storylines) and inert-key pins, `oracle_strength.json` (seed 11 section also
+  refreshed: it lagged the 2026-10-20 phishing_bec change), causal-order and order-control expectations, ratchet baseline (594 new atoms,
+  no regression), `eval/SCORECARD.md`, `benchmark/rule-evidence.md` (46 of 46).
+
 ### Fixed (2026-10-22, ws8 window state under HA)
 
 - `services/ws8-correlation` `make_correlator()` only used the Redis window counter for `BUS_BACKEND=redis`; under the HA profile's `redis-sentinel` it silently used the in-process deque, so even the window membership and TTL clock were per-process. It now builds a Sentinel-aware client (`shared.window.redis_client_for_backend`) and fails at startup if `REDIS_SENTINEL_HOSTS` is missing. Known gap, unchanged: ws8's per-track details (tactics, scores, incident cache) are still in-process (see ws8 `INTERFACE.md`). Regression: `services/ws8-correlation/test_window_backend.py`.

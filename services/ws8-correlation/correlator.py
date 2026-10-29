@@ -101,6 +101,7 @@ from shared.entity_helpers import (  # noqa: E402
 from shared.ip_utils import valid_ip as _canonical_ip_or_none  # noqa: E402
 from shared.log import get_logger  # noqa: E402
 from shared.window import DequeWindowCounter  # noqa: E402
+from track_state import MemoryTrackState  # noqa: E402
 
 _log = get_logger("ws8-correlation")
 
@@ -389,8 +390,16 @@ class Correlator:
                  member_cap: int = DEFAULT_MEMBER_CAP,
                  allowlists_dir: Path | str | None = None,
                  allowlist: Allowlist | None = None,
-                 now_fn=time.time):
+                 now_fn=time.time,
+                 track_state=None):
         self.window_counter = window_counter or DequeWindowCounter()
+        # Where per-track tactics/scores/member entries live: in-process
+        # (default) or Redis, shared across replicas and restarts -- see
+        # track_state.py. `_sides`/`_side_meta` alias the memory dicts so the
+        # in-process behaviour (and tests that inspect them) is unchanged.
+        self.state = track_state if track_state is not None else MemoryTrackState()
+        self._sides: dict[str, dict] = getattr(self.state, "sides", {})
+        self._side_meta: dict[str, dict] = getattr(self.state, "metas", {})
         self.horizon_s = horizon_s
         self.horizon_ms = horizon_s * 1000
         self.member_cap = member_cap
@@ -454,7 +463,6 @@ class Correlator:
         # instance, which is exactly the kind of cross-tenant/cross-test
         # leak this module's own tenant-isolation discipline exists to
         # prevent elsewhere.
-        self._sides: dict[str, dict] = {}
         # track_key -> {"first_seen": ms, "tactics": set, "truncated": bool}.
         # The STABLE per-track aggregate that survives `_sides` member-cap
         # eviction (and horizon eviction, for as long as the track itself
@@ -465,7 +473,6 @@ class Correlator:
         # under multiple incident_ids as the truncation minimum shifted
         # (2026-08-26 gap-hunt findings). Bounded: one tiny dict per live
         # track, pruned by the same `_sweep_dead_tracks()` sweep as `_sides`.
-        self._side_meta: dict[str, dict] = {}
         # track_key -> now_ms of its most recent _update_track call -- mirrors
         # shared/window.py's own `_last[key]` exactly (same field, same
         # purpose: staleness is measured from processing time, the SAME
@@ -790,8 +797,7 @@ class Correlator:
         if not dead_keys:
             return
         for k in dead_keys:
-            self._sides.pop(k, None)
-            self._side_meta.pop(k, None)
+            self.state.forget_track(k)   # no-op on Redis: EXPIRE reclaims shared tracks
             self._last_touch.pop(k, None)
         dead_keys_set = set(dead_keys)
         for incident_id, incident in list(self._last_incident.items()):
@@ -804,6 +810,7 @@ class Correlator:
                 # branch, pruned together here) -- never an orphaned entry.
                 self._incident_graphs.pop(incident_id, None)
                 self._graph_sigs.pop(incident_id, None)
+                self.state.forget_incident(incident_id)
 
     def _update_track(self, tenant: str, entity_type: str, entity_value: str,
                        alert: dict, now_ms: int) -> dict | None:
@@ -828,27 +835,10 @@ class Correlator:
         # docstring for the synthetic-id fallback).
         member = self._member_id(alert)
         self.window_counter.hit(key, now_ms, self.horizon_ms, member=member)
-        # _to_str()-normalized, NOT str(): a real (non-fake) redis-py client
-        # without decode_responses=True returns bytes from ZRANGE, which
-        # would never string-equal the plain-str keys `side` below is keyed
-        # by -- found exactly this way live (2026-08-18, see main.py's own
-        # fix note). Defense in depth: main.py's client IS constructed with
-        # decode_responses=True, but this method should not silently break
-        # again if that ever regresses or a future caller passes a
-        # differently-configured client/backend.
-        live_ids = {_to_str(m) for m in self.window_counter.members(key)}
-
-        # Evicted on the same schedule as the window itself: any id no
-        # longer reported by window.members() (aged out past the horizon)
-        # is dropped from the side table too, so a quiet track's side entry
-        # shrinks to empty exactly when its window state does.
-        side = self._sides.setdefault(key, {})
-        # Attacker-controlled alert `time` must not be trusted to drive the
-        # track's anchors (first_seen -> incident_id bucket, member-cap
-        # eviction ordering): present a skew-future/non-numeric time and it
-        # used to shift first_seen and the whole horizon bucket (2026-08-27
-        # finding). Apply the same _valid_window_time guard WS-4 uses; a
-        # rejected value falls back to now_ms (honest processing time).
+        # Attacker-controlled alert `time` must not drive the track's anchors
+        # (first_seen -> incident_id bucket, member-cap eviction ordering): apply
+        # the same _valid_window_time guard WS-4 uses; a rejected value falls back
+        # to now_ms (honest processing time).
         valid_time = _valid_window_time(alert.get("time"), now_ms)
         entry = {
             "alert_id": member,
@@ -872,18 +862,8 @@ class Correlator:
             # digest, not a wall-clock edge ts (adversarial-reverify finding).
             "time_fallback": not valid_time,
         }
-        side[member] = entry
-        # WP-2-C (ADR-009): remember this single alert's other entity fields
-        # (the provenance-backed relationship sources) and its underlying
-        # event handle, so the incident graph -- built on promotion below --
-        # can emit edges with event_id + ts_ms provenance. Additive entry
-        # fields only: the member-keyed entry set (and _sides[key]'s length)
-        # is unchanged, so the existing member-cap/window eviction discipline
-        # still bounds this table exactly as before. NO cross-alert state is
-        # accumulated here -- an edge is only ever evidenced by one alert.
-        # Each co-occurring value is bounded at STORE time (not just graph
-        # build) so an attacker-controlled >448-byte name cannot be retained
-        # verbatim in the side table -- independent-review WP-2-C #3.
+        # The entry is built COMPLETE before it is stored (it is serialised to the
+        # shared store on Redis; nothing may mutate it afterwards).
         entry["event_id"] = _provenance_event_id(alert, member)
         entry["cooccur"] = [
             (t, self._bounded_entity_value(v))
@@ -896,35 +876,39 @@ class Correlator:
         # `unmapped` component is pre-reduced to one documented scalar), so
         # the member-cap/window-eviction discipline is untouched.
         entry["typed_signal"] = _typed_kind_signal(alert)
-        for stale_id in list(side):
-            if stale_id not in live_ids:
-                del side[stale_id]
+        # Record (idempotent, atomic per alert), THEN snapshot the side table, THEN
+        # read window members. That order matters with several replicas: a peer
+        # hits the window before it records, so an entry visible in our snapshot is
+        # already in the (later) member read and is never pruned as stale.
+        self.state.record(key, member, entry, now_ms)
+        side, meta = self.state.snapshot(key)
+        # _to_str()-normalized, NOT str(): a real redis-py client without
+        # decode_responses=True returns bytes from ZRANGE, which would never
+        # string-equal the plain-str keys `side` is keyed by (found live 2026-08-18).
+        live_ids = {_to_str(m) for m in self.window_counter.members(key)}
+        # Evicted on the same schedule as the window itself: any id no longer
+        # reported by window.members() (aged out past the horizon) is dropped.
+        stale = [m for m in side if m not in live_ids]
+        if stale:
+            self.state.prune(key, stale)
+            for m in stale:
+                del side[m]
 
-        # Stable per-track aggregate that survives member_cap eviction
-        # (below): first_seen is the min member time EVER seen on this
-        # still-live track, tactics the set EVER seen. A sustained attack
-        # past the cap can therefore neither FREEZE the incident (gap-hunt
-        # repro: 1 recon + 400 brute-force -> alerts #199-399 used to emit
-        # nothing, because truncation left only the one-tactic flood) nor
-        # shift the incident_id by truncating the earliest evidence away
-        # (the same incident used to emit under 3 different ids as the
-        # truncation minimum jumped). Bounded: one tiny dict per live track,
-        # pruned alongside `_sides` by `_sweep_dead_tracks`.
-        meta = self._side_meta.setdefault(
-            key, {"first_seen": entry["time"], "tactics": set(), "truncated": False})
-        meta["first_seen"] = min(meta["first_seen"], entry["time"])
-        if entry["tactic"]:
-            meta["tactics"].add(entry["tactic"])
+        # `meta` is the stable per-track aggregate that survives member_cap
+        # eviction: first_seen is the min member time EVER seen on this live track,
+        # tactics the set EVER seen (so a sustained attack past the cap can neither
+        # freeze the incident nor shift its id). On Redis it is shared by replicas.
 
-        # member_cap bounds the side table ITSELF, not just the emitted
-        # payload (gap-hunt finding: reproduced as 401 side-table entries at
-        # member_cap=200). Evict the OLDEST members (by time) when the cap
-        # binds -- the tracked evidence survives in `meta`, so capping never
-        # erases a track's tactics.
+        # member_cap bounds the side table ITSELF, not just the emitted payload.
+        # Evict the OLDEST members (by time) when the cap binds; the tracked
+        # evidence survives in `meta`, so capping never erases a track's tactics.
         if len(side) > self.member_cap:
             excess = len(side) - self.member_cap
-            for evict_id in sorted(side, key=lambda m: side[m]["time"])[:excess]:
+            evicted = sorted(side, key=lambda m: side[m]["time"])[:excess]
+            self.state.prune(key, evicted)
+            for evict_id in evicted:
                 del side[evict_id]
+            self.state.mark_truncated(key)
             meta["truncated"] = True
             self.truncated_count += 1
 
@@ -952,7 +936,10 @@ class Correlator:
         # so the id stays anchored to the track's earliest evidence for as
         # long as the track itself stays live.
         first_seen = meta["first_seen"]
-        incident_id = self._incident_id(tenant, entity_type, entity_value, first_seen)
+        # Bound to the track (first promoter wins, shared across replicas): a late alert that lowers
+        # first_seen across a horizon boundary must not mint a second id for the same chain.
+        incident_id = self.state.bind_incident_id(
+            key, self._incident_id(tenant, entity_type, entity_value, first_seen))
         incident = {
             "incident_id": incident_id,
             "tenant_id": tenant,
@@ -968,7 +955,7 @@ class Correlator:
         }
         if entity_value_full is not None:
             incident["entity_value_full"] = entity_value_full
-        is_new = incident_id not in self._last_incident
+        is_new = self.state.claim_incident(incident_id)
         self._last_incident[incident_id] = incident
         # WP-2-C (ADR-009): emit the incident.graph payload alongside EVERY
         # promotion/update -- purely ADDITIVE; the incident dict above keeps
@@ -1160,7 +1147,8 @@ class Correlator:
         # reason (2026-08-27 finding) -- sibling series, never repurposing the
         # honest nested field.
         out = {
-            "ws8_active_tracks": len(self._sides),
+            "ws8_active_tracks": (len(self._last_touch) if self.state.shared
+                              else len(self._sides)),
             "ws8_promotions_total": self.promotions_count,
             "ws8_truncated_total": self.truncated_count,
             "ws8_skipped_alerts_by_reason": dict(self._skip_reasons),
