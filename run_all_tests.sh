@@ -43,6 +43,7 @@ echo
 echo "== WP-0.1-A: lane-coverage meta-guard (services/parsers/rules/live-tests/HTTP-surface/pin-consistency) =="; LAST_HEADER="== WP-0.1-A: lane-coverage meta-guard (services/parsers/rules/live-tests/HTTP-surface/pin-consistency) =="
 $PY tools/check_lane_coverage.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 $PY tools/check_lane_coverage.py --self-test || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+$PY tools/check_ha_min_replicas.py --self-test && $PY tools/check_ha_min_replicas.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
 echo "== B4: rule validation gate (schema, condition parse, operator safety) =="; LAST_HEADER="== B4: rule validation gate (schema, condition parse, operator safety) =="
 $PY tools/validate_rules.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
@@ -91,6 +92,8 @@ $PY services/ws8-correlation/test_campaigns.py || { fail=1; FAILED="${FAILED} ${
 echo
 echo "== ws8 window backend: redis-sentinel/redis select the Redis-backed counter (ws8:corr), memory the deque, state survives re-instantiation =="; LAST_HEADER="== ws8 window backend =="
 $PY services/ws8-correlation/test_window_backend.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo "== ws8 shared correlator state: tactics/scores/members survive a restart and converge across replicas (one incident id, no double-mint) =="; LAST_HEADER="== ws8 shared correlator state =="
+$PY services/ws8-correlation/test_shared_state.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 
 echo "== ws8 timeline (owner decision WS-8 B, 2026-10-14): read-side time order of an incident's member alerts =="; LAST_HEADER="== ws8 timeline (owner decision WS-8 B, 2026-10-14): read-side time order of an incident's member alerts =="
 $PY services/ws8-correlation/test_timeline.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }

@@ -609,7 +609,8 @@ def test_per_technique_math() -> None:
           f"ot_opcua_sabotage wrong: {den['ot_opcua_sabotage']}")
     # P1 storylines 6-9 (2026-10-14): non-gap steps / declared steps, from the oracles
     for s, want in (("ransomware", (5, 9)), ("insider_exfil", (2, 7)),
-                    ("cloud_iam_abuse", (1, 8)), ("supply_chain_ci", (5, 6))):
+                    ("cloud_iam_abuse", (1, 8)), ("supply_chain_ci", (5, 6)),
+                    ("win_credential_theft", (5, 5)), ("network_credential_abuse", (3, 3))):
         check(den[s][:2] == want, f"{s} wrong: {den[s]} (want {want})")
 
     # (d) 2 of 12 applicable variants lose a technique's step; N/A excluded
@@ -906,7 +907,7 @@ def test_oracle_shapes_and_storyline_registry() -> None:
     arts = real_arts()
     check("phishing_bec" in reg.STORYLINES,
           "phishing_bec is not a registered storyline")
-    check(len(reg.STORYLINES) == 9, f"expected 9 storylines, got {reg.STORYLINES}")
+    check(len(reg.STORYLINES) == 11, f"expected 11 storylines, got {reg.STORYLINES}")
     check(gs._check_storylines(arts) == [],
           f"the storyline cross-check failed on the real tree: {gs._check_storylines(arts)}")
     bad = copy.deepcopy(arts)
