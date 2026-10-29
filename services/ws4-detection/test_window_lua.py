@@ -128,10 +128,58 @@ def test_legacy_redis_and_use_lua_false_and_fakes_keep_old_paths():
     check(RedisWindowCounter(_LuaClient(), use_lua=True)._use_lua is True, "use_lua=True honoured")
 
 
+def test_capped_members_equal_sliced_full_read():
+    """members_capped == slice + count of the full read, deque backend (the
+    engine falls back to the full read for counters without members_capped, so
+    this also pins both engine paths to one answer)."""
+    from shared.window import DequeWindowCounter
+    w = DequeWindowCounter()
+    base = 1_750_000_000_000
+    for i in range(120):
+        w.hit("k", base + i, 600_000, member=f"e{i}")
+        w.hit_distinct("d", base + i, 600_000, value=f"v{i % 70}", member=f"e{i}")
+    for cap in (1, 50, 119, 120, 500):
+        full = w.members("k")
+        check(w.members_capped("k", cap) == (full[:cap], max(0, len(full) - cap)), f"count cap={cap}")
+        fd = w.distinct_members("d")
+        check(w.members_capped("d", cap, distinct=True) == (fd[:cap], max(0, len(fd) - cap)), f"distinct cap={cap}")
+    check(w.members_capped("missing", 50) == ([], 0), "empty window")
+
+
+def test_redis_capped_members_one_pipeline_round_trip():
+    class _P:
+        def __init__(self, log):
+            self.log = log
+
+        def zrange(self, *a): self.log.append(("zrange",) + a); return self
+        def zcard(self, *a): self.log.append(("zcard",) + a); return self
+        def execute(self): return [["a", "b"], 130]
+
+    class _C(_PipeOnlyClient):
+        def __init__(self):
+            super().__init__()
+            self.log = []
+
+        def pipeline(self):
+            self.pipelines += 1
+            return _P(self.log)
+
+    c = _C()
+    w = RedisWindowCounter(c, namespace="ns")
+    page, omitted = w.members_capped("k", 50)
+    check(page == ["a", "b"] and omitted == 80, f"omitted = zcard - cap: {page} {omitted}")
+    check(c.pipelines == 1 and c.log[0] == ("zrange", "ns:k", 0, 49) and c.log[1] == ("zcard", "ns:k"),
+          f"one pipeline, first `cap` oldest-first: {c.log}")
+    w.members_capped("k", 50, distinct=True)
+    check(c.log[2][1] == "ns:d:k", "distinct windows live under the :d: key")
+
+
 def main() -> int:
     for fn in (test_hit_uses_one_script_with_pipeline_equivalent_args,
                test_hit_distinct_uses_gt_script_on_modern_redis,
-               test_legacy_redis_and_use_lua_false_and_fakes_keep_old_paths):
+               test_legacy_redis_and_use_lua_false_and_fakes_keep_old_paths,
+               test_capped_members_equal_sliced_full_read,
+               test_redis_capped_members_one_pipeline_round_trip):
         n = len(FAILS)
         try:
             fn()

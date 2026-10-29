@@ -1,0 +1,4 @@
+events=2999 profile=realistic window_counter=redis
+events/s (under cProfile): 541   ms/event: 1.85
+redis round trips/event: 1.67
+         2212290 function calls (2211522 primitive calls) in 5.536 seconds

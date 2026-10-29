@@ -12,7 +12,7 @@ reference) with use_lua=True on identical input:
     event stream (brute force bursts, password spray / credential stuffing across
     many IPs, port-scan-like fan-out, out-of-order and a replayed second pass for
     at-least-once redelivery) once per counter variant. The alert_id sequences must
-    be identical, non-empty, and the replay must add no new alert_id.
+    be identical, non-empty, and the replay must mint the same new alert_ids under both.
 
 Runs in CI's redis-integration job (REDIS_URL set); without REDIS_URL it says so
 and exits 0, like test_window_redis_live.py (a documented live-only test).
@@ -58,6 +58,14 @@ def counter_parity(client, ns: str) -> list[str]:
             if a != b:
                 fails.append(f"batch {batch} op {i} {kind} key={k} t={t - base} w={window}: old={a} new={b}")
                 return fails
+        for k in keys:                                        # capped read == slice of the full read
+            for cap in (1, 5, 50):
+                for counter in (old, new):
+                    for dist, kk, full in ((False, k, counter.members(k)), (True, "d" + k, counter.distinct_members("d" + k))):
+                        got = counter.members_capped(kk, cap, distinct=dist)
+                        if got != (full[:cap], max(0, len(full) - cap)):
+                            fails.append(f"batch {batch} members_capped({kk},{cap},distinct={dist}): {got} vs full {len(full)}")
+                            return fails
         for zk in ([f"{ns}:{{}}:{k}" for k in keys] + [f"{ns}:{{}}:d:d{k}" for k in keys]):
             ko, kn = zk.format("old"), zk.format("new")
             zo = client.zrange(ko, 0, -1, withscores=True)
@@ -134,8 +142,12 @@ def detector_parity(client, ns: str) -> list[str]:
     if o1 != n1:
         fails.append(f"alert_id sequence differs: old={len(o1)} new={len(n1)} "
                      f"(first diff at {next((i for i, (x, y) in enumerate(zip(o1, n1)) if x != y), 'len')})")
-    if set(n2) - set(n1):
-        fails.append(f"redelivery produced alert_ids not seen in the first pass: {sorted(set(n2) - set(n1))[:3]}")
+    # A replay can legitimately mint ids the first pass did not (the id carries a
+    # wall-clock bucket, so a pass that crosses a boundary does); what must hold
+    # is that old and new mint exactly the same ones.
+    if set(n2) - set(n1) != set(o2) - set(o1):
+        fails.append("redelivery minted different NEW alert_ids: "
+                     f"old={sorted(set(o2) - set(o1))[:3]} new={sorted(set(n2) - set(n1))[:3]}")
     if o2 != n2:
         fails.append(f"redelivery alert sequence differs: old={len(o2)} new={len(n2)}")
     print(f"  detector parity: {len(events)} events, {len(o1)} alerts first pass "

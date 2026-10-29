@@ -25,7 +25,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 os.environ.setdefault("FENGARDE_LOG_LEVEL", "error")
-os.environ["BUS_BACKEND"] = os.environ.get("BUS_BACKEND", "redis")
+bus_backend = os.environ.get("BUS_BACKEND", "redis")
 
 import redis  # noqa: E402
 import redis.connection  # noqa: E402
@@ -50,10 +50,17 @@ def main() -> int:
     ap.add_argument("--profile", default="realistic", choices=L.PROFILES)
     ap.add_argument("--no-window-counter", action="store_true",
                     help="keep the in-process deque window counter (isolate the Redis window cost)")
+    ap.add_argument("--no-lua", action="store_true",
+                    help="window counter with the original MULTI pipelines (use_lua=False)")
+    ap.add_argument("--full-evidence", action="store_true",
+                    help="alert evidence via the original full-window ZRANGE (hide members_capped)")
     ap.add_argument("--top", type=int, default=14)
     a = ap.parse_args()
 
     fb, ws2, _ws3, ws4 = L._load_stages()
+    # fengarde_bench (imported by the loadtest module) forces BUS_BACKEND=memory
+    # at import; this profile needs the REAL bus for the produce/ack round trips.
+    os.environ["BUS_BACKEND"] = bus_backend
     from shared.bus import Bus
     from shared.window import RedisWindowCounter
 
@@ -62,7 +69,9 @@ def main() -> int:
     client.ping()
     det = ws4.Detector()
     if not a.no_window_counter:
-        counter = RedisWindowCounter(client)
+        counter = RedisWindowCounter(client, use_lua=False if a.no_lua else None)
+        if a.full_evidence:
+            counter.members_capped = None  # type: ignore[assignment]  # engine falls back to members()
         det._window_counter = counter
         for r in det.rules:
             if r.stateful:
@@ -85,7 +94,8 @@ def main() -> int:
     prof.disable()
     wall = time.perf_counter() - t0
     n = len(events) - 1
-    print(f"events={n} profile={a.profile} window_counter={'deque' if a.no_window_counter else 'redis'}")
+    print(f"events={n} profile={a.profile} window_counter={'deque' if a.no_window_counter else 'redis'} "
+          f"lua={not a.no_lua} capped_evidence={not a.full_evidence}")
     print(f"events/s (under cProfile): {n / wall:.0f}   ms/event: {wall / n * 1000:.2f}")
     print(f"redis round trips/event: {TRIPS['n'] / n:.2f}")
     s = io.StringIO()

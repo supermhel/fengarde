@@ -1,0 +1,4 @@
+  detector parity: 549 events, 203 alerts first pass (12 distinct ids), 298 on replay (old) / 298 (new)
+[OK] RedisWindowCounter single-EVALSHA path == MULTI pipeline path (counts, zsets, TTLs, Detector alert_ids, redelivery) on a real Redis
+  detector parity: 549 events, 203 alerts first pass (15 distinct ids), 298 on replay (old) / 298 (new)
+[OK] RedisWindowCounter single-EVALSHA path == MULTI pipeline path (counts, zsets, TTLs, Detector alert_ids, redelivery) on a real Redis

@@ -365,6 +365,13 @@ class DequeWindowCounter:
                 seen.append(v)
         return seen
 
+    def members_capped(self, key: str, cap: int, distinct: bool = False) -> tuple:
+        """``(first `cap` members, how many more there are)`` -- exactly
+        ``members()`` / ``distinct_members()`` sliced and counted, so the
+        alert path (which only cites `cap` ids) need not hold the rest."""
+        full = self.distinct_members(key) if distinct else self.members(key)
+        return full[:cap], max(0, len(full) - cap)
+
 
 #: ZADD GT + trim + ZCARD + EXPIRE for Redis < 6.2 (no GT flag): atomic as one script.
 #: KEYS[1] zset; ARGV: member, score, trim-upper-bound, ttl seconds.
@@ -551,3 +558,18 @@ class RedisWindowCounter:
     def distinct_members(self, key: str) -> list:
         """Same idea as ``members()`` but for a `hit_distinct()` key."""
         return list(self.r.zrange(f"{self.ns}:d:{key}", 0, -1))
+
+    def members_capped(self, key: str, cap: int, distinct: bool = False) -> tuple:
+        """``(first `cap` members oldest-first, how many more there are)`` in ONE
+        MULTI round trip (ZRANGE 0..cap-1 + ZCARD). Same answer as slicing
+        ``members()`` / ``distinct_members()`` but O(cap) instead of O(window):
+        the full read made every alert cost a ZRANGE of the whole window (a
+        24 h credential-stuffing window holds thousands of values) for a list
+        capped at ~50 ids. Load test 2026-10-29: that read was 64% of WS-4's
+        per-event time on a stuffing-heavy stream."""
+        zkey = f"{self.ns}:d:{key}" if distinct else f"{self.ns}:{key}"
+        pipe = self.r.pipeline()
+        pipe.zrange(zkey, 0, max(cap, 1) - 1)
+        pipe.zcard(zkey)
+        page, card = pipe.execute()
+        return list(page), max(0, int(card) - cap)

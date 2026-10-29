@@ -1,0 +1,10 @@
+--- before soak (1 ws4 replica, 150 ev/s) 01:51:33 hostCPU=35% freeGB=1,6
+infra-ws1-collectors infra-ws2-normalization infra-ws3-indexer infra-ws4-detection infra-ws5-ai infra-ws6-inventory infra-ws7-dashboard infra-ws8-correlation infra-ws9-resolver siem-bus siem-dashboards siem-goatcounter siem-prometheus siem-store 
+siem-bus cpu=5.39%
+siem-dashboards cpu=1.60%
+siem-store cpu=1.07%
+--- after soak 02:04:18 hostCPU=65% freeGB=1,1
+infra-ws1-collectors infra-ws2-normalization infra-ws3-indexer infra-ws4-detection infra-ws5-ai infra-ws6-inventory infra-ws7-dashboard infra-ws8-correlation infra-ws9-resolver siem-bus siem-dashboards siem-goatcounter siem-prometheus siem-store 
+infra-ws7-dashboard-1 cpu=8.07%
+infra-ws9-resolver-1 cpu=42.36%
+siem-store cpu=36.76%

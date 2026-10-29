@@ -1,0 +1,12 @@
+events=2999 profile=realistic window_counter=redis lua=False capped_evidence=False
+events/s (under cProfile): 98   ms/event: 10.22
+redis round trips/event: 2.68
+events=2999 profile=realistic window_counter=redis lua=True capped_evidence=False
+events/s (under cProfile): 131   ms/event: 7.64
+redis round trips/event: 2.68
+events=2999 profile=realistic window_counter=redis lua=True capped_evidence=True
+events/s (under cProfile): 197   ms/event: 5.08
+redis round trips/event: 2.68
+events=2999 profile=realistic window_counter=deque lua=True capped_evidence=True
+events/s (under cProfile): 701   ms/event: 1.43
+redis round trips/event: 1.00
