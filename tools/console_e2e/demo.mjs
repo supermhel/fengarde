@@ -129,6 +129,17 @@ for (const r of ["overview", "alarms", "incidents", "events", "coverage", "sourc
   await page.goto(URL + "#/" + r); await sleep(500);
   if (!(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1))) { ok(`mobile: #/${r} no horizontal overflow`, false); }
 }
+// the second scenario carries the longest badge ("... · 12x faster · stub AI"): it must wrap, not scroll the page, in DE and EN
+await page.selectOption(".demo-bar select", "ai-ot"); await sleep(400);
+for (const lg of ["DE", "EN"]) {
+  await page.click(`.top .seg button:has-text("${lg}")`); await sleep(400);
+  for (const r of ["overview", "alarms"]) {
+    await page.goto(URL + "#/" + r); await sleep(500);
+    const fits = await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1);
+    const chipFits = await page.evaluate(() => { const c = document.querySelector(".chip.demo").getBoundingClientRect(); return c.left >= 0 && c.right <= window.innerWidth + 1; });
+    ok(`mobile ai-ot ${lg}: #/${r} no horizontal overflow and the disclosure chip is fully visible`, fits && chipFits);
+  }
+}
 ok("demo: no uncaught errors and no failed requests", errs.length === 0 && bad.length === 0, errs.concat(bad).join(" | "));
 await b.close();
 const failed = res.filter((r) => !r).length;
