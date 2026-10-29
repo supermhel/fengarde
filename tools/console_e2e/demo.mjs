@@ -70,6 +70,56 @@ ok("Events log explorer has rows", (await page.$$("table.data tbody tr")).length
 await page.click("button:has-text('Reset')"); await sleep(1500);
 ok("reset: quiet again", (await page.textContent(".banner")).toLowerCase().includes("no active alarms"));
 
+// second scenario: AI agent -> OT (synthetic input, real pipeline output; see docs/console-demo.md)
+await page.selectOption(".demo-bar select", "ai-ot"); await sleep(600);
+ok("ai-ot: badged synthetic input / real pipeline output", /synthetic/i.test(await page.textContent(".chip.demo")) && !(await page.textContent(".chip.demo")).toLowerCase().includes("recorded"));
+ok("ai-ot: starts quiet", (await page.textContent(".banner")).toLowerCase().includes("no active alarms"));
+await page.click("button:has-text('Replay the AI-to-OT chain')");
+await page.waitForSelector(".banner.active", { timeout: 20000 });
+await page.waitForFunction(() => document.querySelector('.nav a[href="#/incidents"] .count'), null, { timeout: 60000 });
+await page.waitForFunction(() => document.querySelector(".demo-bar")?.textContent.includes("Replay again"), null, { timeout: 90000 });
+await page.goto(URL + "#/alarms"); await sleep(1200);
+const alarmText = await page.textContent("table.data");
+const TITLES = ["n8n new webhook exposed", "n8n automation-platform activity outside business hours", "AI agent tool call carries a prompt-injection indicator",
+  "AI agent tool call reached a non-allowlisted domain", "AI agent tool call accessed credential material", "Modbus/TCP write outside the expected address range"];
+for (const t of TITLES) ok(`ai-ot alarm on screen: ${t}`, alarmText.includes(t));
+ok("ai-ot: 7 alarms listed (2 Modbus writes)", (await page.$$("table.data tbody tr.clk")).length === 7);
+let noVerdict = 0;
+for (let i = 0; i < 7; i++) {
+  await page.locator("table.data tbody tr.clk").nth(i).click(); await sleep(500);
+  if (!/engine:\s*stub/i.test(await page.textContent(".faceplate"))) noVerdict++;
+}
+ok("ai-ot: every one of the 7 alarms shows an AI verdict naming the stub backend", noVerdict === 0, `${noVerdict} without`);
+ok("ai-ot: bar discloses 12x speed-up and stub AI without a hover", /12x/.test(await page.textContent(".chip.demo")) && /stub/i.test(await page.textContent(".chip.demo")));
+await page.goto(URL + "#/incidents"); await sleep(1200);
+ok("ai-ot: two incidents (ip 7 members, actor 5)", (await page.$$("table.data tbody tr.clk")).length === 2 && (await page.textContent("table.data")).includes("10.20.0.50") && (await page.textContent("table.data")).includes("ot-engineer"));
+await page.locator("table.data tbody tr.clk", { hasText: "10.20.0.50" }).first().click(); await sleep(900);
+ok("ai-ot: incident detail shows the entity graph", !!(await page.$(".graph")));
+await page.locator("button.btn", { hasText: /build/i }).first().click(); await sleep(1500);
+ok("ai-ot: evidence package builds and reads Verified", (await page.textContent("main")).includes("Verified"));
+await page.locator("select[aria-label='Incident report']").selectOption("en"); await page.locator("button.btn", { hasText: /^Report$/ }).click(); await sleep(1200);
+ok("ai-ot: incident NIS2 report (EN) from the pipeline", (await page.textContent(".report")).length > 300);
+await shot("demo-ai-ot-incident");
+await page.goto(URL + "#/alarms"); await sleep(1000);
+await page.locator("table.data tbody tr.clk", { hasText: "Modbus" }).first().click(); await sleep(900);
+await page.locator("button.btn", { hasText: /NIS2/ }).click(); await sleep(900);
+ok("ai-ot: alarm NIS2 draft (EN)", (await page.textContent(".report")).length > 200);
+await page.click('.top .seg button:has-text("DE")'); await sleep(500);
+await page.locator("select[aria-label='NIS2 language']").selectOption("de"); await sleep(900);
+const de = await page.textContent(".report");
+ok("ai-ot: alarm NIS2 draft (DE) is German", de.length > 200 && /Meldung|Vorfall|Sicherheitsvorfall|Frühwarnung/.test(de), de.slice(0, 80));
+await page.goto(URL + "#/incidents"); await sleep(1000);
+await page.locator("table.data tbody tr.clk", { hasText: "10.20.0.50" }).first().click(); await sleep(900);
+await page.locator("button.btn", { hasText: /Erstellen/ }).first().click(); await sleep(1500);
+ok("ai-ot DE: evidence reads Geprüft", (await page.textContent("main")).includes("Geprüft"));
+await shot("demo-ai-ot-de");
+await page.click('.top .seg button:has-text("EN")'); await sleep(300);
+await page.selectOption(".demo-bar select", "lab"); await sleep(600);
+ok("scenario switch back: lab is quiet and recorded again", (await page.textContent(".banner")).toLowerCase().includes("no active alarms") && (await page.textContent(".chip.demo")).toLowerCase().includes("recorded"));
+await page.goto(URL + "?scenario=ai-ot#/overview"); await sleep(1500);
+ok("?scenario=ai-ot opens the second scenario", /synthetic/i.test(await page.textContent(".chip.demo")));
+await page.selectOption(".demo-bar select", "lab"); await sleep(400);
+
 // German
 await page.click('.top .seg button:has-text("DE")'); await sleep(500);
 ok("DE: demo bar and nav translate", (await page.textContent(".demo-bar")).includes("Angriff") && (await page.textContent(".nav")).includes("Alarme"));
@@ -78,6 +128,17 @@ await page.setViewportSize({ width: 390, height: 844 });
 for (const r of ["overview", "alarms", "incidents", "events", "coverage", "sources", "inventory", "operations", "audit", "settings"]) {
   await page.goto(URL + "#/" + r); await sleep(500);
   if (!(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1))) { ok(`mobile: #/${r} no horizontal overflow`, false); }
+}
+// the second scenario carries the longest badge ("... · 12x faster · stub AI"): it must wrap, not scroll the page, in DE and EN
+await page.selectOption(".demo-bar select", "ai-ot"); await sleep(400);
+for (const lg of ["DE", "EN"]) {
+  await page.click(`.top .seg button:has-text("${lg}")`); await sleep(400);
+  for (const r of ["overview", "alarms"]) {
+    await page.goto(URL + "#/" + r); await sleep(500);
+    const fits = await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1);
+    const chipFits = await page.evaluate(() => { const c = document.querySelector(".chip.demo").getBoundingClientRect(); return c.left >= 0 && c.right <= window.innerWidth + 1; });
+    ok(`mobile ai-ot ${lg}: #/${r} no horizontal overflow and the disclosure chip is fully visible`, fits && chipFits);
+  }
 }
 ok("demo: no uncaught errors and no failed requests", errs.length === 0 && bad.length === 0, errs.concat(bad).join(" | "));
 await b.close();
