@@ -6,11 +6,16 @@ contract test fails if RESULTS.md differs from this output.
 """
 from __future__ import annotations
 
+import copy
 import json
 import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
+
+import run_eval  # noqa: E402
+import stats  # noqa: E402
 RESULTS = HERE / "results"
 OUT = HERE / "RESULTS.md"
 
@@ -46,15 +51,25 @@ def _f(x, pct=False):
     return f"{x:.1%}" if pct else f"{x}"
 
 
+def _m(r: dict) -> dict:
+    """Metrics are DERIVED from the stored per-case rows at render time (run_eval.score is pure), so a
+    percentage is always k/n of the same counts and never a stale or differently rounded stored float."""
+    return run_eval.score(copy.deepcopy(r["rows"]))
+
+
+def _k(m: dict) -> int:
+    return round(m["accuracy"] * m["n"])
+
+
 def _run_block(r: dict) -> list[str]:
-    m = r["metrics"]
+    m = _m(r)
     cm = m["confusion_matrix"]
     out = [f"### `{r['label']}`", ""]
     out.append(f"- adapter: `{r['adapter']}`; model: `{r.get('model')}`; timeout: `{r.get('timeout_seconds')}`; "
                f"wall time {r['wall_seconds']} s; adapter fallback counter: `{r.get('adapter_fallback_counter')}`")
     out.append(f"- **n = {m['n']}**  ({m['support']['true_positive']} true_positive, {m['support']['false_positive']} false_positive); "
-               f"majority-class baseline accuracy {_f(m['majority_class_baseline_accuracy'], True)}")
-    out.append(f"- **accuracy {_f(m['accuracy'], True)}** (95% Wilson {_f(m['accuracy_ci95'][0], True)} to {_f(m['accuracy_ci95'][1], True)}); "
+               f"majority-class (always-malicious) baseline accuracy {_f(m['majority_class_baseline_accuracy'], True)}")
+    out.append(f"- **accuracy {_f(m['accuracy'], True)}** ({_k(m)}/{m['n']}; 95% Wilson {_f(m['accuracy_ci95'][0], True)} to {_f(m['accuracy_ci95'][1], True)}); "
                f"abstain {_f(m['abstain_rate'], True)}; error {_f(m['error_rate'], True)}; "
                f"accuracy when decisive {_f(m['accuracy_when_decisive'], True)} (coverage {_f(m['decisive_coverage'], True)}); "
                f"llm-tier subset n={m['llm_tier_subset']['n']} accuracy {_f(m['llm_tier_subset']['accuracy'], True)}")
@@ -73,31 +88,39 @@ def _run_block(r: dict) -> list[str]:
     return out + [""]
 
 
+def ceiling_paragraph() -> str:
+    cases = run_eval.load_cases()["cases"]
+    return ("**Label ceiling.** Each alert is one event plus the titles of the rules that fired. A signature is "
+            "(rule titles, event source type): the coarsest thing that still names the detection. "
+            + stats.ceiling_phrase(cases) + ", which is the always-malicious level. "
+            "Alerts sharing a signature differ only in the event body (users, addresses, times, counts); for example a "
+            "scanner decoy and an attacker's scan are the same firewall deny line from different private addresses. "
+            "So the rule alone cannot separate them and the body (or context WS-5 is not given) has to carry the difference.")
+
+
 def _dev_holdout_section(d: dict) -> list[str]:
     sp = d["split"]
-    out = ["## Diagnosis: is the poor `qwen2.5:3b` result the prompt, the labels or the model?", "",
-           f"Generated from `results/variants.json` (`variants.py`, {d['date']}, model `{d['model']}`). Direct Ollama calls, so "
+    out = [f"## Diagnosis: prompt, labels or model? (`{d['model']}`)", "",
+           f"Generated from `results/{d.get('file', 'variants.json')}` (`variants.py`, {d['date']}). Direct Ollama calls, so "
            "stub share is 0% by construction and no row was a timeout or parse error unless the error column says so.", "",
            f"Protocol: {sp['rule']}. DEV {sp['dev']} cases (variants compared here only; {len(d['fewshot_case_ids'])} are few-shot examples "
            f"and are not scored, leaving {d['dev_n_scored']}), HOLDOUT {sp['holdout']} cases "
            f"({sp['holdout_by_label']['true_positive']} true_positive, {sp['holdout_by_label']['false_positive']} false_positive: "
-           "the false-positive numbers rest on a handful of cases). The variant picked on DEV (best accuracy) was run once on HOLDOUT.", "",
-           "**Label ceiling.** Alerts are single events plus rule titles. In 9 of 33 distinct (rule, source) signatures a true and a "
-           "false positive share the same rule and source (e.g. a scanner decoy and the attacker's scan are the same ASA deny line "
-           "from different, equally private addresses), so a verdict from (rule, source) alone is capped at 44/54 = 81.5%, the "
-           "always-malicious baseline. Telling them apart needs entity/baseline context the model is not given.", "",
+           "the false-positive numbers rest on a handful of cases). The variant picked on DEV (best accuracy) was run on HOLDOUT. "
+           "The verdict definitions in the prompt are scenario-agnostic (no attack types are named).", "",
+           ceiling_paragraph(), "",
            "### DEV (scored cases only)", "",
            "| variant | n | accuracy | abstain | error | TP recall | TP precision | FP recall | FP precision | p50 latency ms |",
            "|---|---|---|---|---|---|---|---|---|---|"]
     for n, r in d["dev"].items():
-        m = r["metrics"]; t, f = m["per_class"]["true_positive"], m["per_class"]["false_positive"]
+        m = _m(r); t, f = m["per_class"]["true_positive"], m["per_class"]["false_positive"]
         out.append(f"| {n}: {r['note']} | {m['n']} | {_f(m['accuracy'], True)} | {_f(m['abstain_rate'], True)} | {_f(m['error_rate'], True)} | "
                    f"{_f(t['recall'], True)} | {_f(t['precision'], True)} | {_f(f['recall'], True)} | {_f(f['precision'], True)} | {m['latency_ms']['p50']} |")
     out += ["", f"### HOLDOUT (picked on DEV: `{d['picked_on_dev']}`)", "",
             "| variant | n | accuracy (95% Wilson) | abstain | TP recall | TP precision | FP recall | FP precision | always-malicious baseline |",
             "|---|---|---|---|---|---|---|---|---|"]
     for n, r in d["holdout"].items():
-        m = r["metrics"]; t, f = m["per_class"]["true_positive"], m["per_class"]["false_positive"]
+        m = _m(r); t, f = m["per_class"]["true_positive"], m["per_class"]["false_positive"]
         out.append(f"| {n} | {m['n']} | {_f(m['accuracy'], True)} ({_f(m['accuracy_ci95'][0], True)} to {_f(m['accuracy_ci95'][1], True)}) | "
                    f"{_f(m['abstain_rate'], True)} | {_f(t['recall'], True)} | {_f(t['precision'], True)} | {_f(f['recall'], True)} | "
                    f"{_f(f['precision'], True)} | {_f(m['majority_class_baseline_accuracy'], True)} |")
@@ -106,37 +129,43 @@ def _dev_holdout_section(d: dict) -> list[str]:
 
 
 def _repeats_section(d: dict) -> list[str]:
-    """Same HOLDOUT cases, same settings, fresh calls. The spread (min to max over runs) is the yardstick
-    for whether a difference between variants is more than noise."""
+    """Same HOLDOUT cases, same settings, fresh calls. Min/max over n runs is a rough noise yardstick, NOT a
+    significance test; the Wilson intervals are shown beside it and are what limits a claim on 21 cases."""
     out = [f"### Run-to-run spread on HOLDOUT, model `{d['model']}` ({d['split']['holdout']} cases)", ""]
     if d.get("ram_note"):
         out += [f"Memory: {d['ram_note']}", ""]
     out += ["| variant | run | accuracy | abstain | error | TP recall | TP precision | FP recall | FP precision | stub share | latency p50 / p95 ms |",
             "|---|---|---|---|---|---|---|---|---|---|---|"]
-    span = {}
-    allruns = {}
+    span, allruns = {}, {}
     for name, runs in d["repeats"].items():
         # The earlier holdout-stage run of the same variant on the same cases counts as run 1.
         allruns[name] = ([d["holdout"][name]] if name in d.get("holdout", {}) else []) + runs
     for name, runs in allruns.items():
-        for i, r in enumerate(runs, 1):
-            m = r["metrics"]; t, f = m["per_class"]["true_positive"], m["per_class"]["false_positive"]
+        ms = [_m(r) for r in runs]
+        for i, m in enumerate(ms, 1):
+            t, f = m["per_class"]["true_positive"], m["per_class"]["false_positive"]
             out.append(f"| {name} | {i} | {_f(m['accuracy'], True)} | {_f(m['abstain_rate'], True)} | {_f(m['error_rate'], True)} | "
                        f"{_f(t['recall'], True)} | {_f(t['precision'], True)} | {_f(f['recall'], True)} | {_f(f['precision'], True)} | "
                        f"{_f(m['stub_share'], True)} | {m['latency_ms']['p50']} / {m['latency_ms']['p95']} |")
-        accs = [r["metrics"]["accuracy"] for r in runs]
-        span[name] = (min(accs), max(accs))
+        lo_m, hi_m = min(ms, key=lambda m: m["accuracy"]), max(ms, key=lambda m: m["accuracy"])
+        span[name] = (lo_m, hi_m, len(ms))
     out += ["", "Run 1 of a variant that also appears under HOLDOUT above is that earlier holdout-stage run (same cases, same settings).",
-            "", "| variant | runs | accuracy min to max |", "|---|---|---|"]
-    for name, (lo, hi) in span.items():
-        out.append(f"| {name} | {len(allruns[name])} | {_f(lo, True)} to {_f(hi, True)} |")
+            "", "| variant | runs | accuracy min to max | Wilson 95% of the lowest run | Wilson 95% of the highest run |", "|---|---|---|---|---|"]
+    for name, (lo, hi, n) in span.items():
+        out.append(f"| {name} | {n} | {_f(lo['accuracy'], True)} to {_f(hi['accuracy'], True)} | "
+                   f"{_f(lo['accuracy_ci95'][0], True)} to {_f(lo['accuracy_ci95'][1], True)} | "
+                   f"{_f(hi['accuracy_ci95'][0], True)} to {_f(hi['accuracy_ci95'][1], True)} |")
     names = list(span)
     out.append("")
     for i, a in enumerate(names):
         for b in names[i + 1:]:
-            (alo, ahi), (blo, bhi) = span[a], span[b]
-            verdict = "ranges DO NOT overlap (difference exceeds the run-to-run spread)" if ahi < blo or bhi < alo else "ranges overlap (difference is within the run-to-run spread)"
-            out.append(f"- `{a}` vs `{b}`: {verdict}")
+            (alo, ahi, na), (blo, bhi, nb) = span[a], span[b]
+            apart = ahi["accuracy"] < blo["accuracy"] or bhi["accuracy"] < alo["accuracy"]
+            lower, higher = (ahi, blo) if ahi["accuracy"] < blo["accuracy"] else (bhi, alo)
+            wil = lower["accuracy_ci95"][1] >= higher["accuracy_ci95"][0] if apart else True
+            out.append(f"- `{a}` vs `{b}`: min-to-max ranges {'do not overlap' if apart else 'overlap'} over {na} and {nb} runs; "
+                       f"Wilson 95% intervals (highest run of the lower vs lowest run of the higher) {'overlap' if wil else 'do not overlap'}. "
+                       "Not a significance test.")
     return out + ["", "Reading: " + d.get("repeats_reading", ""), ""]
 
 
@@ -149,25 +178,31 @@ def _variants_section(d: dict) -> list[str]:
 
 def _cross_model(docs: list[dict]) -> list[str]:
     """Same HOLDOUT cases and prompts, every model that has a spread: min to max over its runs."""
-    out = ["### Model comparison on the same HOLDOUT cases (min to max over runs)", "",
+    out = ["### Model comparison on the same HOLDOUT cases (min to max over runs; not a significance test)", "",
            "| model | variant | runs | accuracy | TP recall | FP recall | stub share | latency p50 ms (min to max) |", "|---|---|---|---|---|---|---|---|"]
+    base = None
     for d in docs:
-        for name in ("A_shipped_default", "E_binary_schema"):
+        for name in ("A_shipped_default", d.get("picked_on_dev") or "E_binary_schema"):
             runs = ([d["holdout"][name]] if name in d.get("holdout", {}) else []) + d.get("repeats", {}).get(name, [])
             if not runs:
                 continue
-            col = lambda f: [f(r["metrics"]) for r in runs]
-            rng = lambda xs, pct=True: f"{_f(min(xs), pct)} to {_f(max(xs), pct)}"
-            out.append(f"| {d['model']} | {name} | {len(runs)} | {rng(col(lambda m: m['accuracy']))} | "
-                       f"{rng(col(lambda m: m['per_class']['true_positive']['recall']))} | {rng(col(lambda m: m['per_class']['false_positive']['recall']))} | "
-                       f"{rng(col(lambda m: m['stub_share']))} | {rng(col(lambda m: m['latency_ms']['p50']), False)} |")
-    return out + ["", "The always-malicious baseline on these 17 cases is 82.4%.", ""]
+            ms = [_m(r) for r in runs]
+            base = ms[0]["majority_class_baseline_accuracy"]
+            rng = lambda f, pct=True: f"{_f(min(map(f, ms)), pct)} to {_f(max(map(f, ms)), pct)}"
+            out.append(f"| {d['model']} | {name} | {len(ms)} | {rng(lambda m: m['accuracy'])} | "
+                       f"{rng(lambda m: m['per_class']['true_positive']['recall'])} | {rng(lambda m: m['per_class']['false_positive']['recall'])} | "
+                       f"{rng(lambda m: m['stub_share'])} | {rng(lambda m: m['latency_ms']['p50'], False)} |")
+    return out + ["", f"The always-malicious baseline on these holdout cases is {_f(base, True)}.", ""]
 
 
 def render(results_dir: Path = RESULTS) -> str:
     files = sorted((f for f in results_dir.glob("*.json") if not f.name.startswith("variants")), reverse=True)
     lines = [HEADER]
-    vdocs = [json.loads(vf.read_text(encoding="utf-8")) for vf in sorted(results_dir.glob("variants*.json"))]
+    vdocs = []
+    for vf in sorted(results_dir.glob("variants*.json")):
+        vd = json.loads(vf.read_text(encoding="utf-8"))
+        vd["file"] = vf.name
+        vdocs.append(vd)
     for vd in vdocs:
         lines += _variants_section(vd)
     if len([v for v in vdocs if "repeats" in v]) > 1:

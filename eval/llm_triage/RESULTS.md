@@ -22,103 +22,101 @@ Do not edit by hand; the contract test (`test_llm_triage_eval.py`) fails on any 
 - Every case is sent with `tier=llm` so each exercises `analyze()`; production would route only
   `score >= 60` there (the `llm tier subset` column).
 
-## Diagnosis: is the poor `qwen2.5:3b` result the prompt, the labels or the model?
+## Diagnosis: prompt, labels or model? (`qwen2.5:3b`)
 
-Generated from `results/variants.json` (`variants.py`, 2026-10-28, model `qwen2.5:3b`). Direct Ollama calls, so stub share is 0% by construction and no row was a timeout or parse error unless the error column says so.
+Generated from `results/variants.json` (`variants.py`, 2026-10-28). Direct Ollama calls, so stub share is 0% by construction and no row was a timeout or parse error unless the error column says so.
 
-Protocol: per label, sorted by case_id, every 3rd -> holdout. DEV 37 cases (variants compared here only; 4 are few-shot examples and are not scored, leaving 33), HOLDOUT 17 cases (14 true_positive, 3 false_positive: the false-positive numbers rest on a handful of cases). The variant picked on DEV (best accuracy) was run once on HOLDOUT.
+Protocol: by storyline (twin-/decoy- prefix stripped; corpus-b and negctl are their own groups): sorted storyline keys, every 3rd goes to HOLDOUT, no storyline on both sides. DEV 33 cases (variants compared here only; 4 are few-shot examples and are not scored, leaving 29), HOLDOUT 21 cases (18 true_positive, 3 false_positive: the false-positive numbers rest on a handful of cases). The variant picked on DEV (best accuracy) was run on HOLDOUT. The verdict definitions in the prompt are scenario-agnostic (no attack types are named).
 
-**Label ceiling.** Alerts are single events plus rule titles. In 9 of 33 distinct (rule, source) signatures a true and a false positive share the same rule and source (e.g. a scanner decoy and the attacker's scan are the same ASA deny line from different, equally private addresses), so a verdict from (rule, source) alone is capped at 44/54 = 81.5%, the always-malicious baseline. Telling them apart needs entity/baseline context the model is not given.
+**Label ceiling.** Each alert is one event plus the titles of the rules that fired. A signature is (rule titles, event source type): the coarsest thing that still names the detection. 9 of 33 distinct (rule, source) signatures hold both labels; a verdict from (rule, source) alone is capped at 44/54 = 81.5%, which is the always-malicious level. Alerts sharing a signature differ only in the event body (users, addresses, times, counts); for example a scanner decoy and an attacker's scan are the same firewall deny line from different private addresses. So the rule alone cannot separate them and the body (or context WS-5 is not given) has to carry the difference.
 
 ### DEV (scored cases only)
 
 | variant | n | accuracy | abstain | error | TP recall | TP precision | FP recall | FP precision | p50 latency ms |
 |---|---|---|---|---|---|---|---|---|---|
-| A_shipped_default: shipped prompt, Ollama default sampling (the original direct run) | 33 | 3.0% | 97.0% | 0.0% | 3.6% | 100.0% | 0.0% | n/a | 27434.1 |
-| B_shipped_t0: shipped prompt, temperature 0 | 33 | 0.0% | 100.0% | 0.0% | 0.0% | n/a | 0.0% | n/a | 23388.7 |
-| C_definitions_t0: verdict definitions, temperature 0 | 33 | 27.3% | 27.3% | 0.0% | 17.9% | 83.3% | 80.0% | 22.2% | 25232.4 |
-| D_definitions_schema: definitions + JSON schema enum (3 verdicts), t0 | 33 | 27.3% | 27.3% | 0.0% | 17.9% | 83.3% | 80.0% | 22.2% | 21767.3 |
-| E_binary_schema: definitions + schema forcing benign|malicious (diagnostic: removes the abstain option) | 33 | 39.4% | 0.0% | 0.0% | 32.1% | 90.0% | 80.0% | 17.4% | 9786.9 |
-| F_fewshot_t0: definitions + 4 DEV examples, temperature 0 | 33 | 21.2% | 0.0% | 0.0% | 7.1% | 100.0% | 100.0% | 16.1% | 26072.0 |
+| A_shipped_default: shipped prompt, Ollama default sampling (the original direct run) | 29 | 0.0% | 96.6% | 0.0% | 0.0% | n/a | 0.0% | 0.0% | 34339.3 |
+| B_shipped_t0: shipped prompt, temperature 0 | 29 | 0.0% | 96.6% | 0.0% | 0.0% | n/a | 0.0% | 0.0% | 32095.4 |
+| C_definitions_t0: verdict definitions, temperature 0 | 29 | 20.7% | 13.8% | 3.4% | 8.3% | 66.7% | 80.0% | 19.0% | 30929.8 |
+| D_definitions_schema: definitions + JSON schema enum (3 verdicts), t0 | 29 | 20.7% | 10.3% | 3.4% | 8.3% | 66.7% | 80.0% | 18.2% | 25669.9 |
+| E_binary_schema: definitions + schema forcing benign|malicious (diagnostic: removes the abstain option) | 29 | 31.0% | 0.0% | 0.0% | 20.8% | 83.3% | 80.0% | 17.4% | 10645.8 |
+| E_binary_schema_sampled: same prompt/schema as E but Ollama default sampling (shows run-to-run variance; E itself is seeded) | 29 | 27.6% | 0.0% | 3.4% | 16.7% | 80.0% | 80.0% | 17.4% | 11597.0 |
+| F_fewshot_t0: definitions + 4 DEV examples, temperature 0 | 29 | 17.2% | 0.0% | 3.4% | 0.0% | n/a | 100.0% | 17.9% | 32535.1 |
 
 ### HOLDOUT (picked on DEV: `E_binary_schema`)
 
 | variant | n | accuracy (95% Wilson) | abstain | TP recall | TP precision | FP recall | FP precision | always-malicious baseline |
 |---|---|---|---|---|---|---|---|---|
-| A_shipped_default | 17 | 0.0% (0.0% to 18.4%) | 94.1% | 0.0% | n/a | 0.0% | 0.0% | 82.3% |
-| E_binary_schema | 17 | 47.1% (26.2% to 69.0%) | 0.0% | 35.7% | 100.0% | 100.0% | 25.0% | 82.3% |
+| A_shipped_default | 21 | 0.0% (0.0% to 15.5%) | 100.0% | 0.0% | n/a | 0.0% | n/a | 85.7% |
+| E_binary_schema | 21 | 28.6% (13.8% to 50.0%) | 0.0% | 16.7% | 100.0% | 100.0% | 16.7% | 85.7% |
 
-Reading: the shipped prompt makes this model answer `suspicious` (needs-review) on 94-100% of alerts, so the prompt is a real cause: definitions that discourage `suspicious` (C, D) cut abstention to 27% and a forced benign/malicious schema (E) to 0%. But fixing the prompt does not make the model a usable triager: the best variant (E) is still below the always-malicious baseline on DEV and on HOLDOUT, it leans `benign` (it called 12 of 17 held-out alerts benign, missing 9 of 14 real attacks: a SIEM-unsafe error), and a temperature-0 few-shot variant (F) did not help. Its `malicious` calls were right, but few. So the remaining weakness is the model's discrimination plus labels that a single event cannot decide, not the output format or parsing. E removes the abstain option, a product change not adopted here; nothing in WS-5 was changed. Single run per variant, no repeats; Docker load tests may have shared the CPU, so latencies are indicative only.
+Reading: the shipped prompt gets the model to answer `suspicious` almost always, so the prompt is a real cause of the abstentions. Scenario-agnostic verdict definitions (C, D) and, more so, a schema that removes the abstain option (E) stop that, but accuracy on DEV stays far below the always-malicious level: the model then calls most alerts `benign` (see TP recall in the tables). Few-shot (F) did not help. A few rows are errors (Ollama HTTP 500 or a 120 s timeout on a single case); they are counted as wrong, never replaced by a stub. The labels cap what rule and source can decide (label ceiling above), so the difference has to come from the event body, where this model shows little signal.
 
-### Run-to-run spread on HOLDOUT, model `qwen2.5:3b` (17 cases)
+### Run-to-run spread on HOLDOUT, model `qwen2.5:3b` (21 cases)
 
-Memory: qwen2.5:3b Q4_K_M, 2.17 GB resident per Ollama /api/ps, 0 GB VRAM (CPU-only). Docker load tests (ws8 HA proofs) shared this laptop's CPU during parts of these runs, so latencies (and the first runs' p95) are indicative only.
-
-| variant | run | accuracy | abstain | error | TP recall | TP precision | FP recall | FP precision | stub share | latency p50 / p95 ms |
-|---|---|---|---|---|---|---|---|---|---|---|
-| A_shipped_default | 1 | 0.0% | 94.1% | 0.0% | 0.0% | n/a | 0.0% | 0.0% | 0.0% | 25260.7 / 31111.0 |
-| A_shipped_default | 2 | 5.9% | 88.2% | 0.0% | 0.0% | n/a | 33.3% | 50.0% | 0.0% | 29120.7 / 62874.6 |
-| A_shipped_default | 3 | 0.0% | 94.1% | 0.0% | 0.0% | n/a | 0.0% | 0.0% | 0.0% | 14035.2 / 35515.2 |
-| A_shipped_default | 4 | 0.0% | 94.1% | 0.0% | 0.0% | n/a | 0.0% | 0.0% | 0.0% | 12600.7 / 37237.5 |
-| B_shipped_t0 | 1 | 0.0% | 94.1% | 0.0% | 0.0% | n/a | 0.0% | 0.0% | 0.0% | 14162.3 / 34005.4 |
-| E_binary_schema | 1 | 47.1% | 0.0% | 0.0% | 35.7% | 100.0% | 100.0% | 25.0% | 0.0% | 20842.6 / 27314.1 |
-| E_binary_schema | 2 | 41.2% | 0.0% | 0.0% | 28.6% | 100.0% | 100.0% | 23.1% | 0.0% | 24342.2 / 41936.0 |
-| E_binary_schema | 3 | 41.2% | 0.0% | 0.0% | 28.6% | 100.0% | 100.0% | 23.1% | 0.0% | 9947.3 / 25487.7 |
-| E_binary_schema | 4 | 41.2% | 0.0% | 0.0% | 28.6% | 100.0% | 100.0% | 23.1% | 0.0% | 10273.5 / 25720.8 |
-| E_binary_schema_sampled | 1 | 52.9% | 0.0% | 0.0% | 42.9% | 100.0% | 100.0% | 27.3% | 0.0% | 9556.3 / 11208.8 |
-| E_binary_schema_sampled | 2 | 47.1% | 0.0% | 0.0% | 35.7% | 100.0% | 100.0% | 25.0% | 0.0% | 8355.0 / 9919.4 |
-| E_binary_schema_sampled | 3 | 41.2% | 0.0% | 0.0% | 28.6% | 100.0% | 100.0% | 23.1% | 0.0% | 8097.7 / 10234.9 |
-
-Run 1 of a variant that also appears under HOLDOUT above is that earlier holdout-stage run (same cases, same settings).
-
-| variant | runs | accuracy min to max |
-|---|---|---|
-| A_shipped_default | 4 | 0.0% to 5.9% |
-| B_shipped_t0 | 1 | 0.0% to 0.0% |
-| E_binary_schema | 4 | 41.2% to 47.1% |
-| E_binary_schema_sampled | 3 | 41.2% to 52.9% |
-
-- `A_shipped_default` vs `B_shipped_t0`: ranges overlap (difference is within the run-to-run spread)
-- `A_shipped_default` vs `E_binary_schema`: ranges DO NOT overlap (difference exceeds the run-to-run spread)
-- `A_shipped_default` vs `E_binary_schema_sampled`: ranges DO NOT overlap (difference exceeds the run-to-run spread)
-- `B_shipped_t0` vs `E_binary_schema`: ranges DO NOT overlap (difference exceeds the run-to-run spread)
-- `B_shipped_t0` vs `E_binary_schema_sampled`: ranges DO NOT overlap (difference exceeds the run-to-run spread)
-- `E_binary_schema` vs `E_binary_schema_sampled`: ranges overlap (difference is within the run-to-run spread)
-
-Reading: on the same 17 held-out cases the shipped prompt scores 0.0% to 5.9% over 4 runs (it abstains on 88-94%), the seeded schema variant E scores 41.2% to 47.1% over 4 runs, and E with default sampling 41.2% to 52.9% over 3 runs. Even the temperature-0, fixed-seed runs are not exactly reproducible (one of four E runs got 8/17, the other three 7/17), so any single-run figure here carries roughly +/- 6 points of noise on 17 cases. The shipped-prompt vs E difference (about 40 points) is far outside that spread; E vs E-with-sampling is inside it. All of them stay below the 82.4% always-malicious baseline on these cases. With 17 cases (3 false positives) the figures are coarse: one case is 5.9 points.
-
-### Run-to-run spread on HOLDOUT, model `qwen2.5:7b` (17 cases)
-
-Memory: qwen2.5:7b Q4_K_M, 5.07 GB resident per Ollama /api/ps (size_vram 0, so CPU-only), against 2.17 GB for the 3B. Docker load tests shared the CPU during parts of the run: the first shipped-prompt run had p50 49 s / p95 118 s (the 120 s cap was not hit: 0 timeouts), the second 12 s / 42 s, so latency swings with contention and is indicative only.
+Memory: qwen2.5:3b Q4_K_M, 2.17 GB resident per Ollama /api/ps, 0 VRAM (CPU-only). Other sessions' Docker load tests shared this laptop's CPU for most of these runs, so latencies are indicative only (p50 swings between about 10 s and 35 s for the same prompt).
 
 | variant | run | accuracy | abstain | error | TP recall | TP precision | FP recall | FP precision | stub share | latency p50 / p95 ms |
 |---|---|---|---|---|---|---|---|---|---|---|
-| A_shipped_default | 1 | 11.8% | 70.6% | 0.0% | 0.0% | n/a | 66.7% | 40.0% | 0.0% | 49154.8 / 117987.1 |
-| A_shipped_default | 2 | 11.8% | 82.3% | 0.0% | 0.0% | n/a | 66.7% | 66.7% | 0.0% | 12260.0 / 42004.7 |
-| E_binary_schema | 1 | 64.7% | 0.0% | 0.0% | 57.1% | 100.0% | 100.0% | 33.3% | 0.0% | 40984.0 / 72330.1 |
-| E_binary_schema | 2 | 70.6% | 0.0% | 0.0% | 64.3% | 100.0% | 100.0% | 37.5% | 0.0% | 9933.9 / 36514.9 |
+| A_shipped_default | 1 | 0.0% | 100.0% | 0.0% | 0.0% | n/a | 0.0% | n/a | 0.0% | 34239.3 / 37884.1 |
+| A_shipped_default | 2 | 0.0% | 100.0% | 0.0% | 0.0% | n/a | 0.0% | n/a | 0.0% | 14144.7 / 29072.1 |
+| A_shipped_default | 3 | 4.8% | 95.2% | 0.0% | 5.6% | 100.0% | 0.0% | n/a | 0.0% | 13112.8 / 34422.4 |
+| B_shipped_t0 | 1 | 0.0% | 100.0% | 0.0% | 0.0% | n/a | 0.0% | n/a | 0.0% | 15250.1 / 33743.7 |
+| E_binary_schema | 1 | 28.6% | 0.0% | 0.0% | 16.7% | 100.0% | 100.0% | 16.7% | 0.0% | 29026.7 / 37600.4 |
+| E_binary_schema | 2 | 33.3% | 0.0% | 0.0% | 22.2% | 100.0% | 100.0% | 17.6% | 0.0% | 12316.5 / 30429.0 |
+| E_binary_schema | 3 | 33.3% | 0.0% | 0.0% | 22.2% | 100.0% | 100.0% | 17.6% | 0.0% | 11536.0 / 30807.9 |
+| E_binary_schema_sampled | 1 | 38.1% | 0.0% | 0.0% | 27.8% | 100.0% | 100.0% | 18.8% | 0.0% | 11066.7 / 30181.0 |
+| E_binary_schema_sampled | 2 | 23.8% | 0.0% | 0.0% | 11.1% | 100.0% | 100.0% | 15.8% | 0.0% | 10828.3 / 28818.6 |
 
 Run 1 of a variant that also appears under HOLDOUT above is that earlier holdout-stage run (same cases, same settings).
 
-| variant | runs | accuracy min to max |
-|---|---|---|
-| A_shipped_default | 2 | 11.8% to 11.8% |
-| E_binary_schema | 2 | 64.7% to 70.6% |
+| variant | runs | accuracy min to max | Wilson 95% of the lowest run | Wilson 95% of the highest run |
+|---|---|---|---|---|
+| A_shipped_default | 3 | 0.0% to 4.8% | 0.0% to 15.5% | 0.9% to 22.7% |
+| B_shipped_t0 | 1 | 0.0% to 0.0% | 0.0% to 15.5% | 0.0% to 15.5% |
+| E_binary_schema | 3 | 28.6% to 33.3% | 13.8% to 50.0% | 17.2% to 54.6% |
+| E_binary_schema_sampled | 2 | 23.8% to 38.1% | 10.6% to 45.1% | 20.8% to 59.1% |
 
-- `A_shipped_default` vs `E_binary_schema`: ranges DO NOT overlap (difference exceeds the run-to-run spread)
+- `A_shipped_default` vs `B_shipped_t0`: min-to-max ranges overlap over 3 and 1 runs; Wilson 95% intervals (highest run of the lower vs lowest run of the higher) overlap. Not a significance test.
+- `A_shipped_default` vs `E_binary_schema`: min-to-max ranges do not overlap over 3 and 3 runs; Wilson 95% intervals (highest run of the lower vs lowest run of the higher) overlap. Not a significance test.
+- `A_shipped_default` vs `E_binary_schema_sampled`: min-to-max ranges do not overlap over 3 and 2 runs; Wilson 95% intervals (highest run of the lower vs lowest run of the higher) overlap. Not a significance test.
+- `B_shipped_t0` vs `E_binary_schema`: min-to-max ranges do not overlap over 1 and 3 runs; Wilson 95% intervals (highest run of the lower vs lowest run of the higher) overlap. Not a significance test.
+- `B_shipped_t0` vs `E_binary_schema_sampled`: min-to-max ranges do not overlap over 1 and 2 runs; Wilson 95% intervals (highest run of the lower vs lowest run of the higher) overlap. Not a significance test.
+- `E_binary_schema` vs `E_binary_schema_sampled`: min-to-max ranges overlap over 3 and 2 runs; Wilson 95% intervals (highest run of the lower vs lowest run of the higher) overlap. Not a significance test.
 
-Reading: qwen2.5:7b on the same 17 held-out cases (prompts/settings chosen on the 3B dev split, not re-tuned for 7B; 2 runs each, so the spread is thinner than for the 3B): shipped prompt 11.8% in both runs (still 71-82% `suspicious`), E 64.7% and 70.6%. No timeouts, no errors, stub share 0%, so these do measure the model. Against the 3B spread (shipped 0.0-5.9%, E 41.2-47.1%) the ranges do not overlap for E, so 7B beats 3B on E by more than run-to-run noise; for the shipped prompt the gap is 2 cases of 17 against 0-1, a small absolute difference. E's `malicious` calls were all correct (precision 100%) but only 57-64% of the real attacks were called malicious, and 7B E is still below the 82.4% always-malicious baseline and below what a cheap rule on the alert score would need to beat. The (rule, source) label ceiling for all 54 cases is 81.5%; neither model gets near it.
+Reading: shipped prompt versus E: the min-to-max ranges do not overlap over 2 to 3 runs, but the Wilson intervals on 21 cases do overlap, so the gap is suggestive and not established; E versus E with default sampling overlap on both measures. Every variant stays below the always-malicious level on these cases, and a variant that gets 100% FP recall does so by calling nearly everything `benign`, which misses most real attacks (see TP recall). Each variant has only 1 to 3 runs on 21 cases (3 false positives), so these are coarse.
 
-### Model comparison on the same HOLDOUT cases (min to max over runs)
+### Run-to-run spread on HOLDOUT, model `qwen2.5:7b` (21 cases)
+
+Memory: qwen2.5:7b Q4_K_M, 5.07 GB resident per Ollama /api/ps (size_vram 0, so CPU-only), against 2.17 GB for the 3B. Other sessions' Docker load tests shared the CPU, so latency is indicative only; one shipped-prompt case hit the 120 s timeout.
+
+| variant | run | accuracy | abstain | error | TP recall | TP precision | FP recall | FP precision | stub share | latency p50 / p95 ms |
+|---|---|---|---|---|---|---|---|---|---|---|
+| A_shipped_default | 1 | 9.5% | 71.4% | 4.8% | 5.6% | 100.0% | 33.3% | 25.0% | 0.0% | 59612.1 / 72599.9 |
+| A_shipped_default | 2 | 14.3% | 76.2% | 0.0% | 5.6% | 100.0% | 66.7% | 50.0% | 0.0% | 17466.2 / 66170.0 |
+| E_binary_schema | 1 | 47.6% | 0.0% | 0.0% | 38.9% | 100.0% | 100.0% | 21.4% | 0.0% | 55398.5 / 68810.7 |
+| E_binary_schema | 2 | 47.6% | 0.0% | 0.0% | 38.9% | 100.0% | 100.0% | 21.4% | 0.0% | 16907.2 / 48229.9 |
+
+Run 1 of a variant that also appears under HOLDOUT above is that earlier holdout-stage run (same cases, same settings).
+
+| variant | runs | accuracy min to max | Wilson 95% of the lowest run | Wilson 95% of the highest run |
+|---|---|---|---|---|
+| A_shipped_default | 2 | 9.5% to 14.3% | 2.6% to 28.9% | 5.0% to 34.6% |
+| E_binary_schema | 2 | 47.6% to 47.6% | 28.3% to 67.6% | 28.3% to 67.6% |
+
+- `A_shipped_default` vs `E_binary_schema`: min-to-max ranges do not overlap over 2 and 2 runs; Wilson 95% intervals (highest run of the lower vs lowest run of the higher) overlap. Not a significance test.
+
+Reading: qwen2.5:7b on the same HOLDOUT cases, with the prompts chosen on the 3B DEV split (not re-tuned for 7B); 2 runs per variant, so the spread is thin. Compared with the 3B, the 7B scores higher with both prompts, but with 21 cases the Wilson intervals of 7B and 3B overlap (see the comparison table): the data do not separate them. Like the 3B, the 7B under E calls most alerts `benign`: every `malicious` call is right, yet most real attacks are missed. Neither model reaches the always-malicious level.
+
+### Model comparison on the same HOLDOUT cases (min to max over runs; not a significance test)
 
 | model | variant | runs | accuracy | TP recall | FP recall | stub share | latency p50 ms (min to max) |
 |---|---|---|---|---|---|---|---|
-| qwen2.5:3b | A_shipped_default | 4 | 0.0% to 5.9% | 0.0% to 0.0% | 0.0% to 33.3% | 0.0% to 0.0% | 12600.7 to 29120.7 |
-| qwen2.5:3b | E_binary_schema | 4 | 41.2% to 47.1% | 28.6% to 35.7% | 100.0% to 100.0% | 0.0% to 0.0% | 9947.3 to 24342.2 |
-| qwen2.5:7b | A_shipped_default | 2 | 11.8% to 11.8% | 0.0% to 0.0% | 66.7% to 66.7% | 0.0% to 0.0% | 12260.0 to 49154.8 |
-| qwen2.5:7b | E_binary_schema | 2 | 64.7% to 70.6% | 57.1% to 64.3% | 100.0% to 100.0% | 0.0% to 0.0% | 9933.9 to 40984.0 |
+| qwen2.5:3b | A_shipped_default | 3 | 0.0% to 4.8% | 0.0% to 5.6% | 0.0% to 0.0% | 0.0% to 0.0% | 13112.8 to 34239.3 |
+| qwen2.5:3b | E_binary_schema | 3 | 28.6% to 33.3% | 16.7% to 22.2% | 100.0% to 100.0% | 0.0% to 0.0% | 11536.0 to 29026.7 |
+| qwen2.5:7b | A_shipped_default | 2 | 9.5% to 14.3% | 5.6% to 5.6% | 33.3% to 66.7% | 0.0% to 0.0% | 17466.2 to 59612.1 |
+| qwen2.5:7b | E_binary_schema | 2 | 47.6% to 47.6% | 38.9% to 38.9% | 100.0% to 100.0% | 0.0% to 0.0% | 16907.2 to 55398.5 |
 
-The always-malicious baseline on these 17 cases is 82.4%.
+The always-malicious baseline on these holdout cases is 85.7%.
 
 ## Run 2026-10-28  (`results/2026-10-28_qwen2.5-7b.json`)
 
@@ -131,15 +129,15 @@ The always-malicious baseline on these 17 cases is 82.4%.
 ### `stub`
 
 - adapter: `StubLLM`; model: `None`; timeout: `None`; wall time 0.0 s; adapter fallback counter: `None`
-- **n = 54**  (44 true_positive, 10 false_positive); majority-class baseline accuracy 81.5%
-- **accuracy 24.1%** (95% Wilson 14.6% to 37.0%); abstain 57.4%; error 0.0%; accuracy when decisive 56.5% (coverage 42.6%); llm-tier subset n=42 accuracy 23.8%
+- **n = 54**  (44 true_positive, 10 false_positive); majority-class (always-malicious) baseline accuracy 81.5%
+- **accuracy 24.1%** (13/54; 95% Wilson 14.6% to 37.0%); abstain 57.4%; error 0.0%; accuracy when decisive 56.5% (coverage 42.6%); llm-tier subset n=42 accuracy 23.8%
 - **engine mix: {'stub': 54}; stub share 100.0%**; answered by a model: 0 (accuracy on those: n/a)
 - severity (vs rule-declared level, 54 scored): exact 64.8%, within one level 85.2%
 - latency per case (ms): mean 0.1, p50 0.1, p95 0.2, max 1.5
 
 | class | support | predicted | precision | recall | f1 |
 |---|---|---|---|---|---|
-| true_positive | 44 | 11 | 90.9% | 22.7% | 0.3637 |
+| true_positive | 44 | 11 | 90.9% | 22.7% | 0.3636 |
 | false_positive | 10 | 12 | 25.0% | 30.0% | 0.2727 |
 
 Confusion matrix (rows = label, columns = prediction):
@@ -152,8 +150,8 @@ Confusion matrix (rows = label, columns = prediction):
 ### `ollama:qwen2.5:7b`
 
 - adapter: `FallbackLLM`; model: `qwen2.5:7b`; timeout: `120.0`; wall time 1937.7 s; adapter fallback counter: `0`
-- **n = 54**  (44 true_positive, 10 false_positive); majority-class baseline accuracy 81.5%
-- **accuracy 13.0%** (95% Wilson 6.4% to 24.4%); abstain 72.2%; error 0.0%; accuracy when decisive 46.7% (coverage 27.8%); llm-tier subset n=42 accuracy 11.9%
+- **n = 54**  (44 true_positive, 10 false_positive); majority-class (always-malicious) baseline accuracy 81.5%
+- **accuracy 13.0%** (7/54; 95% Wilson 6.4% to 24.4%); abstain 72.2%; error 0.0%; accuracy when decisive 46.7% (coverage 27.8%); llm-tier subset n=42 accuracy 11.9%
 - **engine mix: {'ollama': 54}; stub share 0.0%**; answered by a model: 54 (accuracy on those: 13.0%)
 - severity (vs rule-declared level, 54 scored): exact 18.5%, within one level 85.2%
 - latency per case (ms): mean 35882.7, p50 37812.1, p95 43739.7, max 46099.0
@@ -181,15 +179,15 @@ Confusion matrix (rows = label, columns = prediction):
 ### `stub`
 
 - adapter: `StubLLM`; model: `None`; timeout: `None`; wall time 0.0 s; adapter fallback counter: `None`
-- **n = 54**  (44 true_positive, 10 false_positive); majority-class baseline accuracy 81.5%
-- **accuracy 24.1%** (95% Wilson 14.6% to 37.0%); abstain 57.4%; error 0.0%; accuracy when decisive 56.5% (coverage 42.6%); llm-tier subset n=42 accuracy 23.8%
+- **n = 54**  (44 true_positive, 10 false_positive); majority-class (always-malicious) baseline accuracy 81.5%
+- **accuracy 24.1%** (13/54; 95% Wilson 14.6% to 37.0%); abstain 57.4%; error 0.0%; accuracy when decisive 56.5% (coverage 42.6%); llm-tier subset n=42 accuracy 23.8%
 - **engine mix: {'stub': 54}; stub share 100.0%**; answered by a model: 0 (accuracy on those: n/a)
 - severity (vs rule-declared level, 54 scored): exact 64.8%, within one level 85.2%
 - latency per case (ms): mean 0.7, p50 0.2, p95 3.8, max 5.9
 
 | class | support | predicted | precision | recall | f1 |
 |---|---|---|---|---|---|
-| true_positive | 44 | 11 | 90.9% | 22.7% | 0.3637 |
+| true_positive | 44 | 11 | 90.9% | 22.7% | 0.3636 |
 | false_positive | 10 | 12 | 25.0% | 30.0% | 0.2727 |
 
 Confusion matrix (rows = label, columns = prediction):
@@ -202,9 +200,9 @@ Confusion matrix (rows = label, columns = prediction):
 ### `ollama:qwen2.5:3b`
 
 - adapter: `FallbackLLM`; model: `qwen2.5:3b`; timeout: `120.0`; wall time 1532.5 s; adapter fallback counter: `0`
-- **n = 54**  (44 true_positive, 10 false_positive); majority-class baseline accuracy 81.5%
-- **accuracy 1.8%** (95% Wilson 0.3% to 9.8%); abstain 96.3%; error 0.0%; accuracy when decisive 50.0% (coverage 3.7%); llm-tier subset n=42 accuracy 0.0%
-- **engine mix: {'ollama': 54}; stub share 0.0%**; answered by a model: 54 (accuracy on those: 1.8%)
+- **n = 54**  (44 true_positive, 10 false_positive); majority-class (always-malicious) baseline accuracy 81.5%
+- **accuracy 1.9%** (1/54; 95% Wilson 0.3% to 9.8%); abstain 96.3%; error 0.0%; accuracy when decisive 50.0% (coverage 3.7%); llm-tier subset n=42 accuracy 0.0%
+- **engine mix: {'ollama': 54}; stub share 0.0%**; answered by a model: 54 (accuracy on those: 1.9%)
 - severity (vs rule-declared level, 54 scored): exact 25.9%, within one level 81.5%
 - latency per case (ms): mean 28379.2, p50 27431.5, p95 34619.9, max 54375.4
 
@@ -223,9 +221,9 @@ Confusion matrix (rows = label, columns = prediction):
 ### `ollama:qwen2.5:3b:direct`
 
 - adapter: `OllamaLLM(direct)`; model: `qwen2.5:3b`; timeout: `120.0`; wall time 924.4 s; adapter fallback counter: `None`
-- **n = 54**  (44 true_positive, 10 false_positive); majority-class baseline accuracy 81.5%
-- **accuracy 1.8%** (95% Wilson 0.3% to 9.8%); abstain 96.3%; error 0.0%; accuracy when decisive 50.0% (coverage 3.7%); llm-tier subset n=42 accuracy 2.4%
-- **engine mix: {'ollama': 54}; stub share 0.0%**; answered by a model: 54 (accuracy on those: 1.8%)
+- **n = 54**  (44 true_positive, 10 false_positive); majority-class (always-malicious) baseline accuracy 81.5%
+- **accuracy 1.9%** (1/54; 95% Wilson 0.3% to 9.8%); abstain 96.3%; error 0.0%; accuracy when decisive 50.0% (coverage 3.7%); llm-tier subset n=42 accuracy 2.4%
+- **engine mix: {'ollama': 54}; stub share 0.0%**; answered by a model: 54 (accuracy on those: 1.9%)
 - severity (vs rule-declared level, 54 scored): exact 24.1%, within one level 88.9%
 - latency per case (ms): mean 17118.1, p50 20806.0, p95 25471.5, max 28012.1
 

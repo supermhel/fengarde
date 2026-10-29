@@ -4,9 +4,12 @@ Question it answers: is the poor `qwen2.5:3b` result (52 of 54 answers `suspicio
 prompt/decoding, by labels the model cannot decide from its input, or by the model itself?
 
 Protocol (fixed before running, so the final number is not tuned on what it reports):
-  * Split: within each label, cases sorted by case_id; every 3rd goes to HOLDOUT (about one third),
-    the rest to DEV. Variants are compared on DEV only. The single variant picked on DEV (best
-    accuracy, ties -> lower abstain rate) is then run ONCE on HOLDOUT beside the shipped baseline.
+  * Split BY STORYLINE (the group a case comes from, with the twin-/decoy- prefix stripped, so an attack and its
+    decoy stay together): the storyline keys are sorted and every 3rd goes to HOLDOUT, the rest to DEV. No
+    storyline contributes to both sides, so DEV never sees a near-copy of a HOLDOUT case. (An earlier version
+    split per case, which left 14 of 17 holdout cases sharing a storyline with DEV; those numbers are superseded.)
+    Variants are compared on DEV only. The variant picked on DEV (best accuracy, ties -> lower abstain rate) is
+    then run on HOLDOUT beside the shipped baseline.
   * Few-shot examples are taken from DEV and excluded from DEV scoring.
   * Talks to Ollama directly (own request body: temperature/seed/format schema), so it measures prompt
     and decoding effects only. Production wiring (`llm_adapter.OllamaLLM`) is unchanged.
@@ -42,12 +45,20 @@ _VERDICT_3 = ["benign", "suspicious", "malicious"]
 _LEVELS = ["low", "medium", "high", "critical"]
 
 
+def storyline(case: dict) -> str:
+    """Storyline key: twin-X and decoy-X belong together; corpus-b and negctl-* are their own groups."""
+    g = case["provenance"]["group"]
+    for pre in ("twin-", "decoy-"):
+        if g.startswith(pre):
+            return g[len(pre):]
+    return "negctl" if g.startswith("negctl") else g
+
+
 def split(cases: list[dict]) -> tuple[list[dict], list[dict]]:
-    dev, hold = [], []
-    for label in run_eval.CLASSES:
-        grp = sorted((c for c in cases if c["label"] == label), key=lambda c: c["case_id"])
-        for i, c in enumerate(grp):
-            (hold if i % 3 == 2 else dev).append(c)
+    keys = sorted({storyline(c) for c in cases})
+    held = {k for i, k in enumerate(keys) if i % 3 == 2}
+    dev = [c for c in cases if storyline(c) not in held]
+    hold = [c for c in cases if storyline(c) in held]
     return dev, hold
 
 
@@ -55,12 +66,8 @@ DEFINITIONS = (
     "You are a tier-1 SOC analyst. A detection rule has ALREADY fired on the event below. Decide whether "
     "this specific alert is a real attack or benign activity that merely resembles one.\n"
     "Verdicts:\n"
-    "- malicious: the event itself shows an attacker, an unauthorised actor or abuse (for example an "
-    "automation agent reading credential files, a privileged group change by an unexpected account, bulk "
-    "deletion, logins from unexpected countries, scanning or authentication bursts from a host that is not a "
-    "known scanner or admin).\n"
-    "- benign: the event looks like routine, expected or authorised activity (scheduled jobs, a service "
-    "account doing its normal task, an approved change or maintenance, a known scanner or admin host).\n"
+    "- malicious: the event itself shows an attacker, an unauthorised actor or abuse of a system.\n"
+    "- benign: the event is consistent with routine, expected or authorised activity.\n"
     "- suspicious: use ONLY when the event holds too little information to choose between the two. A rule "
     "having fired is not by itself a reason to answer suspicious.\n"
     "Level: low, medium, high or critical, matching the verdict (benign is normally low).\n"
@@ -152,7 +159,7 @@ def main(argv=None) -> int:
     ap.add_argument("--model", required=True)
     ap.add_argument("--timeout", type=float, default=120)
     ap.add_argument("--variants", nargs="*", default=None)
-    ap.add_argument("--repeats", type=int, default=3, help="repeat stage: runs per variant")
+    ap.add_argument("--repeats", type=int, default=2, help="repeat stage: runs per variant")
     ap.add_argument("--pick", help="holdout: the DEV-selected variant name")
     a = ap.parse_args(argv)
     cases = run_eval.load_cases()["cases"]
@@ -165,7 +172,7 @@ def main(argv=None) -> int:
     doc.update({"date": datetime.date.today().isoformat(), "model": a.model,
                 "split": {"dev": len(dev), "holdout": len(hold),
                           "holdout_by_label": {k: sum(c["label"] == k for c in hold) for k in run_eval.CLASSES},
-                          "rule": "per label, sorted by case_id, every 3rd -> holdout"},
+                          "rule": "by storyline (twin-/decoy- prefix stripped; corpus-b and negctl are their own groups): sorted storyline keys, every 3rd goes to HOLDOUT, no storyline on both sides"},
                 "fewshot_case_ids": sorted(shot_ids), "labelled_set_sha256": run_eval.cases_sha(),
                 "hardware": run_eval.hardware()})
     if a.stage == "dev":
@@ -184,6 +191,8 @@ def main(argv=None) -> int:
     elif a.stage == "repeat":
         # Same HOLDOUT cases, same settings, fresh calls: how much does a variant move between runs?
         names = a.variants or ["A_shipped_default", "B_shipped_t0", "E_binary_schema", "E_binary_schema_sampled"]
+        if not a.variants and doc.get("picked_on_dev") not in (None, *names):
+            names.append(doc["picked_on_dev"])  # the DEV-picked variant always gets a spread, even if it is not E
         doc.setdefault("repeats", {})
         for n in names:
             reps = 1 if n.endswith("_t0") and n.startswith("B") else a.repeats

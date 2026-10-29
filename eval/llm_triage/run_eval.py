@@ -89,7 +89,7 @@ def _pct(xs: list, q: float):
 
 
 def _rate(k: int, n: int):
-    return round(k / n, 4) if n else None
+    return round(k / n, 6) if n else None
 
 
 def score(rows: list[dict]) -> dict:

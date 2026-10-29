@@ -25,6 +25,7 @@ sys.path.insert(0, str(HERE))
 import run_eval  # noqa: E402
 import render_results  # noqa: E402
 import variants  # noqa: E402
+import stats  # noqa: E402
 
 DOC = run_eval.load_cases()
 
@@ -82,21 +83,21 @@ class Scoring(unittest.TestCase):
                 _row("false_positive", "unknown"), _row("false_positive", None, error="TimeoutError: x")]
         m = run_eval.score(rows)
         self.assertEqual(m["n"], 8)
-        self.assertEqual(m["accuracy"], round(3 / 8, 4))
-        self.assertEqual(m["abstain_rate"], round(2 / 8, 4))
-        self.assertEqual(m["error_rate"], round(1 / 8, 4))
+        self.assertEqual(m["accuracy"], round(3 / 8, 6))
+        self.assertEqual(m["abstain_rate"], round(2 / 8, 6))
+        self.assertEqual(m["error_rate"], round(1 / 8, 6))
         tp, fp = m["per_class"]["true_positive"], m["per_class"]["false_positive"]
-        self.assertEqual((tp["predicted"], tp["precision"], tp["recall"]), (3, round(2 / 3, 4), 0.5))
+        self.assertEqual((tp["predicted"], tp["precision"], tp["recall"]), (3, round(2 / 3, 6), 0.5))
         self.assertEqual((fp["predicted"], fp["precision"], fp["recall"]), (2, 0.5, 0.25))
         self.assertEqual(m["confusion_matrix"]["true_positive"],
                          {"true_positive": 2, "false_positive": 1, "needs_review": 1, "error": 0})
         self.assertEqual(m["confusion_matrix"]["false_positive"]["error"], 1)
-        self.assertEqual(m["accuracy_when_decisive"], round(3 / 5, 4))
+        self.assertEqual(m["accuracy_when_decisive"], round(3 / 5, 6))
         self.assertEqual(m["majority_class_baseline_accuracy"], 0.5)
 
     def test_always_malicious_scores_the_majority_baseline(self):
         m = run_eval.score([_row(c["label"], "malicious") for c in DOC["cases"]])
-        self.assertEqual(m["accuracy"], round(m["support"]["true_positive"] / m["n"], 4))
+        self.assertEqual(m["accuracy"], round(m["support"]["true_positive"] / m["n"], 6))
         self.assertEqual(m["per_class"]["true_positive"]["recall"], 1.0)
 
 
@@ -112,7 +113,7 @@ class StubBaseline(unittest.TestCase):
         def stub_pred(score):  # StubLLM's documented thresholds, restated independently
             return "true_positive" if score >= 80 else "needs_review" if score >= 60 else "false_positive"
         ok = sum(stub_pred(c["request"]["event"]["siem"]["score"]) == c["label"] for c in DOC["cases"])
-        self.assertEqual(m["accuracy"], round(ok / len(DOC["cases"]), 4))
+        self.assertEqual(m["accuracy"], round(ok / len(DOC["cases"]), 6))
 
 
 class OllamaPaths(unittest.TestCase):
@@ -173,6 +174,17 @@ class VariantSplit(unittest.TestCase):
         self.assertTrue({c["label"] for c in hold} == set(run_eval.CLASSES))
         self.assertEqual(variants.split(DOC["cases"]), (dev, hold), "split must be deterministic")
 
+    def test_no_storyline_is_on_both_sides(self):
+        dev, hold = variants.split(DOC["cases"])
+        both = {variants.storyline(c) for c in dev} & {variants.storyline(c) for c in hold}
+        self.assertEqual(both, set(), "a storyline (attack steps or its decoy) appears in DEV and HOLDOUT")
+
+    def test_definitions_prompt_names_no_scenario(self):
+        low = variants.DEFINITIONS.lower()
+        for word in ("credential", "privileged", "deletion", "country", "countries", "scan", "maintenance",
+                     "scanner", "agent", "login", "group"):
+            self.assertNotIn(word, low, f"scenario word {word!r} in the verdict definitions (leaks the holdout)")
+
     def test_committed_variant_run_used_this_split_and_set(self):
         d = json.loads(variants.OUT.read_text(encoding="utf-8"))
         _dev, hold = variants.split(DOC["cases"])
@@ -194,6 +206,44 @@ class VariantSplit(unittest.TestCase):
         shots = [c for c in DOC["cases"][:4]]
         for name, (build, *_rest) in variants.VARIANTS.items():
             self.assertIn("alert", build(DOC["cases"][0], shots).lower(), name)
+
+
+class DerivedNumbers(unittest.TestCase):
+    """The figures the docs quote are computed, and the docs that carry them must agree."""
+    ROOT = HERE.parents[1]
+
+    def test_label_ceiling_is_computed_and_matches_a_hand_count(self):
+        s = stats.label_ceiling(DOC["cases"])
+        by_sig = {}
+        for c in DOC["cases"]:
+            by_sig.setdefault(stats.signature(c), []).append(c["label"])
+        self.assertEqual(s["signatures"], len(by_sig))
+        self.assertEqual(s["mixed"], sum(len(set(v)) > 1 for v in by_sig.values()))
+        self.assertEqual(s["ceiling"], sum(max(v.count("true_positive"), v.count("false_positive")) for v in by_sig.values()))
+        self.assertLessEqual(s["ceiling"], s["n"])
+
+    def test_results_md_and_ssot_carry_the_computed_ceiling(self):
+        s = stats.label_ceiling(DOC["cases"])
+        results = render_results.OUT.read_text(encoding="utf-8")
+        self.assertIn(stats.ceiling_phrase(DOC["cases"]), results)
+        ssot = (self.ROOT / "SSOT.md").read_text(encoding="utf-8")
+        for needle in (f"{s['mixed']} of {s['signatures']}", f"{s['ceiling']}/{s['n']} = {s['ceiling_pct']}"):
+            self.assertIn(needle, ssot, f"SSOT.md label-ceiling figure drifted from the computed value ({needle})")
+
+    def test_holdout_baseline_is_computed_not_typed(self):
+        _dev, hold = variants.split(DOC["cases"])
+        tp = sum(c["label"] == "true_positive" for c in hold)
+        expect = f"The always-malicious baseline on these holdout cases is {stats.share(max(tp, len(hold) - tp), len(hold))}."
+        self.assertIn(expect, render_results.OUT.read_text(encoding="utf-8"))
+
+    def test_one_percentage_per_run_in_results_md_and_ssot(self):
+        d = json.loads((render_results.RESULTS / "2026-10-28.json").read_text(encoding="utf-8"))
+        run = next(r for r in d["runs"] if r["label"] == "ollama:qwen2.5:3b")
+        m = run_eval.score([dict(r) for r in run["rows"]])
+        k = round(m["accuracy"] * m["n"])
+        pct = stats.share(k, m["n"])
+        self.assertIn(f"**accuracy {pct}** ({k}/{m['n']};", render_results.OUT.read_text(encoding="utf-8"))
+        self.assertIn(f"{k}/{m['n']}", (self.ROOT / "SSOT.md").read_text(encoding="utf-8"))
 
 
 class CommittedResults(unittest.TestCase):
