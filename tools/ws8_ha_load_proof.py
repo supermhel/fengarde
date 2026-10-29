@@ -55,7 +55,8 @@ while idx < len(sched):
             p = r.pipeline(transaction=False)
             now = int(time.time() * 1000) - 5000
             for i, part, tactic in batch:
-                p.xadd("alerts", {"key": f"u{i}", "payload": json.dumps({"alert_id": f"{tag}-{i}-{part}", "tenant_id": tag, "time": now,
+                p.xadd("alerts", {"key": f"u{i}", "payload": json.dumps({
+                    "alert_id": f"{tag}-{i}-{part}", "tenant_id": tag, "time": now,
                     "rule_id": "r", "level": "high", "score": 10, "mitre": {"tactic": tactic}, "actor": {"user": {"name": f"u{i}"}}})})
             p.execute()
             acked += len(batch)
@@ -78,7 +79,9 @@ bus = Bus()
 n, errs, t0 = 0, 0, time.time()
 while time.time() - t0 < seconds:
     ip = f"198.51.{random.randint(0, 255)}.{random.randint(1, 254)}"
-    ev = {"source_type": "linux_ssh", "raw": f"Jun 10 13:55:{n % 60:02d} db01 sshd[{3000 + n % 900}]: Accepted password for deploy from {ip} port {40000 + n % 9000} ssh2",
+    raw = (f"Jun 10 13:55:{n % 60:02d} db01 sshd[{3000 + n % 900}]: Accepted password for deploy from {ip} "
+           f"port {40000 + n % 9000} ssh2")
+    ev = {"source_type": "linux_ssh", "raw": raw,
           "meta": {"ingest_id": f"{tag}-raw-{n}", "tenant_id": tag, "trace_id": tag, "received_at": int(time.time() * 1000), "ip": ip}}
     try:
         bus.produce("raw.events", key=ip, payload=ev)
@@ -111,7 +114,8 @@ for t in ("raw.events", "normalized.events", "scored.events", "alerts", "inciden
         groups[t] = [{k: g.get(k) for k in ("name", "pending", "lag")} for g in r.xinfo_groups(t)]
     except Exception as e:
         groups[t] = str(e)[:60]
-print(json.dumps({"in_stream": dict(in_stream), "emissions": {k: [[p["member_count"], sorted(p["member_alert_ids"]), p["tactics"]] for p in v] for k, v in em.items()}, "groups": groups}))
+emissions = {k: [[p["member_count"], sorted(p["member_alert_ids"]), p["tactics"]] for p in v] for k, v in em.items()}
+print(json.dumps({"in_stream": dict(in_stream), "emissions": emissions, "groups": groups}))
 '''
 
 
@@ -133,7 +137,8 @@ def py(container, code, *argv, stdin=None, timeout=900):
 
 
 def os_search(index, body):
-    code = ("import json,os,sys,urllib.request as u;urls=os.environ['OPENSEARCH_URL'].split(',');body=sys.stdin.read().encode();last=None\n"
+    code = ("import json,os,sys,urllib.request as u;urls=os.environ['OPENSEARCH_URL'].split(',')\n"
+            "body=sys.stdin.read().encode();last=None\n"
             "for url in urls:\n"
             "  try:\n"
             f"    req=u.Request(url+'/{index}',data=body,headers={{'Content-Type':'application/json'}},method='POST')\n"
@@ -177,10 +182,13 @@ def main():
     tag = f"hl{int(a.rate)}-{uuid.uuid4().hex[:5]}"
     gap = max(10, int(a.rate * 2))               # second tactic ~4 s after the first
     run_s = a.chains * 2 / a.rate + gap * 2 / a.rate
-    ws8 = a.ws8.split(",") if a.ws8 else sh("docker", "ps", "--format", "{{.Names}}", "--filter", f"name={PROJ}-ws8-correlation").stdout.split()
-    log(f"tag={tag} rate={a.rate}/s procs={procs} chains={a.chains} gap={gap} raw={a.raw_rate}/s kills={a.kills} ws8={ws8} est_run={run_s:.0f}s")
+    ws8 = a.ws8.split(",") if a.ws8 else sh(
+        "docker", "ps", "--format", "{{.Names}}", "--filter", f"name={PROJ}-ws8-correlation").stdout.split()
+    log(f"tag={tag} rate={a.rate}/s procs={procs} chains={a.chains} gap={gap} raw={a.raw_rate}/s kills={a.kills} "
+        f"ws8={ws8} est_run={run_s:.0f}s")
     wait_idle()
-    gens = [subprocess.Popen(["docker", "exec", "-i", WS2, "python", "-c", GEN, tag, str(a.chains), str(a.rate), str(gap), str(k), str(procs)],
+    gens = [subprocess.Popen(["docker", "exec", "-i", WS2, "python", "-c", GEN, tag, str(a.chains), str(a.rate), str(gap),
+                              str(k), str(procs)],
                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) for k in range(procs)]
     raw = None
     if a.raw_rate > 0:
@@ -191,7 +199,8 @@ def main():
     def sample_stats():
         time.sleep(run_s * 0.5)
         out = sh("docker", "stats", "--no-stream", "--format", "{{.Name}} {{.CPUPerc}} {{.MemPerc}}").stdout.splitlines()
-        rows = sorted(((float(l.split()[1].rstrip('%')), l.split()[0]) for l in out if len(l.split()) == 3), reverse=True)
+        parts = [ln.split() for ln in out]
+        rows = sorted(((float(p[1].rstrip('%')), p[0]) for p in parts if len(p) == 3), reverse=True)
         stats["top_cpu"] = [f"{n} {c}%" for c, n in rows[:6]]
         stats["total_cpu_pct"] = round(sum(c for c, _ in rows), 0)
     threading.Thread(target=sample_stats, daemon=True).start()
@@ -219,7 +228,8 @@ def main():
     rawo = json.loads(ro[-1]) if ro else {}
     acked = sum(g["acked"] for g in gen)
     failed = [x for g in gen for x in g["failed"]]
-    log(f"producers: acked={acked} failed={len(failed)} retries={sum(g['retries'] for g in gen)} seconds={[g['seconds'] for g in gen]} raw={rawo}")
+    log(f"producers: acked={acked} failed={len(failed)} retries={sum(g['retries'] for g in gen)} "
+        f"seconds={[g['seconds'] for g in gen]} raw={rawo}")
 
     def collect():
         r = py(WS2, COLLECT, tag, str(a.chains))
@@ -233,12 +243,20 @@ def main():
         return [h["_source"] for h in inc], al
 
     last, stable, t0 = None, 0, time.time()
+    drain = {}                                  # seconds after the last producer finished
     while time.time() - t0 < a.drain_s:
         time.sleep(10)
         c = collect()
         inc_docs, al_n = os_state()
         pend = sum(g["pending"] or 0 for v in c["groups"].values() if isinstance(v, list) for g in v)
         lag = sum(g["lag"] or 0 for v in c["groups"].values() if isinstance(v, list) for g in v)
+        ws8_g = [g for g in (c["groups"].get("alerts") or []) if isinstance(g, dict) and g["name"] == "cg-correlate"]
+        if ws8_g and not (ws8_g[0]["pending"] or ws8_g[0]["lag"]):
+            drain.setdefault("ws8_cg_correlate_idle_s", round(time.time() - t0))
+        if al_n >= acked:
+            drain.setdefault("ws3_alerts_all_indexed_s", round(time.time() - t0))
+        if len(inc_docs) >= a.chains:
+            drain.setdefault("ws3_incidents_all_indexed_s", round(time.time() - t0))
         key = json.dumps([len(c["emissions"]), len(inc_docs), al_n, pend, lag])
         stable = stable + 1 if key == last else 0
         last = key
@@ -281,16 +299,21 @@ def main():
     split = sum(1 for i in range(a.chains) if seen.get(f"{tag}-{i}-1") and seen.get(f"{tag}-{i}-2")
                 and seen[f"{tag}-{i}-1"].isdisjoint(seen[f"{tag}-{i}-2"]))
     per = {n[-1]: sum(n[-1] in v for v in seen.values()) for n in ws8}
+    achieved = round(acked / max(g["seconds"] for g in gen), 1)
     res = {"rate": a.rate, "chains": a.chains, "eligible": elig, "lost": len(lost), "forked": len(forked), "wrong_members": len(wrong),
-           "acked_not_indexed": bus_lost, "producer_failed": len(failed), "os_incident_docs": len(inc_docs), "os_incident_ids": len(os_ids),
+           "acked_not_indexed": bus_lost, "producer_failed": len(failed), "os_incident_docs": len(inc_docs),
+           "os_incident_ids": len(os_ids),
            "os_full_incidents": os_full, "os_alerts_indexed": al_n, "alerts_acked": acked, "kills": kills,
-           "ws8_per_replica": per, "host_cpu_sample": stats, "achieved_alerts_per_s": round(acked / max(g["seconds"] for g in gen), 1), "chains_split_across_replicas": split, "raw": rawo,
+           "ws8_per_replica": per, "host_cpu_sample": stats, "drain_after_producers": drain, "achieved_alerts_per_s": achieved,
+           "chains_split_across_replicas": split, "raw": rawo,
            "groups_end": {t: v for t, v in c["groups"].items()}}
     print("RESULT_JSON " + json.dumps(res))
     good = not lost and not forked and not wrong and not failed and elig > 0 and not bus_lost
-    print(f"SUMMARY rate={a.rate}/s chains={a.chains} eligible={elig} lost={len(lost)} forked={len(forked)} wrong_members={len(wrong)} "
-          f"acked_not_indexed={bus_lost} producer_failed={len(failed)} os_incident_ids={len(os_ids)} os_full={os_full} os_alerts={al_n}/{acked} "
-          f"achieved={round(acked / max(g['seconds'] for g in gen), 1)}/s split_chains={split} per_replica={per} cpu={stats} kills={[k['failover_s'] for k in kills]}")
+    print(f"SUMMARY rate={a.rate}/s chains={a.chains} eligible={elig} lost={len(lost)} forked={len(forked)} "
+          f"wrong_members={len(wrong)} "
+          f"acked_not_indexed={bus_lost} producer_failed={len(failed)} os_incident_ids={len(os_ids)} "
+          f"os_full={os_full} os_alerts={al_n}/{acked} achieved={achieved}/s split_chains={split} per_replica={per} "
+          f"drain={drain} cpu={stats} kills={[k['failover_s'] for k in kills]}")
     print("RESULT ha-load: " + ("PASS" if good else "FAIL"))
     return 0 if good else 1
 

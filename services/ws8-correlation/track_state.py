@@ -37,6 +37,7 @@ end
 redis.call('EXPIRE', KEYS[1], ARGV[5])
 redis.call('EXPIRE', KEYS[2], ARGV[5])
 redis.call('EXPIRE', KEYS[3], ARGV[5])
+redis.call('EXPIRE', KEYS[4], ARGV[5])  -- sticky incident id lives exactly as long as the track (no-op if unbound)
 return 1
 """
 
@@ -105,8 +106,8 @@ class RedisTrackState:
 
     def record(self, key: str, member: str, entry: dict, now_ms: int) -> None:
         payload = json.dumps(entry, separators=(",", ":"), sort_keys=True)
-        self.r.eval(_RECORD_LUA, 3, self._k("side", key), self._k("meta", key),
-                    self._k("tac", key), member, payload, entry["tactic"] or "",
+        self.r.eval(_RECORD_LUA, 4, self._k("side", key), self._k("meta", key),
+                    self._k("tac", key), self._k("cid", key), member, payload, entry["tactic"] or "",
                     int(entry["time"]), self.ttl_s)
 
     def snapshot(self, key: str) -> tuple[dict, dict]:
@@ -122,7 +123,11 @@ class RedisTrackState:
             ts = entry.get("typed_signal")
             entry["typed_signal"] = tuple(ts) if ts is not None else None
             side[member] = entry
-        meta = {"first_seen": int(raw_meta["first_seen"]),
+        # meta can be gone while side is not (TTL boundary, or the acked tail lost to a failover): rebuild
+        # first_seen from the members rather than raising; an empty side makes the correlator return None.
+        fs = raw_meta.get("first_seen")
+        first_seen = int(fs) if fs is not None else min((e["time"] for e in side.values()), default=0)
+        meta = {"first_seen": first_seen,
                 "tactics": set(tactics),
                 "truncated": raw_meta.get("truncated") == "1"}
         return side, meta

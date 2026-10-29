@@ -201,10 +201,10 @@ write accepted. `ws8_failover_load_proof.py outage` against that promoted master
 **3 and 4 ws8 replicas** (`load --chains 350 --kills 4 --rate 10`, 74 s, fresh stack per run): 3 replicas ok 350/350, lost 0, forked ids 0,
 wrong member sets 0, 700 alerts handled once each (207/297/196 per replica), 179 chains had their tactics on different replicas; 4 replicas
 ok 350/350, lost 0, forked 0, wrong 0, 187/234/94/185 per replica, 183 split chains; duplicate alert messages 0; 350 incident ids and 350
-emissions in both runs; failover 3.6-5.7 s (3 replicas) and 4.4-5.3 s (4 replicas).
+emissions in both runs; failover 3.6-5.7 s (3 replicas) and 4.4-5.3 s (4 replicas), on the proof-compose Sentinel settings down-after 3000 / failover-timeout 10000 (the shipped HA compose uses down-after 5000 / failover-timeout 20000).
 
 **Full HA stack under load** (`tools/ws8_ha_load_proof.py`; stack beside the dev stack; two ws8 replicas; chains injected on `alerts`, plus 100
-benign raw events/s through ws2 -> ws4 -> ws3; 3 master kills per run; verdict read from OpenSearch because `shared/bus.py trim_acked` removes
+benign background raw events through ws2 -> ws4 -> ws3 (target 100/s, 261-1950 sent per run; no alerts come from them, the chains' alerts are injected into `alerts`); 3 master kills per run, Sentinel at the HA-compose settings of that time, down-after 5000 / failover-timeout 20000; verdict read from OpenSearch because `shared/bus.py trim_acked` removes
 acked stream prefixes):
 
 | target alerts/s | achieved | chains | lost | forked ids | wrong members | alerts indexed/acked | split chains | failovers (s) |
@@ -227,7 +227,7 @@ chains while OpenSearch held all 400 incidents), and the bus streams cannot be u
 
 **Generator fixed.** The first-round producers (one `Bus.produce` per alert from `docker exec` Python) topped out at 10-17 alerts/s. They now pipeline
 XADD of the same `{key, payload}` shape straight into the `alerts` stream (`tools/ws8_ha_load_proof.py`, 3-12 processes, catch-up batches), so the target
-rate is actually driven. Same full HA stack, 2 ws8 replicas, 100 raw events/s through ws2 -> ws4 -> ws3, 3 master kills per run, verdict from OpenSearch:
+rate is actually driven. Same full HA stack, 2 ws8 replicas, benign background raw events through ws2 -> ws4 -> ws3 (target 100/s, 350-1950 sent per run; the chains' alerts are injected straight into `alerts`), 3 master kills per run at down-after 5000 / failover-timeout 20000, verdict from OpenSearch:
 
 | target alerts/s | achieved | chains | lost | forked ids | wrong members | alerts indexed/acked | split chains | failovers (s) | producer retries |
 |---|---|---|---|---|---|---|---|---|---|
@@ -248,15 +248,19 @@ Failovers 3.5-6.2 s.
 **Sentinel failover under CPU saturation.** `tools/ws8_sentinel_failover_dist.py`: 3 Redis + 3 Sentinels, 16 busy-loop containers on the 8-CPU host, kill the master, time
 until the new master accepts a write (includes ~3-4 s of `docker exec` probe overhead; Sentinel's own `+switch-master` was ~6 s), restart, wait for resync, 12 rounds per config.
 
-| down-after / failover-timeout | min | median | p90 | max | rounds with `-failover-abort-not-elected` | TILT |
+| down-after / failover-timeout | min | median | p90 | max | `-failover-abort-not-elected` | TILT |
 |---|---|---|---|---|---|---|
-| 5000 / 20000 (old default) | 8.7 | 10.2 | 11.5 | 50.8 | 3 of 12 | 0 |
-| 5000 / 5000 (new default) | 9.9 | 10.65 | 11.9 | 22.6 | 3 of 12 | 0 |
+| 5000 / 20000 (shipped default) | 8.7 | 10.2 | 11.5 | 50.8 | 3 log lines (rounds not counted) | not counted |
+| 5000 / 5000 (candidate, unproven) | 9.9 | 10.65 | 11.9 | 22.6 | 3 log lines (rounds not counted) | not counted |
 
-Cause of the outliers: under CPU contention the three Sentinels reach ODOWN within milliseconds of each other, split the vote, nobody is elected, and Sentinel gates the
-next attempt at 2x failover-timeout (40 s vs 10 s) - matching the 44.9 s, 45.5 s and 50.8 s rounds. Not the cause: ws8's reconnect (it follows the master change) and TILT (0 events).
-`infra/redis-sentinel-entrypoint.sh` now defaults to failover-timeout 5000. Observed bound: 22.6 s worst of 12 rounds under 16 hogs; 12 rounds are a sample, not a guarantee, and the
-5 s setting was not re-run inside the full-stack load test. Trade-off: failover-timeout also limits how long a failover may spend reconfiguring replicas, so a replica with a
-large dataset may need a higher value (not tested).
+What this shows and does not show: the 44.9 s, 45.5 s and 50.8 s outliers fit a split vote (Sentinels reach ODOWN within milliseconds of each other, nobody is elected, the retry is gated at 2x failover-timeout = 40 s at 20000). The abort lines were counted in total, not per round, so which rounds aborted is not established; the script now counts aborts and TILTs per round. A 20-round rerun per config was started and aborted because another session's load stretched every round to 2-3 minutes. With 12 rounds each the median is the same and the worst round was shorter with 5000 (22.6 s vs 50.8 s), which is not enough to claim an improvement; the shipped default therefore stays failover-timeout 20000 and 5000 is an unproven candidate (it also bounds replica reconfiguration time, untested with large datasets). ws8's reconnect is not the limiter (it follows the master change).
 
-Remaining limits: other hardware (cannot be closed on this host); the 400 alerts/s target (229.4 reached); failover-timeout 5000 with large datasets; more than 8 replicas.
+Remaining limits: other hardware (cannot be closed on this host); the 400 alerts/s target (229.4 reached); whether failover-timeout 5000 beats 20000; more than 8 replicas.
+
+## Hot track and ws8 consume rate (2026-10-28, review follow-up)
+
+ws8 alone, 2 replicas, 3000 alerts injected straight into `alerts` as fast as one pipeline writes (`tools/ws8_hot_track_cost.py`, shared host, another session's load running): every alert its own actor (1-member tracks) drained at 105.5 and 50.2 alerts/s; every alert on ONE actor (one track at the member cap of 200, both replicas hitting it) drained at 17.9 and 13.7 alerts/s, i.e. 3-8x slower (each alert reads the whole side table: HGETALL + json.loads of up to 200 entries), and emitted ~3000 incident updates for the one incident. So the per-alert cost is O(member_cap) and a hot track limits ws8 to roughly 14-18 alerts/s on this host with two replicas; the 200 alerts/s full-stack runs used one track per alert pair and say nothing about hot tracks.
+
+`achieved` in the load tables is the XADD producer rate. ws8's consume rate and drain time were NOT measured in the full-stack runs (the harness now records them but the runs were not repeated); the only ws8-alone consume figures are the 50-105 alerts/s (spread) and 14-18 alerts/s (hot track) above, so at 200 alerts/s injected ws8 was backlogged and caught up afterwards (every run ended at lag 0 / pending 0); nothing is claimed about ws8 not being the limit.
+
+Not proven: hot-track cost on a quiet host; a mitigation (the cost is the full side-table read per alert, a cap below 200 or an incremental read would change it); ws8 drain time in the full stack.

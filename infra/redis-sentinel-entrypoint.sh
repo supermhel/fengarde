@@ -129,24 +129,20 @@ esac
 # comment. "yes" reintroduces blocking DNS on Sentinel's event loop and with it
 # the perpetual-tilt failover deadlock.
 #
-# failover-timeout was 20s (now 5s, see below), not the 60s this script used to carry. Sentinel's
-# leader election is Raft-like and CAN split: measured live (2026-08-05) on this
-# exact 3-node setup, all three Sentinels saw the master go objectively down
-# within ~80ms of each other, each voted for itself, none reached the 2-vote
-# majority, and the round died with "failover-abort-not-elected". That is normal
-# protocol behaviour, not a misconfiguration -- but Sentinel gates the retry at
-# 2x failover-timeout, so 60000 meant a single split vote cost ~2 MINUTES of
-# write-unavailability before the next round (which then elected a leader and
-# finished the switch in 0.7s). Measured failover duration once a leader is
-# elected is under 3s, so 20s keeps a wide margin for a slow replica sync while
-# capping the split-vote penalty at ~40s. Raise it if your replicas carry enough
+# failover-timeout is 20s (default below), not the 60s this script used to carry. Sentinel's
+# leader election is Raft-like and CAN split: all three Sentinels see the master go objectively
+# down within milliseconds of each other, each votes for itself, none reaches the 2-vote
+# majority, and the round dies with "failover-abort-not-elected". That is normal protocol
+# behaviour, not a misconfiguration -- but Sentinel gates the retry at 2x failover-timeout, so
+# every split vote costs 2x failover-timeout of write-unavailability (60000 -> ~2 minutes,
+# 20000 -> ~40 s) before the next round, which then elects a leader and finishes the switch in
+# a few seconds. Measured (2026-10-28, tools/ws8_sentinel_failover_dist.py, 16 busy-loop
+# containers on an 8-CPU host): median time until the new master accepted a write ~10 s, worst
+# observed 50.8 s with 20000. A trial with 5000 (12 kills) showed a worst round of 22.6 s with
+# the same median, but it is one sample on a shared host, it counted abort log lines rather than
+# rounds, and failover-timeout also bounds how long replica reconfiguration may take, so 5000 is
+# NOT the default: it is an unproven candidate. Raise the value if your replicas carry enough
 # data that promotion is slow.
-#
-# 2026-10-28 (tools/ws8_sentinel_failover_dist.py, 16 CPU-hog containers on an 8-CPU host, 12 master kills per config): with
-# failover-timeout 20000 the median time until the new master was writable was 10.2 s but one round took 50.8 s (3 of 12 rounds
-# hit -failover-abort-not-elected; the retry is gated at 2x failover-timeout = 40 s). With 5000 the median was 10.65 s and the worst
-# round 22.6 s (3 of 12 rounds still aborted, the retry now waits 10 s). 5000 is therefore the default. It also caps how long a
-# failover may take to reconfigure replicas, so raise it if a replica's full resync can exceed ~5 s (not tested with large datasets).
 #
 # NOTE: this rationale lives out here as shell comments on purpose. The heredoc
 # below is unquoted (it has to be -- it interpolates the password and master
@@ -162,7 +158,7 @@ sentinel monitor ${MASTER_NAME} ${PRIMARY_IP} ${RAW_PORT} 2
 sentinel auth-pass ${MASTER_NAME} ${REDIS_PASSWORD}
 sentinel down-after-milliseconds ${MASTER_NAME} ${REDIS_SENTINEL_DOWN_AFTER_MS:-5000}
 sentinel parallel-syncs ${MASTER_NAME} 1
-sentinel failover-timeout ${MASTER_NAME} ${REDIS_SENTINEL_FAILOVER_TIMEOUT_MS:-5000}
+sentinel failover-timeout ${MASTER_NAME} ${REDIS_SENTINEL_FAILOVER_TIMEOUT_MS:-20000}
 EOF
 # The file carries the Redis password; keep it off other users on the volume.
 chmod 600 "$SENTINEL_CONF"

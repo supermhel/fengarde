@@ -11,7 +11,6 @@ Run: python services/ws8-correlation/test_shared_state.py
 """
 from __future__ import annotations
 
-import fnmatch
 import os
 import sys
 import types
@@ -118,16 +117,17 @@ class FakeRedis:
 
     def eval(self, script, numkeys, *args):
         assert script == track_state._RECORD_LUA, "unexpected script"
-        side, meta, tac = args[:3]
-        member, payload, tactic, t, ttl = args[3:8]
+        side, meta, tac, cid = args[:4]
+        member, payload, tactic, t, ttl = args[4:9]
         self.hset(side, member, payload)
         fs = self.hget(meta, "first_seen")
         if fs is None or int(t) < int(fs):
             self.hset(meta, "first_seen", str(int(t)))
         if tactic != "":
             self.sadd(tac, tactic)
-        for k in (side, meta, tac):
-            self.ttl[k] = ttl
+        for k in (side, meta, tac, cid):
+            if k in self.d or k != cid:
+                self.ttl[k] = ttl
         return 1
 
 
@@ -267,6 +267,32 @@ def test_tracks_expire_and_tenants_isolated():
     other["tenant_id"] = "globex"
     out = _replica(store).ingest_alert(other)
     check(not any(i["entity_type"] == "actor" for i in out), "tenant isolation: globex must not see acme's tactics")
+
+
+def test_snapshot_survives_expired_meta():
+    store = FakeRedis()
+    st = RedisTrackState(store, ttl_s=86401)
+    st.record("k", "a1", {"time": T0, "tactic": "TA0006", "cooccur": [], "typed_signal": None}, T0)
+    for k in [k for k in store.d if ":meta:" in k]:
+        del store.d[k]                # meta expired / lost to a failover between record() and snapshot()
+    side, meta = st.snapshot("k")     # used to raise KeyError("first_seen")
+    check(meta["first_seen"] == T0 and "a1" in side, f"first_seen rebuilt from members: {meta}")
+    for k in [k for k in store.d if ":side:" in k]:
+        del store.d[k]
+    side, meta = st.snapshot("k")
+    check(side == {} and meta["first_seen"] == 0, f"fully expired track is an empty snapshot: {side} {meta}")
+
+
+def test_incident_id_ttl_follows_the_track():
+    store = FakeRedis()
+    a = _replica(store)
+    a.ingest_alert(_alert("a1", "TA0006"))
+    a.ingest_alert(_alert("a2", "TA0008", t=T0 + 1000))
+    cid = [k for k in store.d if ":cid:" in k]
+    check(len(cid) == 1, f"one bound id expected: {cid}")
+    store.ttl[cid[0]] = 5          # as if it had almost expired
+    a.ingest_alert(_alert("a3", "TA0006", t=T0 + 2000))   # a later alert on the same track
+    check(store.ttl[cid[0]] == 86401, f"cid TTL must be refreshed by every record(): {store.ttl[cid[0]]}")
 
 
 def test_make_correlator_selection():

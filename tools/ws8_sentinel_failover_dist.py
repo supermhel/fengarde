@@ -15,7 +15,6 @@ import argparse
 import json
 import os
 import statistics
-import subprocess
 import sys
 import time
 
@@ -50,6 +49,13 @@ def stop_hogs(n):
     lp.sh(["docker", "rm", "-f"] + [f"{HOG}-{i}" for i in range(n)])
 
 
+def sentinel_events():
+    ev = ""
+    for sn in ("sentinel-1", "sentinel-2", "sentinel-3"):
+        ev += lp.dc("logs", "--no-log-prefix", sn).stdout
+    return ev.count("failover-abort-not-elected"), ev.count("+tilt")
+
+
 def one_round():
     old = lp.master_ip()
     svc = lp.IP_TO_SERVICE[old]
@@ -79,28 +85,30 @@ def main():
     log("sentinel config in effect:", cfg, a.label)
     start_hogs(a.hogs)
     time.sleep(10)
-    res = []
+    res, abort_rounds, tilt_rounds = [], [], []
     try:
         for n in range(a.rounds):
+            a0, t0_ = sentinel_events()
             svc, writable, took = one_round()
+            a1, t1_ = sentinel_events()
             res.append(writable)
+            abort_rounds.append(a1 > a0)        # per ROUND: did any Sentinel abort an election during this failover
+            tilt_rounds.append(t1_ > t0_)
             log(f"round {n + 1}/{a.rounds}: killed {svc}, new master reported {took}s, writable {writable}s")
             time.sleep(5)
     finally:
         stop_hogs(a.hogs)
     ok = sorted(x for x in res if x is not None)
-    ev = ""
-    for s in ("sentinel-1", "sentinel-2", "sentinel-3"):
-        ev += lp.dc("logs", "--no-log-prefix", s).stdout
-    tilt = ev.count("+tilt")
-    aborts = ev.count("failover-abort-not-elected")
+    tilt = sum(tilt_rounds)
+    aborts = sum(abort_rounds)
     out = {"config": cfg, "rounds": a.rounds, "failed_rounds": a.rounds - len(ok), "hogs": a.hogs, "writable_s": ok,
            "min": ok[0] if ok else None, "median": statistics.median(ok) if ok else None,
            "p90": ok[int(0.9 * (len(ok) - 1))] if ok else None, "max": ok[-1] if ok else None,
-           "tilt_events": tilt, "failover_aborts_not_elected": aborts}
+           "rounds_with_tilt": tilt, "rounds_with_abort_not_elected": aborts,
+           "abort_round_times_s": sorted(w for w, x in zip(res, abort_rounds) if x and w is not None)}
     print("RESULT_JSON " + json.dumps(out))
     print(f"SUMMARY config={cfg} rounds={a.rounds} min={out['min']} median={out['median']} p90={out['p90']} max={out['max']} "
-          f"tilt={tilt} aborts={aborts} failed={out['failed_rounds']}")
+          f"rounds_with_tilt={tilt} rounds_with_abort={aborts} failed={out['failed_rounds']}")
     return 0 if ok and len(ok) == a.rounds else 1
 
 
