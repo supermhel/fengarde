@@ -183,7 +183,7 @@ upsert on the deterministic id); alerts stay on the per-document CAS path so ana
 `triage` is preserved (*superseded by section 4b: alerts are now read and written in bulk*); messages are acked only after the bulk response is known,
 per item (failed items stay unacked for redelivery, 429/5xx items are retried
 in-process up to `WS3_BULK_RETRIES`=3, a whole-request failure acks nothing);
-`WS3_BULK=0` restores the old path. Contract test:
+`WS3_BULK=0` switches the bulk batching off (per-document writes again), but it is not byte-for-byte the old path: the per-document handler now runs `index_doc(..., strict=True)`, so an alert whose CAS retries are exhausted raises `AlertCasExhausted` (left unacked, redelivered, dead-lettered at the cap) where the original code logged and acked it. Contract test:
 `services/ws3-indexer/test_bulk_handler.py`.
 
 Same procedure and same isolated project as section 2 (rebuilt images, fresh
@@ -363,19 +363,29 @@ python tools/fengarde_loadtest_live.py --rates --soak-rate 100 --soak-min 12 --o
 | OpenSearch `events-*` growth | 60.0 docs/s | 99.6 docs/s (99.3-108 per minute) |
 | `alerts` stream lag (cg-index) | 1,361 mid-run, 1,779 near end | 0-3 throughout |
 | Total lag | ~230 -> ~1,600 plateau, ~2,100 at the end | 52 at start, 19-402 per minute, 424 at the end (event path, transient), cleared 10 s after stop |
-| Alert path counters (whole session, incl. the ramps) | n/a (per-document) | 18,166 alert messages in 15,617 bulk requests (~1.16 per request), 0 CAS conflicts, 0 failed, 0 retried |
+| Alert path counters (ws3 `bulk` counters, whole session incl. the ramps, covering the bulk path only) | n/a (per-document) | `bulk_docs` 18,166 in 15,617 bulk requests (~1.16 docs per request); `bulk_docs` counts items AFTER the per-`alert_id` collapse; 0 CAS conflicts, 0 failed, 0 retried (bulk path only, see the note below) |
+| Alert messages consumed over the same session | n/a | ~34.5k: the `alerts`/`cg-index` read counter was 16,514 at the start of the soak window and 34,454 at the end (+17,940 in the soak), against 18,166 documents written, i.e. the within-batch collapse removed roughly half of all alert messages before they hit OpenSearch |
 | Alert messages in the soak window | n/a | 17,940 messages = 25.1% of the 71,338 events, but only 358 distinct alert documents |
 | OpenSearch heap | 71-77% | 66-77% (398 MB max) |
 | CPU (mean) | opensearch 87%, ws4 54%, redis 52% | opensearch 64%, ws4 73% (3 replicas summed), redis 43%, ws3 34% |
 | `index_failed` vs `conflicts_409` | 12,085 vs 12,083 (+2 probe) | 16,416 vs 16,430 for the whole session (within 14: the two reads were taken a few events apart) |
 
-What the alert-batching numbers do and do not show: at ~1.16 messages per bulk
-request the batching and the within-batch collapse were barely exercised live; the
-win here is mostly that each alert message no longer costs a separate GET plus
-conditional PUT, not large batches. "0 CAS conflicts" means the stale-version
-fallback was never hit live; that path, the coalescing of same-id versions, the
-no-resurrection of a cleared triage and the exhausted-CAS no-ack are covered by
-unit tests only (`test_bulk_handler.py`), not by the live runs.
+What the alert-batching numbers do and do not show:
+
+* The collapse of repeated `alert_id`s inside a batch was exercised heavily: about
+  34.5k alert messages became 18.2k bulk documents (roughly 1.9 messages per
+  document). The ~1.16 documents per bulk *request* is a separate, small number:
+  each read pass carries few distinct alert ids, so requests stay small.
+* The ws3 counters (`cas_conflicts`, `failed_items`, `retried_items`, `bulk_docs`)
+  only count the bulk path. Fresh alert ids and stale-CAS fallbacks go through the
+  per-document `_index_alert_preserving_triage` (`get_versioned` + `find_alert_versioned`
+  + `index_cas`, one alert at a time, after the bulk), and nothing counts them. So
+  "0 CAS conflicts / 0 failed" does not cover those paths; whether the stale-version
+  fallback was hit live is unknown. That path, the coalescing of same-id versions,
+  the no-resurrection of a cleared triage and the exhausted-CAS no-ack are covered by
+  unit tests only (`test_bulk_handler.py`).
+* Performance note: because fresh alert ids are written one at a time, a burst of
+  *new* alert ids gets no bulk benefit; the batching helps repeats of known ids.
 
 So: 100 events/s held for 12 minutes with no loss, the alert backlog stays flat,
 and the node's `index_failed` counter again equals ws3's own 409 count.

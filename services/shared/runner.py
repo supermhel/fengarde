@@ -382,6 +382,22 @@ def _process_batch(bus, topic, group, entries, handler, max_redeliveries,
     return counts
 
 
+def _flush_gathered(bus, topic, group, batch_entries, handler, max_redeliveries, metrics, pending_acks):
+    """A bus error in the middle of a read pass must not strand the messages
+    already gathered for a batch (they would sit unprocessed in the PEL until
+    the 60 s claim window): process them now and ack best-effort. A failed ack
+    just leaves them to be redelivered, which the idempotent handler absorbs."""
+    if not batch_entries:
+        return
+    try:
+        _process_batch(bus, topic, group, batch_entries, handler, max_redeliveries,
+                       metrics, ack_fn=lambda m, g: pending_acks.append(m))
+        if pending_acks:
+            bus.ack_batch(pending_acks, group)
+    except Exception as exc:  # noqa: BLE001 - bus is already failing; PEL redelivery covers it
+        _throttled_print_exc(topic, exc)
+
+
 def _topic_worker(bus_factory, topic, group, handler, *, max_redeliveries,
                   shutdown, claim_idle_ms, idle_sleep_s, consume_block_ms,
                   service_name, state=None, metrics=None):
@@ -410,8 +426,8 @@ def _topic_worker(bus_factory, topic, group, handler, *, max_redeliveries,
         # redelivery," never a silent double-ack or a lost ack.
         pending_acks: list = []
         bus_error_this_iter = False
+        batch_entries: list = []
         try:
-            batch_entries: list = []
             for msg, times_delivered in bus.claim_pending(
                     topic, group, claim_idle_ms, max_redeliveries):
                 did_work = True
@@ -438,6 +454,8 @@ def _topic_worker(bus_factory, topic, group, handler, *, max_redeliveries,
                 state.mark_ok()
         except Exception as exc:
             bus_error_this_iter = True
+            _flush_gathered(bus, topic, group, batch_entries, handler,
+                            max_redeliveries, metrics, pending_acks)
             if state is not None:
                 state.mark_error(exc)  # bus unreachable -> /health reports degraded
             # Gap-hunt finding (2026-08-23): this update /health (above) but
@@ -461,8 +479,8 @@ def _topic_worker(bus_factory, topic, group, handler, *, max_redeliveries,
         # loop matches the read side instead of paying a round-trip per
         # message on the write side too.
         pending_acks = []
+        batch_entries = []
         try:
-            batch_entries = []
             for msg in bus.consume(topic, group=group, block_ms=consume_block_ms):
                 did_work = True
                 # First delivery == count 1 (the PEL/XPENDING counter starts at 1
@@ -491,6 +509,8 @@ def _topic_worker(bus_factory, topic, group, handler, *, max_redeliveries,
                 state.mark_ok()
         except Exception as exc:
             bus_error_this_iter = True
+            _flush_gathered(bus, topic, group, batch_entries, handler,
+                            max_redeliveries, metrics, pending_acks)
             if state is not None:
                 state.mark_error(exc)
             _throttled_print_exc(topic, exc)

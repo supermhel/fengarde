@@ -418,6 +418,55 @@ def test_worker_respects_batch_max():
     check(sum(sizes) == 7 and max(sizes) <= 3, f"batch sizes bounded by batch_max=3: {sizes}")
 
 
+def test_bus_error_mid_pass_does_not_strand_gathered_batch():
+    """Review item: messages gathered for a batch before a bus error used to be
+    dropped unprocessed (waiting out the 60 s claim window)."""
+    handled: list = []
+    acked: list = []
+
+    class H:
+        batch_max = 100
+
+        def handle_batch(self, payloads):
+            handled.extend(p["i"] for p in payloads)
+            return [None] * len(payloads)
+
+    class FlakyBus:
+        def __init__(self):
+            self.n = 0
+
+        def claim_pending(self, *a, **k):
+            return iter(())
+
+        def consume(self, topic, group=None, block_ms=0):
+            self.n += 1
+            if self.n == 1:
+                for i in range(3):
+                    yield Message(topic=topic, key=str(i), payload={"i": i}, id=f"m{i}")
+                raise ConnectionError("redis went away mid-read")
+            return
+
+        def ack_batch(self, msgs, group):
+            acked.extend(m.id for m in msgs)
+
+        def produce(self, *a, **k):
+            pass
+
+    bus = FlakyBus()
+    shutdown = threading.Event()
+    t = threading.Thread(target=runner._topic_worker, daemon=True, args=(lambda: bus, "t", "g", H()),
+                         kwargs=dict(max_redeliveries=5, shutdown=shutdown, claim_idle_ms=60000,
+                                     idle_sleep_s=0.01, consume_block_ms=10, service_name="x"))
+    t.start()
+    deadline = time.time() + 5
+    while len(handled) < 3 and time.time() < deadline:
+        time.sleep(0.02)
+    shutdown.set()
+    t.join(timeout=3)
+    check(sorted(handled) == [0, 1, 2], f"messages gathered before the bus error were processed: {handled}")
+    check(sorted(acked) == ["m0", "m1", "m2"], f"and acked: {acked}")
+
+
 def test_build_handlers_wiring_and_kill_switch():
     store = FakeBulkStore()
     hs = build_handlers(store)
@@ -526,7 +575,8 @@ def main() -> int:
                test_same_id_versions_coalesce_and_retry_never_overwrites_newer,
                test_stale_cas_fallback_does_not_resurrect_cleared_triage,
                test_exhausted_alert_cas_is_not_acked, test_unroutable_dropped_and_dead_letter_cap,
-               test_worker_respects_batch_max, test_build_handlers_wiring_and_kill_switch,
+               test_worker_respects_batch_max, test_bus_error_mid_pass_does_not_strand_gathered_batch,
+               test_build_handlers_wiring_and_kill_switch,
                test_opensearch_bulk_write_wire_format):
         before = len(FAILS)
         try:
