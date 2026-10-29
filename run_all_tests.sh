@@ -472,6 +472,9 @@ echo
 echo "== acceptance e2e (brute-force -> alert, idempotent) =="; LAST_HEADER="== acceptance e2e (brute-force -> alert, idempotent) =="
 $PY tools/demo_e2e.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
+echo "== demo console AI-to-OT fixture (real WS-2/4/5/8/9/3 on the twin chain; not stale) =="; LAST_HEADER="== demo console AI-to-OT fixture (real WS-2/4/5/8/9/3 on the twin chain; not stale) =="
+$PY tools/test_build_ai_ot_fixtures.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
 echo "== agent_log_shipper e2e (JSONL file -> raw.events -> R1+R3 alerts) =="; LAST_HEADER="== agent_log_shipper e2e (JSONL file -> raw.events -> R1+R3 alerts) =="
 $PY tools/test_agent_log_shipper.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
