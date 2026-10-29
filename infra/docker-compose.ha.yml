@@ -12,7 +12,10 @@
 # `container_name`s (siem-bus-ha-N, siem-sentinel-ha-N, siem-store-ha-N, ...), so a second HA project
 # (another `-p` name) on the same host collides. A previously exited `siem-ws3-indexer-init` of the
 # single-node stack also collides with the one-shot init container of this stack: remove it first.
-# Run ONE ws8-correlation replica (see services/ws8-correlation/INTERFACE.md, "Known gap").
+# ws8-correlation state is shared via Redis since 2026-10-28; proven live on this full stack (one chain to OpenSearch,
+# tools/ws8_ha_stack_proof.py) and, under failover load with two ws8 replicas, on its Redis/Sentinel topology
+# (tools/ws8_failover_load_proof.py). See services/ws8-correlation/INTERFACE.md, "Shared correlator state".
+# To run this profile beside the default stack use infra/docker-compose.ws8-ha-proof.yml (port/name overrides).
 #
 # The profile:
 # - adds 1 Redis primary + 2 replicas + 3 Sentinels on an internal `ha` network
@@ -108,7 +111,10 @@ services:
     command: >
       sh -c '
       if [ -n "$$REDIS_PASSWORD" ]; then
-        exec redis-server --appendonly yes --replicaof ${REDIS_PRIMARY_IP:-172.28.0.11} 6379 --masterauth "$$REDIS_PASSWORD" --requirepass "$$REDIS_PASSWORD";
+        # FIX 23 must survive promotion: a replica ignores min-replicas-* while it
+        # is a replica and enforces it the moment Sentinel promotes it, so every
+        # data node carries the same flags (tools/check_ha_min_replicas.py gates it).
+        exec redis-server --appendonly yes --replicaof ${REDIS_PRIMARY_IP:-172.28.0.11} 6379 --masterauth "$$REDIS_PASSWORD" --requirepass "$$REDIS_PASSWORD" --min-replicas-to-write 1 --min-replicas-max-lag 10;
       else
         echo "REDIS_PASSWORD must be set for HA" >&2; exit 1;
       fi'
@@ -132,7 +138,10 @@ services:
     command: >
       sh -c '
       if [ -n "$$REDIS_PASSWORD" ]; then
-        exec redis-server --appendonly yes --replicaof ${REDIS_PRIMARY_IP:-172.28.0.11} 6379 --masterauth "$$REDIS_PASSWORD" --requirepass "$$REDIS_PASSWORD";
+        # FIX 23 must survive promotion: a replica ignores min-replicas-* while it
+        # is a replica and enforces it the moment Sentinel promotes it, so every
+        # data node carries the same flags (tools/check_ha_min_replicas.py gates it).
+        exec redis-server --appendonly yes --replicaof ${REDIS_PRIMARY_IP:-172.28.0.11} 6379 --masterauth "$$REDIS_PASSWORD" --requirepass "$$REDIS_PASSWORD" --min-replicas-to-write 1 --min-replicas-max-lag 10;
       else
         echo "REDIS_PASSWORD must be set for HA" >&2; exit 1;
       fi'

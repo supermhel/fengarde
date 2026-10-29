@@ -1,0 +1,14 @@
+# Isolated live proof for WS-8 shared correlator state (docs/ws8-shared-correlator-state-design.md).
+# Own project name, no container_name, no host ports -> cannot clash with the dev/HA stacks.
+#   COMPOSE_PROJECT_NAME=ws8proof docker compose -f infra/docker-compose.ws8-proof.yml up -d --build
+#   bash tools/ws8_shared_state_live_proof.sh
+services:
+  redis:
+    image: redis:7-alpine
+    healthcheck: { test: ["CMD", "redis-cli", "ping"], interval: 2s, timeout: 3s, retries: 15 }
+  ws8a: &ws8
+    build: { context: .., dockerfile: services/ws8-correlation/Dockerfile }
+    environment: ["BUS_BACKEND=redis", "REDIS_URL=redis://redis:6379/0"]
+    depends_on: { redis: { condition: service_healthy } }
+  ws8b:
+    <<: *ws8

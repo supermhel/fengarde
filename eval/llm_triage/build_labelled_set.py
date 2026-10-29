@@ -51,6 +51,15 @@ _LEVEL_ORDER = ["low", "medium", "high", "critical"]
 _LEAK_WORDS = ("decoy", "negative_control", "twin_step", "true_positive", "false_positive")
 
 
+# The nine storylines that existed when the evaluation was run (2026-10-28). The labelled set is a FROZEN snapshot: every
+# committed result is keyed to its sha256, so a storyline registered later (it also shifts the global event ids) must not
+# change it silently. To add one, append its name here, regenerate, and re-run run_eval.py and variants.py for every
+# model; the staleness check (`--check`) then passes again and the old results fail the sha test until they are redone.
+FROZEN_STORYLINES = (
+    "ai_to_ot", "it_intrusion", "infra_takeover", "cloud_iam_abuse", "insider_exfil",
+    "ot_opcua_sabotage", "phishing_bec", "ransomware", "supply_chain_ci",
+)
+
 _EVENT_SEQ = [0]  # ingest ids are label-neutral and GLOBALLY unique (WS-5 dedups on event id)
 
 
@@ -111,6 +120,8 @@ def build() -> dict:
     excluded: list = []
 
     for sdef in scenario_registry.ALL:
+        if sdef.name not in FROZEN_STORYLINES:
+            continue  # added after the measured snapshot; see FROZEN_STORYLINES
         payloads = sdef.build(SEED)[0]
         _run([(spec.label, p) for spec, p in payloads], f"twin-{sdef.name}", "true_positive",
              f"eval/twin storyline `{sdef.name}` (oracle {Path(sdef.oracle_path).name}); fired alert on an attack step",

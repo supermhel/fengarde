@@ -585,6 +585,22 @@ _EQUIVALENT: dict = {
         "through the runner address: the wrong oracle scores BETTER because " + _ORDER_BLIND_M)},
     ("supply_chain_ci", "reverse_relationship", "SURVIVED"): {"max": 3, "reason": "2026-10-14 " + _ORDER_BLIND_M},
     ("supply_chain_ci", "swap_adjacent_steps", "SURVIVED"): {"max": 1, "reason": "2026-10-14 " + _NO_ALERT_STEP},
+    # storylines 10-11 (2026-10-28, measured on seed 7 on their first run; same mechanism as the older ones):
+    ("win_credential_theft", "reverse_relationship", "SURVIVED"): {"max": 5, "reason": (
+        "2026-10-28 every step is performed by one compromised account, so the actor track joins each allowed "
+        "pair in both directions and reversing a pair changes no graded output -- " + _ORDER_BLIND_M)},
+    ("network_credential_abuse", "reverse_relationship", "SURVIVED"): {"max": 2, "reason": (
+        "2026-10-28 password_spray->slow_stuffing shares the attacker address and the victim account, and the "
+        "forbidden slow_stuffing->bystander_stale_password pair is joined in NEITHER direction (disjoint "
+        "entities), so reversing either changes no graded output -- " + _ORDER_BLIND_M)},
+    ("network_credential_abuse", "reverse_relationship", "IMPROVED"): {"max": 1, "reason": (
+        "2026-10-28 recon_sweep->password_spray is unmet forward and met in reverse: the sweep is an ASA deny "
+        "that evidences only the attacker address, and the graph's edges run actor->ip, so the earlier side "
+        "has no actor to start an edge -- the it_intrusion recon->brute-force class")},
+    ("network_credential_abuse", "flip_relationship", "IMPROVED"): {"max": 1, "reason": (
+        "2026-10-28 allowed->forbidden flip of recon_sweep->password_spray, an allowed pair the graph does NOT "
+        "join forward (ip-only ASA step, see reverse_relationship above): re-labelling an unmet requirement as "
+        "a met non-edge raises chain_fidelity")},
     # cloud_iam_abuse has ONE alert-raising step and no incident promotes, so there is NO graph: every
     # relationship is unjoined in both directions and no alert order exists to disagree about.
     ("cloud_iam_abuse", "flip_gap_to_false", "SURVIVED"): {"max": 7, "reason": (
@@ -682,6 +698,15 @@ _INERT_KEYS: dict = {
     "provenance.rules_read.dc_mass_vm_delete": _PROV_PIN,
     "provenance.rules_read.dc_mass_vm_delete_by_source": _PROV_PIN,
     "provenance.rules_read.dc_privileged_container": _PROV_PIN,
+    # storylines 10-11 oracles (2026-10-28, measured inert to the mutation grader at seed 7):
+    "provenance.rules_read.win_powershell_suspicious_script": _PROV_PIN,
+    "provenance.rules_read.win_lsass_access_suspicious": _PROV_PIN,
+    "provenance.rules_read.win_ad_sensitive_attribute_modified": _PROV_PIN,
+    "provenance.rules_read.win_service_installed_suspicious_path": _PROV_PIN,
+    "provenance.rules_read.win_audit_log_cleared": _PROV_PIN,
+    "provenance.rules_read.common_port_sweep": _PROV_PIN,
+    "provenance.rules_read.common_password_spray_by_source": _PROV_PIN,
+    "provenance.rules_read.common_credential_stuffing_sustained": _PROV_PIN,
     "step_dependencies.attacker_console_login[]": ("cross-instrument: 2026-10-14 read by "
         "evasion_search.verify_subset_equivalence and scenario_matrix._dependents (cloud_iam_abuse's "
         "victim_session -> attacker_console_login displacement control); the mutation grader never moves on it"),
