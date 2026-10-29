@@ -1,0 +1,10 @@
+--- before C (3 ws4 replicas) 01:45:46 hostCPU=27% freeGB=1,1
+infra-ws1-collectors infra-ws2-normalization infra-ws3-indexer infra-ws4-detection infra-ws5-ai infra-ws6-inventory infra-ws7-dashboard infra-ws8-correlation infra-ws9-resolver siem-bus siem-dashboards siem-goatcounter siem-prometheus siem-store 
+siem-bus cpu=1.52%
+infra-ws9-resolver-1 cpu=1.42%
+siem-store cpu=0.96%
+--- after C 01:50:29 hostCPU=42% freeGB=1,2
+infra-ws1-collectors infra-ws2-normalization infra-ws3-indexer infra-ws4-detection infra-ws5-ai infra-ws6-inventory infra-ws7-dashboard infra-ws8-correlation infra-ws9-resolver siem-bus siem-dashboards siem-goatcounter siem-prometheus siem-store 
+infra-ws7-dashboard-1 cpu=5.55%
+siem-dashboards cpu=3.46%
+infra-ws3-indexer-1 cpu=1.97%

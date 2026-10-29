@@ -889,6 +889,16 @@ class Rule:
         if group_value is None:
             return ([own_id] if own_id else []), 0
         window_key = f"{self.id}:{self._namespaced_group(tenant, group_value)}"
+        capped = getattr(self._counter, "members_capped", None)
+        if capped is not None:
+            # O(cap) read (the full window can hold thousands of entries);
+            # `omitted` is the same number the slice below would compute.
+            ids, omitted = capped(window_key, self._MAX_CONTRIBUTING_IDS,
+                                  distinct=bool(self.distinct_field))
+            ids = [str(i) for i in ids]
+            if not ids and own_id:
+                ids = [own_id]
+            return ids, omitted
         if self.distinct_field:
             # The tracked "member" for a distinct-field window IS the field
             # value (e.g. distinct dst ports), not an event id -- still real

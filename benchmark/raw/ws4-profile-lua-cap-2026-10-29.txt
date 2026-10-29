@@ -1,0 +1,14 @@
+events=2999 profile=realistic window_counter=redis
+events/s (under cProfile): 294   ms/event: 3.40
+redis round trips/event: 2.68
+         2942206 function calls (2941426 primitive calls) in 10.195 seconds
+   Ordered by: cumulative time
+   List reduced from 197 to 8 due to restriction <8>
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+     2999    0.020    0.000   10.195    0.003 /repo/services/ws4-detection/main.py:657(detect_one)
+     8022    0.063    0.000    7.946    0.001 /usr/local/lib/python3.12/site-packages/redis/client.py:866(execute_command)
+     8022    0.233    0.000    7.884    0.001 /usr/local/lib/python3.12/site-packages/redis/client.py:869(_execute_command)
+     2999    0.123    0.000    6.975    0.002 /repo/services/ws4-detection/main.py:288(process)
+    21817    0.041    0.000    6.711    0.000 /repo/services/ws4-detection/engine.py:951(evaluate)
+     5646    0.103    0.000    6.078    0.001 /repo/services/ws4-detection/engine.py:969(_evaluate_stateful)
+    16056    0.047    0.000    5.792    0.000 /usr/local/lib/python3.12/site-packages/redis/retry.py:101(call_with_retry)

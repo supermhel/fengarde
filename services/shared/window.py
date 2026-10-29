@@ -365,6 +365,13 @@ class DequeWindowCounter:
                 seen.append(v)
         return seen
 
+    def members_capped(self, key: str, cap: int, distinct: bool = False) -> tuple:
+        """``(first `cap` members, how many more there are)`` -- exactly
+        ``members()`` / ``distinct_members()`` sliced and counted, so the
+        alert path (which only cites `cap` ids) need not hold the rest."""
+        full = self.distinct_members(key) if distinct else self.members(key)
+        return full[:cap], max(0, len(full) - cap)
+
 
 #: ZADD GT + trim + ZCARD + EXPIRE for Redis < 6.2 (no GT flag): atomic as one script.
 #: KEYS[1] zset; ARGV: member, score, trim-upper-bound, ttl seconds.
@@ -378,6 +385,22 @@ local n = redis.call('ZCARD', KEYS[1])
 redis.call('EXPIRE', KEYS[1], ARGV[4])
 return n
 """
+
+
+#: Single-round-trip twins of the MULTI pipelines in RedisWindowCounter.hit /
+#: hit_distinct (load test 2026-10-28: those pipelines were ~78% of WS-4's
+#: per-event time, 1.4 ms each vs 0.76 ms as one EVALSHA on the measured host).
+#: SAME four steps in the SAME order as the pipelines, and a Lua script is atomic
+#: like MULTI/EXEC. KEYS[1] zset; ARGV: member, score, trim-upper-bound, ttl s.
+_HIT_LUA = """
+redis.call('ZADD', KEYS[1], ARGV[2], ARGV[1])
+redis.call('ZREMRANGEBYSCORE', KEYS[1], 0, ARGV[3])
+local n = redis.call('ZCARD', KEYS[1])
+redis.call('EXPIRE', KEYS[1], ARGV[4])
+return n
+"""
+#: Redis >= 6.2 (ZADD GT). Older servers keep using _DISTINCT_LUA via eval().
+_HIT_DISTINCT_GT_LUA = _HIT_LUA.replace("'ZADD', KEYS[1], ARGV[2]", "'ZADD', KEYS[1], 'GT', ARGV[2]")
 
 
 def redis_client_for_backend(backend: str):
@@ -431,9 +454,19 @@ class RedisWindowCounter:
     would overwrite and undercount. Falls back to the timestamp if none given.
     """
 
-    def __init__(self, client, namespace: str = "ws4:win", zadd_gt: bool | None = None) -> None:
+    def __init__(self, client, namespace: str = "ws4:win", zadd_gt: bool | None = None,
+                 use_lua: bool | None = None) -> None:
         self.r = client
         self.ns = namespace
+        # One EVALSHA per hit()/hit_distinct() instead of a 4-command MULTI
+        # pipeline (same steps, same atomicity, one round trip, fewer replies to
+        # parse). None = auto: on when the client can register scripts (any real
+        # redis-py client); off for the in-test fakes that only model pipeline().
+        # False forces the pipelines (the pre-2026-10-28 behaviour), which the
+        # parity test in test_window_lua_live.py uses as the reference.
+        self._use_lua = (callable(getattr(client, "register_script", None))
+                         if use_lua is None else bool(use_lua))
+        self._scripts: dict = {}
         # ZADD GT needs Redis >= 6.2 (Q11, 2026-10-14). None = detect once from
         # INFO server; False forces the Lua path (same semantics, any Redis >= 2.6).
         self._zadd_gt = zadd_gt
@@ -448,10 +481,23 @@ class RedisWindowCounter:
                 self._zadd_gt = False
         return self._zadd_gt
 
+    def _script(self, name: str, source: str):
+        """Registered script, created on first use (registering contacts Redis
+        on some redis-py versions, and a Redis that is down at construction must
+        not fail ws4's startup). redis-py's Script re-loads itself on NOSCRIPT,
+        which is what a Sentinel failover to a fresh master looks like."""
+        sc = self._scripts.get(name)
+        if sc is None:
+            sc = self._scripts[name] = self.r.register_script(source)
+        return sc
+
     def hit(self, key: str, now_ms: int, window_ms: int, member=None) -> int:
         zkey = f"{self.ns}:{key}"
         m = str(member) if member is not None else str(now_ms)
         horizon = now_ms - window_ms
+        if self._use_lua:
+            return int(self._script("hit", _HIT_LUA)(
+                keys=[zkey], args=[m, now_ms, horizon - 1, max(1, window_ms // 1000 + 1)]))
         pipe = self.r.pipeline()
         pipe.zadd(zkey, {m: now_ms})
         pipe.zremrangebyscore(zkey, 0, horizon - 1)
@@ -483,6 +529,9 @@ class RedisWindowCounter:
         ttl = max(1, window_ms // 1000 + 1)
         if not self._gt_supported():
             return int(self.r.eval(_DISTINCT_LUA, 1, zkey, m, now_ms, horizon - 1, ttl))
+        if self._use_lua:
+            return int(self._script("hit_distinct", _HIT_DISTINCT_GT_LUA)(
+                keys=[zkey], args=[m, now_ms, horizon - 1, ttl]))
         pipe = self.r.pipeline()
         pipe.zadd(zkey, {m: now_ms}, gt=True)
         pipe.zremrangebyscore(zkey, 0, horizon - 1)
@@ -509,3 +558,18 @@ class RedisWindowCounter:
     def distinct_members(self, key: str) -> list:
         """Same idea as ``members()`` but for a `hit_distinct()` key."""
         return list(self.r.zrange(f"{self.ns}:d:{key}", 0, -1))
+
+    def members_capped(self, key: str, cap: int, distinct: bool = False) -> tuple:
+        """``(first `cap` members oldest-first, how many more there are)`` in ONE
+        MULTI round trip (ZRANGE 0..cap-1 + ZCARD). Same answer as slicing
+        ``members()`` / ``distinct_members()`` but O(cap) instead of O(window):
+        the full read made every alert cost a ZRANGE of the whole window (a
+        24 h credential-stuffing window holds thousands of values) for a list
+        capped at ~50 ids. Load test 2026-10-29: that read was 64% of WS-4's
+        per-event time on a stuffing-heavy stream."""
+        zkey = f"{self.ns}:d:{key}" if distinct else f"{self.ns}:{key}"
+        pipe = self.r.pipeline()
+        pipe.zrange(zkey, 0, max(cap, 1) - 1)
+        pipe.zcard(zkey)
+        page, card = pipe.execute()
+        return list(page), max(0, int(card) - cap)

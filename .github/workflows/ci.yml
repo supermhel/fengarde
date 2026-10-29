@@ -400,6 +400,11 @@ jobs:
           FENGARDE_E2E_STRICT: "1"
           REDIS_URL: redis://localhost:6379/0
         run: python services/ws4-detection/test_window_redis_live.py
+      - name: window counter single-EVALSHA path == MULTI pipeline path on real Redis
+        env:
+          FENGARDE_E2E_STRICT: "1"
+          REDIS_URL: redis://localhost:6379/0
+        run: python services/ws4-detection/test_window_lua_live.py
 
   # Q11 (owner decision 2026-10-14, proven 2026-10-20): the hit_distinct Lua fallback on a REAL Redis older
   # than 6.2 (no ZADD GT). The redis-integration job above runs Redis 7 with the Lua path merely FORCED; this
