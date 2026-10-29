@@ -90,7 +90,7 @@ def main() -> int:
     print(f"redis round trips/event: {TRIPS['n'] / n:.2f}")
     s = io.StringIO()
     pstats.Stats(prof, stream=s).sort_stats("cumulative").print_stats(a.top)
-    print("\n".join(l for l in s.getvalue().splitlines() if l.strip())[:3500])
+    print("\n".join(ln for ln in s.getvalue().splitlines() if ln.strip())[:3500])
     return 0
 
 

@@ -53,7 +53,6 @@ step("create SAME id again (op_type=create)", "PUT", f"/{idx}/_doc/a?op_type=cre
 step("index (upsert) same id", "PUT", f"/{idx}/_doc/a", {"n": 2})
 step("index doc violating the mapping", "PUT", f"/{idx}/_doc/b", {"n": "not-a-number"})
 before = failed()
-status, resp = call("POST", "/_bulk", None)  # placeholder to keep structure simple
 nd = "\n".join([json.dumps({"create": {"_index": idx, "_id": "a"}}), json.dumps({"n": 1}),
                 json.dumps({"create": {"_index": idx, "_id": "c"}}), json.dumps({"n": 3})]) + "\n"
 r = urllib.request.Request(base + "/_bulk", data=nd.encode(), method="POST",

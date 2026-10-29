@@ -44,8 +44,12 @@ completion minus scheduled arrival, so queueing shows once offered > capacity.
 In-memory sink instead of a bus; `MemoryStore` instead of OpenSearch.
 
 Profiles: **realistic** = ~60% syslog / 20% ssh / 20% ASA from mostly unique
-sources plus one 10-line brute-force burst per 500 events (alerts = 1.25% of
-events). **alert-heavy** = the older `fengarde_bench.py` mix where every ssh
+sources plus one 10-line brute-force burst per 500 events (the zero-infra run
+emits 250 alert *messages* per 20,000 events, 1.25%; the live harness stamps every
+event "now", so its windows fill much faster and alert messages were ~25% of
+events, see section 4d. Alert messages are not alerts: one burst re-emits the
+same `alert_id` for every event past the threshold, and 17,940 messages in the
+100 events/s soak were only 358 distinct alert documents). **alert-heavy** = the older `fengarde_bench.py` mix where every ssh
 line trips a rule (~1.3 alerts per event), a worst-case stress, not a
 realistic ratio.
 
@@ -176,7 +180,7 @@ Change: `ws3-indexer`'s daemon now gathers each read pass (up to `WS3_BULK_MAX`
 batch path in `services/shared/runner.py`). Semantics kept: `normalized.events`
 use bulk `create` (a per-item 409 is success), other topics bulk `index` (idempotent
 upsert on the deterministic id); alerts stay on the per-document CAS path so analyst
-`triage` is preserved; messages are acked only after the bulk response is known,
+`triage` is preserved (*superseded by section 4b: alerts are now read and written in bulk*); messages are acked only after the bulk response is known,
 per item (failed items stay unacked for redelivery, 429/5xx items are retried
 in-process up to `WS3_BULK_RETRIES`=3, a whole-request failure acks nothing);
 `WS3_BULK=0` restores the old path. Contract test:
@@ -359,10 +363,19 @@ python tools/fengarde_loadtest_live.py --rates --soak-rate 100 --soak-min 12 --o
 | OpenSearch `events-*` growth | 60.0 docs/s | 99.6 docs/s (99.3-108 per minute) |
 | `alerts` stream lag (cg-index) | 1,361 mid-run, 1,779 near end | 0-3 throughout |
 | Total lag | ~230 -> ~1,600 plateau, ~2,100 at the end | 52 at start, 19-402 per minute, 424 at the end (event path, transient), cleared 10 s after stop |
-| Alert path counters | n/a (per-document) | 18,166 alert docs in 15,617 bulk requests, 0 CAS conflicts, 0 failed, 0 retried |
+| Alert path counters (whole session, incl. the ramps) | n/a (per-document) | 18,166 alert messages in 15,617 bulk requests (~1.16 per request), 0 CAS conflicts, 0 failed, 0 retried |
+| Alert messages in the soak window | n/a | 17,940 messages = 25.1% of the 71,338 events, but only 358 distinct alert documents |
 | OpenSearch heap | 71-77% | 66-77% (398 MB max) |
 | CPU (mean) | opensearch 87%, ws4 54%, redis 52% | opensearch 64%, ws4 73% (3 replicas summed), redis 43%, ws3 34% |
 | `index_failed` vs `conflicts_409` | 12,085 vs 12,083 (+2 probe) | 16,416 vs 16,430 for the whole session (within 14: the two reads were taken a few events apart) |
+
+What the alert-batching numbers do and do not show: at ~1.16 messages per bulk
+request the batching and the within-batch collapse were barely exercised live; the
+win here is mostly that each alert message no longer costs a separate GET plus
+conditional PUT, not large batches. "0 CAS conflicts" means the stale-version
+fallback was never hit live; that path, the coalescing of same-id versions, the
+no-resurrection of a cleared triage and the exhausted-CAS no-ack are covered by
+unit tests only (`test_bulk_handler.py`), not by the live runs.
 
 So: 100 events/s held for 12 minutes with no loss, the alert backlog stays flat,
 and the node's `index_failed` counter again equals ws3's own 409 count.

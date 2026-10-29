@@ -25,6 +25,7 @@ Run: python services/ws3-indexer/test_bulk_handler.py
 """
 from __future__ import annotations
 
+import copy
 import os
 import sys
 import threading
@@ -284,6 +285,99 @@ def test_alert_read_failure_leaves_unacked():
           f"alert unacked when its read failed, event still acked: {counts}")
 
 
+def _incident(version, i=1):
+    return {"incident_id": f"inc-{i}", "time": 1_700_000_000_000, "version": version,
+            "siem": {"sector": "common", "tenant": "default"}}
+
+
+def test_same_id_versions_coalesce_and_retry_never_overwrites_newer():
+    """Review finding: v1 429, v2 ok, retry wrote v1 over v2 and both were acked."""
+    seen: list = []
+
+    def script(call_no, op, doc_id):
+        seen.append(call_no)
+        return None
+
+    store = FakeBulkStore(script)
+    h = BatchIndexHandler(store, retries=3, backoff_s=0)
+    bus, counts = drive(store, h, [_incident(1), _incident(2), _incident(3)])
+    idx, did = route(_incident(1))
+    sent = [it for c in store.calls for it in c]
+    check(counts["acked"] == 3, f"all three messages acked: {counts}")
+    check(len(sent) == 1, f"one bulk item for one id, got {len(sent)}")
+    check(store.get(idx, did)["version"] == 3, "the last version is what is stored")
+
+    # the exact review scenario: the item for the id is throttled once, then ok
+    flaky = {"n": 0}
+
+    def throttle_first(call_no, op, doc_id):
+        flaky["n"] += 1
+        return 429 if flaky["n"] == 1 else None
+
+    store2 = FakeBulkStore(throttle_first)
+    h2 = BatchIndexHandler(store2, retries=3, backoff_s=0)
+    drive(store2, h2, [_incident(1), _incident(2)])
+    check(store2.get(idx, did)["version"] == 2, "a retried item must not leave an older version stored")
+    # and different ids in one batch are untouched by coalescing
+    store3 = FakeBulkStore()
+    drive(store3, BatchIndexHandler(store3), [_incident(1, 1), _incident(1, 2)])
+    check(len([it for c in store3.calls for it in c]) == 2, "distinct ids are not merged")
+
+
+def test_stale_cas_fallback_does_not_resurrect_cleared_triage():
+    store = FakeBulkStore()
+    h = BatchIndexHandler(store)
+    drive(store, h, [_alert(7)])
+    idx, did = route(_alert(7))
+    doc = store.get(idx, did)
+    doc["triage"] = {"status": "investigating", "by": "analyst"}
+    store.index(idx, did, doc)
+    real_mget = store.mget_versioned
+
+    def racing_mget(keys):
+        out = real_mget(keys)           # we have read the triage... (MemoryStore hands out live
+        out = {k: (copy.deepcopy(d), v) for k, (d, v) in out.items()}   # references: snapshot it)
+        cur = store.get(idx, did)
+        cur.pop("triage", None)         # ...then the analyst clears it before our write
+        store.index(idx, did, cur)
+        return out
+
+    store.mget_versioned = racing_mget
+    bus, counts = drive(store, h, [_alert(7, 5)])
+    check(counts["acked"] == 1 and h.stats["cas_conflicts"] == 1, f"{counts} {h.stats}")
+    check("triage" not in store.get(idx, did), "a triage cleared during the race must stay cleared")
+    check(store.get(idx, did)["time"] == 1_700_000_000_005, "the new alert data still lands")
+
+
+class _AlwaysStaleStore(FakeBulkStore):
+    def index_cas(self, index, doc_id, document, version):
+        return False if version is not None else super().index_cas(index, doc_id, document, version)
+
+
+def test_exhausted_alert_cas_is_not_acked():
+    store = _AlwaysStaleStore()
+    h = BatchIndexHandler(store, backoff_s=0)
+    import main as ws3_main
+    saved = ws3_main._ALERT_CAS_MAX_RETRIES
+    ws3_main._ALERT_CAS_MAX_RETRIES = 2
+    try:
+        drive(store, h, [_alert(9)])                                   # create path (version None) works
+        bus, counts = drive(store, h, [_alert(9, 3), ev(2, 20)])      # update path always loses the CAS
+        check(counts == {"acked": 1, "failed": 1, "deadlettered": 0},
+              f"exhausted CAS is unacked, the event beside it acked: {counts}")
+        check(bus.acked == ["m1"], f"only the event was acked: {bus.acked}")
+        raised = False
+        try:
+            h(_alert(9, 4))                                            # per-document daemon path
+        except Exception as exc:  # noqa: BLE001
+            raised = type(exc).__name__ == "AlertCasExhausted"
+        check(raised, "per-document daemon handler must raise, not ack, on exhausted CAS")
+        # the batch/tooling path keeps its documented no-raise behavior
+        check(ws3_main.index_doc(store, _alert(9, 6)) is False, "run()-path index_doc still returns False")
+    finally:
+        ws3_main._ALERT_CAS_MAX_RETRIES = saved
+
+
 def test_unroutable_dropped_and_dead_letter_cap():
     store = FakeBulkStore()
     h = BatchIndexHandler(store)
@@ -428,7 +522,10 @@ def main() -> int:
                test_whole_request_failure_acks_nothing, test_redelivery_is_idempotent,
                test_alert_batch_preserves_triage_and_collapses_repeats,
                test_alert_stale_version_falls_back_to_cas_and_keeps_triage,
-               test_alert_read_failure_leaves_unacked, test_unroutable_dropped_and_dead_letter_cap,
+               test_alert_read_failure_leaves_unacked,
+               test_same_id_versions_coalesce_and_retry_never_overwrites_newer,
+               test_stale_cas_fallback_does_not_resurrect_cleared_triage,
+               test_exhausted_alert_cas_is_not_acked, test_unroutable_dropped_and_dead_letter_cap,
                test_worker_respects_batch_max, test_build_handlers_wiring_and_kill_switch,
                test_opensearch_bulk_write_wire_format):
         before = len(FAILS)

@@ -8,7 +8,12 @@ deletes the scratch index. Run against the isolated load-test stack only.
 
 Run:  python tools/fengarde_os_probe.py --os-port 19200
 """
-import argparse, http.client, json, time, urllib.request, uuid
+import argparse
+import http.client
+import json
+import time
+import urllib.request
+import uuid
 
 ap = argparse.ArgumentParser()
 ap.add_argument("--os-port", type=int, default=19200)
@@ -16,7 +21,9 @@ ap.add_argument("--n", type=int, default=600)
 a = ap.parse_args()
 base = f"http://127.0.0.1:{a.os_port}"
 idx = f"loadprobe-{uuid.uuid4().hex[:6]}"
-doc = lambda i: {"class_uid": 3002, "time": int(time.time() * 1000), "msg": "x" * 300, "n": i}
+def doc(i):
+    return {"class_uid": 3002, "time": int(time.time() * 1000), "msg": "x" * 300, "n": i}
+
 
 
 def req(method, path, body=None):

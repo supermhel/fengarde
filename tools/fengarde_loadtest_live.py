@@ -108,7 +108,7 @@ class Sampler(threading.Thread):
         try:
             p = subprocess.run(["docker", "stats", "--no-stream", "--format",
                                 "{{json .}}"], capture_output=True, text=True, timeout=25)
-            d = {}
+            d: dict = {}
             for line in p.stdout.splitlines():
                 j = json.loads(line)
                 if not j["Name"].startswith(self.project + "-"):

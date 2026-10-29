@@ -229,7 +229,7 @@ def run_worker(argv: list[str]) -> dict:
 def spawn(args: list[str]) -> dict:
     env = dict(os.environ, FENGARDE_LOG_LEVEL="error", PYTHONUNBUFFERED="1")
     p = subprocess.run([sys.executable, __file__, *args], capture_output=True, text=True, env=env)
-    lines = [l for l in p.stdout.splitlines() if l.startswith("{")]
+    lines = [ln for ln in p.stdout.splitlines() if ln.startswith("{")]
     if p.returncode != 0 or not lines:
         return {"error": f"exit {p.returncode}", "stderr_tail": p.stderr[-600:], "args": args}
     return json.loads(lines[-1])
@@ -252,7 +252,7 @@ def main() -> int:
     if a.quick:
         a.n, a.rates, a.duration, a.max_events = 2000, [200, 1000], 3.0, 3000
 
-    results = {"meta": {
+    results: dict = {"meta": {
         "date_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "platform": platform.platform(), "machine": platform.machine(),
         "processor": platform.processor(), "cpu_count": os.cpu_count(),
