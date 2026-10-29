@@ -1,4 +1,4 @@
-"""Builds the demo console's SECOND recorded scenario (AI-to-OT) from REAL pipeline code, zero infrastructure.
+"""Builds the demo console's SECOND scenario (AI-to-OT, generated, not recorded) from REAL pipeline code, zero infrastructure.
 
     python tools/build_ai_ot_fixtures.py            # writes services/ws7-dashboard/app/src/demo/fixtures-ai-ot.json
 
@@ -27,6 +27,7 @@ import os
 import sys
 import threading
 import time
+import urllib.parse
 import urllib.request
 from http.server import ThreadingHTTPServer
 from pathlib import Path
@@ -53,6 +54,14 @@ def _import(ws_dir: str, *fresh: str):
         sys.path.remove(p)
     sys.path.insert(0, p)
     return importlib.import_module("main")
+
+
+def _load_file(name: str, path: Path):
+    spec = importlib.util.spec_from_file_location(name, path)
+    assert spec and spec.loader, path
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
 
 
 def raw_payloads() -> list[dict]:
@@ -92,15 +101,11 @@ def build() -> dict:
     configure_aliases()
     now_s = last_s + 3600  # fixed "now" one hour after the last alert: the twin's timestamps are in the past
     corr = ws8.Correlator(now_fn=lambda: now_s)
-    ws8_main = importlib.util.spec_from_file_location("ws8_main", SERVICES / "ws8-correlation" / "main.py")
-    m8 = importlib.util.module_from_spec(ws8_main)
-    ws8_main.loader.exec_module(m8)
+    m8 = _load_file("ws8_main", SERVICES / "ws8-correlation" / "main.py")
     h8 = m8.make_handler(bus, corr)
     for a in alerts:
         h8(a)
-    ws9_main = importlib.util.spec_from_file_location("ws9_main", SERVICES / "ws9-resolver" / "main.py")
-    m9 = importlib.util.module_from_spec(ws9_main)
-    ws9_main.loader.exec_module(m9)
+    m9 = _load_file("ws9_main", SERVICES / "ws9-resolver" / "main.py")
     resolver = ws9.EntityResolver(now_fn=lambda: now_s)
     h9 = m9.make_handler(bus, resolver)
     for a in alerts:
@@ -117,7 +122,8 @@ def build() -> dict:
     import triage_api
     import audit
     import rules_view
-    srv = ThreadingHTTPServer(("127.0.0.1", 0), triage_api.make_handler(store, audit_log=audit.AuditLog(os.environ["FENGARDE_AUDIT_LOG"])))
+    handler = triage_api.make_handler(store, audit_log=audit.AuditLog(os.environ["FENGARDE_AUDIT_LOG"]))
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), handler)
     port = srv.server_address[1]
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     base = f"http://127.0.0.1:{port}"
@@ -140,7 +146,8 @@ def build() -> dict:
                     if keep(doc):
                         rows.append({"_index": idx, "_id": doc_id, "_score": None, "_source": doc, "sort": [doc.get("time")]})
         rows.sort(key=lambda h: -(h["_source"].get("time") or 0))
-        return {"took": 1, "timed_out": False, "hits": {"total": {"value": len(rows), "relation": "eq"}, "max_score": None, "hits": rows}}
+        total = {"value": len(rows), "relation": "eq"}
+        return {"took": 1, "timed_out": False, "hits": {"total": total, "max_score": None, "hits": rows}}
 
     # the same selections the console's nginx proxy sends to OpenSearch (templates/default.conf.template):
     # /api/alerts = docs that have a rule_title; /api/ai-triage = alert_id prefixed "ai-" (WS-5's verdict docs)
@@ -154,9 +161,10 @@ def build() -> dict:
     inc = call(f"/incidents?tenant_id={TENANT}")
     fx = {
         "meta": {
-            "scenario": "ai-ot", "recordedAt": int(time.time() * 1000), "attacker": "10.20.0.50", "t0": t0,
+            "scenario": "ai-ot", "generatedAt": int(time.time() * 1000), "attacker": "10.20.0.50", "t0": t0,
             "timeScale": 12,  # replay compresses the twin's 60 s between steps to 5 s; evidence blocks keep the original times
-            "note": "Synthetic AI-to-OT chain: the evaluation twin's deterministic raw records (seed 7) run through the real WS-2/4/5/8/9/3 code in-process. Not recorded from a live stack, not a real attack.",
+            "note": ("Synthetic AI-to-OT chain: the evaluation twin's deterministic raw records (seed 7) run through the real "
+                     "WS-2/4/5/8/9/3 code in-process. Not recorded from a live stack, not a real attack."),
             "attackAlerts": len(atk_alerts), "attackEvents": len(atk_events), "aiBackend": "stub",
         },
         "alerts": al, "events": ev, "ai": ai_rows, "incidents": inc,
@@ -166,7 +174,7 @@ def build() -> dict:
     fx["rules"]["count"] = len(fx["rules"]["rules"])
     for i in inc["incidents"]:
         iid = i["incident_id"]
-        q = f"/incidents/{urllib.request.quote(iid, safe=':')}"
+        q = f"/incidents/{urllib.parse.quote(iid, safe=':')}"
         fx["graph"][iid] = call(f"{q}/graph?tenant_id={TENANT}")
         fx["evidence"][iid] = call(f"{q}/evidence?tenant_id={TENANT}")
         for lg in ("en", "de"):
@@ -174,9 +182,10 @@ def build() -> dict:
         for n in (fx["graph"][iid] or {}).get("nodes") or []:
             if n["entity_id"] not in fx["entity"]:
                 fx["entity"][n["entity_id"]] = call(f"/entities/{n['entity_id']}?tenant_id={TENANT}")
-    queries = [""] + [f"?template=nis2&stage={s}&lang={lg}" for s in ("early_warning", "notification", "final_report") for lg in ("de", "en")]
+    stages = ("early_warning", "notification", "final_report")
+    queries = [""] + [f"?template=nis2&stage={s}&lang={lg}" for s in stages for lg in ("de", "en")]
     for a in atk_alerts:
-        aid = urllib.request.quote(a["alert_id"], safe=":")
+        aid = urllib.parse.quote(a["alert_id"], safe=":")
         for qs in queries:
             fx["reports"][f"{a['alert_id']}|{qs}"] = call(f"/alerts/{aid}/report{qs}", post=True)
     srv.shutdown()
@@ -191,9 +200,12 @@ def main() -> None:
     print(f"wrote {out} ({out.stat().st_size // 1024} KB)")
     atk_alerts = [h["_source"] for h in fx["alerts"]["hits"]["hits"]]
     inc, t0 = fx["incidents"], fx["meta"]["t0"]
-    print(f"  {len(atk_alerts)} alerts, {len(fx['events']['hits']['hits'])} events, {len(inc['incidents'])} incidents, {len(fx['reports'])} reports")
+    n_events = len(fx["events"]["hits"]["hits"])
+    print(f"  {len(atk_alerts)} alerts, {n_events} events, {len(inc['incidents'])} incidents, {len(fx['reports'])} reports")
     for a in sorted(atk_alerts, key=lambda x: x["time"]):
-        print(f"  alert t+{(a['time'] - t0) // 1000:>4}s  {a['level']:<8} {a['rule_title']}  [{(a.get('mitre') or {}).get('tactic')}]  ai={((a.get('ai') or {}).get('engine'))}")
+        tactic = (a.get("mitre") or {}).get("tactic")
+        engine = (a.get("ai") or {}).get("engine")
+        print(f"  alert t+{(a['time'] - t0) // 1000:>4}s  {a['level']:<8} {a['rule_title']}  [{tactic}]  ai={engine}")
     for i in inc["incidents"]:
         print(f"  incident {i['incident_id']}  members={i['member_count']} tactics={i['tactics']}")
 

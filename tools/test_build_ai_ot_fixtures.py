@@ -19,7 +19,7 @@ sys.path.insert(0, str(HERE))
 import build_ai_ot_fixtures as b  # noqa: E402
 
 FAILS: list[str] = []
-WALL_CLOCK = {"recordedAt", "built_at_ms", "generated_at"}
+WALL_CLOCK = {"recordedAt", "generatedAt", "built_at_ms", "generated_at"}
 
 
 def check(cond, msg):
@@ -57,11 +57,14 @@ def main() -> int:
             check(fx["entity"].get(n["entity_id"]), f"{iid}: entity {n['entity_id'][:8]} missing")
     for a in alerts:
         for lg in ("de", "en"):
-            check(fx["reports"].get(f"{a['alert_id']}|?template=nis2&stage=notification&lang={lg}"), f"{a['alert_id']}: no {lg} NIS2 draft")
+            key = f"{a['alert_id']}|?template=nis2&stage=notification&lang={lg}"
+            check(fx["reports"].get(key), f"{a['alert_id']}: no {lg} NIS2 draft")
 
     ai = [h["_source"] for h in fx["ai"]["hits"]["hits"]]
     check(ai and all((x["ai"] or {}).get("engine") == "stub" for x in ai), "every AI verdict must say engine=stub")
     check(fx["meta"]["aiBackend"] == "stub", "meta.aiBackend must be stub")
+    covered = {e for x in ai for e in x["event_ids"]}
+    check(all(a.get("trigger_event_id") in covered for a in alerts), "every alarm must be coverable by an AI verdict doc")
 
     committed = json.loads(b.OUT.read_text(encoding="utf-8"))
     check(strip(committed) == strip(fx), f"{b.OUT.name} is stale: rerun python tools/build_ai_ot_fixtures.py")

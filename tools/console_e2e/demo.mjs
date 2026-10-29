@@ -84,8 +84,13 @@ const TITLES = ["n8n new webhook exposed", "n8n automation-platform activity out
   "AI agent tool call reached a non-allowlisted domain", "AI agent tool call accessed credential material", "Modbus/TCP write outside the expected address range"];
 for (const t of TITLES) ok(`ai-ot alarm on screen: ${t}`, alarmText.includes(t));
 ok("ai-ot: 7 alarms listed (2 Modbus writes)", (await page.$$("table.data tbody tr.clk")).length === 7);
-await page.locator("table.data tbody tr.clk", { hasText: "prompt-injection" }).first().click(); await sleep(900);
-ok("ai-ot: AI triage says which backend produced the verdict", /stub/i.test(await page.textContent("main")));
+let noVerdict = 0;
+for (let i = 0; i < 7; i++) {
+  await page.locator("table.data tbody tr.clk").nth(i).click(); await sleep(500);
+  if (!/engine:\s*stub/i.test(await page.textContent(".faceplate"))) noVerdict++;
+}
+ok("ai-ot: every one of the 7 alarms shows an AI verdict naming the stub backend", noVerdict === 0, `${noVerdict} without`);
+ok("ai-ot: bar discloses 12x speed-up and stub AI without a hover", /12x/.test(await page.textContent(".chip.demo")) && /stub/i.test(await page.textContent(".chip.demo")));
 await page.goto(URL + "#/incidents"); await sleep(1200);
 ok("ai-ot: two incidents (ip 7 members, actor 5)", (await page.$$("table.data tbody tr.clk")).length === 2 && (await page.textContent("table.data")).includes("10.20.0.50") && (await page.textContent("table.data")).includes("ot-engineer"));
 await page.locator("table.data tbody tr.clk", { hasText: "10.20.0.50" }).first().click(); await sleep(900);

@@ -310,7 +310,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
       <h1 class="cond" style="grid-area:h"><span data-i18n="h1a">Logs in.</span><br><em data-i18n="h1b">Evidence out.</em></h1>
       <div class="cta" style="grid-area:c">
         <button class="btn primary" id="replay" type="button"><span class="play" aria-hidden="true"></span><span id="replayLabel">Replay the attack</span> <kbd>R</kbd></button>
-        <button class="btn" id="replayAi" type="button"><span class="play" aria-hidden="true"></span><span id="replayAiLabel">Replay the AI-to-OT chain</span></button>
+        <button class="btn" id="replayAi" type="button"><span class="play" aria-hidden="true"></span><span id="replayAiLabel">Replay the AI-to-OT chain</span> <kbd>A</kbd></button>
         <a class="btn" href="demo/" data-i18n="cta_console">Open console</a>
         <a class="btn" href="#tour" data-i18n="cta_tour">Watch the recordings</a>
         <a class="btn" href="https://github.com/supermhel/fengarde"><svg class="gh-ic" width="17" height="17" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2C6.48 2 2 6.58 2 12.25c0 4.53 2.87 8.37 6.84 9.73.5.1.68-.22.68-.5 0-.24-.01-1.04-.01-1.88-2.78.62-3.37-1.21-3.37-1.21-.46-1.19-1.11-1.51-1.11-1.51-.91-.63.07-.62.07-.62 1 .07 1.53 1.05 1.53 1.05.89 1.56 2.34 1.11 2.91.85.09-.66.35-1.11.63-1.37-2.22-.26-4.56-1.14-4.56-5.06 0-1.12.39-2.03 1.03-2.75-.1-.26-.45-1.3.1-2.71 0 0 .84-.28 2.75 1.05a9.3 9.3 0 0 1 5 0c1.9-1.33 2.74-1.05 2.74-1.05.55 1.41.2 2.45.1 2.71.64.72 1.03 1.63 1.03 2.75 0 3.93-2.34 4.79-4.57 5.05.36.32.68.94.68 1.9 0 1.37-.01 2.48-.01 2.81 0 .28.18.61.69.5A10.26 10.26 0 0 0 22 12.25C22 6.58 17.52 2 12 2z"/></svg>GitHub</a>
@@ -496,7 +496,7 @@ FINISH: unreviewed and undocumented is unfinished; this build ends with the fini
       state_idle: "Idle: nothing replayed", state_run: "Replay running", state_done: "Replay finished",
       board_cap: "Departure board: pipeline stages and the alarms raised by the replayed attack",
       th_time: "Time", th_src: "Source", th_ev: "Event", th_track: "Track", th_st: "Status", th_svc: "Service", th_what: "What", th_track2: "Interface",
-      board_foot: "<b>Track</b> = the bus topic a stage publishes to. <b>Amber</b> only ever means an alarm needs a person. Press <kbd>R</kbd> to replay.",
+      board_foot: "<b>Track</b> = the bus topic a stage publishes to. <b>Amber</b> only ever means an alarm needs a person. Press <kbd>R</kbd> to replay the attack, <kbd>A</kbd> for the AI-to-OT chain.",
       st_ok: "on time", st_request: "on request", st_replace: "replacement", st_cancel: "cancelled", st_check: "check", st_verified: "verified", st_idle: "ready",
       term_title: "Information terminal · the real console", term_sub: "recorded lab data · changes are not saved", term_open: "Open full screen",
       cap_tag: "Track 4 · what runs today", cap_h: "What runs. What does not.", cap_p: "Every capability gets the board's honest word. Anything stubbed, opt-in or not built says so.", cap_cap: "Capability board",
@@ -560,7 +560,7 @@ next_h: "You've seen the pipeline run. Now make it yours.", next_p: "The 10-minu
       state_idle: "Ruhe: nichts abgespielt", state_run: "Wiedergabe läuft", state_done: "Wiedergabe beendet",
       board_cap: "Abfahrtstafel: Pipeline-Stufen und die Alarme des abgespielten Angriffs",
       th_time: "Zeit", th_src: "Quelle", th_ev: "Ereignis", th_track: "Gleis", th_st: "Hinweis", th_svc: "Dienst", th_what: "Was", th_track2: "Schnittstelle",
-      board_foot: "<b>Gleis</b> = das Bus-Topic, auf das eine Stufe veröffentlicht. <b>Amber</b> heißt immer: Ein Alarm braucht einen Menschen. Mit <kbd>R</kbd> abspielen.",
+      board_foot: "<b>Gleis</b> = das Bus-Topic, auf das eine Stufe veröffentlicht. <b>Amber</b> heißt immer: Ein Alarm braucht einen Menschen. Mit <kbd>R</kbd> den Angriff abspielen, mit <kbd>A</kbd> die KI-zu-OT-Kette.",
       st_ok: "pünktlich", st_request: "auf Anforderung", st_replace: "Ersatzverkehr", st_cancel: "fällt aus", st_check: "prüfen", st_verified: "geprüft", st_idle: "bereit",
       term_title: "Informationsterminal · die echte Konsole", term_sub: "aufgezeichnete Labordaten · Änderungen werden nicht gespeichert", term_open: "Vollbild öffnen",
       cap_tag: "Gleis 4 · was heute fährt", cap_h: "Was fährt. Was nicht.", cap_p: "Jede Fähigkeit bekommt das ehrliche Wort der Tafel. Was nur ein Platzhalter ist, optional ist oder fehlt, sagt es.", cap_cap: "Fähigkeitentafel",
@@ -820,6 +820,7 @@ next_h: "Sie haben die Pipeline laufen sehen. Jetzt machen Sie sie zu Ihrer.", n
   $("#replayAi").addEventListener("click", function () { startReplay("ai-ot"); });
   document.addEventListener("keydown", function (e) {
     if ((e.key === "r" || e.key === "R") && !e.ctrlKey && !e.metaKey && !e.altKey && !/^(INPUT|TEXTAREA|SELECT)$/.test((e.target || {}).tagName || "")) startReplay("lab");
+    if ((e.key === "a" || e.key === "A") && !e.ctrlKey && !e.metaKey && !e.altKey && !/^(INPUT|TEXTAREA|SELECT)$/.test((e.target || {}).tagName || "")) startReplay("ai-ot");
   });
 
   window.addEventListener("message", function (e) {

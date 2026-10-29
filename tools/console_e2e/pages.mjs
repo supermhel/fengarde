@@ -83,6 +83,14 @@ for (const [name, w, h] of [["desktop", 1440, 900], ["mobile", 390, 844]]) {
   await page.click('[data-lang="de"]'); await sleep(400);
   ok(`${name}: DE labels the finished AI-to-OT replay, the other button and the board tag`, (await page.textContent("#replayAiLabel")).includes("Erneut") && (await page.textContent("#replayLabel")).includes("Angriff abspielen") && /synthetisch/i.test(await page.textContent("#boardTag")) && /synthetisch/i.test(await page.textContent("#termSub")));
   await page.click('[data-lang="en"]');
+  // changing the embedded console's scenario list resets the page: after a finished replay, and in the middle of one
+  const sel = page.frameLocator("#frame").locator(".demo-bar select");
+  const idle = async () => (await page.textContent("#replayLabel")).includes("Replay the attack") && (await page.textContent("#replayAiLabel")).includes("AI-to-OT") && !(await page.textContent("#replayAiLabel")).includes("again") && !(await page.$("#replay:disabled, #replayAi:disabled")) && /lab/i.test(await page.textContent("#termSub"));
+  await sel.selectOption("lab"); await sleep(700);
+  ok(`${name}: switching scenario after a finished replay returns the page to idle (no stale "Replay again")`, await idle());
+  await page.click("#replayAi"); await sleep(2500);
+  await sel.selectOption("lab"); await sleep(700);
+  ok(`${name}: switching scenario mid-replay re-enables both buttons and clears the board`, await idle() && !(await page.$("#boardBody .fresh")));
 
   // the recordings: four chapters, each loads and plays
   ok(`${name}: four chapters listed`, (await page.$$("#chapters button")).length === 4);

@@ -35,13 +35,13 @@ domain and reads credential material, then a Modbus/TCP write outside the PLC ad
   health are the lab recording's, unchanged.
 - **AI triage is the stub backend** (`engine: stub`, no model); the console shows the backend per verdict.
 - **Replay is 12x faster** than the twin's 60 s between steps (`meta.timeScale`); the evidence blocks keep the
-  original times. The 2.5 s and 5 s stage delays are estimates, as in the lab scenario.
+  original times. The badge in the demo bar says so in plain sight ("12x faster · stub AI"), not only in its tooltip. The 2.5 s and 5 s stage delays are estimates, as in the lab scenario.
 - **What it does not show**: the two incidents share one host (`10.20.0.50`) and one actor (`ot-engineer`); the
   incident graph joins on shared entities and is order-blind (`eval/SCORECARD.md`). It is not IT-to-OT correlation
   across different hosts and not a causal graph. The web-proxy step has no parser (dead-lettered), and the Modbus
   read that follows the first write raises no alarm: seven alarms, as in the twin.
 - **The project page** (`docs/index.html`) has two replay buttons: "Replay the attack" (key `R`, the recorded lab
-  scenario) and "Replay the AI-to-OT chain". The second posts `scenario: "ai-ot"` to the embedded console. While it
+  scenario) and "Replay the AI-to-OT chain" (key `A`). The second posts `scenario: "ai-ot"` to the embedded console. While it
   plays, the board tag and the terminal caption read "synthetic input, real pipeline output" instead of "recorded
   lab data", and WS-1 stays "ready" on the board (no collector ran: raw records are injected). The board shows the
   newest three rows; the page receives 7 `alarm` messages and 2 `incident` messages (7 and 5 alarms).
@@ -77,8 +77,8 @@ node close_alarms.mjs                                     # earlier lab alarms c
 python ../console_tour_traffic.py 127.0.0.1 5514 203.0.113.50   # one fresh attack, wait ~45 s
 node record_fixtures.mjs 203.0.113.50                    # writes src/demo/fixtures.json
 cd ../../services/ws7-dashboard/app && npm run build:demo
-node ../../../tools/console_e2e/demo.mjs                 # 37 checks against docs/demo (both scenarios, EN and DE)
-node ../../../tools/console_e2e/pages.mjs                # 71 checks against docs/ (project page, both replays, EN/DE, phone width)
+node ../../../tools/console_e2e/demo.mjs                 # 38 checks against docs/demo (both scenarios, EN and DE)
+node ../../../tools/console_e2e/pages.mjs                # 75 checks against docs/ (project page, both replays, EN/DE, phone width)
 ```
 
 Needs a running stack with RBAC and the three test accounts (see `tools/console_e2e/README.md`). Local lab

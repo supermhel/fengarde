@@ -10,7 +10,7 @@ const S = {
       chipTitle: "Recorded from a local lab run. Timestamps are shifted to now, changes are not saved, and the delay between pipeline stages is approximate.",
     },
     "ai-ot": {
-      sub: "synthetic input, real pipeline output", replay: "Replay the AI-to-OT chain", again: "Replay again", pick: "AI agent to OT (synthetic input, real pipeline)",
+      sub: "synthetic input, real pipeline output", flags: "12x faster · stub AI", replay: "Replay the AI-to-OT chain", again: "Replay again", pick: "AI agent to OT (synthetic input, real pipeline)",
       chipTitle: "Synthetic AI-to-OT chain (the evaluation twin's raw records, seed 7). Every alert, incident, graph, evidence package and report was produced by the real WS-2/4/5/8/9/3 code run in-process, not recorded from a live stack. The 60 s between steps is replayed 12x faster, evidence blocks keep the original times. The AI verdicts come from the stub backend (no model). Timestamps are shifted to now, changes are not saved, and the delay between pipeline stages is approximate.",
     },
   },
@@ -21,7 +21,7 @@ const S = {
       chipTitle: "Aufzeichnung eines lokalen Laborlaufs. Zeitstempel sind auf jetzt verschoben, Änderungen werden nicht gespeichert, die Verzögerung zwischen den Stufen ist angenähert.",
     },
     "ai-ot": {
-      sub: "synthetische Eingabe, echte Pipeline-Ausgabe", replay: "KI-zu-OT-Kette abspielen", again: "Erneut abspielen", pick: "KI-Agent zu OT (synthetische Eingabe, echte Pipeline)",
+      sub: "synthetische Eingabe, echte Pipeline-Ausgabe", flags: "12-fach schneller · Stub-KI", replay: "KI-zu-OT-Kette abspielen", again: "Erneut abspielen", pick: "KI-Agent zu OT (synthetische Eingabe, echte Pipeline)",
       chipTitle: "Synthetische KI-zu-OT-Kette (Rohdaten des Evaluations-Twins, Seed 7). Jeder Alarm, Vorfall, Graph, jedes Beweispaket und jeder Bericht wurde vom echten Code von WS-2/4/5/8/9/3 im selben Prozess erzeugt, nicht an einem Live-Stack aufgezeichnet. Die 60 s zwischen den Schritten laufen 12-fach schneller, die Beweisblöcke behalten die Originalzeiten. Die KI-Urteile stammen vom Stub-Backend (kein Modell). Zeitstempel sind auf jetzt verschoben, Änderungen werden nicht gespeichert, die Verzögerung zwischen den Stufen ist angenähert.",
     },
   },
@@ -40,7 +40,7 @@ export default function DemoBar() {
   const pick = (id: ScenarioId) => { setScenario(id); setSc(id); setSt(replayState()); };
   return (
     <span className="demo-bar">
-      <span className="chip demo" title={t.chipTitle}><b>{s.chip}</b> · {t.sub}</span>
+      <span className="chip demo" title={t.chipTitle}><b>{s.chip}</b> · {t.sub}{"flags" in t ? ` · ${t.flags}` : ""}</span>
       <select aria-label={s.scenario} value={sc} onChange={(e) => pick(e.target.value as ScenarioId)}>
         <option value="lab">{s.lab.pick}</option>
         <option value="ai-ot">{s["ai-ot"].pick}</option>
