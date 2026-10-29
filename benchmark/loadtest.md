@@ -22,7 +22,8 @@ for) removes. The zero-infra CPU ceiling (~900-1,500 events/s end to end) is
 still far above the live number. Laptop-scale result only; see the limits at the
 end. Sections: 1 zero-infra, 2 original live runs, 3 bulk writes, 4 WS-4
 profile, alert batching and replicas, 5 window-op round trips and alert evidence,
-6 per-event window batching and WS-2 vs Redis.
+6 per-event window batching and WS-2 vs Redis, 7 the 300-800 events/s run and
+500 events/s soak (contended host).
 
 ## Machine
 
@@ -576,6 +577,65 @@ What the evidence says, in order of how firmly:
   slowdown of WS-2 under load is CPU contention in the Docker VM or Redis queueing (no
   per-core accounting inside the VM).
 
+## 7. 300-800 events/s run (CONTENDED host: not idle)
+
+Run 2026-10-29 15:44-16:09 UTC after the owner confirmed no other session was running
+anything. **The host was not idle and this is a contended run.** Pre-run check:
+`docker ps` showed only this project plus the owner's `infra` dev stack (all services
+under 5% CPU); the Windows host was at 62% CPU with 1.7 GB free RAM, top processes
+Explorer, a mouse-mover utility, two old Python processes (started 15 Oct), Chrome, the
+Claude desktop app, Hermes and Docker Desktop. I closed nothing that was not mine. A
+5-second host log across the whole run (`raw/hostcpu-idle-run-2026-10-29.txt`, 243
+samples): mean 78% CPU, min 14%, max 100%, free RAM 0.6-1.7 GB; around the individual
+runs the instantaneous readings were 10-28% (`raw/neighbours-idle-*.txt`). Treat all
+numbers below as lower bounds of what an idle machine would do.
+
+Config: WS-2 x2, WS-4 x1 then x3, ws3/5/8/9 x1, OpenSearch 512 MB heap, 40 s steps.
+
+| Offered ev/s | WS-4 x1: WS-4 read/s, `normalized` lag at step end | WS-4 x3: WS-2 / WS-4 read/s, total lag at step end |
+|---|---|---|
+| 300 | 286, 440 | 299 / 300, 50 |
+| 400 | 353, 2,398 | 400 / 401, 124 |
+| 500 | 347, 7,559 | 499 / 497, 756 |
+| 600 | 329, 18,250 | 557 / 431, 9,386 (raw lag 2,780, normalized 4,220) |
+| 800 | 282, 37,859 | 707 / 555, 21,100 (raw lag 6,060, normalized 10,628) |
+
+* **No loss at any rate:** every backlog drained after the producer stopped (38,191
+  messages in 102 s for x1; 21,100 in 42 s for x3).
+* **One WS-4 replica** saturates around 330-350 events/s (WS-4 CPU 48-58%: it waits on
+  Redis, as in section 5); **three** keep pace through 500 events/s and saturate between
+  500 and 600.
+* **Which resource saturates first:** at 500 events/s Redis is at 66-89% of a core (13.7k
+  ops/s) and at 600-800 events/s it is at 78-87% while WS-2 (2 replicas, 84-90% summed)
+  and WS-4 (3 replicas, 98-119% summed) both start to fall behind together. That
+  pattern (neither consumer pegged, Redis highest and stalled commands in the
+  slowlog) points to the single-threaded Redis as the shared limit above ~500
+  events/s, but with this contended host I cannot separate it from CPU shortage in
+  the Docker VM, and I did not run `redis-benchmark` while the full load was on.
+
+### 7a. Soak: 500 events/s for 12 minutes (WS-2 x2, WS-4 x3)
+
+```sh
+python tools/fengarde_loadtest_live.py --rates --soak-rate 500 --soak-min 12 --out benchmark/raw/live-soak-idle-500-2026-10-29
+```
+
+| | |
+|---|---|
+| Produced / WS-2 / WS-4 / OpenSearch event docs | 500.0 / 500.0 / 500.0 / 500.1 per s (360,050 events): no loss |
+| Event path lag (`raw`, `normalized`, `scored`) | 0-60 throughout |
+| **Total lag** | 185 at start -> **14,251 at the end, growing ~1,150 messages per minute**; cleared 54 s after the producer stopped |
+| Where the lag sits | the `alerts` stream, consumer group **`cg-correlate` = WS-8 correlation** (2,549 -> 5,809 -> 13,985 across the run); every other group stayed at 0-30 |
+| Redis | 94% of a core mean, 13,451 ops/s mean (17,496 max), 441 MB (streams held back by the lagging WS-8 group), 92 slowlog entries |
+| Other CPU (mean) | WS-4 x3 120% summed, opensearch 87%, WS-2 x2 63% summed, ws3 55%, ws9 60%, ws8 49% |
+| `index_failed` vs `conflicts_409` | 67,365 vs 67,398 (within 33; the two reads were taken seconds apart) |
+| ws3 bulk counters | `failed_items` 0, `retried_items` 0, `cas_conflicts` 0 on every topic |
+
+So **500 events/s is held on the event path for 12 minutes without loss, but not as a
+steady state:** WS-8 (one replica, ~49% CPU) falls behind on alert messages (about a
+quarter of events at this mix, ~125/s) and its backlog grows linearly. It is the first
+consumer to fall behind in this configuration, and Redis, at 94% of a core, is the
+other resource close to its limit. WS-8 was not scaled or profiled here.
+
 ## What this does and does not show
 
 * Measured: zero-infra CPU ceilings per stage and end to end; live-stack
@@ -588,11 +648,11 @@ What the evidence says, in order of how firmly:
   a Windows/Sysmon-heavy mix, an idle reference host, runs longer than 12
   minutes. **This is not evidence of SIEM-scale (thousands of events/s)
   capacity; the live stack as shipped does not reach it on this host.**
-* Next bottlenecks, not fixed here: nothing was run above 500 events/s; Redis (one
-  thread, 78-88% of a core at 500 events/s) is the likeliest next limit, WS-2 needs a
-  second replica at 500 events/s, and the idle-host run has NOT been done (waiting for the
-  owner's confirmation that no other session is using the host), so every number in
-  sections 5 and 6 is from a contended host.
+* Next bottlenecks, not fixed here: WS-8 correlation falls behind on the `alerts`
+  stream at 500 events/s (single consumer, lag growing ~1,150 messages/min) and Redis
+  (one thread) is at 94% of a core there; no run above 800 events/s offered, no run
+  on a verified-idle host (the 300-800 events/s run in section 7 had a host mean of 78%
+  CPU), WS-2 vs Redis above 500 events/s not separated.
 * Scale-out caveat: with several WS-4 replicas the same consumer group is shared,
   so events of one source are no longer processed strictly in order. The global
   Redis window counter makes the threshold count correct, and alert ids are

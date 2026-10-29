@@ -1,0 +1,10 @@
+--- before ramp ws2x2 ws4x3 15:50:33 hostCPU=21% freeGB=1,1
+infra-ws1-collectors infra-ws2-normalization infra-ws3-indexer infra-ws4-detection infra-ws5-ai infra-ws6-inventory infra-ws7-dashboard infra-ws8-correlation infra-ws9-resolver siem-bus siem-dashboards siem-goatcounter siem-prometheus siem-store 
+infra-ws1-collectors-1 cpu=4.53%
+infra-ws3-indexer-1 cpu=2.42%
+siem-store cpu=2.13%
+--- after 15:54:41 hostCPU=10% freeGB=0,7
+infra-ws1-collectors infra-ws2-normalization infra-ws3-indexer infra-ws4-detection infra-ws5-ai infra-ws6-inventory infra-ws7-dashboard infra-ws8-correlation infra-ws9-resolver siem-bus siem-dashboards siem-goatcounter siem-prometheus siem-store 
+siem-bus cpu=2.47%
+siem-store cpu=2.02%
+infra-ws3-indexer-1 cpu=1.64%
