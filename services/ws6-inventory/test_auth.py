@@ -22,6 +22,9 @@ from http.server import ThreadingHTTPServer
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+
+# serve() exits in well under a second when idle; 5 s flaked under a loaded gate (interpreter start + import), so allow 30 s.
+SERVE_EXIT_TIMEOUT = 30
 sys.path.insert(0, str(HERE))
 
 FAILS: list[str] = []
@@ -318,7 +321,7 @@ def test_require_auth_or_die_empty_keystore_exits_1():
     code = "from app import serve; serve(host='127.0.0.1', port=0)"
     try:
         proc = subprocess.run([sys.executable, "-c", code], env=env, capture_output=True,
-                              text=True, cwd=str(HERE), timeout=5)
+                              text=True, cwd=str(HERE), timeout=SERVE_EXIT_TIMEOUT)
     except subprocess.TimeoutExpired:
         check(False, "serve() did not exit with an empty keystore + REQUIRE_AUTH=1 -- "
                      "it reached serve_forever() instead of dying (the gate regressed)")
@@ -376,7 +379,7 @@ def test_serve_actually_calls_require_auth_or_die_before_listening():
     code = "from app import serve; serve(host='127.0.0.1', port=0)"
     try:
         proc = subprocess.run([sys.executable, "-c", code], env=env,
-                              capture_output=True, text=True, cwd=str(HERE), timeout=5)
+                              capture_output=True, text=True, cwd=str(HERE), timeout=SERVE_EXIT_TIMEOUT)
     except subprocess.TimeoutExpired:
         check(False, "serve() did not exit -- it reached serve_forever() instead of "
                      "dying on require_auth_or_die (the wiring regressed)")
