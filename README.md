@@ -328,6 +328,7 @@ python tools/fengarde_loadtest_live.py --rates 25 50 75 100 150 200 --step-s 60 
 | + ws3 bulk writes, 1 WS-4 replica | 60 events/s (alert backlog drifted up) | ~100 events/s | WS-4 consume path: Redis window-counter round trips (~78% of its per-event time) |
 | + batched alert writes, **3 WS-4 replicas** | **100 events/s, alert backlog flat** | not found; 200 events/s kept pace, 300-400 inconclusive (neighbour load) | not reached |
 | + single-EVALSHA window ops, capped alert evidence, **1 WS-4 replica** | 150 events/s (lag flat 6 of 12 min, then grew on a busier host) | ~170-215 events/s; 3 replicas kept pace at 300 | WS-2 / Redis near 190-255 events/s with 3 replicas (contended host) |
+| + one pipelined Redis call per event for all window ops, WS-4 x3, WS-2 x1 / x2 | (ramps only) | 1 WS-2 replica: keeps pace at 400, behind at 500 (394/s); 2 WS-2 replicas: keeps pace at 500 | Redis (78-88% of a core at 500 events/s), not run above 500; host not verified idle |
 
 `index_failed` on the OpenSearch node counted create-only 409 conflicts (by
 design, not failures); evidence in `benchmark/loadtest.md` section 3c. Scaling

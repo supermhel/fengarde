@@ -1,0 +1,6 @@
+evalsha calls 245506 total_usec 12304796 usec/call 50.12
+xreadgroup calls 119995 total_usec 9653956 usec/call 80.45
+xadd calls 1038921 total_usec 9102396 usec/call 8.76
+xautoclaim calls 119997 total_usec 3317481 usec/call 27.65
+xack calls 714879 total_usec 3161673 usec/call 4.42
+zadd calls 245506 total_usec 2965777 usec/call 12.08

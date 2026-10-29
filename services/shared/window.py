@@ -506,6 +506,36 @@ class RedisWindowCounter:
         res = pipe.execute()
         return int(res[2])  # ZCARD result
 
+    def hit_many(self, ops: list) -> list:
+        """Run several ``hit`` / ``hit_distinct`` calls in ONE round trip.
+
+        ``ops``: ``("hit", key, now_ms, window_ms, member)`` or
+        ``("distinct", key, now_ms, window_ms, value)`` tuples; returns the
+        counts in the same order. Each op is the same single EVALSHA as
+        :meth:`hit` / :meth:`hit_distinct` (each atomic on its own key), queued
+        on one non-transactional pipeline, so the result of every op equals
+        issuing them one after another. Without the Lua path or ZADD GT support
+        it just issues them one at a time."""
+        if not ops:
+            return []
+        if not self._use_lua or any(op[0] == "distinct" for op in ops) and not self._gt_supported():
+            return [self.hit(op[1], op[2], op[3], op[4]) if op[0] == "hit"
+                    else self.hit_distinct(op[1], op[2], op[3], value=op[4]) for op in ops]
+        pipe = self.r.pipeline(transaction=False)
+        for kind, key, now_ms, window_ms, arg in ops:
+            horizon = now_ms - window_ms
+            ttl = max(1, window_ms // 1000 + 1)
+            if kind == "hit":
+                zkey = f"{self.ns}:{key}"
+                m = str(arg) if arg is not None else str(now_ms)
+                self._script("hit", _HIT_LUA)(keys=[zkey], args=[m, now_ms, horizon - 1, ttl], client=pipe)
+            else:
+                zkey = f"{self.ns}:d:{key}"
+                m = str(arg) if arg is not None else str(now_ms)
+                self._script("hit_distinct", _HIT_DISTINCT_GT_LUA)(
+                    keys=[zkey], args=[m, now_ms, horizon - 1, ttl], client=pipe)
+        return [int(n) for n in pipe.execute()]
+
     def hit_distinct(self, key: str, now_ms: int, window_ms: int,
                      value=None, member=None) -> int:
         """Distinct-count of ``value`` in-window (global, across replicas).

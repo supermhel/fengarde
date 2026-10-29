@@ -1,0 +1,86 @@
+{
+  "date_utc": "2026-10-29T11:40:07Z",
+  "runs": [
+    {
+      "replicas": 1,
+      "backlog": 30000,
+      "drained": 30000,
+      "seconds": 22.3,
+      "events_per_s": 1345.8,
+      "ws2_cpu_pct_total_mean": 60.3,
+      "ws2_cpu_pct_per_replica_mean": 60.3,
+      "redis_cpu_pct_mean": 20.7,
+      "redis_cpu_pct_max": 29.7,
+      "redis_ops_per_s_mean": 2584,
+      "redis_ops_per_s_max": 3870,
+      "slowlog_entries": 0,
+      "slowlog_max_us": 0,
+      "redis_commandstats": {
+        "cmdstat_xadd": 30000,
+        "cmdstat_xack": 30000
+      }
+    },
+    {
+      "replicas": 2,
+      "backlog": 30000,
+      "drained": 30000,
+      "seconds": 17.6,
+      "events_per_s": 1706.5,
+      "ws2_cpu_pct_total_mean": 125.6,
+      "ws2_cpu_pct_per_replica_mean": 62.8,
+      "redis_cpu_pct_mean": 27.6,
+      "redis_cpu_pct_max": 37.9,
+      "redis_ops_per_s_mean": 3231,
+      "redis_ops_per_s_max": 5885,
+      "slowlog_entries": 0,
+      "slowlog_max_us": 0,
+      "redis_commandstats": {
+        "cmdstat_xadd": 30000,
+        "cmdstat_xack": 30000
+      }
+    },
+    {
+      "replicas": 3,
+      "backlog": 30000,
+      "drained": 30000,
+      "seconds": 17.2,
+      "events_per_s": 1739.6,
+      "ws2_cpu_pct_total_mean": 145.5,
+      "ws2_cpu_pct_per_replica_mean": 48.5,
+      "redis_cpu_pct_mean": 32.8,
+      "redis_cpu_pct_max": 52.0,
+      "redis_ops_per_s_mean": 4051,
+      "redis_ops_per_s_max": 6691,
+      "slowlog_entries": 0,
+      "slowlog_max_us": 0,
+      "redis_commandstats": {
+        "cmdstat_xadd": 30000,
+        "cmdstat_xack": 30000
+      }
+    },
+    {
+      "replicas": 1,
+      "backlog": 30000,
+      "drained": 30000,
+      "seconds": 26.2,
+      "events_per_s": 1143.9,
+      "ws2_cpu_pct_total_mean": 64.8,
+      "ws2_cpu_pct_per_replica_mean": 64.8,
+      "redis_cpu_pct_mean": 22.9,
+      "redis_cpu_pct_max": 43.7,
+      "redis_ops_per_s_mean": 2553,
+      "redis_ops_per_s_max": 3745,
+      "slowlog_entries": 0,
+      "slowlog_max_us": 0,
+      "redis_commandstats": {
+        "cmdstat_xadd": 30000,
+        "cmdstat_xack": 30000
+      }
+    }
+  ],
+  "redis_benchmark": {
+    "xadd_c8": "Error from server: ERR Invalid stream ID specified as stream command argument",
+    "xadd_c8_pipeline16": "Error from server: ERR Invalid stream ID specified as stream command argument",
+    "ping_c8": "PING_INLINE: 47961.63 requests per second, p50=0.079 msec"
+  }
+}

@@ -21,7 +21,8 @@ trips of its window counter (4.4 of ~5.7 ms per event), which scale-out
 for) removes. The zero-infra CPU ceiling (~900-1,500 events/s end to end) is
 still far above the live number. Laptop-scale result only; see the limits at the
 end. Sections: 1 zero-infra, 2 original live runs, 3 bulk writes, 4 WS-4
-profile, alert batching and replicas, 5 window-op round trips and alert evidence.
+profile, alert batching and replicas, 5 window-op round trips and alert evidence,
+6 per-event window batching and WS-2 vs Redis.
 
 ## Machine
 
@@ -486,6 +487,95 @@ one replica is at its edge there (lag flat for six minutes, then growing while t
 host got busier). The earlier 100 events/s soak needed three replicas; one replica
 now holds 100 (ramp) comfortably and 150 marginally.
 
+## 6. Round four (stacked on #132): one Redis round trip per event for all window ops; what limits above ~250 events/s
+
+### 6a. Per-event batching of window ops
+
+`Detector.process` used to call each stateful rule's `evaluate()` in turn, one Redis
+round trip per rule. It now plans every count/distinct stateful rule's window op first
+(`Rule.begin_evaluate`), sends them all with `RedisWindowCounter.hit_many` (one
+non-transactional pipeline of the same `EVALSHA`s, in rule order), then finishes each
+rule (`finish_evaluate`). Window keys include the rule id, so the ops are independent and
+the batch leaves the same state and verdicts as the sequential loop. Periodic (beacon)
+rules, a different counter object, stateless rules and any rule whose `evaluate` was
+replaced on the instance keep the plain path; `FENGARDE_WINDOW_PIPELINE=0` switches the
+batching off.
+
+Equivalence evidence: `test_window_pipeline.py` (zero-infra, in the gate): per-event
+matched rule ids and final window state equal between sequential and batched evaluation,
+one `hit_many` per event, same total number of window ops. `test_window_lua_live.py`
+(CI redis-integration; `raw/window-pipeline-parity-2026-10-29.txt`) on a real Redis:
+549 events twice (shuffled, bursts, many-source stuffing, many-account spray): identical
+per-event matched rules, identical `alert_id` sequence (298 alert messages), and 2,175
+identical window zsets (members, scores, TTLs within 2 s) between `seq` and `pipe`.
+
+Per event, real Redis bus, in-container, 3,000 events, alternating A/B on the same
+stack (`raw/ws4-profile-pipeline-ab-2026-10-29.txt`):
+
+| `FENGARDE_WINDOW_PIPELINE` | events/s (cProfile) | ms/event | Redis round trips/event |
+|---|---|---|---|
+| 0 (sequential) | 447, 486 | 2.24, 2.06 | 2.68 |
+| 1 (batched) | 517, 572 | 1.93, 1.75 | 1.83 |
+
+So about +16% events/s and -32% round trips. (The absolute numbers are higher than the
+section 5a profile because the host was quieter this time; compare only within this
+table.)
+
+### 6b. Is WS-2 or Redis the limit above ~250 events/s? Controlled experiments
+
+Host during these runs: Windows host CPU 20-37% (was 27-65% before), 1.0-1.6 GB free
+RAM; Docker neighbours only the idle `infra` stack (`raw/neighbours-*.txt`). Still not a
+verified-idle host.
+
+**E1, WS-2 alone** (`tools/fengarde_ws2_isolate.py`, `raw/ws2-isolate-2026-10-29.json`):
+ws3/ws4/ws5/ws8/ws9 stopped, a 30,000-event backlog prefilled on `raw.events`, K WS-2
+replicas drain it:
+
+| WS-2 replicas | drain rate (events/s) | WS-2 CPU (per replica) | Redis CPU mean / max | Redis ops/s mean / max |
+|---|---|---|---|---|
+| 1 | 1,346 (second run 1,144) | 60% / 65% | 21% / 30% | 2,584 / 3,870 |
+| 2 | 1,707 | 63% | 28% / 38% | 3,231 / 5,885 |
+| 3 | 1,740 | 49% | 33% / 52% | 4,051 / 6,691 |
+
+One WS-2 process normalizes ~1,150-1,350 events/s when nothing else competes (5x the
+~250 it showed inside the full ramp), and going from 2 to 3 replicas adds almost
+nothing (1,707 -> 1,740) while Redis sat at 33% CPU and no slowlog entry appeared:
+neither WS-2's own code nor Redis was the limit at 250 events/s. (`redis-benchmark`
+inside the container: 69,500 XADD/s with 8 clients, 222,800/s pipelined by 16; PING 48,000/s.)
+
+**E2, full pipeline, WS-4 x3, WS-2 x1 vs x2** (40 s steps, `raw/live-ramp-pipeline-ws2x{1,2}-*`):
+
+| Offered ev/s | WS-2 x1: WS-2 / WS-4 read/s, raw lag | WS-2 x2: WS-2 / WS-4 read/s, raw lag |
+|---|---|---|
+| 300 | 289 / 288, 360 | 300 / 300, 0 |
+| 400 | 400 / 400, 39 | 400 / 401, 0 |
+| 500 | 394 / 395, **3,850** | 500 / 500, 49 |
+
+Redis in these runs: 7,300-10,800 ops/s mean (peaks 13-14k) at 300-500 events/s,
+CPU 49-88% of a core, slowlog (commands over 10 ms) 31-45 entries cumulative. After the
+x1 run stopped, the 4,036-message backlog drained in 12 s.
+
+What the evidence says, in order of how firmly:
+
+* **Measured:** a single WS-2 replica holds 400 events/s and falls behind at 500
+  (394/s processed, raw lag 3,850); two replicas hold 500 events/s with WS-4 x3
+  (lag 49). Nothing was lost in either run (every backlog drained). The previous
+  round's ~190-255 events/s ceiling with three WS-4 replicas did not reproduce on the
+  quieter host with batched window ops: 300 and 400 events/s are now held with one WS-2.
+* **Measured:** WS-2 is not intrinsically slow (E1: 1,150-1,350 events/s alone). Its
+  ~400 events/s ceiling inside the full pipeline is a contention effect: the same process
+  slows ~3x when ws3, 3 WS-4 replicas, OpenSearch and Redis share the CPUs.
+* **Measured, not conclusive:** Redis is not saturated by operation count (13-14k ops/s peak
+  vs a 69.5k XADD/s ceiling) but ran at 78-88% of a core at 500 events/s with 10-67 ms
+  stalls in the slowlog, and its heaviest commands by total time were `EVALSHA`
+  (245k calls, 50 us each, 12.3 s), `XREADGROUP` (120k calls, 80 us, 9.7 s) and `XADD`
+  (1.04M calls, 9 us, 9.1 s; `raw/redis-commandstats-2026-10-29.txt`). So Redis is the
+  next resource to saturate but I did not push it to saturation: no run above 500 events/s
+  was made.
+* **Not shown:** which resource saturates first above 500 events/s; whether the ~3x
+  slowdown of WS-2 under load is CPU contention in the Docker VM or Redis queueing (no
+  per-core accounting inside the VM).
+
 ## What this does and does not show
 
 * Measured: zero-infra CPU ceilings per stage and end to end; live-stack
@@ -498,11 +588,11 @@ now holds 100 (ramp) comfortably and 150 marginally.
   a Windows/Sysmon-heavy mix, an idle reference host, runs longer than 12
   minutes. **This is not evidence of SIEM-scale (thousands of events/s)
   capacity; the live stack as shipped does not reach it on this host.**
-* Next bottlenecks, not fixed here: with 3 WS-4 replicas the limit moved to WS-2 /
-  Redis near 190-255 events/s on this laptop (cause between the two not isolated);
-  WS-4 still makes one Redis round trip per stateful rule per event (batching all
-  rules' window ops into one pipeline per event would be the next step); no clean
-  (idle-host) number above ~300 events/s exists.
+* Next bottlenecks, not fixed here: nothing was run above 500 events/s; Redis (one
+  thread, 78-88% of a core at 500 events/s) is the likeliest next limit, WS-2 needs a
+  second replica at 500 events/s, and the idle-host run has NOT been done (waiting for the
+  owner's confirmation that no other session is using the host), so every number in
+  sections 5 and 6 is from a contended host.
 * Scale-out caveat: with several WS-4 replicas the same consumer group is shared,
   so events of one source are no longer processed strictly in order. The global
   Redis window counter makes the threshold count correct, and alert ids are

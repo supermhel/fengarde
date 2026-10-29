@@ -1,4 +1,4 @@
-"""Old (MULTI pipeline) vs new (single EVALSHA) RedisWindowCounter on a REAL Redis.
+"""Old (MULTI pipeline) vs new (single EVALSHA, and one pipeline per event) RedisWindowCounter on a REAL Redis.
 
 Two checks, both comparing use_lua=False (the pre-2026-10-28 pipelines, the
 reference) with use_lua=True on identical input:
@@ -155,6 +155,54 @@ def detector_parity(client, ns: str) -> list[str]:
     return fails
 
 
+def pipeline_parity(client, ns: str) -> list[str]:
+    """Detector with all of an event's window ops in ONE pipelined Redis call vs
+    the sequential loop, same stream, separate namespaces: identical per-event
+    matched rules, identical alert_ids, identical zsets (members, scores) and TTLs."""
+    import fengarde_loadtest as L
+    _fb, ws2, _ws3, ws4 = L._load_stages()
+    events = _events(ws2, 400)
+    out = {}
+    for variant, pipelined in (("seq", False), ("pipe", True)):
+        det = ws4.Detector(pipeline_window_ops=pipelined)
+        counter = RedisWindowCounter(client, namespace=f"{ns}:pl:{variant}")
+        det._window_counter = counter
+        for r in det.rules:
+            if r.stateful:
+                r.set_counter(counter)
+        sink = _Sink()
+        matched = []
+        for ev in events:
+            _e, m, _a = det.process(dict(ev))
+            matched.append(tuple(r.id for r in m))
+        for ev in events:
+            ws4.detect_one(sink, det, dict(ev))
+        state = {}
+        pre = f"{ns}:pl:{variant}:"
+        for k in client.scan_iter(pre + "*"):
+            state[k[len(pre):]] = (client.zrange(k, 0, -1, withscores=True), client.ttl(k))
+        out[variant] = (matched, sink.alerts, state)
+    fails = []
+    (m1, a1, s1), (m2, a2, s2) = out["seq"], out["pipe"]
+    if not any(m1):
+        fails.append("pipeline parity: the stream tripped no rule")
+    if m1 != m2:
+        i = next(i for i, (x, y) in enumerate(zip(m1, m2)) if x != y)
+        fails.append(f"pipeline parity: matched rules differ at event {i}: seq={m1[i]} pipe={m2[i]}")
+    if a1 != a2:
+        fails.append(f"pipeline parity: alert_id sequence differs (seq={len(a1)} pipe={len(a2)})")
+    if set(s1) != set(s2):
+        fails.append(f"pipeline parity: window keys differ ({len(s1)} vs {len(s2)})")
+    else:
+        for k in s1:
+            (z1, t1), (z2, t2) = s1[k], s2[k]
+            if z1 != z2 or abs(t1 - t2) > 2:
+                fails.append(f"pipeline parity: window {k} differs")
+                break
+    print(f"  pipeline parity: {len(events)} events x2, {len(a1)} alert messages, {len(s1)} window keys")
+    return fails
+
+
 def main() -> int:
     url = os.environ.get("REDIS_URL")
     if not url:
@@ -164,7 +212,7 @@ def main() -> int:
 
     client = redis.Redis.from_url(url, decode_responses=True)
     ns = f"luaparity:{uuid.uuid4().hex[:8]}"
-    fails = counter_parity(client, ns) + detector_parity(client, ns)
+    fails = counter_parity(client, ns) + detector_parity(client, ns) + pipeline_parity(client, ns)
     for k in client.scan_iter(f"{ns}:*"):
         client.delete(k)
     if fails:

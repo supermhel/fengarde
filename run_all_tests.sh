@@ -58,6 +58,9 @@ echo
 echo "== ws4 window counter: single-EVALSHA dispatch (live parity vs pipeline runs in CI redis-integration) =="; LAST_HEADER="== ws4 window counter: single-EVALSHA dispatch (live parity vs pipeline runs in CI redis-integration) =="
 $PY services/ws4-detection/test_window_lua.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
+echo "== ws4 per-event batched window ops: verdicts == sequential, one hit_many per event =="; LAST_HEADER="== ws4 per-event batched window ops: verdicts == sequential, one hit_many per event =="
+$PY services/ws4-detection/test_window_pipeline.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
 echo "== coverage gate floor/buffer tests (was orphaned -- only run directly) =="; LAST_HEADER="== coverage gate floor/buffer tests (was orphaned -- only run directly) =="
 $PY tools/test_coverage_gate.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
