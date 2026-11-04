@@ -90,6 +90,17 @@ No CHANGELOG entry was written on 2026-08-22..25. What those commits changed:
   Docs corrected: it writes `evasion_floor.yaml` (new keys only), it does not touch `baseline_scenarios.json`.
 - `tools/test_gate_tiers.py` also covers non-`$PY` stanzas (the console's npm/npx) and asserts `contract-tests` needs `changes`.
 
+### Docs (2026-11-04, OCSF version assessment — WP-4.2)
+
+- `docs(ocsf): version assessment (WP-4.2)` — read-only assessment, no code change: every parser
+  emits `metadata.version` `1.1.0`, hardcoded in the single shared envelope builder
+  (`services/ws2-normalization/parsers/base.py:193`); upstream is at 1.8.0 (2026-03-16) with 1.9.0
+  out (2026-08-03). Nothing reads or validates the version string (schema types it as plain string,
+  ws3-indexer/OpenSearch mappings ignore it, no test asserts it), so a bump is mechanically free but
+  would misrepresent the project's restricted/project-local 1.1.0-era class and activity semantics;
+  recommendation is keep-1.1.0 until a real mapping pass. Full evidence with file:line and release
+  map: `docs/ocsf-version-assessment.md`.
+
 ## [0.11.3] - 2026-10-21
 
 Tiered CI and the rule-cascade helper, the SLSA generator referenced by tag (the cause of the failed `v0.11.2` provenance job), dependency bumps and release docs. `git log v0.11.2..v0.11.3` is the exact list (PRs #113, #115, #116, #117, #118).
