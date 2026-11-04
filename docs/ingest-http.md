@@ -70,8 +70,14 @@ must send `X-Fengarde-Idempotency-Key`, or the accepted records are ingested twi
 - At most `INGEST_HTTP_MAX_CONCURRENT` connections are served at once (default 16); further connections get 503 immediately.
 - `source_type` must be a built-in parser. Parser plugins register their own types inside ws2, which ws1 cannot see: list
   them in `INGEST_HTTP_EXTRA_SOURCE_TYPES` (comma-separated).
-- **Limit:** the rate-limit bucket and bus partition key are the TCP peer address. Behind Docker's published port or a relay,
-  all senders share one address, hence one bucket and one partition. Per-device keys are not implemented.
+- **Device identity.** Send `X-Fengarde-Source: <device>` (or `?source=`; 1-128 characters of `[A-Za-z0-9._:@-]`) to label where
+  a batch came from. The label keys the bus partition, the spool entry and the per-source rate limit, and is stored as
+  `meta.source` (the TCP peer is always kept as `meta.shipper_ip`). Without it the TCP peer is used; behind a published Docker
+  port or a relay every sender then looks like one address. The label is as trustworthy as the bearer token: any holder can
+  claim any name, so it is never an authorization input.
+- **Per-source cap.** `INGEST_HTTP_MAX_EVENTS_PER_SEC_PER_SOURCE` (default 0 = off) limits one source's share of the tenant
+  ceiling (`INGEST_HTTP_MAX_EVENTS_PER_SEC`). The older nested per-IP bucket ran at the same rate as the tenant bucket and
+  could never bind first, which is why a separate lower cap exists.
 
 ## Response codes (precedence)
 

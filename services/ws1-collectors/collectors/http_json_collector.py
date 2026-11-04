@@ -59,6 +59,7 @@ import hmac
 import ipaddress
 import json
 import os
+import re
 import threading
 import time
 import uuid
@@ -68,7 +69,9 @@ from urllib.parse import parse_qs
 
 from shared.envelope import stamp_meta
 from .spool import BoundedSpool
-from .syslog_udp_server import TenantTokenBuckets
+from collections import OrderedDict
+
+from .syslog_udp_server import TenantTokenBuckets, _TokenBucket
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8554
@@ -76,6 +79,10 @@ DEFAULT_MAX_BODY_BYTES = 1024 * 1024      # 1 MiB cap on one POST body
 DEFAULT_MAX_EVENTS_PER_SEC = 2000         # per-source, same shape as syslog
 DEFAULT_MAX_CONCURRENT = 16               # ThreadingHTTPServer thread guard
 _READ_CHUNK = 64 * 1024
+DEFAULT_MAX_SOURCES = 4096                # bound on the per-source bucket map (LRU)
+# A sender may label the device a batch came from (X-Fengarde-Source / ?source=). The label is only trusted as far as the
+# bearer token: it keys the per-source rate limit, the bus partition and the metrics, never an authorization decision.
+_SOURCE_ID_RE = re.compile(r"^[A-Za-z0-9._:@\-]{1,128}$")
 
 # Frozen snapshot of services/ws2-normalization/parsers/_REGISTRY keys: the
 # daemon validates source_type WITHOUT importing ws2 (separate image; the
@@ -127,6 +134,7 @@ class HttpJsonCollector:
                  max_body_bytes: int = DEFAULT_MAX_BODY_BYTES,
                  max_events_per_sec: float = DEFAULT_MAX_EVENTS_PER_SEC,
                  max_concurrent: int = DEFAULT_MAX_CONCURRENT,
+                 max_events_per_sec_per_source: float = 0,
                  spool: Optional[BoundedSpool] = None,
                  extra_source_types=(),
                  logger=None):
@@ -154,6 +162,12 @@ class HttpJsonCollector:
         self.max_concurrent = max(1, int(max_concurrent))
         self.log = logger
         self._buckets = TenantTokenBuckets(max_events_per_sec, logger=logger)
+        # Per-source cap, separate from the tenant ceiling. The nested per-IP bucket inside TenantTokenBuckets runs at the
+        # SAME rate as the tenant bucket, so it can never bind first; a lower per-source rate is what actually stops one
+        # noisy device from using the whole tenant budget. 0 = off.
+        self._source_rate = max(0.0, float(max_events_per_sec_per_source))
+        self._source_buckets: "OrderedDict[str, _TokenBucket]" = OrderedDict()
+        self._source_lock = threading.Lock()
         self._spool = spool
 
         # Aggregate counters (flat numeric leaves -> real Prometheus gauges).
@@ -224,7 +238,8 @@ class HttpJsonCollector:
 
     def handle_batch(self, source_type: str, format_name: str,
                      records: list, errors: list, *,
-                     idempotency_key: Optional[str], peer_ip: str) -> dict:
+                     idempotency_key: Optional[str], peer_ip: str,
+                     source_id: Optional[str] = None) -> dict:
         """Process one validated batch; returns THIS request's counts.
 
         Never raises on a malformed record -- a JSON parse error (collected
@@ -233,6 +248,9 @@ class HttpJsonCollector:
         never aborts the batch").
         """
         tenant_id = os.getenv("TENANT_ID", "default")
+        # The device label when the sender gave one, else the TCP peer (behind a published Docker port or a relay every
+        # sender shares one peer address). It keys the rate limit, the bus partition and the spool entry.
+        key = source_id or peer_ip
         accepted = skipped = dropped = spooled = rate_limited = 0
         all_errors = list(errors)
         skipped = len(all_errors)  # parse-level failures are skipped records
@@ -247,7 +265,7 @@ class HttpJsonCollector:
                     source_type)
             else:
                 ingest_id = str(uuid.uuid4())
-            if not self._buckets.take(tenant_id, source_ip=peer_ip):
+            if not self._buckets.take(tenant_id) or not self._take_source(key):
                 rate_limited += 1
                 continue
             event = {
@@ -257,13 +275,15 @@ class HttpJsonCollector:
                     "received_at": int(time.time()),
                     "ingest_id": ingest_id,
                     "format": format_name,
+                    "shipper_ip": peer_ip,
+                    **({"source": source_id} if source_id else {}),
                 }),
             }
             try:
-                self.bus.produce(self.topic, key=peer_ip, payload=event)
+                self.bus.produce(self.topic, key=key, payload=event)
                 accepted += 1
             except Exception:
-                if self._try_spool(peer_ip, event):
+                if self._try_spool(key, event):
                     spooled += 1
                 else:
                     dropped += 1
@@ -281,6 +301,21 @@ class HttpJsonCollector:
             "rate_limited": rate_limited,
             "errors": all_errors,
         }
+
+    def _take_source(self, key: str) -> bool:
+        """Per-source token bucket (LRU-bounded map); always True when no per-source rate is configured."""
+        if self._source_rate <= 0:
+            return True
+        with self._source_lock:
+            bucket = self._source_buckets.get(key)
+            if bucket is None:
+                bucket = _TokenBucket(self._source_rate)
+                self._source_buckets[key] = bucket
+                if len(self._source_buckets) > DEFAULT_MAX_SOURCES:
+                    self._source_buckets.popitem(last=False)
+            else:
+                self._source_buckets.move_to_end(key)
+        return bucket.take()
 
     def _try_spool(self, peer_ip: str, event: dict) -> bool:
         if self._spool is None:
@@ -416,6 +451,12 @@ class _IngestHandler(BaseHTTPRequestHandler):
             c.bump("requests_rejected")
             self._send_json(400, {"error": str(exc)})
             return
+        try:
+            source_id = self._source_id(parsed.get("source"), self.headers.get("X-Fengarde-Source"))
+        except _BadRequest as exc:
+            c.bump("requests_rejected")
+            self._send_json(400, {"error": str(exc)})
+            return
         if source_type not in c.source_types:
             c.bump("requests_rejected")
             self._send_json(
@@ -453,7 +494,7 @@ class _IngestHandler(BaseHTTPRequestHandler):
         idem_key = self.headers.get("X-Fengarde-Idempotency-Key") or None
         counts = c.handle_batch(source_type, format_name, records,
                                 parse_errors, idempotency_key=idem_key,
-                                peer_ip=self.client_address[0])
+                                peer_ip=self.client_address[0], source_id=source_id)
         payload = {
             "source_type": source_type,
             "format": format_name,
@@ -495,6 +536,17 @@ class _IngestHandler(BaseHTTPRequestHandler):
                                 keep_blank_values=False).items():
             out[k] = vals[0] if vals else ""
         return out
+
+    def _source_id(self, query_val, header_val):
+        """Optional device label from ?source= or X-Fengarde-Source (None when absent; conflict or bad characters = 400)."""
+        if query_val and header_val and query_val != header_val:
+            raise _BadRequest("conflicting source between query parameter and header")
+        value = (query_val or header_val or "").strip()
+        if not value:
+            return None
+        if not _SOURCE_ID_RE.match(value):
+            raise _BadRequest("source must be 1-128 characters of [A-Za-z0-9._:@-]")
+        return value
 
     def _param(self, query_val, header_val, *, default=None):
         if query_val and header_val and query_val != header_val:
