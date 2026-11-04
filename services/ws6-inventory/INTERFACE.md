@@ -95,7 +95,9 @@ undocumented. `services/ws6-inventory/` now has 7 substantive modules
   it to `0` disables baselining immediately, no restart needed. Devices first seen inside the window are
   inventory only: no new-device event reaches ws2/ws4, so a fresh install is silent about new devices for the first
   hour by design (it avoids one alert per device already on the segment). A log line `new-device baseline window
-  opened` (tenant, seconds, until) is written when a tenant's window starts. Raising the value past 24 h is clamped.
+  opened` (tenant, seconds, until) is written when a tenant's window starts. Raising the value past 24 h is clamped. The window end is stored per tenant at first sighting, so raising the value
+  later never lengthens or re-opens a window that already exists; only shortening (or `0`) takes effect while it is
+  open, and a longer value applies to tenants first seen afterwards.
 - `INVENTORY_BUS_HEALTH_PORT` (default `8006`) — health/metrics port for the
   opt-in bus consumer (`runner.serve`'s per-topic acked/failed/deadlettered
   counters + the API's auth-failure slow counter; gap-hunt #8).

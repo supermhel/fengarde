@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed (2026-11-04, gap-hunt open and partial rows)
+
+- `tools/fengarde_bench.py` exits 1 when most events were dropped (`eps_dropped_majority`), in JSON and text mode (R4 #107);
+  `tools/fengarde_bench_live.py` burst ids carry a per-invocation tag so a second run on the same TEST-NET address is not
+  deduplicated away (R4 #108). Pinned by `tools/test_bench_gates.py`.
+- `tools/check_test_wiring.py` also scans `*_load_test.py` and lists `tools/backpressure_load_test.py` as a documented live-only
+  orphan (R4 #120).
+- CI: the mutmut step first runs its test selection once, blocking (R4 #121). That baseline was RED on `main`:
+  `tools/test_mutmut_window.py` built `RedisWindowCounter` on a fake with no `info()`, so after the 2026-10-29 window changes it took
+  the Lua fallback and two tests raised. They now pass `zadd_gt=True`.
+- `services/ws5-ai/test_llm_adapter.py::test_dribbling_response_hits_total_deadline` pins the wall-clock deadline of the Ollama read
+  (the deadline itself already existed) (R4 #33).
+- `services/ws3-indexer/test_mfa_live_e2e.py` gained step 7: re-presenting the code step 3 spent is refused with the wrong-code body
+  (R4 #85).
+- ws4 image: the Dockerfile copies `tools/validate_rules.py`, and `engine._find_up` replaces the fixed-depth `parents[2]` /
+  `parent.parent.parent` walks. In the built image (`/app/ws4-detection/engine.py`, no `services/` level) they resolved to `/tools` and
+  `/contracts`, so the poison-pill rule guard never ran and the allowlist default pointed nowhere. Pinned by
+  `services/ws4-detection/test_poison_pill_image_layout.py`, which rebuilds the image layout (R3-31).
+- `tools/validate_rules.py` enforces the rule file name family (`FILENAME_FAMILIES`), and `contracts/sigma-convention.md` states the
+  real convention (23 of 46 shipped names did not follow the old `<sector>_` wording) (R3-47).
+- ws6: `TenantKeyStore` takes `InventoryStore`'s write lock when both use one SQLite file (R4-49), pinned by
+  `services/ws6-inventory/test_shared_write_lock.py`.
+- `infra/preflight.sh` also rejects `?`, `#` and spaces in `REDIS_PASSWORD` (R3-28); `services/ws6-inventory/INTERFACE.md` states that a
+  longer `INVENTORY_BASELINE_SECONDS` never lengthens an existing tenant's window (R4 #44).
+
+### Backfill: 2026-08-23 (written 2026-11-04 from commits `418f3cf`, `87e9f80`, `beb1840`; gap-hunt R4 #86)
+
+No CHANGELOG entry was written on 2026-08-22..25. What those commits changed:
+
+- `make chaos` `KILL_TARGETS` silently excluded WS-8; fixed and live-verified (40 scenarios, 6 services killed, 0 lost, 0 duplicated). A
+  repo-wide sweep for the same failure class fixed: ws3 alerts-topic redelivery clobbering an analyst's triage field (CAS-preserving),
+  `check_rule_producers.py`'s dormant anti-dormancy check (sysmon sat uncovered for a month), two live tests wired into CI, a silent
+  fail-closed on a malformed rule condition in ws4, the ws7 staleness badge freezing on a dead feed, no aggregate stub-vs-real LLM
+  fallback metric in ws5, and bus-connection failures updating `/health` but not `/metrics`.
+- TOTP replay: `verify_totp()` had no last-used-counter tracking, so a captured valid code could be resubmitted inside its window to open
+  a second session. Fixed with a per-account `totp_last_counter` (users.py schema v4) and `verify_code_returning_counter()`.
+- `require_auth_or_die` never covered ws6-inventory although its docstring said it did; ws6 now has its own, wired into `serve()`.
+- Also: the `{evtx,splunk}_eval.py` mains returned 0 unconditionally (now gate on mismatches), `coverage_gate.py` warns when a frozen
+  floor's buffer thins below 3 points, the `alerts.json` mapping matches what `make_alert()` writes, `ot_new_device_e2e.py` wired into
+  a CI job, two unread `scoring.yaml` keys removed, the `check_rule_producers.py` FIXTURES step added to `docs/adding-a-parser.md`, and
+  mypy's `exclude` no longer skips a real file.
+
 ### Added (2026-10-28, storylines 10-11: every rule is named by a twin storyline oracle)
 
 - `eval/twin/storyline_win_credential_theft.py` + `oracle_win_credential_theft.yaml`: PowerShell cradle -> LSASS read -> sensitive AD
