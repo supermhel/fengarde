@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed (2026-11-04, WP-4.1 false-correlation rate)
+
+- `false_correlation_rate` 1.0 on the AI-to-OT twin is real (the WS-8 entity-bridge join
+  connects every oracle-forbidden pair; ADR-009/010 "tracks never merge" — ratified, frozen
+  baseline unchanged) but the number is order-blind, and the twin already measures the
+  time-aware answer on the same pairs (`causal_order.py`: `forbidden_order_realised_rate`
+  0.0 — the oracle's anti-causal directions are never realised in time). `eval/twin/report.py`
+  now emits `forbidden_order_realised_rate` / `forbidden_timed` / `temporal_discrimination`
+  as first-class metrics, the card gains a twin-only `forbidden_order_realised_rate` row
+  (lower-better, control: mirrored chain 1.0), and the FCR row's blind-spot text + the
+  "cannot prove" entity-sharing bullet now name the time-aware counterpart — the claim no
+  longer overstates. Findings: `docs/false-correlation-findings.md`. No ws8 change, no
+  frozen ratchet/baseline change; pinned `false_correlation_rate` atoms untouched.
+
 ### Fixed (2026-11-04, full-corpus workflow)
 
 - `full-corpus.yml`: the post-pull pointer check failed exactly when the pull had succeeded (`xargs … grep -l` exits 123 when no pointer
