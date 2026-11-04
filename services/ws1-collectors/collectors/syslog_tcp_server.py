@@ -1,9 +1,9 @@
 """Real TCP syslog listener (WP-1.2) -- RFC 6587 framing, shared dispatch.
 
 Adds live TCP syslog to WS-1 next to the UDP listener. Each decoded frame
-becomes a ``raw.events`` message through the SAME ``SyslogDispatcher`` as
-UDP (token buckets, bounded-spool fallback, counters, per-source metrics), so
-the two transports are one ingest pipeline, not two.
+becomes a ``raw.events`` message through the same dispatch CODE (``SyslogDispatcher``)
+as UDP. Each listener owns its OWN dispatcher instance, so token buckets, counters, per-source metrics and
+the spool are per listener, not pooled: the configured cap applies to UDP and to TCP separately.
 
 Framing (RFC 6587):
   * ``newline`` (``SYSLOG_TCP_FRAMING=newline``, default): frames are
@@ -43,6 +43,8 @@ DEFAULT_PORT = 5515
 DEFAULT_MAX_FRAME_BYTES = 65536          # matches the UDP datagram budget
 DEFAULT_MAX_CONNECTIONS = 64
 DEFAULT_IDLE_TIMEOUT_S = 30
+DEFAULT_MAX_CONN_PER_PEER = 16           # one peer cannot hold every slot
+DEFAULT_SPOOL_DRAIN_INTERVAL_S = 5.0
 FRAMING_NEWLINE = "newline"
 FRAMING_OCTET = "octet-counting"
 FRAMINGS = (FRAMING_NEWLINE, FRAMING_OCTET)
@@ -68,7 +70,9 @@ class SyslogTCPServer:
                  max_events_per_sec: float = 0,
                  max_connections: int = DEFAULT_MAX_CONNECTIONS,
                  idle_timeout_s: float = DEFAULT_IDLE_TIMEOUT_S,
+                 max_connections_per_peer: int = DEFAULT_MAX_CONN_PER_PEER,
                  spool: Optional[BoundedSpool] = None,
+                 spool_drain_interval_s: float = DEFAULT_SPOOL_DRAIN_INTERVAL_S,
                  deterministic_id: bool = False,
                  logger=None):
         if framing not in FRAMINGS:
@@ -84,6 +88,12 @@ class SyslogTCPServer:
         self.max_frame_bytes = int(max_frame_bytes)
         self.max_connections = max(1, int(max_connections))
         self.idle_timeout_s = float(idle_timeout_s)
+        self.max_connections_per_peer = max(1, int(max_connections_per_peer))
+        self._spool_drain_interval_s = spool_drain_interval_s
+        self._spool_shutdown = threading.Event()
+        self._spool_thread: Optional[threading.Thread] = None
+        self._stat_lock = threading.Lock()
+        self._peer_conns: dict[str, int] = {}
         # Shared dispatch: same pipeline as the UDP listener. (No self.log =
         # here: ``log`` is a forwarded property; the dispatcher receives the
         # logger directly and the property setter serves post-construction
@@ -98,14 +108,20 @@ class SyslogTCPServer:
         self.events_idle_closed = 0      # idle timeout closed the connection
         self.events_conn_closed = 0      # clean EOF
         self.events_conn_accepted = 0
+        self.events_conn_refused_peer = 0   # per-peer connection cap
+        self.events_truncated_frames = 0    # EOF mid-frame (octet mode)
 
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self._sock.bind((host, self.port))
-        self.host, self.port = self._sock.getsockname()[0], self._sock.getsockname()[1]
-        # Backlog 128 mirrors the HTTP listener's hardening (default 5 refuses
-        # legitimate connection bursts on some platforms).
-        self._sock.listen(128)
+        try:
+            self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            self._sock.bind((host, self.port))
+            self.host, self.port = self._sock.getsockname()[0], self._sock.getsockname()[1]
+            # Backlog 128 mirrors the HTTP listener's hardening (default 5 refuses
+            # legitimate connection bursts on some platforms).
+            self._sock.listen(128)
+        except OSError:
+            self._sock.close()          # a failed start must not leak the descriptor
+            raise
         self._slots = threading.BoundedSemaphore(self.max_connections)
         self._conn_lock = threading.Lock()
         self._conns: set[socket.socket] = set()
@@ -150,10 +166,25 @@ class SyslogTCPServer:
     def events_empty(self) -> int:
         return self._dispatcher.events_empty
 
+    @property
+    def _spool(self):
+        return self._dispatcher._spool  # noqa: SLF001 -- same family
+
+    def _bump(self, name: str) -> None:
+        """Thread-safe increment of a transport counter (connection threads share them)."""
+        with self._stat_lock:
+            setattr(self, name, getattr(self, name) + 1)
+
     def start(self) -> None:
         if self._running.is_set():
             return
         self._running.set()
+        if self._spool is not None and self._spool_thread is None:
+            # Review of PR 146: only the UDP server replayed its spool, so a TCP spool filled during a bus outage
+            # was never drained. TCP now owns a drain loop for its own spool.
+            self._spool_thread = threading.Thread(target=self._drain_spool_loop,
+                                                  name="syslog-tcp-spool-drain", daemon=True)
+            self._spool_thread.start()
         self._accept_thread = threading.Thread(target=self._accept_loop,
                                                name="syslog-tcp-accept",
                                                daemon=True)
@@ -176,39 +207,57 @@ class SyslogTCPServer:
             if not self._running.is_set():
                 conn.close()
                 break
+            with self._conn_lock:
+                over_peer = self._peer_conns.get(addr[0], 0) >= self.max_connections_per_peer
+            if over_peer:
+                conn.close()
+                self._bump("events_conn_refused_peer")
+                continue
             if not self._slots.acquire(blocking=False):
                 conn.close()
-                self.events_conn_refused += 1
+                self._bump("events_conn_refused")
                 continue
-            self.events_conn_accepted += 1
+            self._bump("events_conn_accepted")
             with self._conn_lock:
                 self._conns.add(conn)
+                self._peer_conns[addr[0]] = self._peer_conns.get(addr[0], 0) + 1
             t = threading.Thread(target=self._conn_loop, args=(conn, addr[0]),
                                  name="syslog-tcp-conn", daemon=True)
             t.start()
 
     def _conn_loop(self, conn: socket.socket, peer_ip: str) -> None:
         buffer = b""
+        state = {"lf": False}
         try:
             conn.settimeout(self.idle_timeout_s)
             while self._running.is_set():
                 try:
                     chunk = conn.recv(_RECV_CHUNK)
                 except socket.timeout:
-                    self.events_idle_closed += 1
+                    self._bump("events_idle_closed")
                     break
                 if not chunk:
-                    self.events_conn_closed += 1
+                    self._bump("events_conn_closed")
+                    # EOF: a final newline-framed message with no terminator is still a message (`printf msg | nc`);
+                    # an unfinished octet-counted frame is counted, not silently dropped.
+                    if buffer:
+                        if self.framing == FRAMING_NEWLINE:
+                            if len(buffer) <= self.max_frame_bytes:
+                                self._dispatcher.handle_line(
+                                    buffer.decode("utf-8", errors="replace").rstrip("\r"), peer_ip)
+                        else:
+                            self._bump("events_truncated_frames")
                     break
                 buffer += chunk
                 if self.framing == FRAMING_OCTET:
-                    buffer = self._drain_octet(peer_ip, buffer)
+                    rest = self._drain_octet(peer_ip, buffer, state)
                 else:
-                    buffer = self._drain_newline(peer_ip, buffer)
-                if buffer is None:          # protocol violation -> reject
+                    rest = self._drain_newline(peer_ip, buffer)
+                if rest is None:            # protocol violation -> reject
                     break
+                buffer = rest
         except OSError:
-            self.events_conn_errors += 1
+            self._bump("events_conn_errors")
         finally:
             try:
                 conn.close()
@@ -216,13 +265,18 @@ class SyslogTCPServer:
                 pass
             with self._conn_lock:
                 self._conns.discard(conn)
+                n = self._peer_conns.get(peer_ip, 0) - 1
+                if n > 0:
+                    self._peer_conns[peer_ip] = n
+                else:
+                    self._peer_conns.pop(peer_ip, None)
             self._slots.release()
 
     def _reject(self, peer_ip: str) -> None:
         """Count one framing-violation close (called when a drainer returns
         None). Throttled log: a talker sending garbage gets one warning per
         connection, then the reset."""
-        self.events_frame_oversize += 1
+        self._bump("events_frame_oversize")
         if self.log is not None:
             self.log.warn("closing tcp syslog connection: framing violation",
                           src=peer_ip, framing=self.framing,
@@ -245,8 +299,14 @@ class SyslogTCPServer:
             line = frame.decode("utf-8", errors="replace").rstrip("\r")
             self._dispatcher.handle_line(line, peer_ip)
 
-    def _drain_octet(self, peer_ip: str, buffer: bytes):
+    def _drain_octet(self, peer_ip: str, buffer: bytes, state: Optional[dict] = None):
+        st = state if state is not None else {"lf": False}
         while True:
+            if st["lf"] and buffer:
+                # The optional LF after the previous message arrived in a LATER segment than the message itself.
+                if buffer.startswith(b"\n"):
+                    buffer = buffer[1:]
+                st["lf"] = False
             sp = buffer.find(b" ")
             if sp < 0:
                 # No length header yet: either it is still arriving or the
@@ -271,9 +331,11 @@ class SyslogTCPServer:
                 return buffer
             msg = buffer[sp + 1:need]
             buffer = buffer[need:]
-            # Interop: some senders append a newline after the message.
+            # Interop: some senders append a newline after the message; it may not have arrived yet.
             if buffer.startswith(b"\n"):
                 buffer = buffer[1:]
+            elif not buffer:
+                st["lf"] = True
             line = msg.decode("utf-8", errors="replace").rstrip("\r")
             self._dispatcher.handle_line(line, peer_ip)
 
@@ -283,8 +345,31 @@ class SyslogTCPServer:
         return self._running.is_set() and bool(
             self._accept_thread and self._accept_thread.is_alive())
 
+    def _drain_spool_loop(self) -> None:
+        """Replay this listener's spool into the bus until stop(); a produce failure just means the outage has not
+        cleared, so drain_into() stops early and the loop retries next interval (same contract as the UDP loop)."""
+        while not self._spool_shutdown.is_set():
+            spool = self._spool
+            if spool is None:
+                return
+            try:
+                drained = spool.drain_into(
+                    lambda item: self.bus.produce(self.topic, key=item["key"], payload=item["event"]))
+                if drained and self.log is not None:
+                    self.log.info("replayed spooled tcp syslog events", count=drained,
+                                  pending=spool.pending_count())
+            except Exception as exc:  # never let the drain loop die silently
+                if self.log is not None:
+                    self.log.warn("tcp spool drain failed", error=str(exc))
+            self._spool_shutdown.wait(self._spool_drain_interval_s)
+
     def stop(self) -> None:
         self._running.clear()
+        self._spool_shutdown.set()
+        try:
+            self._sock.shutdown(socket.SHUT_RDWR)   # wakes a blocked accept() on platforms where close() alone does not
+        except OSError:
+            pass
         try:
             self._sock.close()
         except OSError:
@@ -297,9 +382,16 @@ class SyslogTCPServer:
             self._conns.clear()
         for conn in conns:
             try:
+                conn.shutdown(socket.SHUT_RDWR)     # wake the connection thread's recv()
+            except OSError:
+                pass
+            try:
                 conn.close()
             except OSError:
                 pass
+        if self._spool_thread is not None:
+            self._spool_thread.join(timeout=5)
+            self._spool_thread = None
         # NOTE: the conn threads release() the semaphore themselves in their
         # finally -- replacing _slots here would double-release into a fresh
         # object (ValueError) and also loses the slot accounting.
@@ -324,6 +416,8 @@ class SyslogTCPServer:
             "tcp_events_empty": d.events_empty,
             "tcp_syslog_events_oversize": self.events_frame_oversize,
             "tcp_syslog_conn_refused": self.events_conn_refused,
+            "tcp_syslog_conn_refused_peer": self.events_conn_refused_peer,
+            "tcp_syslog_truncated_frames": self.events_truncated_frames,
             "tcp_syslog_conn_errors": self.events_conn_errors,
             "tcp_syslog_idle_closed": self.events_idle_closed,
             "tcp_syslog_conn_closed": self.events_conn_closed,

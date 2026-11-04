@@ -1,9 +1,13 @@
 # TCP syslog ingest (RFC 6587) — WP-1.2
 
 Point rsyslog, syslog-ng, or any stream-capable sender at ws1's TCP listener.
-Every decoded frame follows the exact same path as the UDP listener — shared
-token buckets, spool fallback, counters and per-source metrics — so the two
-transports are one ingest pipeline.
+Every decoded frame follows the same dispatch code as the UDP listener (token buckets, spool fallback, counters,
+per-source metrics), but each listener has its own instance: the rate cap, the counters (`tcp_*` versus the unprefixed
+UDP ones) and the spool (`SYSLOG_TCP_SPOOL_PATH`, replayed by a TCP drain loop) are per listener, not pooled.
+
+**Exposure:** `5515/tcp` is published on all host interfaces, like UDP 5514, and is plaintext and unauthenticated (TLS is a
+follow-up). Anyone who can reach it can inject syslog lines. Use `SYSLOG_TCP_HOST` and the compose port mapping
+(`127.0.0.1:5515:5515/tcp`) to keep it host-local, and put it behind a firewall otherwise.
 
 ```
 TCP 0.0.0.0:5515   (SYSLOG_TCP_HOST / SYSLOG_TCP_PORT, compose-published 5515:5515/tcp)
@@ -29,6 +33,8 @@ an idle timeout `SYSLOG_TCP_IDLE_TIMEOUT_S` (30 s).
 | frame > `SYSLOG_TCP_MAX_FRAME_BYTES` (65536) | connection closed, counted in `tcp_syslog_events_oversize` |
 | non-numeric / runaway length header (octet mode) | same |
 | more than `SYSLOG_TCP_MAX_CONNECTIONS` peers | newest connection refused (closed), `tcp_syslog_conn_refused` |
+| more than `SYSLOG_TCP_MAX_CONN_PER_PEER` (16) connections from one address | the extra one is refused, `tcp_syslog_conn_refused_peer` |
+| connection closes with an unterminated last line (newline mode) | the line is dispatched; in octet mode an unfinished frame is counted in `tcp_syslog_truncated_frames` |
 | connection silent past the idle timeout | closed, `tcp_syslog_idle_closed` |
 | rate limit (`SYSLOG_TCP_MAX_EVENTS_PER_SEC`, default 2000/s per source) | frames shed + counted like UDP (connection stays up) |
 | bus down | `SYSLOG_TCP_SPOOL_PATH` accepts to the bounded spool; without it, dropped+counted |

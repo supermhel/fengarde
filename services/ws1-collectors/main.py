@@ -352,6 +352,7 @@ def main() -> None:
                                      TCP_DEFAULT_MAX_CONNECTIONS, log),
             idle_timeout_s=_float_env("SYSLOG_TCP_IDLE_TIMEOUT_S",
                                       TCP_DEFAULT_IDLE_TIMEOUT_S, log),
+            max_connections_per_peer=_int_env("SYSLOG_TCP_MAX_CONN_PER_PEER", 16, log),
             spool=tcp_spool,
             logger=log)
         tcp.start()

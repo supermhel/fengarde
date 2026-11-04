@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added (2026-11-04, WP-1.2: TCP syslog for WS-1, RFC 6587)
 
+- Review fixes on the TCP syslog listener (PR 146 review): a TCP spool (`SYSLOG_TCP_SPOOL_PATH`) is now replayed by its own drain loop (only UDP drained before, so a TCP spool filled during an outage was never delivered); the optional LF after an octet-counted message may arrive in a later segment without killing the connection; a final unterminated line is dispatched at EOF; one address is limited to `SYSLOG_TCP_MAX_CONN_PER_PEER` connections (16); transport counters are updated under a lock; `stop()` shuts sockets down to wake blocked threads; a failed bind closes its socket. Docs now say plainly that UDP and TCP have separate dispatchers (per-listener caps and counters) and that 5515/tcp is published on all interfaces, plaintext. Pinned by `test_syslog_tcp_hardening.py`.
+
 - `collectors/syslog_tcp_server.py`: live TCP syslog listener on 5515
   (`SYSLOG_TCP_HOST`/`SYSLOG_TCP_PORT`), RFC 6587 framing — `newline`
   (default) and `octet-counting` (`SYSLOG_TCP_FRAMING`) — with per-connection
