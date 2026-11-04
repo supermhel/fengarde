@@ -112,11 +112,23 @@ services:
     build: { context: .., dockerfile: services/ws1-collectors/Dockerfile }
     restart: unless-stopped
     # Publish the syslog UDP listener so devices (and the smoke test) can send to it.
-    ports: ["5514:5514/udp"]
+    # WP-1.1: HTTP/JSON ingest is host-loopback-only on 8554 (shippers on this
+    # host POST /v1/ingest; TLS is the reverse proxy's job per docs/deployment.md).
+    ports: ["5514:5514/udp", "127.0.0.1:8554:8554"]
     environment:
       - BUS_BACKEND=redis
       - REDIS_PASSWORD=${REDIS_PASSWORD:-}
       - REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0
+      # WP-1.1: bearer token REQUIRED for POST /v1/ingest -- ws1 refuses to
+      # start the listener without it (loopback-only dev: set
+      # FENGARDE_INGEST_DEV_LOOPBACK=1 instead of a token).
+      - FENGARDE_INGEST_TOKEN=${FENGARDE_INGEST_TOKEN:-}
+      # Bind ALL container interfaces; the loopback restriction that keeps this
+      # endpoint host-local is the HOST-side publish above (127.0.0.1:8554:8554),
+      # the same pattern as redis/opensearch (they bind 0.0.0.0 in-container and
+      # are published loopback-only). Binding 127.0.0.1 IN the container would
+      # make the published port unreachable through docker-proxy.
+      - INGEST_HTTP_HOST=0.0.0.0
       # B2 ingest-edge shedding (default 2000/s; explicit here for visibility).
       - SYSLOG_MAX_EVENTS_PER_SEC=2000
       # Zero-loss spool is opt-in and unset by default, same as always -- set

@@ -22,6 +22,13 @@ from collectors.syslog_collector import SyslogCollector  # noqa: E402
 from collectors.snmp_collector import SnmpCollector  # noqa: E402
 from collectors.netflow_collector import NetflowCollector  # noqa: E402
 from collectors.syslog_udp_server import udp_rcvbuf_errors  # noqa: E402  # gap-hunt #71: needed at module scope by _syslog_metrics (was import-only-inside-main)
+from collectors.http_json_collector import (  # noqa: E402  # WP-1.1: HTTP/JSON ingest
+    HttpJsonCollector,
+    DEFAULT_HOST as INGEST_DEFAULT_HOST,
+    DEFAULT_PORT as INGEST_DEFAULT_PORT,
+    DEFAULT_MAX_BODY_BYTES as INGEST_DEFAULT_MAX_BODY_BYTES,
+    DEFAULT_MAX_EVENTS_PER_SEC as INGEST_DEFAULT_MAX_EVENTS_PER_SEC,
+)
 
 MOCKS = HERE / "mocks"
 
@@ -123,14 +130,16 @@ _HEALTH_TOPIC = "ws1.liveness"
 _HEALTH_GROUP = "ws1-health"
 
 
-def build_health_handlers(udp):
+def build_health_handlers(udp, http=None):
     """Runner handler map for the ws1 daemon (see _HEALTH_TOPIC docstring)."""
 
     def handler(payload):
-        # A real worker that must both reach the bus AND prove the UDP ingest
-        # daemon -- WS-1's actual reason to exist -- is still running.
+        # A real worker that must both reach the bus AND prove the ingest
+        # daemons -- WS-1's actual reason to exist -- are still running.
         if udp is None or not udp.is_running():
             raise RuntimeError("syslog UDP ingest daemon is not running")
+        if http is not None and not http.is_running():
+            raise RuntimeError("HTTP/JSON ingest daemon is not running")
 
     return {_HEALTH_TOPIC: (_HEALTH_GROUP, handler)}
 
@@ -156,7 +165,7 @@ def _start_syslog_liveness_producer(bus, log, shutdown, *, interval_s: float = 5
     return t
 
 
-def _syslog_metrics(udp) -> dict:
+def _syslog_metrics(udp, http=None) -> dict:
     """WS-1's ingest-edge metrics, FLAT (gap-hunt #71/#76).
 
     /metrics/prom (shared.runner.render_prometheus) only renders top-level
@@ -167,37 +176,39 @@ def _syslog_metrics(udp) -> dict:
     and the new events_empty/recv_oserror_total all render as real gauges. The
     per-source breakdown stays a (JSON-only) dict leaf, as intended.
     """
-    if udp is None:
-        return {}
-    m = {
-        "events_produced": udp.events_produced,
-        "events_dropped": udp.events_dropped,
-        "events_shed": udp.events_shed,
-        "events_spooled": udp.events_spooled,
-        "events_lost": udp.events_lost,
-        "events_queue_full": udp.events_queue_full,
-        "events_empty": udp.events_empty,          # gap-hunt #81 (distinct from dropped)
-        "recv_oserror_total": udp.recv_oserror_total,  # gap-hunt #79
-        # FENGARDE E6: bounded per-source breakdown {ip: {produced, dropped,
-        # shed, empty}} -- a dict with a capped (LRU-evicted) map, so /metrics
-        # can show which peer IPs are flooding/shedding without the map itself
-        # growing without bound. Aggregates above stay authoritative (and
-        # lossless); this is a visibility partition (JSON-only in /metrics/prom).
-        "per_source": udp.per_source_metrics(),
-    }
-    # P0-4: the kernel-level drop counter (RcvbufErrors) -- the loss class that
-    # reads as a healthy events_shed=0/events_dropped=0 at the app layer alone
-    # (live-proven). None off-Linux / procfs unavailable; omitted rather than
-    # reported as a misleading 0.
-    kernel_rcvbuf_errors = udp_rcvbuf_errors()
-    if kernel_rcvbuf_errors is not None:
-        m["udp_rcvbuf_errors_cumulative"] = kernel_rcvbuf_errors
-    # Ingestion-edge-redundancy design doc (fengarde-sec) step 2: the "healthy
-    # but nothing is arriving" signal /health never had.
-    m["seconds_since_last_event"] = round(udp.seconds_since_last_event(), 1)
-    spool = getattr(udp, "_spool", None)
-    if spool is not None:   # gap-hunt R4-74: torn/corrupt spool lines were counted but never exported
-        m["spool_corrupt_lines_skipped"] = getattr(spool, "corrupt_lines_skipped", 0)
+    m: dict = {}
+    if udp is not None:
+        m.update({
+            "events_produced": udp.events_produced,
+            "events_dropped": udp.events_dropped,
+            "events_shed": udp.events_shed,
+            "events_spooled": udp.events_spooled,
+            "events_lost": udp.events_lost,
+            "events_queue_full": udp.events_queue_full,
+            "events_empty": udp.events_empty,          # gap-hunt #81 (distinct from dropped)
+            "recv_oserror_total": udp.recv_oserror_total,  # gap-hunt #79
+            # FENGARDE E6: bounded per-source breakdown {ip: {produced, dropped,
+            # shed, empty}} -- a dict with a capped (LRU-evicted) map, so /metrics
+            # can show which peer IPs are flooding/shedding without the map itself
+            # growing without bound. Aggregates above stay authoritative (and
+            # lossless); this is a visibility partition (JSON-only in /metrics/prom).
+            "per_source": udp.per_source_metrics(),
+        })
+        # P0-4: the kernel-level drop counter (RcvbufErrors) -- the loss class
+        # that reads as a healthy events_shed=0/events_dropped=0 at the app
+        # layer alone (live-proven). None off-Linux / procfs unavailable;
+        # omitted rather than reported as a misleading 0.
+        kernel_rcvbuf_errors = udp_rcvbuf_errors()
+        if kernel_rcvbuf_errors is not None:
+            m["udp_rcvbuf_errors_cumulative"] = kernel_rcvbuf_errors
+        # Ingestion-edge-redundancy design doc (fengarde-sec) step 2: the
+        # "healthy but nothing is arriving" signal /health never had.
+        m["seconds_since_last_event"] = round(udp.seconds_since_last_event(), 1)
+        spool = getattr(udp, "_spool", None)
+        if spool is not None:   # gap-hunt R4-74: torn/corrupt spool lines were counted but never exported
+            m["spool_corrupt_lines_skipped"] = getattr(spool, "corrupt_lines_skipped", 0)
+    if http is not None:
+        m.update(http.metrics())
     return m
 
 
@@ -262,6 +273,44 @@ def main() -> None:
         log.error("syslog UDP bind failed", host=syslog_host, port=syslog_port,
                   error=str(exc))
 
+    # WP-1.1: HTTP/JSON ingest (POST /v1/ingest). Auth REQUIRED -- without
+    # FENGARDE_INGEST_TOKEN the listener refuses to start, unless the explicit
+    # loopback-only dev switch (FENGARDE_INGEST_DEV_LOOPBACK) is set. A refused
+    # start (missing token, unreadable spool path, bind failure) is logged and
+    # the daemon stays up for /health, exactly like the failed-UDP-bind
+    # posture above; the health worker treats http=None as "not required".
+    http = None
+    try:
+        ingest_spool = None
+        ingest_spool_path = os.getenv("INGEST_HTTP_SPOOL_PATH")
+        if ingest_spool_path:
+            ingest_spool = BoundedSpool(
+                ingest_spool_path,
+                max_bytes=_int_env("INGEST_HTTP_SPOOL_MAX_BYTES",
+                                   SPOOL_DEFAULT_MAX_BYTES, log),
+                logger=log)
+            log.info("http ingest zero-loss spool enabled",
+                     path=ingest_spool_path)
+        http = HttpJsonCollector(
+            bus,
+            ingest_token=os.getenv("FENGARDE_INGEST_TOKEN"),
+            dev_loopback=bool(os.getenv("FENGARDE_INGEST_DEV_LOOPBACK")),
+            host=os.getenv("INGEST_HTTP_HOST", INGEST_DEFAULT_HOST),
+            port=_int_env("INGEST_HTTP_PORT", INGEST_DEFAULT_PORT, log,
+                          crash_on_bad=True),
+            max_body_bytes=_int_env("INGEST_HTTP_MAX_BODY_BYTES",
+                                    INGEST_DEFAULT_MAX_BODY_BYTES, log),
+            max_events_per_sec=_float_env(
+                "INGEST_HTTP_MAX_EVENTS_PER_SEC",
+                INGEST_DEFAULT_MAX_EVENTS_PER_SEC, log),
+            spool=ingest_spool,
+            max_concurrent=_int_env("INGEST_HTTP_MAX_CONCURRENT", 16, log),
+            extra_source_types=[s for s in os.getenv("INGEST_HTTP_EXTRA_SOURCE_TYPES", "").split(",")],
+            logger=log)
+        http.start()
+    except (ValueError, OSError) as exc:
+        log.error("HTTP/JSON ingest not started", error=str(exc))
+
     shutdown = threading.Event()
     depth_thread = _start_depth_watchdog(bus, log, shutdown)
     silence_thread = _start_ingest_silence_watchdog(udp, log, shutdown)
@@ -270,14 +319,16 @@ def main() -> None:
     # hardcoded-200 lie; the liveness producer feeds the self-check worker.
     liveness_thread = _start_syslog_liveness_producer(bus, log, shutdown)
     try:
-        serve(build_health_handlers(udp),
+        serve(build_health_handlers(udp, http),
               health_port=_int_env("PORT", 8001, log, crash_on_bad=True),
               service_name="ws1-collectors", shutdown=shutdown,
-              metrics_provider=lambda: _syslog_metrics(udp),
+              metrics_provider=lambda: _syslog_metrics(udp, http),
               bus_factory=lambda: bus)
     finally:
         if udp is not None:
             udp.stop()
+        if http is not None:
+            http.stop()
         if depth_thread is not None:
             depth_thread.join(timeout=5)
         if silence_thread is not None:

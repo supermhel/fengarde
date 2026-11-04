@@ -473,6 +473,9 @@ $PY eval/llm_triage/test_llm_triage_eval.py || { fail=1; FAILED="${FAILED} ${LAS
 echo
 echo "== ws1 syslog UDP listener (v0.2) =="; LAST_HEADER="== ws1 syslog UDP listener (v0.2) =="
 $PY services/ws1-collectors/test_syslog_udp.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo "== ws1 HTTP/JSON ingest (WP-1.1): auth, 400/413/429, malformed-line skip, idempotent redelivery, spool fallback =="; LAST_HEADER="== ws1 HTTP/JSON ingest (WP-1.1): auth, 400/413/429, malformed-line skip, idempotent redelivery, spool fallback =="
+$PY services/ws1-collectors/test_http_json_ingest.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+$PY services/ws1-collectors/test_http_json_ingest_hardening.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
 echo "== ws1 health/metrics (gap-hunt #70/#71/#76: /health 503 on bus outage, flat gauges) =="; LAST_HEADER="== ws1 health/metrics (gap-hunt #70/#71/#76: /health 503 on bus outage, flat gauges) =="
 $PY services/ws1-collectors/test_main_health_metrics.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }

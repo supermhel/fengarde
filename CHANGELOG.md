@@ -56,6 +56,26 @@ No CHANGELOG entry was written on 2026-08-22..25. What those commits changed:
   floor's buffer thins below 3 points, the `alerts.json` mapping matches what `make_alert()` writes, `ot_new_device_e2e.py` wired into
   a CI job, two unread `scoring.yaml` keys removed, the `check_rule_producers.py` FIXTURES step added to `docs/adding-a-parser.md`, and
   mypy's `exclude` no longer skips a real file.
+### Added (2026-11-04, WP-1.1: HTTP/JSON ingest for WS-1)
+
+- Review fixes on the HTTP ingest edge (PR 142 review): a line with absurd nesting or a >4300-digit int is skipped instead of dropping the connection; `Transfer-Encoding: chunked` bodies are decoded; NDJSON splits on `
+` only; a non-ASCII bearer token gets 401; counters are updated under a lock; the connection cap now bounds connections at accept (503) instead of only inside `do_POST`; `Bearer` is case-insensitive and query values are decoded once; plugin source types can be listed in `INGEST_HTTP_EXTRA_SOURCE_TYPES`; a partial 429/503 tells the client to resend with `X-Fengarde-Idempotency-Key`. The listen backlog is 128 (was socketserver's 5, which refused connection bursts) and a rejected request's small unread body is drained so the client sees the 401, not a reset. Pinned by `test_http_json_ingest_hardening.py`.
+- `POST /v1/ingest` on ws1 (`collectors/http_json_collector.py`, default
+  `127.0.0.1:8554`, compose-published `127.0.0.1:8554:8554`): NDJSON or JSON
+  array (`format=json-array`); `source_type` from query or
+  `X-Fengarde-Source-Type` header, validated against the registered WS-2
+  parsers (unknown → 400). Bearer auth via `FENGARDE_INGEST_TOKEN` (required;
+  the listener refuses to start without it; `FENGARDE_INGEST_DEV_LOOPBACK=1`
+  is the explicit loopback-only dev switch). Body cap → 413, per-source
+  token-bucket rate limit → 429 (reuses the syslog listener's buckets),
+  malformed lines counted in `skipped` (batch never aborts), bus-down spool
+  fallback reusing `collectors/spool.py` (202) / 503 without a spool.
+  `X-Fengarde-Idempotency-Key` makes redelivery idempotent (deterministic
+  `ingest_id`, ordinal-scoped so identical records stay distinct). Each record
+  lands on `raw.events` as `{source_type, raw, meta}` with `meta.format`,
+  partition key = peer IP. Contract test `test_http_json_ingest.py` wired
+  into the fast tier; live curl example against the compose stack in
+  `docs/ingest-http.md`.
 ### Added (2026-11-04, WP-4.3: manual full-corpus eval lane)
 - `.github/workflows/full-corpus.yml`: a `workflow_dispatch`-only lane that runs the same three corpus
   lanes as the nightly (`evtx_eval.py`, `splunk_eval.py`, `blind_recall.py --require-corpus`) against

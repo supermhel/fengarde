@@ -2,12 +2,14 @@
 
 ## Consumes
 - External inputs: **live syslog over UDP** (`SYSLOG_UDP_HOST`/`SYSLOG_UDP_PORT`,
-  default `0.0.0.0:5514`; TCP/514 is NOT implemented), plus mock SNMP/NetFlow
-  sources (see Mocks) — live SNMP/NetFlow transports are not yet wired.
+  default `0.0.0.0:5514`; TCP/514 is NOT implemented), **live HTTP/JSON over
+  TCP** (`POST /v1/ingest`, default `127.0.0.1:8554`, WP-1.1; see
+  `docs/ingest-http.md`), plus mock SNMP/NetFlow sources (see Mocks) — live
+  SNMP/NetFlow transports are not yet wired.
 - Contracts: B (bus topics).
 
 ## Produces
-- Topic `raw.events` — `{source_type, raw, meta}`, partition key = source IP: the datagram's peer IP on the live UDP path (NOT written into `meta`, see below), `meta.ip` on the mock SNMP/NetFlow/sample-syslog path (`main.py`).
+- Topic `raw.events` — `{source_type, raw, meta}`, partition key = source IP: the datagram's peer IP on the live UDP path (NOT written into `meta`, see below), `meta.ip` on the mock SNMP/NetFlow/sample-syslog path (`main.py`), **the poster's peer IP on the HTTP/JSON path** (`collectors/http_json_collector.py`, WP-1.1).
   - **UDP syslog listener specifics** (`collectors/syslog_udp_server.py::build_raw_event`):
     every datagram is produced with `source_type=generic_syslog` (the listener
     cannot know the product) and `meta = {received_at, ingest_id, trace_id,
@@ -18,6 +20,22 @@
     `cisco_asa`, `CEF:` → `cef`, dnsmasq `query[` → `dns_query`) when that parser
     parses it; anything else stays `generic_syslog`. See
     `services/ws2-normalization/INTERFACE.md` → Routing.
+  - **HTTP/JSON ingest specifics** (`collectors/http_json_collector.py`):
+    `POST /v1/ingest?source_type=<registered parser>` with an NDJSON body
+    (default) or a JSON array (`format=json-array`). `source_type` comes from
+    the query parameter or the `X-Fengarde-Source-Type` header and MUST be a
+    registered parser (`REGISTERED_SOURCE_TYPES` in the collector module,
+    cross-checked against ws2's registry by `test_http_json_ingest.py`);
+    unknown → 400. Each record becomes
+    `{source_type, raw: <the record>, meta: {received_at, ingest_id, format,
+    trace_id, tenant_id}}` — `raw` is the wire record (the parser's own key
+    convention), `meta.format` is `ndjson`/`json-array`. Bearer token
+    (`FENGARDE_INGEST_TOKEN`) required; 401 otherwise. Body cap → 413,
+    per-source rate limit (reuses the syslog tenant/source token buckets) → 429,
+    malformed records counted in `skipped` (never abort the batch), bus down →
+    spool (202) or 503 without a spool. Idempotent redelivery via the
+    `X-Fengarde-Idempotency-Key` header (deterministic `ingest_id`). Full
+    contract detail and response precedence: `docs/ingest-http.md`.
 - Topic `assets.updates` — `{mac, ip, hostname, seen_at}`, partition key = mac (fallback ip).
 
 ## Backpressure (B2, F4)
