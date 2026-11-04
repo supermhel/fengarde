@@ -193,7 +193,8 @@ class SyslogUDPServer:
                  workers: int = DEFAULT_WORKERS,
                  queue_maxsize: int = DEFAULT_QUEUE_MAXSIZE,
                  so_rcvbuf: int = DEFAULT_SO_RCVBUF,
-                 peer_metrics_max: int = DEFAULT_PEER_METRICS_MAX):
+                 peer_metrics_max: int = DEFAULT_PEER_METRICS_MAX,
+                 dispatcher: Optional[SyslogDispatcher] = None):
         self.bus = bus
         self.topic = topic
         self.deterministic_id = deterministic_id
@@ -202,7 +203,9 @@ class SyslogUDPServer:
         # protocol-agnostic SyslogDispatcher SHARED with the TCP listener. The
         # counters stay readable here through the properties below, so every
         # existing caller and the whole test_syslog_udp.py suite is unchanged.
-        self._dispatcher = SyslogDispatcher(
+        # ``dispatcher``: main.py hands this one to the TCP listener too, so both transports share one rate cap, one
+        # counter set and one spool (drained by this server's loop).
+        self._dispatcher = dispatcher if dispatcher is not None else SyslogDispatcher(
             bus, topic=topic, max_events_per_sec=max_events_per_sec,
             spool=spool, deterministic_id=deterministic_id,
             peer_metrics_max=peer_metrics_max, logger=logger)
@@ -255,6 +258,10 @@ class SyslogUDPServer:
     # -- WP-1.2: counters and per-source metrics delegate to the shared
     #    dispatcher (the TCP listener uses the same instance-level API, so
     #    /metrics and the tests read one source of truth for both transports)
+    @property
+    def dispatcher(self) -> SyslogDispatcher:
+        return self._dispatcher
+
     @property
     def log(self):
         # Forwarded so a caller may replace the logger AFTER construction

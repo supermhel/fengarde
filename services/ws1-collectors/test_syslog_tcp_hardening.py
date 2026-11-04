@@ -172,6 +172,40 @@ def main() -> int:
     finally:
         srv.stop()
 
+    # 8. shared dispatcher: ONE rate cap, one counter set across UDP and TCP
+    from collectors.syslog_udp_server import SyslogUDPServer
+    ubus = Bus()
+    udp = SyslogUDPServer(ubus, host="127.0.0.1", port=0, max_events_per_sec=2)
+    tcp = SyslogTCPServer(ubus, host="127.0.0.1", port=0, dispatcher=udp.dispatcher)
+    tcp.start()
+    try:
+        udp.dispatcher.handle_line("from-udp-1", "10.0.0.9")
+        udp.dispatcher.handle_line("from-udp-2", "10.0.0.9")     # the 2/s cap is now used up
+        s = conn(tcp.port)
+        s.sendall(b"from-tcp-1\n")
+        s.close()
+        check(wait_for(lambda: udp.events_shed >= 1),
+              f"the TCP line must be shed by the cap the UDP lines already consumed, shed={udp.events_shed}")
+        check(udp.events_produced == 2, f"shared counters must show UDP's 2 produced, got {udp.events_produced}")
+        check("tcp_events_produced" not in tcp.metrics(),
+              "a TCP listener sharing the dispatcher must not re-export the event counters under tcp_")
+    finally:
+        tcp.stop()
+
+    # 9. secure default bind
+    from collectors import syslog_tcp_server as mod
+    check(mod.DEFAULT_HOST == "127.0.0.1", f"the TCP listener must default to loopback, got {mod.DEFAULT_HOST}")
+
+    # 10. throughput of the framing path (no per-frame re-copy): 20000 small frames in one buffer
+    srv = SyslogTCPServer(Bus(), host="127.0.0.1", port=0)
+    buf = bytearray(b"x" * 90 + b"\n") * 20000
+    t0 = time.perf_counter()
+    ok = srv._drain_newline("10.0.0.1", buf)
+    dt = time.perf_counter() - t0
+    check(ok and len(buf) == 0 and srv.events_produced == 20000, f"20000 frames must all be dispatched, got {srv.events_produced}")
+    check(dt < 5.0, f"framing 20000 frames took {dt:.2f}s; the remainder is being re-copied per frame")
+    srv.stop()
+
     # 7. failed bind closes the socket
     a = SyslogTCPServer(Bus(), host="127.0.0.1", port=0)
     try:

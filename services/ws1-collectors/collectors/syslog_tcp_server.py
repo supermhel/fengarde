@@ -1,9 +1,9 @@
 """Real TCP syslog listener (WP-1.2) -- RFC 6587 framing, shared dispatch.
 
 Adds live TCP syslog to WS-1 next to the UDP listener. Each decoded frame
-becomes a ``raw.events`` message through the same dispatch CODE (``SyslogDispatcher``)
-as UDP. Each listener owns its OWN dispatcher instance, so token buckets, counters, per-source metrics and
-the spool are per listener, not pooled: the configured cap applies to UDP and to TCP separately.
+becomes a ``raw.events`` message through the same ``SyslogDispatcher`` as UDP.
+When main.py passes the UDP server's dispatcher in, token buckets, counters, per-source metrics and the spool
+are pooled across both transports; a standalone TCP server owns its own.
 
 Framing (RFC 6587):
   * ``newline`` (``SYSLOG_TCP_FRAMING=newline``, default): frames are
@@ -38,7 +38,9 @@ from typing import Optional
 from .syslog_dispatch import SyslogDispatcher
 from .spool import BoundedSpool
 
-DEFAULT_HOST = "0.0.0.0"
+# Loopback by default: a plaintext, unauthenticated listener must not bind every interface unless the operator asks
+# (SYSLOG_TCP_HOST=0.0.0.0, as the compose file does inside the container behind a host-side publish mapping).
+DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 5515
 DEFAULT_MAX_FRAME_BYTES = 65536          # matches the UDP datagram budget
 DEFAULT_MAX_CONNECTIONS = 64
@@ -73,6 +75,7 @@ class SyslogTCPServer:
                  max_connections_per_peer: int = DEFAULT_MAX_CONN_PER_PEER,
                  spool: Optional[BoundedSpool] = None,
                  spool_drain_interval_s: float = DEFAULT_SPOOL_DRAIN_INTERVAL_S,
+                 dispatcher: Optional[SyslogDispatcher] = None,
                  deterministic_id: bool = False,
                  logger=None):
         if framing not in FRAMINGS:
@@ -98,7 +101,11 @@ class SyslogTCPServer:
         # here: ``log`` is a forwarded property; the dispatcher receives the
         # logger directly and the property setter serves post-construction
         # replacement, the pattern test_syslog_udp.py relies on.)
-        self._dispatcher = SyslogDispatcher(
+        # A dispatcher passed in (main.py hands over the UDP server's) makes UDP and TCP ONE ingest pipeline: one rate cap,
+        # one set of event counters and per-source metrics, one spool (drained by the UDP loop). Without it this listener
+        # owns a dispatcher of its own (standalone use, or when the UDP listener failed to start).
+        self._owns_dispatcher = dispatcher is None
+        self._dispatcher = dispatcher if dispatcher is not None else SyslogDispatcher(
             bus, topic=topic, max_events_per_sec=max_events_per_sec,
             spool=spool, deterministic_id=deterministic_id, logger=logger)
         # Transport-specific counters.
@@ -179,7 +186,7 @@ class SyslogTCPServer:
         if self._running.is_set():
             return
         self._running.set()
-        if self._spool is not None and self._spool_thread is None:
+        if self._owns_dispatcher and self._spool is not None and self._spool_thread is None:
             # Review of PR 146: only the UDP server replayed its spool, so a TCP spool filled during a bus outage
             # was never drained. TCP now owns a drain loop for its own spool.
             self._spool_thread = threading.Thread(target=self._drain_spool_loop,
@@ -226,7 +233,7 @@ class SyslogTCPServer:
             t.start()
 
     def _conn_loop(self, conn: socket.socket, peer_ip: str) -> None:
-        buffer = b""
+        buffer = bytearray()
         state = {"lf": False}
         try:
             conn.settimeout(self.idle_timeout_s)
@@ -244,18 +251,17 @@ class SyslogTCPServer:
                         if self.framing == FRAMING_NEWLINE:
                             if len(buffer) <= self.max_frame_bytes:
                                 self._dispatcher.handle_line(
-                                    buffer.decode("utf-8", errors="replace").rstrip("\r"), peer_ip)
+                                    bytes(buffer).decode("utf-8", errors="replace").rstrip("\r"), peer_ip)
                         else:
                             self._bump("events_truncated_frames")
                     break
                 buffer += chunk
                 if self.framing == FRAMING_OCTET:
-                    rest = self._drain_octet(peer_ip, buffer, state)
+                    ok = self._drain_octet(peer_ip, buffer, state)
                 else:
-                    rest = self._drain_newline(peer_ip, buffer)
-                if rest is None:            # protocol violation -> reject
+                    ok = self._drain_newline(peer_ip, buffer)
+                if not ok:                  # protocol violation -> reject
                     break
-                buffer = rest
         except OSError:
             self._bump("events_conn_errors")
         finally:
@@ -282,61 +288,66 @@ class SyslogTCPServer:
                           src=peer_ip, framing=self.framing,
                           max_frame_bytes=self.max_frame_bytes)
 
-    def _drain_newline(self, peer_ip: str, buffer: bytes):
+    def _drain_newline(self, peer_ip: str, buffer: bytearray) -> bool:
+        """Dispatch every complete LF-terminated frame in ``buffer`` (consumed in place). False = framing violation."""
+        pos = 0
         while True:
-            idx = buffer.find(b"\n")
+            idx = buffer.find(b"\n", pos)
             if idx < 0:
-                # No terminator yet: an over-cap pending frame has nowhere to
-                # go -- reject (the frame cannot complete within the cap).
-                if len(buffer) > self.max_frame_bytes:
+                # No terminator yet: an over-cap pending frame cannot complete within the cap -> reject.
+                if len(buffer) - pos > self.max_frame_bytes:
                     self._reject(peer_ip)
-                    return None
-                return buffer
-            frame, buffer = buffer[:idx], buffer[idx + 1:]
-            if len(frame) > self.max_frame_bytes:
+                    return False
+                del buffer[:pos]
+                return True
+            if idx - pos > self.max_frame_bytes:
                 self._reject(peer_ip)
-                return None
-            line = frame.decode("utf-8", errors="replace").rstrip("\r")
+                return False
+            line = bytes(buffer[pos:idx]).decode("utf-8", errors="replace").rstrip("\r")
+            pos = idx + 1
             self._dispatcher.handle_line(line, peer_ip)
 
-    def _drain_octet(self, peer_ip: str, buffer: bytes, state: Optional[dict] = None):
+    def _drain_octet(self, peer_ip: str, buffer: bytearray, state: Optional[dict] = None) -> bool:
+        """Dispatch every complete ``MSG-LEN SP MSG`` frame in ``buffer`` (consumed in place). False = violation."""
         st = state if state is not None else {"lf": False}
+        pos = 0
         while True:
-            if st["lf"] and buffer:
+            if st["lf"] and pos < len(buffer):
                 # The optional LF after the previous message arrived in a LATER segment than the message itself.
-                if buffer.startswith(b"\n"):
-                    buffer = buffer[1:]
+                if buffer[pos] == 0x0A:
+                    pos += 1
                 st["lf"] = False
-            sp = buffer.find(b" ")
+            sp = buffer.find(b" ", pos)
             if sp < 0:
-                # No length header yet: either it is still arriving or the
-                # peer is not speaking octet-counting at all.
-                if len(buffer) > _MAX_HEADER_BYTES:
+                # No length header yet: either it is still arriving or the peer is not speaking octet-counting.
+                if len(buffer) - pos > _MAX_HEADER_BYTES:
                     self._reject(peer_ip)
-                    return None
-                return buffer
-            hdr = buffer[:sp]
-            if sp > _MAX_HEADER_BYTES or not hdr.isdigit():
+                    return False
+                del buffer[:pos]
+                return True
+            hdr = bytes(buffer[pos:sp])
+            if len(hdr) > _MAX_HEADER_BYTES or not hdr.isdigit():
                 self._reject(peer_ip)
-                return None
+                return False
             length = int(hdr)
             if length > self.max_frame_bytes:
                 self._reject(peer_ip)
-                return None
-            need = sp + 1 + length
-            if len(buffer) < need:
-                if len(buffer) > self.max_frame_bytes + _MAX_HEADER_BYTES:
+                return False
+            end = sp + 1 + length
+            if len(buffer) < end:
+                if len(buffer) - pos > self.max_frame_bytes + _MAX_HEADER_BYTES:
                     self._reject(peer_ip)  # belt: cannot make progress within the cap
-                    return None
-                return buffer
-            msg = buffer[sp + 1:need]
-            buffer = buffer[need:]
+                    return False
+                del buffer[:pos]
+                return True
+            line = bytes(buffer[sp + 1:end]).decode("utf-8", errors="replace").rstrip("\r")
+            pos = end
             # Interop: some senders append a newline after the message; it may not have arrived yet.
-            if buffer.startswith(b"\n"):
-                buffer = buffer[1:]
-            elif not buffer:
+            if pos < len(buffer):
+                if buffer[pos] == 0x0A:
+                    pos += 1
+            else:
                 st["lf"] = True
-            line = msg.decode("utf-8", errors="replace").rstrip("\r")
             self._dispatcher.handle_line(line, peer_ip)
 
     # -- counters / metrics -------------------------------------------------
@@ -399,21 +410,12 @@ class SyslogTCPServer:
             self.log.info("syslog tcp stopped", host=self.host, port=self.port)
 
     def metrics(self) -> dict:
-        """Flat transport AND shared-dispatch counters for /metrics.
+        """Flat transport counters for /metrics, plus the event counters when this listener owns its dispatcher.
 
-        The event counters (produced/dropped/shed/spooled/lost/empty) are the
-        dispatcher's -- shared with UDP -- so they are exported here under the
-        ``tcp_`` prefix, mirroring http_json_collector's ``http_events_*``.
-        Without this the TCP-produced events were invisible on /metrics while
-        flowing to the bus (live-verified)."""
+        Shared with UDP, the event counters (produced/dropped/shed/spooled/lost/empty) are the unprefixed syslog ones
+        already exported for the UDP server, so they are not repeated here under ``tcp_``."""
         d = self._dispatcher
-        return {
-            "tcp_events_produced": d.events_produced,
-            "tcp_events_dropped": d.events_dropped,
-            "tcp_events_shed": d.events_shed,
-            "tcp_events_spooled": d.events_spooled,
-            "tcp_events_lost": d.events_lost,
-            "tcp_events_empty": d.events_empty,
+        m = {
             "tcp_syslog_events_oversize": self.events_frame_oversize,
             "tcp_syslog_conn_refused": self.events_conn_refused,
             "tcp_syslog_conn_refused_peer": self.events_conn_refused_peer,
@@ -423,3 +425,13 @@ class SyslogTCPServer:
             "tcp_syslog_conn_closed": self.events_conn_closed,
             "tcp_syslog_conn_accepted": self.events_conn_accepted,
         }
+        if self._owns_dispatcher:
+            m.update({
+                "tcp_events_produced": d.events_produced,
+                "tcp_events_dropped": d.events_dropped,
+                "tcp_events_shed": d.events_shed,
+                "tcp_events_spooled": d.events_spooled,
+                "tcp_events_lost": d.events_lost,
+                "tcp_events_empty": d.events_empty,
+            })
+        return m

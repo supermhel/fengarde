@@ -330,7 +330,11 @@ def main() -> None:
     try:
         tcp_spool = None
         tcp_spool_path = os.getenv("SYSLOG_TCP_SPOOL_PATH")
-        if tcp_spool_path:
+        # With the UDP listener up, TCP shares its dispatcher (rate cap, counters, spool); a separate TCP spool is
+        # only meaningful when TCP runs alone.
+        if tcp_spool_path and udp is not None:
+            log.info("syslog tcp shares the UDP dispatcher; SYSLOG_TCP_SPOOL_PATH is ignored (SYSLOG_SPOOL_PATH applies)")
+        elif tcp_spool_path:
             tcp_spool = BoundedSpool(
                 tcp_spool_path,
                 max_bytes=_int_env("SYSLOG_TCP_SPOOL_MAX_BYTES",
@@ -354,6 +358,7 @@ def main() -> None:
                                       TCP_DEFAULT_IDLE_TIMEOUT_S, log),
             max_connections_per_peer=_int_env("SYSLOG_TCP_MAX_CONN_PER_PEER", 16, log),
             spool=tcp_spool,
+            dispatcher=udp.dispatcher if udp is not None else None,
             logger=log)
         tcp.start()
     except (ValueError, OSError) as exc:
