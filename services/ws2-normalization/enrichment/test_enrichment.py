@@ -297,5 +297,47 @@ class TestEnrichment(unittest.TestCase):
                          "invalid IP strings must never enter the cache")
 
 
+class TestGeoipPathSelection(unittest.TestCase):
+    """Gap-hunt R4-129: FENGARDE_GEOIP_PATH selects the geo map; the sample map announces itself."""
+
+    def setUp(self):
+        self._td = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._td.name)
+        self.addCleanup(self._td.cleanup)
+        self.geo = self.tmp / "my_geo.yml"
+        self.geo.write_text('entries:\n  - cidr: "192.0.2.0/24"\n    country: "DE"\n', encoding="utf-8")
+        self.ioc = self.tmp / "ioc.yml"
+        self.ioc.write_text("entries: []\n", encoding="utf-8")
+
+    def _loc(self, e):
+        return e.enrich({"src_endpoint": {"ip": "192.0.2.9"}})["src_endpoint"].get("location")
+
+    def test_env_var_selects_the_operator_map(self):
+        import os
+        from unittest import mock
+        with mock.patch.dict(os.environ, {"FENGARDE_GEOIP_PATH": str(self.geo)}):
+            with self.assertNoLogs("ws2-normalization.enrichment", level="WARNING"):
+                e = Enricher(ioc_path=self.ioc)
+        self.assertEqual(self._loc(e), {"country": "DE", "source": "local-geoip"})
+
+    def test_explicit_path_beats_the_env_var(self):
+        import os
+        from unittest import mock
+        other = self.tmp / "other.yml"
+        other.write_text('entries:\n  - cidr: "192.0.2.0/24"\n    country: "FR"\n', encoding="utf-8")
+        with mock.patch.dict(os.environ, {"FENGARDE_GEOIP_PATH": str(self.geo)}):
+            e = Enricher(ioc_path=self.ioc, geoip_path=other)
+        self.assertEqual(self._loc(e)["country"], "FR")
+
+    def test_sample_map_in_use_is_logged(self):
+        import os
+        from unittest import mock
+        env = {k: v for k, v in os.environ.items() if k != "FENGARDE_GEOIP_PATH"}
+        with mock.patch.dict(os.environ, env, clear=True):
+            with self.assertLogs("ws2-normalization.enrichment", level="WARNING") as cm:
+                Enricher(ioc_path=self.ioc)
+        self.assertTrue(any("SAMPLE map" in m and "FENGARDE_GEOIP_PATH" in m for m in cm.output), cm.output)
+
+
 if __name__ == "__main__":
     unittest.main()

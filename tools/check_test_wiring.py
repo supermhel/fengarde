@@ -38,6 +38,7 @@ LIVE_ONLY_ORPHANS = {
     "services/ws4-detection/test_window_sentinel_failover_live.py",          # tools/sentinel_failover_live.py
     "services/ws4-detection/test_window_redis_live.py",                      # CI redis-integration (Q11 Lua fallback)
     "services/ws4-detection/test_window_lua_live.py",                        # CI redis-integration (EVALSHA vs pipeline parity)
+    "tools/backpressure_load_test.py",                                       # live UDP flood; self-skips without a stack (R4 #120)
     # mutmut execution targets (NOT standalone gate suites): `make mutation-test`
     # / CI's `mutmut run` invokes them as the mutation-testing harness on the
     # configured source set. They are not run by run_all_tests.sh by design --
@@ -72,7 +73,10 @@ def main() -> int:
 
     unwired: list[str] = []
     for base in SEARCH_DIRS:
-        for p in (ROOT / base).rglob("test_*.py"):
+        # R4 #120: also scan *_load_test.py -- tools/backpressure_load_test.py is not named test_*.py, so the
+        # gate never saw it and nothing recorded that it is deliberately not run by CI.
+        candidates = {*(ROOT / base).rglob("test_*.py"), *(ROOT / base).rglob("*_load_test.py")}
+        for p in sorted(candidates):
             rel = str(p.relative_to(ROOT)).replace("\\", "/")
             fn = rel.rsplit("/", 1)[-1]
             # Wired if the exact rel path, its basename, or its within-service

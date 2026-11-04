@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import ipaddress
 import logging
+import os
 import threading
 from collections import OrderedDict
 from pathlib import Path
@@ -125,8 +126,20 @@ class Enricher:
     """
 
     def __init__(self, ioc_path: Path | str = _DEFAULT_IOC,
-                 geoip_path: Path | str = _DEFAULT_GEOIP,
+                 geoip_path: Path | str | None = None,
                  cache_cap: int = _IP_CACHE_MAXSIZE):
+        # Gap-hunt R4-129: the shipped geoip.yml is a SAMPLE (RFC1918 plus documentation ranges), so no real public
+        # address ever gets src_endpoint.location and common_impossible_travel cannot fire on production traffic.
+        # An operator supplies their own map (their real egress prefixes) with FENGARDE_GEOIP_PATH; an explicit
+        # argument still wins. Using the sample is logged, because it is otherwise invisible.
+        if geoip_path is None:
+            geoip_path = os.environ.get("FENGARDE_GEOIP_PATH") or _DEFAULT_GEOIP
+        if Path(geoip_path) == _DEFAULT_GEOIP:
+            _LOGGER.warning("geoip: the shipped SAMPLE map is in use (RFC1918 and documentation ranges only); public "
+                            "addresses get no src_endpoint.location, so common_impossible_travel cannot fire on real "
+                            "traffic. Set FENGARDE_GEOIP_PATH to a CIDR->country file with your own egress prefixes.")
+        else:
+            _LOGGER.info("geoip: using operator map %s", geoip_path)
         self._ioc_exact: dict[str, dict] = {}
         self._ioc_nets: list[tuple] = []          # (network, entry)
         self._geo_nets: list[tuple] = []          # (network, country)

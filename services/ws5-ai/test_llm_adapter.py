@@ -176,6 +176,35 @@ class TestFallback(unittest.TestCase):
         self.assertEqual(out["verdict"], "malicious")
         self.assertEqual(out["engine"], "stub")
 
+    def test_dribbling_response_hits_total_deadline(self):
+        # Gap-hunt R4 #33: urllib's timeout is per socket read, so a response that dribbles a byte per read never
+        # trips it. The adapter's own wall-clock deadline must end the call with TimeoutError, and FallbackLLM must
+        # then degrade to the stub instead of pinning a worker forever.
+        import time
+
+        class _Dribble:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def read(self, n=-1):
+                time.sleep(0.02)
+                return b" "          # never EOF, never a complete JSON document
+
+        llm = llm_adapter.OllamaLLM(url="http://x", timeout=0.2)
+        t0 = time.monotonic()
+        with mock.patch.object(llm_adapter, "_urlopen", return_value=_Dribble()):
+            with self.assertRaises(TimeoutError):
+                llm.analyze(SAMPLE_EVENT, SAMPLE_REASONS)
+        self.assertLess(time.monotonic() - t0, 2.0, "the deadline did not bound the dribbling read")
+
+        fb = llm_adapter.FallbackLLM(llm_adapter.OllamaLLM(url="http://x", timeout=0.2), llm_adapter.StubLLM())
+        with mock.patch.object(llm_adapter, "_urlopen", return_value=_Dribble()):
+            out = fb.analyze(SAMPLE_EVENT, SAMPLE_REASONS)
+        self.assertEqual(out["engine"], "stub")
+
 
 class TestSelection(unittest.TestCase):
     def test_no_ollama_url_returns_stub(self):

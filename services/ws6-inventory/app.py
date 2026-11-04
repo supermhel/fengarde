@@ -34,10 +34,14 @@ from keystore import (  # noqa: E402
 )
 from authz import require_auth_or_die, warn_if_disabled  # noqa: E402
 
-STORE = InventoryStore(os.getenv("INVENTORY_DB", ":memory:"))
+_INVENTORY_DB = os.getenv("INVENTORY_DB", ":memory:")
+_KEYSTORE_DB = os.getenv("INVENTORY_KEYSTORE_DB", _INVENTORY_DB)
+STORE = InventoryStore(_INVENTORY_DB)
 # Same file as STORE by default (one DB to back up), separate connection --
 # TenantKeyStore owns its own table/schema, see keystore.py.
-KEYSTORE = TenantKeyStore(os.getenv("INVENTORY_KEYSTORE_DB", os.getenv("INVENTORY_DB", ":memory:")))
+# R4-49: same file => share the inventory store's write lock (":memory:" databases are private, nothing to share).
+KEYSTORE = TenantKeyStore(_KEYSTORE_DB, write_lock=STORE.write_lock
+                          if _KEYSTORE_DB == _INVENTORY_DB and _INVENTORY_DB != ":memory:" else None)
 MIGRATED_TENANTS = ensure_legacy_keys_migrated(KEYSTORE)
 
 # Bounds on client-controlled inputs. `limit` is clamped so a hostile/typo value

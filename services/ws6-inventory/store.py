@@ -239,6 +239,11 @@ class InventoryStore:
         self._write_lock = threading.RLock()
         self._init()
 
+    @property
+    def write_lock(self):
+        """The in-process write lock; TenantKeyStore shares it when both use one SQLite file (gap-hunt R4-49)."""
+        return self._write_lock
+
     def _init(self):
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.execute("PRAGMA synchronous=NORMAL")

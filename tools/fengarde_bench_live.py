@@ -168,12 +168,16 @@ def measure_eps(n: int, mixed: bool, poll_interval_s: float, timeout_s: float) -
     }
 
 
-def _ssh_burst(ip: str, base_s: int, count: int = 10) -> list[dict]:
+def _ssh_burst(ip: str, base_s: int, count: int = 10, run_tag: str = "") -> list[dict]:
+    # Gap-hunt R4 #108: the ids used to be a pure function of (ip, i), so a second invocation that rotated onto the
+    # same TEST-NET address re-sent identical ingest_ids and WS-3 deduplicated them: the "new" burst produced no
+    # new alert and the latency run timed out or read a stale one. A per-invocation tag makes every run's ids unique.
+    tag = f"{run_tag}-" if run_tag else ""
     return [{
         "source_type": "linux_ssh",
         "raw": (f"Jun 10 13:55:{i % 60:02d} db01 sshd[2154]: "
                 f"Failed password for invalid user admin from {ip} port 51000 ssh2"),
-        "meta": {"received_at": base_s + i, "ingest_id": f"bench-live-{ip}-{i}"},
+        "meta": {"received_at": base_s + i, "ingest_id": f"bench-live-{tag}{ip}-{i}"},
     } for i in range(count)]
 
 
@@ -192,6 +196,7 @@ def measure_latency(k: int, poll_interval_s: float, timeout_s: float) -> dict:
     r = _redis_client()
     r.ping()
     samples_ms: list[float] = []
+    run_tag = uuid.uuid4().hex[:8]
     for i in range(k):
         ip = _burst_ip(i)
         # Count BEFORE producing, and wait for an INCREASE, not just ">=1":
@@ -202,7 +207,7 @@ def measure_latency(k: int, poll_interval_s: float, timeout_s: float) -> dict:
         # processed at all.
         baseline = _alerts_count_for_ip(ip)
         base_s = int(time.time()) - 120  # in the past, clear of the 5-min anti-poisoning guard
-        burst = _ssh_burst(ip, base_s)
+        burst = _ssh_burst(ip, base_s, run_tag=run_tag)
 
         produce_events(r, burst)
         t_burst_done = time.perf_counter()

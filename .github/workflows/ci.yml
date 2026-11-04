@@ -650,6 +650,9 @@ jobs:
       - name: mutmut (informational, non-blocking -- see pyproject.toml [tool.mutmut])
         run: |
           pip install --require-hashes -r .github/ci-requirements/mutmut.txt
+          # R4 #121: `mutmut run || true` also hides a RED BASELINE (the unmutated tests failing makes every mutant
+          # "survive"/error and the step still passes). Run the exact test selection once, blocking, first.
+          python -m pytest tools/test_mutmut_shared.py tools/test_mutmut_window.py -q
           python -m mutmut run || true
           python -m mutmut results || true
           echo "mutmut survival rate is informational (pyproject.toml [tool.mutmut]) -- not blocking CI, no threshold parser exists yet"

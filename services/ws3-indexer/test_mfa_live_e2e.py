@@ -26,6 +26,7 @@ The flow asserted, in order:
   4.  login with password only            -> 401 (the gate is now closed)
   5.  login with password + WRONG code    -> 401
   6.  login with password + correct code  -> 200
+  7.  login re-presenting step 3's spent code -> 401 (replay refused)
 
 Steps 4 and 5 are the load-bearing ones. Step 6 alone would pass against a
 build where MFA is not enforced at all -- which is precisely the state the bug
@@ -175,9 +176,10 @@ def main() -> int:
     secret = uri.split("secret=")[1].split("&")[0]
 
     # 3. Confirm a real code (step two) -> secret becomes ACTIVE.
+    step3_code = mfa.generate_code(secret)
     status, body, _ = _post("/auth/mfa/verify",
                             {"password": _PASSWORD,
-                             "totp_code": mfa.generate_code(secret)},
+                             "totp_code": step3_code},
                             cookie=cookie, csrf=csrf)
     check(status == 200, f"step 3: /auth/mfa/verify returned {status} {body} "
                          f"-- expected 200 activating the secret")
@@ -215,6 +217,16 @@ def main() -> int:
           f"step 6: login with a VALID totp_code returned {status} {body} "
           f"-- expected 200")
 
+    # 7. REPLAY (gap-hunt R4 #85). The code step 3 already spent, presented again with the right password, must be
+    # refused with the same body as a wrong code -- the 2026-08-23 replay fix was the one MFA defect this e2e's
+    # original step list could not have caught.
+    status, body, _ = _post("/auth/login",
+                            {"username": user, "password": _PASSWORD, "totp_code": step3_code})
+    check(status == 401,
+          f"step 7: re-presenting step 3's already-used code returned {status} -- expected 401 (TOTP replay)")
+    check(body.get("error") == "invalid credentials",
+          f"step 7: replay error was {body.get('error')!r}; it must match the wrong-code error")
+
     if FAILS:
         print(f"[FAIL] MFA/TOTP live e2e: {len(FAILS)} problem(s)")
         for f in FAILS:
@@ -223,7 +235,7 @@ def main() -> int:
     print("[OK] MFA/TOTP live e2e PASS -- real HTTP against the deployed "
           "handler: provision -> verify activates, password-only login is then "
           "REFUSED, a wrong code is refused indistinguishably from a wrong "
-          "password, and password + valid code succeeds")
+          "password, password + valid code succeeds, and a spent code is refused on replay")
     return 0
 
 

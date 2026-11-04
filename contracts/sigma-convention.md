@@ -5,7 +5,8 @@ Because they target the normalized schema, one rule works across all sources of 
 
 ## Rule conventions
 
-- File: `contracts/rules/<sector>_<short_name>.yml` where sector ∈ `common|bank|dc`.
+- File: `contracts/rules/<family>_<short_name>.yml` where family ∈ `common|bank|dc|win|ot|agent|n8n|m365|email|cloud`
+  (`tools/validate_rules.py` `FILENAME_FAMILIES` enforces it; `siem.sector` inside the file is a separate field).
 - `logsource.product` is unused; instead use `logsource.category` = the OCSF class name
   (`authentication`, `network_activity`, `datastore_activity`, `api_activity`...).
 - Detection field names are **OCSF dotted paths**, e.g. `class_uid`, `activity_id`,

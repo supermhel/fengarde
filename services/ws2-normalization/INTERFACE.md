@@ -15,6 +15,12 @@
   offline/air-gap-safe, fail-open; may ADD optional fields to the already-clean
   event) → validate against Contract A → produce.
 
+  The CIDR→country map defaults to the shipped **sample** `contracts/enrichment/geoip.yml` (RFC1918 plus documentation
+  ranges). Under it no public address gets a country, so `common_impossible_travel` cannot fire on real traffic, and WS-2
+  logs a warning at start while it is in use. Point `FENGARDE_GEOIP_PATH` at a YAML file of the same
+  `entries: [{cidr, country}]` shape holding your own egress prefixes to change that (gap-hunt R4-129). Lookups scan the
+  list (behind a bounded LRU), so it suits tens to thousands of prefixes, not a full GeoIP database.
+
 ## Routing (`parsers/__init__.py::resolve`)
 - A registered `source_type` is authoritative: an explicit product label (e.g.
   `tools/agent_log_shipper.py --source-type linux_ssh`) is never overridden by
