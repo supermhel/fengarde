@@ -1,16 +1,18 @@
-# Gap-hunt 2026-08-26: current status of its findings (read 2026-10-20 at `f236209`; closure list refreshed 2026-10-22)
+# Gap-hunt 2026-08-26: current status of its findings (read 2026-10-20 at `f236209`; closure list refreshed 2026-10-22; open and partial rows re-checked 2026-11-04)
 
 The original report is `docs/archive/reviews/gap_hunt_full_report_2026-08-26.md` (256 findings: 45 CRITICAL, 146 RISK,
 65 MINOR). This file is the tracker it never had. Method: three read-only reviewers read the CODE on `origin/main`
 (`f236209`) for every CRITICAL and RISK finding, not commit messages. Nothing was run, and "fixed" was not mutation-tested.
 MINOR findings (65) have NOT been triaged. Statuses are claims from that read, re-checked only where noted. The counts table below is as of the original read; findings closed afterwards are listed in the next table and are not subtracted from it.
 
-**Staleness note 2026-11-04.** This tracker was not re-audited after 2026-10-22. Merged since then (from the commit log, not
-re-checked against any finding): #119 (F4 clock clamp default, F2 alias map), #124 (ws8 Sentinel window counter), #126 (parser
+**Re-check 2026-11-04 (open and partial rows only).** Each row in "Still OPEN or PARTIAL" below was re-checked against
+`origin/main` at `921d75b` by reading the code and, for `fire_check`, running it (`python eval/attack/fire_check.py`, exit 0).
+Result: R3-35 looks fixed, R3-39 is mitigated and closed as reframed, R4 #86 is now a confirmed gap, and the other rows are
+unchanged. The FIXED and PARTIAL counts in the table above and the FIXED rows were NOT re-verified, and the 65 MINOR findings remain
+untriaged. For orientation, merged since 2026-10-22 (from the commit log): #119 (F4 clock clamp default, F2 alias map), #124 (ws8 Sentinel window counter), #126 (parser
 overflow and extreme-value sweep, Ollama timeout), #127 (ws8 correlator state in Redis), #128/#132/#134 (load test, ws3 bulk
 writes, pipelined ws4 window ops), #129 (LLM verdict eval), #130 (storylines name all rules), #131 (AI-to-OT demo), #133 (ws6 auth
-test timeout). Some of the open or partial rows below, for example R4 #107/#108 (the live bench) and R3-4/R3-6, may be affected by
-that work; they are still listed here as they were. The 65 MINOR findings remain untriaged.
+test timeout). None of that work closed an open row except as noted in the re-check column below.
 
 ## Counts
 
@@ -50,15 +52,15 @@ that work; they are still listed here as they were. The 65 MINOR findings remain
 
 | Finding | State | Suggested fix |
 |---|---|---|
-| R4-129 | needs real data | ship a GeoIP resolver or real egress prefixes, then make the rule `stable` |
-| R4-52 | partial | issue the key only after an RBAC session, not on a spoofable `Sec-Fetch-Site` check |
+| R4-129 | needs real data. **Re-check 2026-11-04: unchanged** (`common_impossible_travel` is still `status: experimental`, still the sample geo map) | ship a GeoIP resolver or real egress prefixes, then make the rule `stable` |
+| R4-52 | partial. **Re-check 2026-11-04: unchanged** (`SECURITY.md` still documents the header as forgeable and `ws7-dashboard/templates/default.conf.template` still keys on `Sec-Fetch-Site` as defense in depth; the key-issuance code was not re-read) | issue the key only after an RBAC session, not on a spoofable `Sec-Fetch-Site` check |
 | R2-2 | accepted (decided 2026-10-20) | keeping `verify_totp` on enrolment: `test_fix_mfa` pins that the enrolment code cannot be replayed at login; cost is waiting for the next 30 s code |
-| R3-4, R3-6 | partial | WS-5 alerts never correlate (give them an entity or drop WS-5 from the producer list); accept/document the spoofable `device:` track |
-| R3-35 | partial | probe the outside-hours window per minute (1440 samples) |
-| R3-39 | partial | fail (not warn) in `fire_check` for a rule with no `mitre:` unless waived (one rule has none) |
-| R4 #33 | partial | add a test with a dribbling fake response asserting `TimeoutError` |
-| R4 #44 | partial | accepted/documented (lengthening the baseline never applies to existing devices) |
-| R4 #85 | partial | add the replay step to the SSOT MFA row |
-| R4 #107, #108 | partial / open | print and fail on `eps_dropped_majority`; tag the live bench SSH-burst ids with the run id |
-| R4 #120, #121 | open | add `backpressure_load_test.py` to the wiring check; run a baseline before `mutmut run \|\| true` |
-| R4 #86 | unverifiable | check git history for 2026-08-22..25 CHANGELOG gaps |
+| R3-4, R3-6 | partial. **Re-check 2026-11-04: unchanged in substance.** WS-8 skips WS-5-shaped alerts with a counted reason (`ws8_skipped_alerts_by_reason`, `test_ws5_shaped_alert_is_skipped_with_reason`, commit `1b97bb7`, 2026-08-26, which predates the 2026-10-20 read); they still do not correlate | WS-5 alerts never correlate (give them an entity or drop WS-5 from the producer list); accept/document the spoofable `device:` track |
+| R3-35 | **Re-check 2026-11-04: looks FIXED.** `fire_check._oh_anchors` searches and sweeps in 60 s steps (`eval/attack/fire_check.py`, step `60_000` ms); `python eval/attack/fire_check.py` exited 0 on 2026-11-04. Not mutation-tested | probe the outside-hours window per minute (1440 samples) |
+| R3-39 | **Re-check 2026-11-04: mitigated, closed as reframed.** Commit `4ad90df` (2026-10-28): the one untagged rule (`agent_tool_call_burst`) goes through the same positive, boundary and near-miss probes, and a failure fails the run. The 2026-11-04 run reported 1 untagged rule fired and held its negative half. There is still no hard failure merely for a missing `mitre:` tag | fail (not warn) in `fire_check` for a rule with no `mitre:` unless waived (one rule has none) |
+| R4 #33 | partial. **Re-check 2026-11-04: still open.** The only timeout test (`ws5-ai/test_llm_adapter.py::test_timeout_degrades_to_stub`) mocks a raised `TimeoutError`; PR #126's `OLLAMA_TIMEOUT_SECONDS` tests cover parsing and the cap, not a dribbling response | add a test with a dribbling fake response asserting `TimeoutError` |
+| R4 #44 | partial. **Re-check 2026-11-04: unchanged.** I found no public doc of this behaviour besides a test comment in `ws6-inventory/test_new_device_diff.py` | accepted/documented (lengthening the baseline never applies to existing devices) |
+| R4 #85 | partial. **Re-check 2026-11-04: still open.** `SSOT.md` has no TOTP-replay mention in its MFA rows | add the replay step to the SSOT MFA row |
+| R4 #107, #108 | partial / open. **Re-check 2026-11-04: both still open.** `tools/fengarde_bench.py` only writes `eps_dropped_majority` into its JSON and exits 1 solely on a bucket versus linear-scan mismatch (R4-106); no run id is added to the live bench ids. PR #128 added a separate `tools/fengarde_loadtest_live.py` that was not checked against this finding | print and fail on `eps_dropped_majority`; tag the live bench SSH-burst ids with the run id |
+| R4 #120, #121 | open. **Re-check 2026-11-04: both still open.** `tools/backpressure_load_test.py` is referenced only in `CHANGELOG.md`, `SSOT.md` and its own docstring, not in `tools/check_test_wiring.py`, `run_all_tests.sh` or CI; the CI mutmut step is still `python -m mutmut run \|\| true` with no baseline | add `backpressure_load_test.py` to the wiring check; run a baseline before `mutmut run \|\| true` |
+| R4 #86 | unverifiable. **Re-check 2026-11-04: gap confirmed.** `CHANGELOG.md` has no entry dated 2026-08-22 to 2026-08-25, while three commits landed on 2026-08-23 (`87e9f80` TOTP replay and auth-scope fixes, `418f3cf` chaos-gate WS-8, `beb1840` CI fixes). The TOTP-replay fix is not mentioned in the CHANGELOG; `418f3cf` is referenced at `CHANGELOG.md:1973`, section date not checked | check git history for 2026-08-22..25 CHANGELOG gaps |
