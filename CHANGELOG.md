@@ -10,6 +10,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added (2026-11-04, HTTP ingest device identity)
 
 - `POST /v1/ingest` accepts `X-Fengarde-Source` (or `?source=`) to label the sending device. The label keys the bus partition, the spool entry and a new per-source rate cap (`INGEST_HTTP_MAX_EVENTS_PER_SEC_PER_SOURCE`, default off); it is stored as `meta.source` and the TCP peer as `meta.shipper_ip`. Behind a published Docker port or a relay every sender shared one peer address, so the rate limit and the partition key could not tell devices apart. The old nested per-IP bucket ran at the tenant rate and could never bind first. Pinned by `test_http_json_ingest_source_identity.py`.
+### Fixed (2026-11-04, WP-4.1 false-correlation rate)
+
+- `false_correlation_rate` 1.0 on the AI-to-OT twin is real (the WS-8 entity-bridge join
+  connects every oracle-forbidden pair; ADR-009/010 "tracks never merge" — ratified, frozen
+  baseline unchanged) but the number is order-blind, and the twin already measures the
+  time-aware answer on the same pairs (`causal_order.py`: `forbidden_order_realised_rate`
+  0.0 — the oracle's anti-causal directions are never realised in time). `eval/twin/report.py`
+  now emits `forbidden_order_realised_rate` / `forbidden_timed` / `temporal_discrimination`
+  as first-class metrics, the card gains a twin-only `forbidden_order_realised_rate` row
+  (lower-better, control: mirrored chain 1.0), and the FCR row's blind-spot text + the
+  "cannot prove" entity-sharing bullet now name the time-aware counterpart — the claim no
+  longer overstates. Findings: `docs/false-correlation-findings.md`. No ws8 change, no
+  frozen ratchet/baseline change; pinned `false_correlation_rate` atoms untouched.
 ### Added (2026-11-04, WP-1.2: TCP syslog for WS-1, RFC 6587)
 
 - Review fixes on the TCP syslog listener (PR 146 review): a TCP spool (`SYSLOG_TCP_SPOOL_PATH`) is now replayed by its own drain loop (only UDP drained before, so a TCP spool filled during an outage was never delivered); the optional LF after an octet-counted message may arrive in a later segment without killing the connection; a final unterminated line is dispatched at EOF; one address is limited to `SYSLOG_TCP_MAX_CONN_PER_PEER` connections (16); transport counters are updated under a lock; `stop()` shuts sockets down to wake blocked threads; a failed bind closes its socket. UDP and TCP now share ONE dispatcher when both run (one rate cap, one counter set, one spool); the TCP listener binds `127.0.0.1` by default (CodeQL `py/bind-socket-all-network-interfaces`) and compose publishes `127.0.0.1:5515` with the container binding `0.0.0.0` behind it; framing is offset-based on a bytearray instead of re-copying the remainder per frame. Pinned by `test_syslog_tcp_hardening.py`.

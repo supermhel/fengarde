@@ -357,6 +357,18 @@ def _test_report_wiring() -> None:
            m.get("causal_order_fidelity") == 1.0 and m.get("order_concordance") == 1.0
            and m.get("alert_order_ok") is True,
            str({k: m.get(k) for k in ("causal_order_fidelity", "order_concordance", "alert_order_ok")}))
+    # WP-4.1 (false-correlation rate): the TIME-AWARE forbidden-pair rate must be
+    # emitted BESIDE the order-blind FCR and must DISAGREE with it on the true
+    # chain (0.0 vs the entity-bridge 1.0). Reverting the metric emission (the
+    # fix) makes m.get(...) None and this check fails.
+    _check("(d) WP-4.1: run() emits forbidden_order_realised_rate and it disagrees "
+           "with the order-blind false_correlation_rate on the true chain (0.0 vs 1.0)",
+           m.get("forbidden_order_realised_rate") == 0.0
+           and m.get("forbidden_timed") == 2
+           and m.get("false_correlation_rate") == 1.0
+           and m.get("forbidden_order_realised_rate") != m.get("false_correlation_rate"),
+           str({k: m.get(k) for k in ("forbidden_order_realised_rate",
+                                      "forbidden_timed", "false_correlation_rate")}))
     with open(report.BASELINE_PATH, "rb") as fh:
         raw = fh.read().replace(b"\r\n", b"\n")
     base = json.loads(raw.decode("utf-8"))
