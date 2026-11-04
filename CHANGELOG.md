@@ -29,6 +29,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   real convention (23 of 46 shipped names did not follow the old `<sector>_` wording) (R3-47).
 - ws6: `TenantKeyStore` takes `InventoryStore`'s write lock when both use one SQLite file (R4-49), pinned by
   `services/ws6-inventory/test_shared_write_lock.py`.
+- ws2: `FENGARDE_GEOIP_PATH` selects the CIDR→country map (an explicit `geoip_path` still wins) and WS-2 logs a warning while the shipped
+  sample map is in use, because under it `common_impossible_travel` cannot fire on real traffic (R4-129, part). Pinned by
+  `TestGeoipPathSelection`.
 - `infra/preflight.sh` also rejects `?`, `#` and spaces in `REDIS_PASSWORD` (R3-28); `services/ws6-inventory/INTERFACE.md` states that a
   longer `INVENTORY_BASELINE_SECONDS` never lengthens an existing tenant's window (R4 #44).
 
