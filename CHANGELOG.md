@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (2026-11-04, HTTP ingest device identity)
+
+- `POST /v1/ingest` accepts `X-Fengarde-Source` (or `?source=`) to label the sending device. The label keys the bus partition, the spool entry and a new per-source rate cap (`INGEST_HTTP_MAX_EVENTS_PER_SEC_PER_SOURCE`, default off); it is stored as `meta.source` and the TCP peer as `meta.shipper_ip`. Behind a published Docker port or a relay every sender shared one peer address, so the rate limit and the partition key could not tell devices apart. The old nested per-IP bucket ran at the tenant rate and could never bind first. Pinned by `test_http_json_ingest_source_identity.py`.
+
 ### Fixed (2026-11-04, full-corpus workflow)
 
 - `full-corpus.yml`: the post-pull pointer check failed exactly when the pull had succeeded (`xargs … grep -l` exits 123 when no pointer
