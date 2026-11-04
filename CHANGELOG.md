@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed (2026-11-04, full-corpus workflow)
+
+- `full-corpus.yml`: the post-pull pointer check failed exactly when the pull had succeeded (`xargs … grep -l` exits 123 when no pointer
+  remains, and `pipefail` made that the step's exit code; first manual run 41859200473). The count no longer carries grep's exit code.
+
 ### Fixed (2026-11-04, gap-hunt open and partial rows)
 
 - `tools/fengarde_bench.py` exits 1 when most events were dropped (`eps_dropped_majority`), in JSON and text mode (R4 #107);
