@@ -181,14 +181,14 @@ echo ""
 echo "4. REDIS_PASSWORD (if set) contains no unencoded URL-reserved characters"
 if [ -n "${REDIS_PASSWORD:-}" ]; then
   case "$REDIS_PASSWORD" in
-    *'@'*|*':'*|*'/'*|*'%'*)
-      fail "REDIS_PASSWORD contains @, :, /, or % -- those break the bus URL"
+    *'@'*|*':'*|*'/'*|*'%'*|*'?'*|*'#'*|*' '*)
+      fail "REDIS_PASSWORD contains @, :, /, %, ?, # or a space -- those break the bus URL"
       note "         (infra/docker-compose.yml uses redis://:${REDIS_PASSWORD}@redis:6379)."
       note "         Set REDIS_PASSWORD to a value without those characters and re-run:"
       note "           export REDIS_PASSWORD=\$(openssl rand -hex 16)"
       ;;
     *)
-      ok "REDIS_PASSWORD is URL-safe (no @ : / % characters)."
+      ok "REDIS_PASSWORD is URL-safe (no @ : / % ? # or space characters)."
       ;;
   esac
 else

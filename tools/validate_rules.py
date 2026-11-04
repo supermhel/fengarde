@@ -48,6 +48,20 @@ _UUID_RE = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
                       r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
 _LEVELS = {"informational", "low", "medium", "high", "critical"}
 _SECTORS = {"common", "bank", "datacenter"}
+
+# Gap-hunt R3-47: rule files are named <family>_<name>.yml. Contract D once said <sector>_ (common|bank|dc), but 23 of
+# the 46 shipped files use a topic family instead. The convention is now the real one and the validator enforces it;
+# a new family is added here and in contracts/sigma-convention.md on purpose, not by accident.
+FILENAME_FAMILIES = {"common", "bank", "dc", "win", "ot", "agent", "n8n", "m365", "email", "cloud"}
+
+
+def validate_filename(name: str) -> "list[str]":
+    stem = name[:-4] if name.endswith(".yml") else name
+    family = stem.split("_", 1)[0]
+    if "_" not in stem or family not in FILENAME_FAMILIES:
+        return [f"file name {name!r} must be <family>_<name>.yml with family one of {sorted(FILENAME_FAMILIES)} "
+                f"(a new family is added to FILENAME_FAMILIES and contracts/sigma-convention.md deliberately)"]
+    return []
 # Gap-hunt finding (2026-08-26): siem.* is where a typo ships MOST quietly --
 # engine.Rule.__init__ only reads the keys below and is deliberately silent
 # about any other key (fail-open posture: a broken field must not crash the
@@ -487,7 +501,7 @@ def main(argv: list[str]) -> int:
         if not rule:
             failures.append((path.name, ["file is empty"]))
             continue
-        errors = validate_rule(rule, rules_index)
+        errors = validate_rule(rule, rules_index) + validate_filename(path.name)
         # Global invariant: rule ids must be unique (a duplicate id collapses two
         # rules' dedup/alert identity -- T7 keys on rule id).
         rid = rule.get("id")

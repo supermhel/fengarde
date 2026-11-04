@@ -400,18 +400,18 @@ class TestCompanionOf(unittest.TestCase):
         try:
             with tempfile.TemporaryDirectory() as tmp:
                 vr.RULES_DIR = Path(tmp)
-                write(tmp, "sib.yml", _sibling())
-                write(tmp, "comp.yml", _companion())
+                write(tmp, "common_sib.yml", _sibling())
+                write(tmp, "common_comp.yml", _companion())
                 with contextlib.redirect_stdout(io.StringIO()):
                     self.assertEqual(main(["validate_rules.py"]), 0)
                     # single-file mode resolves siblings from the file's own dir
-                    self.assertEqual(main(["validate_rules.py", str(Path(tmp) / "comp.yml")]), 0)
-                write(tmp, "comp.yml", _companion("6f1c8a2e-0d3b-4c11-9a21-7b5e2f9a1c02"))
+                    self.assertEqual(main(["validate_rules.py", str(Path(tmp) / "common_comp.yml")]), 0)
+                write(tmp, "common_comp.yml", _companion("6f1c8a2e-0d3b-4c11-9a21-7b5e2f9a1c02"))
                 buf = io.StringIO()
                 with contextlib.redirect_stdout(buf):
                     self.assertNotEqual(main(["validate_rules.py"]), 0)
                     self.assertNotEqual(
-                        main(["validate_rules.py", str(Path(tmp) / "comp.yml")]), 0)
+                        main(["validate_rules.py", str(Path(tmp) / "common_comp.yml")]), 0)
                 self.assertIn("companion_of", buf.getvalue())
         finally:
             vr.RULES_DIR = real_dir
@@ -463,6 +463,25 @@ class TestDefaultEnabled(unittest.TestCase):
                               .read_text(encoding="utf-8"))
         self.assertIs(rule["siem"]["default_enabled"], False)
         self.assertEqual(validate_rule(rule), [])
+
+
+class TestFilenameFamily(unittest.TestCase):
+    """Gap-hunt R3-47: rule file names must be <family>_<name>.yml with a known family."""
+
+    def test_known_families_pass(self):
+        from validate_rules import validate_filename
+        for name in ("common_bruteforce.yml", "ot_config_change.yml", "agent_tool_call_burst.yml", "win_audit_log_cleared.yml"):
+            self.assertEqual(validate_filename(name), [], name)
+
+    def test_unknown_family_or_no_family_fails(self):
+        from validate_rules import validate_filename
+        for name in ("bruteforce.yml", "mystery_rule.yml", "Common_x.yml", "_x.yml"):
+            self.assertTrue(validate_filename(name), name)
+
+    def test_every_shipped_file_name_passes(self):
+        from validate_rules import validate_filename
+        for path in sorted(RULES_DIR.glob("*.yml")):
+            self.assertEqual(validate_filename(path.name), [], path.name)
 
 
 class TestShippedRules(unittest.TestCase):

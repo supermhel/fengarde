@@ -299,6 +299,17 @@ def _run_prefilter_comparison(n: int, mixed: bool, as_json: bool) -> int:
     return 0
 
 
+def _verdict(result: dict) -> int:
+    """Gap-hunt R4 #107: ``eps_dropped_majority`` used to be written into the JSON and nothing read it, so a run
+    that normalized only a sliver of its input exited 0 with a number that looked like throughput. Fail it."""
+    if result.get("eps_dropped_majority"):
+        c = result["counts"]
+        print(f"[FAIL] fengarde-bench: only {c['normalized']} of {result['n_events']} events were normalized "
+              f"({c['dropped']} dropped); the sustained EPS figure is not a throughput number.", file=sys.stderr)
+        return 1
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--events", type=int, default=5000)
@@ -314,10 +325,11 @@ def main() -> int:
         return _run_prefilter_comparison(args.events, args.mixed, args.json)
 
     result = run_bench(args.events, args.mixed)
+    rc = _verdict(result)
 
     if args.json:
         print(json.dumps(result, indent=2))
-        return 0
+        return rc
 
     print("fengarde-bench -- ZERO-INFRA baseline (see this file's module docstring "
           "for what this number does and does not represent)")
@@ -333,7 +345,7 @@ def main() -> int:
     print(f"  sustained EPS:     {result['sustained_eps']}")
     rss = result["peak_rss_mb"]
     print(f"  peak RSS:          {f'{rss} MB' if rss is not None else 'not available on this platform'}")
-    return 0
+    return rc
 
 
 if __name__ == "__main__":

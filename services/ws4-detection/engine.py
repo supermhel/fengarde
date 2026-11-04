@@ -1163,10 +1163,25 @@ def _parse_atom(tokens, i, values):
     return bool(values.get(t, False)), i + 1
 
 
+def _find_up(*parts: str) -> "Path | None":
+    """First ``<ancestor>/<parts>`` that exists, walking up from this file.
+
+    Gap-hunt R3-31: the old fixed-depth walks (``parent.parent.parent``, ``parents[2]``) are right in the source tree
+    (``<repo>/services/ws4-detection/engine.py``) and wrong in the image (``/app/ws4-detection/engine.py``, no
+    ``services/`` level), where they resolved to ``/contracts`` and ``/tools``: the allowlist default pointed nowhere
+    and the poison-pill validator was silently skipped."""
+    for base in Path(__file__).resolve().parents:
+        cand = base.joinpath(*parts)
+        if cand.exists():
+            return cand
+    return None
+
+
 def _default_allowlists_dir() -> Path:
     """contracts/allowlists sibling to contracts/rules, best-effort. If neither
     exists, callers fail closed via load_allowlist's missing-file handling."""
-    return Path(__file__).resolve().parent.parent.parent / "contracts" / "allowlists"
+    return _find_up("contracts", "allowlists") or (
+        Path(__file__).resolve().parent.parent.parent / "contracts" / "allowlists")
 
 
 def _validate_loaded_rule(raw: dict, path: Path) -> None:
@@ -1192,8 +1207,8 @@ def _validate_loaded_rule(raw: dict, path: Path) -> None:
         poison-pill case.
     """
     import importlib.util  # noqa: E402  (module-level would bloat hot imports)
-    vrf = Path(__file__).resolve().parents[2] / "tools" / "validate_rules.py"
-    if not vrf.exists():
+    vrf = _find_up("tools", "validate_rules.py")
+    if vrf is None:
         return  # tools/ not deployed; Rule.__init__ still guards
     spec = importlib.util.spec_from_file_location("_fengarde_validate_rules", vrf)
     if spec is None or spec.loader is None:

@@ -196,7 +196,7 @@ def _parse_legacy_tenant_keys(raw: str | None) -> dict[str, str]:
 
 
 class TenantKeyStore:
-    def __init__(self, path: str = ":memory:"):
+    def __init__(self, path: str = ":memory:", write_lock=None):
         # Gap-hunt #9 (2026-08-26): app.py defaults this store to the SAME
         # SQLite file as InventoryStore (INVENTORY_KEYSTORE_DB falls back to
         # INVENTORY_DB), with independent connections and uncoordinated locks.
@@ -207,7 +207,9 @@ class TenantKeyStore:
         self.db = sqlite3.connect(path, check_same_thread=False, timeout=30)
         self.db.row_factory = sqlite3.Row
         # RLock + locked reads: count()/verify() run on EVERY request on this shared connection.
-        self._write_lock = threading.RLock()
+        # R4-49: when app.py points this store at InventoryStore's file it passes that store's lock, so the two
+        # connections never contend for SQLite's single writer from different threads of this process.
+        self._write_lock = write_lock if write_lock is not None else threading.RLock()
         self._init()
 
     def _init(self):

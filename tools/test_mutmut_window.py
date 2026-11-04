@@ -246,7 +246,7 @@ def test_redis_hit_member_dedup_via_zadd():
 
 def test_redis_hit_distinct_counts_unique_values():
     r = _FakeRedis()
-    c = RedisWindowCounter(r)
+    c = RedisWindowCounter(r, zadd_gt=True)  # GT path; a probe-less fake would pick the Lua fallback (#121)
     assert c.hit_distinct("k", 1000, 60_000, value="p80") == 1
     assert c.hit_distinct("k", 1001, 60_000, value="p80") == 1
     assert c.hit_distinct("k", 1002, 60_000, value="p22") == 2
@@ -271,7 +271,7 @@ def test_redis_hit_periodic_returns_none_cv_under_three_events():
 
 def test_redis_members_and_distinct_members_readback():
     r = _FakeRedis()
-    c = RedisWindowCounter(r)
+    c = RedisWindowCounter(r, zadd_gt=True)  # GT path; a probe-less fake would pick the Lua fallback (#121)
     c.hit("k", 1000, 60_000, member="a")
     c.hit("k", 1001, 60_000, member="b")
     c.hit_distinct("k2", 1000, 60_000, value="p1")
