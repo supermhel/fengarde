@@ -114,7 +114,9 @@ jobs:
           # NOTHING stayed an un-fetched pointer (a partial pull must never
           # silently shrink the corpus -- splunk_eval's own guard only catches
           # the all-pointers case, nightly leaves pointers BY DESIGN).
-          pointers="$(find "$dest/datasets/attack_techniques" -name '*.log' -print0 | xargs -0 -r grep -l '^version https://git-lfs' | wc -l)"
+          # `grep -l` exits 1 (and xargs 123) when NO file matches -- the success case here -- which `set -o pipefail`
+          # turned into a step failure after a good pull (run 41859200473). `|| true` keeps the count, not the exit code.
+          pointers="$(find "$dest/datasets/attack_techniques" -name '*.log' -print0 | { xargs -0 -r grep -l '^version https://git-lfs' || true; } | wc -l)"
           log_files="$(find "$dest/datasets/attack_techniques" -name '*.log' | wc -l)"
           echo "raw-XML .log files materialized: $log_files (nightly subset: 57); un-fetched LFS pointers: $pointers"
           if [ "$pointers" -ne 0 ]; then
