@@ -59,7 +59,7 @@ No CHANGELOG entry was written on 2026-08-22..25. What those commits changed:
 ### Added (2026-11-04, WP-1.1: HTTP/JSON ingest for WS-1)
 
 - Review fixes on the HTTP ingest edge (PR 142 review): a line with absurd nesting or a >4300-digit int is skipped instead of dropping the connection; `Transfer-Encoding: chunked` bodies are decoded; NDJSON splits on `
-` only; a non-ASCII bearer token gets 401; counters are updated under a lock; the connection cap now bounds connections at accept (503) instead of only inside `do_POST`; `Bearer` is case-insensitive and query values are decoded once; plugin source types can be listed in `INGEST_HTTP_EXTRA_SOURCE_TYPES`; a partial 429/503 tells the client to resend with `X-Fengarde-Idempotency-Key`. Pinned by `test_http_json_ingest_hardening.py`.
+` only; a non-ASCII bearer token gets 401; counters are updated under a lock; the connection cap now bounds connections at accept (503) instead of only inside `do_POST`; `Bearer` is case-insensitive and query values are decoded once; plugin source types can be listed in `INGEST_HTTP_EXTRA_SOURCE_TYPES`; a partial 429/503 tells the client to resend with `X-Fengarde-Idempotency-Key`. The listen backlog is 128 (was socketserver's 5, which refused connection bursts) and a rejected request's small unread body is drained so the client sees the 401, not a reset. Pinned by `test_http_json_ingest_hardening.py`.
 - `POST /v1/ingest` on ws1 (`collectors/http_json_collector.py`, default
   `127.0.0.1:8554`, compose-published `127.0.0.1:8554:8554`): NDJSON or JSON
   array (`format=json-array`); `source_type` from query or

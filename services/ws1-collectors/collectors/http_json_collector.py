@@ -320,6 +320,9 @@ class HttpJsonCollector:
 
 class _HttpIngestServer(ThreadingHTTPServer):
     daemon_threads = True
+    # socketserver listens with a backlog of 5: a burst of shippers connecting at once saw ECONNREFUSED/ECONNABORTED
+    # (found as a flaky counter test). The concurrency cap, not the accept queue, should decide who is served.
+    request_queue_size = 128
 
     def __init__(self, addr, handler, collector: HttpJsonCollector, *,
                  max_concurrent: int):
@@ -380,6 +383,7 @@ class _IngestHandler(BaseHTTPRequestHandler):
 
     def _handle_post(self) -> None:
         c = self.collector
+        self._body_consumed = False
         if self.path.split("?", 1)[0] != "/v1/ingest":
             c.bump("requests_rejected")
             self._send_json(404, {"error": "not found; POST /v1/ingest"})
@@ -509,6 +513,7 @@ class _IngestHandler(BaseHTTPRequestHandler):
 
     def _read_body(self) -> bytes:
         c = self.collector
+        self._body_consumed = True
         if "chunked" in (self.headers.get("Transfer-Encoding") or "").lower():
             return self._read_chunked()
         raw_length = self.headers.get("Content-Length")
@@ -588,6 +593,17 @@ class _IngestHandler(BaseHTTPRequestHandler):
         return records, errors
 
     def _send_json(self, status: int, payload: dict) -> None:
+        if status >= 400 and not getattr(self, "_body_consumed", True):
+            # Answering before the request body was read and then closing makes the kernel send RST, which on some
+            # platforms discards the response the client has not read yet (client sees ConnectionAborted instead of 401).
+            # Swallow a small declared body first; bigger ones are not worth reading.
+            try:
+                n = int(self.headers.get("Content-Length") or 0)
+                if 0 < n <= 65536:
+                    self.rfile.read(n)
+            except (ValueError, OSError):
+                pass
+            self._body_consumed = True
         body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
         try:
             self.send_response(status)
