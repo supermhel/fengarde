@@ -51,6 +51,23 @@ No CHANGELOG entry was written on 2026-08-22..25. What those commits changed:
   floor's buffer thins below 3 points, the `alerts.json` mapping matches what `make_alert()` writes, `ot_new_device_e2e.py` wired into
   a CI job, two unread `scoring.yaml` keys removed, the `check_rule_producers.py` FIXTURES step added to `docs/adding-a-parser.md`, and
   mypy's `exclude` no longer skips a real file.
+### Added (2026-11-04, WP-1.1: HTTP/JSON ingest for WS-1)
+- `POST /v1/ingest` on ws1 (`collectors/http_json_collector.py`, default
+  `127.0.0.1:8554`, compose-published `127.0.0.1:8554:8554`): NDJSON or JSON
+  array (`format=json-array`); `source_type` from query or
+  `X-Fengarde-Source-Type` header, validated against the registered WS-2
+  parsers (unknown → 400). Bearer auth via `FENGARDE_INGEST_TOKEN` (required;
+  the listener refuses to start without it; `FENGARDE_INGEST_DEV_LOOPBACK=1`
+  is the explicit loopback-only dev switch). Body cap → 413, per-source
+  token-bucket rate limit → 429 (reuses the syslog listener's buckets),
+  malformed lines counted in `skipped` (batch never aborts), bus-down spool
+  fallback reusing `collectors/spool.py` (202) / 503 without a spool.
+  `X-Fengarde-Idempotency-Key` makes redelivery idempotent (deterministic
+  `ingest_id`, ordinal-scoped so identical records stay distinct). Each record
+  lands on `raw.events` as `{source_type, raw, meta}` with `meta.format`,
+  partition key = peer IP. Contract test `test_http_json_ingest.py` wired
+  into the fast tier; live curl example against the compose stack in
+  `docs/ingest-http.md`.
 
 ### Added (2026-10-28, storylines 10-11: every rule is named by a twin storyline oracle)
 
