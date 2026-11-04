@@ -105,14 +105,22 @@ already runs them in full.
 > `full_corpus_run_commits.txt`) and land in git when whoever runs the lane commits them locally,
 > same no-auto-commit convention as the nightly.
 
-**Pinned corpus commit.** The corpus is pinned at **`corpus pinned at COMMIT_SET_BY_THE_RUN`**
+**Pinned corpus commit.** The corpus is pinned at **`800ef65739e6d2ed61043ccb313623441a3778ae`**
 (splunk/attack_data; EVTX-ATTACK-SAMPLES `4ceed2f4706daf601c212a8f91c113dd85349a2c`;
-EVTX-to-MITRE-Attack unpinned). The workflow itself verifies the splunk checkout against
+EVTX-to-MITRE-Attack unpinned, read as `474856008f037ccd42753f02a631b42690195829` by the run below). The workflow itself verifies the splunk checkout against
 `corpus_manifest.json`'s `splunk-attack-data.pin` and fails if they differ. To obtain the actual
 commit a run read: download the `full-corpus-eval-results` artifact and read
 `full_corpus_run_commits.txt`, or read the `splunk/attack_data HEAD=<sha>` line in the
-"Full splunk/attack_data checkout" step log. Record it here (replace
-`COMMIT_SET_BY_THE_RUN`) before quoting any number from the run.
+"Full splunk/attack_data checkout" step log. The commits above are the ones the first CI run read.
+
+**First CI run (measured 2026-11-04, GitHub Actions run 41860733387, 46-rule build, workflow from PR #145).** Splunk lane:
+1,034 files, 263,261 supported records (3,751 Security, 259,510 Sysmon), 0 oracle mismatches, 0 parser dead letters. EVTX lane:
+278 files, 2,082 supported records, 0 mismatches, 0 dead letters. 0 false positives and 0 false negatives on all 6 graded rules
+in both lanes. True positives: Splunk bruteforce 3, lateral_movement 3, priv_grant 4, after_hours_admin 8, bruteforce_sourceless 8;
+EVTX priv_grant 1, after_hours_admin 4. These match the 2026-10-23 container run above. Blind recall fetched 1,387 of 1,509
+labelled units (177 scoreable) and found a hit for 6 of 331 fetched techniques (58 techniques have a rule); that is a fetch
+figure, not a recall rate. As everywhere in this file: only the 6 graded rules are graded on real data; the other 40 fire on the
+same files unlabelled. A first attempt (run 41859200473) failed in the workflow's own pointer check, not in the lanes; fixed in #145.
 
 **Reproduction.** GitHub Actions → **Full-Corpus Eval (manual, WP-4.3)** → *Run workflow*. Locally,
 the identical corpus + lanes are the documented 2026-10-23 container procedure in the section
