@@ -763,6 +763,35 @@ def test_gate_wiring() -> None:
           f"a gate with the check before the instruments passed: {probs}")
 
 
+def test_wp41_forbidden_order_realised_rate_row() -> None:
+    """WP-4.1: the twin counter-metric must be carded and the FCR claim narrowed.
+
+    The pendings: (1) the registry must hold a twin-only
+    ``forbidden_order_realised_rate`` row with the mirrored-chain control
+    (revert the registry edit -> KeyError here); (2) the false_correlation_rate
+    blind spot must name the time-aware counterpart instead of letting the
+    saturated 1.0 overstate (revert the blind-spot edit -> substring missing);
+    (3) a fresh render must carry the row with the measured 0.0 (revert the
+    report.py metric emission -> extract error / absent cell)."""
+    spec = reg.METRICS_BY_KEY.get("forbidden_order_realised_rate")
+    check(spec is not None and spec.scope == "twin_only"
+          and spec.direction == "lower_better"
+          and spec.control_key == "forbidden_order_realised",
+          f"forbidden_order_realised_rate not carded as twin lower-better row: {spec}")
+    fcr = reg.METRICS_BY_KEY["false_correlation_rate"]
+    check("forbidden_order_realised_rate" in fcr.blind_spot
+          and "order-blind" in fcr.blind_spot,
+          "the FCR blind spot no longer names the time-aware counterpart "
+          "(claim must stay narrowed)")
+    arts = real_arts()
+    text = render_fixture(arts)
+    check("forbidden_order_realised_rate" in text,
+          "the rendered card does not contain the forbidden_order_realised_rate row")
+    cell = re.search(r"\| forbidden_order_realised_rate \| ([^|]+) \|", text)
+    check(cell is not None and cell.group(1).strip() == "0.0",
+          f"rendered forbidden_order_realised_rate cell is not the measured 0.0: {cell and cell.group(1)}")
+
+
 # ==========================================================================
 # 11. NEGATIVE: REGRESSIONS print on --write
 # ==========================================================================
@@ -972,6 +1001,7 @@ def main() -> int:
         test_render_is_cross_os_and_hash_order_stable,
         test_oracle_shapes_and_storyline_registry,
         test_freshness_covers_every_ws4_contract_input,
+        test_wp41_forbidden_order_realised_rate_row,
     ]
     for t in tests:
         before = len(FAILS)

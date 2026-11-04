@@ -1568,6 +1568,19 @@ def run(seed: int = 7) -> dict:
             # was graded (and forwarded) before but never emitted as a metric.
             "causal_order_fidelity": grade["causal_order_fidelity"],
             "order_concordance": grade["order_concordance"],
+            # WP-4.1 (2026-11-04): the TIME-AWARE counterpart of the order-blind
+            # false_correlation_rate, graded on the SAME oracle forbidden pairs
+            # (same denominator rule) but on EVENT TIME (causal_order.py): the
+            # share of timed forbidden pairs whose first-event clock says the
+            # forbidden direction actually happened. 0.0 on the true chain -- the
+            # oracle's anti-causal directions (process_anomaly->modbus_write,
+            # credential_use->agent_mcp_tool_call) are never realised in time,
+            # even though the entity-bridge join reports a saturated 1.0.
+            # Co-reported beside the legacy key, never folded into it (the
+            # ratchet-frozen FCR baseline stays untouched).
+            "forbidden_order_realised_rate": grade["causal_order"]["forbidden_order_realised_rate"],
+            "forbidden_timed": grade["causal_order"]["forbidden_timed"],
+            "temporal_discrimination": grade["causal_order"]["temporal_discrimination"],
             "alert_order_ok": grade["alert_order_ok"],
             "evidence_completeness": evidence,  # already rounded (or None) by _grade_chain
             # WP-3.5-A: real ratio of oracle-forbidden relationships that a

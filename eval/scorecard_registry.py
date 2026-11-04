@@ -324,6 +324,10 @@ CONTROLS: dict[str, ControlRef] = {
         "eval/adversarial/test_scenario_harness.py",
         "def test_directional_discrimination",
         "the join predicate is proven order-blind, so chain_fidelity/FCR are entity-sharing"),
+    "forbidden_order_realised": ControlRef(
+        "eval/twin/test_causal_order.py",
+        "(a) time-MIRRORED chain: concordance 0.0, fidelity 0.0, forbidden realised 1.0",
+        "the time-aware forbidden-pair rate moves: 0.0 on the true chain, 1.0 on the mirrored one"),
     "decoy_contamination": ControlRef(
         "eval/adversarial/test_scenario_harness.py",
         "def test_decoy_contamination",
@@ -560,7 +564,11 @@ METRICS: tuple[MetricSpec, ...] = (
         blind_spot=(
             "Same order-blind predicate as chain_fidelity: a saturated 1.0 cannot "
             "distinguish a mutation that INDUCES false correlation from one that merely "
-            "fails to improve an already-saturated number."),
+            "fails to improve an already-saturated number. The number is the share of "
+            "oracle-forbidden pairs an ENTITY-BRIDGE join connected (ADR-009/010: per-entity "
+            "tracks never merge), NOT a claim that the forbidden causal direction happened; "
+            "the twin's time-aware counterpart is the `forbidden_order_realised_rate` row "
+            "(0.0 on AI-to-OT: the clock never realises the oracle's anti-causal pairs)."),
     ),
     MetricSpec(
         key="directional_discrimination",
@@ -757,6 +765,22 @@ METRICS: tuple[MetricSpec, ...] = (
         blind_spot=(
             "A timestamp invariant (1.0 by construction), kept for transparency, not as "
             "evidence of causal reconstruction."),
+    ),
+    MetricSpec(
+        key="forbidden_order_realised_rate",
+        label="forbidden_order_realised_rate",
+        direction="lower_better",
+        source="twin",
+        scope="twin_only",
+        extract=lambda d, s: d["metrics"]["forbidden_order_realised_rate"],
+        control_key="forbidden_order_realised",
+        blind_spot=(
+            "The TIME-AWARE counterweight to false_correlation_rate, on the SAME oracle "
+            "forbidden pairs: the share whose first-event CLOCK says the forbidden "
+            "direction actually happened (first(f) < first(t), causal_order.py). On the "
+            "true AI-to-OT chain it is 0.0 -- the oracle's anti-causal pairs are never "
+            "realised in time -- while the order-blind entity-bridge FCR saturates at "
+            "1.0. The mirrored chain scores 1.0, so it can move."),
     ),
     MetricSpec(
         key="attribution_accuracy",
@@ -1172,7 +1196,8 @@ LIMITS: tuple[LimitSpec, ...] = (
         "chain_fidelity and false_correlation_rate measure entity SHARING, not causal "
         "order: the legacy join predicate answers 'joined' for a pair and for that pair "
         "reversed, so both numbers describe 'is there an entity bridge', never 'was the "
-        "causal chain reconstructed'.",
+        "causal chain reconstructed'. Order is graded in the twin by event time instead "
+        "(forbidden_order_realised_rate, 0.0 on AI-to-OT).",
         _g_entity_sharing),
     LimitSpec(
         "alert_order_needs_two",
