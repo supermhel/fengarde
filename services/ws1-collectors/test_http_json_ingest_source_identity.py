@@ -82,6 +82,25 @@ def main() -> int:
             check(st == 400, f"source {bad[:20]!r} must be a 400, got {st}")
         st, _ = post(port, URL + "&source=a", REC, {"X-Fengarde-Source": "b"})
         check(st == 400, f"conflicting header/query source must be a 400, got {st}")
+
+        # 6. shipper self-label (X-Fengarde-Shipper / ?shipper=) -> meta.shipper
+        st, _ = post(port, URL, REC, {"X-Fengarde-Shipper": "winlogbeat"})
+        check(st == 200, f"a shipper-labelled batch must be accepted, got {st}")
+        st, _ = post(port, URL + "&shipper=fluentbit-winevtlog", REC)
+        check(st == 200, f"?shipper= must work, got {st}")
+        st, _ = post(port, URL, REC)
+        msgs = bus.drain("raw.events")
+        meta6 = [m.payload["meta"] for m in msgs][-3:]  # drain is non-destructive
+        check(meta6[0].get("shipper") == "winlogbeat"
+              and meta6[1].get("shipper") == "fluentbit-winevtlog",
+              f"meta.shipper must carry the label, got {[m.get('shipper') for m in meta6]}")
+        check("shipper" not in meta6[2],
+              f"an unlabelled batch must have no meta.shipper, got {meta6[2]}")
+        for bad in ("bad shipper", "x" * 65, "a;b", "win log"):
+            st, _ = post(port, URL, REC, {"X-Fengarde-Shipper": bad})
+            check(st == 400, f"shipper {bad[:20]!r} must be a 400, got {st}")
+        st, _ = post(port, URL + "&shipper=a", REC, {"X-Fengarde-Shipper": "b"})
+        check(st == 400, f"conflicting header/query shipper must be a 400, got {st}")
     finally:
         c.stop()
 

@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (2026-11-04, WP-1.3: shipper adapters for real Fluent Bit / Winlogbeat / Docker shapes)
+
+- `services/ws2-normalization/adapters/` — four pure, total adapters that
+  rewrite real shipper records into the dict the target parser already
+  expects, selected by `meta.shipper` (new `X-Fengarde-Shipper` header on the
+  HTTP ingest edge, additive with validation) or by deterministic shape
+  sniff; unknown records pass through UNCHANGED and adapters never raise:
+  `fluentbit-winevtlog` (flat PascalCase `event_data_as_map` shape;
+  `TimeCreated` string -> epoch ms; Sysmon records routed by provider/EventID
+  so a mixed Security+Sysmon channel works), `winlogbeat` (ECS `winlog.*`
+  nesting flattened to the parser keys), `fluentbit-journald` (journald field
+  map -> RFC 3164 line rebuilt from record fields only, sshd identifier
+  routes auth failures to `linux_ssh`), `docker-json` (json-file
+  `{log,stream,time}` + docker filter ids -> RFC 3164 line; id-less lines are
+  a documented no-op, never fabricated). Fixture provenance is in every
+  module header + docs/input-adapters.md (REAL capture for fluent-bit
+  winevtlog; template/schema-derived and labelled as such for the rest).
+- `test_adapters.py` wired into the fast tier: every fixture through the full
+  WS-2 path to valid OCSF, sniff negative controls, label-vs-sniff
+  precedence, and the extreme-value totality sweep (2,850 mutations, none
+  raised); existing parser fixtures and outputs unchanged.
+
 ### Added (2026-11-04, HTTP ingest device identity)
 
 - `POST /v1/ingest` accepts `X-Fengarde-Source` (or `?source=`) to label the sending device. The label keys the bus partition, the spool entry and a new per-source rate cap (`INGEST_HTTP_MAX_EVENTS_PER_SEC_PER_SOURCE`, default off); it is stored as `meta.source` and the TCP peer as `meta.shipper_ip`. Behind a published Docker port or a relay every sender shared one peer address, so the rate limit and the partition key could not tell devices apart. The old nested per-IP bucket ran at the tenant rate and could never bind first. Pinned by `test_http_json_ingest_source_identity.py`.

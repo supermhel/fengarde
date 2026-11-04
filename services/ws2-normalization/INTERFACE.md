@@ -5,7 +5,8 @@
 - Contracts: A (OCSF schema), B (bus).
 
 ## Pipeline
-- Parse (`source_type` → registered parser) → **sanitize** (M1: strip ANSI
+- **Adapt** (WP-1.3: shipper shapes -> parser input — see "Adapters" below) →
+  Parse (`source_type` → registered parser) → **sanitize** (M1: strip ANSI
   escapes/C0 control chars from every free-text field a parser may have populated
   from raw content — `message`, `actor.user/process.name`,
   `src_endpoint`/`dst_endpoint.hostname`, all of `unmapped.*` recursively at any
@@ -85,6 +86,34 @@ A parser can also ship as an external, installable Python package via the
 `fengarde.parsers` entry-point group (M4.5, `discover_plugin_parsers()`,
 `docs/plugin-development.md`) — no fork of this repo required; a plugin whose
 `SOURCE_TYPE` collides with a built-in parser is skipped, the built-in wins.
+
+## Adapters (WP-1.3, `adapters/`)
+Shippers (Fluent Bit, Winlogbeat, Docker) emit shapes that differ from the
+parsers' dict convention. The adapter stage rewrites such records BEFORE
+`resolve()` — the parsers themselves are untouched.
+
+| adapter id (`meta.shipper`) | shipper record | target parser(s) | fixture provenance |
+|---|---|---|---|
+| `fluentbit-winevtlog` | Fluent Bit `winevtlog` in `event_data_as_map: true` mode (flat PascalCase keys, `TimeCreated` as a formatted string) | `sysmon` (ProviderName `Microsoft-Windows-Sysmon` or EventID 1/3/5/11) else `windows_eventlog` | REAL capture (fluent-bit 2.0.6, 2023-01-17, ClickHouse community post); Security shape template-derived |
+| `winlogbeat` | ECS shape (`winlog.*` nesting; `winlog.time_created` ISO) | `sysmon` / `windows_eventlog` (same routing) | field catalog (elastic.co exported-fields-winlog) — template-derived, values model a real 4688/4624 |
+| `fluentbit-journald` | journald field map (`MESSAGE`, `_HOSTNAME`, `_PID`, `SYSLOG_IDENTIFIER`, `_SOURCE_REALTIME_TIMESTAMP`) | `generic_syslog` (rebuilds the RFC 3164 line; `sshd` identifier → text-sniff hands auth failures to `linux_ssh`) | field names per systemd `journal-fields(5)` — schema-derived |
+| `docker-json` | `{"log","stream","time"}` json-file line (+ `docker_id`/`docker_name` from the Fluent Bit docker filter) | `generic_syslog` (RFC 3164 header rebuilt from record fields only) | Docker docs canonical example — documented, not captured |
+
+Rules (contract tests in `test_adapters.py`):
+- selection: `meta.shipper` (the sender's `X-Fengarde-Shipper` header on the
+  HTTP ingest edge) wins; without it, deterministic shape sniffing; no
+  match -> payload returned UNCHANGED (never mangled);
+- each `adapt(payload)` is a pure TOTAL function — it never raises, on any
+  input (extreme-value sweep, same approach as `parsers/test_extreme_values.py`);
+- source_type routing within a family is authoritative (a mixed
+  Security+Sysmon channel is the documented winlog setup); everything else
+  stays on the sender's label;
+- record fields the parser doesn't read are preserved, never dropped
+  (`unmapped_winlog` for winlog.user/record context, `meta.docker_time` as
+  evidence only — never the receipt clock);
+- id-less docker json-file lines have nothing honest to build a syslog header
+  from -> adapter no-op, dead-letter with the normal "set source_type" hint
+  (the shipping recipe adds the docker filter that emits the ids).
 
 ## Contract tests
 - `python test_contract.py`  (memory bus; validates every parser's output against the schema)
