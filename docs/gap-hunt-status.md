@@ -5,6 +5,13 @@ The original report is `docs/archive/reviews/gap_hunt_full_report_2026-08-26.md`
 (`f236209`) for every CRITICAL and RISK finding, not commit messages. Nothing was run, and "fixed" was not mutation-tested.
 MINOR findings (65) have NOT been triaged. Statuses are claims from that read, re-checked only where noted. The counts table below is as of the original read; findings closed afterwards are listed in the next table and are not subtracted from it.
 
+**Staleness note 2026-11-04.** This tracker was not re-audited after 2026-10-22. Merged since then (from the commit log, not
+re-checked against any finding): #119 (F4 clock clamp default, F2 alias map), #124 (ws8 Sentinel window counter), #126 (parser
+overflow and extreme-value sweep, Ollama timeout), #127 (ws8 correlator state in Redis), #128/#132/#134 (load test, ws3 bulk
+writes, pipelined ws4 window ops), #129 (LLM verdict eval), #130 (storylines name all rules), #131 (AI-to-OT demo), #133 (ws6 auth
+test timeout). Some of the open or partial rows below, for example R4 #107/#108 (the live bench) and R3-4/R3-6, may be affected by
+that work; they are still listed here as they were. The 65 MINOR findings remain untriaged.
+
 ## Counts
 
 | Tier | Checked | FIXED | PARTIAL | OPEN | Other |
