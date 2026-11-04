@@ -83,6 +83,44 @@ Reading it:
   (EVTX pin `4ceed2f`; about 17 min LFS pull, 7 min EVTX lane, 10 to 16 min splunk lane in the container).
 - Local runs on a Windows host with antivirus are not supported: Defender quarantined 13 of these `.log` files in an earlier attempt.
 
+## Full-corpus manual run (workflow_dispatch)
+
+[`.github/workflows/full-corpus.yml`](../.github/workflows/full-corpus.yml) (WP-4.3) is a
+`workflow_dispatch`-only lane that runs the **same three corpus lanes as the nightly** —
+`evtx_eval.py`, `splunk_eval.py`, `blind_recall.py --require-corpus` — but with the **full**
+splunk/attack_data corpus instead of the nightly's 57-file pre-registered LFS subset. The splunk
+clone is blobless + sparse (`git clone --filter=blob:none --sparse`, then `sparse-checkout set
+--no-cone` exactly the manifest's `datasets/attack_techniques` + `LICENSE`) and **every**
+`datasets/attack_techniques/**/*.log` Git LFS object is pulled (a complete clone is over 9 GiB;
+expect roughly 17 min for the pull plus the lane runtimes — a full clone does **not** fit the
+runner and is never attempted). EVTX-ATTACK-SAMPLES and EVTX-to-MITRE-Attack are fetched unchanged
+via `fetch_corpora.py`: they carry no LFS selection in `corpus_manifest.json`, so the nightly
+already runs them in full.
+
+> **NOT comparable with the nightly numbers.** The splunk lane here grades ~1,055 raw-XML files
+> instead of the nightly's 57 (at pin `800ef65`: 1,034 files / 263,261 records versus 57 files /
+> 1,235 in the latest nightly row), and this lane does **not** append to `eval/trend.jsonl` /
+> `benchmark/results.json` — that committed series stays the nightly's. Full-corpus results ride
+> the `full-corpus-eval-results` artifact only (the three lane result JSONs plus
+> `full_corpus_run_commits.txt`) and land in git when whoever runs the lane commits them locally,
+> same no-auto-commit convention as the nightly.
+
+**Pinned corpus commit.** The corpus is pinned at **`corpus pinned at COMMIT_SET_BY_THE_RUN`**
+(splunk/attack_data; EVTX-ATTACK-SAMPLES `4ceed2f4706daf601c212a8f91c113dd85349a2c`;
+EVTX-to-MITRE-Attack unpinned). The workflow itself verifies the splunk checkout against
+`corpus_manifest.json`'s `splunk-attack-data.pin` and fails if they differ. To obtain the actual
+commit a run read: download the `full-corpus-eval-results` artifact and read
+`full_corpus_run_commits.txt`, or read the `splunk/attack_data HEAD=<sha>` line in the
+"Full splunk/attack_data checkout" step log. Record it here (replace
+`COMMIT_SET_BY_THE_RUN`) before quoting any number from the run.
+
+**Reproduction.** GitHub Actions → **Full-Corpus Eval (manual, WP-4.3)** → *Run workflow*. Locally,
+the identical corpus + lanes are the documented 2026-10-23 container procedure in the section
+above: `fetch_corpora.py --corpus evtx-attack-samples --corpus splunk-attack-data --no-lfs`, then
+`git lfs pull --include="datasets/attack_techniques/**/*.log"` in the splunk checkout, then the
+three lane scripts. A Windows host with antivirus is not supported (Defender quarantines the
+`.log` corpus files — see the container note above).
+
 ## The honest boundaries (full text in methodology.md)
 
 - **Parser coverage (43.2% in this snapshot) is real and disclosed.** It
