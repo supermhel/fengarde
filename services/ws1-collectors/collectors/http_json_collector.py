@@ -64,7 +64,7 @@ import time
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Optional
-from urllib.parse import parse_qs, unquote
+from urllib.parse import parse_qs
 
 from shared.envelope import stamp_meta
 from .spool import BoundedSpool
@@ -128,6 +128,7 @@ class HttpJsonCollector:
                  max_events_per_sec: float = DEFAULT_MAX_EVENTS_PER_SEC,
                  max_concurrent: int = DEFAULT_MAX_CONCURRENT,
                  spool: Optional[BoundedSpool] = None,
+                 extra_source_types=(),
                  logger=None):
         if not ingest_token and not (dev_loopback and _is_loopback(host)):
             # Unauthenticated ingest on a non-loopback bind is a data-injection
@@ -141,6 +142,10 @@ class HttpJsonCollector:
             raise ValueError("INGEST_HTTP_MAX_BODY_BYTES must be > 0")
         self.bus = bus
         self.token = ingest_token or None
+        # Parser plugins register source types ws1 cannot see (separate image); the operator lists them here
+        # (INGEST_HTTP_EXTRA_SOURCE_TYPES) so the edge does not 400 a type ws2 would parse.
+        self.source_types = REGISTERED_SOURCE_TYPES | frozenset(
+            str(s).strip() for s in extra_source_types if str(s).strip())
         self.dev_loopback = dev_loopback
         self.host = host
         self.port = int(port)
@@ -288,6 +293,11 @@ class HttpJsonCollector:
                               src=peer_ip, error=str(exc))
             return False
 
+    def bump(self, name: str, n: int = 1) -> None:
+        """Thread-safe counter increment (handler threads share these)."""
+        with _COUNTER_LOCK:
+            setattr(self, name, getattr(self, name) + n)
+
     # -- metrics ------------------------------------------------------------
 
     def metrics(self) -> dict:
@@ -319,17 +329,32 @@ class _HttpIngestServer(ThreadingHTTPServer):
         # slow client may hold one slot, but never unbounded workers.
         self._slots = threading.BoundedSemaphore(max_concurrent)
 
-    def get_slot(self) -> bool:
-        return self._slots.acquire(blocking=False)
+    def process_request(self, request, client_address):
+        # Gap-hunt review of PR 142: ThreadingHTTPServer spawns one thread per ACCEPTED connection before any handler
+        # runs, so a semaphore inside do_POST never bounded slow-header or idle connections. Take the slot here, answer
+        # 503 on the accept thread when full, and release it when the connection thread ends.
+        if not self._slots.acquire(blocking=False):
+            self.collector.bump("requests_failed")
+            try:
+                request.sendall(b"HTTP/1.0 503 Service Unavailable\r\nContent-Length: 0\r\n"
+                                b"Connection: close\r\n\r\n")
+            except OSError:
+                pass
+            self.shutdown_request(request)
+            return
+        super().process_request(request, client_address)
 
-    def release_slot(self) -> None:
-        self._slots.release()
+    def process_request_thread(self, request, client_address):
+        try:
+            super().process_request_thread(request, client_address)
+        finally:
+            self._slots.release()
 
 
 class _IngestHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.0"    # close per request: no keep-alive ambiguity
     server_version = "FENGARDE-ingest/1.0"
-    timeout = 30                     # slow client holds one slot, then drops
+    timeout = 15                     # slow client holds one slot, then drops
 
     @property
     def collector(self) -> HttpJsonCollector:
@@ -351,19 +376,12 @@ class _IngestHandler(BaseHTTPRequestHandler):
     do_PUT = do_DELETE = do_PATCH = do_GET  # noqa: N815 -- stdlib naming
 
     def do_POST(self):  # noqa: N802
-        if not self.server.get_slot():
-            self.collector.requests_failed += 1
-            self._send_json(503, {"error": "ingest busy, retry later"})
-            return
-        try:
-            self._handle_post()
-        finally:
-            self.server.release_slot()
+        self._handle_post()
 
     def _handle_post(self) -> None:
         c = self.collector
         if self.path.split("?", 1)[0] != "/v1/ingest":
-            c.requests_rejected += 1
+            c.bump("requests_rejected")
             self._send_json(404, {"error": "not found; POST /v1/ingest"})
             return
 
@@ -371,13 +389,14 @@ class _IngestHandler(BaseHTTPRequestHandler):
         # --- proves the 401 surface dies when this check is removed) --------
         token = self._bearer_token()
         if c.token is not None:
-            if not token or not hmac.compare_digest(token, c.token):
-                c.requests_rejected += 1
+            if not token or not hmac.compare_digest(token.encode("utf-8", "replace"),
+                                                    c.token.encode("utf-8", "replace")):
+                c.bump("requests_rejected")
                 self._send_json(401, {"error": "unauthorized"})
                 return
         else:  # dev_loopback mode: loopback peers only
             if not _is_loopback(self.client_address[0]):
-                c.requests_rejected += 1
+                c.bump("requests_rejected")
                 self._send_json(403, {"error": "dev switch is loopback-only"})
                 return
 
@@ -390,17 +409,17 @@ class _IngestHandler(BaseHTTPRequestHandler):
                                       self.headers.get("X-Fengarde-Format"),
                                       default="ndjson")
         except _BadRequest as exc:
-            c.requests_rejected += 1
+            c.bump("requests_rejected")
             self._send_json(400, {"error": str(exc)})
             return
-        if source_type not in REGISTERED_SOURCE_TYPES:
-            c.requests_rejected += 1
+        if source_type not in c.source_types:
+            c.bump("requests_rejected")
             self._send_json(
                 400, {"error": f"unknown source_type {source_type!r}; "
-                               f"registered: {sorted(REGISTERED_SOURCE_TYPES)}"})
+                               f"registered: {sorted(c.source_types)}"})
             return
         if format_name not in FORMATS:
-            c.requests_rejected += 1
+            c.bump("requests_rejected")
             self._send_json(400, {"error": f"unknown format {format_name!r}; "
                                            f"valid: {FORMATS}"})
             return
@@ -409,13 +428,13 @@ class _IngestHandler(BaseHTTPRequestHandler):
         try:
             body = self._read_body()
         except _TooLarge:
-            c.body_over_cap += 1
-            c.requests_rejected += 1
+            c.bump("body_over_cap")
+            c.bump("requests_rejected")
             self._send_json(413, {"error": f"request body exceeds "
                                            f"{c.max_body_bytes} bytes"})
             return
         except _BadRequest as exc:
-            c.requests_rejected += 1
+            c.bump("requests_rejected")
             self._send_json(400, {"error": str(exc)})
             return
 
@@ -423,7 +442,7 @@ class _IngestHandler(BaseHTTPRequestHandler):
         try:
             records, parse_errors = self._parse_body(body, format_name)
         except _BadRequest as exc:
-            c.requests_rejected += 1
+            c.bump("requests_rejected")
             self._send_json(400, {"error": str(exc)})
             return
 
@@ -439,24 +458,27 @@ class _IngestHandler(BaseHTTPRequestHandler):
             "errors": counts["errors"][:20],
         }
 
+        if counts["accepted"] > 0 and idem_key is None and (counts["dropped"] or counts["rate_limited"]):
+            payload["note"] = ("partial accept: resend the batch with X-Fengarde-Idempotency-Key to avoid "
+                               "duplicating the accepted records")
         # Status precedence: 503 (dropped) > 202 (all spooled) > 429 > 200.
         if counts["dropped"] > 0:
-            c.requests_failed += 1
+            c.bump("requests_failed")
             self._send_json(503, {**payload,
                                   "error": "bus unavailable and no spool; "
                                            "records dropped"})
             return
         if counts["spooled"] > 0 and counts["accepted"] == 0:
-            c.requests_accepted += 1
+            c.bump("requests_accepted")
             self._send_json(202, {**payload, "spooled": counts["spooled"],
                                   "note": "accepted for later delivery (bus down)"})
             return
         if counts["rate_limited"] > 0:
-            c.requests_limited += 1
+            c.bump("requests_limited")
             self._send_json(429, {**payload,
                                   "rate_limited": counts["rate_limited"]})
             return
-        c.requests_ok += 1
+        c.bump("requests_ok")
         self._send_json(200, payload)
 
     # -- helpers ------------------------------------------------------------
@@ -467,7 +489,7 @@ class _IngestHandler(BaseHTTPRequestHandler):
         out = {}
         for k, vals in parse_qs(self.path.split("?", 1)[1],
                                 keep_blank_values=False).items():
-            out[k] = unquote(vals[0]) if vals else ""
+            out[k] = vals[0] if vals else ""
         return out
 
     def _param(self, query_val, header_val, *, default=None):
@@ -480,13 +502,15 @@ class _IngestHandler(BaseHTTPRequestHandler):
         return str(value).strip()
 
     def _bearer_token(self) -> Optional[str]:
-        auth = self.headers.get("Authorization", "")
-        if not auth.startswith("Bearer "):
+        scheme, _, rest = self.headers.get("Authorization", "").partition(" ")
+        if scheme.lower() != "bearer":      # RFC 9110: the auth scheme is case-insensitive
             return None
-        return auth[len("Bearer "):].strip() or None
+        return rest.strip() or None
 
     def _read_body(self) -> bytes:
         c = self.collector
+        if "chunked" in (self.headers.get("Transfer-Encoding") or "").lower():
+            return self._read_chunked()
         raw_length = self.headers.get("Content-Length")
         if raw_length is not None:
             try:
@@ -510,6 +534,32 @@ class _IngestHandler(BaseHTTPRequestHandler):
                 raise _TooLarge()
         return body
 
+    def _read_chunked(self) -> bytes:
+        """Decode a Transfer-Encoding: chunked body, enforcing the size cap before buffering each chunk."""
+        c = self.collector
+        body = bytearray()
+        while True:
+            line = self.rfile.readline(1024)
+            if not line.endswith(b"\n"):
+                raise _BadRequest("malformed chunked encoding")
+            try:
+                size = int(line.split(b";", 1)[0].strip(), 16)
+            except ValueError:
+                raise _BadRequest("malformed chunk size") from None
+            if size < 0:
+                raise _BadRequest("malformed chunk size")
+            if size == 0:
+                while True:                      # discard trailers up to the blank line
+                    trailer = self.rfile.readline(1024)
+                    if trailer in (b"\r\n", b"\n", b""):
+                        return bytes(body)
+            if len(body) + size > c.max_body_bytes:
+                raise _TooLarge()
+            chunk = self.rfile.read(size)
+            if len(chunk) != size or self.rfile.read(2) != b"\r\n":
+                raise _BadRequest("truncated chunk")
+            body += chunk
+
     def _parse_body(self, body: bytes, format_name: str):
         text = body.decode("utf-8", errors="replace")
         if format_name == "json-array":
@@ -517,18 +567,24 @@ class _IngestHandler(BaseHTTPRequestHandler):
                 root = json.loads(text)
             except json.JSONDecodeError as exc:
                 raise _BadRequest(f"body is not a JSON array: {exc.msg}") from None
+            except (ValueError, RecursionError) as exc:      # >4300-digit int, absurd nesting
+                raise _BadRequest(f"body is not parseable JSON ({type(exc).__name__})") from None
             if not isinstance(root, list):
                 raise _BadRequest("format=json-array expects a JSON array root")
             return root, []
         # NDJSON (default): a line that fails JSON is counted, not fatal.
         records, errors = [], []
-        for lineno, line in enumerate(text.splitlines(), start=1):
+        # NDJSON separates records on \n only; str.splitlines() would also cut at U+2028/U+0085/\x1c-\x1e, all legal
+        # unescaped inside a JSON string.
+        for lineno, line in enumerate(text.split("\n"), start=1):
             if not line.strip():
                 continue
             try:
                 records.append(json.loads(line))
             except json.JSONDecodeError as exc:
                 errors.append(f"line {lineno}: {exc.msg}")
+            except (ValueError, RecursionError) as exc:      # >4300-digit int, absurd nesting: skip the line, keep the batch
+                errors.append(f"line {lineno}: unparseable ({type(exc).__name__})")
         return records, errors
 
     def _send_json(self, status: int, payload: dict) -> None:

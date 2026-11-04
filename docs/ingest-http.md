@@ -57,6 +57,22 @@ resending the same batch with the same key produces the same `ingest_id`s
 fresh uuid4 — identical records are NOT collapsed (see the FIX-21 note in
 `syslog_udp_server.py`). Redelivery must preserve line order.
 
+**Retrying a 429 or 503 without the key duplicates events.** Those responses can come back after part of the batch was
+already accepted (the body says how many, and carries a `note` when it applies). A shipper that resends the whole batch
+must send `X-Fengarde-Idempotency-Key`, or the accepted records are ingested twice.
+
+## Behaviour notes
+
+- Bodies may use `Content-Length` or `Transfer-Encoding: chunked`; the size cap applies to the decoded body.
+- NDJSON records are separated by `\n` only. A line that is not valid JSON, is nested absurdly deep, or contains an integer
+  over 4300 digits is counted as skipped; the rest of the batch is kept. (`format=json-array` rejects the whole body with 400.)
+- `Authorization: Bearer` is matched case-insensitively. Query values are percent-decoded once.
+- At most `INGEST_HTTP_MAX_CONCURRENT` connections are served at once (default 16); further connections get 503 immediately.
+- `source_type` must be a built-in parser. Parser plugins register their own types inside ws2, which ws1 cannot see: list
+  them in `INGEST_HTTP_EXTRA_SOURCE_TYPES` (comma-separated).
+- **Limit:** the rate-limit bucket and bus partition key are the TCP peer address. Behind Docker's published port or a relay,
+  all senders share one address, hence one bucket and one partition. Per-device keys are not implemented.
+
 ## Response codes (precedence)
 
 | Status | When | Body |
