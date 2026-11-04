@@ -51,6 +51,20 @@ No CHANGELOG entry was written on 2026-08-22..25. What those commits changed:
   floor's buffer thins below 3 points, the `alerts.json` mapping matches what `make_alert()` writes, `ot_new_device_e2e.py` wired into
   a CI job, two unread `scoring.yaml` keys removed, the `check_rule_producers.py` FIXTURES step added to `docs/adding-a-parser.md`, and
   mypy's `exclude` no longer skips a real file.
+### Added (2026-11-04, WP-4.3: manual full-corpus eval lane)
+- `.github/workflows/full-corpus.yml`: a `workflow_dispatch`-only lane that runs the same three corpus
+  lanes as the nightly (`evtx_eval.py`, `splunk_eval.py`, `blind_recall.py --require-corpus`) against
+  the **full** splunk/attack_data corpus instead of the nightly's 57-file pre-registered LFS subset —
+  the splunk clone is blobless + sparse (`git clone --filter=blob:none --sparse`, sparse set exactly
+  the manifest's `datasets/attack_techniques` + `LICENSE`) and every
+  `datasets/attack_techniques/**/*.log` Git LFS object is pulled on an ubuntu runner; the two EVTX
+  corpora are fetched unchanged via `fetch_corpora.py` (already full in the nightly). Results upload as
+  the `full-corpus-eval-results` artifact (lane result JSONs + `full_corpus_run_commits.txt`). The
+  numbers are explicitly **NOT comparable with the nightly 57-file-subset numbers** and are not
+  appended to `eval/trend.jsonl` / `benchmark/results.json` (that series stays the nightly's);
+  `benchmark/README.md` documents the lane, the not-comparable label and the
+  `corpus pinned at COMMIT_SET_BY_THE_RUN` placeholder (obtained from the artifact's commit file or
+  the fetch step log). First manual run pending a push of this branch.
 
 ### Added (2026-10-28, storylines 10-11: every rule is named by a twin storyline oracle)
 
