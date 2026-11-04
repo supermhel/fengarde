@@ -2,14 +2,17 @@
 
 ## Consumes
 - External inputs: **live syslog over UDP** (`SYSLOG_UDP_HOST`/`SYSLOG_UDP_PORT`,
-  default `0.0.0.0:5514`; TCP/514 is NOT implemented), **live HTTP/JSON over
-  TCP** (`POST /v1/ingest`, default `127.0.0.1:8554`, WP-1.1; see
-  `docs/ingest-http.md`), plus mock SNMP/NetFlow sources (see Mocks) — live
-  SNMP/NetFlow transports are not yet wired.
+  default `0.0.0.0:5514`), **live syslog over TCP** (`SYSLOG_TCP_HOST`/
+  `SYSLOG_TCP_PORT`, default `0.0.0.0:5515`, RFC 6587 framing — `newline`
+  default, `octet-counting` via `SYSLOG_TCP_FRAMING`; WP-1.2,
+  `collectors/syslog_tcp_server.py`; TLS/RFC 5425 is the follow-up PR),
+  **live HTTP/JSON over TCP** (`POST /v1/ingest`, default `127.0.0.1:8554`,
+  WP-1.1; see `docs/ingest-http.md`), plus mock SNMP/NetFlow sources (see
+  Mocks) — live SNMP/NetFlow transports are not yet wired.
 - Contracts: B (bus topics).
 
 ## Produces
-- Topic `raw.events` — `{source_type, raw, meta}`, partition key = source IP: the datagram's peer IP on the live UDP path (NOT written into `meta`, see below), `meta.ip` on the mock SNMP/NetFlow/sample-syslog path (`main.py`), **the poster's peer IP on the HTTP/JSON path** (`collectors/http_json_collector.py`, WP-1.1).
+- Topic `raw.events` — `{source_type, raw, meta}`, partition key = source IP: the datagram's peer IP on the live UDP path (NOT written into `meta`, see below), `meta.ip` on the mock SNMP/NetFlow/sample-syslog path (`main.py`), **the poster's peer IP on the HTTP/JSON path** (`collectors/http_json_collector.py`, WP-1.1), **the TCP peer IP on the live TCP path** (`collectors/syslog_tcp_server.py`, WP-1.2).
   - **UDP syslog listener specifics** (`collectors/syslog_udp_server.py::build_raw_event`):
     every datagram is produced with `source_type=generic_syslog` (the listener
     cannot know the product) and `meta = {received_at, ingest_id, trace_id,
@@ -20,6 +23,19 @@
     `cisco_asa`, `CEF:` → `cef`, dnsmasq `query[` → `dns_query`) when that parser
     parses it; anything else stays `generic_syslog`. See
     `services/ws2-normalization/INTERFACE.md` → Routing.
+  - **TCP syslog listener specifics** (`collectors/syslog_tcp_server.py`, WP-1.2):
+    RFC 6587 framing, one decoded frame = one `raw.events` record with the
+    SAME shape as the UDP path (`source_type=generic_syslog`,
+    `meta = {received_at, ingest_id, trace_id, tenant_id}`). `newline` framing
+    (default) terminates frames on LF (CR stripped); `octet-counting` reads
+    `MSG-LEN SP SYSLOG-MSG` with a tolerated trailing LF. Frames longer than
+    `SYSLOG_TCP_MAX_FRAME_BYTES` (default 65536) or a non-numeric length header
+    close that connection (counted in `/metrics`). Partial frames persist per
+    connection; an idle connection (`SYSLOG_TCP_IDLE_TIMEOUT_S`, default 30 s)
+    is closed, and `SYSLOG_TCP_MAX_CONNECTIONS` (default 64) bounds concurrent
+    peers. Dispatch, rate limiting (token buckets) and the spool fallback
+    (`SYSLOG_TCP_SPOOL_PATH`) are the shared `SyslogDispatcher` used by UDP.
+    TLS (RFC 5425) is the follow-up PR.
   - **HTTP/JSON ingest specifics** (`collectors/http_json_collector.py`):
     `POST /v1/ingest?source_type=<registered parser>` with an NDJSON body
     (default) or a JSON array (`format=json-array`). `source_type` comes from

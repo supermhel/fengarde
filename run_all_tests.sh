@@ -473,6 +473,8 @@ $PY eval/llm_triage/test_llm_triage_eval.py || { fail=1; FAILED="${FAILED} ${LAS
 echo
 echo "== ws1 syslog UDP listener (v0.2) =="; LAST_HEADER="== ws1 syslog UDP listener (v0.2) =="
 $PY services/ws1-collectors/test_syslog_udp.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo "== ws1 syslog TCP listener (WP-1.2): RFC 6587 newline + octet-counting framing, partial reads, oversize reject, concurrency, shared dispatch =="; LAST_HEADER="== ws1 syslog TCP listener (WP-1.2): RFC 6587 newline + octet-counting framing, partial reads, oversize reject, concurrency, shared dispatch =="
+$PY services/ws1-collectors/test_syslog_tcp.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo "== ws1 HTTP/JSON ingest (WP-1.1): auth, 400/413/429, malformed-line skip, idempotent redelivery, spool fallback =="; LAST_HEADER="== ws1 HTTP/JSON ingest (WP-1.1): auth, 400/413/429, malformed-line skip, idempotent redelivery, spool fallback =="
 $PY services/ws1-collectors/test_http_json_ingest.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 $PY services/ws1-collectors/test_http_json_ingest_hardening.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }

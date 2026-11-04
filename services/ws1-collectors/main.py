@@ -29,6 +29,12 @@ from collectors.http_json_collector import (  # noqa: E402  # WP-1.1: HTTP/JSON 
     DEFAULT_MAX_BODY_BYTES as INGEST_DEFAULT_MAX_BODY_BYTES,
     DEFAULT_MAX_EVENTS_PER_SEC as INGEST_DEFAULT_MAX_EVENTS_PER_SEC,
 )
+from collectors.syslog_tcp_server import (  # noqa: E402  # WP-1.2: TCP syslog
+    SyslogTCPServer, FRAMING_NEWLINE, DEFAULT_HOST as TCP_DEFAULT_HOST, DEFAULT_PORT as TCP_DEFAULT_PORT,
+    DEFAULT_MAX_FRAME_BYTES as TCP_DEFAULT_MAX_FRAME_BYTES,
+    DEFAULT_MAX_CONNECTIONS as TCP_DEFAULT_MAX_CONNECTIONS,
+    DEFAULT_IDLE_TIMEOUT_S as TCP_DEFAULT_IDLE_TIMEOUT_S,
+)
 
 MOCKS = HERE / "mocks"
 
@@ -130,7 +136,7 @@ _HEALTH_TOPIC = "ws1.liveness"
 _HEALTH_GROUP = "ws1-health"
 
 
-def build_health_handlers(udp, http=None):
+def build_health_handlers(udp, http=None, tcp=None):
     """Runner handler map for the ws1 daemon (see _HEALTH_TOPIC docstring)."""
 
     def handler(payload):
@@ -140,6 +146,8 @@ def build_health_handlers(udp, http=None):
             raise RuntimeError("syslog UDP ingest daemon is not running")
         if http is not None and not http.is_running():
             raise RuntimeError("HTTP/JSON ingest daemon is not running")
+        if tcp is not None and not tcp.is_running():
+            raise RuntimeError("syslog TCP ingest daemon is not running")
 
     return {_HEALTH_TOPIC: (_HEALTH_GROUP, handler)}
 
@@ -165,7 +173,7 @@ def _start_syslog_liveness_producer(bus, log, shutdown, *, interval_s: float = 5
     return t
 
 
-def _syslog_metrics(udp, http=None) -> dict:
+def _syslog_metrics(udp, http=None, tcp=None) -> dict:
     """WS-1's ingest-edge metrics, FLAT (gap-hunt #71/#76).
 
     /metrics/prom (shared.runner.render_prometheus) only renders top-level
@@ -209,6 +217,8 @@ def _syslog_metrics(udp, http=None) -> dict:
             m["spool_corrupt_lines_skipped"] = getattr(spool, "corrupt_lines_skipped", 0)
     if http is not None:
         m.update(http.metrics())
+    if tcp is not None:
+        m.update(tcp.metrics())
     return m
 
 
@@ -311,6 +321,43 @@ def main() -> None:
     except (ValueError, OSError) as exc:
         log.error("HTTP/JSON ingest not started", error=str(exc))
 
+    # WP-1.2: TCP syslog listener (RFC 6587 framing: newline or
+    # octet-counting via SYSLOG_TCP_FRAMING). Shares the UDP path's dispatch,
+    # rate limiting and spool machinery (SyslogDispatcher). A failed start
+    # (bad framing value, bind failure) is logged and the daemon stays up for
+    # /health; the health worker treats tcp=None as "not required".
+    tcp = None
+    try:
+        tcp_spool = None
+        tcp_spool_path = os.getenv("SYSLOG_TCP_SPOOL_PATH")
+        if tcp_spool_path:
+            tcp_spool = BoundedSpool(
+                tcp_spool_path,
+                max_bytes=_int_env("SYSLOG_TCP_SPOOL_MAX_BYTES",
+                                   SPOOL_DEFAULT_MAX_BYTES, log),
+                logger=log)
+            log.info("syslog tcp zero-loss spool enabled",
+                     path=tcp_spool_path)
+        tcp = SyslogTCPServer(
+            bus,
+            host=os.getenv("SYSLOG_TCP_HOST", TCP_DEFAULT_HOST),
+            port=_int_env("SYSLOG_TCP_PORT", TCP_DEFAULT_PORT, log,
+                          crash_on_bad=True),
+            framing=os.getenv("SYSLOG_TCP_FRAMING", FRAMING_NEWLINE),
+            max_frame_bytes=_int_env("SYSLOG_TCP_MAX_FRAME_BYTES",
+                                     TCP_DEFAULT_MAX_FRAME_BYTES, log),
+            max_events_per_sec=_float_env("SYSLOG_TCP_MAX_EVENTS_PER_SEC",
+                                          DEFAULT_MAX_EVENTS_PER_SEC, log),
+            max_connections=_int_env("SYSLOG_TCP_MAX_CONNECTIONS",
+                                     TCP_DEFAULT_MAX_CONNECTIONS, log),
+            idle_timeout_s=_float_env("SYSLOG_TCP_IDLE_TIMEOUT_S",
+                                      TCP_DEFAULT_IDLE_TIMEOUT_S, log),
+            spool=tcp_spool,
+            logger=log)
+        tcp.start()
+    except (ValueError, OSError) as exc:
+        log.error("syslog TCP listener not started", error=str(exc))
+
     shutdown = threading.Event()
     depth_thread = _start_depth_watchdog(bus, log, shutdown)
     silence_thread = _start_ingest_silence_watchdog(udp, log, shutdown)
@@ -319,16 +366,18 @@ def main() -> None:
     # hardcoded-200 lie; the liveness producer feeds the self-check worker.
     liveness_thread = _start_syslog_liveness_producer(bus, log, shutdown)
     try:
-        serve(build_health_handlers(udp, http),
+        serve(build_health_handlers(udp, http, tcp),
               health_port=_int_env("PORT", 8001, log, crash_on_bad=True),
               service_name="ws1-collectors", shutdown=shutdown,
-              metrics_provider=lambda: _syslog_metrics(udp, http),
+              metrics_provider=lambda: _syslog_metrics(udp, http, tcp),
               bus_factory=lambda: bus)
     finally:
         if udp is not None:
             udp.stop()
         if http is not None:
             http.stop()
+        if tcp is not None:
+            tcp.stop()
         if depth_thread is not None:
             depth_thread.join(timeout=5)
         if silence_thread is not None:

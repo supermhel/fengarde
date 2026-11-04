@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (2026-11-04, WP-1.2: TCP syslog for WS-1, RFC 6587)
+
+- `collectors/syslog_tcp_server.py`: live TCP syslog listener on 5515
+  (`SYSLOG_TCP_HOST`/`SYSLOG_TCP_PORT`), RFC 6587 framing — `newline`
+  (default) and `octet-counting` (`SYSLOG_TCP_FRAMING`) — with per-connection
+  buffering (partial frames/length headers reassembled across reads), frame
+  cap → oversize reject (connection closed, counted), idle timeout, and a
+  bounded connection count. Dispatch, per-source token-bucket rate limiting,
+  spool fallback (`SYSLOG_TCP_SPOOL_PATH`) and counters are the shared
+  `SyslogDispatcher` extracted from the UDP path (`collectors/syslog_dispatch.py`);
+  UDP behaviour and API are unchanged (54-test suite untouched and green).
+  `/health` and `/metrics` now include the TCP listener. Contract test
+  `test_syslog_tcp.py` (18 tests: framings, splits, oversize, concurrency,
+  rate limit, spool) wired into the fast tier; operator doc
+  `docs/syslog-tcp.md` with rsyslog/syslog-ng configs. TLS (RFC 5425) is the
+  follow-up PR.
+
 ### Fixed (2026-11-04, full-corpus workflow)
 
 - `full-corpus.yml`: the post-pull pointer check failed exactly when the pull had succeeded (`xargs … grep -l` exits 123 when no pointer

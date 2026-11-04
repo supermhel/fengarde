@@ -40,18 +40,17 @@ on ``/metrics`` without the per-event I/O tax.
 """
 from __future__ import annotations
 
-from collections import OrderedDict
-
-import hashlib
 import queue
 import socket
 import threading
 import time
-import uuid
 from typing import Optional
 
 from .spool import BoundedSpool
-from shared.envelope import stamp_meta
+from .syslog_dispatch import (  # noqa: F401  # re-exported for existing callers (tests import from this module)
+    SyslogDispatcher, TenantTokenBuckets, _TokenBucket, build_raw_event,
+    _deterministic_ingest_id,
+)
 
 # CodeQL py/bind-socket-all-network-interfaces (alert #63) flags this default.
 # It is intentional, not an oversight: this is a syslog COLLECTOR whose entire
@@ -141,122 +140,6 @@ def udp_rcvbuf_errors(path: str = "/proc/net/snmp") -> Optional[int]:
         return None
 
 
-class _TokenBucket:
-    """Token bucket: capacity == rate, refills continuously by elapsed time.
-
-    A burst up to `rate` tokens is allowed instantly (a source flushing a
-    small backlog shouldn't get throttled just for existing); sustained
-    traffic above `rate`/sec sheds the excess. `rate <= 0` disables limiting
-    (every take() succeeds) -- the default state for tests and any deployment
-    that hasn't opted in yet.
-
-    F4 (per-tenant throughput isolation): a bucket can be keyed by tenant
-    so one tenant's flood cannot consume another tenant's share. Unknown
-    tenants are grouped into a single shared bucket under the reserved key
-    ``_default`` to preserve the previous global behavior without an
-    unbounded number of in-memory bucket objects.
-    """
-
-    def __init__(self, rate_per_sec: float):
-        self.rate = rate_per_sec
-        self.capacity = max(rate_per_sec, 0)
-        self.tokens = self.capacity
-        self._last = time.monotonic()
-        self._lock = threading.Lock()
-
-    def take(self) -> bool:
-        if self.rate <= 0:
-            return True
-        with self._lock:
-            now = time.monotonic()
-            elapsed = now - self._last
-            self._last = now
-            self.tokens = min(self.capacity, self.tokens + elapsed * self.rate)
-            if self.tokens >= 1:
-                self.tokens -= 1
-                return True
-            return False
-
-
-class TenantTokenBuckets:
-    """Thin tenant-scoped facade over a shared `_TokenBucket` rate.
-
-    A fixed per-tenant cap is required for true isolation. Sharing one
-    bucket instance across tenants and branching on `take()` would still
-    let one tenant's burst steal all tokens; instead each tenant gets its
-    own bucket so the configured rate is a per-tenant ceiling, not a pool.
-    """
-
-    def __init__(self, rate_per_sec: float, logger=None):
-        self._rate = max(rate_per_sec, 0)
-        self._buckets: "dict[str, _TokenBucket]" = {}
-        self._default_bucket = _TokenBucket(self._rate)
-        # F4 gap fix: the tenant-level bucket alone collapses to one shared
-        # budget whenever every real network source shares one tenant_id --
-        # the default, single-tenant deployment. A flooding host can then
-        # rate-limit away a genuine concurrent attacker's events on the same
-        # collector, since both share the sole tenant bucket. A nested
-        # per-source-IP bucket at the same rate caps any ONE source's share
-        # of the tenant budget without weakening the tenant-wide ceiling.
-        self._source_buckets: "dict[str, _TokenBucket]" = {}
-        self._lock = threading.Lock()
-        self._log = logger
-
-    def take(self, tenant_id: str, source_ip: "Optional[str]" = None) -> bool:
-        bucket = self._default_bucket if not tenant_id else self._buckets.get(tenant_id)
-        if bucket is None:
-            bucket = _TokenBucket(self._rate)
-            # keep map bounded: never grow without limit on a poisoned header.
-            if len(self._buckets) < 4096:
-                with self._lock:
-                    if tenant_id not in self._buckets:
-                        self._buckets[tenant_id] = bucket
-            else:
-                bucket = self._default_bucket
-                if self._log is not None:
-                    self._log.warn("tenant bucket map full, degrading to shared default",
-                                   tenant_id=tenant_id, source_ip=source_ip)
-        if not bucket.take():
-            return False
-        if not source_ip:
-            return True
-        src_bucket = self._source_buckets.get(source_ip)
-        if src_bucket is None:
-            src_bucket = _TokenBucket(self._rate)
-            if len(self._source_buckets) < 4096:
-                with self._lock:
-                    if source_ip not in self._source_buckets:
-                        self._source_buckets[source_ip] = src_bucket
-            else:
-                src_bucket = self._default_bucket  # bounded map; degrade rather than grow forever
-                if self._log is not None:
-                    self._log.warn("source bucket map full, degrading to shared default",
-                                   tenant_id=tenant_id, source_ip=source_ip)
-        return src_bucket.take()
-
-
-def _deterministic_ingest_id(line: str) -> str:
-    """SHA-256-derived UUID-like id (mirrors WS-2's generic_syslog parser)."""
-    digest = hashlib.sha256(line.encode("utf-8", errors="replace")).hexdigest()
-    return f"{digest[0:8]}-{digest[8:12]}-{digest[12:16]}-{digest[16:20]}-{digest[20:32]}"
-
-
-def build_raw_event(line: str, *, deterministic_id: bool = False) -> dict:
-    """Wrap a decoded syslog line into a WS-2-parseable raw event."""
-    if deterministic_id:
-        ingest_id = _deterministic_ingest_id(line)
-    else:
-        ingest_id = str(uuid.uuid4())
-    return {
-        "source_type": "generic_syslog",
-        "raw": line,
-        "meta": stamp_meta({
-            "received_at": int(time.time()),
-            "ingest_id": ingest_id,
-        }),
-    }
-
-
 class SyslogUDPServer:
     """Threaded UDP syslog server that produces raw events to ``raw.events``.
 
@@ -314,49 +197,23 @@ class SyslogUDPServer:
         self.bus = bus
         self.topic = topic
         self.deterministic_id = deterministic_id
-        self.log = logger
-        self.events_produced = 0
-        self.events_dropped = 0     # bus produce failed AND no spool (or spool full)
-        self.events_shed = 0        # rate-limited AND no spool (or spool full)
-        self.events_spooled = 0     # written to the fallback spool, pending replay
-        self.events_lost = 0        # spool configured but itself at capacity
+        # WP-1.2: the dispatch core (token buckets, spool fallback, counters,
+        # per-source breakdown, throttled shed/produce-failure logs) lives in a
+        # protocol-agnostic SyslogDispatcher SHARED with the TCP listener. The
+        # counters stay readable here through the properties below, so every
+        # existing caller and the whole test_syslog_udp.py suite is unchanged.
+        self._dispatcher = SyslogDispatcher(
+            bus, topic=topic, max_events_per_sec=max_events_per_sec,
+            spool=spool, deterministic_id=deterministic_id,
+            peer_metrics_max=peer_metrics_max, logger=logger)
         self.events_queue_full = 0  # P0-4: worker pool saturated, queue.put_nowait refused
-        # Gap-hunt (2026-08-26) #81: an empty/CRLF-only datagram is NOT a bus
-        # produce failure -- incrementing events_dropped for it meant a flood of
-        # empty datagrams read on /metrics as a Redis outage when the bus is
-        # perfectly healthy. Distinct counter so an operator can tell "empty
-        # garbage on the wire" from "bus is down".
-        self.events_empty = 0
+        self._queue_lock = threading.Lock()
         # Gap-hunt (2026-08-26) #79: a persistent (non-close) recv OSError is
         # no longer a bare `continue` inside the recv thread -- that could
         # become an unbounded tight busyloop pegging a core. Now counted and
         # logged, with a short backoff sleep between retries.
         self.recv_oserror_total = 0
         self._recv_oserror_backoff_s = _RECV_OSERROR_BACKOFF_S
-        # B2: one bucket per tenant_id so one tenant's flood cannot shed another
-        # tenant's datagrams. Events with no tenant_id fall into the shared
-        # default bucket, preserving prior global behavior for unknown sources.
-        self._buckets = TenantTokenBuckets(max_events_per_sec, logger=self.log)
-        self._last_shed_log = 0.0   # throttles the shed-warning log itself: a
-                                    # real flood must not turn into a log flood
-        # Gap-hunt (2026-08-26) #77: the bus-produce-failure log had no throttle
-        # (unlike the shed path just above) -- a Redis outage at the configured
-        # event rate produced thousands of log lines/sec, burying every other
-        # signal. Same 1/sec throttle posture as _last_shed_log.
-        self._last_produce_fail_log = 0.0
-        # P0-4: genuinely concurrent now (a fixed pool of worker threads all
-        # call _handle_datagram), so this lock is load-bearing, not defensive.
-        # FENGARDE E6: incrementally-maintained per-source breakdown for
-        # /metrics. A bounded dict keyed by peer IP -> {produced, dropped,
-        # shed}; guarded by the same _shed_lock that protects the aggregate
-        # counters (see _count_peer). LRU-evicts the oldest source when the
-        # map would exceed peer_metrics_max. The aggregates are untouched --
-        # this is purely additive, so it cannot regress the counters-under-
-        # lock fix.
-        self._peer_metrics_max = max(1, peer_metrics_max)
-        self._peer_metrics: "OrderedDict[str, dict[str, int]]" = OrderedDict()
-        self._shed_lock = threading.Lock()
-        self._spool = spool
         self._spool_drain_interval_s = spool_drain_interval_s
         self._spool_shutdown = threading.Event()
         self._spool_thread: Optional[threading.Thread] = None
@@ -395,146 +252,68 @@ class SyslogUDPServer:
         self._worker_threads: list[threading.Thread] = []
         self._running = threading.Event()
 
-    def _handle_datagram(self, data: bytes, peer_ip: str) -> None:
-        line = data.decode("utf-8", errors="replace").rstrip("\r\n")
-        if not line:
-            # An empty/CRLF-only datagram carries no event but still costs a
-            # real recv + queue/worker cycle. Consume a rate-limit token and
-            # count it so a flood of trivial datagrams is throttled and visible
-            # in per_source_metrics(), instead of bypassing both invisibly (a
-            # flood like this previously evaded SYSLOG_MAX_EVENTS_PER_SEC
-            # entirely and never appeared in any counter).
-            #
-            # Gap-hunt (2026-08-26) #81: it is counted in a DISTINCT counter
-            # (events_empty), not events_dropped -- events_dropped means "bus
-            # produce failed", and a flood of empty datagrams on a healthy bus
-            # read on /metrics exactly like a Redis outage otherwise. An
-            # operator can now tell "empty garbage on the wire" from "the bus
-            # is down".
-            self._buckets.take("")
-            with self._shed_lock:
-                self.events_empty += 1
-                self._count_peer(peer_ip, "empty")
-            return
-        # FIX 21 (reverted 2026-08-06): a prior version of this line hardcoded
-        # deterministic_id=True on the theory that "UDP retransmission is
-        # normal." It isn't -- UDP has no retransmission mechanism, so
-        # duplicate datagrams are rare (network-level duplication/relay
-        # loops), while genuinely distinct repeated log lines (identical
-        # appliance/firewall messages, e.g. repeated auth failures) are
-        # common. Content-hashing collapsed every distinct-but-identical-text
-        # datagram to ONE meta.ingest_id, which stateful window rules dedup
-        # by member -- N separate brute-force attempts counted as 1 and the
-        # threshold rule silently never fired. Honor the constructor flag
-        # (default False = per-datagram uuid4) like every other caller of
-        # build_raw_event.
-        event = build_raw_event(line, deterministic_id=self.deterministic_id)
-        tenant_id = event.get("meta", {}).get("tenant_id")
-        if not self._buckets.take(tenant_id or "", source_ip=peer_ip):
-            if self._try_spool(peer_ip, event):
-                with self._shed_lock:
-                    self.events_spooled += 1
-                return
-            self._count_shed(peer_ip, lost_to_full_spool=self._spool is not None)
-            return
-        try:
-            self.bus.produce(self.topic, key=peer_ip, payload=event)
-        except Exception as exc:  # bus/Redis unreachable -> try the spool before dropping
-            if self._try_spool(peer_ip, event):
-                with self._shed_lock:
-                    self.events_spooled += 1
-                return
-            with self._shed_lock:
-                self.events_dropped += 1
-                self._count_peer(peer_ip, "dropped")
-                # Gap-hunt (2026-08-26) #77: throttle the produce-failure log
-                # (at most 1/sec), exactly like the shed path does. Without
-                # this a Redis outage at the configured event rate logged
-                # thousands of lines/sec.
-                now = time.monotonic()
-                if now - self._last_produce_fail_log >= 1.0:
-                    self._last_produce_fail_log = now
-                    should_log = True
-                else:
-                    should_log = False
-            if should_log and self.log is not None:
-                self.log.warn("dropped syslog datagram: bus produce failed",
-                              src=peer_ip, error=str(exc),
-                              spool_full=self._spool is not None)
-            return
-        with self._shed_lock:
-            self.events_produced += 1
-            self._count_peer(peer_ip, "produced")
+    # -- WP-1.2: counters and per-source metrics delegate to the shared
+    #    dispatcher (the TCP listener uses the same instance-level API, so
+    #    /metrics and the tests read one source of truth for both transports)
+    @property
+    def log(self):
+        # Forwarded so a caller may replace the logger AFTER construction
+        # (test_syslog_udp.py does exactly that) -- the dispatcher must see it.
+        return self._dispatcher.log
 
-    def _count_peer(self, peer_ip: str, kind: str) -> None:
-        """Increment ``kind`` (\"produced\"/\"dropped\"/\"shed\") for ``peer_ip``.
+    @log.setter
+    def log(self, value):
+        self._dispatcher.log = value
 
-        MUST be called with ``self._shed_lock`` held (it's only ever invoked
-        from the already-locked aggregate-counter blocks in ``_handle_datagram``
-        / ``_count_shed``), so this is cheap and race-free. Bounds the map: when
-        a brand-new IP arrives at ``_peer_metrics_max`` distinct sources, the
-        least-recently-updated one is evicted (true LRU -- a ``pop``+reinsert
-        moves the just-updated entry to the back of the dict's insertion
-        order). Eviction only affects this visibility map, never the aggregate
-        counters: every datagram remains accounted for by the totals.
-        """
-        metrics = self._peer_metrics
-        if peer_ip not in metrics:
-            if len(metrics) >= self._peer_metrics_max:
-                # evict the oldest key (OrderedDict preserves insertion order)
-                metrics.pop(next(iter(metrics)))
-            metrics[peer_ip] = {"produced": 0, "dropped": 0, "shed": 0, "empty": 0}
-        metrics[peer_ip][kind] += 1
-        metrics.move_to_end(peer_ip)
+    @property
+    def events_produced(self) -> int:
+        return self._dispatcher.events_produced
+
+    @property
+    def events_dropped(self) -> int:
+        return self._dispatcher.events_dropped
+
+    @property
+    def events_shed(self) -> int:
+        return self._dispatcher.events_shed
+
+    @property
+    def events_spooled(self) -> int:
+        return self._dispatcher.events_spooled
+
+    @property
+    def events_lost(self) -> int:
+        return self._dispatcher.events_lost
+
+    @property
+    def events_empty(self) -> int:
+        return self._dispatcher.events_empty
+
+    @property
+    def _shed_lock(self):
+        # Contract surface (test_fix_counters_deterministic asserts it): the
+        # shared dispatch lock that serializes aggregate counter updates.
+        return self._dispatcher._shed_lock  # noqa: SLF001 -- same family
+
+    @property
+    def _spool(self):
+        # The spool-drain loop and main.py's metrics probe read this name.
+        return self._dispatcher._spool  # noqa: SLF001 -- same family
 
     def per_source_metrics(self) -> dict:
-        """Snapshot of the bounded per-source breakdown for ``metrics_provider``.
+        return self._dispatcher.per_source_metrics()
 
-        Returns ``{ip: {"produced": n, "dropped": n, "shed": n}}`` under the
-        same lock the counters are written under, so a /metrics read is
-        consistent. The map is capped at ``peer_metrics_max`` distinct IPs
-        (LRU-evicted when full); aggregate counters always cover the rest.
-        """
-        with self._shed_lock:
-            return {ip: dict(m) for ip, m in self._peer_metrics.items()}
+    def _handle_datagram(self, data: bytes, peer_ip: str) -> None:
+        # WP-1.2: the whole dispatch decision (empty guard, token buckets,
+        # spool fallback, produce, counters, per-source metrics) is in the
+        # protocol-agnostic SyslogDispatcher shared with the TCP listener.
+        line = data.decode("utf-8", errors="replace").rstrip("\r\n")
+        self._dispatcher.handle_line(line, peer_ip)
 
-    def _try_spool(self, peer_ip: str, event: dict) -> bool:
-        """Best-effort spool write. False on no-spool-configured, spool-full,
-        OR any unexpected error (BoundedSpool.append() already treats OSError
-        as "not spooled", but this belt-and-suspenders catch means a bug in
-        the spool itself degrades to "count as shed/dropped" rather than
-        crashing the UDP handler and losing the datagram's accounting)."""
-        if self._spool is None:
-            return False
-        try:
-            return self._spool.append({"key": peer_ip, "event": event})
-        except Exception as exc:
-            if self.log is not None:
-                self.log.warn("spool append failed unexpectedly", src=peer_ip,
-                              error=str(exc))
-            return False
-
-    def _count_shed(self, peer_ip: str, *, lost_to_full_spool: bool) -> None:
-        # Throttle the warning itself (at most once/sec) so a flood can't
-        # turn into a logging DoS too. Locked so the counters and the
-        # log-throttle timestamp stay correct even under concurrent handlers.
-        should_log = False
-        with self._shed_lock:
-            if lost_to_full_spool:
-                self.events_lost += 1
-            else:
-                self.events_shed += 1
-            self._count_peer(peer_ip, "shed")
-            now = time.monotonic()
-            if now - self._last_shed_log >= 1.0:
-                self._last_shed_log = now
-                should_log = True
-            shed_total, lost_total = self.events_shed, self.events_lost
-        if should_log and self.log is not None:
-            self.log.warn(
-                "shedding syslog datagrams: rate limit exceeded",
-                src=peer_ip, events_shed_total=shed_total,
-                events_lost_total=lost_total, spool_full=lost_to_full_spool)
+    def _recv_queue_full(self) -> None:
+        """Count a refused queue put (recv thread saturated; P0-4)."""
+        with self._queue_lock:
+            self.events_queue_full += 1
 
     def start(self) -> None:
         """Start serving on background daemon threads (non-blocking).
@@ -593,14 +372,13 @@ class SyslogUDPServer:
                 break
             # A single float write is atomic under CPython's GIL -- no lock
             # needed, same reasoning as every other lock-free counter this
-            # module deliberately doesn't guard (see _shed_lock's own scope:
-            # it protects multi-field aggregate updates, not single writes).
+            # module deliberately doesn't guard (queue_full is a single
+            # increment, guarded against concurrent recv-loop writers only).
             self._last_received_ts = time.monotonic()
             try:
                 self._queue.put_nowait((data, addr[0]))
             except queue.Full:
-                with self._shed_lock:
-                    self.events_queue_full += 1
+                self._recv_queue_full()
 
     def is_running(self) -> bool:
         """True while the recv + worker threads are live (start() called and
@@ -698,7 +476,8 @@ class SyslogUDPServer:
             except queue.Empty:
                 break
             if item is not None:
-                self.events_lost += 1
+                with self._dispatcher._shed_lock:  # noqa: SLF001 -- same family
+                    self._dispatcher.events_lost += 1
         self._spool_shutdown.set()
         if self._spool_thread is not None:
             self._spool_thread.join(timeout=5)

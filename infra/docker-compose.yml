@@ -112,9 +112,10 @@ services:
     build: { context: .., dockerfile: services/ws1-collectors/Dockerfile }
     restart: unless-stopped
     # Publish the syslog UDP listener so devices (and the smoke test) can send to it.
+    # WP-1.2: TCP syslog (RFC 6587) joins it on 5515, same network contract.
     # WP-1.1: HTTP/JSON ingest is host-loopback-only on 8554 (shippers on this
     # host POST /v1/ingest; TLS is the reverse proxy's job per docs/deployment.md).
-    ports: ["5514:5514/udp", "127.0.0.1:8554:8554"]
+    ports: ["5514:5514/udp", "5515:5515/tcp", "127.0.0.1:8554:8554"]
     environment:
       - BUS_BACKEND=redis
       - REDIS_PASSWORD=${REDIS_PASSWORD:-}
