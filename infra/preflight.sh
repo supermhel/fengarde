@@ -8,14 +8,15 @@
 #   1. vm.max_map_count >= 262144  (OpenSearch won't boot otherwise on Linux/WSL2)
 #   2. Docker is installed and the daemon is reachable (+ a >= 4 GB RAM hint)
 #   3. The ports FENGARDE publishes are free (TCP 6379, 9200, 5601, 8000, 8080,
-#      8554 -- the WP-1.1 HTTP/JSON ingest endpoint; UDP 5514 -- ws1-collectors'
-#      syslog listener, easy to miss since every other port here is TCP)
+#      8554 -- the WP-1.1 HTTP/JSON ingest endpoint, 5515 -- the WP-1.2 TCP
+#      syslog listener; UDP 5514 -- ws1-collectors' syslog listener, easy to
+#      miss since every other port here is TCP)
 #
 # Exits non-zero if a BLOCKER is found. POSIX sh; works on Linux, macOS, WSL2.
 set -u
 
 REQUIRED_MAP_COUNT=262144
-TCP_PORTS="6379 9200 5601 8000 8080 8554"
+TCP_PORTS="6379 9200 5601 8000 8080 8554 5515"
 UDP_PORTS="5514"
 
 problems=0

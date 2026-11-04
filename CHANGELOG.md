@@ -10,6 +10,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added (2026-11-04, HTTP ingest device identity)
 
 - `POST /v1/ingest` accepts `X-Fengarde-Source` (or `?source=`) to label the sending device. The label keys the bus partition, the spool entry and a new per-source rate cap (`INGEST_HTTP_MAX_EVENTS_PER_SEC_PER_SOURCE`, default off); it is stored as `meta.source` and the TCP peer as `meta.shipper_ip`. Behind a published Docker port or a relay every sender shared one peer address, so the rate limit and the partition key could not tell devices apart. The old nested per-IP bucket ran at the tenant rate and could never bind first. Pinned by `test_http_json_ingest_source_identity.py`.
+### Added (2026-11-04, WP-1.2: TCP syslog for WS-1, RFC 6587)
+
+- Review fixes on the TCP syslog listener (PR 146 review): a TCP spool (`SYSLOG_TCP_SPOOL_PATH`) is now replayed by its own drain loop (only UDP drained before, so a TCP spool filled during an outage was never delivered); the optional LF after an octet-counted message may arrive in a later segment without killing the connection; a final unterminated line is dispatched at EOF; one address is limited to `SYSLOG_TCP_MAX_CONN_PER_PEER` connections (16); transport counters are updated under a lock; `stop()` shuts sockets down to wake blocked threads; a failed bind closes its socket. UDP and TCP now share ONE dispatcher when both run (one rate cap, one counter set, one spool); the TCP listener binds `127.0.0.1` by default (CodeQL `py/bind-socket-all-network-interfaces`) and compose publishes `127.0.0.1:5515` with the container binding `0.0.0.0` behind it; framing is offset-based on a bytearray instead of re-copying the remainder per frame. Pinned by `test_syslog_tcp_hardening.py`.
+
+- `collectors/syslog_tcp_server.py`: live TCP syslog listener on 5515
+  (`SYSLOG_TCP_HOST`/`SYSLOG_TCP_PORT`), RFC 6587 framing — `newline`
+  (default) and `octet-counting` (`SYSLOG_TCP_FRAMING`) — with per-connection
+  buffering (partial frames/length headers reassembled across reads), frame
+  cap → oversize reject (connection closed, counted), idle timeout, and a
+  bounded connection count. Dispatch, per-source token-bucket rate limiting,
+  spool fallback (`SYSLOG_TCP_SPOOL_PATH`) and counters are the shared
+  `SyslogDispatcher` extracted from the UDP path (`collectors/syslog_dispatch.py`);
+  UDP behaviour and API are unchanged (54-test suite untouched and green).
+  `/health` and `/metrics` now include the TCP listener. Contract test
+  `test_syslog_tcp.py` (18 tests: framings, splits, oversize, concurrency,
+  rate limit, spool) wired into the fast tier; operator doc
+  `docs/syslog-tcp.md` with rsyslog/syslog-ng configs. TLS (RFC 5425) is the
+  follow-up PR.
 
 ### Fixed (2026-11-04, full-corpus workflow)
 
