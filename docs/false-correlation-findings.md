@@ -104,6 +104,18 @@ clock-graded, same-denominator counterpart is invisible to a card reader.
   exists and the FCR blind-spot names it (revert the registry edit -> check fails;
   `generate_scorecard.py --check` also fails on any divergence).
 
+### Limits of the new metric (read before quoting the 0.0)
+
+- **It is true by construction on the true chain.** The twin generates its events in the oracle's causal order, so
+  `forbidden_order_realised_rate` is 0.0 there by design. It certifies that the harness and the clock agree with the oracle; it
+  does not measure how well the correlator avoids false correlation. The mirrored-chain control (1.0) only shows that the metric
+  can move.
+- **n = 2.** It is graded on the two oracle-forbidden pairs of one synthetic storyline.
+- **The headline `false_correlation_rate` stays 1.0.** The graph still joins both forbidden pairs, by ratified design. Nothing in this
+  change makes the correlator better; it makes the claim more precise.
+- **Open (owner decision):** `README.md` still says incidents carry a "typed causal graph". The graph's direction comes from entity
+  type, not event time (ADR-009/010), so "typed entity graph" would be the accurate wording. This PR does not change the README.
+
 ## 5. Evidence file:line index
 
 | claim | evidence |
