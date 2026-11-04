@@ -1,0 +1,164 @@
+# Manual full-corpus detection-accuracy eval (WP-4.3).
+#
+# Runs the SAME three corpus lanes as nightly-eval.yml (evtx_eval.py,
+# splunk_eval.py, blind_recall.py --require-corpus) but against the FULL
+# splunk/attack_data corpus instead of the 57-file pre-registered LFS subset
+# the nightly pulls. The nightly caps its LFS pull with the manifest selection
+# (corpus_manifest.json's per_technique / max_files / max_bytes, measured 57
+# raw-XML files); this lane runs the documented full-pull procedure
+# (benchmark/README.md, "Full corpus on the 46-rule build"): EVERY
+# datasets/attack_techniques/**/*.log Git LFS object at the manifest pin
+# (~1,055 raw-XML files corpus-wide; a complete clone is > 9 GiB, so the
+# clone here is blobless + sparse -- `--filter=blob:none --sparse`, sparse set
+# exactly the manifest's sparse_paths). The two EVTX corpora are fetched
+# unchanged via fetch_corpora.py: they carry no LFS selection, so the nightly
+# ALREADY runs them in full.
+#
+# The numbers this lane produces are deliberately NOT comparable with the
+# nightly's 57-file-subset numbers, and -- unlike the nightly -- it does NOT
+# append to eval/trend.jsonl / benchmark/results.json (that committed series
+# stays the nightly's comparable one). Results ride the per-run
+# full-corpus-eval-results artifact only and land in git when whoever runs the
+# lane commits them locally, matching the nightly's no-auto-commit convention.
+#
+# workflow_dispatch only: a manual review lane, never on a schedule and never
+# part of the zero-infra PR gate. Expect a long run: the LFS pull alone is
+# ~17 min measured (2026-10-23 container run) and the full splunk lane ~10-16
+# min on top (evtx ~7 min, full blind recall longer than the nightly's).
+#
+# Actions are SHA-pinned to 40-char commit SHAs, matching the convention used
+# across every workflow in this repo (see tools/verify_action_pins.py).
+name: Full-Corpus Eval (manual, WP-4.3)
+
+on:
+  workflow_dispatch:
+
+# Least-privilege default (mirrors nightly-eval.yml): read repo contents; the
+# only write is the per-run artifact upload (actions/upload-artifact), which
+# needs no extra repo write scope.
+permissions:
+  contents: read
+
+jobs:
+  full-corpus-eval:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+        with:
+          persist-credentials: false  # no step pushes or calls the API
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
+        with:
+          python-version: "3.12"
+      - name: Install deps
+        # Hash-pinned like every services/*/requirements.txt (and the nightly
+        # lane's install): python-evtx is a real dependency here, not optional.
+        run: pip install --require-hashes -r eval/requirements.txt
+
+      # ---- corpus fetch (full, unlike the nightly's capped subset) ---------
+      # Fail LOUDLY on a runner too small for the > 9 GiB pull, before wasting
+      # an hour of downloading: a full pull that dies mid-way leaves nothing
+      # usable. (GitHub-hosted ubuntu-latest has ~14 GiB of disk; the measured
+      # full checkout lands around 10-12 GiB incl. the LFS object store, so 12
+      # GiB free is the headroom floor -- use a larger runner if it triggers.)
+      - name: Check runner disk headroom for the full > 9 GiB pull
+        run: |
+          set -euo pipefail
+          avail_kib="$(df -Pk "$PWD" | awk 'NR==2 {print $4}')"
+          echo "free space on the workspace partition: $((avail_kib / 1024 / 1024)) GiB"
+          if [ "$avail_kib" -lt $((12 * 1024 * 1024)) ]; then
+            echo "[FAIL] fewer than 12 GiB free; the full splunk/attack_data pull is > 9 GiB."
+            echo "Re-run on a larger runner (runs-on label) or skip this lane."
+            exit 1
+          fi
+
+      - name: "Fetch pinned EVTX corpora (unchanged from nightly: already full)"
+        run: |
+          set -euo pipefail
+          git lfs install --skip-repo
+          # evtx-attack-samples + evtx-to-mitre have NO LFS selection in
+          # corpus_manifest.json (sparse_paths: []), so the nightly already
+          # runs them in full -- reuse the pinned fetcher unchanged (it exits 1
+          # on any failed fetch or pin mismatch, never a silent skip).
+          python eval/detection_accuracy/fetch_corpora.py             --corpus evtx-attack-samples --corpus evtx-to-mitre
+
+      - name: Full splunk/attack_data checkout (blobless, sparse, all LFS pulled)
+        env:
+          GIT_LFS_SKIP_SMUDGE: "1"
+          SPLUNK_PIN: 800ef65739e6d2ed61043ccb313623441a3778ae  # corpus_manifest.json splunk-attack-data.pin
+        run: |
+          set -euo pipefail
+          dest="eval/detection_accuracy/splunk-attack-data"
+          # > 9 GiB with the LFS data pulled; the transfer is only the small
+          # pointer/yml tree: --filter=blob:none (no blob objects over the wire,
+          # fetched on demand) + --sparse (root-only initial cone checkout).
+          git clone --filter=blob:none --sparse https://github.com/splunk/attack_data "$dest"
+          git -C "$dest" fetch --depth 1 origin "$SPLUNK_PIN"
+          # Exactly the sparse set the nightly manifest uses (sparse_paths in
+          # eval/detection_accuracy/corpus_manifest.json): the lanes read only
+          # datasets/attack_techniques (splunk_eval's raw-<Event> .log files,
+          # blind_recall's scenario YAMLs); LICENSE is kept so the fetched tree
+          # carries its licence. Same --no-cone mode + paths as fetch_corpora.py.
+          git -C "$dest" sparse-checkout set --no-cone datasets/attack_techniques LICENSE
+          git -C "$dest" checkout -q --detach FETCH_HEAD
+          head="$(git -C "$dest" rev-parse HEAD)"
+          echo "splunk/attack_data HEAD=$head (manifest pin $SPLUNK_PIN)"
+          if [ "$head" != "$SPLUNK_PIN" ]; then
+            echo "[FAIL] splunk/attack_data HEAD != manifest pin; numbers would not be reproducible"
+            exit 1
+          fi
+          # FULL pull: the nightly pulls only the pre-registered subset (57
+          # files); this is the documented full-corpus procedure (benchmark/
+          # README.md, 2026-10-23 container run). ~17 min measured.
+          git -C "$dest" lfs pull --include="datasets/attack_techniques/**/*.log"
+          # A successful pull exits 0; this is the belt-and-braces check that
+          # NOTHING stayed an un-fetched pointer (a partial pull must never
+          # silently shrink the corpus -- splunk_eval's own guard only catches
+          # the all-pointers case, nightly leaves pointers BY DESIGN).
+          # `grep -l` exits 1 (and xargs 123) when NO file matches -- the success case here -- which `set -o pipefail`
+          # turned into a step failure after a good pull (run 41859200473). `|| true` keeps the count, not the exit code.
+          pointers="$(find "$dest/datasets/attack_techniques" -name '*.log' -print0 | { xargs -0 -r grep -l '^version https://git-lfs' || true; } | wc -l)"
+          log_files="$(find "$dest/datasets/attack_techniques" -name '*.log' | wc -l)"
+          echo "raw-XML .log files materialized: $log_files (nightly subset: 57); un-fetched LFS pointers: $pointers"
+          if [ "$pointers" -ne 0 ]; then
+            echo "[FAIL] $pointers .log file(s) still un-fetched Git LFS pointers -- full-corpus numbers would not be complete"
+            exit 1
+          fi
+
+      # ---- eval entry points (same commands as nightly-eval.yml) ------------
+      - name: EVTX oracle replay (full-corpus lane)
+        run: python eval/detection_accuracy/evtx_eval.py
+
+      # NOT comparable with the nightly row: this grades every raw-XML file of
+      # the splunk corpus (~1,055), the nightly only the 57-file subset. Both
+      # lanes still go through the same independent oracle + pipeline.
+      - name: Splunk attack_data oracle replay (FULL corpus -- NOT comparable with the nightly 57-file subset)
+        run: python eval/detection_accuracy/splunk_eval.py
+
+      - name: Blind recall on full pinned third-party corpora (NOT comparable with the nightly subset-fed run)
+        run: python eval/detection_accuracy/blind_recall.py --require-corpus
+
+      # ---- provenance + upload -------------------------------------------------
+      # Which corpus commits THIS run read (recorded for benchmark/README.md's
+      # "corpus pinned at COMMIT_SET_BY_THE_RUN" placeholder). No trend row is
+      # appended and benchmark/results.json is NOT regenerated: those stay the
+      # nightly's comparable series.
+      - name: Record corpus commits read by this run
+        run: |
+          set -euo pipefail
+          out="eval/detection_accuracy/full_corpus_run_commits.txt"
+          : > "$out"
+          for c in evtx-samples splunk-attack-data evtx-to-mitre; do
+            echo "$c=$(git -C "eval/detection_accuracy/$c" rev-parse HEAD)" >> "$out"
+          done
+          cat "$out"
+      - name: Upload full-corpus results (NOT comparable with nightly)
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: full-corpus-eval-results
+          path: |
+            eval/detection_accuracy/evtx_eval_results.json
+            eval/detection_accuracy/splunk_eval_results.json
+            eval/detection_accuracy/blind_recall_results.json
+            eval/detection_accuracy/full_corpus_run_commits.txt
+          if-no-files-found: error
+          retention-days: 14

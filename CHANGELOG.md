@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed (2026-11-04, full-corpus workflow)
+
+- `full-corpus.yml`: the post-pull pointer check failed exactly when the pull had succeeded (`xargs … grep -l` exits 123 when no pointer
+  remains, and `pipefail` made that the step's exit code; first manual run 41859200473). The count no longer carries grep's exit code.
+
 ### Fixed (2026-11-04, gap-hunt open and partial rows)
 
 - `tools/fengarde_bench.py` exits 1 when most events were dropped (`eps_dropped_majority`), in JSON and text mode (R4 #107);
@@ -71,6 +76,20 @@ No CHANGELOG entry was written on 2026-08-22..25. What those commits changed:
   partition key = peer IP. Contract test `test_http_json_ingest.py` wired
   into the fast tier; live curl example against the compose stack in
   `docs/ingest-http.md`.
+### Added (2026-11-04, WP-4.3: manual full-corpus eval lane)
+- `.github/workflows/full-corpus.yml`: a `workflow_dispatch`-only lane that runs the same three corpus
+  lanes as the nightly (`evtx_eval.py`, `splunk_eval.py`, `blind_recall.py --require-corpus`) against
+  the **full** splunk/attack_data corpus instead of the nightly's 57-file pre-registered LFS subset —
+  the splunk clone is blobless + sparse (`git clone --filter=blob:none --sparse`, sparse set exactly
+  the manifest's `datasets/attack_techniques` + `LICENSE`) and every
+  `datasets/attack_techniques/**/*.log` Git LFS object is pulled on an ubuntu runner; the two EVTX
+  corpora are fetched unchanged via `fetch_corpora.py` (already full in the nightly). Results upload as
+  the `full-corpus-eval-results` artifact (lane result JSONs + `full_corpus_run_commits.txt`). The
+  numbers are explicitly **NOT comparable with the nightly 57-file-subset numbers** and are not
+  appended to `eval/trend.jsonl` / `benchmark/results.json` (that series stays the nightly's);
+  `benchmark/README.md` documents the lane, the not-comparable label and the
+  `corpus pinned at COMMIT_SET_BY_THE_RUN` placeholder (obtained from the artifact's commit file or
+  the fetch step log). First manual run pending a push of this branch.
 
 ### Added (2026-10-28, storylines 10-11: every rule is named by a twin storyline oracle)
 
@@ -109,6 +128,17 @@ No CHANGELOG entry was written on 2026-08-22..25. What those commits changed:
   exit, a stale `scenario_matrix` artifact is recomputed, renamed-in rule files count as new, and the tests no longer fake every call.
   Docs corrected: it writes `evasion_floor.yaml` (new keys only), it does not touch `baseline_scenarios.json`.
 - `tools/test_gate_tiers.py` also covers non-`$PY` stanzas (the console's npm/npx) and asserts `contract-tests` needs `changes`.
+
+### Docs (2026-11-04, OCSF version assessment — WP-4.2)
+
+- `docs(ocsf): version assessment (WP-4.2)` — read-only assessment, no code change: every parser
+  emits `metadata.version` `1.1.0`, hardcoded in the single shared envelope builder
+  (`services/ws2-normalization/parsers/base.py:193`); upstream is at 1.8.0 (2026-03-16) with 1.9.0
+  out (2026-08-03). Nothing reads or validates the version string (schema types it as plain string,
+  ws3-indexer/OpenSearch mappings ignore it, no test asserts it), so a bump is mechanically free but
+  would misrepresent the project's restricted/project-local 1.1.0-era class and activity semantics;
+  recommendation is keep-1.1.0 until a real mapping pass. Full evidence with file:line and release
+  map: `docs/ocsf-version-assessment.md`.
 
 ## [0.11.3] - 2026-10-21
 
