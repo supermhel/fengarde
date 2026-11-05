@@ -468,26 +468,33 @@ def password_problem(password) -> Optional[str]:
     return None
 
 
-def ensure_first_boot_admin(store: UserStore, username: str = "admin") -> Optional[str]:
+def ensure_first_boot_admin(store: UserStore, username: str = "admin",
+                            password: Optional[str] = None) -> Optional[str]:
     """First-boot bootstrap: if the user store is empty, create one admin.
 
     The initial password comes from the operator via FENGARDE_ADMIN_PASSWORD
-    (read here at first boot only). The service itself never generates,
-    stores, logs, or returns a plaintext credential -- only the scrypt hash
-    ever touches disk. This closes both CodeQL findings the earlier designs
-    hit in turn (py/clear-text-logging for print-the-password, then
+    (read here at first boot only; ``password`` overrides the env var for
+    the WP-3.2 prod first-boot generation path, where shared/prodcheck.py
+    generated a fresh value into a 0600 file). The service itself never
+    generates, stores, logs, or returns a plaintext credential unless the
+    operator EXPLICITLY asked for file generation (FENGARDE_PROFILE=prod +
+    FENGARDE_FIRST_BOOT_FILE) — only the scrypt hash ever touches the store.
+    This closes both CodeQL findings the earlier designs hit in turn
+    (py/clear-text-logging for print-the-password, then
     py/clear-text-storage for write-it-to-a-0600-file): the only party that
-    ever holds the plaintext is the operator who chose it. Still no
-    admin/admin or any other default credential (PLAN_A's ask) -- env var
-    unset means NO account is created and RBAC stays fail-closed (nobody
-    can log in) until the operator provides one and restarts.
+    ever holds the plaintext is the operator who chose it (or the 0600 file
+    the operator explicitly requested, header instructing rotate+delete).
+    Still no admin/admin or any other default credential (PLAN_A's ask) --
+    env var unset means NO account is created and RBAC stays fail-closed
+    (nobody can log in) until the operator provides one and restarts.
 
     Returns the username if an account was created by this call, else None
-    (users already exist, or the env var is unset). Never the password.
+    (users already exist, or no usable password). Never the password.
     """
     if store.count() > 0:
         return None
-    password = os.getenv("FENGARDE_ADMIN_PASSWORD")
+    if password is None:
+        password = os.getenv("FENGARDE_ADMIN_PASSWORD")
     if not password:
         return None
     store.create_user(username, password, role="admin", tenant_id=DEFAULT_TENANT)

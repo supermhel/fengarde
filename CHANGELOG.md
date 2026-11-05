@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (2026-11-04, WP-3.2: secure defaults — FENGARDE_PROFILE=prod gate)
+
+- `services/shared/prodcheck.py` — prod gate: `FENGARDE_PROFILE=prod` refuses
+  to boot until the WHOLE secure surface is present, printing ONE aggregated
+  numbered failure list (API key, RBAC on, non-default admin credential,
+  Redis bus password) and exiting 1. Known-default/too-short admin passwords
+  are refused explicitly. Demo/profile-less runs are byte-for-byte no-op.
+- First-boot admin password into a FILE (not a log), prod-only:
+  `generate_first_boot_password()` writes a crypto-random 20+ char password
+  to `FENGARDE_FIRST_BOOT_FILE` (0600, rotate-and-delete header, never
+  logged), and the ws3 triage bootstrap creates the admin in-process — ONLY
+  on an empty user store; a non-empty store with the file set is refused
+  (a first-boot file must never rotate the live admin password). This is an
+  EXPLICIT prod-profile-only exception to the standing no-plaintext rule
+  (CodeQL py/clear-text-storage), documented in docs/secure-defaults.md.
+- `require_auth_or_die` now routes through the prod gate first (prod implies
+  auth-is-required; the two modes cannot disagree).
+- `tools/test_prodcheck.py` (8 groups, fast tier): aggregation, defaults
+  refusal, first-boot file semantics, demo no-op, REQUIRE_AUTH contract,
+  users.py password-param path.
+
 ### Added (2026-11-04, WP-1.3: shipper adapters for real Fluent Bit / Winlogbeat / Docker shapes)
 
 - `services/ws2-normalization/adapters/` — four pure, total adapters that
