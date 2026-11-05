@@ -18,13 +18,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ingest.internal` → ws1-collectors:8554, both with `tls internal`
   (Caddy's local CA: no DNS, no ACME, no cert provisioning; public-domain
   variant documented).
-- `tools/test_tls_profile.py` (fast tier) — static contract: the !override
-  removals are present for BOTH endpoints, caddy is tls-profile-only on
-  443, the Caddyfile proxies both targets with tls internal.
-- `docs/tls-profile.md` — setup, restore-to-plaintext, the merge semantics,
-  and the live verification transcript: console 200 over TLS, ingest 200
-  accepted:1 over TLS, unauthenticated ingest 401, plaintext 8080/8554
-  connection refused, stack restored to the default profile afterwards.
+- `tools/test_tls_profile.py` (fast tier) — asserts on the MERGED compose
+  config (`docker compose config --format json`, else a YAML merge): only
+  caddy 443/tcp publishes on all interfaces, ws1/ws7 publish nothing, no UDP
+  port is published (syslog is dropped, not TLS-terminated), plus the Caddy
+  wiring and that the docs carry the real `--cacert` commands and no `curl -k`.
+- `docs/tls-profile.md` — setup (export `root.crt`, verify with `--cacert`),
+  restore-to-plaintext, the merge semantics, client-IP behaviour, the local CA
+  risk (unencrypted `root.key` in the `caddy-data` volume; do not `caddy trust`
+  on shared hosts; rotation; external/name-constrained CA), and a MANUAL
+  verification record (not reproduced by CI).
+- Review fixes (PR #162): ws1 `INGEST_HTTP_TRUSTED_PROXIES` (default empty =
+  unchanged) — behind a trusted proxy the client is the last untrusted
+  `X-Forwarded-For` hop, `meta.shipper_ip` stays the real client and the proxy
+  hop is `meta.shipper_proxy_ip`; an untrusted peer's header is ignored. The
+  TLS profile mounts `infra/caddy/nginx-real-ip.conf` into ws7 (nginx
+  `set_real_ip_from` + `real_ip_recursive`) so `RATE_LIMIT_TRUST_PROXY_HEADER`
+  buckets per client, not per Caddy; the default nginx path is unchanged.
 
 ### Added (2026-11-04, WP-1.3: shipper adapters for real Fluent Bit / Winlogbeat / Docker shapes)
 

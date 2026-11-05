@@ -317,6 +317,7 @@ def main() -> None:
             max_concurrent=_int_env("INGEST_HTTP_MAX_CONCURRENT", 16, log),
             max_events_per_sec_per_source=_float_env("INGEST_HTTP_MAX_EVENTS_PER_SEC_PER_SOURCE", 0, log),
             extra_source_types=[s for s in os.getenv("INGEST_HTTP_EXTRA_SOURCE_TYPES", "").split(",")],
+            trusted_proxies=os.getenv("INGEST_HTTP_TRUSTED_PROXIES", ""),
             logger=log)
         http.start()
     except (ValueError, OSError) as exc:

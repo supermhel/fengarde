@@ -135,6 +135,50 @@ def main() -> int:
     check(len(c._source_buckets) <= mod.DEFAULT_MAX_SOURCES,
           f"the per-source map must stay bounded, got {len(c._source_buckets)}")
 
+    # 6. trusted-proxy client resolution (WP-3.1 review): XFF only from a trusted peer, last untrusted hop wins
+    t = mod.parse_trusted_proxies("172.16.0.0/12, 10.0.0.0/8")
+    r = mod.resolve_client_ip
+    check(r("172.18.0.5", ["203.0.113.9"], t) == ("203.0.113.9", "172.18.0.5"), "trusted peer: client = XFF hop")
+    check(r("172.18.0.5", ["1.1.1.1, 203.0.113.9"], t) == ("203.0.113.9", "172.18.0.5"),
+          "spoofed leftmost hop must be ignored, last untrusted hop wins")
+    check(r("172.18.0.5", ["198.51.100.7", "10.1.1.1, 203.0.113.9, 172.17.0.2"], t) == ("203.0.113.9", "172.18.0.5"),
+          "trusted hops on the right are skipped, repeated headers are joined")
+    check(r("172.18.0.5", ["10.1.1.1, 172.17.0.2"], t) == ("10.1.1.1", "172.18.0.5"),
+          "all hops trusted-range (private client behind NAT): leftmost is the client")
+    check(r("198.51.100.1", ["203.0.113.9"], t) == ("198.51.100.1", None), "untrusted peer: XFF ignored")
+    check(r("172.18.0.5", [], t) == ("172.18.0.5", None), "no header: peer")
+    check(r("172.18.0.5", ["not-an-ip"], t) == ("172.18.0.5", None), "garbage hop: fall back to peer")
+    check(r("127.0.0.1", ["203.0.113.9"], ()) == ("127.0.0.1", None), "default (empty list): header never trusted")
+    try:
+        mod.parse_trusted_proxies("nonsense")
+        check(False, "a bad CIDR must raise")
+    except ValueError:
+        pass
+
+    # end to end: loopback peer trusted -> shipper_ip is the XFF client, proxy hop recorded, rate-limit key follows
+    bus = Bus()
+    c, port = start(bus, trusted_proxies="127.0.0.0/8")
+    try:
+        st, _ = post(port, URL, REC, {"X-Forwarded-For": "6.6.6.6, 203.0.113.9"})
+        st2, _ = post(port, URL, REC, {"X-Forwarded-For": "203.0.113.10"})
+        msgs = bus.drain("raw.events")
+        check(st == 200 and st2 == 200 and [m.key for m in msgs] == ["203.0.113.9", "203.0.113.10"],
+              f"keys must be the resolved client IPs, got {[m.key for m in msgs]}")
+        m0 = msgs[0].payload["meta"]
+        check(m0.get("shipper_ip") == "203.0.113.9" and m0.get("shipper_proxy_ip") == "127.0.0.1",
+              f"meta must carry client and proxy hop separately, got {m0}")
+    finally:
+        c.stop()
+    bus = Bus()
+    c, port = start(bus)  # not trusted: a client-supplied XFF is ignored
+    try:
+        post(port, URL, REC, {"X-Forwarded-For": "203.0.113.9"})
+        msgs = bus.drain("raw.events")
+        check(msgs[0].key == "127.0.0.1" and "shipper_proxy_ip" not in msgs[0].payload["meta"],
+              "an untrusted peer's X-Forwarded-For must be ignored")
+    finally:
+        c.stop()
+
     if FAILS:
         print(f"[FAIL] ws1 HTTP ingest source identity: {len(FAILS)} problem(s)")
         for f in FAILS:

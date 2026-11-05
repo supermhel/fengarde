@@ -3,16 +3,22 @@
 #
 # The main docker-compose.yml stays foolproof for `docker compose up` (zero
 # prerequisites, loopback-bound plaintext). This override ADDS a Caddy
-# service and REMOVES the plaintext publishes of ws7 (console) and ws1
-# (HTTP/JSON ingest + syslog transports), so in this profile the console and
-# the ingest endpoint answer ONLY over TLS (port 443).
+# service and REMOVES every host publish of ws7 (console) and ws1 (HTTP/JSON
+# ingest AND the syslog UDP/TCP listeners), so in this profile the console and
+# the HTTP ingest endpoint answer ONLY over TLS (port 443). Syslog is NOT
+# TLS-terminated: its host publishes are dropped, so syslog is unreachable from
+# outside the compose network until RFC 5425 lands (WP-1.2 follow-up).
 #
-# Setup / run:
+# Setup / run (full commands incl. exporting the root certificate:
+# docs/tls-profile.md):
 #   cd infra
 #   docker compose -f docker-compose.yml -f docker-compose.tls.yml \
 #       --profile tls up -d
-#   curl -k --resolve siem.internal:443:127.0.0.1 https://siem.internal/
-#   curl -k --resolve ingest.internal:443:127.0.0.1 https://ingest.internal/v1/ingest
+#   docker compose -f docker-compose.yml -f docker-compose.tls.yml --profile tls \
+#       cp caddy:/data/caddy/pki/authorities/local/root.crt ./fengarde-root.crt
+#   curl --cacert ./fengarde-root.crt --resolve siem.internal:443:127.0.0.1 https://siem.internal/
+# Never `curl -k` with the bearer ingest token: that hands it to anyone who can
+# MITM the connection.
 # Back to plaintext: docker compose -f docker-compose.yml -f docker-compose.tls.yml \
 #       --profile tls down && docker compose up -d --remove-orphans
 #
@@ -26,6 +32,16 @@
 # docker compose >= 2.20) REPLACES the base ports list instead of appending
 # to it. Removing ports makes the services reachable only on the compose
 # network — and therefore only through Caddy.
+#
+# Client IPs: Caddy overwrites X-Forwarded-For with the address it saw. ws1
+# (INGEST_HTTP_TRUSTED_PROXIES) and ws7's nginx (nginx-real-ip.conf) trust that
+# header ONLY from the compose network's private ranges; narrow both to Caddy's
+# subnet if other containers share the network. On Docker Desktop the client
+# address Caddy sees is the VM's NAT gateway, not the LAN client.
+#
+# The local CA root KEY lives unencrypted in the caddy-data volume
+# (/data/caddy/pki/authorities/local/root.key): see docs/tls-profile.md before
+# trusting that CA on any machine.
 
 services:
   caddy:
@@ -47,12 +63,17 @@ services:
   ws7-dashboard:
     # plaintext publish removed: the console answers ONLY over TLS here
     ports: !override []
+    volumes:
+      - ./caddy/nginx-real-ip.conf:/etc/nginx/real-ip.d/real-ip.conf:ro
 
   ws1-collectors:
-    # HTTP/JSON ingest (8554) AND the syslog transports (5514/5515) removed:
-    # in this profile everything in and out of ws1 is TLS-terminated by Caddy.
+    # HTTP/JSON ingest (8554) and the syslog listeners (5514/udp, 5515/tcp)
+    # are no longer published at all. HTTP ingest is reachable via Caddy (TLS);
+    # syslog is NOT proxied, so it is simply unreachable from the host here.
     # (Syslog-over-TLS is a separate roadmap item, WP-1.2 follow-up.)
     ports: !override []
+    environment:
+      - INGEST_HTTP_TRUSTED_PROXIES=10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
 
 volumes:
   caddy-data:

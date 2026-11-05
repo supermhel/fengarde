@@ -1,26 +1,34 @@
 """Contract tests for the WP-3.1 TLS profile (infra/docker-compose.tls.yml).
 
-The profile must guarantee: in TLS mode the console (ws7) and the ingest
-endpoint (ws1) answer ONLY over TLS. These static checks pin that promise
-without Docker:
+The profile must guarantee: in TLS mode the console (ws7) and the HTTP ingest
+endpoint (ws1) answer ONLY over TLS, and syslog is not published at all. The
+checks run on the MERGED compose config (``docker compose config --format
+json`` when docker is available, else a YAML merge that models ``!override``),
+so a comment or an unrelated string can no longer satisfy them:
 
-- the override removes the plaintext publishes of ws7 and ws1 (`!override`,
-  the compose-spec merge tag) instead of adding alongside them;
-- Caddy is in the ``tls`` profile, publishes 443, proxies BOTH sites;
-- the Caddyfile serves `siem.internal` -> ws7 and `ingest.internal` -> ws1,
-  each with `tls internal` (local-CA default, no public DNS/ACME required).
+- no service other than caddy publishes on all interfaces, and caddy publishes
+  exactly 443/tcp;
+- ws1 and ws7 publish nothing; no UDP port is published anywhere;
+- the Caddyfile serves `siem.internal` -> ws7 and `ingest.internal` -> ws1 with
+  `tls internal`; ws1 trusts the proxy range for client IPs; ws7 mounts the
+  real-ip file; the docs carry the real verification commands (`--cacert`, root
+  export, no `curl -k`).
 
-The full merge is additionally verified live by `docker compose config` at
-development time (pasted in docs/tls-profile.md) and by the gate's live path.
+The live transcript in docs/tls-profile.md is MANUAL; CI does not reproduce it.
 
 Run: python tools/test_tls_profile.py
 """
 from __future__ import annotations
 
+import json
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+INFRA = ROOT / "infra"
+ALL_IFACES = (None, "", "0.0.0.0", "::", "[::]")
 
 FAILS: list[str] = []
 
@@ -30,72 +38,125 @@ def check(cond: object, msg: str) -> None:
         FAILS.append(msg)
 
 
-def test_override_structure():
-    text = (ROOT / "infra" / "docker-compose.tls.yml").read_text(encoding="utf-8")
-    # both endpoints must have their publishes REMOVED via the compose spec
-    # !override tag ("ports: !override []"), never appended next to them
-    # (the exact per-service semantics are asserted in test_yaml_parses)
-    check("ws7-dashboard:" in text and "ports: !override []" in text,
-          "ws7 plaintext publish is not removed in the tls override")
-    # at least the two service removals carry the tag (the header comment may
-    # mention it too)
-    check(text.count("ports: !override []") >= 2,
-          "expected >= 2 !override port removals (ws7, ws1)")
-    check('profiles: ["tls"]' in text,
-          "caddy must be a tls-profile-only service")
-    check('"443:443/tcp"' in text, "caddy must publish 443")
-    check("caddy-data:" in text and "caddy-config:" in text,
-          "caddy data/config volumes must be declared")
-    check("ws7-dashboard" in text and "ws1-collectors" in text,
-          "caddy must depend on both endpoints")
+def _merged_from_docker() -> dict | None:
+    if not shutil.which("docker"):
+        return None
+    try:
+        r = subprocess.run(
+            ["docker", "compose", "-f", "docker-compose.yml", "-f", "docker-compose.tls.yml",
+             "--profile", "tls", "config", "--format", "json"],
+            cwd=INFRA, capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if r.returncode != 0:
+        return None
+    return json.loads(r.stdout)
 
 
-def test_caddyfile_sites():
-    text = (ROOT / "infra" / "caddy" / "Caddyfile").read_text(encoding="utf-8")
-    check("siem.internal {" in text, "console site missing")
-    check("ingest.internal {" in text, "ingest site missing")
-    check("tls internal" in text, "local-CA (tls internal) default missing")
-    check("ws7-dashboard:80" in text and "ws1-collectors:8554" in text,
-          "reverse_proxy targets wrong")
+def _parse_port(spec) -> dict:
+    """Short or long compose port syntax -> {host_ip, published, target, protocol}."""
+    if isinstance(spec, dict):
+        return {"host_ip": spec.get("host_ip"), "published": str(spec.get("published", "")),
+                "target": str(spec.get("target", "")), "protocol": spec.get("protocol", "tcp")}
+    s = str(spec)
+    proto = "tcp"
+    if "/" in s:
+        s, proto = s.rsplit("/", 1)
+    parts = s.split(":")
+    host_ip = parts[0] if len(parts) == 3 else None
+    return {"host_ip": host_ip, "published": parts[-2] if len(parts) > 1 else "",
+            "target": parts[-1], "protocol": proto}
 
 
-def test_yaml_parses():
+def _merged_from_yaml() -> dict:
     import yaml  # noqa: PLC0415
 
-    # docker compose's `!override` merge tag is not standard YAML: accept it
-    # as "replace with the wrapped value" so the files can be parsed here.
-    class _ComposeLoader(yaml.SafeLoader):  # noqa: N801
+    class _Tagged(list):
+        """A list carrying the compose `!override` tag."""
+
+    class _L(yaml.SafeLoader):  # noqa: N801
         pass
 
     def _override(loader, node):  # noqa: ANN001, ANN202
-        if isinstance(node, yaml.SequenceNode):
-            return loader.construct_sequence(node, deep=True)
-        return loader.construct_object(node, deep=True)
+        seq = loader.construct_sequence(node, deep=True) if isinstance(node, yaml.SequenceNode) \
+            else loader.construct_object(node, deep=True)
+        return _Tagged(seq)
 
-    _ComposeLoader.add_constructor("!override", _override)
+    _L.add_constructor("!override", _override)
+    base = yaml.load((INFRA / "docker-compose.yml").read_text(encoding="utf-8"), Loader=_L)
+    ovr = yaml.load((INFRA / "docker-compose.tls.yml").read_text(encoding="utf-8"), Loader=_L)
+    services = base["services"]
+    for name, svc in ovr["services"].items():
+        cur = services.setdefault(name, {})
+        for k, v in svc.items():
+            if k == "ports":
+                # untagged lists APPEND in compose; the !override tag replaces
+                cur["ports"] = list(v) if isinstance(v, _Tagged) else list(cur.get("ports", [])) + list(v)
+            elif isinstance(v, list) and isinstance(cur.get(k), list):
+                cur[k] = list(cur[k]) + list(v)
+            else:
+                cur[k] = v
+    return {"services": services}
 
-    base = yaml.load((ROOT / "infra" / "docker-compose.yml").read_text(encoding="utf-8"),
-                     Loader=_ComposeLoader)
-    ovr = yaml.load((ROOT / "infra" / "docker-compose.tls.yml").read_text(encoding="utf-8"),
-                    Loader=_ComposeLoader)
-    for name in ("ws7-dashboard", "ws1-collectors"):
-        check(name in base["services"], f"{name} missing from the base compose")
-        check(name in ovr["services"], f"{name} missing from the tls override")
-        check(ovr["services"][name].get("ports") == [],
-              f"{name} must declare ports: !override []")
-    check("caddy" in ovr["services"] and "volumes" in ovr,
-          "override must add caddy + its named volumes")
+
+def _env_list(service: dict) -> list:
+    env = service.get("environment") or []
+    if isinstance(env, dict):
+        return [f"{k}={v}" for k, v in env.items()]
+    return list(env)
+
+
+def test_merged_ports():
+    merged = _merged_from_docker() or _merged_from_yaml()
+    pub = {n: [_parse_port(p) for p in (s.get("ports") or [])]
+           for n, s in merged["services"].items()}
+    for n in ("ws1-collectors", "ws7-dashboard"):
+        check(n in pub, f"{n} missing from the merged config")
+        check(pub.get(n) == [], f"{n} must publish nothing in the tls profile, got {pub.get(n)}")
+    check("caddy" in pub, "caddy missing from the merged tls config")
+    public = [(n, p["published"], p["protocol"]) for n, ps in pub.items() for p in ps
+              if p["host_ip"] in ALL_IFACES]
+    check(public == [("caddy", "443", "tcp")],
+          f"only caddy 443/tcp may publish on all interfaces, got {public}")
+    udp = [(n, p) for n, ps in pub.items() for p in ps if p["protocol"] == "udp"]
+    check(not udp, f"no UDP port may be published in the tls profile (syslog), got {udp}")
+    svc = merged["services"]
+    check(svc["caddy"].get("profiles") == ["tls"], "caddy must be a tls-profile-only service")
+    check(any(str(e).startswith("INGEST_HTTP_TRUSTED_PROXIES=") for e in _env_list(svc["ws1-collectors"])),
+          "ws1 must set INGEST_HTTP_TRUSTED_PROXIES in the tls profile")
+    check("real-ip" in json.dumps(svc["ws7-dashboard"].get("volumes")),
+          "ws7 must mount the nginx real-ip file in the tls profile")
+
+
+def test_caddyfile_sites():
+    text = (INFRA / "caddy" / "Caddyfile").read_text(encoding="utf-8")
+    check("siem.internal {" in text, "console site missing")
+    check("ingest.internal {" in text, "ingest site missing")
+    check(text.count("tls internal") >= 2, "local-CA (tls internal) default missing on a site")
+    check("ws7-dashboard:80" in text and "ws1-collectors:8554" in text,
+          "reverse_proxy targets wrong")
+    real_ip = (INFRA / "caddy" / "nginx-real-ip.conf").read_text(encoding="utf-8")
+    check("set_real_ip_from" in real_ip and "real_ip_header X-Forwarded-For" in real_ip
+          and "real_ip_recursive on" in real_ip, "nginx real-ip file incomplete")
 
 
 def test_documentation_is_honest():
-    text = (ROOT / "docs" / "tls-profile.md").read_text(encoding="utf-8")
-    check("internal" in text and "443" in text,
-          "doc must state the local-CA default and the port")
+    doc = (ROOT / "docs" / "tls-profile.md").read_text(encoding="utf-8")
+    for needle in ("--cacert", "--resolve", "cp caddy:/data/caddy/pki/authorities/local/root.crt",
+                   "root.key", "caddy trust", "NOT reproduced by CI"):
+        check(needle in doc, f"docs/tls-profile.md must contain {needle!r}")
+    for f in (ROOT / "docs" / "tls-profile.md", INFRA / "docker-compose.tls.yml", INFRA / "caddy" / "Caddyfile"):
+        text = f.read_text(encoding="utf-8")
+        # prose may say "never `curl -k`"; a runnable insecure command starts a line with curl
+        bad = [ln for ln in text.splitlines()
+               if ln.lstrip("# ").startswith("curl") and (" -k " in ln or " -sk " in ln or "--insecure" in ln)]
+        check(not bad, f"{f.name} shows an insecure curl command: {bad}")
+        check("everything in and out of ws1 is TLS-terminated" not in text,
+              f"{f.name} makes a false TLS claim about syslog")
 
 
 def main() -> int:
-    tests = [test_override_structure, test_caddyfile_sites,
-             test_yaml_parses, test_documentation_is_honest]
+    tests = [test_merged_ports, test_caddyfile_sites, test_documentation_is_honest]
     for t in tests:
         t()
     if FAILS:
@@ -103,8 +164,8 @@ def main() -> int:
         for f in FAILS:
             print("  -", f)
         return 1
-    print(f"[OK] tls_profile: {len(tests)} test groups — plaintext removal, "
-          "caddy wiring, local-CA default, honest docs")
+    print(f"[OK] tls_profile: {len(tests)} test groups — merged-config ports, caddy wiring, "
+          "real-ip, doc commands")
     return 0
 
 
