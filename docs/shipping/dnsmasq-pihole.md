@@ -3,7 +3,7 @@
 > **Status of this recipe.** The configs were linted with the official container images (Vector 0.61.0, Fluent Bit 5.1.5, rsyslog 8.2610.0,
 > syslog-ng 4.12.0) and, where Linux-capable, run live on Docker Desktop against a real ws1 listener and the real WS-2 path
 > (see the [Verification log](README.md#verification-log)). What was not run is stated below. The committed samples are still adapter
-> fixtures / templates, except [pihole-v6.dnsmasq.log](samples/pihole-v6.dnsmasq.log), a real capture from the official `pihole/pihole` image (see below);
+> fixtures / templates, except [pihole-v6.dnsmasq.txt](samples/pihole-v6.dnsmasq.txt), a real capture from the official `pihole/pihole` image (see below);
 > `tools/test_shipping_recipes.py` runs them all through WS-2.
 
 Parser: `dns_query` (class 4002). Path: syslog TCP 5515 (or UDP 5514), declared `generic_syslog`; the `query[...] ... from ...`
@@ -37,7 +37,7 @@ encoding.codec = "text"
 ```
 
 Sample: [dnsmasq query line with a PRI added](samples/dnsmasq.syslog.txt). The line itself is the example in the `dns_query`
-parser docstring (documented shape; a real capture is [pihole-v6.dnsmasq.log](samples/pihole-v6.dnsmasq.log)) -> `dns_query`.
+parser docstring (documented shape; a real capture is [pihole-v6.dnsmasq.txt](samples/pihole-v6.dnsmasq.txt)) -> `dns_query`.
 
 ## Fluent Bit
 
@@ -69,7 +69,7 @@ real header was observed in the live run and is exercised against the capture ab
 
 ## Real Pi-hole capture
 
-[samples/pihole-v6.dnsmasq.log](samples/pihole-v6.dnsmasq.log): `/var/log/pihole/pihole.log`, 81 lines, captured from `pihole/pihole:2026.10.1` (Pi-hole core v6.5, FTL v6.8, web v6.6.1, dnsmasq `pi-hole-v2.93+30`, Alpine) on 2026-11-05, Docker Desktop on Windows 11. The
+[samples/pihole-v6.dnsmasq.txt](samples/pihole-v6.dnsmasq.txt): `/var/log/pihole/pihole.log`, 81 lines, captured from `pihole/pihole:2026.10.1` (Pi-hole core v6.5, FTL v6.8, web v6.6.1, dnsmasq `pi-hole-v2.93+30`, Alpine) on 2026-11-05, Docker Desktop on Windows 11. The
 log already had query logging on (v6 default); DNS traffic was generated with `nslookup`/`dig` inside the container and from a sibling container, including one domain added with `pihole deny`. Scrub: the sibling's bridge address 172.17.0.3
 -> 192.0.2.5 and the Pi-hole's 172.17.0.2 -> 192.0.2.2; nothing else changed (loopback 127.0.0.1 clients and public resolver/answer addresses are as captured).
 Both shippers were run on the copied file against a real ws1 TCP listener and the real WS-2 path (README Verification log); `tools/test_shipping_recipes.py` re-runs every line through the same path for both shapes (Vector `<30>` + line; Fluent Bit header as observed).

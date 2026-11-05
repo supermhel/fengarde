@@ -12,7 +12,7 @@ the samples claim while syslog configs target TCP 5515 (drift fails).
 
 NOT proven here: that Vector / Fluent Bit / rsyslog / syslog-ng accept the
 configs or emit the sample shapes (this test runs none of them). They were linted and run live once by hand
-(2026-11-05, container images; pihole-v6.dnsmasq.log is a real pihole/pihole capture); see the Verification log in docs/shipping/README.md.
+(2026-11-05, container images; pihole-v6.dnsmasq.txt is a real pihole/pihole capture); see the Verification log in docs/shipping/README.md.
 
 Run: python tools/test_shipping_recipes.py
 """
@@ -36,7 +36,7 @@ from main import normalize_one  # noqa: E402
 from parsers import known_sources, resolve  # noqa: E402
 
 SAMPLES = HERE / "samples"
-PIHOLE_CAPTURE = "pihole-v6.dnsmasq.log"
+PIHOLE_CAPTURE = "pihole-v6.dnsmasq.txt"
 
 # (sample file, recipe doc, declared source_type, shipper label or None,
 #  parser expected after resolve(), OCSF class_uid, adapter constant it must equal or None)
