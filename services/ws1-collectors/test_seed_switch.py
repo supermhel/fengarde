@@ -11,7 +11,7 @@ os.environ["BUS_BACKEND"] = "memory"
 
 import main  # noqa: E402
 
-FAILS = []
+FAILS: list[str] = []
 
 
 def check(cond, msg):
