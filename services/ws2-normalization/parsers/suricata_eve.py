@@ -90,7 +90,7 @@ class SuricataEveParser(Parser):
             "gid": integer(a.get("gid")), "rev": integer(a.get("rev")), "category": text(a.get("category")),
             "severity": sev, "action": text(a.get("action")), "app_proto": text(rec.get("app_proto")),
             "proto": text(rec.get("proto")), "flow_id": integer(rec.get("flow_id"))})
-        return _NET, _OTHER, _SEVERITY.get(sev, SEV_INFO), f"Suricata alert: {sig}", {"ids": ids}, False
+        return _NET, _OTHER, (SEV_INFO if sev is None else _SEVERITY.get(sev, SEV_INFO)), f"Suricata alert: {sig}", {"ids": ids}, False
 
     @staticmethod
     def _flow(rec: dict):
@@ -112,12 +112,14 @@ class SuricataEveParser(Parser):
         if kind not in ("request", "response", "answer"):  # v3 says "response"; v2 said "answer"
             return None
         # EVE DNS v3: queries[]; v1/v2 (flat): rrname/rrtype on the dns object itself.
-        queries = d.get("queries") if isinstance(d.get("queries"), list) else []
+        raw_q = d.get("queries")
+        queries = raw_q if isinstance(raw_q, list) else []
         q = _d(queries[0]) if queries else d
         name = (text(q.get("rrname")) or "").rstrip(".")
         if not name:
             return None
-        answers = d.get("answers") if isinstance(d.get("answers"), list) else []
+        raw_a = d.get("answers")
+        answers = raw_a if isinstance(raw_a, list) else []
         dns = drop_none({
             "qtype": text(q.get("rrtype"), 16), "rcode": text(d.get("rcode"), 32), "query_count": len(queries) or None,
             "answers": [s for s in (text(_d(x).get("rdata")) for x in answers[:16]) if s],

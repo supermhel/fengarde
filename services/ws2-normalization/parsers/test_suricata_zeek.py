@@ -186,7 +186,7 @@ class TestRouting(unittest.TestCase):
 
 
 class TestHostileInput(unittest.TestCase):
-    JUNK = [None, 0, 1.5, True, [], {}, "", "   ", "not json", "{", "[1,2]", '{"event_type": 5}', '{"uid":1}',
+    JUNK: list[object] = [None, 0, 1.5, True, [], {}, "", "   ", "not json", "{", "[1,2]", '{"event_type": 5}', '{"uid":1}',
             {"event_type": "alert"}, {"event_type": "alert", "alert": "x"}, {"event_type": "dns", "dns": []},
             {"event_type": "modbus", "modbus": {"request": 3}}, {"event_type": "dnp3", "dnp3": {"application": 1}},
             {"event_type": "flow", "src_ip": ["1.1.1.1"], "src_port": 99999, "flow": {"pkts_toserver": 10 ** 400}},
