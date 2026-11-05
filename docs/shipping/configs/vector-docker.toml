@@ -1,5 +1,5 @@
-# Vector docker_logs -> FENGARDE TCP syslog 5515. Written from vendor docs, NOT executed.
-# The docker_logs field names (.container_name, .stream, .timestamp) are UNVERIFIED.
+# Vector docker_logs -> FENGARDE TCP syslog 5515. Linted and run live on Linux containers 2026-11-05 (README Verification log).
+# Verified on Vector 0.61.0: .container_name, .stream, .timestamp and .message exist on docker_logs events. Needs the Docker socket mounted.
 [sources.docker]
 type = "docker_logs"
 
@@ -10,7 +10,7 @@ source = '''
 msg = string!(.message)
 name = string!(.container_name)
 pri = if .stream == "stderr" { "<11>" } else { "<14>" }
-.message = join!([pri, format_timestamp!(.timestamp, format: "%b %e %H:%M:%S"), " ", name, " ", name, ": ", msg], separator: "")
+.message = join([pri, format_timestamp!(.timestamp, format: "%b %e %H:%M:%S"), " ", name, " ", name, ": ", msg], separator: "")
 '''
 
 [sinks.fengarde]

@@ -11,7 +11,8 @@ of its owning doc, and HTTP configs carry the source_type / X-Fengarde-Shipper
 the samples claim while syslog configs target TCP 5515 (drift fails).
 
 NOT proven here: that Vector / Fluent Bit / rsyslog / syslog-ng accept the
-configs or emit the sample shapes (none is run). See docs/shipping/README.md.
+configs or emit the sample shapes (this test runs none of them). They were linted and run live once by hand
+(2026-11-05, container images); see the Verification log in docs/shipping/README.md.
 
 Run: python tools/test_shipping_recipes.py
 """
@@ -87,7 +88,7 @@ CONFIGS = {
     "syslog-ng-relay.conf": ("network-gear.md", None),
 }
 # supporting files that are not shipper configs themselves
-SUPPORT = {"docker_ids.lua": "docker.md", "fluent-bit-docker-parsers.conf": "docker.md"}
+SUPPORT = {"docker_ids.lua": "docker.md", "fluent-bit-docker-parsers.conf": "docker.md", "fluent-bit-n8n-parsers.conf": "n8n.md"}
 
 FAILS: list[str] = []
 
@@ -222,7 +223,7 @@ def main() -> int:
             print("  -", f)
         return 1
     print(f"[OK] {len(CASES)} shipping samples -> real WS-2 path -> valid OCSF with the claimed parser; "
-          f"{n_blocks} config blocks match configs/ (configs themselves NOT machine-linted here)")
+          f"{n_blocks} config blocks match configs/ (shipper configs are not executed by this test)")
     return 0
 
 

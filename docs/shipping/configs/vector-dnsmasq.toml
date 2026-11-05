@@ -1,4 +1,4 @@
-# Vector: dnsmasq/Pi-hole query log -> FENGARDE TCP syslog 5515. Written from vendor docs, NOT executed.
+# Vector: dnsmasq/Pi-hole query log -> FENGARDE TCP syslog 5515. Linted and run live on Linux containers 2026-11-05 (README Verification log).
 # The file already carries "Mon DD HH:MM:SS dnsmasq[pid]: query[A] name from ip"; only a <PRI> is added.
 [sources.dns]
 type = "file"

@@ -38,14 +38,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `docs/shipping/` — one recipe per source (Windows Sysmon+Security, Linux auth/sshd, Docker, dnsmasq/Pi-hole, n8n, network gear via
   rsyslog/syslog-ng for OPNsense/pfSense/Proxmox) with Vector and Fluent Bit configs where a verified shape exists, the real parser
   `source_type`, the ingest path and an explicit "not covered" list; `README.md` holds the recipe-to-parser table. **No Vector Windows recipe**
-  (no sample of its output exists; stated in the doc). Configs were written from vendor docs and **not executed or linted** (the tools
-  are not installed on the authoring machine); unverifiable option names are marked unverified.
+  (no sample of its output exists; stated in the doc). Configs were then linted with the official vendor images (vector 0.61.0, fluent-bit 5.1.5, rsyslog 8.2610.0, syslog-ng 4.12.0) and run live in Linux containers on
+  Docker Desktop against a real ws1 listener and the real WS-2 path (manual, 2026-11-05; see the Verification log in `docs/shipping/README.md`). Fixed as a result: Fluent Bit n8n parser
+  not registered (new `fluent-bit-n8n-parsers.conf`), Vector n8n `decoding` option (now a `remap`), Vector env-var expansion is off by default in 0.61 (needs
+  `VECTOR_DANGEROUSLY_ALLOW_ENV_VAR_INTERPOLATION=true`), Fluent Bit journald `Read_From_Tail On` delivered nothing (now `Off` + `DB`), `join!` VRL warning. NOT run: the Windows
+  (winevtlog) config, Vector `include_units`, relay `address=`/`ip()`, any real appliance output.
 - `tools/test_shipping_recipes.py` (fast tier): 15 samples, each run through `adapt_record` -> `resolve` -> parse -> OCSF validation and
   required to resolve to the parser the recipe claims; adapter-fixture samples asserted equal to the adapter constants; recipe config
   blocks asserted identical to `docs/shipping/configs/`. Sample provenance (hand transcription of a third-party published output / template-derived /
   documented / illustrative) is labelled per sample.
 - `tools/lint_shipping_recipes.sh`: optional, manual config lint (`vector validate`, `fluent-bit --dry-run`, `rsyslogd -N1`,
-  `syslog-ng --syntax-only`), skips tools that are absent; not in the default gate.
+  `syslog-ng --syntax-only`), skips tools that are absent; flags verified against the official images; syntax lint only; not in the default gate.
 
 ## [0.12.0] - 2026-11-05
 

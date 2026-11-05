@@ -1,10 +1,9 @@
 # Linux auth / sshd
 
-> **Status of this recipe.** The configs below were written from vendor documentation and were **not
-> executed**: Vector, Fluent Bit, rsyslog and syslog-ng are not installed on the machine that produced them, so they are
-> **not machine-linted** (`tools/lint_shipping_recipes.sh` does that when you have the tool). What a green test (per author run) covers is the
-> FENGARDE half: each sample listed here goes through the real WS-2 path (`adapt_record` -> `resolve` -> parse -> OCSF
-> validation) in `tools/test_shipping_recipes.py`. Whether your shipper emits exactly that sample shape is not proven by that test.
+> **Status of this recipe.** The configs were linted with the official container images (Vector 0.61.0, Fluent Bit 5.1.5, rsyslog 8.2610.0,
+> syslog-ng 4.12.0) and, where Linux-capable, run live on Docker Desktop against a real ws1 listener and the real WS-2 path
+> (see the [Verification log](README.md#verification-log)). What was not run is stated below. The committed samples are still adapter
+> fixtures / templates, not captures; `tools/test_shipping_recipes.py` runs them through WS-2.
 
 Parser: `linux_ssh` (class 3002 Authentication). Both paths below declare `generic_syslog`; the sshd identifier makes the
 WS-2 text sniff hand the line to `linux_ssh`.
@@ -20,8 +19,14 @@ The example host `192.0.2.10` is a placeholder: see [Reaching ws1 from another h
 
 Keep `Strip_Underscores Off`: the adapter reads `MESSAGE`, `_HOSTNAME`, `_PID`, `SYSLOG_IDENTIFIER`.
 
+**Verified live (Fluent Bit 5.1.5 systemd input reading a real journal written by the systemd-journald of a debian:trixie-slim sibling container):** records carry exactly those keys
+(`PRIORITY`, `_HOSTNAME`, `_PID`, `SYSLOG_IDENTIFIER`, `MESSAGE`, ...) and resolved to `linux_ssh` (class 3002). **Fixed by this test:** with `Read_From_Tail On` the plugin delivered
+0 of 4 entries written after start (same setup, `Off` delivered 4 of 4), so the recipe uses `Read_From_Tail Off` plus `DB /var/lib/fluent-bit/journald.db`; a restart with the DB kept
+delivered only the entry written afterwards (no replay). First start therefore ships the existing matching journal history once. `_SOURCE_REALTIME_TIMESTAMP` is absent for
+stdout-transport entries (the sample has it; it comes from the syslog transport).
+
 ```ini fluent-bit-journald.conf
-# Fluent Bit (Linux) systemd/journald -> FENGARDE HTTP ingest. Written from vendor docs, NOT executed.
+# Fluent Bit (Linux) systemd/journald -> FENGARDE HTTP ingest. Linted and run live on Linux containers 2026-11-05 (README Verification log).
 # WARNING: Authorization: Bearer goes over plain http:// -- cleartext on the wire; use the TLS front from docs/deployment.md or keep it on a trusted segment.
 [SERVICE]
     Flush        5
@@ -30,7 +35,8 @@ Keep `Strip_Underscores Off`: the adapter reads `MESSAGE`, `_HOSTNAME`, `_PID`, 
     Name               systemd
     Tag                host.auth
     Systemd_Filter     SYSLOG_IDENTIFIER=sshd
-    Read_From_Tail     On
+    Read_From_Tail     Off
+    DB                 /var/lib/fluent-bit/journald.db
     Strip_Underscores  Off
 
 [OUTPUT]
@@ -54,11 +60,14 @@ values representative) -> `linux_ssh`.
 Vector builds the RFC 3164 line itself and sends it to the syslog TCP listener
 ([../syslog-tcp.md](../syslog-tcp.md); default newline framing, plaintext and unauthenticated: keep it on a trusted segment).
 Vendor docs: <https://vector.dev/docs/reference/configuration/sources/journald/> and
-<https://vector.dev/docs/reference/configuration/sinks/socket/>. The journald field names and the socket framing default are **unverified**.
+<https://vector.dev/docs/reference/configuration/sinks/socket/>. **Verified live** (Vector 0.61.0 debian image, which ships `journalctl`; the alpine image does not): `.host`, `._PID`, `.message`, `.timestamp` exist; the socket sink with `codec = "text"` sent LF-terminated frames;
+`sshd` lines resolved to `linux_ssh`. **Not exercised:** `include_units` (the test journal has no systemd units; the test copy dropped it). Without it, every journal record would be
+labelled `sshd[pid]` by the hardcoded remap (observed with journald's own messages).
 
 ```toml vector-journald.toml
-# Vector (Linux) journald -> FENGARDE TCP syslog 5515. Written from vendor docs, NOT executed.
-# The journald field names used below (.host, ._PID, .message) are UNVERIFIED.
+# Vector (Linux) journald -> FENGARDE TCP syslog 5515. Linted and run live on Linux containers 2026-11-05 (README Verification log).
+# Verified on Vector 0.61.0 (debian image, which ships journalctl): .host, ._PID, .message, .timestamp. include_units was NOT exercised (needs real systemd units).
+# The sshd[pid] label is hardcoded for every record, so keep include_units: without it other units are mislabelled sshd.
 [sources.journal]
 type = "journald"
 include_units = ["ssh", "sshd"]
@@ -68,7 +77,7 @@ type = "remap"
 inputs = ["journal"]
 source = '''
 msg = string!(.message)
-.message = join!(["<38>", format_timestamp!(.timestamp, format: "%b %e %H:%M:%S"), " ", string!(.host), " sshd[", string!(._PID), "]: ", msg], separator: "")
+.message = join(["<38>", format_timestamp!(.timestamp, format: "%b %e %H:%M:%S"), " ", string!(.host), " sshd[", string!(._PID), "]: ", msg], separator: "")
 '''
 
 [sinks.fengarde]

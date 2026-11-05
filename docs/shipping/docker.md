@@ -1,10 +1,9 @@
 # Docker
 
-> **Status of this recipe.** The configs below were written from vendor documentation and were **not
-> executed**: Vector, Fluent Bit, rsyslog and syslog-ng are not installed on the machine that produced them, so they are
-> **not machine-linted** (`tools/lint_shipping_recipes.sh` does that when you have the tool). What a green test (per author run) covers is the
-> FENGARDE half: each sample listed here goes through the real WS-2 path (`adapt_record` -> `resolve` -> parse -> OCSF
-> validation) in `tools/test_shipping_recipes.py`. Whether your shipper emits exactly that sample shape is not proven by that test.
+> **Status of this recipe.** The configs were linted with the official container images (Vector 0.61.0, Fluent Bit 5.1.5, rsyslog 8.2610.0,
+> syslog-ng 4.12.0) and, where Linux-capable, run live on Docker Desktop against a real ws1 listener and the real WS-2 path
+> (see the [Verification log](README.md#verification-log)). What was not run is stated below. The committed samples are still adapter
+> fixtures / templates, not captures; `tools/test_shipping_recipes.py` runs them through WS-2.
 
 Parser: `generic_syslog` for ordinary container output; `linux_ssh` when the container line is an sshd line (via the text sniff).
 A container's application logs are **not** parsed by an app-specific parser, only as generic syslog text.
@@ -25,7 +24,7 @@ fluent/fluent-bit-docs `pipeline/filters` listing on GitHub, 2026-11-05), so the
 recipe `docker_name` is the first 12 hex of the container id, not the human container name.
 
 ```ini fluent-bit-docker.conf
-# Fluent Bit (Docker host) json-file logs -> FENGARDE HTTP ingest. Written from vendor docs, NOT executed.
+# Fluent Bit (Docker host) json-file logs -> FENGARDE HTTP ingest. Linted and run live on Linux containers 2026-11-05 (README Verification log).
 # WARNING: Authorization: Bearer goes over plain http:// -- cleartext on the wire; use the TLS front from docs/deployment.md or keep it on a trusted segment.
 [SERVICE]
     Flush         5
@@ -82,17 +81,22 @@ Samples (the adapter fixtures, i.e. the shape the adapter accepts; **NOT this co
 `docker_name` such as `n8n_bankcorp`, whereas this config's Lua sets `docker_name` to the 12-hex id):
 [n8n container line](samples/docker-n8n.fluentbit.json) -> `generic_syslog`; [sshd in a container](samples/docker-sshd.fluentbit.json) -> `linux_ssh`.
 
-**Unverified:** the parser's `Time_Format %Y-%m-%dT%H:%M:%S.%L`. Docker stamps look like `2019-01-01T11:11:11.111111111Z` (9 fractional
-digits plus `Z`). `%L` is Fluent Bit's documented fractional-seconds directive, but whether it consumes nine digits and the trailing `Z`
-was not tested; if `time` comes out empty the adapter dead-letters the record.
+**Verified (Fluent Bit 5.1.5, Linux container):** `%L` consumed the 9-digit Docker fraction and the trailing `Z`: `2026-11-05T08:30:00.123456789Z` parsed to
+08:30:00.123457 UTC (double precision), `...01.5Z` to 01.5; non-time text logs `invalid time format ... for 'garbage'`. With `Time_Keep On` the original `time`
+string reaches ws1 unchanged. Run live: the Lua `add_ids` script added `docker_id` (64 hex from the path) and `docker_name` (first 12); two
+json-file lines reached ws1 as `docker-json` / `generic_syslog` and normalized to class 1002. **Limit found:** the program slot is the 12-hex id, so a container's
+line becomes `linux_ssh` only when the container's own text carries a syslog-style `sshd[pid]:` prefix (as the sshd sample does); a bare
+`Failed password ...` line resolves to `generic_syslog`. The glob in `Path` is re-scanned every 60 s by default, so containers created later appear after up to a minute.
 
 ## Vector -> TCP syslog 5515
 
-Vendor docs: <https://vector.dev/docs/reference/configuration/sources/docker_logs/>. Field names **unverified**.
+Vendor docs: <https://vector.dev/docs/reference/configuration/sources/docker_logs/>. **Verified live** (Vector 0.61.0, Docker socket mounted, one test container): `.container_name`,
+.stream, .timestamp, .message exist; stderr produced `<11>`, stdout `<14>`; frames reached the FENGARDE TCP listener LF-terminated; both lines normalized to class 1002 / `generic_syslog`
+(the same `sshd[pid]:` prefix caveat applies). VRL warned `can't abort infallible function` for `join!`, so the config uses `join(...)`. The test copy added `include_containers` to avoid shipping other containers' logs.
 
 ```toml vector-docker.toml
-# Vector docker_logs -> FENGARDE TCP syslog 5515. Written from vendor docs, NOT executed.
-# The docker_logs field names (.container_name, .stream, .timestamp) are UNVERIFIED.
+# Vector docker_logs -> FENGARDE TCP syslog 5515. Linted and run live on Linux containers 2026-11-05 (README Verification log).
+# Verified on Vector 0.61.0: .container_name, .stream, .timestamp and .message exist on docker_logs events. Needs the Docker socket mounted.
 [sources.docker]
 type = "docker_logs"
 
@@ -103,7 +107,7 @@ source = '''
 msg = string!(.message)
 name = string!(.container_name)
 pri = if .stream == "stderr" { "<11>" } else { "<14>" }
-.message = join!([pri, format_timestamp!(.timestamp, format: "%b %e %H:%M:%S"), " ", name, " ", name, ": ", msg], separator: "")
+.message = join([pri, format_timestamp!(.timestamp, format: "%b %e %H:%M:%S"), " ", name, " ", name, ": ", msg], separator: "")
 '''
 
 [sinks.fengarde]

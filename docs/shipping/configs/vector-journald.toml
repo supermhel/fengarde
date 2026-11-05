@@ -1,5 +1,6 @@
-# Vector (Linux) journald -> FENGARDE TCP syslog 5515. Written from vendor docs, NOT executed.
-# The journald field names used below (.host, ._PID, .message) are UNVERIFIED.
+# Vector (Linux) journald -> FENGARDE TCP syslog 5515. Linted and run live on Linux containers 2026-11-05 (README Verification log).
+# Verified on Vector 0.61.0 (debian image, which ships journalctl): .host, ._PID, .message, .timestamp. include_units was NOT exercised (needs real systemd units).
+# The sshd[pid] label is hardcoded for every record, so keep include_units: without it other units are mislabelled sshd.
 [sources.journal]
 type = "journald"
 include_units = ["ssh", "sshd"]
@@ -9,7 +10,7 @@ type = "remap"
 inputs = ["journal"]
 source = '''
 msg = string!(.message)
-.message = join!(["<38>", format_timestamp!(.timestamp, format: "%b %e %H:%M:%S"), " ", string!(.host), " sshd[", string!(._PID), "]: ", msg], separator: "")
+.message = join(["<38>", format_timestamp!(.timestamp, format: "%b %e %H:%M:%S"), " ", string!(.host), " sshd[", string!(._PID), "]: ", msg], separator: "")
 '''
 
 [sinks.fengarde]
