@@ -58,6 +58,12 @@ so any piece can be scaled or replaced without rewriting the others.
   labelled deterministic stub. Alert data is never piped through a third-party LLM
   API, and the console names which engine actually ran. Verdict quality is poor in the two models measured (`qwen2.5:3b` 1 of 54 labelled alerts correct, `qwen2.5:7b` 7 of 54, mostly `suspicious` answers); see
   [`eval/llm_triage/RESULTS.md`](eval/llm_triage/RESULTS.md).
+  **AI triage is a seam, not a feature** until a model clears the stated bar (defined in
+  `eval/llm_triage/README.md`, § The bar): on the committed 54-case evaluation it must beat
+  BOTH the always-malicious baseline AND the score-driven stub in accuracy, keep abstain
+  under 20 % and error under 5 %, and carry 0 % stub share when measured `--direct`.
+  Until then the console and the alert report name the engine (`stub` vs `ollama/<model>`)
+  on every verdict so nothing is silently attributed to a model that did not run.
 - **Evidence, not just alerts.** Incidents carry a typed causal graph and a
   Merkle hash-chain evidence package that the API verifies before serving it.
 - **Honest status.** What is proven, what is claimed and what is stubbed is

@@ -788,7 +788,8 @@ def route_post_report(self, report_alert_id: str):
                                     "langs": list(nis2_template.LANGUAGES)})
         report = nis2_template.build_report(alert_doc, triage, stage=stage, lang=lang)
     else:
-        report = reporting.generate_report(alert_doc, triage)
+        report = reporting.generate_report(
+            reporting.attach_ai(self.deps.store, alert_doc), triage)
     report_index = reporting._report_index()
     self.deps.store.index(report_index, report["report_id"], report)
     self._audit("report_generated",
