@@ -89,6 +89,33 @@ def test_fluentbit_winevtlog_security_fixture():
               "fluentbit-winevtlog Security fixture: expected 3002/1 logon")
 
 
+def test_fluentbit_winevtlog_real_nested_eventdata():
+    # REAL capture (Fluent Bit 4.2.8, Windows 11, Application channel): the named event data is a nested EventData map.
+    # The adapter must flatten it (parsers read flat keys), keep the system fields authoritative, and stay total.
+    cap = fluentbit_winevtlog.CAPTURED_WIN11_APPLICATION
+    check(fluentbit_winevtlog.sniffs(cap), "fluentbit-winevtlog: sniffs() rejects the real Windows 11 capture")
+    p, event, errors = full_path("windows_eventlog", cap)
+    raw = p["raw"]
+    check(p["source_type"] == "windows_eventlog" and "EventData" not in raw and raw.get("EventName") == "crashpad_log"
+          and raw.get("P1") == "setup.exe" and raw.get("EventID") == 1001 and isinstance(raw.get("TimeCreated"), int),
+          f"real capture not flattened: keys={sorted(raw)[:8]}")
+    check(event is None, "real WER 1001 must stay unmapped (no EventID 1001 mapping), not be mis-parsed")
+    # sysmon-shaped record with the nested map reaches the sysmon parser's flat field names
+    sm = {k: v for k, v in fluentbit_winevtlog.FIXTURE.items() if k not in ("Message", "StringInserts")}
+    sm["EventData"] = {"Image": r"C:\Windows\System32\cmd.exe", "CommandLine": "cmd /c whoami", "ProcessId": 1234,
+                       "EventID": 9999, "Computer": "spoofed"}
+    p, event, errors = full_path("windows_eventlog", sm, {"received_at": 1673963483})
+    check(p["source_type"] == "sysmon" and event is not None and not errors and event.get("class_uid") == 1002
+          and "cmd.exe" in str(event), f"nested sysmon EventData not parsed: {p['source_type']} {errors[:1]}")
+    check(p["raw"]["EventID"] == 1 and p["raw"]["Computer"] == sm["Computer"],
+          "EventData overwrote reserved system fields")
+    # non-dict EventData is left alone (totality)
+    for bad in ("x", ["a"], None, 5):
+        r = dict(cap, EventData=bad)
+        o = fluentbit_winevtlog.adapt({"source_type": "windows_eventlog", "raw": r, "meta": {}})
+        check(isinstance(o, dict) and o["raw"]["EventData"] == bad, f"non-dict EventData {bad!r} must be untouched")
+
+
 def test_winlogbeat_process_fixture():
     # ECS-shaped winlogbeat record (field catalog, 4688): -> windows_eventlog,
     # 4688 maps to 1002/1; event_data flattened into the parser's keys.
@@ -318,6 +345,7 @@ def test_extreme_value_sweep_adapters():
 def main():
     tests = [test_fluentbit_winevtlog_sysmon_fixture,
              test_fluentbit_winevtlog_security_fixture,
+             test_fluentbit_winevtlog_real_nested_eventdata,
              test_winlogbeat_process_fixture,
              test_winlogbeat_logon_fixture,
              test_journald_sshd_fixture,

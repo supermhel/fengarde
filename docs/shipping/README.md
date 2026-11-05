@@ -7,6 +7,7 @@ the data, the ingest path and what is **not** covered. Background: [../input-ada
 | Source / shipper | Recipe | Ingest path | Parser (`source_type` in the registry) | Sample checked | Sample provenance |
 |---|---|---|---|---|---|
 | Windows Sysmon (Fluent Bit) | [windows.md](windows.md) | HTTP, `source_type=windows_eventlog`, `fluentbit-winevtlog` | `sysmon` | [windows-sysmon.fluentbit.json](samples/windows-sysmon.fluentbit.json) | hand transcription of a third-party published output, not byte-verified |
+| Windows Application (Fluent Bit) | [windows.md](windows.md) | same | `windows_eventlog` (no event: EventID 1001 unmapped) | [windows-application.fluentbit.json](samples/windows-application.fluentbit.json) | captured on Windows 11 with Fluent Bit 4.2.8 on 2026-11-05 (Application channel), scrubbed |
 | Windows Security (Fluent Bit) | [windows.md](windows.md) | same | `windows_eventlog` | [windows-security.fluentbit.json](samples/windows-security.fluentbit.json) | template-derived |
 | Windows 4688 (Winlogbeat) | [windows.md](windows.md) | HTTP via a relay (no config), `winlogbeat` | `windows_eventlog` | [windows-4688.winlogbeat.json](samples/windows-4688.winlogbeat.json) | template-derived |
 | Windows 4624 (Winlogbeat) | [windows.md](windows.md) | same | `windows_eventlog` | [windows-4624.winlogbeat.json](samples/windows-4624.winlogbeat.json) | template-derived |
@@ -29,11 +30,13 @@ the data, the ingest path and what is **not** covered. Background: [../input-ada
   adapter fixture are asserted equal to it; Vector-side syslog samples are asserted equal to the adapter output after the transformation the config's remap performs (PRI added / host slot = name);
   config blocks in the recipes are asserted byte-identical to `configs/`, must sit in a labelled fence of their recipe doc, and must carry the
   `source_type` / `X-Fengarde-Shipper` (HTTP) or TCP port 5515 (syslog) the recipe claims. A green run is the author's, not independent proof. Run: `python tools/test_shipping_recipes.py`.
-- **Run on 2026-11-05 (see the Verification log):** every config except the Windows one was linted with its vendor's official container image and then run live in Linux containers
+- **Run on 2026-11-05 (see the Verification log):** every config except the Windows one (run in a separate pass, below) was linted with its vendor's official container image and then run live in Linux containers
   (Docker Desktop on Windows 11) against a real ws1 `HttpJsonCollector` / `SyslogTCPServer` on a memory bus, with the received payloads pushed through the real WS-2 path. That found and fixed four real defects
   (n8n Fluent Bit parser, n8n Vector decoding, Vector env-var expansion, journald `Read_From_Tail`).
 - **Verified in a second pass (2026-11-05):** a real `pihole/pihole:2026.10.1` log (committed as a sample), the rsyslog `address=` / syslog-ng `ip()` relay bindings, syslog-ng `keep-hostname`, and Vector `include_units` against a journal written by real systemd units.
-- **Still not verified:** the Windows config (`winevtlog` is Windows-only; the Linux build rejects it) and the claimed Windows record shape; any real OPNsense / pfSense / Proxmox / n8n output (inputs were hand-written files, `logger`, `systemd-cat`
+- **Run on Windows 11, 2026-11-05 (third pass, Application and System channels only):** the Windows Fluent Bit config ran as a normal user against a real ws1 listener; the real record shape differs from the earlier assumption
+  (nested `EventData`), which found and fixed an adapter defect (see windows.md and the Verification log).
+- **Still not verified:** the Windows `Security` channel (needs admin) and Sysmon channel, so no real 4624/Sysmon record has been seen; Fluent Bit 5.x on Windows; any real OPNsense / pfSense / Proxmox / n8n output (inputs were hand-written files, `logger`, `systemd-cat`
   or a real systemd journal in a container); a real Pi-hole other than this container image and version (no hardware, no DHCP, no real LAN clients); TLS paths. Sample files other than `pihole-v6.dnsmasq.txt` are still adapter fixtures / templates, not captures.
 - **Optional lint:** `tools/lint_shipping_recipes.sh` runs `vector validate --no-environment`, `fluent-bit --dry-run -c`, `rsyslogd -N1 -f`, `syslog-ng --syntax-only -f` where those tools are installed, and skips cleanly otherwise
   (also the Windows-only and journald configs on a non-matching OS). It is a syntax lint only: `fluent-bit --dry-run` did **not** catch the unregistered `json` parser, and the
@@ -49,7 +52,7 @@ Lint (all against the committed files):
 
 ```
 vector validate --no-environment /c/<file>.toml   -> Validated (dnsmasq, docker, journald); n8n FAILED first: "unknown field `decoding`" -> fixed, Validated
-fluent-bit --dry-run -c /c/<file>.conf            -> "configuration test is successful" (dnsmasq, docker, journald, n8n); windows: "[error] [config] section 'winevtlog' tried to instance a plugin name that doesn't exist" (platform-limited)
+fluent-bit --dry-run -c /c/<file>.conf            -> "configuration test is successful" (dnsmasq, docker, journald, n8n); windows: "[error] [config] section 'winevtlog' tried to instance a plugin name that doesn't exist" (Linux build; the Windows build was run, see below)
 rsyslogd -N1 -f /c/<file>.conf                    -> clean, one warning: omfwd plain TCP is the "backward-compatible insecure default" (forward, relay)
 syslog-ng --syntax-only -f /c/<file>.conf         -> exit 0 (forward, relay)
 negative controls (bogus option) -> syslog-ng "syntax error, unexpected LL_IDENTIFIER", fluent-bit "check properties for input plugins is failed", rsyslog "parameter 'Bogus' not known"
@@ -71,7 +74,24 @@ Live runs (shipper container -> `host.docker.internal` -> ws1 listener on the ho
 | syslog-ng forward / relay | syslog-ng 4.12.0 | LF-terminated with no framing option; sshd line `linux_ssh` 3002; relay replaced the host field with the sender's resolved name |
 
 Raw bytes seen by the TCP listener (captured by a proxy in front of it), for example syslog-ng: `b'<38>Nov  5 10:00:01 localhost sshd[77]: Failed password ... (ng-relay)\n'`.
-The inputs were my own files and `logger` / `systemd-cat` / `/dev/udp` writes; the driver script lives outside the repo (scratch only). Not covered: Windows, real appliances other than the Pi-hole container, TLS.
+The inputs were my own files and `logger` / `systemd-cat` / `/dev/udp` writes; the driver script lives outside the repo (scratch only). Not covered: real appliances other than the Pi-hole container, TLS, Windows other than the run below.
+
+### Windows run (2026-11-05, Windows 11 Pro de-DE, normal user)
+
+Downloaded `https://packages.fluentbit.io/windows/fluent-bit-4.2.8-win64.zip` (the vendor's download host); SHA256 `1bd0575c2ae6c1803b6288c5cd9efab1546aaa45933e1d5019f8401b409b8eec` equals the published
+`.sha256` file. Extracted into a scratch directory, run without elevation, no service, registry, firewall or task changes; the binary and every captured file were deleted afterwards. The same SHA256 check for
+`fluent-bit-5.1.5-win64.zip` (`96e9489e...04bcd`) also matched, but that build printed `socketpair: No error` / `pipe: No error` and exited 1 for every command including `--version` (cause undetermined; 4.2.8 ran).
+
+```
+fluent-bit -i winevtlog --help          -> input present in 4.2.8; options match the vendor docs (channels, event_data_as_map, event_template_cache_size=256, ignore_missing_channels, read_existing_events, ...)
+event_data_as_map=true, cache_size=0    -> [error] event_template_cache_size must be greater than zero when event_data_as_map is enabled; failed initialize input
+Channels Application,Microsoft-Windows-Sysmon/Operational (Sysmon not installed) -> [error] cannot subscribe ... (15007); failed to open and no subscribed channels; input init failed; with Ignore_Missing_Channels true: starts
+repo config, Channels=Application,System, Host/Port = local ws1 (memory bus, per-run token), Read_Existing_Events + last-hour Event_Query (test only) -> 2 POSTs of 1330 + 1310 records, HTTP 200, 0 skipped
+```
+
+Through `adapt_record` -> `resolve` -> `normalize_one`: 2,640 records, no exceptions; all routed to `windows_eventlog`; 2,638 `parser returned None` (EventIDs not mapped); 2 System 7045 -> class 1002, message
+`Service installed: ? -> ? (by ?)` (no `EventData` map for that provider; service name/path only in `StringInserts`). Not run: Security and Sysmon channels, Fluent Bit 5.x on Windows, TLS.
+Run harness (scratch only, not committed): ws1 `HttpJsonCollector` on `127.0.0.1` with a free port, memory bus and a generated token passed to Fluent Bit by environment variable, never printed.
 
 Second pass (2026-11-05, same host and engine; extra images `pihole/pihole:2026.10.1` (tag read from Docker Hub, pushed 2026-10-31), a local `debian:trixie-slim` + `systemd` + `openssh-server` image built for the test, `alpine:3.20` as the UDP sender):
 
