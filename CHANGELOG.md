@@ -41,8 +41,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (no sample of its output exists; stated in the doc). Configs were then linted with the official vendor images (vector 0.61.0, fluent-bit 5.1.5, rsyslog 8.2610.0, syslog-ng 4.12.0) and run live in Linux containers on
   Docker Desktop against a real ws1 listener and the real WS-2 path (manual, 2026-11-05; see the Verification log in `docs/shipping/README.md`). Fixed as a result: Fluent Bit n8n parser
   not registered (new `fluent-bit-n8n-parsers.conf`), Vector n8n `decoding` option (now a `remap`), Vector env-var expansion is off by default in 0.61 (needs
-  `VECTOR_DANGEROUSLY_ALLOW_ENV_VAR_INTERPOLATION=true`), Fluent Bit journald `Read_From_Tail On` delivered nothing (now `Off` + `DB`), `join!` VRL warning. NOT run: the Windows
-  (winevtlog) config, Vector `include_units`, relay `address=`/`ip()`, any real appliance output.
+  `VECTOR_DANGEROUSLY_ALLOW_ENV_VAR_INTERPOLATION=true`), Fluent Bit journald `Read_From_Tail On` delivered nothing (now `Off` + `DB`), `join!` VRL warning. A second container pass (2026-11-05) then verified a real `pihole/pihole:2026.10.1` log (committed as `docs/shipping/samples/pihole-v6.dnsmasq.log`
+  and exercised by the test), rsyslog `address=` / syslog-ng `ip()` binding, Vector `include_units` against a journal from real systemd units, and changed the syslog-ng relay config to
+  `keep-hostname(yes)` (the default replaced the appliance host name with the sender's resolved name). NOT run: the Windows (winevtlog) config, any real OPNsense/pfSense/Proxmox/n8n output, TLS.
 - `tools/test_shipping_recipes.py` (fast tier): 15 samples, each run through `adapt_record` -> `resolve` -> parse -> OCSF validation and
   required to resolve to the parser the recipe claims; adapter-fixture samples asserted equal to the adapter constants; recipe config
   blocks asserted identical to `docs/shipping/configs/`. Sample provenance (hand transcription of a third-party published output / template-derived /

@@ -61,13 +61,12 @@ Vector builds the RFC 3164 line itself and sends it to the syslog TCP listener
 ([../syslog-tcp.md](../syslog-tcp.md); default newline framing, plaintext and unauthenticated: keep it on a trusted segment).
 Vendor docs: <https://vector.dev/docs/reference/configuration/sources/journald/> and
 <https://vector.dev/docs/reference/configuration/sinks/socket/>. **Verified live** (Vector 0.61.0 debian image, which ships `journalctl`; the alpine image does not): `.host`, `._PID`, `.message`, `.timestamp` exist; the socket sink with `codec = "text"` sent LF-terminated frames;
-`sshd` lines resolved to `linux_ssh`. **Not exercised:** `include_units` (the test journal has no systemd units; the test copy dropped it). Without it, every journal record would be
-labelled `sshd[pid]` by the hardcoded remap (observed with journald's own messages).
+`sshd` lines resolved to `linux_ssh`. **`include_units` verified** (Vector 0.61.0-debian reading the journal of a real systemd-as-PID-1 container, debian:trixie-slim, privileged, with `ssh.service` and an extra `noise.service`): the committed config shipped only the 9 `ssh.service` entries (no `noise.service`, kernel or systemd lines); with the line removed the same journal produced 4275 records, all labelled `sshd[pid]` (e.g. `noise-from-other-unit`, kernel network messages), and entries without `_PID` (kernel) fail the remap (`expected string, got null`) and are dropped. Of the 9 shipped lines, `Invalid user ...` resolved to `linux_ssh` (3002); `Server listening ...` and `Connection closed by ...` resolved to `generic_syslog` (1002). On Debian 13 (OpenSSH 10) the journal's own identifier for the per-connection process is `sshd-session`, which the hardcoded `sshd[pid]` label hides.
 
 ```toml vector-journald.toml
 # Vector (Linux) journald -> FENGARDE TCP syslog 5515. Linted and run live on Linux containers 2026-11-05 (README Verification log).
-# Verified on Vector 0.61.0 (debian image, which ships journalctl): .host, ._PID, .message, .timestamp. include_units was NOT exercised (needs real systemd units).
-# The sshd[pid] label is hardcoded for every record, so keep include_units: without it other units are mislabelled sshd.
+# Verified on Vector 0.61.0 (debian image, which ships journalctl): .host, ._PID, .message, .timestamp. include_units verified 2026-11-05 on a journal written by real systemd units (README Verification log).
+# The sshd[pid] label is hardcoded for every record, so keep include_units: without it other units are mislabelled sshd. Unit names are given without the .service suffix (Debian's is `ssh`).
 [sources.journal]
 type = "journald"
 include_units = ["ssh", "sshd"]

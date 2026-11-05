@@ -15,7 +15,7 @@ the data, the ingest path and what is **not** covered. Background: [../input-ada
 | Docker n8n container (Fluent Bit) | [docker.md](docker.md) | HTTP, `generic_syslog`, `docker-json` | `generic_syslog` | [docker-n8n.fluentbit.json](samples/docker-n8n.fluentbit.json) | documented example: adapter fixture shape, NOT this config's literal output (the config's Lua sets `docker_name` to a 12-hex id; `linux_ssh` needs a `sshd[pid]:` prefix in the container's own text, see docker.md) |
 | Docker sshd container (Fluent Bit) | [docker.md](docker.md) | same | `linux_ssh` | [docker-sshd.fluentbit.json](samples/docker-sshd.fluentbit.json) | documented example |
 | Docker (Vector) | [docker.md](docker.md) | syslog TCP 5515 | `generic_syslog` | [docker-n8n.vector.syslog.txt](samples/docker-n8n.vector.syslog.txt) | adapter output with the container name in the host slot, as the remap emits (not a Vector capture) |
-| dnsmasq / Pi-hole (Vector, rsyslog, syslog-ng) | [dnsmasq-pihole.md](dnsmasq-pihole.md) | syslog TCP 5515 | `dns_query` | [dnsmasq.syslog.txt](samples/dnsmasq.syslog.txt) | documented (parser docstring) |
+| dnsmasq / Pi-hole (Vector, rsyslog, syslog-ng) | [dnsmasq-pihole.md](dnsmasq-pihole.md) | syslog TCP 5515 | `dns_query` | [dnsmasq.syslog.txt](samples/dnsmasq.syslog.txt); real capture [pihole-v6.dnsmasq.log](samples/pihole-v6.dnsmasq.log) | documented (parser docstring); capture from `pihole/pihole:2026.10.1` |
 | dnsmasq / Pi-hole (Fluent Bit) | [dnsmasq-pihole.md](dnsmasq-pihole.md) | syslog TCP 5515 | `dns_query` | [dnsmasq.fluentbit-wrapped.syslog.txt](samples/dnsmasq.fluentbit-wrapped.syslog.txt) | template-derived (assumed header) |
 | n8n (Vector, Fluent Bit) | [n8n.md](n8n.md) | HTTP, `source_type=n8n_audit` | `n8n_audit` | [n8n-audit.json](samples/n8n-audit.json) | documented (parser docstring); native n8n shape unverified |
 | Proxmox sshd (rsyslog, syslog-ng) | [network-gear.md](network-gear.md) | syslog TCP 5515 | `linux_ssh` | [proxmox-sshd.syslog.txt](samples/proxmox-sshd.syslog.txt) | illustrative |
@@ -32,9 +32,9 @@ the data, the ingest path and what is **not** covered. Background: [../input-ada
 - **Run on 2026-11-05 (see the Verification log):** every config except the Windows one was linted with its vendor's official container image and then run live in Linux containers
   (Docker Desktop on Windows 11) against a real ws1 `HttpJsonCollector` / `SyslogTCPServer` on a memory bus, with the received payloads pushed through the real WS-2 path. That found and fixed four real defects
   (n8n Fluent Bit parser, n8n Vector decoding, Vector env-var expansion, journald `Read_From_Tail`).
-- **Still not verified:** the Windows config (`winevtlog` is Windows-only; the Linux build rejects it) and the claimed Windows record shape; Vector `include_units` filtering (no systemd units in the test journal);
-  the `address=` / `ip()` relay-hardening options; any real appliance (OPNsense, pfSense, Proxmox, Pi-hole, n8n): inputs were hand-written files / `logger` / `systemd-cat` lines, not the real products'
-  output; TLS paths. Sample files are still adapter fixtures / templates, not captures from these runs.
+- **Verified in a second pass (2026-11-05):** a real `pihole/pihole:2026.10.1` log (committed as a sample), the rsyslog `address=` / syslog-ng `ip()` relay bindings, syslog-ng `keep-hostname`, and Vector `include_units` against a journal written by real systemd units.
+- **Still not verified:** the Windows config (`winevtlog` is Windows-only; the Linux build rejects it) and the claimed Windows record shape; any real OPNsense / pfSense / Proxmox / n8n output (inputs were hand-written files, `logger`, `systemd-cat`
+  or a real systemd journal in a container); a real Pi-hole other than this container image and version (no hardware, no DHCP, no real LAN clients); TLS paths. Sample files other than `pihole-v6.dnsmasq.log` are still adapter fixtures / templates, not captures.
 - **Optional lint:** `tools/lint_shipping_recipes.sh` runs `vector validate --no-environment`, `fluent-bit --dry-run -c`, `rsyslogd -N1 -f`, `syslog-ng --syntax-only -f` where those tools are installed, and skips cleanly otherwise
   (also the Windows-only and journald configs on a non-matching OS). It is a syntax lint only: `fluent-bit --dry-run` did **not** catch the unregistered `json` parser, and the
   Vector lint cannot see the missing env-var expansion. Not part of the default gate.
@@ -63,7 +63,7 @@ Live runs (shipper container -> `host.docker.internal` -> ws1 listener on the ho
 | Fluent Bit n8n | fluent-bit 5.1.5 | before fix: `parser 'json' is not registered`, records shipped as `{"log": ...}` and rejected by the parser; after adding `fluent-bit-n8n-parsers.conf`: `n8n_audit`, classes 6003 and 3002 |
 | Vector n8n | vector 0.61.0 | before fix: `unknown field decoding`; then literal `${...}` token -> 401; with `VECTOR_DANGEROUSLY_ALLOW_ENV_VAR_INTERPOLATION=true` and the remap: `n8n_audit`, 6003 and 3002 |
 | Fluent Bit journald (real journal from a sibling container) | fluent-bit 5.1.5 | `Read_From_Tail On`: 0 of 4 new entries; `Off`: 4 of 4; with `DB` a restart did not replay. Records `linux_ssh`, 3002 |
-| Vector journald (real journal, `include_units` dropped in the test copy) | vector 0.61.0-debian | `.host`, `._PID`, `.message`, `.timestamp` present; sshd lines `linux_ssh`, 3002; journald's own messages were labelled `sshd[pid]` too |
+| Vector journald (real journal from a sibling container without systemd units, `include_units` dropped in the test copy) | vector 0.61.0-debian | `.host`, `._PID`, `.message`, `.timestamp` present; sshd lines `linux_ssh`, 3002; journald's own messages were labelled `sshd[pid]` too |
 | Vector docker_logs (Docker socket) | vector 0.61.0 | `.container_name`, `.stream`, `.timestamp`, `.message` present; `<14>` stdout / `<11>` stderr; `generic_syslog`, 1002; LF-terminated |
 | Fluent Bit dnsmasq (syslog output) | fluent-bit 5.1.5 | LF-terminated, wrapped `<14>... pihole01 fluent-bit: <line>`; query line `dns_query` 4002, reply line `generic_syslog` 1002 |
 | Vector dnsmasq | vector 0.61.0 | LF-terminated; query line `dns_query` 4002; reply line and blank line dead-lettered (`parser returned None`) |
@@ -71,7 +71,19 @@ Live runs (shipper container -> `host.docker.internal` -> ws1 listener on the ho
 | syslog-ng forward / relay | syslog-ng 4.12.0 | LF-terminated with no framing option; sshd line `linux_ssh` 3002; relay replaced the host field with the sender's resolved name |
 
 Raw bytes seen by the TCP listener (captured by a proxy in front of it), for example syslog-ng: `b'<38>Nov  5 10:00:01 localhost sshd[77]: Failed password ... (ng-relay)\n'`.
-The inputs were my own files and `logger` / `systemd-cat` / `/dev/udp` writes; the driver script lives outside the repo (scratch only). Not covered: Windows, `include_units`, `address=`/`ip()`, real appliances, TLS.
+The inputs were my own files and `logger` / `systemd-cat` / `/dev/udp` writes; the driver script lives outside the repo (scratch only). Not covered: Windows, real appliances other than the Pi-hole container, TLS.
+
+Second pass (2026-11-05, same host and engine; extra images `pihole/pihole:2026.10.1` (tag read from Docker Hub, pushed 2026-10-31), a local `debian:trixie-slim` + `systemd` + `openssh-server` image built for the test, `alpine:3.20` as the UDP sender):
+
+| Item | Setup | Result |
+|---|---|---|
+| Real Pi-hole log | `pihole/pihole:2026.10.1` (core v6.5, FTL v6.8, dnsmasq `pi-hole-v2.93+30`, Alpine); `nslookup`/`dig` inside and from a sibling; one `pihole deny` domain | 81 log lines committed as `samples/pihole-v6.dnsmasq.log` (client bridge IPs scrubbed). Vector 0.61.0 tail of the file: 82 bus messages, 25 `query[...]` lines `dns_query` 4002, 56 other lines + 1 blank dead-lettered. Fluent Bit 5.1.5: 81 messages, 25 `dns_query` 4002, 56 `generic_syslog` 1002, each wrapped `<14>Nov  5 09:17:30 pihole01 fluent-bit: <line>`. A blocked query is an ordinary `dns_query`; the `exactly denied` line is a separate generic event or dead-letter |
+| rsyslog `address=` | rsyslog 8.2610.0, user-defined Docker network `10.99.0.0/24`, relay `.10`, datagrams to `127.0.0.1` (inside the relay) and to `10.99.0.10` (from a sibling) | no option: both relayed; `address="10.99.0.10"`: only the LAN datagram; `address="127.0.0.1"`: only the loopback datagram |
+| syslog-ng `ip()` | syslog-ng 4.12.0, same network | no option: both relayed; `ip("10.99.0.10")`: only LAN; `ip("127.0.0.1")`: only loopback |
+| Host field through the relay | same datagrams, host name `FWHOST` | rsyslog: `FWHOST` kept (default). syslog-ng default `keep-hostname(no)`: replaced with the sender's reverse-resolved name (`localhost` / the sender container's name). With `options { keep-hostname(yes); };`: `FWHOST` kept. The committed syslog-ng relay config now sets it; the committed rsyslog and syslog-ng relay configs were re-run (placeholder address substituted) and `FWHOST` arrived, `syslog-ng --syntax-only` exit 0 |
+| Vector `include_units` | debian:trixie-slim with systemd as PID 1 (`--privileged --cgroupns=host`, `/sys/fs/cgroup` mounted; Docker Desktop accepted it with no host change), `ssh.service` + a `noise.service`; Vector 0.61.0-debian reading the journal volume | committed config: 9 records, all from `ssh.service`; same journal without `include_units`: 4275 records incl. `noise.service` and kernel messages, all mislabelled `sshd[pid]`; `_PID`-less (kernel) entries fail the remap |
+
+Limits: the datagram senders were `/dev/udp` and `nc`, not an OPNsense/pfSense; the bind test proves the daemon option, not a firewall; a systemd container is a stand-in for a host; the stock `rsyslog/syslog_appliance_alpine` image was not used.
 
 ## Prerequisites
 

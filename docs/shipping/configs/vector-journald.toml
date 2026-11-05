@@ -1,6 +1,6 @@
 # Vector (Linux) journald -> FENGARDE TCP syslog 5515. Linted and run live on Linux containers 2026-11-05 (README Verification log).
-# Verified on Vector 0.61.0 (debian image, which ships journalctl): .host, ._PID, .message, .timestamp. include_units was NOT exercised (needs real systemd units).
-# The sshd[pid] label is hardcoded for every record, so keep include_units: without it other units are mislabelled sshd.
+# Verified on Vector 0.61.0 (debian image, which ships journalctl): .host, ._PID, .message, .timestamp. include_units verified 2026-11-05 on a journal written by real systemd units (README Verification log).
+# The sshd[pid] label is hardcoded for every record, so keep include_units: without it other units are mislabelled sshd. Unit names are given without the .service suffix (Debian's is `ssh`).
 [sources.journal]
 type = "journald"
 include_units = ["ssh", "sshd"]
