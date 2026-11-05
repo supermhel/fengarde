@@ -1,10 +1,10 @@
 # Windows: Sysmon + Security
 
-> **Status of this recipe.** The configs below were written from vendor documentation and were **not
-> executed**: Vector, Fluent Bit, rsyslog and syslog-ng are not installed on the machine that produced them, so they are
-> **not machine-linted** (`tools/lint_shipping_recipes.sh` does that when you have the tool). What a green test (per author run) covers is the
-> FENGARDE half: each sample listed here goes through the real WS-2 path (`adapt_record` -> `resolve` -> parse -> OCSF
-> validation) in `tools/test_shipping_recipes.py`. Whether your shipper emits exactly that sample shape is not proven by that test.
+> **Status of this recipe.** The configs were linted with the official container images (Vector 0.61.0, Fluent Bit 5.1.5, rsyslog 8.2610.0,
+> syslog-ng 4.12.0) and, where Linux-capable, run live on Docker Desktop against a real ws1 listener and the real WS-2 path
+> (see the [Verification log](README.md#verification-log)). What was not run is stated below. The committed samples are still adapter
+> fixtures / templates, not captures; `tools/test_shipping_recipes.py` runs them through WS-2.
+> **Windows configs were NOT run:** the Fluent Bit winevtlog input exists only in Windows builds.
 
 The example host `192.0.2.10` is a placeholder: see [Reaching ws1 from another host](README.md#reaching-ws1-from-another-host) (published address change + firewall) before pointing a remote shipper at it.
 
@@ -24,13 +24,13 @@ windows family (`windows_eventlog`/`sysmon`) and moves Sysmon records to `sysmon
 ## Fluent Bit (winevtlog)
 
 `Event_Data_As_Map true` is **required**: without it the event data is rendered into `Message`/`StringInserts`, which the
-adapter does not parse. Option names were taken from the vendor docs
-(<https://docs.fluentbit.io/manual/pipeline/inputs/windows-event-log-winevtlog>) but not re-read for this revision: treat them as
-unchecked. `Event_Data_As_Map` is vendor-documented but was **not executed**; the `http` output options
-(`Format json_lines`, `Header`, `Json_Date_Key`) are from memory of the vendor docs and **unverified**.
+adapter does not parse. Option names were re-read on 2026-11-05 from the vendor docs
+(<https://docs.fluentbit.io/manual/pipeline/inputs/windows-event-log-winevtlog>): `Channels`, `Interval_Sec` and `Event_Data_As_Map` are listed there (the docs say it needs
+`event_template_cache_size` > 0). **Not run:** the Linux Fluent Bit 5.1.5 build rejects the plugin (`winevtlog ... doesn't exist`), so the input and the claimed record shape are unproven on Windows.
+The `http` output half (`Format json_lines`, `Header`, `Json_Date_Key false`, bearer header) is the same output block run live in the Docker/journald/n8n recipes: ws1 accepted the records.
 
 ```ini fluent-bit-windows.conf
-# Fluent Bit (Windows) -> FENGARDE HTTP ingest. Written from vendor docs, NOT executed.
+# Fluent Bit (Windows) -> FENGARDE HTTP ingest. Linted only (Linux build has no winevtlog input): NOT run. Option names from vendor docs.
 # WARNING: Authorization: Bearer goes over plain http:// -- cleartext on the wire; use the TLS front from docs/deployment.md or keep it on a trusted segment.
 [SERVICE]
     Flush        5
