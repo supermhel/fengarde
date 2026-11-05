@@ -48,7 +48,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Event_Data_As_Map` needs `event_template_cache_size` > 0 as documented; the real record nests the event data under `EventData` (not flat), so the `fluentbit-winevtlog` adapter now flattens it
   (regression test in `test_adapters.py`); `Ignore_Missing_Channels true` added to the config (a missing Sysmon channel otherwise stops the whole input); new real sample
   `docs/shipping/samples/windows-application.fluentbit.json`. Still NOT run: the Windows Security and Sysmon channels (no real 4624/Sysmon record seen), Fluent Bit 5.1.5 on Windows (exited at start-up
-  here), TLS. Known gap: providers without an `EventData` map (System 7045) carry the data only in `StringInserts`, which is not parsed.
+  here), TLS. System 7045 (no `EventData` map, data only in `StringInserts`) is now read positionally by the `windows_eventlog` parser, so `win_service_installed_suspicious_path` can fire on real Fluent Bit output; other providers' `StringInserts` are still not parsed.
 - `tools/test_shipping_recipes.py` (fast tier): 15 samples, each run through `adapt_record` -> `resolve` -> parse -> OCSF validation and
   required to resolve to the parser the recipe claims; adapter-fixture samples asserted equal to the adapter constants; recipe config
   blocks asserted identical to `docs/shipping/configs/`. Sample provenance (hand transcription of a third-party published output / template-derived /

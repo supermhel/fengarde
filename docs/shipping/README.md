@@ -90,7 +90,7 @@ repo config, Channels=Application,System, Host/Port = local ws1 (memory bus, per
 ```
 
 Through `adapt_record` -> `resolve` -> `normalize_one`: 2,640 records, no exceptions; all routed to `windows_eventlog`; 2,638 `parser returned None` (EventIDs not mapped); 2 System 7045 -> class 1002, message
-`Service installed: ? -> ? (by ?)` (no `EventData` map for that provider; service name/path only in `StringInserts`). Not run: Security and Sysmon channels, Fluent Bit 5.x on Windows, TLS.
+`Service installed: ? -> ? (by ?)` when first run; that provider has no `EventData` map (name/path only in `StringInserts`), which the `windows_eventlog` parser now reads (positional order ServiceName, ImagePath, ServiceType, StartType, AccountName, checked on a live 7045 event 2026-11-05; regression test in `parsers/test_recall_events.py`). Not run: Security and Sysmon channels, Fluent Bit 5.x on Windows, TLS.
 Run harness (scratch only, not committed): ws1 `HttpJsonCollector` on `127.0.0.1` with a free port, memory bus and a generated token passed to Fluent Bit by environment variable, never printed.
 
 Second pass (2026-11-05, same host and engine; extra images `pihole/pihole:2026.10.1` (tag read from Docker Hub, pushed 2026-10-31), a local `debian:trixie-slim` + `systemd` + `openssh-server` image built for the test, `alpine:3.20` as the UDP sender):

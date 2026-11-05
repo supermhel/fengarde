@@ -37,6 +37,18 @@ svc_ok = parse("windows_eventlog", {"EventID": 7045, "TimeCreated": T, "Computer
                                     "ServiceName": "Spooler", "ImagePath": r"C:\Windows\System32\spoolsv.exe"})
 svc_4697 = parse("windows_eventlog", {"EventID": 4697, "TimeCreated": T, "Computer": "dc1", "SubjectUserName": "adm",
                                       "ServiceName": "x", "ServiceFileName": "%COMSPEC% /c calc"})
+# Real Fluent Bit shape for System 7045: positional StringInserts only (order checked on a live event, 2026-11-05)
+svc_ins = parse("windows_eventlog", {"EventID": 7045, "TimeCreated": T, "Computer": "wks1",
+                                     "StringInserts": ["Upd", r"C:\Users\jdoe\AppData\Local\Temp\u.exe", "user mode service",
+                                                       "auto start", "LocalSystem"]})
+check(svc_ins is not None and "Upd -> C:" in svc_ins["message"], f"7045 StringInserts must fill name/path: {svc_ins}")
+check(svc_ins["unmapped"]["service"]["suspicious_path"] is True, "StringInserts temp-path service must be suspicious")
+svc_named_wins = parse("windows_eventlog", {"EventID": 7045, "TimeCreated": T, "Computer": "wks1", "ServiceName": "Named",
+                                            "ImagePath": r"C:\Windows\a.exe", "StringInserts": ["Other", r"C:\x\b.exe"]})
+check("Named -> C:" in svc_named_wins["message"], "named fields must win over StringInserts")
+for bad in ("junk", 5, [], [None], [{}], ["only-name"]):
+    r = parse("windows_eventlog", {"EventID": 7045, "TimeCreated": T, "Computer": "wks1", "StringInserts": bad})
+    check(r is not None, f"7045 with StringInserts={bad!r} must still parse (total)")
 clr_sec = parse("windows_eventlog", {"EventID": 1102, "TimeCreated": T, "Computer": "dc1", "SubjectUserName": "adm"})
 clr_sys = parse("windows_eventlog", {"EventID": 104, "TimeCreated": T, "Computer": "dc1", "SubjectUserName": "adm"})
 for ev, act in ((svc_tmp, 3), (svc_ok, 3), (svc_4697, 3), (clr_sec, 4), (clr_sys, 4)):

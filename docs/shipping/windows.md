@@ -41,8 +41,8 @@ What the 2026-11-05 run (Windows 11, official `fluent-bit-4.2.8-win64.zip`, norm
   `EventData` into the top level (system keys win on a collision); before the fix the parsers saw none of the event-data fields.
 - `TimeCreated` is rendered in the machine's local time with an offset (`2026-08-11 21:21:44 +0100`), which the adapter already converted correctly. `Message` is localized (de-DE here) and some non-ASCII
   characters arrive mangled (`UserID` `NT-AUTORIT<U+E0C4>T\SYSTEM`); the parsers do not read those fields.
-- **Result through WS-2:** all 2,640 records route to `windows_eventlog`; 2,638 dead-letter (`parser returned None`, EventIDs the parser does not map) and 2 (System 7045, "service installed") become class 1002 but with
-  `Service installed: ? -> ? (by ?)`, because that provider arrives without an `EventData` map and the service name/path exist only in `StringInserts` (not parsed: open gap).
+- **Result through WS-2:** all 2,640 records route to `windows_eventlog`; 2,638 dead-letter (`parser returned None`, EventIDs the parser does not map) and 2 (System 7045, "service installed") became class 1002 but with
+  `Service installed: ? -> ? (by ?)`, because that provider arrives without an `EventData` map and the service name/path exist only in `StringInserts`. The parser now reads System 7045 `StringInserts` positionally (name, path, type, start type, account); a named field still wins. Regression test: `parsers/test_recall_events.py`.
 - **A missing channel stops the whole input** (`cannot subscribe 'Microsoft-Windows-Sysmon/Operational' (15007)`, `failed to open and no subscribed channels`) unless `Ignore_Missing_Channels true`, which the config now sets so a host
   without Sysmon still ships the other channels.
 - `Read_Existing_Events true` (used only for the test; the recipe tails) produced a first batch over ws1's default 1 MiB body cap: ws1 counted `body_over_cap` and Fluent Bit logged `could not flush records (http_do=-1)`.
@@ -103,4 +103,4 @@ Samples (template-derived from Elastic's exported-fields catalog): [4688](sample
 - Mixing shapes under one `X-Fengarde-Shipper` label in a batch: the label is per request; mismatched shapes dead-letter.
 - Vector on Windows (above); remote collection (`remote.*` options); TLS.
 - Real `Security` and Sysmon records from Windows (never seen; the 4624 and Sysmon samples remain a template and a hand transcription of a 2023 capture that predates the event-data map).
-- Event data of providers that arrive without an `EventData` map (`StringInserts` only), e.g. the service name and path of System 7045.
+- Event data of other providers that arrive without an `EventData` map (`StringInserts` only): only System 7045 is read positionally.
