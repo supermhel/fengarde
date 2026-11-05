@@ -11,21 +11,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `tools/alert_labeller.py` — export (join alert dump + event dump into
   review records with contributing events by `siem.ingest_id`; unknown ids
-  surfaced as `missing_event_ids`), label (`tp`/`fp`/`unknown` to a local
-  git-ignored `labels.jsonl`, duplicates refused unless `--override`),
-  scrub (deterministic anonymization of ips/hostnames/domains/users with a
-  `"scrubbed": true` + digest stamp), publish (REFUSES any unstamped file).
-- `eval/real/grade.py` — per-rule precision = tp/(tp+fp) from the labels +
-  review, with an explicit **"single-site, owner-labelled"** marker; `unknown`
-  reported separately, never in the denominator; orphan labels surfaced; the
-  result is never merged into SCORECARD.md.
+  surfaced as `missing_event_ids`; the alert's own `event_ids_omitted` cap
+  marker is carried into the record and printed as `TRUNCATED:`), label
+  (`tp`/`fp`/`unknown` to a local git-ignored `labels.jsonl`, duplicates
+  refused unless `--override`; a malformed line exits 2 WITHOUT rewriting;
+  atomic temp-file + `os.replace` writes), scrub (recurses into every string
+  leaf and key incl. all `contributing_events`; keyed HMAC-SHA256 pseudonyms
+  for names/hostnames/emails/alert ids under a secret that is never written
+  to the output; one collision-free IP map per run; `--labels` scrubs the
+  labels in the same run with the note dropped; per-line JSONL), publish
+  (validates every line: stamp + digest + an independent private-value
+  re-scan, all or nothing). Every output path is refused unless
+  `git check-ignore` covers it. Pseudonyms differ between runs only because
+  the default secret is random per run; `--secret-file` makes them stable (and
+  confirmable by its holder) -- no unlinkability claim is made beyond that.
+- `eval/real/grade.py` — per-rule precision = tp/(tp+fp) with n, a 95% Wilson
+  interval and a LOW-N flag (n < 10), from the labels + review, with an
+  explicit **"single-site, owner-labelled"** marker; labels deduped by
+  alert_id, orphan labels counted and excluded from rule rows, `unknown` never
+  in the denominator; exits 2 on a missing/empty labels file or empty review;
+  the result is never merged into SCORECARD.md.
 - `.gitignore` — the whole live-data lane (`eval/real/{review,labels.jsonl,
   out,latest.*}`) is untracked by default; only the code is committed.
-- `tools/test_alert_labeller.py` (6 groups, wired into the fast tier):
-  export join/order/missing, review header + readback, label
-  append/duplicate/override/verdict validation, deterministic scrub +
-  cross-seed unlinkability, publish refusal on unstamped data, precision
-  math incl. the unmatched-rule bucket.
+- `tools/test_alert_labeller.py` (13 groups, wired into the fast tier):
+  export join/order/missing/omitted, corrupt-label refusal with a
+  byte-identical file, recursive scrub (username + hostname, no IP), keyed
+  non-reversible pseudonyms, collision-free IPs past 16, multi-line JSONL +
+  labels scrub, publish gate (forged stamp / tampered digest / private note /
+  all-or-nothing), output-path guard on every writer, end-to-end lane,
+  precision with n/CI, grade failure modes.
 - `docs/labelling.md` — the full lane workflow (dump → export → review →
   label → scrub → publish → grade).
 

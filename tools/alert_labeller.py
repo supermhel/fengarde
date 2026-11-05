@@ -2,27 +2,27 @@
 """Alert labelling tool + real-data lane (WP-2.2).
 
 The owner labels alerts from their own network ONCE and gets per-rule
-precision. The lane:
+precision. The lane (every default path is git-ignored):
 
     dump alerts (alerts.ndjson, make_alert shape) + events (events.ndjson,
     normalized.events docs, siem.ingest_id as the join key)
-      ->  python tools/alert_labeller.py export --alerts ... --events ... --out eval/real/review/
-      ->  (human) python tools/alert_labeller.py label --jsonl eval/real/labels.jsonl \
-             --alert-id <id> --verdict fp --note "..."
-      ->  python tools/alert_labeller.py scrub --review-dir eval/real/review/ \
+      ->  python tools/alert_labeller.py export --alerts ... --events ...
+      ->  (human) python tools/alert_labeller.py label --alert-id <id> \
+             --verdict fp --note "..."
+      ->  python tools/alert_labeller.py scrub --dir eval/real/review/ \
              --labels eval/real/labels.jsonl --out eval/real/out/scrubbed/
-      ->  python tools/alert_labeller.py publish --dir eval/real/out/scrubbed/ \
-             (refuses anything without the scrub stamp)
+      ->  python tools/alert_labeller.py publish --src eval/real/out/scrubbed/
+             (re-scans every line; refuses on any stamp/digest/ip/host/user hit)
       ->  python eval/real/grade.py --review-dir eval/real/out/scrubbed/ \
              --labels eval/real/out/scrubbed/labels.jsonl
 
-Privacy rule: everything under ``eval/real/`` that may contain live traffic
-(``review/``, ``labels.jsonl``, ``out/``) is git-ignored by default — nothing
-from a private network is ever committed. The SCRUB step deterministically
-anonymizes ips/hostnames/users/domains and stamps every output line with a
-header carrying ``"scrubbed": true`` and the scrub digest; ``publish`` refuses
-to copy any file that lacks the stamp. The must-be-shared result of grading
-carries an explicit "single-site, owner-labelled" marker.
+Privacy rules: everything under ``eval/real/`` that may contain live traffic
+is git-ignored, and every OUTPUT path (label/export/scrub/publish/grade) is
+refused unless ``git check-ignore`` covers it. SCRUB pseudonymises ips,
+hostnames, users and alert ids with HMAC-SHA256 under a secret that is never
+written to the output; the stamp is an integrity check, not authenticity, so
+``publish`` independently re-scans the content and refuses on any private-
+looking value.
 
 All subcommands are pure file operations; tests are synthetic (tools/test_
 alert_labeller.py) and never touch the bus.
@@ -31,124 +31,197 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import hmac
+import ipaddress
 import json
+import os
 import re
+import secrets
+import subprocess
 import sys
 from pathlib import Path
 from typing import Optional
 
+ROOT = Path(__file__).resolve().parents[1]
+REAL = ROOT / "eval" / "real"
 VERDICTS = ("tp", "fp", "unknown")
 
 _IP_RE = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
+_V6_RE = re.compile(r"(?<![\w:.])[0-9A-Fa-f:]{2,39}(?![\w:.])")
+_EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,}")
 _HOST_RE = re.compile(r"\b(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z]{2,}\b")
 _USER_RE = re.compile(r"\buser(?:name)?[\"']?\s*[:=]\s*[\"']?([A-Za-z0-9_.@$-]{3,64})", re.I)
+_PSEUDO_RE = re.compile(r"^(?:user|host)-[0-9a-f]{8}$")
+_ALERT_PSEUDO_RE = re.compile(r"^alert-[0-9a-f]{12}$")
+_PSEUDO_NET = ipaddress.ip_network("198.18.0.0/15")  # RFC 2544 benchmark range
 
-SCRUB_HEADER = {"deck": "fengarde-labeller-v1"}
+# Values under these keys are private by key semantics (a bare 'jdoe' matches
+# no regex). host-kind keys get host-<h>, the rest user-<h>. Over-scrubbing
+# (e.g. process.name) is deliberate: the scrubbed copy is for rule-level grading.
+_HOST_KEYS = frozenset({"hostname", "computer", "domain", "host", "fqdn", "workstation"})
+_NAME_KEYS = _HOST_KEYS | {"name", "uid", "username", "user", "account", "upn", "email"}
+# Top-level fields that are public rule facts / stamp metadata (never scrubbed).
+_SAFE_TOP = frozenset({"rule_id", "rule_title", "level", "score", "time",
+                       "event_ids_total", "event_ids_omitted", "verdict", "kind",
+                       "deck", "alerts_digest", "scrubbed", "scrub_digest"})
+# Top-level fields dropped outright: free text / provenance names.
+_DROP_TOP = frozenset({"note", "alerts_source", "events_source"})
 
 
 def _digest(text: bytes) -> str:
     return hashlib.sha256(text).hexdigest()[:16]
 
 
-def scrub_map(seed: str) -> dict:
-    """Deterministic per-run anonymization maps (same input -> same output)."""
-    def h(i: int) -> str:
-        return hashlib.sha256(f"{seed}:{i}".encode()).hexdigest()
-    # 10.0.0.0/8 pseudonyms derived from the seed; collisions are fine (one
-    # pseudonym may map many real hosts — the point is unlinkability).
-    ips = []
-    for i in range(16):
-        d = h(i)
-        ips.append(f"10.{int(d[0:2], 16) % 250 + 1}."
-                   f"{int(d[2:4], 16) % 250 + 1}.{int(d[4:6], 16) % 250 + 2}")
-    return {"_ip": ips}
+def _is_v6(tok: str) -> bool:
+    if tok.count(":") < 2:
+        return False
+    try:
+        ipaddress.IPv6Address(tok)
+    except ValueError:
+        return False
+    return True
 
 
-_NAME_KEYS = ("name", "domain", "uid", "username", "user", "hostname", "computer")
+class Scrubber:
+    """One real->pseudonym map per run. Names/ids are HMAC-SHA256 under a
+    secret that is never stored in any output (unsalted hashes are
+    dictionary-reversible); IPs are keyed the same way but probed until the
+    pseudonym is unused, so two real IPs never share one."""
 
+    def __init__(self, secret: Optional[bytes] = None):
+        self.key = secret if secret is not None else secrets.token_bytes(32)
+        self._ips: dict[str, str] = {}
+        self._used: set[str] = set()
+        self._known: dict[str, str] = {}   # private value -> "user"|"host"
+        self._known_re: Optional[re.Pattern] = None
 
-def _anonymize_str(key: str, value: str) -> str:
-    """Value-by-key anonymization: name/domain/uid values have no pattern
-    (a bare 'jdoe' matches no regex) and are hashed by KEY SEMANTICS."""
-    if key in _NAME_KEYS:
-        if key in ("hostname", "computer", "domain"):
-            return f"host-{_digest(value.encode())[:8]}"
-        return f"user-{_digest(value.encode())[:8]}"
-    return value
+    def _h(self, label: str, value: str, n: int) -> str:
+        return hmac.new(self.key, f"{label}:{value}".encode(), hashlib.sha256).hexdigest()[:n]
 
+    def name(self, kind: str, value: str) -> str:
+        return f"{kind}-{self._h(kind, value.lower() if kind == 'host' else value, 8)}"
 
-def scrub_text(text: str, map_: dict) -> str:
-    """Anonymize ip/host/user tokens deterministically (map_ is a lookup)."""
-    seen_ip: dict[str, str] = {}
-    seen_host: dict[str, str] = {}
-    seen_user: dict[str, str] = {}
+    def alert_id(self, value: str) -> str:
+        # make_alert ids are rule:group:bucket, so they embed the src ip/user
+        return f"alert-{self._h('alert', value, 12)}"
 
-    def ip_repl(m):
-        ip = m.group(0)
-        if ip not in seen_ip:
-            seen_ip[ip] = map_["_ip"][len(seen_ip) % len(map_["_ip"])]
-        return seen_ip[ip]
+    def ip(self, real: str) -> str:
+        if real not in self._ips:
+            n = 0
+            while True:
+                idx = int(self._h(f"ip{n}", real, 8), 16) % (_PSEUDO_NET.num_addresses - 2) + 1
+                cand = str(_PSEUDO_NET[idx])
+                if cand not in self._used:
+                    break
+                n += 1
+            self._used.add(cand)
+            self._ips[real] = cand
+        return self._ips[real]
 
-    def host_repl(m):
-        h = m.group(0)
-        if h not in seen_host:
-            seen_host[h] = f"host-{_digest(h.encode())[:8]}"
-        return seen_host[h]
-
-    def user_repl(m):
-        u = m.group(1)
-        if u not in seen_user:
-            seen_user[u] = f"user-{_digest(u.encode())[:8]}"
-        return m.group(0).replace(u, seen_user[u])
-
-    text = _IP_RE.sub(ip_repl, text)
-    text = _HOST_RE.sub(host_repl, text)
-    text = _USER_RE.sub(user_repl, text)
-    return text
-
-
-def scrub_doc(doc: dict, map_: dict, seed: str) -> dict:
-    """Scrub one alert/event doc: string leaves under known-private keys plus
-    the whole JSON dump as a safety net (no field is ever assumed public)."""
-    out = json.loads(json.dumps(doc))  # deep copy
-    private_paths = [("src_endpoint",), ("dst_endpoint",), ("actor", "user"),
-                     ("api", "request", "data"), ("email",), ("message",),
-                     ("unmapped",)]
-    for path in private_paths:
-        node = out
-        for key in path[:-1]:
-            node = node.get(key) if isinstance(node, dict) else None
-            if node is None:
-                break
-        if node is None:
-            continue
-        leaf = path[-1]
-        if isinstance(node, dict) and leaf in node:
-            v = node[leaf]
-            if isinstance(v, str):
-                node[leaf] = scrub_text(v, map_)
-            elif isinstance(v, dict):
-                for k, vv in v.items():
-                    if isinstance(vv, str):
-                        v[k] = _anonymize_str(k, scrub_text(vv, map_))
-                    elif isinstance(vv, dict):
-                        for k2, vv2 in vv.items():
-                            if isinstance(vv2, str):
-                                vv[k2] = _anonymize_str(k2, scrub_text(vv2, map_))
-    # whole-document safety net: scrub every string leaf that still contains
-    # an ip/host/user shape anywhere
-    walk = [out]
-    while walk:
-        node = walk.pop()
+    def learn(self, node: object, key: str = "") -> None:
+        """Collect values under name keys so free text elsewhere is cleaned."""
         if isinstance(node, dict):
             for k, v in node.items():
-                if isinstance(v, str) and _IP_RE.search(v):
-                    node[k] = scrub_text(v, map_)
-                elif isinstance(v, (dict, list)):
-                    walk.append(v)
+                self.learn(v, str(k).lower())
         elif isinstance(node, list):
-            walk.extend(node)
-    return out
+            for v in node:
+                self.learn(v, key)
+        elif isinstance(node, str) and key in _NAME_KEYS:
+            if (len(node) >= 2 and not _PSEUDO_RE.match(node) and node not in self._known
+                    and node.lower() not in ("user", "host", "alert", "ip6")):  # pseudonym prefixes
+                self._known[node] = "host" if key in _HOST_KEYS else "user"
+                self._known_re = None
+
+    def text(self, text: str) -> str:
+        def v6(m):
+            return f"ip6-{self._h('ip6', m.group(0), 8)}" if _is_v6(m.group(0)) else m.group(0)
+
+        def email(m):
+            local, _, dom = m.group(0).partition("@")
+            return f"{self.name('user', local)}@{self.name('host', dom)}"
+
+        text = _EMAIL_RE.sub(email, text)
+        text = _IP_RE.sub(lambda m: self.ip(m.group(0)), text)
+        text = _V6_RE.sub(v6, text)
+        text = _HOST_RE.sub(lambda m: self.name("host", m.group(0)), text)
+        text = _USER_RE.sub(
+            lambda m: m.group(0).replace(m.group(1), self.name("user", m.group(1))), text)
+        if self._known:
+            if self._known_re is None:
+                alt = "|".join(re.escape(v) for v in sorted(self._known, key=len, reverse=True))
+                self._known_re = re.compile(rf"(?<!\w)(?:{alt})(?!\w)")
+            text = self._known_re.sub(
+                lambda m: self.name(self._known[m.group(0)], m.group(0)), text)
+        return text
+
+    def _walk(self, node: object, key: str, top: bool) -> object:
+        if isinstance(node, dict):
+            out: dict = {}
+            for k, v in node.items():
+                if top and k in _DROP_TOP:
+                    continue
+                if top and k in _SAFE_TOP:
+                    out[k] = v
+                else:
+                    out[self.text(k)] = self._walk(v, k.lower(), False)
+            return out
+        if isinstance(node, list):
+            return [self._walk(v, key, False) for v in node]
+        if isinstance(node, str) and node:
+            if key == "alert_id":
+                return self.alert_id(node)
+            if key in _NAME_KEYS:
+                return self.name("host" if key in _HOST_KEYS else "user", node)
+            return self.text(node)
+        return node
+
+    def scrub_doc(self, doc: dict) -> dict:
+        """Recurse into EVERY string leaf and key (no field is assumed public),
+        replacing known-private values wherever they appear in free text."""
+        self.learn(doc)
+        return self._walk(doc, "", True)  # type: ignore[return-value]
+
+
+def _text_hits(s: str) -> list[str]:
+    hits = []
+    for m in _IP_RE.finditer(s):
+        try:
+            if ipaddress.ip_address(m.group(0)) in _PSEUDO_NET:
+                continue
+        except ValueError:
+            pass
+        hits.append("ipv4")
+    hits += ["ipv6" for m in _V6_RE.finditer(s) if _is_v6(m.group(0))]
+    hits += ["email" for _ in _EMAIL_RE.finditer(s)]
+    hits += ["host" for _ in _HOST_RE.finditer(s)]
+    hits += ["user" for m in _USER_RE.finditer(s) if not _PSEUDO_RE.match(m.group(1))]
+    return hits
+
+
+def find_private(node: object, path: str = "$", key: str = "", top: bool = True) -> list[str]:
+    """Independent re-scan of a SCRUBBED record: returns 'path: kind' hits
+    (never the private value itself). publish uses it because a stamp is
+    self-declared and must not be trusted on its own."""
+    hits: list[str] = []
+    if isinstance(node, dict):
+        for k, v in node.items():
+            if top and k in _SAFE_TOP:
+                continue
+            hits += [f"{path}.<key>: {h}" for h in _text_hits(str(k))]
+            hits += find_private(v, f"{path}.{k}", str(k).lower(), False)
+    elif isinstance(node, list):
+        for i, v in enumerate(node):
+            hits += find_private(v, f"{path}[{i}]", key, False)
+    elif isinstance(node, str) and node:
+        if key == "alert_id":
+            if not _ALERT_PSEUDO_RE.match(node):
+                hits.append(f"{path}: alert_id not pseudonymised")
+        elif key in _NAME_KEYS:
+            if not _PSEUDO_RE.match(node):
+                hits.append(f"{path}: name field not pseudonymised")
+        else:
+            hits += [f"{path}: {h}" for h in _text_hits(node)]
+    return hits
 
 
 def export_alerts(alerts: list[dict], events: list[dict]) -> list[dict]:
@@ -158,7 +231,8 @@ def export_alerts(alerts: list[dict], events: list[dict]) -> list[dict]:
     its ``event_ids`` that exist in the events dump, in the SAME order as the
     alert carries them; the triggering event (``trigger_event_id``) is always
     included first when present in the dump. Unknown ids are listed under
-    ``missing_event_ids`` so the reviewer sees the cap/truncation, never a
+    ``missing_event_ids``; ids the alert's own cap cut are carried as
+    ``event_ids_omitted`` so the reviewer sees the truncation, never a
     silent gap.
     """
     by_id: dict = {}
@@ -182,6 +256,8 @@ def export_alerts(alerts: list[dict], events: list[dict]) -> list[dict]:
         for i in ids:
             if i not in ordered:
                 ordered.append(i)
+        om = alert.get("event_ids_omitted")
+        omitted = om if isinstance(om, int) and not isinstance(om, bool) and om > 0 else 0
         contrib = []
         missing = []
         for i in ordered:
@@ -199,7 +275,8 @@ def export_alerts(alerts: list[dict], events: list[dict]) -> list[dict]:
             "src_endpoint": alert.get("src_endpoint"),
             "contributing_events": contrib,
             "missing_event_ids": missing,
-            "event_ids_total": len(aids) if isinstance(aids, list) else 0,
+            "event_ids_omitted": omitted,
+            "event_ids_total": len(ids) + omitted,
         }
         out.append(rec)
     return out
@@ -255,91 +332,157 @@ def read_review_file(path: Path) -> list[dict]:
     return out
 
 
+def _read_labels(path: Path) -> list[dict]:
+    """Strict read: a corrupt line is an error, never silently dropped."""
+    if not path.exists():
+        return []
+    out = []
+    for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        if not line.strip():
+            continue
+        try:
+            rec = json.loads(line)
+        except ValueError as exc:
+            raise ValueError(f"{path}:{n}: malformed label line ({exc}); refusing to "
+                             f"rewrite the file - fix or remove that line by hand") from exc
+        if not isinstance(rec, dict) or not isinstance(rec.get("alert_id"), str):
+            raise ValueError(f"{path}:{n}: not a label record; refusing to rewrite "
+                             f"the file - fix or remove that line by hand")
+        out.append(rec)
+    return out
+
+
 def label_append(labels_path: Path, alert_id: str, verdict: str,
                  note: str = "", *, override: bool = False) -> int:
     if verdict not in VERDICTS:
         raise ValueError(f"verdict must be one of {VERDICTS}")
     labels_path.parent.mkdir(parents=True, exist_ok=True)
-    existing = []
-    if labels_path.exists():
-        try:
-            existing = [json.loads(line) for line in
-                        labels_path.read_text(encoding="utf-8").splitlines() if line.strip()]
-        except ValueError:
-            existing = []
+    existing = _read_labels(labels_path)  # raises BEFORE anything is written
     if not override and any(e.get("alert_id") == alert_id for e in existing):
         return 1  # duplicate: use --override
-    record = {"alert_id": alert_id, "verdict": verdict, "note": note}
     existing = [e for e in existing if e.get("alert_id") != alert_id]
-    existing.append(record)
-    with labels_path.open("w", encoding="utf-8", newline="\n") as fh:
+    existing.append({"alert_id": alert_id, "verdict": verdict, "note": note})
+    tmp = labels_path.with_name(labels_path.name + ".tmp")
+    with tmp.open("w", encoding="utf-8", newline="\n") as fh:
         for e in existing:
             fh.write(json.dumps(e) + "\n")
+    os.replace(tmp, labels_path)  # atomic: a crash never leaves a truncated file
     return 0
 
 
-def scrub_file(src: Path, dst_dir: Path, map_: dict, seed: str) -> Path:
-    doc = json.loads(src.read_text(encoding="utf-8"))
-    scrubbed = scrub_doc(doc, map_, seed)
-    scrubbed["scrubbed"] = True
-    scrubbed["scrub_seed"] = seed
-    scrubbed["scrub_digest"] = _digest(
-        json.dumps(scrubbed, sort_keys=True).encode())
+def _stamp(rec: dict) -> dict:
+    body = {k: v for k, v in rec.items() if k not in ("scrubbed", "scrub_digest")}
+    return {**body, "scrubbed": True,
+            "scrub_digest": _digest(json.dumps(body, sort_keys=True).encode())}
+
+
+def _label_view(rec: dict) -> dict:
+    """Label records keep only alert_id + verdict (the free-text note is dropped)."""
+    if "verdict" in rec:
+        return {"alert_id": rec.get("alert_id"), "verdict": rec["verdict"]}
+    return rec
+
+
+def read_jsonl_strict(path: Path) -> list[dict]:
+    out = []
+    for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        if not line.strip():
+            continue
+        try:
+            rec = json.loads(line)
+        except ValueError as exc:
+            raise ValueError(f"{path.name}:{n}: not JSON ({exc})") from exc
+        if not isinstance(rec, dict):
+            raise ValueError(f"{path.name}:{n}: not a JSON object")
+        out.append(rec)
+    return out
+
+
+def scrub_file(src: Path, dst_dir: Path, scrubber: Scrubber) -> Path:
+    """Scrub a JSONL file line by line; every output line is stamped."""
+    recs = read_jsonl_strict(src)
+    scrubbed = [_stamp(scrubber.scrub_doc(_label_view(r))) for r in recs]
     dst_dir.mkdir(parents=True, exist_ok=True)
     dst = dst_dir / src.name
-    dst.write_text(json.dumps(scrubbed, ensure_ascii=False) + "\n",
+    dst.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in scrubbed),
                    encoding="utf-8", newline="\n")
     return dst
 
 
 def is_scrubbed(doc: dict) -> bool:
-    return bool(doc.get("scrubbed") is True and
-                isinstance(doc.get("scrub_digest"), str))
+    """Stamp present AND digest consistent (integrity only, not authenticity)."""
+    return bool(doc.get("scrubbed") is True and isinstance(doc.get("scrub_digest"), str)
+                and _stamp(doc)["scrub_digest"] == doc["scrub_digest"])
 
 
 def publish_dir(src_dir: Path, dst_dir: Path) -> int:
-    """Copy scrubbed files only; refuse anything not stamped.
-
-    Returns the number of copied files; exits 2 via the CLI when any file
-    lacks the scrub stamp — the lane refuses to publish unscrubbed data.
-    """
+    """Copy scrubbed files only. Validates EVERY line of EVERY file first
+    (stamp + digest + independent private-value re-scan), then copies."""
     if not src_dir.is_dir():
         raise NotADirectoryError(str(src_dir))
-    dst_dir.mkdir(parents=True, exist_ok=True)
-    n = 0
-    for path in sorted(src_dir.iterdir()):
-        if not path.is_file() or path.suffix == ".lock":
-            continue
+    files = [p for p in sorted(src_dir.iterdir()) if p.is_file() and p.suffix != ".lock"]
+    for path in files:
         try:
-            doc = json.loads(path.read_text(encoding="utf-8"))
+            recs = read_jsonl_strict(path)
         except (ValueError, OSError) as exc:
-            raise ValueError(f"{path.name}: unreadable/not JSON ({exc})") from exc
-        if not is_scrubbed(doc):
-            raise ValueError(
-                f"{path.name}: NOT scrubbed — the lane refuses to publish "
-                f"unscrubbed data (run the scrub step first)")
-        dst = dst_dir / path.name
-        dst.write_text(path.read_text(encoding="utf-8"),
-                       encoding="utf-8", newline="\n")
-        n += 1
-    return n
+            raise ValueError(f"{path.name}: unreadable/not JSONL ({exc})") from exc
+        for n, rec in enumerate(recs, 1):
+            if not is_scrubbed(rec):
+                raise ValueError(
+                    f"{path.name}:{n}: NOT scrubbed - the lane refuses to publish "
+                    f"unscrubbed data (run the scrub step first)")
+            hits = find_private(rec)
+            if hits:
+                raise ValueError(
+                    f"{path.name}:{n}: stamped but still looks private - the lane "
+                    f"refuses to publish ({'; '.join(hits[:5])})")
+    dst_dir.mkdir(parents=True, exist_ok=True)
+    for path in files:
+        (dst_dir / path.name).write_text(path.read_text(encoding="utf-8"),
+                                         encoding="utf-8", newline="\n")
+    return len(files)
+
+
+def ensure_ignored(path: Path, *, is_dir: bool = False) -> None:
+    """Refuse an output path that `git check-ignore` does not cover (fail
+    closed: git missing / path outside the repo / tracked file all refuse)."""
+    probe = (path / ".probe") if is_dir else path
+    try:
+        rc = subprocess.run(["git", "-C", str(ROOT), "check-ignore", "-q", "--",
+                             str(probe.resolve())], capture_output=True).returncode
+    except OSError:
+        rc = 1
+    if rc != 0:
+        raise ValueError(f"refusing to write {path}: not covered by .gitignore "
+                         f"(live data must stay under the git-ignored eval/real/ area)")
 
 
 # ---------------------------------------------------------------- CLI -------
 
 def cmd_export(args) -> int:
+    try:
+        ensure_ignored(args.out, is_dir=True)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
     alerts, a_bad = load_jsonl(args.alerts)
     events, e_bad = load_jsonl(args.events)
     records = export_alerts(alerts, events)
     target = write_review(args.out, records, args.alerts, args.events)
+    trunc = [r for r in records if r["event_ids_omitted"]]
     print(f"exported {len(records)} review records -> {target} "
           f"(malformed lines skipped: alerts {a_bad}, events {e_bad}; "
           f"events joined: {sum(len(r['contributing_events']) for r in records)})")
+    if trunc:
+        print(f"TRUNCATED: {len(trunc)} alert(s) lost {sum(r['event_ids_omitted'] for r in trunc)} "
+              f"contributing event id(s) to the alert's own cap (event_ids_omitted); "
+              f"their review is NOT complete")
     return 0
 
 
 def cmd_label(args) -> int:
     try:
+        ensure_ignored(args.jsonl)
         rc = label_append(args.jsonl, args.alert_id, args.verdict,
                           args.note or "", override=args.override)
     except ValueError as exc:
@@ -354,22 +497,36 @@ def cmd_label(args) -> int:
 
 
 def cmd_scrub(args) -> int:
-    map_ = scrub_map(args.seed)
-    srcs = list(args.dir.iterdir()) if args.dir.is_dir() else [args.dir]
-    n = 0
-    for path in srcs:
-        if not path.is_file():
-            continue
-        scrub_file(path, args.out, map_, args.seed)
-        n += 1
-    print(f"scrubbed {n} file(s) -> {args.out} (seed {args.seed})")
+    try:
+        ensure_ignored(args.out, is_dir=True)
+        secret = args.secret_file.read_bytes().strip() if args.secret_file else None
+        if secret is not None and not secret:
+            raise ValueError("--secret-file is empty")
+        srcs = sorted(p for p in args.dir.iterdir() if p.is_file()) if args.dir.is_dir() \
+            else [args.dir]
+        skipped = [p.name for p in srcs if p.suffix != ".jsonl"]
+        srcs = [p for p in srcs if p.suffix == ".jsonl"]
+        if args.labels:
+            srcs.append(args.labels)
+        scr = Scrubber(secret)
+        for path in srcs:  # learn every private name first so free text in ANY file is cleaned
+            for rec in read_jsonl_strict(path):
+                scr.learn(rec)
+        for path in srcs:
+            scrub_file(path, args.out, scr)
+    except (ValueError, OSError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    print(f"scrubbed {len(srcs)} file(s) -> {args.out} (skipped non-.jsonl: {len(skipped)}; "
+          f"secret {'from file' if secret else 'random per run, not stored'})")
     return 0
 
 
 def cmd_publish(args) -> int:
     try:
+        ensure_ignored(args.dst, is_dir=True)
         n = publish_dir(args.src, args.dst)
-    except (ValueError, OSError, NotADirectoryError) as exc:
+    except (ValueError, OSError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
     print(f"published {n} scrubbed file(s) -> {args.dst}")
@@ -383,26 +540,29 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("export", help="join alert dump + event dump into review records")
     p.add_argument("--alerts", required=True, type=Path)
     p.add_argument("--events", required=True, type=Path)
-    p.add_argument("--out", required=True, type=Path)
+    p.add_argument("--out", type=Path, default=REAL / "review")
     p.set_defaults(fn=cmd_export)
 
     p = sub.add_parser("label", help="record a tp/fp/unknown verdict")
-    p.add_argument("--jsonl", required=True, type=Path)
+    p.add_argument("--jsonl", type=Path, default=REAL / "labels.jsonl")
     p.add_argument("--alert-id", required=True)
     p.add_argument("--verdict", required=True, choices=VERDICTS)
     p.add_argument("--note", default=None)
     p.add_argument("--override", action="store_true")
     p.set_defaults(fn=cmd_label)
 
-    p = sub.add_parser("scrub", help="deterministically anonymize review files")
-    p.add_argument("--dir", required=True, type=Path)
-    p.add_argument("--out", required=True, type=Path)
-    p.add_argument("--seed", default="fengarde-2026")
+    p = sub.add_parser("scrub", help="pseudonymise review files (+ labels) with a secret key")
+    p.add_argument("--dir", required=True, type=Path, help="review dir (or one .jsonl file)")
+    p.add_argument("--labels", type=Path, help="labels.jsonl to scrub in the SAME run "
+                   "(alert ids are pseudonymised, so review and labels must share one run)")
+    p.add_argument("--out", type=Path, default=REAL / "out" / "scrubbed")
+    p.add_argument("--secret-file", type=Path, help="file holding the HMAC secret (keep it "
+                   "private); default: random per run, never stored")
     p.set_defaults(fn=cmd_scrub)
 
     p = sub.add_parser("publish", help="copy scrubbed files, refuse anything else")
-    p.add_argument("--src", required=True, type=Path)
-    p.add_argument("--dst", required=True, type=Path)
+    p.add_argument("--src", type=Path, default=REAL / "out" / "scrubbed")
+    p.add_argument("--dst", type=Path, default=REAL / "out" / "published")
     p.set_defaults(fn=cmd_publish)
     return ap
 
