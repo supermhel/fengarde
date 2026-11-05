@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (2026-11-04, WP-2.2: labelling tool + real-data lane)
+
+- `tools/alert_labeller.py` — export (join alert dump + event dump into
+  review records with contributing events by `siem.ingest_id`; unknown ids
+  surfaced as `missing_event_ids`), label (`tp`/`fp`/`unknown` to a local
+  git-ignored `labels.jsonl`, duplicates refused unless `--override`),
+  scrub (deterministic anonymization of ips/hostnames/domains/users with a
+  `"scrubbed": true` + digest stamp), publish (REFUSES any unstamped file).
+- `eval/real/grade.py` — per-rule precision = tp/(tp+fp) from the labels +
+  review, with an explicit **"single-site, owner-labelled"** marker; `unknown`
+  reported separately, never in the denominator; orphan labels surfaced; the
+  result is never merged into SCORECARD.md.
+- `.gitignore` — the whole live-data lane (`eval/real/{review,labels.jsonl,
+  out,latest.*}`) is untracked by default; only the code is committed.
+- `tools/test_alert_labeller.py` (6 groups, wired into the fast tier):
+  export join/order/missing, review header + readback, label
+  append/duplicate/override/verdict validation, deterministic scrub +
+  cross-seed unlinkability, publish refusal on unstamped data, precision
+  math incl. the unmatched-rule bucket.
+- `docs/labelling.md` — the full lane workflow (dump → export → review →
+  label → scrub → publish → grade).
+
 ### Added (2026-11-04, WP-1.3: shipper adapters for real Fluent Bit / Winlogbeat / Docker shapes)
 
 - `services/ws2-normalization/adapters/` — four pure, total adapters that

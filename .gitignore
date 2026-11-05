@@ -118,3 +118,14 @@ PRODUCT.md
 
 # console e2e last-run output (written by every run; never commit)
 tools/console_e2e/out/
+
+# WP-2.2 real-data labelling lane: live-traffic material is NEVER committed.
+# The code (tools/alert_labeller.py, eval/real/grade.py, tests) is tracked;
+# the DATA (review exports, owner verdicts, scrubbed/publish copies, the
+# grader's live output) stays local.
+eval/real/review/
+eval/real/labels.jsonl
+eval/real/out/
+eval/real/*.labels.jsonl
+eval/real/latest.json
+eval/real/latest.md
