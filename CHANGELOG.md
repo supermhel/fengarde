@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (2026-11-05, WP-2.1: homelab deployment profile)
+
+- `infra/docker-compose.homelab.yml` — compose override for a persistent single-site install, used as
+  `docker compose -f infra/docker-compose.yml -f infra/docker-compose.homelab.yml up -d`: fixed-name volumes
+  (`FENGARDE_HOMELAB_VOL_PREFIX`), every ingest port loopback by default (syslog UDP 5514 included; LAN opt-in via
+  `FENGARDE_SYSLOG_BIND` / `FENGARDE_HTTP_INGEST_BIND`), `restart: unless-stopped` on redis/opensearch/dashboards, memory
+  ceilings and a 1g OpenSearch heap (`FENGARDE_HOMELAB_OS_HEAP`), `devkit-feeder` moved behind `--profile demo`, ws1 syslog
+  spool enabled. Retention has no env knob: it is the ISM policies (documented, not changed).
+- `docs/homelab.md` — start/stop, data locations, LAN exposure, retention, per-source recipe links (land with PR #151), cold
+  backup/wipe, known issues (ws1 re-seeds mock events on every start), and what is not proven. Walkthrough run against a
+  throwaway stack: HTTP record + syslog TCP line reached OpenSearch, data survived `down`/`up`. Labelling (WP-2.2) not built.
+
 ### Added (2026-11-04, WP-1.3: shipper adapters for real Fluent Bit / Winlogbeat / Docker shapes)
 
 - `services/ws2-normalization/adapters/` — four pure, total adapters that
