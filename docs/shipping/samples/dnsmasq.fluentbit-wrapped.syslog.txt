@@ -1,0 +1,1 @@
+<30>Jul 20 10:15:03 pihole01 fluent-bit: Jul 20 10:15:03 dnsmasq[123]: query[A] evil-c2.example.com from 10.0.0.5

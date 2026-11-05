@@ -33,6 +33,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   parser; winlogbeat `event_data` can no longer overwrite `EventID`/`Computer`/`TimeCreated`; docker ids and names are validated;
   journald without `_HOSTNAME` is a no-op; fixture provenance wording corrected (transcribed, not byte-exact).
 
+### Added (2026-11-05, WP-1.4: shipper recipes in `docs/shipping/`)
+
+- `docs/shipping/` — one recipe per source (Windows Sysmon+Security, Linux auth/sshd, Docker, dnsmasq/Pi-hole, n8n, network gear via
+  rsyslog/syslog-ng for OPNsense/pfSense/Proxmox) with Vector and Fluent Bit configs where a verified shape exists, the real parser
+  `source_type`, the ingest path and an explicit "not covered" list; `README.md` holds the recipe-to-parser table. **No Vector Windows recipe**
+  (no sample of its output exists; stated in the doc). Configs were written from vendor docs and **not executed or linted** (the tools
+  are not installed on the authoring machine); unverifiable option names are marked unverified.
+- `tools/test_shipping_recipes.py` (fast tier): 15 samples, each run through `adapt_record` -> `resolve` -> parse -> OCSF validation and
+  required to resolve to the parser the recipe claims; adapter-fixture samples asserted equal to the adapter constants; recipe config
+  blocks asserted identical to `docs/shipping/configs/`. Sample provenance (transcribed real capture / template-derived /
+  documented / illustrative) is labelled per sample.
+- `tools/lint_shipping_recipes.sh`: optional, manual config lint (`vector validate`, `fluent-bit --dry-run`, `rsyslogd -N1`,
+  `syslog-ng --syntax-only`), skips tools that are absent; not in the default gate.
+
 ## [0.12.0] - 2026-11-05
 
 _Headline: real input. FENGARDE can now be fed over HTTP/JSON and TCP syslog, the gap-hunt tracker is closed, and the full-corpus benchmark has a CI lane. The two new listeners have unit and synthetic evidence only; no real-network deployment has exercised them. Notable changes: `5515/tcp` (TCP syslog) now starts in the default stack, bound to loopback; `POST /v1/ingest` on `127.0.0.1:8554` needs `FENGARDE_INGEST_TOKEN`; the TCP metric names changed during review (event counters are the unprefixed syslog ones when UDP is up). The graph is still entity-linked with direction from entity type, not event time (false_correlation_rate 1.0 on the twin)._

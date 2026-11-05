@@ -1,0 +1,20 @@
+# Vector (Linux) journald -> FENGARDE TCP syslog 5515. Written from vendor docs, NOT executed.
+# The journald field names used below (.host, ._PID, .message) are UNVERIFIED.
+[sources.journal]
+type = "journald"
+include_units = ["ssh", "sshd"]
+
+[transforms.to_line]
+type = "remap"
+inputs = ["journal"]
+source = '''
+msg = string!(.message)
+.message = join!(["<38>", format_timestamp!(.timestamp, format: "%b %e %H:%M:%S"), " ", string!(.host), " sshd[", string!(._PID), "]: ", msg], separator: "")
+'''
+
+[sinks.fengarde]
+type = "socket"
+inputs = ["to_line"]
+mode = "tcp"
+address = "192.0.2.10:5515"
+encoding.codec = "text"
