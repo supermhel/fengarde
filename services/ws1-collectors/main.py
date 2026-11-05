@@ -222,6 +222,11 @@ def _syslog_metrics(udp, http=None, tcp=None) -> dict:
     return m
 
 
+def _seed_mock_enabled() -> bool:
+    """WS1_SEED_MOCK: off only for 0/false/no/off; anything else (incl. unset or junk) keeps the demo seed."""
+    return os.getenv("WS1_SEED_MOCK", "1").strip().lower() not in ("0", "false", "no", "off")
+
+
 def main() -> None:
     # Daemon: seed raw.events once from the bundled mock sources (offline-friendly),
     # then start the REAL live ingestion path — a UDP syslog listener — and stay up
@@ -241,9 +246,14 @@ def main() -> None:
     log = get_logger("ws1-collectors")
 
     bus = Bus()
-    counts = run_once(bus)
-    log.info("seeded", raw_events=counts["raw.events"],
-             asset_updates=counts["assets.updates"])
+    # WS1_SEED_MOCK=0 skips the bundled mock events/assets (a real install must not get a fake cisco_asa deny per restart).
+    # Default on: the demo, the e2e tests and the quick-start rely on the seed.
+    if not _seed_mock_enabled():
+        log.info("mock seed disabled", env="WS1_SEED_MOCK")
+    else:
+        counts = run_once(bus)
+        log.info("seeded", raw_events=counts["raw.events"],
+                 asset_updates=counts["assets.updates"])
 
     # Live syslog ingestion (env-configurable; 5514 avoids privileged 514).
     syslog_host = os.getenv("SYSLOG_UDP_HOST", DEFAULT_HOST)

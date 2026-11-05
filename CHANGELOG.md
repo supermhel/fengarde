@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (2026-11-05, WS1_SEED_MOCK)
+
+- `WS1_SEED_MOCK=0` stops ws1 seeding the bundled mock events and assets on every start (default stays on for the demo); the homelab override sets it. `test_seed_switch.py` covers the switch.
+
 ### Added (2026-11-05, WP-2.1: homelab deployment profile)
 
 - `infra/docker-compose.homelab.yml` — compose override for a persistent single-site install, used as

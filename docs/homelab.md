@@ -149,10 +149,10 @@ docker compose -f infra/docker-compose.yml -f infra/docker-compose.homelab.yml d
 
 ## Known issues
 
-- **Mock data on every ws1 start.** `ws1-collectors` seeds 9 bundled mock raw events and 2 mock assets each time it starts
-  (`services/ws1-collectors/main.py`, log line `seeded`). There is no switch to turn this off. In the test run one of them became
-  a `cisco_asa` event (`203.0.113.5` -> `10.0.0.10:22`, `src` country `RU`), and a restart added another copy with a new
-  `ingest_id`, so they accumulate one per restart. Filter them out (`src_endpoint.ip: 203.0.113.5`) until a switch exists.
+- **Mock data on ws1 start.** By default `ws1-collectors` seeds 9 bundled mock raw events and 2 mock assets on every start
+  (log line `seeded`); in a test run one became a fake `cisco_asa` deny (`203.0.113.5` -> `10.0.0.10:22`, country `RU`) and each
+  restart added another copy. This override sets `WS1_SEED_MOCK=0` (log line `mock seed disabled`), so a homelab install gets
+  none. If you ran an earlier version of this override, filter the old ones out with `src_endpoint.ip: 203.0.113.5`.
   The demo feeder (`devkit-feeder`, fake SSH brute-force burst) is disabled by this override; `--profile demo` brings it back.
 - The `observability` profile (Prometheus, Grafana, GoatCounter) is untouched and not tuned for this install.
 

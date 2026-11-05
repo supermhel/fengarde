@@ -49,6 +49,8 @@ services:
       # Bounded on-disk fallback when the bus is down, drained by the UDP loop.
       # Needs the ws1-spool volume (already mounted by the base file).
       - SYSLOG_SPOOL_PATH=/var/lib/fengarde/spool/spool.jsonl
+      # Real install: no bundled mock events/assets on start (default on elsewhere for the demo).
+      - WS1_SEED_MOCK=0
     mem_limit: 512m
 
   ws2-normalization:
