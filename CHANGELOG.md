@@ -20,7 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   nesting flattened to the parser keys), `fluentbit-journald` (journald field
   map -> RFC 3164 line rebuilt from record fields only, sshd identifier
   routes auth failures to `linux_ssh`), `docker-json` (json-file
-  `{log,stream,time}` + docker filter ids -> RFC 3164 line; id-less lines are
+  `{log,stream,time}` + shipper-added `docker_id`/`docker_name` -> RFC 3164 line; id-less lines are
   a documented no-op, never fabricated). Fixture provenance is in every
   module header + docs/input-adapters.md (REAL capture for fluent-bit
   winevtlog; template/schema-derived and labelled as such for the rest).

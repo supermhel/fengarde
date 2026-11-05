@@ -22,7 +22,7 @@ shipper --NDJSON, X-Fengarde-Shipper: winlogbeat--> ws1 POST /v1/ingest
 | `fluentbit-winevtlog` | Fluent Bit `winevtlog` input, **`event_data_as_map: true`** (Windows) | `sysmon` or `windows_eventlog` | `TimeCreated` string → epoch ms; Sysmon records routed by provider/EventID |
 | `winlogbeat` | Winlogbeat 7/8 ECS output (Windows) | `sysmon` or `windows_eventlog` | `winlog.*` nesting flattened to the parser keys; `winlog.time_created` → epoch ms |
 | `fluentbit-journald` | Fluent Bit `systemd` input (Linux) | `generic_syslog` → text-sniff routes sshd lines to `linux_ssh` | journald field map → RFC 3164 line built from record fields only |
-| `docker-json` | Docker `json-file` driver lines with the Fluent Bit `docker` filter (`docker_id`/`docker_name`) | `generic_syslog` | `{log,stream,time}` → RFC 3164 line; header rebuilt from record fields only |
+| `docker-json` | Docker `json-file` driver lines plus `docker_id`/`docker_name` added by the shipper config (e.g. a Lua filter; Fluent Bit has no `docker` filter) | `generic_syslog` | `{log,stream,time}` → RFC 3164 line; header rebuilt from record fields only |
 
 One sender-side rule: `source_type` must stay a REGISTERED parser
 (`windows_eventlog`, `sysmon`, `generic_syslog`, ... — ws1 rejects unknown
@@ -69,7 +69,7 @@ documented Fluent Bit setup).
   is rebuilt ONLY from fields present in the record.
 - `docker-json` FIXTURE — **documented example**: Docker's own canonical
   json-file example (docs.docker.com/engine/logging/drivers/json-file) +
-  `docker_id`/`docker_name` per Fluent Bit's `docker` filter manual.
+  `docker_id`/`docker_name` are fields the shipper config must add; they are not a documented Fluent Bit filter output (Fluent Bit has no `docker` filter).
 
 No specimen value was invented in any fixture.
 
@@ -82,7 +82,7 @@ No specimen value was invented in any fixture.
 - A naked Docker `json-file` line (no `docker_id`/`docker_name`, no
   `--log-opt tag`) has no identifier to build an honest RFC 3164 host/program
   from: the adapter leaves it untouched and it dead-letters with the standard
-  "set source_type" hint. Point the recipe at the Fluent Bit `docker` filter.
+  "set source_type" hint. The shipping recipe must add `docker_id`/`docker_name` itself (e.g. a Lua filter).
 - Winlogbeat's `winlog.time_created` is ISO-8601 with a UTC `Z`; any offset
   form is accepted; a naive timestamp is assumed UTC. Unparseable
   `TimeCreated` values simply drop the key (the parser falls back to its
