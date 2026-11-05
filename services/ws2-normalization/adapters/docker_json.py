@@ -45,7 +45,7 @@ FIXTURE = {
     "log": "User info: admin@bankcorp.example\n",
     "stream": "stdout",
     "time": "2019-01-01T11:11:11.111111111Z",
-    "docker_id": "1d8f02f0f8a9d0c1",   # fluent-bit docker filter, top-level
+    "docker_id": "1d8f02f0f8a9d0c1",   # added by the shipper config, top-level
     "docker_name": "n8n_bankcorp",
 }
 
@@ -57,7 +57,7 @@ SSH_FIXTURE = {
     "docker_name": "bastion_prod",
 }
 
-#: The naked json-file line (no docker filter): NO identifier -> adapter no-op
+#: The naked json-file line (no ids added): NO identifier -> adapter no-op
 NO_CONTAINER_FIXTURE = {
     "log": "sshd[731]: Failed password for invalid user root from 198.51.100.23 port 51234 ssh2\n",
     "stream": "stderr",
