@@ -37,6 +37,7 @@ from parsers import known_sources, resolve  # noqa: E402
 
 SAMPLES = HERE / "samples"
 PIHOLE_CAPTURE = "pihole-v6.dnsmasq.txt"
+WIN_CAPTURE = "windows-application.fluentbit.json"  # real: Fluent Bit 4.2.8, Windows 11, Application channel
 
 # (sample file, recipe doc, declared source_type, shipper label or None,
 #  parser expected after resolve(), OCSF class_uid, adapter constant it must equal or None)
@@ -193,8 +194,22 @@ def main() -> int:
     check(PIHOLE_CAPTURE in (HERE / "dnsmasq-pihole.md").read_text(encoding="utf-8"), f"{PIHOLE_CAPTURE}: not referenced in dnsmasq-pihole.md")
     check(PIHOLE_CAPTURE in readme, f"{PIHOLE_CAPTURE}: missing from README table")
 
+    # real capture (Fluent Bit 4.2.8 on Windows 11, Application channel, scrubbed): nested EventData must be flattened and the
+    # record must reach the windows_eventlog parser; WER 1001 has no EventID mapping so it must yield NO event (not a mis-parse)
+    wraw = load(WIN_CAPTURE)
+    check(wraw == fluentbit_winevtlog.CAPTURED_WIN11_APPLICATION, f"{WIN_CAPTURE}: differs from CAPTURED_WIN11_APPLICATION")
+    check(wraw.get("Computer") == "WIN11-LAB" and "DESKTOP-" not in json.dumps(wraw), f"{WIN_CAPTURE}: unscrubbed host name")
+    wad = adapt_record({"source_type": "windows_eventlog", "raw": wraw, "meta": {"received_at": 1673963483, "shipper": "fluentbit-winevtlog"}})
+    wp = resolve(wad)
+    check(wp is not None and wp.SOURCE_TYPE == "windows_eventlog", f"{WIN_CAPTURE}: resolved {getattr(wp, 'SOURCE_TYPE', None)!r}")
+    check("EventData" not in wad["raw"] and wad["raw"].get("EventName") == "crashpad_log", f"{WIN_CAPTURE}: EventData not flattened")
+    wev, werrs = normalize_one(wad)
+    check(wev is None and werrs, f"{WIN_CAPTURE}: expected an unmapped (no event) result, got {wev and wev.get('class_uid')}")
+    check(WIN_CAPTURE in (HERE / "windows.md").read_text(encoding="utf-8"), f"{WIN_CAPTURE}: not referenced in windows.md")
+    check(WIN_CAPTURE in readme, f"{WIN_CAPTURE}: missing from README table")
+
     # every sample file is used, every recipe doc is indexed in the README
-    used = {c[0] for c in CASES} | {PIHOLE_CAPTURE}
+    used = {c[0] for c in CASES} | {PIHOLE_CAPTURE, WIN_CAPTURE}
     for p in SAMPLES.iterdir():
         check(p.name in used, f"unused sample file {p.name}")
     for doc in sorted({c[1] for c in CASES}):

@@ -1,11 +1,20 @@
 """Adapter: Fluent Bit ``winevtlog`` records -> windows_eventlog / sysmon input.
 
 Target convention: the Windows Event Log XML attribute names the parsers
-already read (``EventID``, ``Computer``, ``SubjectUserName``, ...) — which is
-exactly the record shape Fluent Bit's ``winevtlog`` input emits in
-``event_data_as_map: true`` mode (the plugin flattens the event-data map into
-the record top level). The adapter must therefore convert almost nothing:
+already read (``EventID``, ``Computer``, ``SubjectUserName``, ...), FLAT at the
+record top level. Fluent Bit's ``winevtlog`` input in ``event_data_as_map: true``
+mode does NOT emit that: a real Fluent Bit 4.2.8 run on Windows 11 (see
+CAPTURED_WIN11_APPLICATION) puts the named event data in a nested ``EventData``
+map next to the system fields (``ProviderName``, ``EventID``, ``Computer``,
+``TimeCreated``, ``Message``, ``StringInserts`` ...). The 2023 published capture
+(FIXTURE, Fluent Bit 2.0.6) predates the map and carries no event-data keys at
+all; the adapter therefore normalizes either shape to flat:
 
+- a dict ``EventData`` is flattened into the top level (system keys win on a
+  collision, so event data can never overwrite ``EventID``/``Computer``/...);
+  the map exists only when the provider's template resolves -- classic
+  providers (e.g. Service Control Manager 7045) arrive with ``StringInserts``
+  only and nothing is mapped (honest scope below);
 - ``TimeCreated`` arrives as a formatted string (``"2023-01-17 12:50:59 +0000"``)
   -> epoch MILLISECONDS int, the parser's convention;
 - records from the Sysmon provider (or a Sysmon EventID without a named
@@ -99,6 +108,82 @@ SECURITY_FIXTURE = {
 }
 
 
+# REAL capture: Fluent Bit v4.2.8 (official win64 zip) winevtlog, Application channel, run as a normal user on Windows 11
+# (de-DE) on 2026-11-05 with Event_Data_As_Map true; Computer scrubbed to a placeholder, everything else verbatim --
+# including the localized Message/Response text and the mangled UserID (U+E0C4 where "NT-AUTORITAET" has its umlaut).
+CAPTURED_WIN11_APPLICATION = {
+    "ProviderName": "Windows Error Reporting",
+    "ProviderGuid": "{0EAD09BD-2157-539A-8D6D-C87F95B64D70}",
+    "Qualifiers": "",
+    "EventID": 1001,
+    "Version": 0,
+    "Level": 4,
+    "Task": 0,
+    "Opcode": 0,
+    "Keywords": "0x8000000000000000",
+    "TimeCreated": "2026-08-11 21:21:44 +0100",
+    "EventRecordID": 61384,
+    "ActivityID": "",
+    "RelatedActivityID": "",
+    "ProcessID": 20672,
+    "ThreadID": 18324,
+    "Channel": "Application",
+    "Computer": "WIN11-LAB",
+    "UserID": "NT-AUTORIT\ue0c4T\\SYSTEM",
+    "Message": "Fehlerbucket , Typ 0\r\nEreignisname: crashpad_log\r\nAntwort: Nicht verf\u00fcgbar\r\nCAB-Datei-ID: 0\r\n\r\nProblemsignatur:\r\nP1: setup.exe\r\nP2: 151.0.4129.72\r\nP3: EdgeInstallerError|msedge\r\nP4: 0x3c\r\nP5: \r\nP6: \r\nP7: \r\nP8: \r\nP9: \r\nP10: \r\n\r\nAngef\u00fcgte Dateien:\r\n\\\\?\\C:\\Windows\\SystemTemp\\msedge_installer.log\r\n\r\nDiese Dateien befinden sich m\u00f6glicherweise hier:\r\nNULL\r\n\r\nAnalysesymbol: \r\nEs wird erneut nach einer L\u00f6sung gesucht: 0\r\nBerichts-ID: af3e1eaf-434a-43aa-9398-b6c8192e1dee\r\nBerichtstatus: 268697600\r\nBucket mit Hash: \r\nCAB-Datei-Guid: 0",
+    "EventData": {
+        "Bucket": "",
+        "BucketType": "0",
+        "EventName": "crashpad_log",
+        "Response": "Nicht verf\u00fcgbar",
+        "CabId": "0",
+        "P1": "setup.exe",
+        "P2": "151.0.4129.72",
+        "P3": "EdgeInstallerError|msedge",
+        "P4": "0x3c",
+        "P5": "",
+        "P6": "",
+        "P7": "",
+        "P8": "",
+        "P9": "",
+        "P10": "",
+        "AttachedFiles": "\r\n\\\\?\\C:\\Windows\\SystemTemp\\msedge_installer.log",
+        "StorePath": "NULL",
+        "AnalysisSymbol": "",
+        "Rechecking": 0,
+        "ReportId": "af3e1eaf-434a-43aa-9398-b6c8192e1dee",
+        "ReportStatus": 268697600,
+        "HashedBucket": "",
+        "CabGuid": "0"
+    },
+    "StringInserts": [
+        "",
+        "0",
+        "crashpad_log",
+        "Nicht verf\u00fcgbar",
+        "0",
+        "setup.exe",
+        "151.0.4129.72",
+        "EdgeInstallerError|msedge",
+        "0x3c",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "\r\n\\\\?\\C:\\Windows\\SystemTemp\\msedge_installer.log",
+        "NULL",
+        "",
+        0,
+        "af3e1eaf-434a-43aa-9398-b6c8192e1dee",
+        268697600,
+        "",
+        "0"
+    ]
+}
+
+
 SOURCE_TYPES = frozenset({"windows_eventlog", "sysmon"})
 
 
@@ -149,6 +234,12 @@ def adapt(payload: dict) -> dict:
     if not isinstance(raw, dict):
         return payload
     out = dict(raw)
+    ed = out.get("EventData")
+    if isinstance(ed, dict):  # Fluent Bit >= 4.x nests the named event data; the parsers read it flat
+        del out["EventData"]
+        for k, v in ed.items():
+            if isinstance(k, str):
+                out.setdefault(k, v)
     ts = _to_epoch_ms(out.get("TimeCreated"))
     if ts is not None:
         out["TimeCreated"] = ts

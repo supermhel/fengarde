@@ -19,7 +19,7 @@ shipper --NDJSON, X-Fengarde-Shipper: winlogbeat--> ws1 POST /v1/ingest
 
 | `shipper` id | source | target parser | what changes |
 |---|---|---|---|
-| `fluentbit-winevtlog` | Fluent Bit `winevtlog` input, **`event_data_as_map: true`** (Windows) | `sysmon` or `windows_eventlog` | `TimeCreated` string → epoch ms; Sysmon records routed by provider/EventID |
+| `fluentbit-winevtlog` | Fluent Bit `winevtlog` input, **`event_data_as_map: true`** (Windows) | `sysmon` or `windows_eventlog` | nested `EventData` map (real Fluent Bit 4.2.8 shape) flattened to the parser keys; `TimeCreated` string → epoch ms; Sysmon records routed by provider/EventID |
 | `winlogbeat` | Winlogbeat 7/8 ECS output (Windows) | `sysmon` or `windows_eventlog` | `winlog.*` nesting flattened to the parser keys; `winlog.time_created` → epoch ms |
 | `fluentbit-journald` | Fluent Bit `systemd` input (Linux) | `generic_syslog` → text-sniff routes sshd lines to `linux_ssh` | journald field map → RFC 3164 line built from record fields only |
 | `docker-json` | Docker `json-file` driver lines plus `docker_id`/`docker_name` added by the shipper config (e.g. a Lua filter; Fluent Bit has no `docker` filter) | `generic_syslog` | `{log,stream,time}` → RFC 3164 line; header rebuilt from record fields only |

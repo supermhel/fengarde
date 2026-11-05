@@ -43,7 +43,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   not registered (new `fluent-bit-n8n-parsers.conf`), Vector n8n `decoding` option (now a `remap`), Vector env-var expansion is off by default in 0.61 (needs
   `VECTOR_DANGEROUSLY_ALLOW_ENV_VAR_INTERPOLATION=true`), Fluent Bit journald `Read_From_Tail On` delivered nothing (now `Off` + `DB`), `join!` VRL warning. A second container pass (2026-11-05) then verified a real `pihole/pihole:2026.10.1` log (committed as `docs/shipping/samples/pihole-v6.dnsmasq.txt`
   and exercised by the test), rsyslog `address=` / syslog-ng `ip()` binding, Vector `include_units` against a journal from real systemd units, and changed the syslog-ng relay config to
-  `keep-hostname(yes)` (the default replaced the appliance host name with the sender's resolved name). NOT run: the Windows (winevtlog) config, any real OPNsense/pfSense/Proxmox/n8n output, TLS.
+  `keep-hostname(yes)` (the default replaced the appliance host name with the sender's resolved name). NOT run: any real OPNsense/pfSense/Proxmox/n8n output, TLS.
+  Third pass (2026-11-05, Windows 11, official `fluent-bit-4.2.8-win64.zip`, normal user, Application and System channels, output to a local ws1 listener): the Windows config ran; the `winevtlog` input exists;
+  `Event_Data_As_Map` needs `event_template_cache_size` > 0 as documented; the real record nests the event data under `EventData` (not flat), so the `fluentbit-winevtlog` adapter now flattens it
+  (regression test in `test_adapters.py`); `Ignore_Missing_Channels true` added to the config (a missing Sysmon channel otherwise stops the whole input); new real sample
+  `docs/shipping/samples/windows-application.fluentbit.json`. Still NOT run: the Windows Security and Sysmon channels (no real 4624/Sysmon record seen), Fluent Bit 5.1.5 on Windows (exited at start-up
+  here), TLS. Known gap: providers without an `EventData` map (System 7045) carry the data only in `StringInserts`, which is not parsed.
 - `tools/test_shipping_recipes.py` (fast tier): 15 samples, each run through `adapt_record` -> `resolve` -> parse -> OCSF validation and
   required to resolve to the parser the recipe claims; adapter-fixture samples asserted equal to the adapter constants; recipe config
   blocks asserted identical to `docs/shipping/configs/`. Sample provenance (hand transcription of a third-party published output / template-derived /
