@@ -2,9 +2,11 @@
 
 > **Status of this recipe.** The configs below were written from vendor documentation and were **not
 > executed**: Vector, Fluent Bit, rsyslog and syslog-ng are not installed on the machine that produced them, so they are
-> **not machine-linted** (`tools/lint_shipping_recipes.sh` does that when you have the tool). What *is* proven is the
+> **not machine-linted** (`tools/lint_shipping_recipes.sh` does that when you have the tool). What a green test (per author run) covers is the
 > FENGARDE half: each sample listed here goes through the real WS-2 path (`adapt_record` -> `resolve` -> parse -> OCSF
 > validation) in `tools/test_shipping_recipes.py`. Whether your shipper emits exactly that sample shape is not proven by that test.
+
+The example host `192.0.2.10` is a placeholder: see [Reaching ws1 from another host](README.md#reaching-ws1-from-another-host) (published address change + firewall) before pointing a remote shipper at it.
 
 Ingest path: `POST http://<ws1>:8554/v1/ingest?source_type=<type>&format=ndjson` with
 `Authorization: Bearer $FENGARDE_INGEST_TOKEN`, optional `X-Fengarde-Shipper` (adapter label, one per sender) and
@@ -22,12 +24,14 @@ windows family (`windows_eventlog`/`sysmon`) and moves Sysmon records to `sysmon
 ## Fluent Bit (winevtlog)
 
 `Event_Data_As_Map true` is **required**: without it the event data is rendered into `Message`/`StringInserts`, which the
-adapter does not parse. Option names checked against the vendor page
-(<https://docs.fluentbit.io/manual/pipeline/inputs/windows-event-log-winevtlog>, read 2026-11-05); the `http` output options
+adapter does not parse. Option names were taken from the vendor docs
+(<https://docs.fluentbit.io/manual/pipeline/inputs/windows-event-log-winevtlog>) but not re-read for this revision: treat them as
+unchecked. `Event_Data_As_Map` is vendor-documented but was **not executed**; the `http` output options
 (`Format json_lines`, `Header`, `Json_Date_Key`) are from memory of the vendor docs and **unverified**.
 
 ```ini fluent-bit-windows.conf
 # Fluent Bit (Windows) -> FENGARDE HTTP ingest. Written from vendor docs, NOT executed.
+# WARNING: Authorization: Bearer goes over plain http:// -- cleartext on the wire; use the TLS front from docs/deployment.md or keep it on a trusted segment.
 [SERVICE]
     Flush        5
 
@@ -50,7 +54,7 @@ adapter does not parse. Option names checked against the vendor page
     Header           X-Fengarde-Source ${COMPUTERNAME}
 ```
 
-Samples checked: [Sysmon 1, transcribed real capture](samples/windows-sysmon.fluentbit.json) (fluent-bit 2.0.6, ClickHouse post, 2023-01-17;
+Samples checked: [Sysmon 1, hand transcription of a third-party published output, not byte-verified](samples/windows-sysmon.fluentbit.json) (fluent-bit 2.0.6, ClickHouse post, 2023-01-17;
 hand-transcribed, no capture file stored) -> `sysmon`; [Security 4624, template-derived](samples/windows-security.fluentbit.json) -> `windows_eventlog`.
 
 ## Vector

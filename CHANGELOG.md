@@ -42,7 +42,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   are not installed on the authoring machine); unverifiable option names are marked unverified.
 - `tools/test_shipping_recipes.py` (fast tier): 15 samples, each run through `adapt_record` -> `resolve` -> parse -> OCSF validation and
   required to resolve to the parser the recipe claims; adapter-fixture samples asserted equal to the adapter constants; recipe config
-  blocks asserted identical to `docs/shipping/configs/`. Sample provenance (transcribed real capture / template-derived /
+  blocks asserted identical to `docs/shipping/configs/`. Sample provenance (hand transcription of a third-party published output / template-derived /
   documented / illustrative) is labelled per sample.
 - `tools/lint_shipping_recipes.sh`: optional, manual config lint (`vector validate`, `fluent-bit --dry-run`, `rsyslogd -N1`,
   `syslog-ng --syntax-only`), skips tools that are absent; not in the default gate.
