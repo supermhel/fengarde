@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (2026-11-04, WP-2.3: alert false-positive tuning report)
+
+- `tools/alert_fp_report.py`: replays ALERT documents (the exact `make_alert`
+  shape WS-4 produces on `alerts`) from a JSONL dump and reports alerts per
+  rule per day (UTC), per-rule totals, and the top noisy sources
+  (`src_endpoint.ip`) with deterministic ordering — threshold tuning from
+  REAL traffic, zero infrastructure, read-only. Flags: `--since/--until`
+  (inclusive UTC days), `--rule`, `--top`, `--json`, `--out`, `-` stdin.
+  Malformed lines are counted and skipped; undated alerts count toward rule
+  totals and sources (never dropped); no-source alerts are bucketed.
+- Review fixes: `--json` no longer crashes (`per_day` is nested
+  `{rule: {day: n}}`); `--since/--until` are strictly validated (exit 2);
+  undated alerts are excluded under a window and reported; redelivered
+  `alert_id`s are deduped; live output goes to git-ignored `eval/real/out/`.
+- `tools/test_alert_fp_report.py` (11 groups, wired into the fast tier):
+  day bucketing (epoch ms + raw seconds), malformed tolerance, per-rule/day
+  counts, tie-broken source ranking, window bounds, undated/no-source
+  honesty, `--rule`, CLI round-trip incl. exit-2.
+- `docs/fp-report.md`: input-production recipes (OpenSearch scroll, bus
+  replay), CLI reference and a labelled SYNTHETIC sample output.
+
 ### Added (2026-11-04, WP-1.3: shipper adapters for real Fluent Bit / Winlogbeat / Docker shapes)
 
 - `services/ws2-normalization/adapters/` — four pure, total adapters that
