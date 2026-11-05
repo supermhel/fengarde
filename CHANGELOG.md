@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (2026-11-04, WP-3.1: TLS profile — Caddy, local-CA default)
+
+- `infra/docker-compose.tls.yml` — opt-in `tls` profile: Caddy service
+  (caddy:2.8-alpine, publishes 443 only) in front of the console and the
+  HTTP/JSON ingest; `ports: !override []` on ws7 + ws1 REMOVES their
+  plaintext publishes, so in this profile both endpoints answer ONLY over
+  TLS. Compose-spec merge tag requires docker compose >= 2.20.
+- `infra/caddy/Caddyfile` — `siem.internal` → ws7-dashboard:80 and
+  `ingest.internal` → ws1-collectors:8554, both with `tls internal`
+  (Caddy's local CA: no DNS, no ACME, no cert provisioning; public-domain
+  variant documented).
+- `tools/test_tls_profile.py` (fast tier) — static contract: the !override
+  removals are present for BOTH endpoints, caddy is tls-profile-only on
+  443, the Caddyfile proxies both targets with tls internal.
+- `docs/tls-profile.md` — setup, restore-to-plaintext, the merge semantics,
+  and the live verification transcript: console 200 over TLS, ingest 200
+  accepted:1 over TLS, unauthenticated ingest 401, plaintext 8080/8554
+  connection refused, stack restored to the default profile afterwards.
+
 ### Added (2026-11-04, WP-1.3: shipper adapters for real Fluent Bit / Winlogbeat / Docker shapes)
 
 - `services/ws2-normalization/adapters/` — four pure, total adapters that

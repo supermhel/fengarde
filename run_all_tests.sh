@@ -52,6 +52,9 @@ echo
 echo "== tools: dns_cardinality_report (measures the UNVERIFIED DNS allowlist; never edits it) =="; LAST_HEADER="== tools: dns_cardinality_report (measures the UNVERIFIED DNS allowlist; never edits it) =="
 $PY tools/test_dns_cardinality_report.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
+echo "== WP-3.1 TLS profile: plaintext publishes removed, caddy 443/local-CA only =="; LAST_HEADER="== WP-3.1 TLS profile =="
+$PY tools/test_tls_profile.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
 echo "== tools: fengarde_loadtest harness (percentiles + realistic profile stays alert-light) =="; LAST_HEADER="== tools: fengarde_loadtest harness (percentiles + realistic profile stays alert-light) =="
 $PY tools/test_fengarde_loadtest.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
