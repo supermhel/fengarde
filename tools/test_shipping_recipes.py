@@ -150,7 +150,7 @@ def main() -> int:
     for sample, doc, st, shipper, want_parser, want_class, const in CASES:
         label = sample
         raw = load(sample)
-        meta = {"received_at": 1673963483}
+        meta: dict[str, object] = {"received_at": 1673963483}
         if shipper:
             meta["shipper"] = shipper
         payload = {"source_type": st, "raw": raw, "meta": meta}
@@ -224,14 +224,14 @@ def main() -> int:
 
     # config blocks: ```<lang> <filename> ... ``` must equal docs/shipping/configs/<filename>
     n_blocks = 0
-    for doc in sorted(HERE.glob("*.md")):
-        for m in re.finditer(r"^```\w+ (\S+)\n(.*?)^```$", doc.read_text(encoding="utf-8"), re.S | re.M):
+    for md in sorted(HERE.glob("*.md")):
+        for m in re.finditer(r"^```\w+ (\S+)\n(.*?)^```$", md.read_text(encoding="utf-8"), re.S | re.M):
             n_blocks += 1
             cfg = HERE / "configs" / m.group(1)
-            check(cfg.is_file(), f"{doc.name}: block names missing config {m.group(1)}")
+            check(cfg.is_file(), f"{md.name}: block names missing config {m.group(1)}")
             if cfg.is_file():
                 check(cfg.read_text(encoding="utf-8") == m.group(2),
-                      f"{doc.name}: block {m.group(1)} differs from configs/{m.group(1)}")
+                      f"{md.name}: block {m.group(1)} differs from configs/{m.group(1)}")
     check(n_blocks > 0, "no config blocks found")
 
     # each config must sit in a LABELLED fence of its owning recipe doc (prose mentions do not count), carry the
@@ -245,18 +245,18 @@ def main() -> int:
         check(cfg.name in CONFIGS, f"config {cfg.name} has no CONFIGS entry (test cannot check it)")
         if cfg.name not in CONFIGS:
             continue
-        doc, sample = CONFIGS[cfg.name]
-        check(cfg.name in fenced.get(doc, ()), f"{cfg.name}: no labelled code fence in {doc}")
-        doc_text = (HERE / doc).read_text(encoding="utf-8")
+        owner_doc, cfg_sample = CONFIGS[cfg.name]
+        check(cfg.name in fenced.get(owner_doc, ()), f"{cfg.name}: no labelled code fence in {owner_doc}")
+        doc_text = (HERE / owner_doc).read_text(encoding="utf-8")
         text = cfg.read_text(encoding="utf-8")
-        for e in check_config(cfg.name, text, doc_text, sample):
+        for e in check_config(cfg.name, text, doc_text, cfg_sample):
             check(False, e)
         if cfg.name == "vector-n8n.toml":  # negative self-test: a drifted config MUST be flagged
             for old, new in (("source_type=n8n_audit", "source_type=bogus"), ("8554", "9999")):
-                check(old in text and check_config(cfg.name, text.replace(old, new), doc_text, sample),
+                check(old in text and check_config(cfg.name, text.replace(old, new), doc_text, cfg_sample),
                       f"self-test: mutated {old!r} not detected")
         if cfg.name == "rsyslog-forward.conf":
-            check(check_config(cfg.name, text.replace("5515", "5514"), doc_text, sample),
+            check(check_config(cfg.name, text.replace("5515", "5514"), doc_text, cfg_sample),
                   "self-test: mutated syslog port not detected")
     for d in HERE.glob("*.md"):
         for m in re.finditer(r"^```(ini|toml|lua|conf)[ \t]*$", d.read_text(encoding="utf-8"), re.M):
