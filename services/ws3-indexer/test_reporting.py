@@ -58,6 +58,22 @@ def test_template_backend_renders_and_validates():
     check(report["citations"] == [], "template backend must have empty citations")
     check("brute-force" in report["body"], "body should reference the rule title")
     check(reporting._validate_backend_response(report), "own output must pass its own validator")
+    # WP-4.6: the AI-triage provenance line is part of EVERY template report —
+    # the engine (stub vs model) is trust-critical and must be named even when
+    # there is no verdict yet.
+    check("## AI triage" in report["body"]
+          and "no AI verdict" in report["body"],
+          "report must state the AI-triage provenance section (absent verdict)")
+
+    alert_with_ai = dict(_ALERT)
+    alert_with_ai["ai"] = {"verdict": "suspicious", "level": "medium",
+                           "engine": "ollama", "model": "qwen2.5:7b",
+                           "summary": "burst from one address"}
+    body = reporting._render_template(alert_with_ai, {"status": "new", "note": ""})
+    check("by ollama" in body and "/ qwen2.5:7b" in body,
+          f"report must name the engine/model of the verdict: {body[-500:]}")
+    check("NO ENGINE RECORDED" not in body,
+          "an absent engine must not be fabricated once the verdict exists")
 
 
 def test_validator_rejects_non_draft_status():

@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Honesty (2026-11-04, WP-4.6: AI triage is a seam, not a feature — engine named per verdict)
+
+- Per-alert incident report (`services/ws3-indexer/reporting.py` template)
+  now carries an **AI triage** section naming the engine on every verdict:
+  `stub` vs `ollama/<model>` (+ verdict, level, summary), and stating
+  explicitly when NO verdict exists — a report never implies a model ran.
+  (The console already names the engine per alert; Alarms view.)
+- README + `eval/llm_triage/README.md` state the bar a model must clear
+  before AI triage may be called a feature (on the committed 54-case set,
+  `--direct`: beat the always-malicious baseline AND the score-driven stub,
+  abstain < 20 %, error < 5 %, stub share 0 %) — until then it is
+  documented as a seam. Choosing/buying a model stays the owner's decision.
+- `test_reporting.py` extended: the template must include the AI-triage
+  provenance section with and without a verdict, and must never fabricate an
+  engine.
+
 ### Added (2026-11-04, WP-1.3: shipper adapters for real Fluent Bit / Winlogbeat / Docker shapes)
 
 - `services/ws2-normalization/adapters/` — four pure, total adapters that

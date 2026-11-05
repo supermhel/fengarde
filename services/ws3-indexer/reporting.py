@@ -56,6 +56,7 @@ def _render_template(alert: dict, triage: dict) -> str:
     actor = alert.get("actor") or {}
     status = triage.get("status", "new")
     note = triage.get("note") or "(none)"
+    ai = alert.get("ai") or {}
 
     lines = [
         f"# Incident Report Draft — {rule_title}",
@@ -72,6 +73,17 @@ def _render_template(alert: dict, triage: dict) -> str:
         "## Triage state",
         f"- Status: {status}",
         f"- Analyst note: {note}",
+        "",
+        "## AI triage (WP-4.6 honesty: name the engine, always)",
+        # The engine/model line is MANDATORY signal: a verdict's provenance
+        # (labelled stub vs local model) decides how much the reader may
+        # trust it, so the report prints it even when absent.
+        (f"- Verdict: {ai.get('verdict', '(none)')} ({ai.get('level', '-')}) "
+         f"by {ai.get('engine') or 'NO ENGINE RECORDED'}"
+         + (f" / {ai.get('model')}" if ai.get("model") else "")
+         + (f" — {ai.get('summary')}" if ai.get("summary") else "")
+         if ai else "- Verdict: — (no AI verdict; the stub does not fire unless "
+                    "an AI engine is configured)"),
         "",
         "## Fields an analyst must still provide",
         "- [ANALYST MUST PROVIDE: business impact assessment]",
