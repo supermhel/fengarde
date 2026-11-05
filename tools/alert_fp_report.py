@@ -17,7 +17,12 @@ document per line). The report never mutates anything.
 Contract behaviour (tested in tools/test_alert_fp_report.py, zero-infra):
 - malformed lines are counted and skipped, never fatal (mirrors ws1/ws2);
 - alerts with no usable ``time`` are aggregated into "undated" and never
-  dropped silently;
+  dropped silently (with a --since/--until window they cannot be windowed, so
+  they are EXCLUDED from every table and reported in ``undated_excluded``);
+- redelivered alerts (same ``alert_id``, at-least-once bus) are counted once;
+  ``duplicates_dropped`` is reported, alerts without an id are counted as-is
+  and flagged in ``no_alert_id``;
+- --since/--until must be strict YYYY-MM-DD (exit 2 otherwise);
 - alerts whose ``src_endpoint.ip`` is absent land in a "no source" bucket;
 - output ordering is deterministic: rules and days sorted, sources by
   (count desc, ip asc) — stable report diffs for threshold tuning.
@@ -25,12 +30,17 @@ Contract behaviour (tested in tools/test_alert_fp_report.py, zero-infra):
 Run:
     python tools/alert_fp_report.py --jsonl alerts.ndjson
     python tools/alert_fp_report.py --jsonl alerts.ndjson --since 2026-10-01 --rule common_bruteforce
-    ... | tee docs/fp-report.md
+    python tools/alert_fp_report.py --jsonl alerts.ndjson --out eval/real/out/fp-report.md
+
+Live-traffic output (raw source IPs) must NEVER be committed: write it to a
+git-ignored path (``eval/real/out/``), not under docs/. docs/fp-report.md holds
+only a labelled SYNTHETIC sample.
 """
 from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from collections import Counter
 from datetime import datetime, timezone
@@ -118,10 +128,13 @@ def aggregate(alerts: list[dict],
     ``since``/``until`` are inclusive ``YYYY-MM-DD`` day bounds applied to the
     UTC alert day; alerts outside are not counted anywhere (and are reported
     as ``excluded_by_window`` so an operator sees the filter took effect).
-    An alert with NO usable time cannot be windowed: it counts toward the
-    rule total and the noisy-sources table (it IS real noise) and is surfaced
-    in ``undated`` — never dropped. An alert without a rule_id still counts
-    toward noisy sources; there is no honest per-rule bucket for it.
+    Without a window, an alert with NO usable time counts toward the rule total
+    and noisy sources and is surfaced in ``undated``. With a window it cannot
+    be placed inside it, so it is excluded everywhere and counted in
+    ``undated_excluded`` (and ``excluded_by_window``). An alert without a
+    rule_id still counts toward noisy sources. Alerts repeating an already
+    seen ``alert_id`` are dropped (``duplicates_dropped``): delivery is
+    at-least-once, so counting replays would inflate threshold decisions.
     """
     per_day: Counter = Counter()            # (rule_id, day) -> count
     per_rule: Counter = Counter()           # rule_id -> count
@@ -129,13 +142,30 @@ def aggregate(alerts: list[dict],
     undated = 0
     no_source = 0
     excluded = 0
+    undated_excluded = 0
+    duplicates = 0
+    no_id = 0
+    seen: set[str] = set()
     titles: dict[str, str] = {}
+    windowed = bool(since or until)
     for alert in alerts:
+        aid = alert.get("alert_id")
+        if isinstance(aid, str) and aid:
+            if aid in seen:
+                duplicates += 1
+                continue
+            seen.add(aid)
+        else:
+            no_id += 1
         rid = alert.get("rule_id")
         rid = rid if isinstance(rid, str) and rid else None
         d = day_of(alert.get("time"))
         if d is None:
             undated += 1
+            if windowed:
+                excluded += 1
+                undated_excluded += 1
+                continue
             if rid:
                 per_rule[rid] += 1
                 if isinstance(alert.get("rule_title"), str):
@@ -157,14 +187,20 @@ def aggregate(alerts: list[dict],
             no_source += 1
         else:
             per_source[ip] += 1
+    nested: dict[str, dict[str, int]] = {}
+    for (rid, day), n in sorted(per_day.items()):
+        nested.setdefault(rid, {})[day] = n
     return {
-        "per_day": dict(per_day),
+        "per_day": nested,
         "per_rule": dict(per_rule),
         "per_source": dict(per_source),
         "titles": titles,
         "undated": undated,
         "no_source": no_source,
         "excluded_by_window": excluded,
+        "undated_excluded": undated_excluded,
+        "duplicates_dropped": duplicates,
+        "no_alert_id": no_id,
         "total": len(alerts),
     }
 
@@ -183,7 +219,10 @@ def render_markdown(agg: dict, top_n: int,
     out.append(f"- total alerts read: {agg['total']}")
     out.append(f"- undated (no usable time, counted in rule totals): {agg['undated']}")
     out.append(f"- sources without an ip: {agg['no_source']}")
-    out.append(f"- excluded by the day window: {agg['excluded_by_window']}")
+    out.append(f"- excluded by the day window: {agg['excluded_by_window']}"
+               f" (of which undated: {agg['undated_excluded']})")
+    out.append(f"- duplicate alert_id dropped (bus redelivery): {agg['duplicates_dropped']}")
+    out.append(f"- alerts without an alert_id (cannot be deduped): {agg['no_alert_id']}")
     out.append("")
     per_day = agg["per_day"]
     if per_day:
@@ -191,8 +230,9 @@ def render_markdown(agg: dict, top_n: int,
         out.append("")
         out.append("| rule_id | day | alerts |")
         out.append("|---|---|---|")
-        for (rid, day), n in sorted(per_day.items(), key=lambda kv: (kv[0][0], kv[0][1])):
-            out.append(f"| {rid} | {day} | {n} |")
+        for rid in sorted(per_day):
+            for day in sorted(per_day[rid]):
+                out.append(f"| {rid} | {day} | {per_day[rid][day]} |")
         out.append("")
     per_rule = agg["per_rule"]
     if per_rule:
@@ -219,6 +259,19 @@ def render_markdown(agg: dict, top_n: int,
     return "\n".join(out)
 
 
+def valid_day(text: Optional[str]) -> bool:
+    """Strict zero-padded YYYY-MM-DD that is a real calendar day."""
+    if text is None:
+        return True
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", text):
+        return False
+    try:
+        datetime.strptime(text, "%Y-%m-%d")
+    except ValueError:
+        return False
+    return True
+
+
 def main(argv: Optional[list[str]] = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--jsonl", required=True,
@@ -230,6 +283,14 @@ def main(argv: Optional[list[str]] = None) -> int:
     ap.add_argument("--json", action="store_true", help="emit the aggregates as JSON")
     ap.add_argument("--out", help="write the report to a file instead of stdout")
     args = ap.parse_args(argv)
+
+    for flag, val in (("--since", args.since), ("--until", args.until)):
+        if not valid_day(val):
+            print(f"error: {flag} must be YYYY-MM-DD (UTC day), got {val!r}", file=sys.stderr)
+            return 2
+    if args.since and args.until and args.since > args.until:
+        print("error: --since is after --until", file=sys.stderr)
+        return 2
 
     if args.jsonl == "-":
         lines = sys.stdin.read().splitlines()

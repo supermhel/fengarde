@@ -118,3 +118,7 @@ PRODUCT.md
 
 # console e2e last-run output (written by every run; never commit)
 tools/console_e2e/out/
+
+# live-traffic FP-tuning reports (WP-2.3 tools/alert_fp_report.py --out): raw
+# source IPs, never commit. Same dir as the PR #161 labelling lane.
+eval/real/out/

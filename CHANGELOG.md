@@ -17,7 +17,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (inclusive UTC days), `--rule`, `--top`, `--json`, `--out`, `-` stdin.
   Malformed lines are counted and skipped; undated alerts count toward rule
   totals and sources (never dropped); no-source alerts are bucketed.
-- `tools/test_alert_fp_report.py` (8 groups, wired into the fast tier):
+- Review fixes: `--json` no longer crashes (`per_day` is nested
+  `{rule: {day: n}}`); `--since/--until` are strictly validated (exit 2);
+  undated alerts are excluded under a window and reported; redelivered
+  `alert_id`s are deduped; live output goes to git-ignored `eval/real/out/`.
+- `tools/test_alert_fp_report.py` (11 groups, wired into the fast tier):
   day bucketing (epoch ms + raw seconds), malformed tolerance, per-rule/day
   counts, tie-broken source ranking, window bounds, undated/no-source
   honesty, `--rule`, CLI round-trip incl. exit-2.

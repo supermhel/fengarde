@@ -27,12 +27,16 @@ def check(cond: object, msg: str) -> None:
         FAILS.append(msg)
 
 
+_SEQ = [0]
+
+
 def alert(rule: str, day: str, ip: str, title: str = "", ts=None) -> dict:
     """A make_alert-shaped document; day default gives 12:00:00 UTC."""
     if ts is None:
         dt = datetime.strptime(day + "T12:00:00", "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc)
         ts = int(dt.timestamp() * 1000)
-    a = {"alert_id": f"{rule}-{day}-{ip}", "time": ts, "rule_id": rule,
+    _SEQ[0] += 1  # unique ids: identical rule/day/ip alerts are distinct alerts
+    a = {"alert_id": f"{rule}-{day}-{ip}-{_SEQ[0]}", "time": ts, "rule_id": rule,
          "rule_title": title or rule, "level": "high", "score": 0.9,
          "src_endpoint": {"ip": ip}, "triage": {"status": "new"}}
     return a
@@ -73,9 +77,8 @@ def test_per_rule_per_day_counts():
         alert("m365_inbox_rule_external_forward", "2026-10-02", "10.0.0.5"),
     ]
     agg = afr.aggregate([json.loads(x) for x in dump(alerts).splitlines()])
-    check(agg["per_day"] == {("common_bruteforce", "2026-10-01"): 2,
-                             ("common_bruteforce", "2026-10-02"): 1,
-                             ("m365_inbox_rule_external_forward", "2026-10-02"): 1},
+    check(agg["per_day"] == {"common_bruteforce": {"2026-10-01": 2, "2026-10-02": 1},
+                             "m365_inbox_rule_external_forward": {"2026-10-02": 1}},
           f"per_day wrong: {agg['per_day']}")
     check(agg["per_rule"]["common_bruteforce"] == 3,
           f"per_rule wrong: {agg['per_rule']}")
@@ -114,18 +117,69 @@ def test_window_bounds_and_undated():
     ]
     parsed = [json.loads(x) for x in dump(alerts).splitlines()]
     agg = afr.aggregate(parsed, since="2026-10-02", until="2026-10-09")
-    check(set(agg["per_day"]) == {("r1", "2026-10-05")},
+    check(agg["per_day"] == {"r1": {"2026-10-05": 1}},
           f"window bounds wrong: {agg['per_day']}")
     check(agg["excluded_by_window"] == 3, f"excluded wrong: {agg['excluded_by_window']}")
-    # undated: no usable time -> rule total yes, per_day no, sources yes
     undated = {"rule_id": "r1", "rule_title": "t", "src_endpoint": {"ip": "10.9.9.9"}}
+    # windowed: an undated alert cannot be placed in the window -> excluded + reported
     agg2 = afr.aggregate(parsed + [undated], since="2026-10-02", until="2026-10-09")
-    check(agg2["undated"] == 1, f"undated wrong: {agg2['undated']}")
-    # r1: 10-05 in-window + undated = 2 (10-01 and 10-10 are excluded by window)
-    check(agg2["per_rule"]["r1"] == 2, f"undated must count toward rule total: {agg2['per_rule']}")
-    check(agg2["per_source"].get("10.9.9.9") == 1,
-          f"undated must count toward sources: {agg2['per_source']}")
-    check(sum(agg2["per_day"].values()) == 1, "per_day must exclude the undated")
+    check(agg2["undated"] == 1 and agg2["undated_excluded"] == 1,
+          f"undated must be reported as excluded: {agg2['undated']}/{agg2['undated_excluded']}")
+    check(agg2["per_rule"] == {"r1": 1}, f"windowed undated leaked into rules: {agg2['per_rule']}")
+    check("10.9.9.9" not in agg2["per_source"],
+          f"windowed undated leaked into sources: {agg2['per_source']}")
+    check(agg2["excluded_by_window"] == 4, f"excluded must include undated: {agg2['excluded_by_window']}")
+    # no window: undated counts toward rule total + sources, never per_day
+    agg3 = afr.aggregate(parsed + [undated])
+    check(agg3["undated"] == 1 and agg3["undated_excluded"] == 0, "no-window undated accounting wrong")
+    check(agg3["per_rule"]["r1"] == 4, f"undated must count toward rule total: {agg3['per_rule']}")
+    check(agg3["per_source"].get("10.9.9.9") == 1, "undated must count toward sources")
+    check(sum(n for d in agg3["per_day"].values() for n in d.values()) == 4,
+          "per_day must exclude the undated")
+
+
+def test_dedupe_by_alert_id():
+    a = alert("r1", "2026-10-01", "10.0.0.1")
+    noid1 = {"rule_id": "r1", "time": a["time"], "src_endpoint": {"ip": "10.0.0.2"}}
+    noid2 = dict(noid1)
+    agg = afr.aggregate([a, dict(a), dict(a), noid1, noid2])
+    check(agg["duplicates_dropped"] == 2, f"duplicates wrong: {agg['duplicates_dropped']}")
+    check(agg["per_rule"] == {"r1": 3}, f"redelivery double-counted: {agg['per_rule']}")
+    check(agg["per_source"] == {"10.0.0.1": 1, "10.0.0.2": 2}, f"sources: {agg['per_source']}")
+    check(agg["no_alert_id"] == 2, f"id-less alerts must be flagged: {agg['no_alert_id']}")
+
+
+def test_utc_day_boundary():
+    # 23:59:59.999 UTC vs 00:00:00.000 UTC next day -> different UTC days
+    last = int(datetime(2026, 10, 1, 23, 59, 59, 999000, tzinfo=timezone.utc).timestamp() * 1000)
+    check(afr.day_of(last) == "2026-10-01", "23:59:59.999Z must stay on 2026-10-01")
+    check(afr.day_of(last + 1) == "2026-10-02", "00:00:00.000Z must roll to 2026-10-02")
+
+
+def test_cli_json_and_window_validation():
+    import contextlib
+    import io
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        path = str(Path(d) / "a.ndjson")
+        a = alert("r1", "2026-10-01", "10.0.0.1")
+        Path(path).write_text(dump([a, a, alert("r1", "2026-10-02", "10.0.0.1")]), encoding="utf-8")
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = afr.main(["--jsonl", path, "--json"])
+        check(rc == 0, f"--json must exit 0, got {rc}")
+        doc = json.loads(buf.getvalue())
+        check(doc["per_day"] == {"r1": {"2026-10-01": 1, "2026-10-02": 1}}, f"json per_day: {doc.get('per_day')}")
+        check(doc["duplicates_dropped"] == 1, "json must carry duplicates_dropped")
+        for bad in ("2026-10-1", "2026-10-01T00:00:00", "garbage", "2026-13-01", "20261001"):
+            with contextlib.redirect_stderr(io.StringIO()):
+                rc = afr.main(["--jsonl", path, "--since", bad])
+            check(rc == 2, f"--since {bad!r} must exit 2, got {rc}")
+        with contextlib.redirect_stderr(io.StringIO()):
+            rc = afr.main(["--jsonl", path, "--until", "nope"])
+            check(rc == 2, "bad --until must exit 2")
+            rc = afr.main(["--jsonl", path, "--since", "2026-10-05", "--until", "2026-10-01"])
+            check(rc == 2, "since > until must exit 2")
 
 
 def test_no_source_bucket_and_no_rule():
@@ -177,7 +231,9 @@ def main() -> int:
     tests = [test_day_of, test_parse_tolerates_malformed_lines,
              test_per_rule_per_day_counts, test_noisy_sources_ordering_and_ties,
              test_window_bounds_and_undated, test_no_source_bucket_and_no_rule,
-             test_rule_filter_and_markdown, test_main_cli_round_trip]
+             test_rule_filter_and_markdown, test_main_cli_round_trip,
+             test_dedupe_by_alert_id, test_utc_day_boundary,
+             test_cli_json_and_window_validation]
     for t in tests:
         t()
     if FAILS:
@@ -186,7 +242,8 @@ def main() -> int:
             print("  -", f)
         return 1
     print(f"[OK] alert_fp_report: {len(tests)} test groups — per-rule/day counts, "
-          "noisy-source ranking, window bounds, undated/no-source honesty, CLI")
+          "noisy-source ranking, window bounds, undated/no-source honesty, dedupe, "
+          "UTC boundary, --json, date validation, CLI")
     return 0
 
 
