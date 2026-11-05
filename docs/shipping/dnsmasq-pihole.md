@@ -2,13 +2,15 @@
 
 > **Status of this recipe.** The configs below were written from vendor documentation and were **not
 > executed**: Vector, Fluent Bit, rsyslog and syslog-ng are not installed on the machine that produced them, so they are
-> **not machine-linted** (`tools/lint_shipping_recipes.sh` does that when you have the tool). What *is* proven is the
+> **not machine-linted** (`tools/lint_shipping_recipes.sh` does that when you have the tool). What a green test (per author run) covers is the
 > FENGARDE half: each sample listed here goes through the real WS-2 path (`adapt_record` -> `resolve` -> parse -> OCSF
 > validation) in `tools/test_shipping_recipes.py`. Whether your shipper emits exactly that sample shape is not proven by that test.
 
 Parser: `dns_query` (class 4002). Path: syslog TCP 5515 (or UDP 5514), declared `generic_syslog`; the `query[...] ... from ...`
 shape makes the WS-2 text sniff select `dns_query`. dnsmasq logs queries only with `log-queries`; Pi-hole writes
 `/var/log/pihole/pihole.log` (path is the usual default, **verify on your install**).
+
+The example host `192.0.2.10` is a placeholder: see [Reaching ws1 from another host](README.md#reaching-ws1-from-another-host) (published address change + firewall) before pointing a remote shipper at it.
 
 ## Vector
 

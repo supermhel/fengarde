@@ -1,4 +1,5 @@
 # Vector: JSON-lines file of n8n audit events -> FENGARDE HTTP ingest. Written from vendor docs, NOT executed.
+# WARNING: Authorization: Bearer goes over plain http:// -- cleartext on the wire; use the TLS front from docs/deployment.md or keep it on a trusted segment.
 # Records MUST already be in the n8n_audit parser's shape (eventType, user, ...). See n8n.md.
 [sources.n8n]
 type = "file"

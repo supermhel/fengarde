@@ -2,7 +2,7 @@
 
 > **Status of this recipe.** The configs below were written from vendor documentation and were **not
 > executed**: Vector, Fluent Bit, rsyslog and syslog-ng are not installed on the machine that produced them, so they are
-> **not machine-linted** (`tools/lint_shipping_recipes.sh` does that when you have the tool). What *is* proven is the
+> **not machine-linted** (`tools/lint_shipping_recipes.sh` does that when you have the tool). What a green test (per author run) covers is the
 > FENGARDE half: each sample listed here goes through the real WS-2 path (`adapt_record` -> `resolve` -> parse -> OCSF
 > validation) in `tools/test_shipping_recipes.py`. Whether your shipper emits exactly that sample shape is not proven by that test.
 
@@ -16,10 +16,13 @@ Ingest path: `POST http://<ws1>:8554/v1/ingest?source_type=<type>&format=ndjson`
 `X-Fengarde-Source` (device name). See [../ingest-http.md](../ingest-http.md). TLS is not terminated by ws1; put it behind the proxy in
 [../deployment.md](../deployment.md) before leaving a loopback/LAN segment.
 
+The example host `192.0.2.10` is a placeholder: see [Reaching ws1 from another host](README.md#reaching-ws1-from-another-host) (published address change + firewall) before pointing a remote shipper at it.
+
 Keep `Strip_Underscores Off`: the adapter reads `MESSAGE`, `_HOSTNAME`, `_PID`, `SYSLOG_IDENTIFIER`.
 
 ```ini fluent-bit-journald.conf
 # Fluent Bit (Linux) systemd/journald -> FENGARDE HTTP ingest. Written from vendor docs, NOT executed.
+# WARNING: Authorization: Bearer goes over plain http:// -- cleartext on the wire; use the TLS front from docs/deployment.md or keep it on a trusted segment.
 [SERVICE]
     Flush        5
 
@@ -76,8 +79,10 @@ address = "192.0.2.10:5515"
 encoding.codec = "text"
 ```
 
-Sample: [the line this remap is meant to produce](samples/linux-sshd.vector.syslog.txt) (the adapter's own output for the
-journald fixture, with the same header shape) -> `linux_ssh`. A real Vector emission was never captured.
+Sample: [the line this remap is meant to produce](samples/linux-sshd.vector.syslog.txt) -> `linux_ssh`. It is the body the
+`fluentbit-journald` adapter produces for the journald fixture with the remap's `<38>` PRI prepended (the adapter emits no PRI; this
+remap does; `.host` fills the host slot and the program slot is the hardcoded `sshd`). The test asserts that equality. A real Vector
+emission was never captured.
 
 ## Not covered
 

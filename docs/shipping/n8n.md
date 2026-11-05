@@ -2,11 +2,13 @@
 
 > **Status of this recipe.** The configs below were written from vendor documentation and were **not
 > executed**: Vector, Fluent Bit, rsyslog and syslog-ng are not installed on the machine that produced them, so they are
-> **not machine-linted** (`tools/lint_shipping_recipes.sh` does that when you have the tool). What *is* proven is the
+> **not machine-linted** (`tools/lint_shipping_recipes.sh` does that when you have the tool). What a green test (per author run) covers is the
 > FENGARDE half: each sample listed here goes through the real WS-2 path (`adapt_record` -> `resolve` -> parse -> OCSF
 > validation) in `tools/test_shipping_recipes.py`. Whether your shipper emits exactly that sample shape is not proven by that test.
 
 Parser: `n8n_audit` (class 6003 API Activity; login/logout 3002). Path: HTTP, `source_type=n8n_audit`.
+
+The example host `192.0.2.10` is a placeholder: see [Reaching ws1 from another host](README.md#reaching-ws1-from-another-host) (published address change + firewall) before pointing a remote shipper at it.
 
 Ingest path: `POST http://<ws1>:8554/v1/ingest?source_type=<type>&format=ndjson` with
 `Authorization: Bearer $FENGARDE_INGEST_TOKEN`, optional `X-Fengarde-Shipper` (adapter label, one per sender) and
@@ -21,6 +23,7 @@ against this parser**, so no config here turns n8n's native output into that sha
 
 ```toml vector-n8n.toml
 # Vector: JSON-lines file of n8n audit events -> FENGARDE HTTP ingest. Written from vendor docs, NOT executed.
+# WARNING: Authorization: Bearer goes over plain http:// -- cleartext on the wire; use the TLS front from docs/deployment.md or keep it on a trusted segment.
 # Records MUST already be in the n8n_audit parser's shape (eventType, user, ...). See n8n.md.
 [sources.n8n]
 type = "file"
@@ -41,6 +44,7 @@ request.headers = { "X-Fengarde-Shipper" = "vector", "X-Fengarde-Source" = "n8n-
 
 ```ini fluent-bit-n8n.conf
 # Fluent Bit: JSON-lines file of n8n audit events -> FENGARDE HTTP ingest. Written from vendor docs, NOT executed.
+# WARNING: Authorization: Bearer goes over plain http:// -- cleartext on the wire; use the TLS front from docs/deployment.md or keep it on a trusted segment.
 # Records MUST already be in the n8n_audit parser's shape (eventType, user, ...). See n8n.md.
 [INPUT]
     Name    tail
