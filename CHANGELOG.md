@@ -17,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - README + `eval/llm_triage/README.md` state the bar a model must clear
   before AI triage may be called a feature (on the committed 54-case set,
   `--direct`: beat the always-malicious baseline AND the score-driven stub,
-  abstain < 20 %, error < 5 %, stub share 0 %) — until then it is
+  abstain < 20 %, error < 5 %, stub share 0 % — the thresholds are a maintainer-chosen policy, not derived from data) — until then it is
   documented as a seam. Choosing/buying a model stays the owner's decision.
 - `test_reporting.py` extended: the template must include the AI-triage
   provenance section with and without a verdict, and must never fabricate an

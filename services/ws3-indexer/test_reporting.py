@@ -62,7 +62,7 @@ def test_template_backend_renders_and_validates():
     # the engine (stub vs model) is trust-critical and must be named even when
     # there is no verdict yet.
     check("## AI triage" in report["body"]
-          and "no AI verdict" in report["body"],
+          and "no AI verdict recorded" in report["body"],
           "report must state the AI-triage provenance section (absent verdict)")
 
     alert_with_ai = dict(_ALERT)
@@ -74,6 +74,27 @@ def test_template_backend_renders_and_validates():
           f"report must name the engine/model of the verdict: {body[-500:]}")
     check("NO ENGINE RECORDED" not in body,
           "an absent engine must not be fabricated once the verdict exists")
+    check("stub does not fire" not in report["body"],
+          "absent-verdict wording must not claim the stub is off")
+
+    # Real shape: the verdict is a SEPARATE ai-<event id> doc; the detection
+    # alert never carries `ai`. attach_ai must join them (any backend).
+    from storage.memory import MemoryStore
+    store = MemoryStore()
+    store.index("alerts-2026.01.01", "ai-evt-1", {
+        "alert_id": "ai-evt-1", "event_ids": ["evt-1"],
+        "ai": {"verdict": "benign", "level": "low", "engine": "stub",
+               "model": None, "summary": "score-driven"}})
+    joined = reporting.attach_ai(store, _ALERT)
+    check("ai" not in _ALERT and joined["ai"]["engine"] == "stub",
+          "attach_ai must join the separate ai-* doc without mutating the alert")
+    body = reporting._render_template(joined, {"status": "new", "note": ""})
+    check("by stub" in body, f"joined verdict must name the engine: {body[-400:]}")
+    trig = dict(_ALERT, event_ids=["port-22"], trigger_event_id="evt-1")
+    check(reporting.attach_ai(store, trig).get("ai") is not None,
+          "attach_ai must also try trigger_event_id")
+    check(reporting.attach_ai(store, dict(_ALERT, event_ids=["nope"])).get("ai") is None,
+          "no ai doc -> alert unchanged")
 
 
 def test_validator_rejects_non_draft_status():

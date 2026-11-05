@@ -28,7 +28,7 @@ AI triage ships with a labelled **stub** as the default. A model may be called
 "the triage feature" only when it clears ALL of these on the committed
 54-case set, measured with `run_eval.py --all-local --direct` and rendered
 into `RESULTS.md` (owner chooses/buys the model; this repo only states the
-bar):
+bar; the thresholds below are a maintainer-chosen policy, not derived from the data):
 
 1. accuracy strictly better than the **always-malicious baseline**;
 2. accuracy strictly better than the **score-driven stub**;
