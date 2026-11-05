@@ -28,8 +28,8 @@ corrupt the Q12/clock-skew semantics) and rides along as ``meta.docker_time``.
 
 Fixture provenance: the byte shape is Docker's OWN canonical example from the
 official ``json-file`` driver documentation (docs.docker.com/engine/logging/
-drivers/json-file); ``docker_id``/``docker_name`` are the fields Fluent Bit's
-``docker`` filter adds (docs.fluentbit.io, "Docker" filter). DOCUMENTED
+drivers/json-file); ``docker_id``/``docker_name`` are fields the SHIPPER CONFIG must add
+(Fluent Bit has no ``docker`` filter; checked against fluent-bit-docs 2026-11-05). DOCUMENTED
 EXAMPLE, not a local capture — labelled as such per repo honesty rule.
 """
 from __future__ import annotations
