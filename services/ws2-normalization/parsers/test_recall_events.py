@@ -46,7 +46,8 @@ check(svc_ins["unmapped"]["service"]["suspicious_path"] is True, "StringInserts 
 svc_named_wins = parse("windows_eventlog", {"EventID": 7045, "TimeCreated": T, "Computer": "wks1", "ServiceName": "Named",
                                             "ImagePath": r"C:\Windows\a.exe", "StringInserts": ["Other", r"C:\x\b.exe"]})
 check("Named -> C:" in svc_named_wins["message"], "named fields must win over StringInserts")
-for bad in ("junk", 5, [], [None], [{}], ["only-name"]):
+bad_inserts: list[object] = ["junk", 5, [], [None], [{}], ["only-name"]]
+for bad in bad_inserts:
     r = parse("windows_eventlog", {"EventID": 7045, "TimeCreated": T, "Computer": "wks1", "StringInserts": bad})
     check(r is not None, f"7045 with StringInserts={bad!r} must still parse (total)")
 clr_sec = parse("windows_eventlog", {"EventID": 1102, "TimeCreated": T, "Computer": "dc1", "SubjectUserName": "adm"})
