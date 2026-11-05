@@ -12,7 +12,7 @@ the samples claim while syslog configs target TCP 5515 (drift fails).
 
 NOT proven here: that Vector / Fluent Bit / rsyslog / syslog-ng accept the
 configs or emit the sample shapes (this test runs none of them). They were linted and run live once by hand
-(2026-11-05, container images); see the Verification log in docs/shipping/README.md.
+(2026-11-05, container images; pihole-v6.dnsmasq.log is a real pihole/pihole capture); see the Verification log in docs/shipping/README.md.
 
 Run: python tools/test_shipping_recipes.py
 """
@@ -36,6 +36,7 @@ from main import normalize_one  # noqa: E402
 from parsers import known_sources, resolve  # noqa: E402
 
 SAMPLES = HERE / "samples"
+PIHOLE_CAPTURE = "pihole-v6.dnsmasq.log"
 
 # (sample file, recipe doc, declared source_type, shipper label or None,
 #  parser expected after resolve(), OCSF class_uid, adapter constant it must equal or None)
@@ -170,8 +171,30 @@ def main() -> int:
         check(f"`{want_parser}`" in doc_text, f"{label}: {doc} does not name parser `{want_parser}`")
         check(sample in readme, f"{label}: missing from README table")
 
+    # real capture (pihole/pihole 2026.10.1, scrubbed): every line through the Vector path (<30> prefix) and the Fluent Bit
+    # path (header as observed); `query[...]` lines must become dns_query 4002 naming the queried host, nothing else may
+    lines = (SAMPLES / PIHOLE_CAPTURE).read_text(encoding="utf-8").splitlines()
+    n_q = 0
+    for ln in lines:
+        is_q = bool(re.search(r"dnsmasq\[\d+\]: query\[", ln))
+        n_q += is_q
+        for tag, raw in (("vector", "<30>" + ln), ("fluentbit", "<14>Nov  5 09:17:30 pihole01 fluent-bit: " + ln)):
+            adapted = adapt_record({"source_type": "generic_syslog", "raw": raw, "meta": {"received_at": 1673963483}})
+            p_ = resolve(adapted)
+            got = p_.SOURCE_TYPE if p_ else None
+            check((got == "dns_query") == is_q, f"{PIHOLE_CAPTURE} [{tag}]: {ln!r} resolved to {got!r}")
+            if is_q:
+                ev, errs = normalize_one(adapted)
+                host = ln.split("] ", 1)[1].split()[0]
+                check(ev is not None and not errs and ev.get("class_uid") == 4002
+                      and ev["dst_endpoint"]["hostname"] == host, f"{PIHOLE_CAPTURE} [{tag}]: {ln!r} -> {errs[:1]}")
+    check(n_q == 25 and len(lines) == 81, f"{PIHOLE_CAPTURE}: expected 81 lines / 25 queries, got {len(lines)} / {n_q}")
+    check(not re.search(r"\b172\.(1[6-9]|2\d|3[01])\.", "\n".join(lines)), f"{PIHOLE_CAPTURE}: unscrubbed host address")
+    check(PIHOLE_CAPTURE in (HERE / "dnsmasq-pihole.md").read_text(encoding="utf-8"), f"{PIHOLE_CAPTURE}: not referenced in dnsmasq-pihole.md")
+    check(PIHOLE_CAPTURE in readme, f"{PIHOLE_CAPTURE}: missing from README table")
+
     # every sample file is used, every recipe doc is indexed in the README
-    used = {c[0] for c in CASES}
+    used = {c[0] for c in CASES} | {PIHOLE_CAPTURE}
     for p in SAMPLES.iterdir():
         check(p.name in used, f"unused sample file {p.name}")
     for doc in sorted({c[1] for c in CASES}):
