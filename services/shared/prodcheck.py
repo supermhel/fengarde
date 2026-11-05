@@ -54,22 +54,40 @@ def prod_active() -> bool:
     return os.getenv("FENGARDE_PROFILE", "").strip().lower() == "prod"
 
 
+# The printed refusal text comes ONLY from this table of constants, looked up by a reason code. The password value (and
+# anything derived from it) never reaches a message, a log record or stderr; CodeQL py/clear-text-logging-sensitive-data
+# would otherwise follow the value into the aggregated failure list.
+_PW_REASONS = {
+    "type": "must be a string",
+    "default": "is a known default password — prod refuses to start with it",
+    "short": "is shorter than the 12-character minimum (the user store's own rule)",
+    "long": "is longer than the 256-character maximum",
+}
+
+
+def admin_password_issue(password: object, min_chars: int = 12) -> Optional[str]:
+    """Reason CODE (a key of ``_PW_REASONS``) why the admin password is unacceptable for prod, or None."""
+    if not isinstance(password, str):
+        return "type"
+    if password.strip().lower() in DEFAULT_PASSWORDS:
+        return "default"
+    if len(password) < min_chars:
+        return "short"
+    if len(password) > 256:
+        return "long"
+    return None
+
+
 def admin_password_ok(password: str, min_chars: int = 12) -> Optional[str]:
-    """Why the provided admin password is unacceptable for prod, or None.
+    """Why the provided admin password is unacceptable for prod, or None (constant text, never the value).
 
     Default-credential refusal is the point (a known admin password with
     RBAC on is still default-open); length mirrors users.password_problem.
     """
-    if not isinstance(password, str):
-        return "must be a string"
-    if password.strip().lower() in DEFAULT_PASSWORDS:
-        return "is a known default password — prod refuses to start with it"
-    if len(password) < min_chars:
-        return (f"is shorter than the {min_chars}-character minimum (the user "
-                f"store's own rule)")
-    if len(password) > 256:
-        return "is longer than the 256-character maximum"
-    return None
+    code = admin_password_issue(password, min_chars)
+    if code == "short" and min_chars != 12:
+        return f"is shorter than the {int(min_chars)}-character minimum (the user store's own rule)"
+    return None if code is None else _PW_REASONS[code]
 
 
 def _bus_requires_redis_password() -> bool:
@@ -94,9 +112,9 @@ def prod_problems() -> list[str]:
                 "FENGARDE_FIRST_BOOT_FILE (prod generates a fresh password into "
                 "that file at first boot)")
     else:
-        issue = admin_password_ok(pw)
-        if issue:
-            problems.append(f"FENGARDE_ADMIN_PASSWORD {issue}")
+        code = admin_password_issue(pw)
+        if code:
+            problems.append("FENGARDE_ADMIN_PASSWORD " + _PW_REASONS[code])
     if _bus_requires_redis_password() and not os.getenv("REDIS_PASSWORD"):
         problems.append("REDIS_PASSWORD is not set (Redis bus with no auth)")
     return problems
