@@ -1,0 +1,1 @@
+<38>Nov  5 10:00:03 fw01 sshd[3302]: Failed password for invalid user root from 198.51.100.23 port 51234 ssh2

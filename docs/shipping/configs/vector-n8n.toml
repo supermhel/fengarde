@@ -1,0 +1,17 @@
+# Vector: JSON-lines file of n8n audit events -> FENGARDE HTTP ingest. Written from vendor docs, NOT executed.
+# Records MUST already be in the n8n_audit parser's shape (eventType, user, ...). See n8n.md.
+[sources.n8n]
+type = "file"
+include = ["/home/node/.n8n/fengarde-audit.log"]
+decoding.codec = "json"
+
+[sinks.fengarde]
+type = "http"
+inputs = ["n8n"]
+uri = "http://192.0.2.10:8554/v1/ingest?source_type=n8n_audit&format=ndjson"
+method = "post"
+encoding.codec = "json"
+framing.method = "newline_delimited"
+auth.strategy = "bearer"
+auth.token = "${FENGARDE_INGEST_TOKEN}"
+request.headers = { "X-Fengarde-Shipper" = "vector", "X-Fengarde-Source" = "n8n-01" }

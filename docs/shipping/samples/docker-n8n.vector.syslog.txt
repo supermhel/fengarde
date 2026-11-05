@@ -1,0 +1,1 @@
+<14>Jan  1 11:11:11 1d8f02f0f8a9 n8n_bankcorp: User info: admin@bankcorp.example
