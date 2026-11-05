@@ -279,7 +279,7 @@ never touches the bus, and no backend service depends on it.
 | WS | Service | Role |
 |----|---------|------|
 | 1 | `services/ws1-collectors` | Collect logs → `raw.events` |
-| 2 | `services/ws2-normalization` | Parsers → validated OCSF events (19 parsers) |
+| 2 | `services/ws2-normalization` | Parsers → validated OCSF events (21 parsers) |
 | 3 | `services/ws3-indexer` | Routing + OpenSearch indexing; entity/incident-graph/evidence read routes |
 | 4 | `services/ws4-detection` | Correlation rules + scoring + windowing (46 rules) |
 | 5 | `services/ws5-ai` | Triage — real local-LLM (Ollama), stub fallback, bounded concurrency |

@@ -15,7 +15,7 @@
 #
 ################################################################################
 
-# Build all 19 atheris fuzz harnesses from tools/fuzz/ into $OUT.
+# Build all 21 atheris fuzz harnesses from tools/fuzz/ into $OUT.
 # This list MUST match .github/workflows/fuzz.yml and tools/fuzz/ exactly.
 FUZZ_TARGETS=(
   fuzz_active_directory
@@ -34,9 +34,11 @@ FUZZ_TARGETS=(
   fuzz_modbus_anomaly
   fuzz_n8n_audit
   fuzz_opcua_audit
+  fuzz_suricata_eve
   fuzz_sysmon
   fuzz_vmware_vsphere
   fuzz_windows_eventlog
+  fuzz_zeek_json
 )
 
 # The harnesses add services/ to sys.path at RUN time, which PyInstaller cannot see, so (1) the Dockerfile puts the

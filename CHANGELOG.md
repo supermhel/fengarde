@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (2026-11-05, WP-1.5: Suricata EVE and Zeek JSON parsers)
+
+- `suricata_eve` and `zeek_json` parsers (`services/ws2-normalization/parsers/`). FENGARDE captures no packets; these normalise
+  the JSON logs of tools that do. Suricata EVE: `alert`, `flow`, `dns`, `modbus`, `dnp3`. Zeek: `conn.log`, `dns.log`,
+  `notice.log`, `modbus.log` and the CISA ICSNPP `modbus_detailed.log`. `raw` may be a dict or one JSON line. Alerts, notices and
+  Modbus/DNP3 events are 4001 activity 99 (never Deny/Accept, so port-scan and beaconing rules do not consume them); flow/conn
+  are 4001 activity 2; DNS queries are 4002 activity 1 and so DO feed `common_dns_exfil` / `common_dns_tunnel_by_domain`.
+  Neither parser sets `unmapped.ot.anomaly_type`; `modbus_anomaly`/`opcua_audit` are untouched. No detection rules added.
+  Content-sniff routing gains two narrow branches (Suricata `event_type`+`flow_id`; Zeek `uid`+`id.orig_h`) ahead of the
+  `event_type` branch that would otherwise send Suricata to `n8n_audit`; `source_type` stays authoritative.
+- Fixtures are REAL: `parsers/test_fixtures/suricata_eve_real.json` (Suricata 8.0.8) and `zeek_json_real.json` (Zeek 9.0.1 +
+  icsnpp-modbus 2.0.0), each produced by running the tool image on public suricata-verify pcaps (MIT repo licence); pcap
+  URL/sha256, image digest, command and the three locally-authored Suricata rules are in each file's `provenance` header.
+  `parsers/test_suricata_zeek.py` (fast tier) checks mapping, dict-vs-line parity, routing, hostile-input totality and prints a
+  mutation-based field-coverage report (mapped vs dropped fixture fields).
+- Gates: `FIXTURES` entries in `tools/check_rule_producers.py` (loaded from the fixture files), contract-test samples in
+  `mocks/raw_samples.json` + `test_contract.py`, `tools/fuzz/fuzz_suricata_eve.py` / `fuzz_zeek_json.py`, `fuzz.yml` matrix and
+  `projects/fengarde/build.sh`; `contracts/detection-coverage.md` documents the new producers. Parser count 19 -> 21.
+- Not verified: no live Suricata/Zeek sensor feeding a running stack; only the three public pcaps were run; atheris was not run.
+
 ### Added (2026-11-04, WP-1.3: shipper adapters for real Fluent Bit / Winlogbeat / Docker shapes)
 
 - `services/ws2-normalization/adapters/` — four pure, total adapters that

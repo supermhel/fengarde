@@ -20,6 +20,16 @@
       "source_type": "linux_ssh",
       "raw": "Jun 10 13:55:36 db01 sshd[2154]: Failed password for invalid user admin from 203.0.113.5 port 51000 ssh2",
       "meta": { "ip": "203.0.113.5", "received_at": 1750000300000 }
+    },
+    {
+      "source_type": "suricata_eve",
+      "raw": "{\"timestamp\": \"2016-05-24T23:27:03.085375+0000\", \"flow_id\": 2055533764596995, \"pcap_cnt\": 4, \"event_type\": \"alert\", \"src_ip\": \"10.16.1.11\", \"src_port\": 33458, \"dest_ip\": \"10.16.1.1\", \"dest_port\": 53, \"proto\": \"UDP\", \"ip_v\": 4, \"pkt_src\": \"wire/pcap\", \"tx_id\": 0, \"alert\": {\"action\": \"allowed\", \"gid\": 1, \"signature_id\": 9900001, \"rev\": 1, \"signature\": \"FENGARDE-FIXTURE local rule: DNS query seen\", \"category\": \"\", \"severity\": 3}, \"dns\": {\"version\": 3, \"type\": \"request\", \"tx_id\": 0, \"id\": 44779, \"flags\": \"120\", \"rd\": true, \"opcode\": 0, \"rcode\": \"NOERROR\", \"queries\": [{\"rrname\": \"codemonkey.net\", \"rrtype\": \"A\"}]}, \"app_proto\": \"dns\", \"direction\": \"to_server\", \"flow\": {\"pkts_toserver\": 1, \"pkts_toclient\": 0, \"bytes_toserver\": 85, \"bytes_toclient\": 0, \"start\": \"2016-05-24T23:27:03.085375+0000\", \"src_ip\": \"10.16.1.11\", \"dest_ip\": \"10.16.1.1\", \"src_port\": 33458, \"dest_port\": 53}}",
+      "meta": { "ip": "10.16.1.11", "received_at": 1750000400000 }
+    },
+    {
+      "source_type": "zeek_json",
+      "raw": {"ts": 1464132421.96078, "uid": "CR70ck3blasuJpa2oi", "id.orig_h": "10.16.1.11", "id.orig_p": 53679, "id.resp_h": "10.16.1.1", "id.resp_p": 53, "proto": "udp", "trans_id": 39339, "rtt": 0.3723611831665039, "query": "client-cf.dropbox.com", "qclass": 1, "qclass_name": "C_INTERNET", "qtype": 1, "qtype_name": "A", "rcode": 0, "rcode_name": "NOERROR", "AA": false, "TC": false, "RD": true, "RA": true, "Z": 0, "answers": ["52.85.112.21"], "TTLs": [47.0], "rejected": false, "opcode": 0, "opcode_name": "query"},
+      "meta": { "ip": "10.16.1.11", "received_at": 1750000500000 }
     }
   ]
 }
