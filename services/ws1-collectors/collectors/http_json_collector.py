@@ -83,6 +83,12 @@ DEFAULT_MAX_SOURCES = 4096                # bound on the per-source bucket map (
 # A sender may label the device a batch came from (X-Fengarde-Source / ?source=). The label is only trusted as far as the
 # bearer token: it keys the per-source rate limit, the bus partition and the metrics, never an authorization decision.
 _SOURCE_ID_RE = re.compile(r"^[A-Za-z0-9._:@\-]{1,128}$")
+#: Optional shipper self-label (X-Fengarde-Shipper / ?shipper=), e.g.
+#: ``fluentbit-winevtlog``, ``winlogbeat``, ``fluentbit-journald``, ``docker-json``.
+#: Stamped into meta.shipper for the WS-2 adapter stage (WP-1.3). Same
+#: character class as the device label; advisory only (keys the adapter
+#: selection, never an authorization decision).
+_SHIPPER_ID_RE = re.compile(r"^[A-Za-z0-9._:\-]{1,64}$")
 
 # Frozen snapshot of services/ws2-normalization/parsers/_REGISTRY keys: the
 # daemon validates source_type WITHOUT importing ws2 (separate image; the
@@ -239,7 +245,8 @@ class HttpJsonCollector:
     def handle_batch(self, source_type: str, format_name: str,
                      records: list, errors: list, *,
                      idempotency_key: Optional[str], peer_ip: str,
-                     source_id: Optional[str] = None) -> dict:
+                     source_id: Optional[str] = None,
+                     shipper_id: Optional[str] = None) -> dict:
         """Process one validated batch; returns THIS request's counts.
 
         Never raises on a malformed record -- a JSON parse error (collected
@@ -277,6 +284,7 @@ class HttpJsonCollector:
                     "format": format_name,
                     "shipper_ip": peer_ip,
                     **({"source": source_id} if source_id else {}),
+                    **({"shipper": shipper_id} if shipper_id else {}),
                 }),
             }
             try:
@@ -453,6 +461,7 @@ class _IngestHandler(BaseHTTPRequestHandler):
             return
         try:
             source_id = self._source_id(parsed.get("source"), self.headers.get("X-Fengarde-Source"))
+            shipper_id = self._shipper_id(parsed.get("shipper"), self.headers.get("X-Fengarde-Shipper"))
         except _BadRequest as exc:
             c.bump("requests_rejected")
             self._send_json(400, {"error": str(exc)})
@@ -494,7 +503,8 @@ class _IngestHandler(BaseHTTPRequestHandler):
         idem_key = self.headers.get("X-Fengarde-Idempotency-Key") or None
         counts = c.handle_batch(source_type, format_name, records,
                                 parse_errors, idempotency_key=idem_key,
-                                peer_ip=self.client_address[0], source_id=source_id)
+                                peer_ip=self.client_address[0], source_id=source_id,
+                                shipper_id=shipper_id)
         payload = {
             "source_type": source_type,
             "format": format_name,
@@ -546,6 +556,19 @@ class _IngestHandler(BaseHTTPRequestHandler):
             return None
         if not _SOURCE_ID_RE.match(value):
             raise _BadRequest("source must be 1-128 characters of [A-Za-z0-9._:@-]")
+        return value
+
+    def _shipper_id(self, query_val, header_val):
+        """Optional shipper self-label from ?shipper= or X-Fengarde-Shipper
+        (None when absent; conflict or bad characters = 400). Advisory only —
+        it selects the WS-2 adapter, never an authorization decision."""
+        if query_val and header_val and query_val != header_val:
+            raise _BadRequest("conflicting shipper between query parameter and header")
+        value = (query_val or header_val or "").strip()
+        if not value:
+            return None
+        if not _SHIPPER_ID_RE.match(value):
+            raise _BadRequest("shipper must be 1-64 characters of [A-Za-z0-9._:-]")
         return value
 
     def _param(self, query_val, header_val, *, default=None):

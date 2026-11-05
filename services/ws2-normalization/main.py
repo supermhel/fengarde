@@ -21,6 +21,7 @@ from shared.bus import Bus  # noqa: E402
 from shared.ocsf import validate  # noqa: E402
 from shared.sanitize import strip_ansi_and_control  # noqa: E402
 from parsers import resolve  # noqa: E402
+from adapters import adapt_record  # noqa: E402
 from parsers.timeutil import to_epoch_ms  # noqa: E402
 from enrichment import enrich  # noqa: E402
 
@@ -154,12 +155,15 @@ def _sanitize_free_text(event: dict) -> dict:
 def normalize_one(raw_payload: dict):
     """Return (event, errors). event is None if no parser / unparseable.
 
-    Pipeline: parse -> sanitize free text (M1) -> A5 enrich (additive, offline,
-    fail-open) -> validate. Enrichment runs before validate so the enriched
-    event is what's checked against Contract A, but it only ADDS optional
-    src_endpoint.reputation/location -- an event validates identically whether
-    or not a data match adds a field.
+    Pipeline: adapt (WP-1.3: shipper shape -> parser input, by meta.shipper or
+    shape sniff; no-op for unlabelled/unknown records) -> parse -> sanitize free
+    text (M1) -> A5 enrich (additive, offline, fail-open) -> validate.
+    Enrichment runs before validate so the enriched event is what's checked
+    against Contract A, but it only ADDS optional src_endpoint.reputation/
+    location -- an event validates identically whether or not a data match
+    adds a field.
     """
+    raw_payload = adapt_record(raw_payload)
     parser = resolve(raw_payload)
     if parser is None:
         st = raw_payload.get("source_type", "")

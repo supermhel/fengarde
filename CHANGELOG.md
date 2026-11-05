@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (2026-11-04, WP-1.3: shipper adapters for real Fluent Bit / Winlogbeat / Docker shapes)
+
+- `services/ws2-normalization/adapters/` — four pure, total adapters that
+  rewrite real shipper records into the dict the target parser already
+  expects, selected by `meta.shipper` (new `X-Fengarde-Shipper` header on the
+  HTTP ingest edge, additive with validation) or by deterministic shape
+  sniff; unknown records pass through UNCHANGED and adapters never raise:
+  `fluentbit-winevtlog` (flat PascalCase `event_data_as_map` shape;
+  `TimeCreated` string -> epoch ms; Sysmon records routed by provider/EventID
+  so a mixed Security+Sysmon channel works), `winlogbeat` (ECS `winlog.*`
+  nesting flattened to the parser keys), `fluentbit-journald` (journald field
+  map -> RFC 3164 line rebuilt from record fields only, sshd identifier
+  routes auth failures to `linux_ssh`), `docker-json` (json-file
+  `{log,stream,time}` + shipper-added `docker_id`/`docker_name` -> RFC 3164 line; id-less lines are
+  a documented no-op, never fabricated). Fixture provenance is in every
+  module header + docs/input-adapters.md (REAL capture for fluent-bit
+  winevtlog; template/schema-derived and labelled as such for the rest).
+- `test_adapters.py` wired into the fast tier: every fixture through the full
+  WS-2 path to valid OCSF, sniff negative controls, label-vs-sniff
+  precedence, and the extreme-value totality sweep (2,850 mutations, none
+  raised); existing parser fixtures and outputs unchanged.
+- Review fixes (2026-11-05): docker date padding for day >= 10 with hours 00-09; adapters only rewrite a record whose declared
+  `source_type` is in the adapter's family; a wrong label falls through to the sniff; native numeric `TimeCreated` is left to the
+  parser; winlogbeat `event_data` can no longer overwrite `EventID`/`Computer`/`TimeCreated`; docker ids and names are validated;
+  journald without `_HOSTNAME` is a no-op; fixture provenance wording corrected (transcribed, not byte-exact).
+
 ## [0.12.0] - 2026-11-05
 
 _Headline: real input. FENGARDE can now be fed over HTTP/JSON and TCP syslog, the gap-hunt tracker is closed, and the full-corpus benchmark has a CI lane. The two new listeners have unit and synthetic evidence only; no real-network deployment has exercised them. Notable changes: `5515/tcp` (TCP syslog) now starts in the default stack, bound to loopback; `POST /v1/ingest` on `127.0.0.1:8554` needs `FENGARDE_INGEST_TOKEN`; the TCP metric names changed during review (event counters are the unprefixed syslog ones when UDP is up). The graph is still entity-linked with direction from entity type, not event time (false_correlation_rate 1.0 on the twin)._
