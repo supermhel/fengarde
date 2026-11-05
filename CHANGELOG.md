@@ -28,6 +28,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   WS-2 path to valid OCSF, sniff negative controls, label-vs-sniff
   precedence, and the extreme-value totality sweep (2,850 mutations, none
   raised); existing parser fixtures and outputs unchanged.
+- Review fixes (2026-11-05): docker date padding for day >= 10 with hours 00-09; adapters only rewrite a record whose declared
+  `source_type` is in the adapter's family; a wrong label falls through to the sniff; native numeric `TimeCreated` is left to the
+  parser; winlogbeat `event_data` can no longer overwrite `EventID`/`Computer`/`TimeCreated`; docker ids and names are validated;
+  journald without `_HOSTNAME` is a no-op; fixture provenance wording corrected (transcribed, not byte-exact).
 
 ## [0.12.0] - 2026-11-05
 

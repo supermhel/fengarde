@@ -30,7 +30,7 @@ creation record in that shape. TEMPLATE-DERIVED from the field catalog, not a
 captured specimen — labelled as such per repo honesty rule. (A real
 pre-ECS Winlogbeat 1.x capture exists in the Logz.io 2016 post
 "Windows Event Log Analysis with Winlogbeat" — logz.io/blog/windows-event-log-
-analysis — and is quoted in docs/input-adapters.md as historical shape; the
+analysis — and is only cited, not quoted; the
 adapter targets the current nested ECS shape.)
 """
 from __future__ import annotations
@@ -120,10 +120,6 @@ SECURITY_LOGON_FIXTURE = {
 
 
 def _to_epoch_ms(value) -> Optional[int]:
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, int):
-        return value if value >= 0 else None
     if not isinstance(value, str):
         return None
     s = value.strip()
@@ -139,6 +135,9 @@ def _to_epoch_ms(value) -> Optional[int]:
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
     return int(dt.timestamp() * 1000)
+
+
+SOURCE_TYPES = frozenset({"windows_eventlog", "sysmon"})
 
 
 def _flatten_event_data(winlog: dict, out: dict) -> None:
@@ -171,6 +170,8 @@ def adapt(payload: dict) -> dict:
     if not isinstance(winlog, dict):
         return payload
     out: dict = {}
+    # event_data first: its keys are free-form and must never overwrite the adapter's own fields set below.
+    _flatten_event_data(winlog, out)
     eid = winlog.get("event_id")
     try:
         eid_int = int(eid) if (not isinstance(eid, bool) and eid is not None) else None
@@ -182,9 +183,11 @@ def adapt(payload: dict) -> dict:
     if isinstance(computer, str) and computer:
         out["Computer"] = computer
     ts = _to_epoch_ms(winlog.get("time_created"))
+    tc = winlog.get("time_created")
     if ts is not None:
         out["TimeCreated"] = ts
-    _flatten_event_data(winlog, out)
+    elif isinstance(tc, (int, float)) and not isinstance(tc, bool):
+        out["TimeCreated"] = tc  # native numeric time: the parser's timeutil owns seconds/ms/FILETIME
     # Preserve winlog-level context the parsers don't read but operators may
     # want to audit (record_id, task, opcode, provider_guid) + the user
     # resolution artifacts, under a namespaced key — never dropped silently.

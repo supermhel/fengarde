@@ -66,6 +66,9 @@ def _rfc3164_time(usec) -> Optional[str]:
     return dt.strftime("%b %d %H:%M:%S")
 
 
+SOURCE_TYPES = frozenset({"generic_syslog", "linux_ssh"})
+
+
 def _ident(raw: dict) -> Optional[str]:
     for key in ("SYSLOG_IDENTIFIER", "_COMM"):
         v = raw.get(key)
@@ -104,6 +107,8 @@ def adapt(payload: dict) -> dict:
         return payload
     host = raw.get("_HOSTNAME")
     host = host if isinstance(host, str) and host and host != "-" else None
+    if host is None:
+        return payload  # no honest host for the header: leave the record unchanged (never put the program in the host slot)
     ident = _ident(raw)
     pid = _pid(raw)
     stamp = _rfc3164_time(raw.get("_SOURCE_REALTIME_TIMESTAMP")

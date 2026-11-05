@@ -14,13 +14,13 @@ the record top level). The adapter must therefore convert almost nothing:
   ``Security`` and ``Microsoft-Windows-Sysmon/Operational`` (the documented
   setup), and a fixed sender-side ``source_type`` cannot cover both.
 
-Fixture provenance (REAL capture): the sample below is the byte-exact output
+Fixture provenance (transcribed from a published capture; not byte-exact, no capture file stored): the sample below is the output
 of fluent-bit 2.0.6's ``winevtlog`` input on a Windows host (2023-01-17),
 published by ClickHouse in their community post
 "Send Windows Event Logs to ClickHouse with Fluent Bit"
 (clickhouse.com/blog/sending-windows-event-logs-to-clickhouse-with-fluent-bit);
-it was ingested into ClickHouse ``JSONEachRow`` and the object is reproduced
-verbatim here (the ``StringInserts`` array truncated to its first two entries
+it was ingested into ClickHouse ``JSONEachRow`` and the object is transcribed
+here (the ``StringInserts`` array truncated to its first two entries
 for fixture size — the adapter does not read it). No specimen value was
 invented. ``event_data_as_map: true`` is REQUIRED (the recipe sets it); in
 default mode Fluent Bit renders the event text under ``Message`` and the event
@@ -99,29 +99,24 @@ SECURITY_FIXTURE = {
 }
 
 
+SOURCE_TYPES = frozenset({"windows_eventlog", "sysmon"})
+
+
 def _to_epoch_ms(value) -> Optional[int]:
-    """Fluent Bit's TimeCreated string -> epoch ms, or None when unparseable.
+    """Fluent Bit's TimeCreated string -> epoch ms, or None when it is not the plugin's rendering.
 
     Accepts ``%Y-%m-%d %H:%M:%S %z`` (the plugin's rendering), optional
-    fractional seconds, and a missing timezone (assumed UTC). Any other type
-    (already-ms int, junk) passes through ints >= 0 and rejects the rest —
-    the parser then falls back to its received_at default, exactly as it does
-    for a record that never carried a TimeCreated.
+    fractional seconds, and a missing timezone (assumed UTC). Anything else
+    (numbers, digit strings, junk) returns None and the caller leaves the value
+    UNTOUCHED: the parser's own time handling (parsers/timeutil.py: seconds, ms,
+    FILETIME, ISO) already deals with native shapes, and a conversion here would
+    misdate them.
     """
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, int):
-        return value if value >= 0 else None
     if not isinstance(value, str):
         return None
     s = value.strip()
-    if not s:
+    if not s or s.isdigit():
         return None
-    if s.isdigit():
-        try:
-            return int(s)
-        except (ValueError, OverflowError):
-            return None
     for fmt in ("%Y-%m-%d %H:%M:%S %z", "%Y-%m-%d %H:%M:%S.%f %z",
                 "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S"):
         try:
@@ -155,9 +150,7 @@ def adapt(payload: dict) -> dict:
         return payload
     out = dict(raw)
     ts = _to_epoch_ms(out.get("TimeCreated"))
-    if ts is None and "TimeCreated" in out:
-        del out["TimeCreated"]
-    elif ts is not None:
+    if ts is not None:
         out["TimeCreated"] = ts
     provider = str(out.get("ProviderName") or "").strip().lower()
     eid = out.get("EventID")

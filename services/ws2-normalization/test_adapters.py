@@ -185,7 +185,7 @@ def test_shipper_label_beats_sniff_and_unknown_is_noop():
     # Explicit meta.shipper wins even when the shape is ambiguous...
     winlog_like = {"Channel": "Security", "EventID": 4624, "Computer": "c",
                    "TimeCreated": "2023-01-17 12:50:59 +0000"}
-    payload = {"source_type": "generic_syslog", "raw": winlog_like,
+    payload = {"source_type": "windows_eventlog", "raw": winlog_like,
                "meta": {"shipper": "fluentbit-winevtlog"}}
     out = adapt_record(payload)
     check(out["source_type"] == "windows_eventlog",
@@ -220,6 +220,48 @@ def test_sniff_negative_controls():
     check(not winlogbeat.sniffs(docker_rec) and not fluentbit_winevtlog.sniffs(docker_rec)
           and not fluentbit_journald.sniffs(docker_rec),
           "docker record tripped another family's sniffer")
+
+
+def test_review_fixes_pr150():
+    # docker: a day >= 10 with an hour 00-09 must keep a parseable RFC3164 header (the old replace() ate the hour's pad)
+    rec = {"log": "hello\n", "stream": "stdout", "time": "2019-01-10T09:05:00Z", "docker_id": "1d8f02f0f8a9d0c1",
+           "docker_name": "app"}
+    out = docker_json.adapt({"source_type": "generic_syslog", "raw": rec, "meta": {}})
+    check("Jan 10  9" not in out["raw"] and "Jan 10 09:05:00 " in out["raw"], f"docker date padding: {out['raw']!r}")
+    rec["time"] = "2019-01-05T11:11:11Z"
+    check("Jan  5 11:11:11 " in docker_json.adapt({"source_type": "generic_syslog", "raw": rec, "meta": {}})["raw"],
+          "single-digit day must be space-padded")
+    # docker: a hostile container name cannot forge header text
+    rec["docker_name"] = "evil sshd[1]: Failed"
+    rec["docker_id"] = "zz"
+    p = {"source_type": "generic_syslog", "raw": rec, "meta": {}}
+    check(docker_json.adapt(p) is p, "invalid docker id and name must be a no-op")
+    # a record declared as another source_type is never rewritten, even if its shape matches an adapter
+    other = {"source_type": "n8n_audit", "raw": {"log": "x", "stream": "stdout", "time": "t", "docker_id": "1d8f02f0f8a9d0c1"},
+             "meta": {}}
+    check(adapt_record(other) is other, "sniff must not rewrite a record declared as another source_type")
+    labelled = {"source_type": "n8n_audit", "raw": {"Channel": "Security", "EventID": 4624, "Computer": "c", "TimeCreated": "x"},
+                "meta": {"shipper": "fluentbit-winevtlog"}}
+    check(adapt_record(labelled) is labelled, "a label must not override a declared source_type outside the family")
+    # a wrong label falls through to the sniff instead of dead-lettering
+    wb = {"source_type": "windows_eventlog", "raw": winlogbeat.FIXTURE, "meta": {"shipper": "docker-json"}}
+    check(adapt_record(wb)["raw"].get("EventID") is not None, "a wrong label must fall through to the sniff")
+    # native numeric TimeCreated is left alone (seconds, float seconds, FILETIME)
+    for tc in (1673960531, 1673960531.5, 133190000000000000):
+        r = {"Channel": "Security", "EventID": 4624, "Computer": "c", "TimeCreated": tc}
+        o = fluentbit_winevtlog.adapt({"source_type": "windows_eventlog", "raw": r, "meta": {}})
+        check(o["raw"]["TimeCreated"] == tc, f"numeric TimeCreated {tc!r} must be untouched, got {o['raw']['TimeCreated']!r}")
+    # winlogbeat: event_data keys cannot overwrite the adapter's own fields
+    w = copy.deepcopy(winlogbeat.FIXTURE)
+    w["winlog"]["event_data"]["EventID"] = 9999
+    w["winlog"]["event_data"]["Computer"] = "spoofed"
+    o = winlogbeat.adapt({"source_type": "windows_eventlog", "raw": w, "meta": {}})["raw"]
+    check(o["EventID"] == w["winlog"]["event_id"] and o["Computer"] == w["winlog"]["computer_name"],
+          f"event_data overwrote reserved fields: {o.get('EventID')!r} {o.get('Computer')!r}")
+    # journald without _HOSTNAME: no honest header, record unchanged
+    j = {"MESSAGE": "m", "SYSLOG_IDENTIFIER": "sshd", "_PID": "5", "_SOURCE_REALTIME_TIMESTAMP": "1673960531000000"}
+    jp = {"source_type": "generic_syslog", "raw": j, "meta": {}}
+    check(fluentbit_journald.adapt(jp) is jp, "journald record without _HOSTNAME must be a no-op")
 
 
 def test_extreme_value_sweep_adapters():
@@ -283,6 +325,7 @@ def main():
              test_docker_json_fixture,
              test_shipper_label_beats_sniff_and_unknown_is_noop,
              test_sniff_negative_controls,
+             test_review_fixes_pr150,
              test_extreme_value_sweep_adapters]
     for t in tests:
         t()

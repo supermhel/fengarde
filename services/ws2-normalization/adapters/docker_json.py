@@ -34,8 +34,12 @@ EXAMPLE, not a local capture — labelled as such per repo honesty rule.
 """
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 from typing import Optional
+
+_ID_RE = re.compile(r"^[0-9a-fA-F]{12,64}$")
+_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 
 FIXTURE = {
     "log": "User info: admin@bankcorp.example\n",
@@ -60,6 +64,8 @@ NO_CONTAINER_FIXTURE = {
     "time": "2019-01-01T11:11:12.111111111Z",
 }
 
+SOURCE_TYPES = frozenset({"generic_syslog", "linux_ssh"})
+
 _PRI = {"stdout": 14, "stderr": 11}  # user.notice / user.err
 
 
@@ -79,9 +85,8 @@ def _rfc3164_date(iso: str) -> Optional[str]:
         dt = datetime.fromisoformat(base)
     except ValueError:
         return None
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return dt.strftime("%b %d %H:%M:%S").replace(" 0", "  ", 1)  # RFC3164 pads day
+    dt = dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt.astimezone(timezone.utc)
+    return f"{dt:%b} {dt.day:>2} {dt:%H:%M:%S}"  # RFC3164 space-pads the day (not the hour)
 
 
 def adapt(payload: dict) -> dict:
@@ -94,8 +99,9 @@ def adapt(payload: dict) -> dict:
         return payload
     cid = raw.get("docker_id")
     cname = raw.get("docker_name")
-    cid = cid if isinstance(cid, str) and cid else None
-    cname = cname if isinstance(cname, str) and cname else None
+    # Both go verbatim into the RFC 3164 line: accept only real-looking identifiers so a crafted name cannot forge header text.
+    cid = cid if isinstance(cid, str) and _ID_RE.match(cid) else None
+    cname = cname if isinstance(cname, str) and _NAME_RE.match(cname) else None
     raw_time = raw.get("time")
     stamp = _rfc3164_date(raw_time) if isinstance(raw_time, str) else None
     # No identifier (or no useable time) -> nothing honest to build a header

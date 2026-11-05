@@ -46,11 +46,12 @@ documented Fluent Bit setup).
 
 ## Fixture provenance (honesty ledger)
 
-- `fluentbit-winevtlog` FIXTURE — **REAL capture**: byte-exact output of
+- `fluentbit-winevtlog` FIXTURE — **transcribed from a published real capture**: output of
   fluent-bit 2.0.6's `winevtlog` input on a Windows host (2023-01-17),
   published by ClickHouse in *"Send Windows Event Logs to ClickHouse with
-  Fluent Bit"* (clickhouse.com/blog/...); reproduced with `StringInserts`
-  truncated to two entries (the adapter never reads it).
+  Fluent Bit"* (clickhouse.com/blog/...). Transcribed by hand, not byte-exact:
+  `StringInserts` is truncated to two entries (the adapter never reads it) and no
+  capture file or hash is stored in this repo, so the "real" label rests on that post.
 - `fluentbit-winevtlog` SECURITY_FIXTURE — **template-derived**: keys are the
   standard Security-4624 event-data names (Microsoft's event template, echoed
   by Winlogbeat's exported-fields catalog), values in the plugin's flat
