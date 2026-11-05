@@ -12,7 +12,8 @@ the samples claim while syslog configs target TCP 5515 (drift fails).
 
 NOT proven here: that Vector / Fluent Bit / rsyslog / syslog-ng accept the
 configs or emit the sample shapes (this test runs none of them). They were linted and run live once by hand
-(2026-11-05, container images; pihole-v6.dnsmasq.txt is a real pihole/pihole capture); see the Verification log in docs/shipping/README.md.
+(2026-11-05, container images; pihole-v6.dnsmasq.txt is a real pihole/pihole capture);
+see the Verification log in docs/shipping/README.md.
 
 Run: python tools/test_shipping_recipes.py
 """
@@ -42,11 +43,15 @@ WIN_CAPTURE = "windows-application.fluentbit.json"  # real: Fluent Bit 4.2.8, Wi
 # (sample file, recipe doc, declared source_type, shipper label or None,
 #  parser expected after resolve(), OCSF class_uid, adapter constant it must equal or None)
 CASES = [
-    ("windows-sysmon.fluentbit.json", "windows.md", "windows_eventlog", "fluentbit-winevtlog", "sysmon", 1002, fluentbit_winevtlog.FIXTURE),
-    ("windows-security.fluentbit.json", "windows.md", "windows_eventlog", "fluentbit-winevtlog", "windows_eventlog", 3002, fluentbit_winevtlog.SECURITY_FIXTURE),
+    ("windows-sysmon.fluentbit.json", "windows.md", "windows_eventlog",
+     "fluentbit-winevtlog", "sysmon", 1002, fluentbit_winevtlog.FIXTURE),
+    ("windows-security.fluentbit.json", "windows.md", "windows_eventlog",
+     "fluentbit-winevtlog", "windows_eventlog", 3002, fluentbit_winevtlog.SECURITY_FIXTURE),
     ("windows-4688.winlogbeat.json", "windows.md", "windows_eventlog", "winlogbeat", "windows_eventlog", 1002, winlogbeat.FIXTURE),
-    ("windows-4624.winlogbeat.json", "windows.md", "windows_eventlog", "winlogbeat", "windows_eventlog", 3002, winlogbeat.SECURITY_LOGON_FIXTURE),
-    ("linux-sshd.fluentbit-journald.json", "linux-auth.md", "generic_syslog", "fluentbit-journald", "linux_ssh", 3002, fluentbit_journald.FIXTURE),
+    ("windows-4624.winlogbeat.json", "windows.md", "windows_eventlog",
+     "winlogbeat", "windows_eventlog", 3002, winlogbeat.SECURITY_LOGON_FIXTURE),
+    ("linux-sshd.fluentbit-journald.json", "linux-auth.md", "generic_syslog",
+     "fluentbit-journald", "linux_ssh", 3002, fluentbit_journald.FIXTURE),
     ("linux-sshd.vector.syslog.txt", "linux-auth.md", "generic_syslog", None, "linux_ssh", 3002, None),
     ("docker-n8n.fluentbit.json", "docker.md", "generic_syslog", "docker-json", "generic_syslog", 1002, docker_json.FIXTURE),
     ("docker-sshd.fluentbit.json", "docker.md", "generic_syslog", "docker-json", "linux_ssh", 3002, docker_json.SSH_FIXTURE),
@@ -191,7 +196,8 @@ def main() -> int:
                       and ev["dst_endpoint"]["hostname"] == host, f"{PIHOLE_CAPTURE} [{tag}]: {ln!r} -> {errs[:1]}")
     check(n_q == 25 and len(lines) == 81, f"{PIHOLE_CAPTURE}: expected 81 lines / 25 queries, got {len(lines)} / {n_q}")
     check(not re.search(r"\b172\.(1[6-9]|2\d|3[01])\.", "\n".join(lines)), f"{PIHOLE_CAPTURE}: unscrubbed host address")
-    check(PIHOLE_CAPTURE in (HERE / "dnsmasq-pihole.md").read_text(encoding="utf-8"), f"{PIHOLE_CAPTURE}: not referenced in dnsmasq-pihole.md")
+    check(PIHOLE_CAPTURE in (HERE / "dnsmasq-pihole.md").read_text(encoding="utf-8"),
+          f"{PIHOLE_CAPTURE}: not referenced in dnsmasq-pihole.md")
     check(PIHOLE_CAPTURE in readme, f"{PIHOLE_CAPTURE}: missing from README table")
 
     # real capture (Fluent Bit 4.2.8 on Windows 11, Application channel, scrubbed): nested EventData must be flattened and the
@@ -199,7 +205,8 @@ def main() -> int:
     wraw = load(WIN_CAPTURE)
     check(wraw == fluentbit_winevtlog.CAPTURED_WIN11_APPLICATION, f"{WIN_CAPTURE}: differs from CAPTURED_WIN11_APPLICATION")
     check(wraw.get("Computer") == "WIN11-LAB" and "DESKTOP-" not in json.dumps(wraw), f"{WIN_CAPTURE}: unscrubbed host name")
-    wad = adapt_record({"source_type": "windows_eventlog", "raw": wraw, "meta": {"received_at": 1673963483, "shipper": "fluentbit-winevtlog"}})
+    wad = adapt_record({"source_type": "windows_eventlog", "raw": wraw,
+                        "meta": {"received_at": 1673963483, "shipper": "fluentbit-winevtlog"}})
     wp = resolve(wad)
     check(wp is not None and wp.SOURCE_TYPE == "windows_eventlog", f"{WIN_CAPTURE}: resolved {getattr(wp, 'SOURCE_TYPE', None)!r}")
     check("EventData" not in wad["raw"] and wad["raw"].get("EventName") == "crashpad_log", f"{WIN_CAPTURE}: EventData not flattened")

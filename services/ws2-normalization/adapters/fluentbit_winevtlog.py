@@ -130,7 +130,13 @@ CAPTURED_WIN11_APPLICATION = {
     "Channel": "Application",
     "Computer": "WIN11-LAB",
     "UserID": "NT-AUTORIT\ue0c4T\\SYSTEM",
-    "Message": "Fehlerbucket , Typ 0\r\nEreignisname: crashpad_log\r\nAntwort: Nicht verf\u00fcgbar\r\nCAB-Datei-ID: 0\r\n\r\nProblemsignatur:\r\nP1: setup.exe\r\nP2: 151.0.4129.72\r\nP3: EdgeInstallerError|msedge\r\nP4: 0x3c\r\nP5: \r\nP6: \r\nP7: \r\nP8: \r\nP9: \r\nP10: \r\n\r\nAngef\u00fcgte Dateien:\r\n\\\\?\\C:\\Windows\\SystemTemp\\msedge_installer.log\r\n\r\nDiese Dateien befinden sich m\u00f6glicherweise hier:\r\nNULL\r\n\r\nAnalysesymbol: \r\nEs wird erneut nach einer L\u00f6sung gesucht: 0\r\nBerichts-ID: af3e1eaf-434a-43aa-9398-b6c8192e1dee\r\nBerichtstatus: 268697600\r\nBucket mit Hash: \r\nCAB-Datei-Guid: 0",
+    "Message": ("Fehlerbucket , Typ 0\r\nEreignisname: crashpad_log\r\nAntwort: Nicht verf\u00fcgbar\r\nCAB"
+        "-Datei-ID: 0\r\n\r\nProblemsignatur:\r\nP1: setup.exe\r\nP2: 151.0.4129.72\r\nP3: EdgeInst"
+        "allerError|msedge\r\nP4: 0x3c\r\nP5: \r\nP6: \r\nP7: \r\nP8: \r\nP9: \r\nP10: \r\n\r\nAnge"
+        "f\u00fcgte Dateien:\r\n\\\\?\\C:\\Windows\\SystemTemp\\msedge_installer.log\r\n\r\nDiese D"
+        "ateien befinden sich m\u00f6glicherweise hier:\r\nNULL\r\n\r\nAnalysesymbol: \r\nEs wird e"
+        "rneut nach einer L\u00f6sung gesucht: 0\r\nBerichts-ID: af3e1eaf-434a-43aa-9398-b6c8192e1d"
+        "ee\r\nBerichtstatus: 268697600\r\nBucket mit Hash: \r\nCAB-Datei-Guid: 0"),
     "EventData": {
         "Bucket": "",
         "BucketType": "0",
