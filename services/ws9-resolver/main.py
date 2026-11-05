@@ -78,6 +78,8 @@ def make_self_handler(resolver: EntityResolver):
 
 
 if __name__ == "__main__":
+    from shared.prodcheck import prod_or_die  # noqa: E402
+    prod_or_die("ws9-resolver", rbac=False)  # WP-3.2: prod needs the Redis bus password
     resolver = make_resolver()
     bus = Bus()
     handlers = {

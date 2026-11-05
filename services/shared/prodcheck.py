@@ -26,9 +26,17 @@ that says rotate-and-delete. This is the WP-3.2 requirement and is an
 EXPLICIT, prod-profile-only exception to the repo's standing rule
 (users.py: "the service never stores a plaintext credential"; the earlier
 write-to-0600 design was closed as CodeQL py/clear-text-storage in the
-DEFAULT path). Rationale, stated plainly: an environment variable is
-readable via /proc/<pid>/environ by any same-user process; a 0600 file is
-not, and the file's owner is told to rotate + delete it after first login.
+DEFAULT path). Rationale, stated plainly: a file keeps the secret OUT of the process
+environment, so it is not exposed through ``docker inspect``, orchestrator
+manifests, process listings or shell history. It is NOT protection against
+other processes of the SAME uid: those can read a 0600 file exactly as they
+can read /proc/<pid>/environ. Residual risk: anyone with the service uid (or
+root) reads it, and so can a backup of the volume. Mitigate by mounting the
+path on a tmpfs / secret mount and DELETING the file right after rotating the
+password via the admin API. The file is created atomically (O_CREAT|O_EXCL,
+mode 0600 at creation, symlinks refused) and an existing file is never
+overwritten. POSIX only: on Windows (where the 0600 mode is not enforced and
+prod does not run) generation is refused.
 Never log the generated value — only its path.
 """
 from __future__ import annotations
@@ -91,11 +99,15 @@ def admin_password_ok(password: str, min_chars: int = 12) -> Optional[str]:
 
 
 def _bus_requires_redis_password() -> bool:
-    return os.getenv("BUS_BACKEND", "").strip() in ("redis", "redis-sentinel")
+    # shared/bus.py::Bus() lowercases BUS_BACKEND, so must this check.
+    return os.getenv("BUS_BACKEND", "").strip().lower() in ("redis", "redis-sentinel")
 
 
-def prod_problems() -> list[str]:
-    """Every unsatisfied prod obligation, numbered, in a stable order."""
+def _is_windows() -> bool:
+    return os.name == "nt"
+
+
+def _rbac_problems() -> list[str]:
     problems: list[str] = []
     if not os.getenv("FENGARDE_API_KEY"):
         problems.append("FENGARDE_API_KEY is not set (API-key auth would be OFF)")
@@ -105,22 +117,36 @@ def prod_problems() -> list[str]:
     if not pw:
         # first-boot generation (FENGARDE_FIRST_BOOT_FILE) is ALLOWED at
         # startup: the triage bootstrap generates ONLY when the user store is
-        # empty and fails closed otherwise — prodcheck cannot see the store.
+        # empty and fails closed otherwise - prodcheck cannot see the store.
         if not os.getenv("FENGARDE_FIRST_BOOT_FILE"):
             problems.append(
                 "no admin credential: set FENGARDE_ADMIN_PASSWORD or "
                 "FENGARDE_FIRST_BOOT_FILE (prod generates a fresh password into "
                 "that file at first boot)")
+        elif _is_windows():
+            problems.append(
+                "FENGARDE_FIRST_BOOT_FILE is POSIX-only (a 0600 file cannot be "
+                "enforced on Windows); set FENGARDE_ADMIN_PASSWORD instead")
     else:
         code = admin_password_issue(pw)
         if code:
             problems.append("FENGARDE_ADMIN_PASSWORD " + _PW_REASONS[code])
+    return problems
+
+
+def prod_problems(rbac: bool = True) -> list[str]:
+    """Every unsatisfied prod obligation, numbered, in a stable order.
+
+    ``rbac=False`` drops the ws3-only obligations (API key / RBAC DB / admin
+    credential) for services with their own auth store (ws6 keystore).
+    """
+    problems = _rbac_problems() if rbac else []
     if _bus_requires_redis_password() and not os.getenv("REDIS_PASSWORD"):
         problems.append("REDIS_PASSWORD is not set (Redis bus with no auth)")
     return problems
 
 
-def prod_or_die(service: str) -> None:
+def prod_or_die(service: str, rbac: bool = True, extra: tuple = ()) -> None:
     """Refuse to start in prod when any obligation is missing.
 
     Prints ONE aggregated failure list (numbered, every problem at once —
@@ -130,7 +156,7 @@ def prod_or_die(service: str) -> None:
     """
     if not prod_active():
         return
-    problems = prod_problems()
+    problems = prod_problems(rbac) + list(extra)
     if not problems:
         return
     head = "FENGARDE_PROFILE=prod but the secure surface is incomplete:"
@@ -152,18 +178,35 @@ def generate_first_boot_password(file_env: str = "FENGARDE_FIRST_BOOT_FILE",
     path = os.getenv(file_env)
     if not path:
         raise ValueError(f"{file_env} must be set to generate a first-boot password")
+    if _is_windows():
+        raise RuntimeError(
+            "first-boot password file generation is POSIX-only: the 0600 mode "
+            "is not enforced on Windows; set FENGARDE_ADMIN_PASSWORD instead")
     # token_urlsafe is URL-safe base64: 15 bytes -> 20 chars, entropy ~120 bit
     password = secrets.token_urlsafe(min_chars + 9)[:min_chars + 3]
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
     header = (
-        "# FENGARDE first-boot admin password — FENGARDE_PROFILE=prod\n"
+        "# FENGARDE first-boot admin password - FENGARDE_PROFILE=prod\n"
         "# Generated: never logged; rotate it via the admin API after first\n"
         "# login, then DELETE this file (the service user store only ever\n"
         "# holds the scrypt hash).\n"
     )
-    with target.open("w", encoding="utf-8", newline="\n") as fh:
+    # Created atomically with mode 0600 (no umask window), refusing symlinks
+    # and refusing to overwrite: O_EXCL doubles as the cross-process lock.
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(target, flags, stat.S_IRUSR | stat.S_IWUSR)
+    with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as fh:
         fh.write(header)
         fh.write(password + "\n")
-    target.chmod(stat.S_IRUSR | stat.S_IWUSR)  # 0o600 regardless of umask
     return password
+
+
+def discard_first_boot_file(file_env: str = "FENGARDE_FIRST_BOOT_FILE") -> None:
+    """Roll back a just-generated file (the admin creation failed after it)."""
+    path = os.getenv(file_env)
+    if path:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass

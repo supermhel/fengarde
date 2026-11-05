@@ -10,21 +10,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added (2026-11-04, WP-3.2: secure defaults — FENGARDE_PROFILE=prod gate)
 
 - `services/shared/prodcheck.py` — prod gate: `FENGARDE_PROFILE=prod` refuses
-  to boot until the WHOLE secure surface is present, printing ONE aggregated
+  to boot until the secure surface is present, printing ONE aggregated
   numbered failure list (API key, RBAC on, non-default admin credential,
-  Redis bus password) and exiting 1. Known-default/too-short admin passwords
+  Redis bus password; `BUS_BACKEND` matched case-insensitively like the bus)
+  and exiting 1. Enforced at: ws3 daemon + triage `serve()` (full surface),
+  ws6 `serve()` (a provisioned key + Redis password), ws1/2/4/5/8/9 `main`
+  (Redis password). ws1 HTTP ingest keeps its own token refusal; ws7 is nginx
+  (not wired). Known-default/too-short admin passwords
   are refused explicitly. Demo/profile-less runs are byte-for-byte no-op.
 - First-boot admin password into a FILE (not a log), prod-only:
   `generate_first_boot_password()` writes a crypto-random 20+ char password
-  to `FENGARDE_FIRST_BOOT_FILE` (0600, rotate-and-delete header, never
-  logged), and the ws3 triage bootstrap creates the admin in-process — ONLY
-  on an empty user store; a non-empty store with the file set is refused
-  (a first-boot file must never rotate the live admin password). This is an
+  to `FENGARDE_FIRST_BOOT_FILE` (created atomically `O_EXCL` at 0600, no
+  overwrite, symlinks refused, rotate-and-delete header, never logged;
+  refused on Windows), and the ws3 triage bootstrap creates the admin
+  in-process — ONLY on an empty user store; a non-empty store with the file
+  set logs an error and generates nothing. Two processes cannot both
+  generate (the exclusive file create is the lock; rolled back if the admin
+  insert fails). A file keeps the secret out of env/`docker inspect`; it does
+  NOT hide it from same-uid processes — use a tmpfs/secret mount and delete
+  after rotating. This is an
   EXPLICIT prod-profile-only exception to the standing no-plaintext rule
   (CodeQL py/clear-text-storage), documented in docs/secure-defaults.md.
 - `require_auth_or_die` now routes through the prod gate first (prod implies
   auth-is-required; the two modes cannot disagree).
-- `tools/test_prodcheck.py` (8 groups, fast tier): aggregation, defaults
+- `tools/test_prodcheck.py` (12 groups, fast tier): aggregation, defaults
   refusal, first-boot file semantics, demo no-op, REQUIRE_AUTH contract,
   users.py password-param path.
 
