@@ -1,0 +1,27 @@
+# FENGARDE homelab deployment profile -- HTTP spool drain enablement (2026-11-06).
+#
+# The full homelab profile ships with WP-2.1 (PR #154, `infra/docker-compose.homelab.yml`:
+# named volumes, loopback publishing, memory ceilings, the syslog spool). This file lands
+# THE piece of that profile that belongs to WP "HTTP spool drain" FIRST so the feature is
+# actually deployable before #154 merges: it switches on the HTTP/JSON ingest spool in the
+# same ws1-spool volume the base compose already mounts (the same volume WP-2.1 uses for
+# the syslog spool). When #154 merges, git's 3-way merge keeps both sets of ws1
+# environment lines (its SYSLOG_SPOOL_PATH/WS1_SEED_MOCK, this INGEST_HTTP_SPOOL_PATH).
+#
+#   docker compose -f infra/docker-compose.yml -f infra/docker-compose.homelab.yml up -d
+#
+# What this enables: with INGEST_HTTP_SPOOL_PATH set, an HTTP/JSON ingest 202s
+# ("accepted for later delivery") when the bus is down and the collector's
+# http-json-spool-drain thread replays the spool into the bus once it returns
+# (test_http_spool_drain.py: bus down -> spooled; bus up -> replayed exactly once).
+#
+# Requires Docker Compose >= 2.24 (the `!override` tag is used by the WP-2.1
+# profile; kept for consistency).
+
+services:
+  ws1-collectors:
+    environment:
+      # HTTP/JSON zero-loss spool: bounded on-disk fallback when the bus is
+      # down, drained by the collector's own http-json-spool-drain thread.
+      # Needs the ws1-spool volume (already mounted by the base file).
+      - INGEST_HTTP_SPOOL_PATH=/var/lib/fengarde/spool/http-spool.jsonl
