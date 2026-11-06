@@ -125,6 +125,43 @@ def _is_loopback(ip: str) -> bool:
         return False
 
 
+def parse_trusted_proxies(spec) -> tuple:
+    """Comma-separated CIDRs/IPs -> tuple of ip_network. A bad entry raises ValueError (fail loud at startup)."""
+    if not spec:
+        return ()
+    items = spec.split(",") if isinstance(spec, str) else spec
+    return tuple(ipaddress.ip_network(str(i).strip(), strict=False) for i in items if str(i).strip())
+
+
+def _in_nets(ip: str, nets) -> bool:
+    try:
+        addr = ipaddress.ip_address(ip)
+    except ValueError:
+        return False
+    return any(addr in n for n in nets)
+
+
+def resolve_client_ip(peer_ip: str, xff_values: list, trusted) -> tuple:
+    """Return (client_ip, proxy_ip). X-Forwarded-For counts only when the TCP peer is a trusted proxy; the client is the
+    LAST untrusted hop (hops further left are client-supplied and ignored). proxy_ip is None when the header is not used."""
+    if not trusted or not _in_nets(peer_ip, trusted):
+        return peer_ip, None
+    hops = [h.strip() for v in xff_values for h in v.split(",") if h.strip()]
+    norm = None
+    for hop in reversed(hops):
+        try:
+            a = ipaddress.ip_address(hop)
+        except ValueError:
+            return peer_ip, None  # garbage on the proxy side: do not guess
+        # one canonical text per address (IPv6 case/zero-compression, v4-mapped) so rate-limit/partition keys match
+        norm = str(getattr(a, "ipv4_mapped", None) or a)
+        if not _in_nets(norm, trusted):
+            return norm, peer_ip
+    # every hop is a trusted address (e.g. a private-range client behind NAT): the leftmost is the originating client,
+    # same as nginx real_ip_recursive; no header at all -> the peer
+    return (norm, peer_ip) if norm else (peer_ip, None)
+
+
 class HttpJsonCollector:
     """WS-1 HTTP/JSON ingest listener (in-process, threaded, counted).
 
@@ -143,6 +180,7 @@ class HttpJsonCollector:
                  max_events_per_sec_per_source: float = 0,
                  spool: Optional[BoundedSpool] = None,
                  extra_source_types=(),
+                 trusted_proxies=(),
                  logger=None):
         if not ingest_token and not (dev_loopback and _is_loopback(host)):
             # Unauthenticated ingest on a non-loopback bind is a data-injection
@@ -161,6 +199,8 @@ class HttpJsonCollector:
         self.source_types = REGISTERED_SOURCE_TYPES | frozenset(
             str(s).strip() for s in extra_source_types if str(s).strip())
         self.dev_loopback = dev_loopback
+        # Peers allowed to tell us the client address via X-Forwarded-For (INGEST_HTTP_TRUSTED_PROXIES). Empty = never.
+        self.trusted_proxies = parse_trusted_proxies(trusted_proxies)
         self.host = host
         self.port = int(port)
         self.topic = topic
@@ -246,7 +286,8 @@ class HttpJsonCollector:
                      records: list, errors: list, *,
                      idempotency_key: Optional[str], peer_ip: str,
                      source_id: Optional[str] = None,
-                     shipper_id: Optional[str] = None) -> dict:
+                     shipper_id: Optional[str] = None,
+                     proxy_ip: Optional[str] = None) -> dict:
         """Process one validated batch; returns THIS request's counts.
 
         Never raises on a malformed record -- a JSON parse error (collected
@@ -283,6 +324,7 @@ class HttpJsonCollector:
                     "ingest_id": ingest_id,
                     "format": format_name,
                     "shipper_ip": peer_ip,
+                    **({"shipper_proxy_ip": proxy_ip} if proxy_ip else {}),
                     **({"source": source_id} if source_id else {}),
                     **({"shipper": shipper_id} if shipper_id else {}),
                 }),
@@ -501,10 +543,12 @@ class _IngestHandler(BaseHTTPRequestHandler):
             return
 
         idem_key = self.headers.get("X-Fengarde-Idempotency-Key") or None
+        client_ip, proxy_ip = resolve_client_ip(
+            self.client_address[0], self.headers.get_all("X-Forwarded-For") or [], c.trusted_proxies)
         counts = c.handle_batch(source_type, format_name, records,
                                 parse_errors, idempotency_key=idem_key,
-                                peer_ip=self.client_address[0], source_id=source_id,
-                                shipper_id=shipper_id)
+                                peer_ip=client_ip, source_id=source_id,
+                                shipper_id=shipper_id, proxy_ip=proxy_ip)
         payload = {
             "source_type": source_type,
             "format": format_name,

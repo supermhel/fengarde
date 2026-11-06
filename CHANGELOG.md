@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (2026-11-04, WP-3.1: TLS profile — Caddy, local-CA default)
+
+- `infra/docker-compose.tls.yml` — opt-in `tls` profile: Caddy service
+  (caddy:2.8-alpine, publishes 443 only) in front of the console and the
+  HTTP/JSON ingest; `ports: !override []` on ws7 + ws1 REMOVES their
+  plaintext publishes, so in this profile both endpoints answer ONLY over
+  TLS. Compose-spec merge tag requires docker compose >= 2.20.
+- `infra/caddy/Caddyfile` — `siem.internal` → ws7-dashboard:80 and
+  `ingest.internal` → ws1-collectors:8554, both with `tls internal`
+  (Caddy's local CA: no DNS, no ACME, no cert provisioning; public-domain
+  variant documented).
+- `tools/test_tls_profile.py` (fast tier) — asserts on the MERGED compose
+  config (`docker compose config --format json`, else a YAML merge): only
+  caddy 443/tcp publishes on all interfaces, ws1/ws7 publish nothing, no UDP
+  port is published (syslog is dropped, not TLS-terminated), plus the Caddy
+  wiring and that the docs carry the real `--cacert` commands and no `curl -k`.
+- `docs/tls-profile.md` — setup (export `root.crt`, verify with `--cacert`),
+  restore-to-plaintext, the merge semantics, client-IP behaviour, the local CA
+  risk (unencrypted `root.key` in the `caddy-data` volume; do not `caddy trust`
+  on shared hosts; rotation; external/name-constrained CA), and a MANUAL
+  verification record (not reproduced by CI).
+- Review fixes (PR #162): ws1 `INGEST_HTTP_TRUSTED_PROXIES` (default empty =
+  unchanged) — behind a trusted proxy the client is the last untrusted
+  `X-Forwarded-For` hop, `meta.shipper_ip` stays the real client and the proxy
+  hop is `meta.shipper_proxy_ip`; an untrusted peer's header is ignored. The
+  TLS profile mounts `infra/caddy/nginx-real-ip.conf` into ws7 (nginx
+  `set_real_ip_from` + `real_ip_recursive`) so `RATE_LIMIT_TRUST_PROXY_HEADER`
+  buckets per client, not per Caddy; the default nginx path is unchanged.
+- Review round 2 (PR #162): (1) client-IP trust is now ONE address, not the
+  private ranges: the profile pins the compose network (`172.31.250.0/24`,
+  automatic addresses only from `.128/25`) and Caddy at `172.31.250.2`, and
+  both `INGEST_HTTP_TRUSTED_PROXIES` and nginx `set_real_ip_from` trust only
+  that address, so another container can no longer forge `X-Forwarded-For`
+  (config test + resolver unit test; proven in a throwaway network). (2) Caddy
+  publishes `${FENGARDE_TLS_BIND:-127.0.0.1}:443` (loopback by default; LAN
+  exposure is opt-in) and `docs/tls-profile.md` warns that the console has no
+  login and `/api/config.js` serves the API key. (3) ws1 normalises the
+  forwarded IP (IPv6 case/compression, v4-mapped) before using it as a key.
+  (4) docs now state exactly which ports have no publish in the profile.
+
 ### Added (2026-11-04, WP-1.3: shipper adapters for real Fluent Bit / Winlogbeat / Docker shapes)
 
 - `services/ws2-normalization/adapters/` — four pure, total adapters that

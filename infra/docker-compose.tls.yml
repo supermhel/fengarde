@@ -1,0 +1,100 @@
+# WP-3.1 — opt-in TLS profile: Caddy in front of the console and the ingest
+# endpoint, with a local-CA default (Caddy `tls internal`).
+#
+# The main docker-compose.yml stays foolproof for `docker compose up` (zero
+# prerequisites, loopback-bound plaintext). This override ADDS a Caddy
+# service and REMOVES every host publish of ws7 (console) and ws1 (HTTP/JSON
+# ingest AND the syslog UDP/TCP listeners), so in this profile the console and
+# the HTTP ingest endpoint answer ONLY over TLS (port 443). Syslog is NOT
+# TLS-terminated: its host publishes are dropped, so syslog is unreachable from
+# outside the compose network until RFC 5425 lands (WP-1.2 follow-up).
+#
+# Setup / run (full commands incl. exporting the root certificate:
+# docs/tls-profile.md):
+#   cd infra
+#   docker compose -f docker-compose.yml -f docker-compose.tls.yml \
+#       --profile tls up -d
+#   docker compose -f docker-compose.yml -f docker-compose.tls.yml --profile tls \
+#       cp caddy:/data/caddy/pki/authorities/local/root.crt ./fengarde-root.crt
+#   curl --cacert ./fengarde-root.crt --resolve siem.internal:443:127.0.0.1 https://siem.internal/
+# Never `curl -k` with the bearer ingest token: that hands it to anyone who can
+# MITM the connection.
+# Back to plaintext: docker compose -f docker-compose.yml -f docker-compose.tls.yml \
+#       --profile tls down && docker compose up -d --remove-orphans
+#
+# Site names are internal (siem.internal / ingest.internal); for a public
+# domain drop `tls internal` in infra/caddy/Caddyfile and use the real name.
+# The base file's services keep NO profile, so they still start with plain
+# `docker compose up`; the tls override only changes them when COMPOSED with
+# this file.
+#
+# NOTE on the merge: `ports: !override []` (compose spec !override YAML tag,
+# docker compose >= 2.20) REPLACES the base ports list instead of appending
+# to it. Removing ports makes the services reachable only on the compose
+# network — and therefore only through Caddy.
+#
+# Client IPs: Caddy overwrites X-Forwarded-For with the address it saw, and has
+# a FIXED address on the compose network (ipam subnet 172.31.250.0/24, Caddy
+# 172.31.250.2; ip_range limits auto-assigned addresses to .128/25 so none can
+# take .2 first). ws1 (INGEST_HTTP_TRUSTED_PROXIES) and ws7's nginx
+# (nginx-real-ip.conf) trust that header ONLY from that one address, so another
+# container cannot forge a client IP. Keep the three values in step. If the
+# subnet clashes with one of yours, change all of them. On Docker Desktop the
+# client address Caddy sees is the VM's NAT gateway, not the LAN client.
+#
+# Exposure: Caddy publishes on ${FENGARDE_TLS_BIND:-127.0.0.1}:443, i.e.
+# loopback by default like the base file's console publish. The console has no
+# login by default and /api/config.js hands the API key to a same-origin
+# request: do NOT set FENGARDE_TLS_BIND to a LAN address on an untrusted network
+# (docs/tls-profile.md).
+#
+# The local CA root KEY lives unencrypted in the caddy-data volume
+# (/data/caddy/pki/authorities/local/root.key): see docs/tls-profile.md before
+# trusting that CA on any machine.
+
+services:
+  caddy:
+    profiles: ["tls"]
+    image: caddy:2.8-alpine
+    restart: unless-stopped
+    networks:
+      default:
+        ipv4_address: 172.31.250.2
+    ports:
+      - "${FENGARDE_TLS_BIND:-127.0.0.1}:443:443/tcp"
+      # no 80: `tls internal` needs no ACME HTTP challenge; add 80:80 only
+      # if you switch a site to Let's Encrypt with a public domain.
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - ws7-dashboard
+      - ws1-collectors
+
+  ws7-dashboard:
+    # plaintext publish removed: the console answers ONLY over TLS here
+    ports: !override []
+    volumes:
+      - ./caddy/nginx-real-ip.conf:/etc/nginx/real-ip.d/real-ip.conf:ro
+
+  ws1-collectors:
+    # HTTP/JSON ingest (8554) and the syslog listeners (5514/udp, 5515/tcp)
+    # are no longer published at all. HTTP ingest is reachable via Caddy (TLS);
+    # syslog is NOT proxied, so it is simply unreachable from the host here.
+    # (Syslog-over-TLS is a separate roadmap item, WP-1.2 follow-up.)
+    ports: !override []
+    environment:
+      - INGEST_HTTP_TRUSTED_PROXIES=172.31.250.2
+
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: 172.31.250.0/24
+          # dynamic addresses come from the upper half only, so no other container can grab Caddy's fixed .2
+          ip_range: 172.31.250.128/25
+
+volumes:
+  caddy-data:
+  caddy-config:
