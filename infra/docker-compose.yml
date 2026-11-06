@@ -118,6 +118,8 @@ services:
     ports: ["5514:5514/udp", "127.0.0.1:5515:5515/tcp", "127.0.0.1:8554:8554"]
     environment:
       - BUS_BACKEND=redis
+      # WP-3.2: FENGARDE_PROFILE=prod arms the startup gate (empty = demo, no-op).
+      - FENGARDE_PROFILE=${FENGARDE_PROFILE:-}
       - REDIS_PASSWORD=${REDIS_PASSWORD:-}
       - REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0
       # WP-1.1: bearer token REQUIRED for POST /v1/ingest -- ws1 refuses to
@@ -166,7 +168,7 @@ services:
   ws2-normalization:
     build: { context: .., dockerfile: services/ws2-normalization/Dockerfile }
     restart: unless-stopped
-    environment: ["BUS_BACKEND=redis", "REDIS_PASSWORD=${REDIS_PASSWORD:-}", "REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0"]
+    environment: ["FENGARDE_PROFILE=${FENGARDE_PROFILE:-}", "BUS_BACKEND=redis", "REDIS_PASSWORD=${REDIS_PASSWORD:-}", "REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0"]
     depends_on: { redis: { condition: service_healthy } }
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8002/health', timeout=3)"]
@@ -180,6 +182,8 @@ services:
     restart: unless-stopped
     environment:
       - BUS_BACKEND=redis
+      # WP-3.2: FENGARDE_PROFILE=prod arms the startup gate (empty = demo, no-op).
+      - FENGARDE_PROFILE=${FENGARDE_PROFILE:-}
       - REDIS_PASSWORD=${REDIS_PASSWORD:-}
       - REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0
       - STORAGE_BACKEND=opensearch
@@ -204,7 +208,14 @@ services:
       # WS-6 POST /assets/upsert server-side. Key only needed when WS-6 auth is on.
       - INVENTORY_URL=http://ws6-inventory:8000
       - INVENTORY_API_KEY=${INVENTORY_API_KEY:-${FENGARDE_API_KEY:-}}
-      # - FENGARDE_RBAC_DB=/app/ws3-indexer/data/rbac.sqlite
+      # RBAC + first admin (docs/secure-defaults.md). All three empty = RBAC off,
+      # the pre-WP-3.2 default. prod REQUIRES FENGARDE_RBAC_DB plus one of the
+      # other two. The directory of FENGARDE_FIRST_BOOT_FILE must be writable by
+      # uid 10001 (this service drops to it): chown the host dir or use an init
+      # container, same as ws3-indexer-init does for the data volume.
+      - FENGARDE_RBAC_DB=${FENGARDE_RBAC_DB:-}
+      - FENGARDE_ADMIN_PASSWORD=${FENGARDE_ADMIN_PASSWORD:-}
+      - FENGARDE_FIRST_BOOT_FILE=${FENGARDE_FIRST_BOOT_FILE:-}
     # Deploy fix (same bug class as ws1's spool volume, live-docker-caught
     # 2026-08-21): a fresh named volume is created root:root, but this service
     # drops to uid 10001 (Dockerfile USER app) -- without a one-shot chown the
@@ -229,7 +240,7 @@ services:
   ws4-detection:
     build: { context: .., dockerfile: services/ws4-detection/Dockerfile }
     restart: unless-stopped
-    environment: ["BUS_BACKEND=redis", "REDIS_PASSWORD=${REDIS_PASSWORD:-}", "REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0", "FENGARDE_OPT_IN_RULES=${FENGARDE_OPT_IN_RULES:-}", "RULES_RELOAD_INTERVAL_S=${RULES_RELOAD_INTERVAL_S:-5}", "FENGARDE_WINDOW_TIME_SOURCE=${FENGARDE_WINDOW_TIME_SOURCE:-clamp}", "FENGARDE_WINDOW_MAX_SKEW_SECONDS=${FENGARDE_WINDOW_MAX_SKEW_SECONDS:-600}"]
+    environment: ["FENGARDE_PROFILE=${FENGARDE_PROFILE:-}", "BUS_BACKEND=redis", "REDIS_PASSWORD=${REDIS_PASSWORD:-}", "REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0", "FENGARDE_OPT_IN_RULES=${FENGARDE_OPT_IN_RULES:-}", "RULES_RELOAD_INTERVAL_S=${RULES_RELOAD_INTERVAL_S:-5}", "FENGARDE_WINDOW_TIME_SOURCE=${FENGARDE_WINDOW_TIME_SOURCE:-clamp}", "FENGARDE_WINDOW_MAX_SKEW_SECONDS=${FENGARDE_WINDOW_MAX_SKEW_SECONDS:-600}"]
     # Per-tenant disabled_rules, written by ws3-indexer's admin rule toggle; the
     # rule-reload watcher (RULES_RELOAD_INTERVAL_S, default 5s here) re-reads it
     # so a console toggle takes effect without restarting WS-4.
@@ -246,7 +257,7 @@ services:
   ws5-ai:
     build: { context: .., dockerfile: services/ws5-ai/Dockerfile }
     restart: unless-stopped
-    environment: ["BUS_BACKEND=redis", "REDIS_PASSWORD=${REDIS_PASSWORD:-}", "REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0"]
+    environment: ["FENGARDE_PROFILE=${FENGARDE_PROFILE:-}", "BUS_BACKEND=redis", "REDIS_PASSWORD=${REDIS_PASSWORD:-}", "REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0"]
     depends_on: { redis: { condition: service_healthy } }
     # set OLLAMA_URL to enable the local LLM; otherwise StubLLM. On CPU-only hosts also set OLLAMA_TIMEOUT_SECONDS
     # (default 8): a real prompt can take 8-9 s even on a 0.5B model and would otherwise fall back to the stub.
@@ -260,7 +271,7 @@ services:
   ws8-correlation:
     build: { context: .., dockerfile: services/ws8-correlation/Dockerfile }
     restart: unless-stopped
-    environment: ["BUS_BACKEND=redis", "REDIS_PASSWORD=${REDIS_PASSWORD:-}", "REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0"]
+    environment: ["FENGARDE_PROFILE=${FENGARDE_PROFILE:-}", "BUS_BACKEND=redis", "REDIS_PASSWORD=${REDIS_PASSWORD:-}", "REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0"]
     depends_on: { redis: { condition: service_healthy } }
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8008/health', timeout=3)"]
@@ -282,7 +293,7 @@ services:
   ws9-resolver:
     build: { context: .., dockerfile: services/ws9-resolver/Dockerfile }
     restart: unless-stopped
-    environment: ["BUS_BACKEND=redis", "REDIS_PASSWORD=${REDIS_PASSWORD:-}", "REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0"]
+    environment: ["FENGARDE_PROFILE=${FENGARDE_PROFILE:-}", "BUS_BACKEND=redis", "REDIS_PASSWORD=${REDIS_PASSWORD:-}", "REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0"]
     depends_on: { redis: { condition: service_healthy } }
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8009/health', timeout=3)"]
@@ -320,6 +331,7 @@ services:
       # bus_consumer.py's own tests exercise, same convention as every other
       # workstream's BUS_BACKEND=redis line above.
       - BUS_BACKEND=redis
+      - FENGARDE_PROFILE=${FENGARDE_PROFILE:-}
       - REDIS_PASSWORD=${REDIS_PASSWORD:-}
       - REDIS_URL=redis://:${REDIS_PASSWORD:-}@redis:6379/0
       # M7 Track Y: per-tenant baseline window. Devices first seen inside this

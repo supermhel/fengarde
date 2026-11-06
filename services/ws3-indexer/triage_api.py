@@ -99,6 +99,7 @@ import traceback
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import NoReturn
 from urllib.parse import parse_qs, urlparse
 
 _HERE = Path(__file__).resolve().parent
@@ -1347,6 +1348,12 @@ def bootstrap_first_admin(users_db) -> None:
     FileExistsError and creates nothing), and the file is rolled back if the
     admin could not be created, so the file's password is always the admin's.
     Only constant text and the file PATH are ever logged, never the password.
+
+    Under FENGARDE_PROFILE=prod a first-boot file that cannot be provisioned
+    (stale file, unwritable directory, unsupported platform) is FATAL
+    (SystemExit(1)): a prod service with no admin is unusable, so it must not
+    keep serving as if healthy. Call this on the MAIN thread (``init_rbac``
+    from ``main()``), where SystemExit ends the process.
     """
     import os as _os
     from shared.prodcheck import (  # noqa: E402
@@ -1354,6 +1361,12 @@ def bootstrap_first_admin(users_db) -> None:
     from shared.users import ensure_first_boot_admin  # noqa: E402
     log = get_logger("ws3-indexer-triage")
     first_boot_file = _os.getenv("FENGARDE_FIRST_BOOT_FILE")
+
+    def fatal(msg: str) -> NoReturn:
+        log.error(msg, password_file=first_boot_file)
+        print("FENGARDE_PROFILE=prod: " + msg, file=sys.stderr)
+        sys.exit(1)
+
     # First-boot bootstrap: the admin password comes from the operator via
     # FENGARDE_ADMIN_PASSWORD -- the service never generates, logs, or
     # stores a plaintext credential (only the scrypt hash reaches disk).
@@ -1376,22 +1389,18 @@ def bootstrap_first_admin(users_db) -> None:
         if prod_active() and first_boot_file:
             try:
                 generated = generate_first_boot_password()
-            except FileExistsError:
-                log.error(
-                    "FENGARDE_FIRST_BOOT_FILE already exists -- refusing to "
-                    "overwrite it (another process is bootstrapping, or a "
-                    "stale file is left over: delete it and restart)",
-                    password_file=first_boot_file,
-                )
-                return
-            except (OSError, RuntimeError):
-                log.error(
+            except (OSError, RuntimeError) as exc:
+                if isinstance(exc, FileExistsError) and _os.path.lexists(first_boot_file):
+                    fatal(
+                        "FENGARDE_FIRST_BOOT_FILE already exists but the user store "
+                        "is empty -- refusing to overwrite it (another process is "
+                        "bootstrapping, or a stale file is left over: delete it and "
+                        "restart)")
+                fatal(
                     "cannot create FENGARDE_FIRST_BOOT_FILE (symlink, "
                     "permissions, missing directory or unsupported platform) "
-                    "-- no admin account created",
-                    password_file=first_boot_file,
-                )
-                return
+                    "-- no admin account created; the directory must exist and "
+                    "be writable by the service user (uid 10001 in the image)")
             try:
                 created = ensure_first_boot_admin(users_db, password=generated)
             except Exception:  # noqa: BLE001 - roll back, then surface
@@ -1421,7 +1430,30 @@ def bootstrap_first_admin(users_db) -> None:
             )
 
 
-def serve(store, host="0.0.0.0", port=8013):
+def init_rbac():
+    """Open the RBAC user store (opt-in) and bootstrap the first admin.
+
+    M4.2 RBAC: opt-in via FENGARDE_RBAC_DB (a SQLite file path), same
+    unset-is-off convention as FENGARDE_API_KEY/dashboard basic-auth/Redis
+    AUTH. Unset -> None -> make_handler(store) with no users_db -> byte-for-byte
+    pre-M4.2 behavior. The ws3 daemon calls this on the MAIN thread (before
+    starting the triage thread) so a prod bootstrap failure is fatal to the
+    process instead of silently killing only the API thread.
+    """
+    import os as _os
+    rbac_db_path = _os.getenv("FENGARDE_RBAC_DB")
+    if not rbac_db_path:
+        return None
+    from shared.users import UserStore  # noqa: E402
+    users_db = UserStore(rbac_db_path)
+    bootstrap_first_admin(users_db)
+    return users_db
+
+
+_UNSET = object()
+
+
+def serve(store, host="0.0.0.0", port=8013, users_db=_UNSET):
     warn_if_disabled("ws3-indexer-triage")
     # WP-3.2: FENGARDE_PROFILE=prod refuses to serve triage/RBAC with an
     # incomplete or default-secured auth surface (one numbered list).
@@ -1429,17 +1461,8 @@ def serve(store, host="0.0.0.0", port=8013):
     prod_or_die("ws3-indexer-triage")
     _ensure_report_index(store)
 
-    # M4.2 RBAC: opt-in via FENGARDE_RBAC_DB (a SQLite file path), same
-    # unset-is-off convention as FENGARDE_API_KEY/dashboard basic-auth/Redis
-    # AUTH. Unset -> make_handler(store) with no users_db -> byte-for-byte
-    # pre-M4.2 behavior.
-    import os as _os
-    users_db = None
-    rbac_db_path = _os.getenv("FENGARDE_RBAC_DB")
-    if rbac_db_path:
-        from shared.users import UserStore  # noqa: E402
-        users_db = UserStore(rbac_db_path)
-        bootstrap_first_admin(users_db)
+    if users_db is _UNSET:  # standalone callers; the daemon passes init_rbac()'s result
+        users_db = init_rbac()
 
     handler_cls = make_handler(store, users_db=users_db)
     srv = ThreadingHTTPServer((host, port), handler_cls)

@@ -145,7 +145,7 @@ def test_all_obligations_satisfied():
     with env(**{**cleared(), "FENGARDE_PROFILE": "prod", "FENGARDE_API_KEY": "k" * 24,
                 "FENGARDE_RBAC_DB": "/tmp/r.db",
                 "FENGARDE_ADMIN_PASSWORD": "S3cure-！-not-default-pw-2026",
-                "BUS_BACKEND": "redis", "REDIS_PASSWORD": None}):
+                "BUS_BACKEND": "redis", "REDIS_PASSWORD": None, "REDIS_URL": None}):
         problems = pc.prod_problems()
         check(any("REDIS_PASSWORD" in p for p in problems),
               "redis bus without REDIS_PASSWORD must be refused in prod")
@@ -167,11 +167,12 @@ def test_bus_backend_case_insensitive():
             "FENGARDE_RBAC_DB": "/tmp/r.db",
             "FENGARDE_ADMIN_PASSWORD": "S3cure-not-default-pw-2026"}
     for v in ("REDIS", "Redis", "  redis-sentinel ", "REDIS-SENTINEL"):
-        with env(**{**base, "BUS_BACKEND": v, "REDIS_PASSWORD": None}):
+        with env(**{**base, "BUS_BACKEND": v, "REDIS_PASSWORD": None, "REDIS_URL": None}):
             check(any("REDIS_PASSWORD" in p for p in pc.prod_problems()),
                   f"BUS_BACKEND={v!r} without REDIS_PASSWORD must be refused")
-        with env(**{**base, "BUS_BACKEND": v, "REDIS_PASSWORD": "x" * 16}):
-            check(pc.prod_problems() == [], f"BUS_BACKEND={v!r} with a password is fine")
+        url = "redis://:" + "x" * 16 + "@redis:6379/0"
+        with env(**{**base, "BUS_BACKEND": v, "REDIS_PASSWORD": "x" * 16, "REDIS_URL": url}):
+            check(pc.prod_problems() == [], f"BUS_BACKEND={v!r} with a password is fine: {pc.prod_problems()}")
     with env(**{**base, "BUS_BACKEND": "memory", "REDIS_PASSWORD": None}):
         check(pc.prod_problems() == [], "memory bus needs no REDIS_PASSWORD")
 
@@ -284,9 +285,14 @@ def test_bootstrap_first_admin():
         f.write_text("winner-password\n", encoding="utf-8")
         store = fresh(d)
         buf = io.StringIO()
+        code = None
         with env(**{**prod, "FENGARDE_FIRST_BOOT_FILE": str(f)}), \
                 contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
-            triage_api.bootstrap_first_admin(store)
+            try:
+                triage_api.bootstrap_first_admin(store)
+            except SystemExit as exc:
+                code = exc.code
+        check(code == 1, f"stale file + empty store must be FATAL under prod (exit 1), got {code!r}")
         check(store.count() == 0, "loser of the file race must not create an admin")
         check(f.read_text(encoding="utf-8") == "winner-password\n",
               "the winner's file must not be overwritten")
@@ -330,6 +336,96 @@ def test_bootstrap_first_admin():
             triage_api.bootstrap_first_admin(store)
         check(not f.exists() and store.count() == 0, "non-prod must never generate a password file")
         store.db.close()
+
+
+def test_bootstrap_failure_is_fatal_and_on_main_thread():
+    import triage_api
+    # (a) unwritable first-boot location under prod -> SystemExit(1), no admin, no traceback needed
+    with tempfile.TemporaryDirectory() as d, posix_mode():
+        blocker = Path(d) / "afile"
+        blocker.write_text("x", encoding="utf-8")
+        import shared.users as users
+        store = users.UserStore(str(Path(d) / "u.sqlite"))
+        buf = io.StringIO()
+        code = None
+        with env(**{**cleared(), "FENGARDE_PROFILE": "prod",
+                    "FENGARDE_FIRST_BOOT_FILE": str(blocker / "sub" / "pw.txt")}), \
+                contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+            try:
+                triage_api.bootstrap_first_admin(store)
+            except SystemExit as exc:
+                code = exc.code
+        check(code == 1 and store.count() == 0, f"unwritable first-boot path must exit 1 under prod: {code!r}")
+        check("uid 10001" in buf.getvalue(), "the failure message must name the uid/permission requirement")
+        # (b) outside prod the same misconfiguration stays non-fatal (demo path unchanged)
+        with env(**{**cleared(), "FENGARDE_PROFILE": None,
+                    "FENGARDE_FIRST_BOOT_FILE": str(blocker / "sub" / "pw.txt")}), \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            triage_api.bootstrap_first_admin(store)
+        store.db.close()
+    # (c) the daemon runs the bootstrap on the MAIN thread, before the triage thread exists
+    src = (ROOT / "services" / "ws3-indexer" / "main.py").read_text(encoding="utf-8")
+    i_init = src.find("triage_api.init_rbac()")
+    i_thread = src.find("target=triage_api.serve")
+    check(0 < i_init < i_thread, "main() must call triage_api.init_rbac() before starting the triage thread")
+    check("users_db" in src[i_thread:i_thread + 300], "the thread must receive the already-built users_db")
+
+
+def test_profile_typo_refused():
+    for bad in ("production", "prd", "prod-", "Prod ", "produ", "1", "true", "staging"):
+        with env(**{**cleared(), "FENGARDE_PROFILE": bad}):
+            check(pc.profile_problem() is not None or bad.strip().lower() == "prod",
+                  f"profile {bad!r} must be flagged")
+            out = run_or_die()
+            if bad.strip().lower() != "prod":
+                check("unrecognised" in out and "FENGARDE_PROFILE is invalid" in out,
+                      f"typo {bad!r} must be refused with a clear message: {out!r}")
+                check(len(bad.strip()) < 3 or bad.strip() not in out.replace("FENGARDE_PROFILE", ""),
+                      f"the value {bad!r} must not be echoed")
+    for ok in (None, "", "  ", "prod", "PROD", " Prod ", "dev", "demo", "DEV"):
+        with env(**{**cleared(), "FENGARDE_PROFILE": ok}):
+            check(pc.profile_problem() is None, f"profile {ok!r} is documented and must be accepted")
+    # a typo'd profile on a real entrypoint exits 1 (it used to boot the open demo)
+    svc = ROOT / "services"
+    r = _run_entry([str(svc / "ws2-normalization" / "main.py")], svc / "ws2-normalization",
+                   {"FENGARDE_PROFILE": "production"})
+    check(r.returncode == 1 and "unrecognised" in r.stderr,
+          f"ws2 must refuse FENGARDE_PROFILE=production: rc={r.returncode} err={r.stderr[-300:]!r}")
+
+
+def test_secret_strength_minimums():
+    good = {**cleared(), "FENGARDE_PROFILE": "prod", "FENGARDE_RBAC_DB": "/tmp/r.db",
+            "FENGARDE_ADMIN_PASSWORD": "S3cure-not-default-pw-2026"}
+    with env(**{**good, "FENGARDE_API_KEY": "x"}):
+        out = run_or_die()
+        check(f"{pc.API_KEY_MIN}-character minimum" in out and "FENGARDE_API_KEY" in out,
+              f"a 1-char API key must be refused with the minimum stated: {out!r}")
+        check("FENGARDE_API_KEY=x" not in out, "the key value must not be echoed")
+    with env(**{**good, "FENGARDE_API_KEY": "k" * (pc.API_KEY_MIN - 1)}):
+        check(len(pc.prod_problems()) == 1, "23 chars is below the 24-char minimum")
+    with env(**{**good, "FENGARDE_API_KEY": "k" * pc.API_KEY_MIN}):
+        check(pc.prod_problems() == [], "exactly the minimum passes")
+    ok_key = "k" * 24
+    pw = "p" * pc.REDIS_PASSWORD_MIN
+    # sentinel bus: REDIS_PASSWORD only, length enforced
+    with env(**{**good, "FENGARDE_API_KEY": ok_key, "BUS_BACKEND": "redis-sentinel", "REDIS_PASSWORD": "short"}):
+        check(any(f"{pc.REDIS_PASSWORD_MIN}-character minimum" in p for p in pc.prod_problems()),
+              "a short REDIS_PASSWORD must be refused")
+    with env(**{**good, "FENGARDE_API_KEY": ok_key, "BUS_BACKEND": "redis-sentinel", "REDIS_PASSWORD": pw}):
+        check(pc.prod_problems() == [], "sentinel + long enough REDIS_PASSWORD passes")
+    # plain redis bus: connects with REDIS_URL, so the URL must carry the SAME password
+    plain = {**good, "FENGARDE_API_KEY": ok_key, "BUS_BACKEND": "redis", "REDIS_PASSWORD": pw}
+    with env(**{**plain, "REDIS_URL": "redis://redis:6379/0"}):
+        check(any("REDIS_URL carries no password" in p for p in pc.prod_problems()),
+              "plain redis bus with a password-less REDIS_URL must be refused")
+    with env(**{**plain, "REDIS_URL": "redis://:" + "q" * 16 + "@redis:6379/0"}):
+        out = run_or_die()
+        check("does not match" in out, f"a mismatching URL password must be refused: {out!r}")
+        check(("q" * 16) not in out and pw not in out, "neither password may appear in the message")
+    with env(**{**plain, "REDIS_URL": "redis://:" + pw + "@redis:6379/0"}):
+        check(pc.prod_problems() == [], f"matching URL password passes: {pc.prod_problems()}")
+    with env(**{**plain, "REDIS_URL": "redis://:pa%73s@redis:6379/0", "REDIS_PASSWORD": "pass" + "z" * 12}):
+        check(any("does not match" in p for p in pc.prod_problems()), "percent-decoded comparison, mismatch caught")
 
 
 def _run_entry(argv, cwd, extra_env, timeout=60):
@@ -429,7 +525,9 @@ def main() -> int:
              test_first_boot_file_generation, test_first_boot_file_refused_on_windows,
              test_bootstrap_first_admin, test_every_entrypoint_refuses_in_prod,
              test_authz_integration_demo_unchanged,
-             test_users_ensure_first_boot_password_param]
+             test_users_ensure_first_boot_password_param,
+             test_bootstrap_failure_is_fatal_and_on_main_thread,
+             test_profile_typo_refused, test_secret_strength_minimums]
     for t in tests:
         t()
     if FAILS:

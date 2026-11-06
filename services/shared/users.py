@@ -209,10 +209,23 @@ def migrate(db: sqlite3.Connection) -> int:
     for version, sql in _SCHEMA_MIGRATIONS:
         if version <= current:
             continue
-        db.executescript(sql)
-        db.execute(f"PRAGMA user_version = {version}")
-        db.commit()
-        current = version
+        # BEGIN IMMEDIATE takes the write lock (waiting out the connection's busy timeout), then
+        # user_version is re-read under it: concurrent first starts on a fresh DB serialize here
+        # instead of both running the same ALTER ("duplicate column name"). DDL and the version
+        # bump commit together (sqlite DDL is transactional); executescript() would COMMIT early.
+        db.execute("BEGIN IMMEDIATE")
+        try:
+            current = db.execute("PRAGMA user_version").fetchone()[0]
+            if version > current:
+                for stmt in sql.split(";"):  # no ';' inside any migration literal
+                    if stmt.strip():
+                        db.execute(stmt)
+                db.execute(f"PRAGMA user_version = {version}")
+                current = version
+            db.commit()
+        except BaseException:
+            db.rollback()
+            raise
     return current
 
 

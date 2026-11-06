@@ -8,7 +8,10 @@ gated on ``FENGARDE_PROFILE`` (case-insensitive) being exactly ``prod``.
 What prod REQUIRES (aggregated — one numbered failure list, never the
 first-failure-only):
 
-  1. ``FENGARDE_API_KEY`` set                        (API-key auth on ws3 write
+  0. ``FENGARDE_PROFILE`` itself is recognised (prod / dev / demo / unset): any
+     other non-empty value (``production``, ``prd``, ``prod-``) is a typo that
+     would silently run the open demo, so it is REFUSED, not ignored;
+  1. ``FENGARDE_API_KEY`` set and >= 24 chars        (API-key auth on ws3 write
      surfaces; an unset key runs the service default-open);
   2. ``FENGARDE_RBAC_DB`` set                        (role-based access ON;
      prod without RBAC is default-open by design choice, so it is a refusal);
@@ -18,7 +21,10 @@ first-failure-only):
   4. ``FENGARDE_ADMIN_PASSWORD`` (when provided) must not be a known default
      (admin / password / changeme / fengarde / ... case-insensitive) and
      must meet the user store's length rule;
-  5. Redis-backed bus -> ``REDIS_PASSWORD`` set.
+  5. Redis-backed bus -> ``REDIS_PASSWORD`` set and >= 16 chars; on the plain
+     ``redis`` bus the connection uses ``REDIS_URL`` (not ``REDIS_PASSWORD``),
+     so the URL must carry the SAME password, else the bus would run
+     unauthenticated or fail while the gate said "fine".
 
 First-boot generation (``generate_first_boot_password``) writes a fresh
 strong password to ``FENGARDE_FIRST_BOOT_FILE`` with mode 0600 and a header
@@ -41,12 +47,14 @@ Never log the generated value — only its path.
 """
 from __future__ import annotations
 
+import hmac
 import os
 import secrets
 import stat
 import sys
 from pathlib import Path
 from typing import Optional
+from urllib.parse import unquote, urlsplit
 
 from shared.log import get_logger
 
@@ -57,9 +65,29 @@ DEFAULT_PASSWORDS = frozenset({
 })
 
 
+# Documented minimums (docs/secure-defaults.md states the same numbers).
+API_KEY_MIN = 24
+REDIS_PASSWORD_MIN = 16
+# Exact documented profile values (case-insensitive); unset/empty is the demo too.
+KNOWN_PROFILES = ("prod", "dev", "demo")
+
+
 def prod_active() -> bool:
     """True when FENGARDE_PROFILE (case-insensitive) is exactly 'prod'."""
     return os.getenv("FENGARDE_PROFILE", "").strip().lower() == "prod"
+
+
+def profile_problem() -> Optional[str]:
+    """Constant message when FENGARDE_PROFILE is set to something undocumented.
+
+    A misspelling must not silently disable the gate. The value is not echoed.
+    """
+    v = os.getenv("FENGARDE_PROFILE", "").strip().lower()
+    if v == "" or v in KNOWN_PROFILES:
+        return None
+    return ("FENGARDE_PROFILE is set to an unrecognised value; allowed: "
+            + ", ".join(KNOWN_PROFILES) + " (or unset). Refusing to start rather "
+            "than silently run the insecure demo profile")
 
 
 # The printed refusal text comes ONLY from this table of constants, looked up by a reason code. The password value (and
@@ -86,21 +114,34 @@ def admin_password_issue(password: object, min_chars: int = 12) -> Optional[str]
     return None
 
 
-def admin_password_ok(password: str, min_chars: int = 12) -> Optional[str]:
-    """Why the provided admin password is unacceptable for prod, or None (constant text, never the value).
-
-    Default-credential refusal is the point (a known admin password with
-    RBAC on is still default-open); length mirrors users.password_problem.
-    """
-    code = admin_password_issue(password, min_chars)
-    if code == "short" and min_chars != 12:
-        return f"is shorter than the {int(min_chars)}-character minimum (the user store's own rule)"
-    return None if code is None else _PW_REASONS[code]
-
-
-def _bus_requires_redis_password() -> bool:
+def _bus_backend() -> str:
     # shared/bus.py::Bus() lowercases BUS_BACKEND, so must this check.
-    return os.getenv("BUS_BACKEND", "").strip().lower() in ("redis", "redis-sentinel")
+    return os.getenv("BUS_BACKEND", "").strip().lower()
+
+
+def _redis_problems() -> list[str]:
+    """Redis-bus obligations. Messages are constants: no password-derived data."""
+    backend = _bus_backend()
+    if backend not in ("redis", "redis-sentinel"):
+        return []
+    problems: list[str] = []
+    pw = os.getenv("REDIS_PASSWORD", "")
+    if not pw:
+        problems.append("REDIS_PASSWORD is not set (Redis bus with no auth)")
+    elif len(pw) < REDIS_PASSWORD_MIN:
+        problems.append(f"REDIS_PASSWORD is shorter than the {REDIS_PASSWORD_MIN}-character minimum")
+    if backend == "redis":
+        # bus.py _RedisBus connects with REDIS_URL only; REDIS_PASSWORD is read by the sentinel bus.
+        try:
+            url_pw = unquote(urlsplit(os.getenv("REDIS_URL", "")).password or "")
+        except ValueError:
+            url_pw = ""
+        if not url_pw:
+            problems.append("REDIS_URL carries no password (the plain redis bus authenticates "
+                            "with the URL: redis://:<password>@host:6379/0)")
+        elif pw and not hmac.compare_digest(url_pw.encode(), pw.encode()):
+            problems.append("REDIS_URL's password does not match REDIS_PASSWORD")
+    return problems
 
 
 def _is_windows() -> bool:
@@ -109,8 +150,11 @@ def _is_windows() -> bool:
 
 def _rbac_problems() -> list[str]:
     problems: list[str] = []
-    if not os.getenv("FENGARDE_API_KEY"):
+    key = os.getenv("FENGARDE_API_KEY")
+    if not key:
         problems.append("FENGARDE_API_KEY is not set (API-key auth would be OFF)")
+    elif len(key) < API_KEY_MIN:
+        problems.append(f"FENGARDE_API_KEY is shorter than the {API_KEY_MIN}-character minimum")
     if not os.getenv("FENGARDE_RBAC_DB"):
         problems.append("FENGARDE_RBAC_DB is not set (role-based access would be OFF)")
     pw = os.getenv("FENGARDE_ADMIN_PASSWORD")
@@ -141,9 +185,7 @@ def prod_problems(rbac: bool = True) -> list[str]:
     credential) for services with their own auth store (ws6 keystore).
     """
     problems = _rbac_problems() if rbac else []
-    if _bus_requires_redis_password() and not os.getenv("REDIS_PASSWORD"):
-        problems.append("REDIS_PASSWORD is not set (Redis bus with no auth)")
-    return problems
+    return problems + _redis_problems()
 
 
 def prod_or_die(service: str, rbac: bool = True, extra: tuple = ()) -> None:
@@ -152,14 +194,21 @@ def prod_or_die(service: str, rbac: bool = True, extra: tuple = ()) -> None:
     Prints ONE aggregated failure list (numbered, every problem at once —
     an operator fixes the whole list in one pass, not one refusal per boot)
     and exits 1. No-op unless ``FENGARDE_PROFILE=prod``; the zero-config
-    demo path is untouched.
+    demo path is untouched. An UNRECOGNISED non-empty profile also exits 1
+    (a typo must not silently disable the gate).
     """
+    bad = profile_problem()
+    if bad:
+        _die(service, "FENGARDE_PROFILE is invalid:", [bad])
     if not prod_active():
         return
     problems = prod_problems(rbac) + list(extra)
     if not problems:
         return
-    head = "FENGARDE_PROFILE=prod but the secure surface is incomplete:"
+    _die(service, "FENGARDE_PROFILE=prod but the secure surface is incomplete:", problems)
+
+
+def _die(service: str, head: str, problems: list[str]) -> None:
     body = "\n".join(f"  {i}) {p}" for i, p in enumerate(problems, 1))
     get_logger(service).error(head, problems=problems)
     print(f"{head}\n{body}", file=sys.stderr)
@@ -182,7 +231,8 @@ def generate_first_boot_password(file_env: str = "FENGARDE_FIRST_BOOT_FILE",
         raise RuntimeError(
             "first-boot password file generation is POSIX-only: the 0600 mode "
             "is not enforced on Windows; set FENGARDE_ADMIN_PASSWORD instead")
-    # token_urlsafe is URL-safe base64: 15 bytes -> 20 chars, entropy ~120 bit
+    # token_urlsafe(n) is URL-safe base64 of n random bytes (6 bits/char, ~1.33 chars/byte);
+    # n = min_chars + 9 gives >= min_chars + 12 chars, of which min_chars + 3 are kept (~138 bit at 20).
     password = secrets.token_urlsafe(min_chars + 9)[:min_chars + 3]
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)

@@ -33,9 +33,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (CodeQL py/clear-text-storage), documented in docs/secure-defaults.md.
 - `require_auth_or_die` now routes through the prod gate first (prod implies
   auth-is-required; the two modes cannot disagree).
-- `tools/test_prodcheck.py` (12 groups, fast tier): aggregation, defaults
+- `tools/test_prodcheck.py` (15 groups, fast tier): aggregation, defaults
   refusal, first-boot file semantics, demo no-op, REQUIRE_AUTH contract,
-  users.py password-param path.
+  users.py password-param path, fatal bootstrap, profile typos, minimums.
+- Second review round (same PR): (1) `infra/docker-compose.yml` now forwards
+  `FENGARDE_PROFILE` to ws1/2/3/4/5/6/8/9 (`${FENGARDE_PROFILE:-}`, unset =
+  empty = demo) and `FENGARDE_RBAC_DB` / `FENGARDE_ADMIN_PASSWORD` /
+  `FENGARDE_FIRST_BOOT_FILE` to ws3, so `FENGARDE_PROFILE=prod docker compose
+  up` arms the gate; `tools/test_compose_prod_env.py` asserts it (verified
+  once with `docker compose config`, base and HA). (2) ws3 builds the RBAC
+  store and bootstraps the first admin on the MAIN thread
+  (`triage_api.init_rbac()`); a stale first-boot file with an empty store or an
+  unwritable path is fatal (exit 1) under prod, matching the docs; docs state
+  the uid-10001 chown / init-container requirement. (3) a non-empty
+  `FENGARDE_PROFILE` other than `prod`/`dev`/`demo` (e.g. `production`) is
+  refused instead of silently running the demo. (4) the gate enforces
+  `FENGARDE_API_KEY` >= 24 chars and `REDIS_PASSWORD` >= 16 chars (constants
+  in messages, values never echoed) and, for the plain `redis` bus, that
+  `REDIS_URL` carries the same password. (5) removed unused
+  `admin_password_ok`, corrected the entropy comment, docs now say exactly
+  which ports are published. (6) `shared/users.py` `migrate()` is safe under
+  concurrent first start (`BEGIN IMMEDIATE` + re-read `user_version`;
+  previously 'duplicate column name' crashed losers);
+  `services/shared/test_users_migrate_race.py` is the regression.
 
 ### Added (2026-11-04, WP-1.3: shipper adapters for real Fluent Bit / Winlogbeat / Docker shapes)
 
