@@ -10,11 +10,23 @@ Mapping (class / activity; activity ids beyond ocsf-classes.md are project-local
     alert   -> 4001 / 99 (Other)   an IDS signature match is not a connection verdict, so it must NOT be a Deny (6) or
                                    Accept (7): common_port_scan* and common_beaconing key on those. unmapped.ids.*
     flow    -> 4001 / 2  (Close)   Suricata logs a flow record when the flow ends. unmapped.suricata.flow.*
-    dns     -> 4002 / 1  (query)   a ``request``: feeds common_dns_exfil / common_dns_tunnel_by_domain through
-                                   dst_endpoint.hostname and unmapped.dns.parent_domain, like dns_query.py
-               4002 / 2  (response) a ``response`` (``answer`` in EVE DNS v2): no rule counts these, so a lookup is not counted twice
+    dns     -> 4002 / 1  (query)   a ``request`` (``query`` in EVE DNS v1/v2): feeds common_dns_exfil /
+                                   common_dns_tunnel_by_domain through dst_endpoint.hostname and unmapped.dns.parent_domain,
+                                   like dns_query.py
+               4002 / 2  (response) a ``response`` (``answer`` in EVE DNS v1/v2): no rule counts these, so a lookup is not
+                                   counted twice. Suricata 8.0 logs v3 by default; v2 (flat rrname/rrtype) comes from every
+                                   7.x sensor and from ``version: 2`` (docs/upgrade/8.0-dns-logging-changes).
     modbus  -> 4001 / 99           unmapped.ot.{protocol, function_code, unit_id, address, ...}; sector datacenter
     dnp3    -> 4001 / 99           unmapped.ot.{protocol, function_code, ...}; sector datacenter
+
+Event time: alert/dns/modbus/dnp3 use the record ``timestamp`` (the packet time). A ``flow`` record is different: its
+``timestamp`` is the engine clock when the flow was logged (src/output-json-flow.c: ``TimeGet()``), which in the real
+fixture is minutes away from the flow, while ``flow.end`` is the last packet (``f->lastts``). The Close event is stamped
+``flow.end`` (fallback ``timestamp``), so a long flow is placed where it ended, not where it was logged or started.
+
+An IPS ``alert.action`` of ``blocked`` stays only in ``unmapped.ids.action``: it is deliberately NOT mapped to Deny (6),
+because common_port_scan* counts firewall-style connection denies and a single signature drop is not one. Revisit if a
+rule needs IPS drops.
 
 Modbus/DNP3 events deliberately never set ``unmapped.ot.anomaly_type``: that is modbus_anomaly.py's own classification
 (ot_modbus_unauthorized_write keys on it) and this parser makes no judgement of its own. Every other EVE ``event_type``
@@ -32,11 +44,27 @@ from ._netjson import drop_none, endpoint, envelope_meta, integer, load_record, 
 
 _NET, _DNS = 4001, 4002
 _CLOSE, _OTHER = 2, 99
+_MAX_TIME_MS = 253_402_300_799_000  # 9999-12-31
+# EVE ``event_type`` values (eve-json-format docs); the content sniff in parsers/__init__.py needs a KNOWN one, because
+# the bare key name also appears in other sources (n8n_audit).
+EVE_EVENT_TYPES = frozenset({
+    "alert", "anomaly", "arp", "bittorrent-dht", "dcerpc", "dhcp", "dnp3", "dns", "drop", "email", "enip", "fileinfo",
+    "flow", "ftp", "http", "http2", "ike", "ikev2", "krb5", "ldap", "mdns", "modbus", "mqtt", "netflow", "nfs",
+    "pgsql", "pop3", "quic", "rdp", "rfb", "sip", "smb", "smtp", "snmp", "ssh", "stats", "tftp", "tls", "websocket"})
 _SEVERITY = {1: SEV_HIGH, 2: SEV_MEDIUM, 3: SEV_LOW}  # Suricata: 1 is the most severe
 
 
 def _d(v) -> dict:
     return v if isinstance(v, dict) else {}
+
+
+def looks_like_eve(rec: dict) -> bool:
+    """Content sniff: a known EVE ``event_type``, an integer ``flow_id`` and a packet address or ``pcap_cnt``."""
+    fid = rec.get("flow_id")
+    et = rec.get("event_type")
+    return (isinstance(et, str) and et in EVE_EVENT_TYPES and isinstance(fid, int) and not isinstance(fid, bool)
+            and (isinstance(rec.get("src_ip"), str) or isinstance(rec.get("dest_ip"), str)
+                 or integer(rec.get("pcap_cnt")) is not None))
 
 
 class SuricataEveParser(Parser):
@@ -63,7 +91,7 @@ class SuricataEveParser(Parser):
         meta = envelope_meta(raw)
         event = self.base_event(
             class_uid=class_uid, activity_id=activity, severity_id=severity,
-            time_ms=self._time_ms(rec, meta), ingest_id=meta.get("ingest_id"),
+            time_ms=self._time_ms(rec, meta, activity == _CLOSE), ingest_id=meta.get("ingest_id"),
             message=message, meta=meta, sector=sector(meta, "datacenter" if ot else self.SECTOR))
         src = endpoint(rec.get("src_ip"), rec.get("src_port"))
         dst = endpoint(rec.get("dest_ip"), rec.get("dest_port"))
@@ -109,7 +137,7 @@ class SuricataEveParser(Parser):
     def _dns(rec: dict):
         d = _d(rec.get("dns"))
         kind = d.get("type")
-        if kind not in ("request", "response", "answer"):  # v3 says "response"; v2 said "answer"
+        if kind not in ("request", "response", "query", "answer"):  # v3: request/response; v1/v2: query/answer
             return None
         # EVE DNS v3: queries[]; v1/v2 (flat): rrname/rrtype on the dns object itself.
         raw_q = d.get("queries")
@@ -124,7 +152,7 @@ class SuricataEveParser(Parser):
             "qtype": text(q.get("rrtype"), 16), "rcode": text(d.get("rcode"), 32), "query_count": len(queries) or None,
             "answers": [s for s in (text(_d(x).get("rdata")) for x in answers[:16]) if s],
             "parent_domain": parent_domain(name), "tx_id": integer(d.get("tx_id"))})
-        activity = 1 if kind == "request" else 2
+        activity = 1 if kind in ("request", "query") else 2
         return (_DNS, activity, SEV_INFO, f"DNS {kind} {dns.get('qtype', '?')} {name}",
                 {"hostname": name, "dns": dns}, False)
 
@@ -169,6 +197,9 @@ class SuricataEveParser(Parser):
                 f"DNP3 {ot.get('message_type', 'message')} function {ot.get('function_code', '?')}", {"ot": ot}, True)
 
     @staticmethod
-    def _time_ms(rec: dict, meta: dict) -> int:
-        return (to_epoch_ms(rec.get("timestamp")) or to_epoch_ms(meta.get("received_at"))
+    def _time_ms(rec: dict, meta: dict, closing: bool) -> int:
+        end = to_epoch_ms(_d(rec.get("flow")).get("end")) if closing else None
+        if end is not None and end > _MAX_TIME_MS:  # to_epoch_ms reads a huge float as FILETIME: not a time
+            end = None
+        return (end or to_epoch_ms(rec.get("timestamp")) or to_epoch_ms(meta.get("received_at"))
                 or int(time.time() * 1000))

@@ -46,7 +46,9 @@ by accident:
   `unmapped.ids.*` (signature, sid, severity, action), `unmapped.zeek.notice.*`, and `unmapped.ot.*` (protocol,
   function_code, unit_id, address, ...; sector `datacenter`). These parsers never set `unmapped.ot.anomaly_type`, so
   `ot_modbus_unauthorized_write*` stay exclusive to `modbus_anomaly`.
-- **4001 activity 2 (Close)** — Suricata `flow` and Zeek `conn` records (written at flow end); detail under
+- **4001 activity 2 (Close)** — Suricata `flow` and Zeek `conn` records (written at flow end), stamped with the END of
+  the flow: Suricata `flow.end` (the record `timestamp` is the engine clock at logging, not the flow), Zeek `ts` +
+  `duration` (`ts` is the first packet); detail under
   `unmapped.suricata.flow.*` / `unmapped.zeek.conn.*`. No rule reads activity 2 today. Mapping refused/reset
   connections (Zeek `S0`/`REJ`/`RSTO`, Suricata flow state) to activity 6 so the port-scan rules see them is a
   deliberate follow-up decision, not done here.

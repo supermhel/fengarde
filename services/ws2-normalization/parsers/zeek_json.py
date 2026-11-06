@@ -13,6 +13,15 @@ A Zeek JSON line does not name its log stream, so the stream is recognised by fi
     modbus_detailed.log  has ``func`` + ``unit``, no ``pdu_type``  -> same (CISA ICSNPP ``icsnpp-modbus`` package)
     conn.log             has ``conn_state`` / ``history``          -> 4001 / 2 (Close; conn.log is written at end)
 
+Event time: ``ts`` is the time of the connection's FIRST packet, but conn.log is written at the end, so the Close event is
+stamped ``ts + duration`` (a 7200 s connection is no longer placed two hours early; with no ``duration`` it stays ``ts``).
+dns/notice/modbus rows keep ``ts``, the time of that message.
+
+Minimum Zeek: the ``unit`` and ``pdu_type`` columns that Modbus recognition relies on arrived in Zeek 5.1.0 (NEWS under
+5.1.0, zeek/zeek PR 2281, July 2022); older releases write modbus.log lines with no ``unit``, which are dropped. One Modbus
+transaction yields up to three events: modbus.log writes a REQ row and a RESP row and, with the ICSNPP package,
+modbus_detailed.log adds a row of its own; each is a separate log line, hence a separate event.
+
 Activity ids beyond ocsf-classes.md are project-local. 99 (Other) is used where no Deny (6) / Accept (7) verdict exists,
 because common_port_scan* and common_beaconing key on those; a Modbus transaction or a notice is neither. This parser
 never sets ``unmapped.ot.anomaly_type`` (modbus_anomaly.py's own classification, which ot_modbus_unauthorized_write
@@ -21,6 +30,7 @@ keys on) -- it makes no judgement of its own. Every other Zeek stream (http, ssl
 """
 from __future__ import annotations
 
+import re
 import time
 from typing import Optional
 
@@ -32,17 +42,32 @@ from ._netjson import (drop_none, endpoint, envelope_meta, integer, load_record,
 
 _NET, _DNS = 4001, 4002
 _CLOSE, _OTHER = 2, 99
+_MAX_DURATION_S = 10 * 366 * 86400  # a longer "connection" is not trusted to move the event time
 
-# Modbus Application Protocol V1.1b3 public function-code table, keyed by the names Zeek uses (a trailing
-# ``_EXCEPTION`` is stripped first). Names not listed simply get no numeric ``function_code``.
+# Zeek's Modbus::function_codes (scripts/base/protocols/modbus/consts.zeek, master): the 20 standard codes (incl. 0x5B
+# OBJECT_MESSAGING) and the 12 machine/vendor ones. The log name is that table's value; for an exception response Zeek
+# appends ``_EXCEPTION`` (stripped first). A code outside the table is logged as ``unknown-N`` (N may include the 0x80
+# exception bit), handled in _function_code().
 _MODBUS_CODES = {
-    "READ_COILS": 1, "READ_DISCRETE_INPUTS": 2, "READ_HOLDING_REGISTERS": 3, "READ_INPUT_REGISTERS": 4,
-    "WRITE_SINGLE_COIL": 5, "WRITE_SINGLE_REGISTER": 6, "READ_EXCEPTION_STATUS": 7, "DIAGNOSTICS": 8,
-    "GET_COMM_EVENT_COUNTER": 11, "GET_COMM_EVENT_LOG": 12, "WRITE_MULTIPLE_COILS": 15,
-    "WRITE_MULTIPLE_REGISTERS": 16, "REPORT_SLAVE_ID": 17, "READ_FILE_RECORD": 20, "WRITE_FILE_RECORD": 21,
-    "MASK_WRITE_REGISTER": 22, "READ_WRITE_MULTIPLE_REGISTERS": 23, "READ_FIFO_QUEUE": 24,
-    "ENCAP_INTERFACE_TRANSPORT": 43,
+    "READ_COILS": 0x01, "READ_DISCRETE_INPUTS": 0x02, "READ_HOLDING_REGISTERS": 0x03, "READ_INPUT_REGISTERS": 0x04,
+    "WRITE_SINGLE_COIL": 0x05, "WRITE_SINGLE_REGISTER": 0x06, "READ_EXCEPTION_STATUS": 0x07, "DIAGNOSTICS": 0x08,
+    "GET_COMM_EVENT_COUNTER": 0x0B, "GET_COMM_EVENT_LOG": 0x0C, "WRITE_MULTIPLE_COILS": 0x0F,
+    "WRITE_MULTIPLE_REGISTERS": 0x10, "REPORT_SLAVE_ID": 0x11, "READ_FILE_RECORD": 0x14, "WRITE_FILE_RECORD": 0x15,
+    "MASK_WRITE_REGISTER": 0x16, "READ_WRITE_MULTIPLE_REGISTERS": 0x17, "READ_FIFO_QUEUE": 0x18,
+    "ENCAP_INTERFACE_TRANSPORT": 0x2B, "OBJECT_MESSAGING": 0x5B,
+    "PROGRAM_484": 0x09, "POLL_484": 0x0A, "PROGRAM_584_984": 0x0D, "POLL_584_984": 0x0E, "PROGRAM_884_U84": 0x12,
+    "RESET_COMM_LINK_884_U84": 0x13, "PROGRAM_CONCEPT": 0x28, "MULTIPLE_FUNCTION_CODES": 0x29, "PROGRAM_UNITY": 0x5A,
+    "FIRMWARE_REPLACEMENT": 0x7D, "PROGRAM_584_984_2": 0x7E, "REPORT_LOCAL_ADDRESS": 0x7F,
 }
+_UNKNOWN_FUNC = re.compile(r"unknown-(\d{1,3})")
+
+
+def _function_code(func: str) -> Optional[int]:
+    base = func[:-len("_EXCEPTION")] if func.endswith("_EXCEPTION") else func
+    if base in _MODBUS_CODES:
+        return _MODBUS_CODES[base]
+    m = _UNKNOWN_FUNC.fullmatch(func)
+    return int(m.group(1)) & 0x7F if m and int(m.group(1)) <= 0xFF else None  # 0x80 is the exception flag, not a code
 
 
 class ZeekJsonParser(Parser):
@@ -73,7 +98,7 @@ class ZeekJsonParser(Parser):
         meta = envelope_meta(raw)
         event = self.base_event(
             class_uid=class_uid, activity_id=activity, severity_id=severity,
-            time_ms=self._time_ms(rec, meta), ingest_id=meta.get("ingest_id"),
+            time_ms=self._time_ms(rec, meta, activity == _CLOSE), ingest_id=meta.get("ingest_id"),
             message=message, meta=meta, sector=sector(meta, "datacenter" if ot else self.SECTOR))
         if src:
             event["src_endpoint"] = src
@@ -137,11 +162,10 @@ class ZeekJsonParser(Parser):
         func = text(rec.get("func"), 64)
         if func is None:
             return None
-        base = func[:-len("_EXCEPTION")] if func.endswith("_EXCEPTION") else func
         # modbus_detailed.log names the failure ``exception_code``; modbus.log names it ``exception``.
         exc = text(rec.get("exception")) or text(rec.get("exception_code"))
         ot = drop_none({
-            "protocol": "modbus_tcp", "function_code": _MODBUS_CODES.get(base), "function_name": func,
+            "protocol": "modbus_tcp", "function_code": _function_code(func), "function_name": func,
             "unit_id": integer(rec.get("unit")), "transaction_id": integer(rec.get("tid")),
             "pdu_type": text(rec.get("pdu_type"), 8), "address": integer(rec.get("address")),
             "quantity": integer(rec.get("quantity")), "exception_name": exc,
@@ -150,9 +174,12 @@ class ZeekJsonParser(Parser):
         return (_NET, _OTHER, SEV_INFO, f"Modbus/TCP {func} unit {ot.get('unit_id', '?')}", {"ot": ot}, True, src, dst)
 
     @staticmethod
-    def _time_ms(rec: dict, meta: dict) -> int:
-        return (to_epoch_ms(rec.get("ts")) or to_epoch_ms(meta.get("received_at"))
-                or int(time.time() * 1000))
+    def _time_ms(rec: dict, meta: dict, closing: bool) -> int:
+        start = to_epoch_ms(rec.get("ts"))
+        d = number(rec.get("duration")) if closing else None
+        if start and d is not None and 0 <= d <= _MAX_DURATION_S:  # a hostile 1e300 duration keeps the start time
+            start += int(d * 1000)
+        return start or to_epoch_ms(meta.get("received_at")) or int(time.time() * 1000)
 
 
 def _bool(v) -> Optional[bool]:

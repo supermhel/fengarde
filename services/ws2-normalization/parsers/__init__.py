@@ -31,7 +31,7 @@ from .modbus_anomaly import ModbusAnomalyParser
 from .inventory_diff import InventoryDiffParser
 from .mail_gateway import MailGatewayParser
 from .m365_audit import M365AuditParser
-from .suricata_eve import SuricataEveParser
+from .suricata_eve import SuricataEveParser, looks_like_eve
 from .zeek_json import ZeekJsonParser
 from .plugins import discover_plugin_parsers
 
@@ -122,9 +122,10 @@ def _resolve_structured(rec: dict) -> Optional[Parser]:
     if "Operation" in rec and "Workload" in rec and "CreationTime" in rec:
         return _REGISTRY["m365_audit"]
     # Network-sensor JSON. Checked before the eventType/event_type branch below: Suricata's `event_type` key would
-    # otherwise route to n8n_audit. Suricata EVE: event_type + flow_id (every record kind except `stats`). Zeek: uid +
-    # id.orig_h (conn/dns/modbus); notice.log has neither, so it is reachable by source_type="zeek_json" only.
-    if isinstance(rec.get("event_type"), str) and "flow_id" in rec:
+    # otherwise route to n8n_audit. Suricata EVE: a KNOWN event_type + integer flow_id + src_ip/dest_ip/pcap_cnt
+    # (looks_like_eve; `stats` has no flow_id). Zeek: uid + id.orig_h (conn/dns/modbus); notice.log has neither, so it
+    # is reachable by source_type="zeek_json" only.
+    if looks_like_eve(rec):
         return _REGISTRY["suricata_eve"]
     if "uid" in rec and "id.orig_h" in rec:
         return _REGISTRY["zeek_json"]
