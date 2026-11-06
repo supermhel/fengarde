@@ -43,8 +43,11 @@ closing sentence).
    `false_correlation_rate` (1.0), `directional_discrimination` (0.0) and
    `incident_count`; only `alert_order_ok` and `order_concordance` move
    (`docs/proposals/2026-10-02-ws8-edge-time.md`, "The problem, measured";
-   re-statement in `eval/twin/causal_order.py:1-14`). I did not re-run
-   `eval/adversarial/order_controls.py`. **[UNVERIFIED this session]**
+   re-statement in `eval/twin/causal_order.py:1-14`). **[VERIFIED
+   2026-11-06]** `python eval/adversarial/order_controls.py` runs and prints
+   "order controls can say yes and no": under `mirror` the order-aware columns
+   (`alert_order_ok`, `order_concordance`, `forbidden_order_realised_rate`) flip
+   while the join metrics stay equal; under `shift_1h` they do not move.
 4. **The class is waived, not fixed.** `eval/twin/oracle_consistency.py`
    carries a frozen `_ORDER_BLIND` waiver on **13** `("<storyline>", "forbidden",
    ...)` entries across 8 storylines (I counted the entries in the file; I did
@@ -83,7 +86,12 @@ closing sentence).
    and `_coalesce` keeps the last payload per `(index, doc_id)`
    (`services/ws3-indexer/main.py:137-150`, `router.py:99-110`). There is no
    `incident-graphs` file under `contracts/opensearch-mappings/`, so I expect
-   dynamic mapping, but I did not find where the index is created.
+   dynamic mapping, but I did not find where the index is created (re-checked
+   2026-11-06: `incident-graphs` appears only in `services/ws3-indexer/router.py`
+   and the storage adapters; the mapping files that exist for other indices set
+   `"dynamic": "false"`, which would keep unknown keys in `_source` but not index
+   them, so an `incident-graphs` template, if one is ever added, must list the
+   four new keys or accept that they are stored but not searchable).
    **[UNVERIFIED]** Whether any consumer rejects unknown edge keys: I found no
    strict-schema check in the files above; I did not audit every consumer
    (the roadmap section 5.2 "consumer strictness" check the 2026-10-02
@@ -279,11 +287,12 @@ are weak exactly where a naive version would be weak:
   waiver list today, but only those whose steps are timed and bridged are
   gradable, which I have not counted). With 0 failures in 13 forbidden pairs
   the rule-of-three upper bound is about 23 %, which is why 13 alone cannot
-  support a strong claim, and why n = 2 supports none. Grep shows roughly 50
-  `allowed: true` and 17 `allowed: false` lines across the 11 oracle files
-  (includes comments; graded subset not counted), so reaching 30 gradable pairs
-  may need new storylines or a second seed family. **[UNVERIFIED]** that 30 is
-  attainable; if it is not, the honest outcome is "claim not demonstrated", not
+  support a strong claim, and why n = 2 supports none. A parsed count
+  (2026-11-06, YAML load of the 11 `eval/twin/oracle*.yaml` files, nodes carrying
+  a boolean `allowed`) gives 49 allowed and 16 forbidden pairs, 65 in total, so 30
+  and 10 are within the raw pool; that is an UPPER bound, because the gradable
+  subset (timed, entity-bearing, emitted as a graph edge) is still not counted.
+  **[UNVERIFIED]** that 30 gradable pairs are attainable; if it is not, the honest outcome is "claim not demonstrated", not
   a lower n.
 - **Pass criterion for the README gate (owner to ratify).**
   `directional_discrimination_timed >= 0.5` (the threshold the existing
