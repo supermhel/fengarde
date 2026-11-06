@@ -33,6 +33,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   parser; winlogbeat `event_data` can no longer overwrite `EventID`/`Computer`/`TimeCreated`; docker ids and names are validated;
   journald without `_HOSTNAME` is a no-op; fixture provenance wording corrected (transcribed, not byte-exact).
 
+### Changed (2026-11-06, WP-6.1: sessions-only browser auth — GH-2, owner option C)
+
+- **nginx front key gate + `/api/config.js` bootstrap removed in ws7.** The browser
+  no longer holds or serves `FENGARDE_API_KEY`: `location = /api/config.js` is
+  deleted, `window.FENGARDE_API_KEY` is gone from the nginx template, the SPA's
+  `index.html` no longer loads the config script, and `api.ts` `headers()` no
+  longer attaches `X-Api-Key`. The browser authenticates by its RBAC session
+  cookie alone — ws3 `_check_auth` (the single auth authority) accepts a session
+  OR the API key.
+- **Auth-less upstreams keep a gate via `auth_request /api/auth/check`.** Routes
+  that proxy straight to something with no credential check of its own —
+  OpenSearch direct reads `/api/alerts`, `/api/events`, `/api/ai-triage`, and
+  `/api/ops/*`, `/api/prom/*` — now run an nginx `auth_request` to the new ws3
+  `GET /auth/check` (200 iff key-OR-session, else 401), so they stay protected
+  without a browser-side key.
+- **ws3 `GET /auth/check` added** (`ROUTE_INVENTORY` + `contracts/triage-api.yaml`),
+  mirroring `_check_auth`; the API key is retained for machine clients.
+- **Behavioral note:** browser console access now requires RBAC (there is no
+  login system with RBAC off); RBAC-off deployments with a key set are
+  machine/read path for a browser. The default RBAC-off + key-unset demo is
+  unchanged.
+
 ## [0.12.0] - 2026-11-05
 
 _Headline: real input. FENGARDE can now be fed over HTTP/JSON and TCP syslog, the gap-hunt tracker is closed, and the full-corpus benchmark has a CI lane. The two new listeners have unit and synthetic evidence only; no real-network deployment has exercised them. Notable changes: `5515/tcp` (TCP syslog) now starts in the default stack, bound to loopback; `POST /v1/ingest` on `127.0.0.1:8554` needs `FENGARDE_INGEST_TOKEN`; the TCP metric names changed during review (event counters are the unprefixed syslog ones when UDP is up). The graph is still entity-linked with direction from entity type, not event time (false_correlation_rate 1.0 on the twin)._

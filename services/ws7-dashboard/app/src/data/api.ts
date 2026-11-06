@@ -95,8 +95,6 @@ export interface Session { username: string; role: string; tenant_id: string; cs
 
 export type Result<T> = { ok: true; data: T } | { ok: false; status: number; reason: string };
 
-declare global { interface Window { FENGARDE_API_KEY?: string } }
-
 let csrf: string | null = null;
 let tenant: string | null = null;
 /** Tenant scope for the tenant-aware routes (rules, incidents, inventory), like the classic console's tenantQuery(). */
@@ -106,7 +104,10 @@ export const setCsrf = (t: string | null) => { csrf = t; };
 
 function headers(extra: Record<string, string> = {}): Record<string, string> {
   const h: Record<string, string> = { Accept: "application/json", ...extra };
-  if (window.FENGARDE_API_KEY) h["X-Api-Key"] = window.FENGARDE_API_KEY;
+  // WP-6.1 (option C): the browser authenticates by its RBAC SESSION cookie
+  // (credentials: "same-origin", forwarded by nginx) -- it never holds the
+  // API key. FENGARDE_API_KEY is reserved for machine clients, which send
+  // X-Api-Key on their own.
   if (csrf) h["X-CSRF-Token"] = csrf;
   return h;
 }

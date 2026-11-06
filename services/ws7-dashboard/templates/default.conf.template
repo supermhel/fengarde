@@ -71,7 +71,7 @@ server {
     # revalidate on every load so a redeploy is picked up immediately (`/` reaches this exact match via the `index` internal redirect);
     # the content-hashed bundles under /assets/ never change in place, so they
     # are cached forever. Each block repeats the server-level security headers
-    # because any add_header here drops the inherited ones (see config.js below).
+    # because any add_header here drops the inherited ones.
     location = /index.html {
         add_header Cache-Control "no-cache";
         add_header X-Frame-Options "DENY" always;
@@ -88,53 +88,19 @@ server {
         add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'" always;
     }
 
-    # 2026-08-26 gap-hunt: same-origin config bootstrap. The browser must
-    # PRESENT X-Api-Key on every request (see the write-route guards below),
-    # so the page needs a same-origin source for the key. envsubst substitutes
-    # ${FENGARDE_API_KEY} into this body at container start; unset -> empty
-    # string -> the JS attaches no header -> every route's empty-vs-empty
-    # comparison passes (zero-config default unchanged).
-    # Gap-hunt read-plane #6 (2026-08-27): this body is the API key in
-    # plaintext, served to any client that reaches this port, so the nginx
-    # X-Api-Key gate on the data routes only stops NON-browser clients -- a
-    # tool/script can curl THIS file and mint the key, bypassing the gate
-    # entirely. That residual exposure cannot be fully closed here: a trusted
-    # same-origin page must be able to load the key (it re-presents it as
-    # X-Api-Key on every guarded request), so withholding it would break the
-    # whole client-presented-key model. The proportionate mitigation below
-    # serves the bootstrap ONLY to a real same-origin browser subresource
-    # fetch, identified by the Sec-Fetch-Site request-header that browsers set
-    # on subresource loads ("same-origin", immune to the repo's no-referrer
-    # Referrer-Policy). Plain curl/wget, scanners, and cross-origin <img>/<script>
-    # dumps send no such header (or "cross-site") and get 403. NOTE: this is
-    # defense-in-depth, NOT a security boundary -- Sec-Fetch-Site is
-    # client-declared and spoofable, it excludes pre-fetch-metadata browsers,
-    # and any client that can render this dashboard is equally entitled to the
-    # data it boots. HTTPS termination + treating FENGARDE_API_KEY as a
-    # deployment secret (infra/SECURITY notes) are the real controls.
-    location = /api/config.js {
-        default_type application/javascript;
-        add_header Cache-Control "no-store";
-        # nginx `add_header` is NOT inherited from the parent `server` block
-        # once THIS block defines any add_header of its own (Cache-Control
-        # above) -- so the response carrying the API key would otherwise be
-        # the one response stripped of every security header (CSP,
-        # X-Frame-Options, nosniff, Referrer-Policy) defined at :54-57.
-        # Repeat them explicitly rather than rely on inheritance.
-        add_header X-Frame-Options "DENY" always;
-        add_header X-Content-Type-Options "nosniff" always;
-        add_header Referrer-Policy "no-referrer" always;
-        add_header Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'" always;
-        # Read-only bootstrap: reject any state-changing method.
-        limit_except GET HEAD {
-            deny all;
-        }
-        set $fengarde_cfg_ok 0;
-        if ($http_sec_fetch_site = "same-origin") { set $fengarde_cfg_ok 1; }
-        if ($fengarde_cfg_ok = 0) { return 403; }
-        return 200 'window.FENGARDE_API_KEY = "${FENGARDE_API_KEY}";\n';
-    }
-
+    # WP-6.1 (GH-2, owner decision 2026-11-05, option C): browser auth is now
+    # SESSION-ONLY. The /api/config.js API-key bootstrap is REMOVED -- the
+    # browser never holds FENGARDE_API_KEY. The SPA logs in over RBAC and its
+    # session cookie (forwarded unmodified by the /api/auth/ and guard
+    # proxies) is the credential ws3's _check_auth accepts ("a session or the
+    # API key", triage_api.py). The API key remains valid for MACHINE clients
+    # on every route (ws3/auth request still accepts X-Api-Key). Ws3 is the
+    # single auth authority; nginx no longer compares the key itself except
+    # as an nginx auth_request that passes the request through to ws3's
+    # /auth/check (key-OR-session) for routes that reach an auth-less
+    # upstream (OpenSearch reads, ops metrics, Prometheus) so those stay
+    # authenticated without re-introducing a browser-side key.
+    #
     # DX4: same-origin live-alerts endpoint. The front end fetches /api/alerts and
     # nginx proxies it to OpenSearch's alerts-* search. The upstream is resolved at
     # request time via Docker's embedded DNS (127.0.0.11) so nginx still starts even
@@ -150,23 +116,16 @@ server {
         # using a variable upstream. With a variable, nginx ignores any query string
         # appended to proxy_pass, so URI-search params are silently dropped.
         # This query: newest 50 real rule alerts (excludes ai.results which lack rule_title).
-        # SECURITY FIX: this location talks straight to OpenSearch (which
-        # never checks X-Api-Key -- DISABLE_SECURITY_PLUGIN=true) and,
-        # unlike /api/auth/, /api/triage/, /api/rules below, forwarded NO
-        # credential of any kind. That meant even a deployment with
-        # FENGARDE_API_KEY explicitly set (auth deliberately turned on) left
-        # this one alert-read endpoint wide open -- the client-side login
-        # gate in index.html protected nothing at this layer. Enforced here,
-        # in nginx itself, since OpenSearch can't do it: when FENGARDE_API_KEY
-        # is unset (the default; envsubst still substitutes it as an empty
-        # string per docker-compose.yml's ${FENGARDE_API_KEY:-}), both sides
-        # of the comparison are "" and every request passes -- unchanged,
-        # zero-config behavior. When it IS set, only a caller presenting the
-        # matching X-Api-Key gets through; everyone else gets 401, same as
-        # the other three proxied routes' backend already enforces.
-        if ($http_x_api_key != "${FENGARDE_API_KEY}") {
-            return 401;  # non-2xx -> the front end's r.ok check falls back to mock data
-        }
+        # SECURITY FIX (WP-6.1): this location talks STRAIGHT to OpenSearch
+        # (which never checks X-Api-Key -- DISABLE_SECURITY_PLUGIN=true), so
+        # the nginx X-Api-Key comparison is replaced by an auth_request to
+        # ws3's /auth/check, the single auth authority: it accepts a valid
+        # X-Api-Key (machine clients) OR an active RBAC session cookie
+        # (browsers, option C). A caller with neither gets 401 here before
+        # OpenSearch is ever reached -- OpenSearch itself cannot enforce
+        # this. The subrequest carries the client's Cookie and X-Api-Key
+        # headers through the /api/auth/ proxy to ws3 /auth/check.
+        auth_request /api/auth/check;
 
         proxy_pass $opensearch/alerts-*/_search;
         proxy_method POST;
@@ -202,9 +161,7 @@ server {
     location = /api/ai-triage {
         resolver 127.0.0.11 ipv6=off valid=30s;
         set $opensearch "http://${OPENSEARCH_HOST}";
-        if ($http_x_api_key != "${FENGARDE_API_KEY}") {
-            return 401;
-        }
+        auth_request /api/auth/check;
         proxy_pass $opensearch/alerts-*/_search;
         proxy_method POST;
         proxy_set_header Content-Type "application/json";
@@ -223,9 +180,7 @@ server {
     location = /api/events {
         resolver 127.0.0.11 ipv6=off valid=30s;
         set $opensearch "http://${OPENSEARCH_HOST}";
-        if ($http_x_api_key != "${FENGARDE_API_KEY}") {
-            return 401;
-        }
+        auth_request /api/auth/check;
         proxy_pass $opensearch/events-*/_search;
         proxy_method POST;
         proxy_set_header Content-Type "application/json";
@@ -248,17 +203,17 @@ server {
     # FENGARDE_API_KEY set with RBAC off; the front end tells "not logged in"
     # (401) apart from "no login system at all" (404) by this exact status.
     location /api/auth/ {
-        # Gap-hunt #52/#53: require the caller-presented key (see /api/triage/
-        # for the full account) -- never inject a server-side key. The browser
-        # holds the key via /api/config.js, so the front end's 401 (RBAC on,
-        # logged out) vs 404 (RBAC off, no login system) detection still
-        # works: when the key is set the browser presents it and reaches
-        # /auth/me; when it is unset both sides compare "" == "" and pass.
+        # WP-6.1 (option C): the login/bootstrap surface is NOT key-gated --
+        # a browser that has not logged in yet could not present a credential,
+        # so requiring one here would lock users out. ws3's own routes make
+        # the call: /auth/login,/auth/logout,/auth/mfa/* are exempt from
+        # _check_auth when RBAC is on; GET /auth/me is reachable (session-only)
+        # so the front end tells 401 (logged out, RBAC on) apart from 404
+        # (no login system, RBAC off). Machine clients still pass X-Api-Key,
+        # which is forwarded so ws3 can accept the key on /auth/check and
+        # other key-capable reads.
         resolver 127.0.0.11 ipv6=off valid=30s;
         set $ws3_auth "http://ws3-indexer:${WS3_TRIAGE_PORT}";
-        if ($http_x_api_key != "${FENGARDE_API_KEY}") {
-            return 401;
-        }
         rewrite ^/api/auth/(.*)$ /auth/$1 break;
         proxy_pass $ws3_auth;
         proxy_set_header Host $host;
@@ -282,20 +237,16 @@ server {
     # success fallback is needed here the way it is for the read-only
     # alerts feed.
     location /api/triage/ {
-        # Gap-hunt (2026-08-26) #52/#53: this used to INJECT the key
-        # server-side (proxy_set_header X-Api-Key "${FENGARDE_API_KEY}"),
-        # which with RBAC off (the documented default) let anyone reaching
-        # port 8080 POST triage decisions and read the audit log -- the key
-        # protected nothing on these routes. Now the caller must PRESENT the
-        # key itself (the JS reads it from /api/config.js and attaches it to
-        # every request). When FENGARDE_API_KEY is unset both sides compare
-        # "" == "" and every request passes (zero-config default unchanged);
-        # when set, only callers presenting the matching key get through.
+        # WP-6.1 (option C): no nginx key gate here -- triage is served by
+        # ws3-indexer, whose _check_auth accepts an X-Api-Key (machine
+        # clients) OR an active RBAC session cookie (browsers), and whose
+        # _require_role enforces the session role/tenant per route. That is
+        # the single auth authority; nginx only forwards the caller-presented
+        # key and the session cookie and lets ws3 decide. (This replaced the
+        # 2026-08-26 gap-hunt model where the browser held the key via
+        # /api/config.js and nginx compared it itself.)
         resolver 127.0.0.11 ipv6=off valid=30s;
         set $ws3_triage "http://ws3-indexer:${WS3_TRIAGE_PORT}";
-        if ($http_x_api_key != "${FENGARDE_API_KEY}") {
-            return 401;
-        }
         rewrite ^/api/triage/(.*)$ /$1 break;
         proxy_pass $ws3_triage;
         proxy_set_header Host $host;
@@ -317,13 +268,10 @@ server {
     # as /api/triage/ above, GET-only in practice (rules_view.py has no
     # write route), no CSRF/body forwarding needed.
     location /api/rules {
-        # Gap-hunt #52/#53: require the caller-presented key (see /api/triage/
-        # for the full account) -- never inject a server-side key.
+        # WP-6.1: auth delegated to ws3 -- key or session (see /api/triage/ for the
+        # full account) -- never inject a server-side key.
         resolver 127.0.0.11 ipv6=off valid=30s;
         set $ws3_rules "http://ws3-indexer:${WS3_TRIAGE_PORT}";
-        if ($http_x_api_key != "${FENGARDE_API_KEY}") {
-            return 401;
-        }
         rewrite ^/api/rules$ /rules break;
         proxy_pass $ws3_rules;
         proxy_set_header Host $host;
@@ -343,13 +291,10 @@ server {
     # string (tenant_id/entity_type/entity_value/limit) forwarded unchanged
     # by nginx's default rewrite behavior.
     location /api/incidents {
-        # Gap-hunt #52/#53: require the caller-presented key (see /api/triage/
-        # for the full account) -- never inject a server-side key.
+        # WP-6.1: auth delegated to ws3 -- key or session (see /api/triage/ for the
+        # full account) -- never inject a server-side key.
         resolver 127.0.0.11 ipv6=off valid=30s;
         set $ws3_incidents "http://ws3-indexer:${WS3_TRIAGE_PORT}";
-        if ($http_x_api_key != "${FENGARDE_API_KEY}") {
-            return 401;
-        }
         rewrite ^/api/incidents$ /incidents break;
         proxy_pass $ws3_incidents;
         proxy_set_header Host $host;
@@ -372,9 +317,6 @@ server {
     location /api/incidents/ {
         resolver 127.0.0.11 ipv6=off valid=30s;
         set $ws3_incidents_sub "http://ws3-indexer:${WS3_TRIAGE_PORT}";
-        if ($http_x_api_key != "${FENGARDE_API_KEY}") {
-            return 401;
-        }
         rewrite ^/api/incidents/(.*)$ /incidents/$1 break;
         proxy_pass $ws3_incidents_sub;
         proxy_set_header Host $host;
@@ -392,9 +334,6 @@ server {
     location /api/entities/ {
         resolver 127.0.0.11 ipv6=off valid=30s;
         set $ws3_entities "http://ws3-indexer:${WS3_TRIAGE_PORT}";
-        if ($http_x_api_key != "${FENGARDE_API_KEY}") {
-            return 401;
-        }
         rewrite ^/api/entities/(.*)$ /entities/$1 break;
         proxy_pass $ws3_entities;
         proxy_set_header Host $host;
@@ -452,15 +391,12 @@ server {
     # does the real access control over the forwarded session cookie; this
     # proxy just gets the request there.
     location /api/audit {
-        # Gap-hunt #52/#53: require the caller-presented key (see /api/triage/
-        # for the full account) -- never inject a server-side key. The backend
+        # WP-6.1: auth delegated to ws3 -- key or session (see /api/triage/ for the
+        # full account) -- never inject a server-side key. The backend
         # _require_role("admin") gate still does the real access control over
         # the forwarded session cookie when RBAC is on.
         resolver 127.0.0.11 ipv6=off valid=30s;
         set $ws3_audit "http://ws3-indexer:${WS3_TRIAGE_PORT}";
-        if ($http_x_api_key != "${FENGARDE_API_KEY}") {
-            return 401;
-        }
         rewrite ^/api/audit$ /audit break;
         proxy_pass $ws3_audit;
         proxy_set_header Host $host;
@@ -485,7 +421,7 @@ server {
     location /api/ops/ws1 {
         resolver 127.0.0.11 ipv6=off valid=30s;
         set $ws1_ops "http://ws1-collectors:8001";
-        if ($http_x_api_key != "${FENGARDE_API_KEY}") { return 401; }
+        auth_request /api/auth/check;
         rewrite ^/api/ops/ws1$ /metrics break;
         proxy_pass $ws1_ops;
         proxy_set_header Host $host;
@@ -495,7 +431,7 @@ server {
     location /api/ops/ws2 {
         resolver 127.0.0.11 ipv6=off valid=30s;
         set $ws2_ops "http://ws2-normalization:8002";
-        if ($http_x_api_key != "${FENGARDE_API_KEY}") { return 401; }
+        auth_request /api/auth/check;
         rewrite ^/api/ops/ws2$ /metrics break;
         proxy_pass $ws2_ops;
         proxy_set_header Host $host;
@@ -505,7 +441,7 @@ server {
     location /api/ops/ws3 {
         resolver 127.0.0.11 ipv6=off valid=30s;
         set $ws3_ops "http://ws3-indexer:8003";
-        if ($http_x_api_key != "${FENGARDE_API_KEY}") { return 401; }
+        auth_request /api/auth/check;
         rewrite ^/api/ops/ws3$ /metrics break;
         proxy_pass $ws3_ops;
         proxy_set_header Host $host;
@@ -515,7 +451,7 @@ server {
     location /api/ops/ws4 {
         resolver 127.0.0.11 ipv6=off valid=30s;
         set $ws4_ops "http://ws4-detection:8004";
-        if ($http_x_api_key != "${FENGARDE_API_KEY}") { return 401; }
+        auth_request /api/auth/check;
         rewrite ^/api/ops/ws4$ /metrics break;
         proxy_pass $ws4_ops;
         proxy_set_header Host $host;
@@ -529,7 +465,7 @@ server {
         # view fully green. Same shape/gate as the other five.
         resolver 127.0.0.11 ipv6=off valid=30s;
         set $ws5_ops "http://ws5-ai:8005";
-        if ($http_x_api_key != "${FENGARDE_API_KEY}") { return 401; }
+        auth_request /api/auth/check;
         rewrite ^/api/ops/ws5$ /metrics break;
         proxy_pass $ws5_ops;
         proxy_set_header Host $host;
@@ -539,7 +475,7 @@ server {
     location /api/ops/ws8 {
         resolver 127.0.0.11 ipv6=off valid=30s;
         set $ws8_ops "http://ws8-correlation:8008";
-        if ($http_x_api_key != "${FENGARDE_API_KEY}") { return 401; }
+        auth_request /api/auth/check;
         rewrite ^/api/ops/ws8$ /metrics break;
         proxy_pass $ws8_ops;
         proxy_set_header Host $host;
@@ -556,7 +492,7 @@ server {
     # prefix block denies every other /api/prom/ path. nginx matches on the
     # normalized URI ($uri, %-decoded, ../ resolved) and the rewrite passes the
     # normalized path upstream, so encoded/traversal tricks cannot escape the
-    # two allowed paths. Same X-Api-Key gate as /api/ops/* and /api/rules.
+    # two allowed paths. Same auth_request /auth/check gate as /api/ops/*.
     # No add_header here, so the server-level security headers are inherited.
     # Prometheus not running (profile off) -> resolver failure -> 502, which
     # the console shows as "Prometheus not reachable".
@@ -570,7 +506,7 @@ server {
         resolver 127.0.0.11 ipv6=off valid=30s;
         resolver_timeout 1s;  # profile off -> fail fast so the panel says "not reachable" instead of waiting
         set $prometheus "http://prometheus:9090";
-        if ($http_x_api_key != "${FENGARDE_API_KEY}") { return 401; }
+        auth_request /api/auth/check;
         rewrite ^/api/prom/(.*)$ /$1 break;
         proxy_pass $prometheus;
         proxy_set_header Host $host;

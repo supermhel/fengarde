@@ -270,6 +270,38 @@ def test_rbac_off_by_default_no_auth_routes():
         srv.shutdown(); srv.server_close()
 
 
+def test_auth_check_accepts_session():
+    """WP-6.1: /auth/check (the nginx auth_request guard) must accept an
+    RBAC SESSION -- that is the whole browser path under option C (sessions
+    only). The OpenSearch/ops/prom routes are gated by auth_request to this
+    endpoint, and a logged-in browser presents only its session cookie.
+
+    The API key is SET here (like test_session_suffices_when_api_key_also_set)
+    so the enforcement is meaningful: the auth model is auth-by-default-DISABLED
+    (key unset == open), so with RBAC on but key unset everyone passes
+    _check_auth and /auth/check is 200 for strangers too -- that is the
+    existing, documented zero-config contract, not a regression. With the key
+    set, a caller needs key OR session."""
+    store, users = _make_store_and_users()
+    os.environ["FENGARDE_API_KEY"] = "s3cr3t-option-c"
+    try:
+        srv, port = _serve(store, users)
+        try:
+            code, _, _ = _request(port, "GET", "/auth/check")
+            check(code == 401, f"/auth/check with no session and no key must be 401, got {code}")
+
+            _, _, set_cookie = _request(port, "POST", "/auth/login",
+                                        {"username": "acme_analyst", "password": "pw-acme-1"})
+            cookie = _cookie_value(set_cookie)
+            code2, body2, _ = _request(port, "GET", "/auth/check", cookie=cookie)
+            check(code2 == 200, f"/auth/check with a valid session (no key header) must be 200, got {code2}")
+            check(body2.get("ok") is True, "/auth/check must carry ok:true")
+        finally:
+            srv.shutdown(); srv.server_close()
+    finally:
+        os.environ.pop("FENGARDE_API_KEY", None)
+
+
 def test_session_suffices_when_api_key_also_set():
     """Gap-hunt 2026-09-04: with BOTH FENGARDE_RBAC_DB and FENGARDE_API_KEY
     configured, a valid RBAC session must be sufficient on its own -- the
@@ -320,6 +352,7 @@ def main():
     test_rbac_off_by_default_no_auth_routes()
     test_csrf_required_for_writes_when_session_active()
     test_csrf_not_required_when_rbac_off_or_no_session()
+    test_auth_check_accepts_session()
     test_session_suffices_when_api_key_also_set()
 
     if FAILS:
