@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """M4.6 ops lifecycle: back up FENGARDE's LOCAL state.
 
-Bundles the two things that live only on this host and aren't already in
-version control:
+Bundles the things that live only on this host, are plain files/SQLite
+(a service could hold them open), and aren't already in version control:
 
   * the RBAC user database (FENGARDE_RBAC_DB / --rbac-db). FAILS if the
     configured path does not exist, so a missing DB can never silently
@@ -10,6 +10,10 @@ version control:
     sqlite3's `.backup()` API, which is safe to run against
     a DB a live service still has open (unlike a raw file copy, which can
     grab a half-written page mid-transaction).
+  * the WS-6 inventory API-key store (INVENTORY_KEYSTORE_DB / --keystore-db,
+    same sqlite3 `.backup()` treatment; ":memory:" default = skipped).
+  * the WS-3 audit log (FENGARDE_AUDIT_LOG / --audit-log, a JSONL file;
+    omitted when unset or the path does not exist).
   * contracts/ -- rules, tenant configs, webhook configs. Most of this is
     already in git, but an operator's local tenant/webhook YAML additions
     (contracts/tenants/*.yml, contracts/webhooks/*.yml) may not be committed
@@ -30,6 +34,7 @@ Usage:
     python tools/backup.py --out ./backups
     python tools/backup.py --out ./backups --rbac-db /path/to/users.db
     python tools/backup.py --out ./backups --no-contracts   # RBAC DB only
+    python tools/backup.py --out ./backups --keystore-db /data/keystore.db --audit-log /data/audit.jsonl
 """
 from __future__ import annotations
 
@@ -67,7 +72,9 @@ def _backup_sqlite(src: Path, dest: Path) -> None:
         src_conn.close()
 
 
-def build_backup(out_dir: Path, rbac_db: Path | None, include_contracts: bool) -> Path:
+def build_backup(out_dir: Path, rbac_db: Path | None, include_contracts: bool,
+                 keystore_db: Path | None = None,
+                 audit_log: Path | None = None) -> Path:
     out_dir.mkdir(parents=True, exist_ok=True)
     timestamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
     archive_path = out_dir / f"fengarde-backup-{timestamp}.tar.gz"
@@ -75,8 +82,9 @@ def build_backup(out_dir: Path, rbac_db: Path | None, include_contracts: bool) -
     manifest: dict = {
         "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "fengarde_component": "backup",
-        "note": "local state only (RBAC DB + contracts/) -- OpenSearch index data "
-                "is NOT included, use OpenSearch's own snapshot API for that",
+        "note": "local state only (RBAC DB, inventory keystore, audit log, "
+                "contracts/) -- OpenSearch index data is NOT included, use "
+                "OpenSearch's own snapshot API for that",
         "files": [],
     }
 
@@ -100,6 +108,29 @@ def build_backup(out_dir: Path, rbac_db: Path | None, include_contracts: bool) -
             _backup_sqlite(rbac_db, dest)
             manifest["files"].append({
                 "path": f"rbac/{rbac_db.name}", "sha256": _sha256(dest), "size": dest.stat().st_size,
+            })
+
+        for name, src, folder in (("keystore-db", keystore_db, "keystore"),
+                                  ("audit-log", audit_log, "ws3")):
+            if src is None:
+                continue
+            if not src.exists() or not src.is_file():
+                raise FileNotFoundError(
+                    f"--{name.replace('_', '-')} {src} does not exist -- refusing "
+                    f"to create an archive that silently omits the configured "
+                    f"store (file renamed or never initialized?)"
+                )
+            if name == "keystore-db":
+                dest = staging / folder / src.name
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                _backup_sqlite(src, dest)
+            else:
+                dest = staging / folder / src.name
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                dest.write_bytes(src.read_bytes())
+            manifest["files"].append({
+                "path": f"{folder}/{src.name}", "sha256": _sha256(dest),
+                "size": dest.stat().st_size,
             })
 
         if include_contracts:
@@ -131,12 +162,23 @@ def main() -> None:
     parser.add_argument("--out", required=True, help="directory to write the backup archive into")
     parser.add_argument("--rbac-db", default=os.getenv("FENGARDE_RBAC_DB"),
                          help="path to the RBAC SQLite DB (default: $FENGARDE_RBAC_DB)")
+    parser.add_argument("--keystore-db", default=os.getenv("INVENTORY_KEYSTORE_DB"),
+                         help="path to the WS-6 inventory API-key SQLite store "
+                              "(default: $INVENTORY_KEYSTORE_DB; ':memory:' is skipped)")
+    parser.add_argument("--audit-log", default=os.getenv("FENGARDE_AUDIT_LOG"),
+                         help="path to the WS-3 audit JSONL log (default: $FENGARDE_AUDIT_LOG)")
     parser.add_argument("--no-contracts", action="store_true", help="skip bundling contracts/")
     args = parser.parse_args()
 
     rbac_db = Path(args.rbac_db) if args.rbac_db else None
+    # ':memory:' is the WS-6 default, not a file -- never treat it as a path.
+    keystore_db = (Path(args.keystore_db) if args.keystore_db
+                   and args.keystore_db != ":memory:" else None)
+    audit_log = Path(args.audit_log) if args.audit_log else None
     try:
-        archive = build_backup(Path(args.out), rbac_db, include_contracts=not args.no_contracts)
+        archive = build_backup(Path(args.out), rbac_db,
+                               include_contracts=not args.no_contracts,
+                               keystore_db=keystore_db, audit_log=audit_log)
     except FileNotFoundError as exc:
         sys.exit(f"[FAIL] backup aborted: {exc}")
     print(json.dumps({"backup": str(archive), "size_bytes": archive.stat().st_size}))

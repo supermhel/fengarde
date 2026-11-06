@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (2026-11-06, WP-3.3: backup covers every non-Docker store + upgrade/rollback runbook)
+
+- **`tools/backup.py` now bundles the two host-only stores it previously
+  missed** alongside the RBAC DB and contracts: the WS-6 inventory API-key
+  store (`--keystore-db`, default `$INVENTORY_KEYSTORE_DB`, same hot sqlite
+  `.backup()` treatment as RBAC; `:memory:` skipped) and the WS-3 audit log
+  (`--audit-log`, default `$FENGARDE_AUDIT_LOG`, a plain JSONL file). Same
+  fail-closed discipline as RBAC: an explicitly configured store whose path
+  does not exist refuses the archive instead of silently omitting it.
+- **`tools/test_backup_restore.py`** gains an all-stores round trip (fast
+  tier): one archive carries RBAC DB + keystore + audit log + contracts; each
+  store is then mutated in place (user deleted, key revoked, audit lines
+  appended) and the restore brings back the ORIGINAL state -- the exact
+  backup-then-restore an operator runs before an upgrade or a rollback.
+- **`docs/upgrade.md`**: per-release upgrade/migration-note convention
+  (every CHANGELOG release section documents its own upgrade contract),
+  the standard no-migration upgrade procedure, migration-release guidance,
+  and a two-layer documented rollback (image-tag rollback vs
+  backup-then-restore), with the honest scope boundary stated (events/alerts
+  live in OpenSearch and need its native snapshot API).
+
 ### Added (2026-11-04, WP-1.3: shipper adapters for real Fluent Bit / Winlogbeat / Docker shapes)
 
 - `services/ws2-normalization/adapters/` — four pure, total adapters that

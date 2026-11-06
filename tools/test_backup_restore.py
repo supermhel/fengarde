@@ -77,6 +77,88 @@ def test_full_round_trip_rbac_and_contracts():
         check(original_rule == restored_rule, "a restored contract file must be byte-identical to the source")
 
 
+def test_full_round_trip_all_non_docker_stores():
+    """WP-3.3: every local store that runs WITHOUT Docker, one archive.
+
+    RBAC DB + WS-6 inventory keystore (both hot-snapshotted sqlite) + WS-3
+    audit JSONL + contracts/ travel in one backup; each store is then
+    MUTATED in place (a user deleted, a key revoked, audit lines appended)
+    and the restore must bring back the ORIGINAL state -- the exact
+    backup-then-restore the operator runs before an upgrade/rollback."""
+    import json as _json
+    import os as _os
+    _os.environ["FENGARDE_API_KEY_PEPPER"] = "test-pepper-backup-roundtrip"
+    WS6 = ROOT / "services" / "ws6-inventory"
+    sys.path.insert(0, str(WS6))
+    from keystore import TenantKeyStore  # noqa: E402
+
+    with tempfile.TemporaryDirectory() as d:
+        d = Path(d)
+        db_path = d / "users.db"
+        _make_rbac_db(db_path)
+
+        keystore_path = d / "keystore.db"
+        ks = TenantKeyStore(str(keystore_path))
+        ks.provision("acme", "acme-secret-0", source="test")
+        ks.db.close()
+
+        audit_path = d / "audit.jsonl"
+        audit_lines = [
+            _json.dumps({"ts": 1, "actor": "ops", "action": "boot"}),
+            _json.dumps({"ts": 2, "actor": "ops", "action": "login"}),
+        ]
+        audit_path.write_text("\n".join(audit_lines) + "\n", encoding="utf-8")
+        original_audit = audit_path.read_bytes()
+
+        archive = backup.build_backup(
+            d / "backups", rbac_db=db_path, include_contracts=True,
+            keystore_db=keystore_path, audit_log=audit_path)
+        with tarfile.open(archive, "r:gz") as tar:
+            names = tar.getnames()
+        check(any(n.startswith("keystore/") for n in names),
+              "the archive must contain the WS-6 keystore backup")
+        check(any(n.startswith("ws3/") for n in names),
+              "the archive must contain the WS-3 audit log backup")
+
+        # ---- mutate ALL local stores as if time passed / disaster struck ----
+        import sqlite3 as _s
+        sql = _s.connect(str(db_path))
+        sql.execute("DELETE FROM users WHERE username='ops_admin'")
+        sql.commit(); sql.close()
+        ks2 = _s.connect(str(keystore_path))
+        ks2.execute("DELETE FROM api_keys WHERE tenant_id='acme'")
+        ks2.commit(); ks2.close()
+        audit_path.write_bytes(audit_path.read_bytes() + b'{"ts": 3, "mutated": true}\n')
+        # (contracts/ are in git, never mutated)
+
+        # ---- restore from the pre-mutation backup ----
+        dest = d / "restored"
+        restored = restore.verify_and_restore(archive, dest, force=False)
+        check(len(restored) == len(names) - 1,
+              f"every manifest entry restored, got {len(restored)} of {len(names) - 1}")
+
+        conn = _s.connect(str(dest / "rbac" / "users.db"))
+        row = conn.execute("SELECT username, role, tenant_id FROM users "
+                           "WHERE username='ops_admin'").fetchone()
+        conn.close()
+        check(row == ("ops_admin", "admin", "default"),
+              f"restored RBAC DB must have the ORIGINAL user back, got {row}")
+
+        ksr = TenantKeyStore(str(dest / "keystore" / keystore_path.name))
+        ok, tenant, _scope = ksr.verify("acme-secret-0")
+        check(ok and tenant == "acme",
+              f"restored keystore must verify the ORIGINAL key, ok={ok} tenant={tenant}")
+        ksr.db.close()
+
+        restored_audit = (dest / "ws3" / audit_path.name).read_bytes()
+        check(restored_audit == original_audit,
+              "restored audit log must be the ORIGINAL bytes, not the mutated file")
+
+        original_rule = (ROOT / "contracts" / "rules" / "common_bruteforce.yml").read_bytes()
+        check((dest / "contracts" / "rules" / "common_bruteforce.yml").read_bytes()
+              == original_rule, "restored contracts must be byte-identical")
+
+
 def test_no_rbac_db_backs_up_contracts_only():
     with tempfile.TemporaryDirectory() as d:
         d = Path(d)
@@ -212,6 +294,7 @@ def test_symlink_member_escaping_staging_is_rejected():
 
 def main():
     test_full_round_trip_rbac_and_contracts()
+    test_full_round_trip_all_non_docker_stores()
     test_no_rbac_db_backs_up_contracts_only()
     test_tampered_checksum_is_rejected_before_writing_anything()
     test_collision_requires_force()
