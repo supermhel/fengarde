@@ -25,6 +25,21 @@ services:
   redis:
     restart: unless-stopped
     mem_limit: 1g
+    # The base command plus `--maxmemory 768mb --maxmemory-policy noeviction`. Without a
+    # maxmemory a stalled consumer group pins the streams until the 1g container limit
+    # OOM-kills Redis, and the AOF replay on restart can loop. With it, Redis stays up
+    # and refuses writes (XADD -> OOM error) until consumers ack and the trimmer frees
+    # space; ws1 then spools or sheds (docs/homelab.md). Keep this list in step with
+    # the base command (test_homelab_compose.py checks that every base flag is kept).
+    command: !override
+      - sh
+      - -c
+      - |
+        if [ -n "$$REDIS_PASSWORD" ]; then
+          exec redis-server --appendonly yes --maxmemory 768mb --maxmemory-policy noeviction --requirepass "$$REDIS_PASSWORD";
+        else
+          exec redis-server --appendonly yes --maxmemory 768mb --maxmemory-policy noeviction;
+        fi
 
   opensearch:
     restart: unless-stopped
@@ -57,6 +72,11 @@ services:
     mem_limit: 512m
   ws3-indexer:
     mem_limit: 768m
+    # ISM policies attach at index CREATION (ism_template), so ws3 must not create an
+    # index before `provision` has installed them. provision is one-shot (restart "no",
+    # exits 0 when done); if it fails, ws3-indexer does not start -- loud, on purpose.
+    depends_on:
+      provision: { condition: service_completed_successfully }
   ws4-detection:
     mem_limit: 768m
   ws5-ai:

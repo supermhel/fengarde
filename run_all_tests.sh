@@ -36,6 +36,7 @@ if tier_on fast; then  # tier: fast
 echo "== Phase 0: contract validator =="; LAST_HEADER="== Phase 0: contract validator =="
 $PY tools/validate_contract.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 $PY tools/test_validate_contract.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+$PY tools/test_homelab_compose.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
 echo "== A6: anti-dormancy check (rules must be satisfiable by a real parser) =="; LAST_HEADER="== A6: anti-dormancy check (rules must be satisfiable by a real parser) =="
 $PY tools/check_rule_producers.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }

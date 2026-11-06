@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (2026-11-06, WP-2.1 review fixes)
+
+- Homelab override: Redis gets `--maxmemory 768mb --maxmemory-policy noeviction` (base flags kept) so a stalled consumer
+  cannot OOM-kill the bus; `ws3-indexer` now waits for the one-shot `provision` so ISM policies exist before the first index.
+- `tools/test_homelab_compose.py` (wired into `run_all_tests.sh`): OpenSearch heap <= half its limit, Redis cap and base flags,
+  provision ordering, loopback ports, volume prefix, and that `docs/homelab.md` states the real memory-limit sum (9.5 GiB).
+- `WS1_SEED_MOCK`: unrecognised values (`n`, `f`, `disable`) keep the seed on but now log a warning; documented in
+  `services/ws1-collectors/INTERFACE.md`.
+- `docs/homelab.md`: guarded `infra/.env` creation (no token rotation on rerun), base-stack to homelab volume migration,
+  corrected `make down` semantics, Docker/ufw firewall caveat, real memory numbers (limits 9.5 GiB, idle about 2.0 GiB),
+  prefix-based backup plus a tested restore, `MSYS_NO_PATHCONV` for Git Bash. The `!override` Compose minimum is marked
+  unverified (tested on Compose v5.1.4 only).
+
 ### Added (2026-11-05, WS1_SEED_MOCK)
 
 - `WS1_SEED_MOCK=0` stops ws1 seeding the bundled mock events and assets on every start (default stays on for the demo); the homelab override sets it. `test_seed_switch.py` covers the switch.
