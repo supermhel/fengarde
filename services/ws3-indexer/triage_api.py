@@ -99,6 +99,7 @@ import traceback
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import NoReturn
 from urllib.parse import parse_qs, urlparse
 
 _HERE = Path(__file__).resolve().parent
@@ -1336,38 +1337,132 @@ def _ensure_report_index(store) -> None:
             index=index, error=str(exc))
 
 
-def serve(store, host="0.0.0.0", port=8013):
-    warn_if_disabled("ws3-indexer-triage")
-    _ensure_report_index(store)
+def bootstrap_first_admin(users_db) -> None:
+    """First-boot admin provisioning for the RBAC user store (WP-3.2).
 
-    # M4.2 RBAC: opt-in via FENGARDE_RBAC_DB (a SQLite file path), same
-    # unset-is-off convention as FENGARDE_API_KEY/dashboard basic-auth/Redis
-    # AUTH. Unset -> make_handler(store) with no users_db -> byte-for-byte
-    # pre-M4.2 behavior.
+    Order matters: (1) operator-chosen FENGARDE_ADMIN_PASSWORD; (2) in prod
+    with FENGARDE_FIRST_BOOT_FILE and a NON-EMPTY store: log an error and
+    generate nothing (a first-boot file must never rotate the live admin
+    password); (3) empty store + prod + file: generate. Generation is atomic
+    across processes: the O_EXCL file is the lock (the loser gets
+    FileExistsError and creates nothing), and the file is rolled back if the
+    admin could not be created, so the file's password is always the admin's.
+    Only constant text and the file PATH are ever logged, never the password.
+
+    Under FENGARDE_PROFILE=prod a first-boot file that cannot be provisioned
+    (stale file, unwritable directory, unsupported platform) is FATAL
+    (SystemExit(1)): a prod service with no admin is unusable, so it must not
+    keep serving as if healthy. Call this on the MAIN thread (``init_rbac``
+    from ``main()``), where SystemExit ends the process.
+    """
     import os as _os
-    users_db = None
-    rbac_db_path = _os.getenv("FENGARDE_RBAC_DB")
-    if rbac_db_path:
-        from shared.users import UserStore, ensure_first_boot_admin  # noqa: E402
-        users_db = UserStore(rbac_db_path)
-        # First-boot bootstrap: the admin password comes from the operator via
-        # FENGARDE_ADMIN_PASSWORD -- the service never generates, logs, or
-        # stores a plaintext credential (only the scrypt hash reaches disk).
-        created = ensure_first_boot_admin(users_db)
-        if created:
-            get_logger("ws3-indexer-triage").info(
-                "first-boot admin account created from "
-                "FENGARDE_ADMIN_PASSWORD (unset it now -- it is no "
-                "longer needed and env vars leak via inspect/exec)",
-                username=created,
-            )
-        elif users_db.count() == 0:
-            get_logger("ws3-indexer-triage").warn(
+    from shared.prodcheck import (  # noqa: E402
+        discard_first_boot_file, generate_first_boot_password, prod_active)
+    from shared.users import ensure_first_boot_admin  # noqa: E402
+    log = get_logger("ws3-indexer-triage")
+    first_boot_file = _os.getenv("FENGARDE_FIRST_BOOT_FILE")
+
+    def fatal(msg: str) -> NoReturn:
+        log.error(msg, password_file=first_boot_file)
+        print("FENGARDE_PROFILE=prod: " + msg, file=sys.stderr)
+        sys.exit(1)
+
+    # First-boot bootstrap: the admin password comes from the operator via
+    # FENGARDE_ADMIN_PASSWORD -- the service never generates, logs, or
+    # stores a plaintext credential (only the scrypt hash reaches disk).
+    created = ensure_first_boot_admin(users_db)
+    if created:
+        log.info(
+            "first-boot admin account created from "
+            "FENGARDE_ADMIN_PASSWORD (unset it now -- it is no "
+            "longer needed and env vars leak via inspect/exec)",
+            username=created,
+        )
+    elif prod_active() and first_boot_file and users_db.count() > 0:
+        log.error(
+            "FENGARDE_PROFILE=prod with FENGARDE_FIRST_BOOT_FILE "
+            "but the user store is NOT empty -- refusing to "
+            "generate (a first-boot file must never rotate the "
+            "live admin password)",
+        )
+    elif users_db.count() == 0:
+        if prod_active() and first_boot_file:
+            try:
+                generated = generate_first_boot_password()
+            except (OSError, RuntimeError) as exc:
+                if isinstance(exc, FileExistsError) and _os.path.lexists(first_boot_file):
+                    fatal(
+                        "FENGARDE_FIRST_BOOT_FILE already exists but the user store "
+                        "is empty -- refusing to overwrite it (another process is "
+                        "bootstrapping, or a stale file is left over: delete it and "
+                        "restart)")
+                fatal(
+                    "cannot create FENGARDE_FIRST_BOOT_FILE (symlink, "
+                    "permissions, missing directory or unsupported platform) "
+                    "-- no admin account created; the directory must exist and "
+                    "be writable by the service user (uid 10001 in the image)")
+            try:
+                created = ensure_first_boot_admin(users_db, password=generated)
+            except Exception:  # noqa: BLE001 - roll back, then surface
+                discard_first_boot_file()
+                raise
+            if created:
+                log.info(
+                    "prod first-boot admin account created; password "
+                    "written to the FIRST_BOOT file -- rotate it via the "
+                    "admin API after first login, then delete the file",
+                    username=created,
+                    password_file=first_boot_file,
+                )
+            else:
+                discard_first_boot_file()
+                log.error(
+                    "first-boot admin was not created (the store filled in "
+                    "the meantime) -- generated file removed",
+                )
+        else:
+            log.warn(
                 "RBAC enabled but the user store is empty and "
                 "FENGARDE_ADMIN_PASSWORD is unset -- no one can log "
-                "in. Set FENGARDE_ADMIN_PASSWORD and restart to "
+                "in. Set FENGARDE_ADMIN_PASSWORD (or, in prod, "
+                "FENGARDE_FIRST_BOOT_FILE) and restart to "
                 "create the first admin account."
             )
+
+
+def init_rbac():
+    """Open the RBAC user store (opt-in) and bootstrap the first admin.
+
+    M4.2 RBAC: opt-in via FENGARDE_RBAC_DB (a SQLite file path), same
+    unset-is-off convention as FENGARDE_API_KEY/dashboard basic-auth/Redis
+    AUTH. Unset -> None -> make_handler(store) with no users_db -> byte-for-byte
+    pre-M4.2 behavior. The ws3 daemon calls this on the MAIN thread (before
+    starting the triage thread) so a prod bootstrap failure is fatal to the
+    process instead of silently killing only the API thread.
+    """
+    import os as _os
+    rbac_db_path = _os.getenv("FENGARDE_RBAC_DB")
+    if not rbac_db_path:
+        return None
+    from shared.users import UserStore  # noqa: E402
+    users_db = UserStore(rbac_db_path)
+    bootstrap_first_admin(users_db)
+    return users_db
+
+
+_UNSET = object()
+
+
+def serve(store, host="0.0.0.0", port=8013, users_db=_UNSET):
+    warn_if_disabled("ws3-indexer-triage")
+    # WP-3.2: FENGARDE_PROFILE=prod refuses to serve triage/RBAC with an
+    # incomplete or default-secured auth surface (one numbered list).
+    from shared.prodcheck import prod_or_die  # noqa: E402
+    prod_or_die("ws3-indexer-triage")
+    _ensure_report_index(store)
+
+    if users_db is _UNSET:  # standalone callers; the daemon passes init_rbac()'s result
+        users_db = init_rbac()
 
     handler_cls = make_handler(store, users_db=users_db)
     srv = ThreadingHTTPServer((host, port), handler_cls)

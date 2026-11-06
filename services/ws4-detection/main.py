@@ -750,6 +750,8 @@ def run(bus, detector: "Detector") -> dict:
 
 
 def main():
+    from shared.prodcheck import prod_or_die  # noqa: E402
+    prod_or_die("ws4-detection", rbac=False)  # WP-3.2: prod needs the Redis bus password
     import threading  # noqa: E402
     from shared.runner import serve, start_depth_watchdog  # noqa: E402  (lazy: keeps run() import-light)
     from shared.log import get_logger  # noqa: E402

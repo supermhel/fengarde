@@ -223,6 +223,8 @@ def _syslog_metrics(udp, http=None, tcp=None) -> dict:
 
 
 def main() -> None:
+    from shared.prodcheck import prod_or_die  # noqa: E402
+    prod_or_die("ws1-collectors", rbac=False)  # WP-3.2: prod needs the Redis bus password
     # Daemon: seed raw.events once from the bundled mock sources (offline-friendly),
     # then start the REAL live ingestion path — a UDP syslog listener — and stay up
     # behind the runner's /health endpoint until SIGTERM. WS-1 is a producer, not a

@@ -22,6 +22,7 @@ if str(_SERVICES_DIR) not in sys.path:
     sys.path.insert(0, str(_SERVICES_DIR))
 
 from shared.log import get_logger  # noqa: E402
+from shared.prodcheck import prod_active, prod_or_die  # noqa: E402
 
 
 def warn_if_disabled(service: str, keystore) -> None:
@@ -46,7 +47,17 @@ def require_auth_or_die(service: str, keystore) -> None:
     FENGARDE_REQUIRE_AUTH is 1/true/yes, in which case an empty keystore
     (no key ever provisioned) exits(1) with a clear message instead of
     silently serving every request unauthenticated.
+
+    WP-3.2: FENGARDE_PROFILE=prod implies the requirement. ws6 has its own
+    keystore (no RBAC DB / admin password), so the prod gate runs with
+    rbac=False: Redis-bus password plus "at least one provisioned key".
     """
+    extra: tuple = ()
+    if prod_active() and keystore.count() == 0:
+        extra = ("no per-tenant API keys provisioned (ws6 would serve open "
+                 "writes): set FENGARDE_API_KEY / FENGARDE_API_KEYS or run "
+                 "manage_keys.py",)
+    prod_or_die(service, rbac=False, extra=extra)
     if os.getenv("FENGARDE_REQUIRE_AUTH", "").strip().lower() not in ("1", "true", "yes"):
         return
     if keystore.count() == 0:

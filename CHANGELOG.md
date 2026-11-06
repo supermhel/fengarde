@@ -7,6 +7,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (2026-11-04, WP-3.2: secure defaults — FENGARDE_PROFILE=prod gate)
+
+- `services/shared/prodcheck.py` — prod gate: `FENGARDE_PROFILE=prod` refuses
+  to boot until the secure surface is present, printing ONE aggregated
+  numbered failure list (API key, RBAC on, non-default admin credential,
+  Redis bus password; `BUS_BACKEND` matched case-insensitively like the bus)
+  and exiting 1. Enforced at: ws3 daemon + triage `serve()` (full surface),
+  ws6 `serve()` (a provisioned key + Redis password), ws1/2/4/5/8/9 `main`
+  (Redis password). ws1 HTTP ingest keeps its own token refusal; ws7 is nginx
+  (not wired). Known-default/too-short admin passwords
+  are refused explicitly. Demo/profile-less runs are byte-for-byte no-op.
+- First-boot admin password into a FILE (not a log), prod-only:
+  `generate_first_boot_password()` writes a crypto-random 20+ char password
+  to `FENGARDE_FIRST_BOOT_FILE` (created atomically `O_EXCL` at 0600, no
+  overwrite, symlinks refused, rotate-and-delete header, never logged;
+  refused on Windows), and the ws3 triage bootstrap creates the admin
+  in-process — ONLY on an empty user store; a non-empty store with the file
+  set logs an error and generates nothing. Two processes cannot both
+  generate (the exclusive file create is the lock; rolled back if the admin
+  insert fails). A file keeps the secret out of env/`docker inspect`; it does
+  NOT hide it from same-uid processes — use a tmpfs/secret mount and delete
+  after rotating. This is an
+  EXPLICIT prod-profile-only exception to the standing no-plaintext rule
+  (CodeQL py/clear-text-storage), documented in docs/secure-defaults.md.
+- `require_auth_or_die` now routes through the prod gate first (prod implies
+  auth-is-required; the two modes cannot disagree).
+- `tools/test_prodcheck.py` (15 groups, fast tier): aggregation, defaults
+  refusal, first-boot file semantics, demo no-op, REQUIRE_AUTH contract,
+  users.py password-param path, fatal bootstrap, profile typos, minimums.
+- Second review round (same PR): (1) `infra/docker-compose.yml` now forwards
+  `FENGARDE_PROFILE` to ws1/2/3/4/5/6/8/9 (`${FENGARDE_PROFILE:-}`, unset =
+  empty = demo) and `FENGARDE_RBAC_DB` / `FENGARDE_ADMIN_PASSWORD` /
+  `FENGARDE_FIRST_BOOT_FILE` to ws3, so `FENGARDE_PROFILE=prod docker compose
+  up` arms the gate; `tools/test_compose_prod_env.py` asserts it (verified
+  once with `docker compose config`, base and HA). (2) ws3 builds the RBAC
+  store and bootstraps the first admin on the MAIN thread
+  (`triage_api.init_rbac()`); a stale first-boot file with an empty store or an
+  unwritable path is fatal (exit 1) under prod, matching the docs; docs state
+  the uid-10001 chown / init-container requirement. (3) a non-empty
+  `FENGARDE_PROFILE` other than `prod`/`dev`/`demo` (e.g. `production`) is
+  refused instead of silently running the demo. (4) the gate enforces
+  `FENGARDE_API_KEY` >= 24 chars and `REDIS_PASSWORD` >= 16 chars (constants
+  in messages, values never echoed) and, for the plain `redis` bus, that
+  `REDIS_URL` carries the same password. (5) removed unused
+  `admin_password_ok`, corrected the entropy comment, docs now say exactly
+  which ports are published. (6) `shared/users.py` `migrate()` is safe under
+  concurrent first start (`BEGIN IMMEDIATE` + re-read `user_version`;
+  previously 'duplicate column name' crashed losers);
+  `services/shared/test_users_migrate_race.py` is the regression.
+
 ### Added (2026-11-04, WP-1.3: shipper adapters for real Fluent Bit / Winlogbeat / Docker shapes)
 
 - `services/ws2-normalization/adapters/` — four pure, total adapters that

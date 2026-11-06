@@ -209,10 +209,23 @@ def migrate(db: sqlite3.Connection) -> int:
     for version, sql in _SCHEMA_MIGRATIONS:
         if version <= current:
             continue
-        db.executescript(sql)
-        db.execute(f"PRAGMA user_version = {version}")
-        db.commit()
-        current = version
+        # BEGIN IMMEDIATE takes the write lock (waiting out the connection's busy timeout), then
+        # user_version is re-read under it: concurrent first starts on a fresh DB serialize here
+        # instead of both running the same ALTER ("duplicate column name"). DDL and the version
+        # bump commit together (sqlite DDL is transactional); executescript() would COMMIT early.
+        db.execute("BEGIN IMMEDIATE")
+        try:
+            current = db.execute("PRAGMA user_version").fetchone()[0]
+            if version > current:
+                for stmt in sql.split(";"):  # no ';' inside any migration literal
+                    if stmt.strip():
+                        db.execute(stmt)
+                db.execute(f"PRAGMA user_version = {version}")
+                current = version
+            db.commit()
+        except BaseException:
+            db.rollback()
+            raise
     return current
 
 
@@ -468,26 +481,33 @@ def password_problem(password) -> Optional[str]:
     return None
 
 
-def ensure_first_boot_admin(store: UserStore, username: str = "admin") -> Optional[str]:
+def ensure_first_boot_admin(store: UserStore, username: str = "admin",
+                            password: Optional[str] = None) -> Optional[str]:
     """First-boot bootstrap: if the user store is empty, create one admin.
 
     The initial password comes from the operator via FENGARDE_ADMIN_PASSWORD
-    (read here at first boot only). The service itself never generates,
-    stores, logs, or returns a plaintext credential -- only the scrypt hash
-    ever touches disk. This closes both CodeQL findings the earlier designs
-    hit in turn (py/clear-text-logging for print-the-password, then
+    (read here at first boot only; ``password`` overrides the env var for
+    the WP-3.2 prod first-boot generation path, where shared/prodcheck.py
+    generated a fresh value into a 0600 file). The service itself never
+    generates, stores, logs, or returns a plaintext credential unless the
+    operator EXPLICITLY asked for file generation (FENGARDE_PROFILE=prod +
+    FENGARDE_FIRST_BOOT_FILE) — only the scrypt hash ever touches the store.
+    This closes both CodeQL findings the earlier designs hit in turn
+    (py/clear-text-logging for print-the-password, then
     py/clear-text-storage for write-it-to-a-0600-file): the only party that
-    ever holds the plaintext is the operator who chose it. Still no
-    admin/admin or any other default credential (PLAN_A's ask) -- env var
-    unset means NO account is created and RBAC stays fail-closed (nobody
-    can log in) until the operator provides one and restarts.
+    ever holds the plaintext is the operator who chose it (or the 0600 file
+    the operator explicitly requested, header instructing rotate+delete).
+    Still no admin/admin or any other default credential (PLAN_A's ask) --
+    env var unset means NO account is created and RBAC stays fail-closed
+    (nobody can log in) until the operator provides one and restarts.
 
     Returns the username if an account was created by this call, else None
-    (users already exist, or the env var is unset). Never the password.
+    (users already exist, or no usable password). Never the password.
     """
     if store.count() > 0:
         return None
-    password = os.getenv("FENGARDE_ADMIN_PASSWORD")
+    if password is None:
+        password = os.getenv("FENGARDE_ADMIN_PASSWORD")
     if not password:
         return None
     store.create_user(username, password, role="admin", tenant_id=DEFAULT_TENANT)
