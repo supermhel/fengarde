@@ -147,16 +147,19 @@ def resolve_client_ip(peer_ip: str, xff_values: list, trusted) -> tuple:
     if not trusted or not _in_nets(peer_ip, trusted):
         return peer_ip, None
     hops = [h.strip() for v in xff_values for h in v.split(",") if h.strip()]
+    norm = None
     for hop in reversed(hops):
         try:
-            ipaddress.ip_address(hop)
+            a = ipaddress.ip_address(hop)
         except ValueError:
             return peer_ip, None  # garbage on the proxy side: do not guess
-        if not _in_nets(hop, trusted):
-            return hop, peer_ip
+        # one canonical text per address (IPv6 case/zero-compression, v4-mapped) so rate-limit/partition keys match
+        norm = str(getattr(a, "ipv4_mapped", None) or a)
+        if not _in_nets(norm, trusted):
+            return norm, peer_ip
     # every hop is a trusted address (e.g. a private-range client behind NAT): the leftmost is the originating client,
     # same as nginx real_ip_recursive; no header at all -> the peer
-    return (hops[0], peer_ip) if hops else (peer_ip, None)
+    return (norm, peer_ip) if norm else (peer_ip, None)
 
 
 class HttpJsonCollector:

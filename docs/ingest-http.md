@@ -81,9 +81,7 @@ must send `X-Fengarde-Idempotency-Key`, or the accepted records are ingested twi
   not itself trusted (if every hop is in the trusted ranges, the leftmost is the client); hops to the left of the first
   untrusted one are client-supplied and ignored, and an unparsable hop falls back to the peer. That
   address becomes `meta.shipper_ip`, the rate-limit/partition key (when unlabelled) and the spool key; the proxy hop is kept
-  as `meta.shipper_proxy_ip`. A request from an untrusted peer can never spoof its address. The TLS profile sets this to the
-  private ranges of the compose network, which is only safe because ws1 is reachable from nothing but that network there;
-  narrow it to Caddy's actual subnet if other containers share it.
+  as `meta.shipper_proxy_ip`. A request from an untrusted peer can never spoof its address. The TLS profile sets this to Caddy's single fixed address (172.31.250.2), never to a whole private range: any other container on the compose network is then an ordinary client whose header is ignored. The forwarded IP is normalised (IPv6 case/compression, v4-mapped) before it becomes a key.
 - **Per-source cap.** `INGEST_HTTP_MAX_EVENTS_PER_SEC_PER_SOURCE` (default 0 = off) limits one source's share of the tenant
   ceiling (`INGEST_HTTP_MAX_EVENTS_PER_SEC`). The older nested per-IP bucket ran at the same rate as the tenant bucket and
   could never bind first, which is why a separate lower cap exists.

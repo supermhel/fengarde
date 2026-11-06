@@ -149,6 +149,15 @@ def main() -> int:
     check(r("172.18.0.5", [], t) == ("172.18.0.5", None), "no header: peer")
     check(r("172.18.0.5", ["not-an-ip"], t) == ("172.18.0.5", None), "garbage hop: fall back to peer")
     check(r("127.0.0.1", ["203.0.113.9"], ()) == ("127.0.0.1", None), "default (empty list): header never trusted")
+    # review finding 1: only Caddy's single address is trusted -> another container cannot forge a client
+    caddy = mod.parse_trusted_proxies("172.31.250.2")
+    check(r("172.31.250.9", ["6.6.6.6"], caddy) == ("172.31.250.9", None), "forged XFF from a non-Caddy peer must be ignored")
+    check(r("172.31.250.2", ["203.0.113.9"], caddy) == ("203.0.113.9", "172.31.250.2"), "Caddy's own XFF is honoured")
+    # review finding 3: IPv6 case/format variants and v4-mapped collapse to one key
+    t6 = mod.parse_trusted_proxies("127.0.0.1")
+    v6keys = {r("127.0.0.1", [v], t6)[0] for v in ("2001:DB8:0:0:0:0:0:1", "2001:db8::1", "2001:0db8::0001")}
+    check(v6keys == {"2001:db8::1"}, f"IPv6 variants must normalise to one key, got {v6keys}")
+    check(r("127.0.0.1", ["::ffff:203.0.113.9"], t6)[0] == "203.0.113.9", "v4-mapped IPv6 must normalise to v4 text")
     try:
         mod.parse_trusted_proxies("nonsense")
         check(False, "a bad CIDR must raise")

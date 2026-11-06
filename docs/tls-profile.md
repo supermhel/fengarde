@@ -8,6 +8,17 @@ Syslog (5514/udp, 5515/tcp) is not proxied and no longer published at all, so
 it is unreachable from outside the compose network until syslog-over-TLS
 (RFC 5425, a WP-1.2 follow-up) exists.
 
+> **Warning: loopback by default; do not expose the console on a LAN without authentication.**
+> Caddy publishes `127.0.0.1:443` (like the base file's console at
+> `127.0.0.1:8080`). Set `FENGARDE_TLS_BIND=<address>` (for example `0.0.0.0`)
+> only on a network you trust: the console has no login by default, and
+> `/api/config.js` returns the API key to any request that sends
+> `Sec-Fetch-Site: same-origin`, which any non-browser client can do. TLS gives
+> confidentiality in transit, not access control. Console authentication is
+> separate owner-decided work (WP-6.1); until it lands, put an authenticating
+> proxy or a firewall in front before binding beyond loopback. The HTTP ingest
+> endpoint on the same port still requires its bearer token.
+
 Local-CA default: the Caddyfile uses `tls internal`, so Caddy issues
 certs from its own internal CA. No public DNS, no ACME, no cert files to
 provision. (For a public domain: drop `tls internal` and use your real
@@ -63,28 +74,36 @@ services:
 
 `tools/test_tls_profile.py` (fast tier) renders the merged config
 (`docker compose config --format json` when docker is available, else a YAML
-merge) and asserts: no service other than `caddy` publishes on all interfaces,
-`caddy` publishes exactly `443/tcp`, ws1/ws7 publish nothing, and no UDP port
-is published. TLS termination inside ws1/ws7 remains out of scope.
+merge) and asserts: no service publishes on all interfaces by default, `caddy`
+publishes exactly `127.0.0.1:443/tcp` (`FENGARDE_TLS_BIND` overrides the
+address), ws1/ws7 publish nothing, no UDP port is published, and Caddy's fixed
+address is the only one trusted for `X-Forwarded-For` in ws1 and nginx. TLS termination inside ws1/ws7 remains out of scope.
 
 ## Client IP behind Caddy
 
 Caddy overwrites `X-Forwarded-For` with the address it saw (it trusts no
 upstream proxy by default), so a client cannot inject a fake hop through it.
 
-- **ws1 ingest**: set by the profile via `INGEST_HTTP_TRUSTED_PROXIES`
-  (private ranges of the compose network). Only a TCP peer inside that list
-  may supply the client address; `meta.shipper_ip` is then the real client,
-  `meta.shipper_proxy_ip` is Caddy, and the unlabelled rate-limit/partition key
-  is per client instead of one shared bucket. See `docs/ingest-http.md`.
+- **Fixed Caddy address.** The profile gives the compose network a subnet
+  (`172.31.250.0/24`, automatic addresses only from `172.31.250.128/25` so no other container can take Caddy's
+  `.2` first) and Caddy the fixed address `172.31.250.2`. ws1 and ws7's
+  nginx trust `X-Forwarded-For` from that ONE address only, so another
+  container on the network that sends the header straight to ws1 or ws7 is an
+  ordinary client and its header is ignored (it cannot pick its own client IP).
+  The three values (compose `ipv4_address`, `INGEST_HTTP_TRUSTED_PROXIES`,
+  `set_real_ip_from` in `infra/caddy/nginx-real-ip.conf`) must stay equal;
+  `tools/test_tls_profile.py` checks it. If `172.31.250.0/24` clashes with a
+  network you use, change all three.
+- **ws1 ingest**: only a TCP peer equal to Caddy may supply the client address;
+  `meta.shipper_ip` is then the real client (normalised, so IPv6 case and
+  zero-compression variants give one key), `meta.shipper_proxy_ip` is Caddy, and
+  the unlabelled rate-limit/partition key is per client instead of one shared
+  bucket. See `docs/ingest-http.md`.
 - **Console (ws7 nginx -> ws3)**: `infra/caddy/nginx-real-ip.conf` is mounted
   by the profile only; nginx then sets `$remote_addr` to the client from
   `X-Forwarded-For`, so ws3's opt-in `RATE_LIMIT_TRUST_PROXY_HEADER=1`
   buckets per client instead of per Caddy. The default (non-TLS) nginx is
   unchanged: the include matches no file.
-- Both trust the compose network's private ranges. Narrow them to Caddy's
-  actual subnet (`docker network inspect <project>_default`) if other
-  containers share that network: any trusted peer can state an arbitrary client.
 - **Docker Desktop (Windows/macOS)**: connections reach Caddy through the VM's
   NAT, so the "client IP" is the NAT gateway (for example `172.21.0.1`), not
   the LAN host. Real client addresses need native Linux Docker (or a host
@@ -137,6 +156,16 @@ raw.events meta: "shipper_ip": "172.21.0.7", "shipper_proxy_ip": "172.21.0.6"
 ws3 stub (via ws7 nginx, forged XFF 9.9.9.9): X-Forwarded-For = 172.21.0.7
 ```
 
-Plaintext ports on the host are not published (`docker compose config`
-lists only `caddy 443/tcp` on all interfaces; loopback-only publishes remain
-for redis/opensearch/dashboards/ws6).
+In this profile the console (ws7), the HTTP ingest (ws1 8554) and the syslog
+listeners (ws1 5514/udp, 5515/tcp) have no host publish at all, and nothing
+publishes on all interfaces (`docker compose config` lists only
+`127.0.0.1:443` for caddy by default). The base file's OTHER services keep
+their plaintext loopback publishes (redis 6379, opensearch 9200, dashboards
+5601, inventory API 8000, ws6 and the other 127.0.0.1 ports): the profile
+does not TLS-wrap them and does not remove them.
+
+Update 2026-11-06 (review round 2, PR #162): the fixed Caddy address, the ipam
+subnet and the loopback default for 443 were added after the manual run above;
+that transcript predates them (its client and Caddy addresses were
+Docker-assigned). The fixed-address behaviour was re-proven in a throwaway
+network (see the CHANGELOG entry for this review round).

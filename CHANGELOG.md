@@ -35,6 +35,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   TLS profile mounts `infra/caddy/nginx-real-ip.conf` into ws7 (nginx
   `set_real_ip_from` + `real_ip_recursive`) so `RATE_LIMIT_TRUST_PROXY_HEADER`
   buckets per client, not per Caddy; the default nginx path is unchanged.
+- Review round 2 (PR #162): (1) client-IP trust is now ONE address, not the
+  private ranges: the profile pins the compose network (`172.31.250.0/24`,
+  automatic addresses only from `.128/25`) and Caddy at `172.31.250.2`, and
+  both `INGEST_HTTP_TRUSTED_PROXIES` and nginx `set_real_ip_from` trust only
+  that address, so another container can no longer forge `X-Forwarded-For`
+  (config test + resolver unit test; proven in a throwaway network). (2) Caddy
+  publishes `${FENGARDE_TLS_BIND:-127.0.0.1}:443` (loopback by default; LAN
+  exposure is opt-in) and `docs/tls-profile.md` warns that the console has no
+  login and `/api/config.js` serves the API key. (3) ws1 normalises the
+  forwarded IP (IPv6 case/compression, v4-mapped) before using it as a key.
+  (4) docs now state exactly which ports have no publish in the profile.
 
 ### Added (2026-11-04, WP-1.3: shipper adapters for real Fluent Bit / Winlogbeat / Docker shapes)
 
