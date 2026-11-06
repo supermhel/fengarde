@@ -28,11 +28,35 @@ detection rules. Update this file in the same PR as any parser or rule change.
 | 1002 | Kernel/Process | generic_syslog, windows_eventlog (4688/4672; 7045/4697 service install, 1102/104 log cleared, 4104/4103/800 PowerShell added 2026-10-20), sysmon (P0-3, EventID 1 ProcessCreate; EventID 5 ProcessTerminate added 2026-09-10; EventID 10 ProcessAccess added 2026-10-20) | win_audit_log_cleared, win_service_installed_suspicious_path, win_lsass_access_suspicious, win_powershell_suspicious_script (2026-10-20), win_office_spawns_shell (2026-10-20, T1204.002), common_after_hours_admin (4672 activity 2) |
 | 3002 | Authentication | linux_ssh, active_directory, windows_eventlog (4624/4634/4647), opcua_audit (v0.4 P2, session events), n8n_audit (v0.4 P3, login/logout — no dedicated rule yet), cef (v0.5, auth-shaped extension keys), cloudtrail (v0.5, ConsoleLogin), m365_audit (2026-10-14, `UserLoggedIn` activity 1 and `UserLoginFailed` activity 4; `parsers/m365_audit.py`) | common_bruteforce, common_bruteforce_by_account (2026-10-01), common_bruteforce_sourceless (P0-2, 2026-07-21 audit fix plan), common_lateral_movement, common_lateral_movement_by_source (2026-10-01), common_password_spray, common_password_spray_by_source (2026-10-20), common_credential_stuffing_sustained (Q16), common_impossible_travel (v0.4 P4), ot_new_engineering_connection, cloud_root_console_login (v0.5) |
 | 3003 | Account Change | windows_eventlog (4720/4722/4726/4728/4732, added v0.3; 5136 directory change added 2026-10-20) | common_priv_grant, common_rapid_account_lifecycle (v0.5), win_ad_sensitive_attribute_modified (2026-10-20) |
-| 4001 | Network Activity | cisco_asa, cef (v0.5, non-auth-shaped extension keys), sysmon (P0-3, EventID 3 NetworkConnect, always activity 7/Accept), modbus_anomaly (M7, 2026-07-22 — protocol-anomaly detector, NOT a vendor-log parser, see its module docstring), inventory_diff (M7 Track Y, 2026-08-05 — inventory worker's new-device notifications, OT-aware) | common_port_scan, common_port_scan_by_target (2026-10-01), common_port_sweep (2026-10-20), common_beaconing (v0.5, periodicity primitive), ot_modbus_unauthorized_write (M7), ot_modbus_unauthorized_write_ticketed (2026-08-28, LOW downgrade companion), ot_new_device_on_segment (M7 Track Y) |
-| 4002 | DNS/HTTP Activity | dns_query (v0.5, first producer — closes the long-standing gap below) | common_dns_exfil (v0.5), common_dns_tunnel_by_domain (2026-10-01) |
+| 4001 | Network Activity | cisco_asa, cef (v0.5, non-auth-shaped extension keys), sysmon (P0-3, EventID 3 NetworkConnect, always activity 7/Accept), modbus_anomaly (M7, 2026-07-22 — protocol-anomaly detector, NOT a vendor-log parser, see its module docstring), inventory_diff (M7 Track Y, 2026-08-05 — inventory worker's new-device notifications, OT-aware), suricata_eve + zeek_json (WP-1.5, 2026-11-05 — activity 2 Close for flow/conn records, activity 99 Other for IDS alerts, Zeek notices and Modbus/DNP3 application events; see "Network-sensor producers" below) | common_port_scan, common_port_scan_by_target (2026-10-01), common_port_sweep (2026-10-20), common_beaconing (v0.5, periodicity primitive), ot_modbus_unauthorized_write (M7), ot_modbus_unauthorized_write_ticketed (2026-08-28, LOW downgrade companion), ot_new_device_on_segment (M7 Track Y) |
+| 4002 | DNS/HTTP Activity | dns_query (v0.5, first producer — closes the long-standing gap below), suricata_eve + zeek_json (WP-1.5, 2026-11-05 — activity 1 for queries, activity 2 for Suricata responses) | common_dns_exfil (v0.5), common_dns_tunnel_by_domain (2026-10-01) |
 | 4009 | Email Activity | mail_gateway (2026-10-14, secure-email-gateway message log; attachment summary incl. macro-capable flag) | email_macro_attachment_delivered (2026-10-20); no other mail-shape rule yet (phishing_bec phish_delivery stays a declared gap, T1566.001) |
 | 6003 | API Activity | vmware_vsphere, m365_audit (2026-10-14, mailbox-rule facts under unmapped.m365.inbox_rule -- m365_inbox_rule_external_forward reads them since 2026-10-20 (T1114.003)), mcp_agent (v0.4 P1), opcua_audit (v0.4 P2, write/method events), n8n_audit (v0.4 P3), k8s_audit (v0.5, first k8s producer), cloudtrail (v0.5, non-ConsoleLogin management events) | dc_mass_vm_delete, dc_mass_vm_delete_by_source (2026-10-01), agent_credential_file_access, agent_tool_call_burst, agent_prompt_injection_indicator, agent_destructive_command, agent_egress_non_allowlisted_domain, ot_write_outside_maintenance, ot_config_change, ot_opcua_write_unauthorized_node (experimental, `siem.default_enabled: false`: off until a tenant opts in), n8n_new_webhook_exposed, n8n_workflow_modified_after_hours, dc_privileged_container (v0.5) |
 | 6005 | Datastore Activity | db_audit (v0.3 — fixed the dormancy below) | bank_db_priv_esc, bank_mass_card_read (v0.5) |
+
+## Network-sensor producers (WP-1.5, 2026-11-05)
+
+`suricata_eve` and `zeek_json` normalise the JSON logs of tools that capture packets (FENGARDE itself captures none).
+They add new PRODUCERS for classes 4001 and 4002 but no rules, and are mapped so that no existing rule consumes them
+by accident:
+
+- **4001 activity 99 (Other)** — Suricata `alert`, Zeek `notice`, and Modbus/DNP3 application events. Deliberately NOT
+  6 (Deny) or 7 (Accept): `common_port_scan*`/`common_port_sweep` key on 6 and `common_beaconing` on 7, and an IDS
+  signature hit or a perfectly periodic Modbus poll is neither a connection verdict nor a beacon. Detail lives under
+  `unmapped.ids.*` (signature, sid, severity, action), `unmapped.zeek.notice.*`, and `unmapped.ot.*` (protocol,
+  function_code, unit_id, address, ...; sector `datacenter`). These parsers never set `unmapped.ot.anomaly_type`, so
+  `ot_modbus_unauthorized_write*` stay exclusive to `modbus_anomaly`.
+- **4001 activity 2 (Close)** — Suricata `flow` and Zeek `conn` records (written at flow end), stamped with the END of
+  the flow: Suricata `flow.end` (the record `timestamp` is the engine clock at logging, not the flow), Zeek `ts` +
+  `duration` (`ts` is the first packet); detail under
+  `unmapped.suricata.flow.*` / `unmapped.zeek.conn.*`. No rule reads activity 2 today. Mapping refused/reset
+  connections (Zeek `S0`/`REJ`/`RSTO`, Suricata flow state) to activity 6 so the port-scan rules see them is a
+  deliberate follow-up decision, not done here.
+- **4002 activity 1 (query)** — Suricata `dns` requests and Zeek `dns.log` rows. These DO feed `common_dns_exfil` and
+  `common_dns_tunnel_by_domain` (via `dst_endpoint.hostname` and `unmapped.dns.parent_domain`, computed with
+  `dns_query.parent_domain`). Suricata `dns` responses are activity 2 so one lookup is not counted twice.
+- Not mapped (parser returns None): Suricata `stats`/`anomaly`/`http`/`tls`/`files`/... and any other Zeek stream
+  (`http.log`, `ssl.log`, `weird.log`, ...). Field-level coverage is reported by `parsers/test_suricata_zeek.py`.
 
 ## Gaps — classes with NO parser producer at all
 

@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (2026-11-05, WP-1.5: Suricata EVE and Zeek JSON parsers)
+
+- `suricata_eve` and `zeek_json` parsers (`services/ws2-normalization/parsers/`). FENGARDE captures no packets; these normalise
+  the JSON logs of tools that do. Suricata EVE: `alert`, `flow`, `dns`, `modbus`, `dnp3`. Zeek: `conn.log`, `dns.log`,
+  `notice.log`, `modbus.log` and the CISA ICSNPP `modbus_detailed.log`. `raw` may be a dict or one JSON line. Alerts, notices and
+  Modbus/DNP3 events are 4001 activity 99 (never Deny/Accept, so port-scan and beaconing rules do not consume them); flow/conn
+  are 4001 activity 2; DNS queries are 4002 activity 1 and so DO feed `common_dns_exfil` / `common_dns_tunnel_by_domain`.
+  Neither parser sets `unmapped.ot.anomaly_type`; `modbus_anomaly`/`opcua_audit` are untouched. No detection rules added.
+  Content-sniff routing gains two narrow branches (Suricata: known `event_type` + integer `flow_id` + address; Zeek `uid`+`id.orig_h`) ahead of the
+  `event_type` branch that would otherwise send Suricata to `n8n_audit`; `source_type` stays authoritative.
+- Fixtures are REAL: `parsers/test_fixtures/suricata_eve_real.json` (Suricata 8.0.8) and `zeek_json_real.json` (Zeek 9.0.1 +
+  icsnpp-modbus 2.0.0), each produced by running the tool image on public suricata-verify pcaps (MIT repo licence); pcap
+  URL/sha256, image digest, command and the three locally-authored Suricata rules are in each file's `provenance` header.
+  `parsers/test_suricata_zeek.py` (fast tier) checks mapping, dict-vs-line parity, routing, hostile-input totality and prints a
+  mutation-based field-coverage report (mapped vs dropped fixture fields).
+- Gates: `FIXTURES` entries in `tools/check_rule_producers.py` (loaded from the fixture files), contract-test samples in
+  `mocks/raw_samples.json` + `test_contract.py`, `tools/fuzz/fuzz_suricata_eve.py` / `fuzz_zeek_json.py`, `fuzz.yml` matrix and
+  `projects/fengarde/build.sh`; `contracts/detection-coverage.md` documents the new producers. Parser count 19 -> 21.
+- Fuzzing: both atheris harnesses were run for 90 s each on 2026-11-05 by the author (python:3.12 container, atheris installed from the repo's pinned `.github/ci-requirements/atheris.txt`, seeds from `tools/fuzz/make_seeds.py`): about 2.9M runs for `suricata_eve` and 3.4M for `zeek_json`, no crash. No log of that run was kept or attached; the figures come from the PR description only. Re-run for the second review on 2026-11-06 with the same method (throwaway container, 90 s per harness, `-max_total_time=90`): `suricata_eve`: "Done 455764 runs in 91 second(s)"; `zeek_json`: "Done 292516 runs in 91 second(s)"; no crash. Throughput was lower than the figures above (host shared with other builds; not investigated). 90 s is a smoke run; the nightly fuzz job (10 min per target) remains the long-run authority.
+- Not verified: no live Suricata/Zeek sensor feeding a running stack; only the three public pcaps were run.
+
+### Fixed (2026-11-06, WP-1.5 second review; each finding reproduced by a failing test first)
+
+- Suricata DNS v1/v2 (every 7.x sensor, or 8.x with `version: 2`) logs `dns.type` `query`/`answer` with flat `rrname`/`rrtype`; the parser accepted only `request`/`response`/`answer`, so a v2 `query` returned None and `common_dns_exfil` / `common_dns_tunnel_by_domain` never saw a query. `query` is now activity 1 (shape and the rename from the Suricata 8.0 upgrade notes, `doc/userguide/upgrade/8.0-dns-logging-changes.rst`); v3 is unchanged.
+- Content-sniff routing: a record with ANY string `event_type` and a `flow_id` went to `suricata_eve`, so n8n's `{"event_type":"workflow.executed","flow_id":"f1"}` was dead-lettered. It now needs a known EVE `event_type`, an integer `flow_id` and `src_ip`/`dest_ip`/`pcap_cnt` (`looks_like_eve`); negative tests cover n8n and opcua_audit. A list-valued `event_type` is also safe (it would have raised in the set lookup).
+- Close event time: Suricata `flow` records now use `flow.end` (the last packet) instead of the record `timestamp`, which Suricata sets to the engine clock when the flow is logged (`src/output-json-flow.c`: `TimeGet()`; in the real fixture 12:01:18 against a flow ending 12:06:16); Zeek `conn` uses `ts + duration` (`ts` is the first packet; conn.log is written at the end), so a 7200 s connection is no longer stamped two hours early. Missing/invalid `flow.end`/`duration` fall back to `timestamp`/`ts`. Alert/dns/notice/modbus/dnp3 times are unchanged.
+- Zeek Modbus function codes: `_MODBUS_CODES` now holds all 32 entries of Zeek's `Modbus::function_codes` (`scripts/base/protocols/modbus/consts.zeek`, master, fetched 2026-11-06: the 19 standard, `0x5B` OBJECT_MESSAGING and the 12 vendor codes) and maps Zeek's `unknown-N` names (N 0-255, exception bit masked) to a numeric code.
+- Documented, not changed: Zeek Modbus recognition needs the `unit` column, added in Zeek 5.1.0 (NEWS, zeek/zeek PR 2281); one Modbus transaction yields several events (modbus.log REQ and RESP rows, plus the ICSNPP `modbus_detailed.log` row(s)); an IPS `alert.action` of `blocked` stays only in `unmapped.ids.action` (not Deny, so port-scan rules do not count signature drops).
+- Docs: parser count 19 -> 21 in the README capability table and the fuzz target list in `project.yaml`; the registered list in `docs/ingest-http.md` now names the two new parsers. `TestProvenance` was weak (a 64-character check); `TestProvenanceAgainstContent` checks the headers against the fixture records (pcap names, one pinned suricata-verify commit, rule ids, protocols enabled by the command, ICSNPP present iff installed). It found that the Zeek header lists `dnp3-eve.pcap` although no selected Zeek record comes from it (Zeek has no dnp3 log in the fixture); not altered, because whether Zeek was run on that pcap cannot be known from the files.
+
 ### Added (2026-11-04, WP-1.3: shipper adapters for real Fluent Bit / Winlogbeat / Docker shapes)
 
 - `services/ws2-normalization/adapters/` — four pure, total adapters that

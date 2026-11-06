@@ -450,6 +450,9 @@ echo
 echo "== ws2 parsers: modbus_anomaly (M7 Track X, 2026-07-22: OT protocol-anomaly detector, not a vendor-log parser -- un-dormants ot_modbus_unauthorized_write.yml) =="; LAST_HEADER="== ws2 parsers: modbus_anomaly (M7 Track X, 2026-07-22: OT protocol-anomaly detector, not a vendor-log parser -- un-dormants ot_modbus_unauthorized_write.yml) =="
 $PY services/ws2-normalization/parsers/test_modbus_anomaly.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
+echo "== ws2 parsers: suricata_eve + zeek_json (WP-1.5: normalise the logs of packet-capturing sensors; real-capture fixtures) =="; LAST_HEADER="== ws2 parsers: suricata_eve + zeek_json (WP-1.5: normalise the logs of packet-capturing sensors; real-capture fixtures) =="
+$PY services/ws2-normalization/parsers/test_suricata_zeek.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
 echo "== ws2 inventory_diff parser (M7 Track Y): OCSF shape + edge rejection =="; LAST_HEADER="== ws2 inventory_diff parser (M7 Track Y): OCSF shape + edge rejection =="
 $PY services/ws2-normalization/parsers/test_inventory_diff.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
