@@ -97,3 +97,65 @@ exists), 117, 124, 125, 126, 127*, 128, 139 (title now matches the "concurrent s
 | R3-31 | the ws4 Dockerfile copies `tools/validate_rules.py`, and `engine._find_up` replaces the fixed-depth path walks; `test_poison_pill_image_layout.py` rebuilds the image layout (the first version of this fix, the COPY alone, did not work: the test showed `parents[2]` resolves to `/` in the image) |
 | R3-47 | `tools/validate_rules.py` enforces `FILENAME_FAMILIES`; `contracts/sigma-convention.md` states the real convention |
 | R4-49 | `TenantKeyStore` shares `InventoryStore`'s write lock when both use one SQLite file; `test_shared_write_lock.py` |
+
+## WP-4.4 (GH-3) re-verification of the FIXED rows (2026-11-06)
+
+Scope: GH-3 asked for a second reviewer to sample the rows the 2026-10-20 and 2026-11-04 reads marked FIXED (154 CRITICAL/RISK + 61 MINOR), mutation-check the security-relevant ones, and explain the report's 65-vs-61 MINOR count. This section is that re-verification. Everything below was run on a fresh worktree of `origin/main` at `182a4ab` (branch `wp/4.4-gh3-reverify`), with the repo's venv python. Every sampled suite was run one file at a time (never in parallel) and the output is quoted from those runs.
+
+### Sample re-verification of FIXED rows (16 distinct fixes, ws1..ws6 + shared + tools + infra/CI)
+
+| Finding (row) | Workstream | Evidence (test run on this branch) | Result |
+|---|---|---|---|
+| R4-72: `syslog_udp_server.stop()` lets workers drain; leftovers counted in `events_lost` | ws1 | `services/ws1-collectors/test_syslog_udp.py` | `Ran 54 tests in 1.314s` / `OK` |
+| R4-74/R4-75: WS-1 passes its logger to the spool; exports `spool_corrupt_lines_skipped` | ws1 | `services/ws1-collectors/test_spool_perf.py` (torn-tail corrupt-skip cases) | `[OK] spool perf/locking (P1-6) tests PASS` |
+| R4-136: `active_directory` maps a logon's target host to `dst_endpoint.hostname` | ws2 | `services/ws2-normalization/parsers/test_active_directory.py` | `Ran 8 tests in 0.010s` / `OK` |
+| fuzzing (not in the 2026-08-26 report): the 19 repaired atheris harnesses found 5 parser bugs, all fixed | ws2 | `services/ws2-normalization/parsers/test_fuzz_findings.py` | `[OK] fuzz findings: non-string process name, out-of-range ports (cef/asa/ssh), non-string OPC UA eventType all handled` |
+| R4 #6: audit append takes the cross-process lock | ws3 | `services/ws3-indexer/test_fix_audit.py` | `[OK] E1 audit: entries on login/triage/report, /audit admin-scoped, append-only, capacity-cap tail-truncation, fail-open` |
+| R3-43: the report route returns 400 for an unknown NIS2 `stage`/`lang` | ws3 | `services/ws3-indexer/test_nis2_template.py` (`test_http_report_route_rejects_unknown_stage_or_lang`) | `[OK] M5 NIS2 template: ... invalid stage/lang degrade gracefully ... and the HTTP report route correctly selects the NIS2 renderer via query params` |
+| R4 #17: hot reload rejects a zero-byte/truncated rule file and keeps the old set | ws4 | `services/ws4-detection/test_hot_reload.py` | `[OK] B4 hot-reload: valid edit swaps in, malformed edit rejected (fail-closed, old set kept), removed rule stops firing, mtime poll watcher off by default and picks up real changes when enabled` |
+| R3-31: ws4 Dockerfile COPYs `tools/validate_rules.py` and `engine._find_up` replaces fixed-depth walks | ws4 | `services/ws4-detection/test_poison_pill_image_layout.py` | `[OK] ws4 image layout: Dockerfile ships validate_rules.py and the poison-pill guard rejects a bad rule there (control without it: accepted)` |
+| R4 #33: the wall-clock deadline in `OllamaLLM.analyze` is pinned | ws5 | `services/ws5-ai/test_llm_adapter.py` (`test_dribbling_response_hits_total_deadline`) | `ok` — `Ran 22 tests in 0.592s` / `OK` |
+| R3-57: `llm_adapter._urlopen` fails closed when the no-redirect opener is unavailable | ws5 | `services/ws5-ai/test_llm_adapter.py` (`test_refuses_without_the_no_redirect_opener`) | `ok` — `Ran 22 tests` / `OK` |
+| R4-49: `TenantKeyStore` shares `InventoryStore`'s write lock on one SQLite file | ws6 | `services/ws6-inventory/test_shared_write_lock.py` | `[OK] ws6 stores share one write lock exactly when they share a SQLite file` |
+| R2-14: `bus_error` counted on each failing path | shared | `services/shared/test_runner.py` (incl. `_test_topic_worker_bus_error_each_path_counts`; the redis variant SKIPs without a reachable Redis) | `[OK] runner unit tests PASS` |
+| R4-107/108: `fengarde_bench.py` exits 1 on `eps_dropped_majority`; live bench burst ids tagged per run | tools | `tools/test_bench_gates.py` | `[OK] bench gates: mass-drop run exits 1 (JSON and text), live-bench burst ids are unique per run` |
+| R3-47: `tools/validate_rules.py` enforces `FILENAME_FAMILIES` | tools | `tools/test_validate_rules.py` | `Ran 65 tests in 1.281s` / `OK` |
+| R4-120: `tools/check_test_wiring.py` scans `*_load_test.py` and lists `backpressure_load_test.py` as live-only | tools/CI | `tools/check_test_wiring.py` | `[OK] every test_*.py is wired into run_all_tests.sh (or a documented live-only orphan). No orphan suite silently untested.` |
+| R3-28 (MINOR, fixed in the 2026-11-04 PR): `infra/preflight.sh` rejects `@ : / % ? #` and spaces in `REDIS_PASSWORD` | infra | `REDIS_PASSWORD=p@ssw0rd bash infra/preflight.sh` and `REDIS_PASSWORD=urlsafepass bash infra/preflight.sh` | bad: `[ FAIL ] REDIS_PASSWORD contains @, :, /, %, ?, # or a space -- those break the bus URL`, script exit 1; good: `[ OK ] REDIS_PASSWORD is URL-safe (no @ : / % ? # or space characters).` (The run's other `[ FAIL ]` is the MSYS-host `vm.max_map_count` platform check, unrelated to this row.) |
+
+Verdict: every sampled FIXED row still holds on `182a4ab` — 14 distinct suites, exit 0 each, plus the two-way preflight run.
+
+### Mutation checks of security-relevant FIXED rows (4; fix reverted in the working tree -> RED -> restored -> GREEN)
+
+Method: for each row, the fixing change was reversed in the working tree only (never committed), the row's covering test was run (must FAIL), then `git checkout --` restored the fix and the test was re-run (must PASS). Nothing mutated was committed; the tree was clean (`git status --short` empty) before the report commit.
+
+| Row | Security property | Mutation (reverted shape) | RED evidence | GREEN evidence (fix restored) |
+|---|---|---|---|---|
+| R3-57 (ws5) | SSRF / outbound redirect-following (`_urlopen` fails closed) | Removed the `FENGARDE_ALLOW_REDIRECTING_URLOPEN` guard so a no-opener call falls through to plain `urllib.request.urlopen` | `test_refuses_without_the_no_redirect_opener ... ERROR` — `AttributeError: 'object' object has no attribute 'timeout'` at `llm_adapter.py:92`; `Ran 22 tests ... FAILED (errors=1)`, exit 1 | `Ran 22 tests in 0.629s` / `OK` |
+| R4 #17 (ws4) | Rule-set integrity on a bad edit (a zero-byte file must not silently shrink detection) | `self._load(strict_empty=True)` back to `self._load()` in the reload path | `[FAIL] hot_reload: 2 problem(s)` — `- a zero-byte rule file must fail reload(), not shrink the rule set` / `- the PREVIOUS rule set must still fire after the rejected reload` | `[OK] B4 hot-reload: ... malformed edit rejected (fail-closed, old set kept) ...` |
+| R4-49 (ws6) | Tenant data integrity / cross-tenant isolation (two stores writing one SQLite file under separate locks) | Dropped the shared `write_lock=` wiring in `app.py` (`KEYSTORE = TenantKeyStore(_KEYSTORE_DB)`) | `[FAIL] ws6 shared write lock: 2 problem(s)` — `- same file (keystore defaults to the inventory db) must share the lock` / `- explicit same path must share the lock`, exit 1 | `[OK] ws6 stores share one write lock exactly when they share a SQLite file` |
+| R2-14 (shared) | Drop/error telemetry (a failing bus path must count `bus_error`, not just degrade `/health`) | Set the consume-path setpoint to `bus_error_this_iter = False` in `runner.py` | `[FAIL] runner: 2 problem(s)` — `- bus.claim_pending()/consume() raising must increment metrics 'bus_error', not just /health -- got {}` / `- consume() raising ALONE must increment 'bus_error' -- got {}`, exit 1 | `[OK] runner unit tests PASS` |
+
+### The '65 vs 61 MINOR' discrepancy — exact cause
+
+The archived report (`docs/archive/reviews/gap_hunt_full_report_2026-08-26.md`) carries three different MINOR totals. I counted the document itself (`^\d+\.\s+\*\*🔵` numbered entries per section, per round):
+
+- Numbered 🔵 entries actually present: **61** = round 2: **1** (item 39, `chaos_test.py`), round 3: **20**, round 4: **40**.
+- Section-header sums: **64** = round 2: 1, round 3: 21, round 4: 42.
+- Totals table: **65** = round 2: 2, round 3: 21, round 4: 42.
+
+The 4 extra entries (65 − 61), each with its source:
+
+1. **Round-2 summary-table row (1 phantom).** The table says round 2 has `2 🔵`, but the round has exactly one blue entry (Tools/CI item 39); the Tools/CI header itself correctly says `1🔵`. The same row also overstates 🟡 (33) against the 34 real ones — the table row's arithmetic, not the sections, is wrong.
+2. **Round-3 "Eval harness + contracts drift" header (net +1).** The header lists `5🔵`, the section contains 3 real blue entries (#47, #48, #49). That is +2, offset by the round's "shared/ modules" header listing `7🔵` while the section contains 8 real blue entries (#63–#70) — −1. Net round-3 inflation: +1 (21 vs 20).
+3. **Round-4 "WS-3 indexer remaining modules" header (+1).** Lists `4🔵`, section contains 3 real blue entries (#10, #11, #12).
+4. **Round-4 "WS-5 llm_adapter.py core logic" header (+1).** Lists `5🔵`, section contains 4 real blue entries (#37, #38, #39, #40).
+
+Net: 61 real numbered entries + 1 (R2 table row) + 1 (R3 headers) + 2 (R4 headers) = 65. The tracker's GH-3 row ("its section headers sum to 64") is confirmed: the only totals-table-vs-headers mismatch is round 2 (2 vs 1). All 61 real MINOR entries are covered by the 2026-11-04 triage; nothing numbered was left untriaged.
+
+### What this re-verification did not run
+
+- The full serial gate (`run_all_tests.sh`, ~30 min) was not run locally; CI runs it on this PR's exact head. Each sampled suite was run individually.
+- Live-stack suites were not run: `test_mfa_live_e2e.py` replay step (R4 #85; needs the console stack), the 6-container Sentinel run (R3-22/23), `*_live.py` suites needing real Redis/OpenSearch, and the ws7 dashboard browser e2e.
+- Mutation checks cover 4 of the security-relevant rows only (R3-57, R4 #17, R4-49, R2-14); the other sampled rows were re-verified as-is, not mutation-tested.
+- ws7/ws9 rows have no fix-specific suite in the tracker's closed tables (ws7's close, R4 #54/#61/#69, is the legacy console being retired — the code no longer exists; ws9 had no FIXED row in the sampled set).
