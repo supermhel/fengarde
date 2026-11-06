@@ -241,6 +241,7 @@ def _default_triage() -> dict:
 # ---------------------------------------------------------------------------
 ROUTE_INVENTORY: list[tuple[str, str, bool]] = [
     ("GET", "/auth/me", True),
+    ("GET", "/auth/check", False),
     ("GET", "/alerts", False),
     ("GET", "/incidents", False),
     ("GET", "/events", False),
@@ -307,6 +308,21 @@ def route_auth_me(self):
     # fresh login.
     return self._send(200, {"username": session.username, "role": session.role,
                              "tenant_id": session.tenant_id, "csrf_token": session.csrf_token})
+
+
+def route_auth_check(self):
+    """GET /auth/check -- lightweight liveness gate for nginx auth_request.
+
+    Returns 200 iff the caller holds A VALID CREDENTIAL: either the
+    FENGARDE_API_KEY (machine clients) or an active RBAC session cookie
+    (browsers, WP-6.1 option C). It is deliberately the same authority as
+    _check_auth -- the dispatch runs _check_auth BEFORE this handler, so by
+    the time this function is reached the caller is already authenticated and
+    the only sensible answer is 200. Response is a 200 with no secret data.
+    nginx `/api/auth/check` only probes the status code; the tiny body is for
+    humans/logs.
+    """
+    return self._send(200, {"ok": True, "auth": "session-or-api-key"})
 
 
 def route_get_report(self, alert_id: str):
@@ -1164,6 +1180,8 @@ class Handler(BaseHTTPRequestHandler):
             self._send(500, {"error": "internal error"})
 
     def _route_get(self, path: str):
+        if path == "/auth/check":
+            return route_auth_check(self)
         if path == "/alerts":
             return route_list_alerts(self)
         if path == "/incidents":
