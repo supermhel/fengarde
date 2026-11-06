@@ -41,6 +41,8 @@ and caps a body at `INGEST_HTTP_MAX_BODY_BYTES` (1 MiB, `413`); a retry after `4
 | rsyslog (`omfwd`) | the action is suspended while the target is down; with no action queue configured, messages are lost | no queue, `action.resumeRetryCount` or `queue.saveOnShutdown` in the committed configs, so an outage drops messages |
 | syslog-ng (`network()`) | in-memory buffer (`log-fifo-size`) with flow control; overflow drops (UDP never back-pressures); `disk-buffer()` persists | no `disk-buffer()` in the committed configs |
 
+Checked against vendor sources on 2026-11-06 (read, not run): Fluent Bit `Retry_Limit` default is 1 (fluent-bit-docs `administration/scheduling-and-retries.md`); Vector's default memory buffer is 500 events and `when_full` defaults to `block` (`lib/vector-buffers/src/config.rs` and `lib.rs`). The rsyslog and syslog-ng rows remain from vendor documentation as remembered and are still unverified.
+
 If an outage must not lose events, add the persistence option in the right-hand column and test it against a stopped ws1: the committed configs do not.
 
 **Other operational notes.** The Fluent Bit journald `DB` directory (`/var/lib/fluent-bit/` in the recipe) must exist and be writable before Fluent Bit starts; it is not created for you. Docker's `partial` (split) lines, from json-file records over 16 KiB, are
