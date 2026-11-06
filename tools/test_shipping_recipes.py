@@ -31,7 +31,9 @@ SERVICES = ROOT / "services"
 WS2 = SERVICES / "ws2-normalization"
 sys.path.insert(0, str(SERVICES))
 sys.path.insert(0, str(WS2))
+sys.path.append(str(SERVICES / "ws4-detection"))  # appended: ws2's `main`/`parsers` must win name lookups
 
+from engine import load_rules  # noqa: E402  (ws4 detection engine: evaluates a rule on a normalized event)
 from adapters import ADAPTERS, adapt_record, docker_json, fluentbit_journald, fluentbit_winevtlog, winlogbeat  # noqa: E402
 from main import normalize_one  # noqa: E402
 from parsers import known_sources, resolve  # noqa: E402
@@ -45,6 +47,8 @@ WIN_CAPTURE = "windows-application.fluentbit.json"  # real: Fluent Bit 4.2.8, Wi
 CASES = [
     ("windows-sysmon.fluentbit.json", "windows.md", "windows_eventlog",
      "fluentbit-winevtlog", "sysmon", 1002, fluentbit_winevtlog.FIXTURE),
+    ("windows-sysmon-eventdata.fluentbit.json", "windows.md", "windows_eventlog",
+     "fluentbit-winevtlog", "sysmon", 1002, None),
     ("windows-security.fluentbit.json", "windows.md", "windows_eventlog",
      "fluentbit-winevtlog", "windows_eventlog", 3002, fluentbit_winevtlog.SECURITY_FIXTURE),
     ("windows-4688.winlogbeat.json", "windows.md", "windows_eventlog", "winlogbeat", "windows_eventlog", 1002, winlogbeat.FIXTURE),
@@ -214,6 +218,39 @@ def main() -> int:
     check(wev is None and werrs, f"{WIN_CAPTURE}: expected an unmapped (no event) result, got {wev and wev.get('class_uid')}")
     check(WIN_CAPTURE in (HERE / "windows.md").read_text(encoding="utf-8"), f"{WIN_CAPTURE}: not referenced in windows.md")
     check(WIN_CAPTURE in readme, f"{WIN_CAPTURE}: missing from README table")
+
+    # Sysmon field mapping (the parser-name/class check above proves nothing about fields). The 2023 hand transcription predates
+    # Event_Data_As_Map, so it resolves to `sysmon` but maps NOTHING: assert that known limitation explicitly. The template-derived
+    # sample in the real nested-EventData shape must yield image, command line, user, parent image and pid.
+    meta_ = {"received_at": 1673963483, "shipper": "fluentbit-winevtlog"}
+    old_ev, _ = normalize_one(adapt_record({"source_type": "windows_eventlog",
+                                            "raw": load("windows-sysmon.fluentbit.json"), "meta": dict(meta_)}))
+    check(old_ev is not None and old_ev["message"] == "Process created: ? (by ?)" and "actor" not in old_ev
+          and old_ev["unmapped"]["process_launch"] == {"suspicious": False},
+          f"windows-sysmon.fluentbit.json: known no-field-mapping limitation changed: {old_ev and old_ev.get('message')!r}")
+    new_ev, _ = normalize_one(adapt_record({"source_type": "windows_eventlog",
+                                            "raw": load("windows-sysmon-eventdata.fluentbit.json"), "meta": dict(meta_)}))
+    pl = (new_ev or {}).get("unmapped", {}).get("process_launch", {})
+    act = (new_ev or {}).get("actor", {})
+    check(new_ev is not None and act.get("process") == {"name": r"C:\Windows\System32\cmd.exe", "pid": 8844}
+          and act.get("user") == {"name": r"WIN11-LAB\labuser"} and pl.get("image") == r"C:\Windows\System32\cmd.exe"
+          and pl.get("command_line") == "cmd.exe /c whoami" and pl.get("parent") == r"C:\Windows\explorer.exe"
+          and "?" not in new_ev["message"], f"windows-sysmon-eventdata.fluentbit.json: field mapping wrong: {new_ev}")
+
+    # System 7045 in the REAL Fluent Bit shape (envelope as in WIN_CAPTURE: no EventData map, StringInserts only; values invented)
+    # must fire win_service_installed_suspicious_path through the ws4 engine, and a System32 service must not
+    def svc_event(path: str):
+        rec = {k: v for k, v in load(WIN_CAPTURE).items() if k not in ("EventData", "Message")}
+        rec.update(ProviderName="Service Control Manager", Channel="System", EventID=7045, Computer="WIN11-LAB",
+                   StringInserts=["Updater", path, "user mode service", "auto start", "LocalSystem"])
+        ev_, errs_ = normalize_one(adapt_record({"source_type": "windows_eventlog", "raw": rec, "meta": dict(meta_)}))
+        check(ev_ is not None and not errs_, f"System 7045 ({path}): no valid OCSF {errs_[:1]}")
+        return ev_
+    svc_rule = next(r for r in load_rules(ROOT / "contracts" / "rules") if r.title == "Service installed from a suspicious path")
+    bad_svc, good_svc = svc_event(r"C:\Users\labuser\AppData\Local\Temp\u.exe"), svc_event(r"C:\Windows\System32\spoolsv.exe")
+    check(bad_svc is not None and "Updater -> C:" in bad_svc["message"] and svc_rule.evaluate(bad_svc),
+          "System 7045 (StringInserts only) in a Temp path must fire win_service_installed_suspicious_path")
+    check(good_svc is not None and not svc_rule.evaluate(good_svc), "System 7045 in System32 must not fire the rule")
 
     # every sample file is used, every recipe doc is indexed in the README
     used = {c[0] for c in CASES} | {PIHOLE_CAPTURE, WIN_CAPTURE}

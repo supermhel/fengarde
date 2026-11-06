@@ -22,6 +22,8 @@
   `entries: [{cidr, country}]` shape holding your own egress prefixes to change that (gap-hunt R4-129). Lookups scan the
   list (behind a bounded LRU), so it suits tens to thousands of prefixes, not a full GeoIP database.
 
+Optional: `FENGARDE_WINEVTLOG_TZ` (IANA zone, e.g. `Europe/Berlin`; unset by default) makes the `fluentbit-winevtlog` adapter read Fluent Bit's printed `TimeCreated` wall clock in that zone with correct DST instead of trusting the printed UTC offset, which Fluent Bit takes from the current date, not the event's (see `docs/shipping/windows.md`). Read per record; an invalid zone is ignored with one warning.
+
 ## Routing (`parsers/__init__.py::resolve`)
 - A registered `source_type` is authoritative: an explicit product label (e.g.
   `tools/agent_log_shipper.py --source-type linux_ssh`) is never overridden by

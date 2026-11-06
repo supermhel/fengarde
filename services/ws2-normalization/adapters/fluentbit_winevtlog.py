@@ -35,11 +35,25 @@ invented. ``event_data_as_map: true`` is REQUIRED (the recipe sets it); in
 default mode Fluent Bit renders the event text under ``Message`` and the event
 data only as ``StringInserts``, which this adapter does not attempt to
 reverse-engineer (honest scope, see docs/input-adapters.md).
+
+Known limit (DST): Fluent Bit prints ``TimeCreated`` with the host's CURRENT UTC offset, not the offset in force when the
+event happened. The Windows 11 capture below reads ``2026-08-11 21:21:44 +0100`` while the host's own event log says
+``2026-08-11T21:21:44+02:00`` (W. Europe Standard Time, DST): the wall clock is right, the offset is not, so by default an
+event from the other side of a DST switch is dated one hour off (the capture lands at 20:21:44Z instead of 19:21:44Z).
+Opt-in fix: set ``FENGARDE_WINEVTLOG_TZ`` to the host's IANA zone; the printed offset is then ignored and the wall clock is
+resolved in that zone with correct DST (an ambiguous fall-back hour resolves to its first occurrence). Where DST accuracy
+matters, prefer Winlogbeat, which emits UTC.
 """
 from __future__ import annotations
 
-from datetime import datetime
+import logging
+import os
+from datetime import datetime, timezone
 from typing import Optional
+from zoneinfo import ZoneInfo
+
+#: Optional IANA zone (e.g. ``Europe/Berlin``) in which the printed TimeCreated wall clock is interpreted. Read at call time.
+TZ_ENV = "FENGARDE_WINEVTLOG_TZ"
 
 _SYSMON_PROVIDER = "microsoft-windows-sysmon"
 #: Sysmon EventIDs are provider-scoped low numbers; if the provider is unnamed
@@ -217,9 +231,34 @@ def _to_epoch_ms(value) -> Optional[int]:
             continue
     else:
         return None
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=__import__("datetime").timezone.utc)
+    if dt.tzinfo is not None:
+        zone = _configured_zone()
+        if zone is not None:
+            # Fluent Bit prints the CURRENT UTC offset, not the one in force at the event time (see TZ_ENV): trust only the
+            # wall clock and let the zone database supply the offset valid on that date.
+            dt = dt.replace(tzinfo=zone)
+    else:
+        dt = dt.replace(tzinfo=timezone.utc)
     return int(dt.timestamp() * 1000)
+
+
+_WARNED_ZONES: set = set()
+
+
+def _configured_zone():
+    """The IANA zone named by FENGARDE_WINEVTLOG_TZ, or None (unset / invalid -> today's behaviour). Never raises."""
+    name = os.environ.get(TZ_ENV, "").strip()
+    if not name:
+        return None
+    try:
+        return ZoneInfo(name)
+    except Exception:  # noqa: BLE001  (ZoneInfoNotFoundError, ValueError on '../x', missing tzdata, ...)
+        if name not in _WARNED_ZONES:
+            _WARNED_ZONES.add(name)
+            logging.getLogger("ws2.adapters").warning(
+                "%s=%r is not a usable IANA zone (is tzdata installed?); ignoring it, using the offset Fluent Bit printed",
+                TZ_ENV, name[:64])
+        return None
 
 
 def sniffs(raw) -> bool:

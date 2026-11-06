@@ -25,6 +25,18 @@ Keep `Strip_Underscores Off`: the adapter reads `MESSAGE`, `_HOSTNAME`, `_PID`, 
 delivered only the entry written afterwards (no replay). First start therefore ships the existing matching journal history once. `_SOURCE_REALTIME_TIMESTAMP` is absent for
 stdout-transport entries (the sample has it; it comes from the syslog transport).
 
+**What `Read_From_Tail` does, as measured.** `Off` starts at the beginning of the (filtered) journal: the first start ships all existing matching history, then follows. `On` should start at the end and ship only new
+entries; in the same live test it delivered 0 of the 4 entries written after start (the cause was not determined, so `On` is unverified rather than known broken). The `DB` directory (`/var/lib/fluent-bit/` above) must exist and be
+writable by the Fluent Bit user before it starts; Fluent Bit does not create it. Without a working `DB`, a restart re-reads from the beginning (`Off`).
+
+**Event time of sshd events is the receipt time, so backfill and replay are stamped "now".** The `linux_ssh` parser stamps every event with `meta.received_at` (the repo's clock-skew policy: the sender's clock is not
+trusted), not with the time inside the line. The journald adapter rebuilds the RFC 3164 date from `_SOURCE_REALTIME_TIMESTAMP`, but that date never reaches an sshd event. Probe: a 2023 journal entry delivered in 2026 became a 2026 event.
+Consequences: the first start with `Read_From_Tail Off` (history), a restart without the `DB`, and anything replayed after a ws1 outage all arrive with the time they were received, not the time they happened, which distorts time-window
+detections and any forensic timeline. The parser's time policy is deliberately unchanged. To keep history out of the timeline, start with `Read_From_Tail On` (unverified, see above) and accept that earlier entries are not shipped.
+
+**Backfill and the ingest body cap.** ws1 rejects a request body over `INGEST_HTTP_MAX_BODY_BYTES` (default 1 MiB, counted as `body_over_cap`). A large first batch, which `Read_From_Tail Off` on a host with a big journal can produce, may exceed it
+and be dropped by ws1 with Fluent Bit logging a flush failure. This was measured only for the Windows recipe; for journald it is a risk, not an observation. Raise the cap before a backfill.
+
 ```ini fluent-bit-journald.conf
 # Fluent Bit (Linux) systemd/journald -> FENGARDE HTTP ingest. Linted and run live on Linux containers 2026-11-05 (README Verification log).
 # WARNING: Authorization: Bearer goes over plain http:// -- cleartext on the wire; use the TLS front from docs/deployment.md or keep it on a trusted segment.

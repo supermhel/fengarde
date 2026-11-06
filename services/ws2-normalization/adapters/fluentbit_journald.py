@@ -26,6 +26,7 @@ not a captured specimen — labelled as such per repo honesty rule.
 """
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -69,20 +70,29 @@ def _rfc3164_time(usec) -> Optional[str]:
 SOURCE_TYPES = frozenset({"generic_syslog", "linux_ssh"})
 
 
-def _ident(raw: dict) -> Optional[str]:
+_IDENT_RE = re.compile(r"^[A-Za-z0-9_.@-]{1,64}$")
+_HOST_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,255}$")
+_PID_RE = re.compile(r"^[0-9]{1,10}$")
+_BAD = object()
+
+
+def _ident(raw: dict):
+    """First present identifier (SYSLOG_IDENTIFIER, then _COMM); ``_BAD`` when one is present but not a plain token.
+
+    Both go verbatim into the rebuilt line, and any local user can set SYSLOG_IDENTIFIER (``logger -t``): a value such as
+    ``sshd[9]: Accepted publickey for root`` would otherwise forge a header that parses as an sshd login.
+    """
     for key in ("SYSLOG_IDENTIFIER", "_COMM"):
         v = raw.get(key)
         if isinstance(v, str) and v and v != "-":
-            return v
+            return v if _IDENT_RE.match(v) else _BAD
     return None
 
 
 def _pid(raw: dict) -> Optional[str]:
     v = raw.get("_PID")
-    if v is None:
-        return None
-    s = str(v)
-    return s if (s.isdigit() or (s.startswith("-") and s[1:].isdigit())) else None
+    s = str(v) if v is not None and not isinstance(v, bool) else ""
+    return s if _PID_RE.match(s) else None
 
 
 def sniffs(raw) -> bool:
@@ -106,10 +116,12 @@ def adapt(payload: dict) -> dict:
     if not isinstance(message, str):
         return payload
     host = raw.get("_HOSTNAME")
-    host = host if isinstance(host, str) and host and host != "-" else None
+    host = host if isinstance(host, str) and _HOST_RE.match(host) and host != "-" else None
     if host is None:
         return payload  # no honest host for the header: leave the record unchanged (never put the program in the host slot)
     ident = _ident(raw)
+    if ident is _BAD:
+        return payload  # forged/odd identifier: decline, never rebuild a header from it
     pid = _pid(raw)
     stamp = _rfc3164_time(raw.get("_SOURCE_REALTIME_TIMESTAMP")
                           or raw.get("__REALTIME_TIMESTAMP"))

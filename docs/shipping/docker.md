@@ -88,6 +88,16 @@ json-file lines reached ws1 as `docker-json` / `generic_syslog` and normalized t
 line becomes `linux_ssh` only when the container's own text carries a syslog-style `sshd[pid]:` prefix (as the sshd sample does); a bare
 `Failed password ...` line resolves to `generic_syslog`. The glob in `Path` is re-scanned every 60 s by default, so containers created later appear after up to a minute.
 
+**Partial (split) lines are not reassembled.** Docker's json-file driver splits a long line (over 16 KiB) into several records (the driver's "partial" messages; the non-final pieces have no trailing `\n` in `log`); each piece becomes its own event here
+(Fluent Bit's `Docker_Mode` / a multiline parser would be needed to join them; not configured, not tested). A `Failed password ...` line is far below that size, but a long stack trace or JSON blob is cut.
+
+**Event time differs by parser, and backfill of sshd lines is stamped "now".** For a container sshd line the rebuilt header carries the Docker `time`, but the `linux_ssh` parser stamps events with `meta.received_at` (the
+sender's clock is not trusted), so replayed or backlogged sshd lines (restart without a position `DB`, a new container's whole log read from the start, a ws1 outage) get the time of receipt. Ordinary container lines go to `generic_syslog`,
+which uses the rebuilt header date instead (month/day/time, with the **current** year assumed), so those keep their original time unless the log crosses a year boundary. Docker's original `time` also survives as `meta.docker_time`.
+
+**Body cap.** ws1 rejects request bodies over `INGEST_HTTP_MAX_BODY_BYTES` (default 1 MiB, counted as `body_over_cap`). A big backlog flushed in one request (long ws1 outage, or a newly seen container with a large log read from the start)
+may exceed it. This was measured only on the Windows recipe; for Docker it is a risk, not an observation. Raise the cap before a backfill.
+
 ## Vector -> TCP syslog 5515
 
 Vendor docs: <https://vector.dev/docs/reference/configuration/sources/docker_logs/>. **Verified live** (Vector 0.61.0, Docker socket mounted, one test container): `.container_name`,

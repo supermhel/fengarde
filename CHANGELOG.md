@@ -26,12 +26,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   winevtlog; template/schema-derived and labelled as such for the rest).
 - `test_adapters.py` wired into the fast tier: every fixture through the full
   WS-2 path to valid OCSF, sniff negative controls, label-vs-sniff
-  precedence, and the extreme-value totality sweep (2,850 mutations, none
+  precedence, and the extreme-value totality sweep (3,039 mutations, none
   raised); existing parser fixtures and outputs unchanged.
 - Review fixes (2026-11-05): docker date padding for day >= 10 with hours 00-09; adapters only rewrite a record whose declared
   `source_type` is in the adapter's family; a wrong label falls through to the sniff; native numeric `TimeCreated` is left to the
   parser; winlogbeat `event_data` can no longer overwrite `EventID`/`Computer`/`TimeCreated`; docker ids and names are validated;
   journald without `_HOSTNAME` is a no-op; fixture provenance wording corrected (transcribed, not byte-exact).
+
+### Fixed (2026-11-06, WP-1.4 second review of PR #153)
+
+- `docker-json` adapter: `time` values at the calendar edges with an offset (`0001-01-01T00:00:00+05:00`, `9999-12-31T23:59:59-05:00`) raised `OverflowError` out of `adapt()` and, because `normalize_one` calls the adapter stage outside its
+  try, out of ws2. The date helper now declines them, and `adapt_record` itself catches any exception from an adapter or sniffer (treated as "declined", payload unchanged; `KeyboardInterrupt` still propagates). The totality sweep
+  now also drives year 1 / 9999 / leap-day / nanosecond / out-of-range timestamps through every time field of every adapter and the real `normalize_one` entry: **3,039 mutations, none raised** (was 2,850, which missed the time fields).
+- `fluentbit-winevtlog`: Fluent Bit prints `TimeCreated` with the host's CURRENT UTC offset, not the offset at the event time. The committed real capture says `+0100`; the host log has the same event at `21:21:44+02:00` (W. Europe summer time),
+  so the old wording "converted correctly" was wrong and events across a DST switch were dated one hour off. New optional ws2 setting `FENGARDE_WINEVTLOG_TZ` (IANA zone, read per record, default unset = unchanged behaviour,
+  invalid zone = ignored with one warning) interprets the printed wall clock in that zone; the capture then yields `2026-08-11T19:21:44Z` (unset: `20:21:44Z`). Winlogbeat is untouched and is the recommended shipper where DST accuracy matters.
+- `fluentbit-journald` adapter: `SYSLOG_IDENTIFIER`, `_COMM`, `_HOSTNAME` and `_PID` went verbatim into the rebuilt line, so `logger -t 'sshd[9]: Accepted publickey for root ...'` forged a header that parsed as an sshd login. They are now
+  validated (plain tokens only; `_PID` digits only) and a record with a forged value is left untouched.
+- Docs: sshd events (`linux_ssh`) are stamped with receipt time per the clock-skew policy, so journald/Docker backfill and replay arrive as "now" (parser policy unchanged; documented in `docs/shipping/linux-auth.md`, `docker.md`, README) together with the
+  1 MiB ingest body-cap risk for backfills and what `Read_From_Tail On/Off` does; `fluent-bit-windows.conf` is flagged in the file, `windows.md` and the README as never run with Security/Sysmon, with the `Ignore_Missing_Channels` rationale; new README
+  "Delivery guarantees" section (vendor-documented, unverified here); journald `DB` directory must exist; Docker `partial` lines are not reassembled.
+- Tests: new `docs/shipping/samples/windows-sysmon-eventdata.fluentbit.json` (Sysmon 1 in the REAL nested-`EventData` shape; template-derived from Sysmon field names in the verified Windows 11 envelope, **not a capture**) with image, command line,
+  user, parent image and pid asserted; the old 2023 Sysmon sample is asserted to keep its known no-field-mapping limitation; a System 7045 record in the real `StringInserts`-only shape is proven to fire `win_service_installed_suspicious_path`
+  through the ws4 engine (and a System32 service not to). `tools/test_shipping_recipes.py` now covers 16 samples.
 
 ### Added (2026-11-05, WP-1.4: shipper recipes in `docs/shipping/`)
 

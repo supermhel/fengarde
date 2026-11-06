@@ -6,7 +6,8 @@ the data, the ingest path and what is **not** covered. Background: [../input-ada
 
 | Source / shipper | Recipe | Ingest path | Parser (`source_type` in the registry) | Sample checked | Sample provenance |
 |---|---|---|---|---|---|
-| Windows Sysmon (Fluent Bit) | [windows.md](windows.md) | HTTP, `source_type=windows_eventlog`, `fluentbit-winevtlog` | `sysmon` | [windows-sysmon.fluentbit.json](samples/windows-sysmon.fluentbit.json) | hand transcription of a third-party published output, not byte-verified |
+| Windows Sysmon (Fluent Bit) | [windows.md](windows.md) | HTTP, `source_type=windows_eventlog`, `fluentbit-winevtlog` | `sysmon` (**no field mapping** for this old shape: message `Process created: ? (by ?)`) | [windows-sysmon.fluentbit.json](samples/windows-sysmon.fluentbit.json) | hand transcription of a third-party 2023 output that predates `Event_Data_As_Map`, not byte-verified |
+| Windows Sysmon, real `EventData` shape (Fluent Bit) | [windows.md](windows.md) | same | `sysmon` (image, command line, user, parent image, pid asserted) | [windows-sysmon-eventdata.fluentbit.json](samples/windows-sysmon-eventdata.fluentbit.json) | template-derived from Sysmon event 1 field names in the verified Windows 11 envelope, **not a capture** |
 | Windows Application (Fluent Bit) | [windows.md](windows.md) | same | `windows_eventlog` (no event: EventID 1001 unmapped) | [windows-application.fluentbit.json](samples/windows-application.fluentbit.json) | captured on Windows 11 with Fluent Bit 4.2.8 on 2026-11-05 (Application channel), scrubbed |
 | Windows Security (Fluent Bit) | [windows.md](windows.md) | same | `windows_eventlog` | [windows-security.fluentbit.json](samples/windows-security.fluentbit.json) | template-derived |
 | Windows 4688 (Winlogbeat) | [windows.md](windows.md) | HTTP via a relay (no config), `winlogbeat` | `windows_eventlog` | [windows-4688.winlogbeat.json](samples/windows-4688.winlogbeat.json) | template-derived |
@@ -22,6 +23,28 @@ the data, the ingest path and what is **not** covered. Background: [../input-ada
 | Proxmox sshd (rsyslog, syslog-ng) | [network-gear.md](network-gear.md) | syslog TCP 5515 | `linux_ssh` | [proxmox-sshd.syslog.txt](samples/proxmox-sshd.syslog.txt) | illustrative |
 | OPNsense/pfSense sshd (relay) | [network-gear.md](network-gear.md) | syslog TCP 5515 | `linux_ssh` | [opnsense-sshd.syslog.txt](samples/opnsense-sshd.syslog.txt) | illustrative |
 | OPNsense/pfSense filterlog (relay) | [network-gear.md](network-gear.md) | syslog TCP 5515 | `generic_syslog` (no firewall parser) | [pfsense-filterlog.syslog.txt](samples/pfsense-filterlog.syslog.txt) | illustrative |
+
+**Windows config caveat.** `configs/fluent-bit-windows.conf` lists the `Security` and `Sysmon` channels but that exact file was only ever run with `Application,System` (Security needs an administrator account, Sysmon was not installed); no real
+4624/4688/Sysmon record has been seen. **Windows time caveat.** Fluent Bit prints the *current* UTC offset on `TimeCreated`, so events from the other side of a DST switch are dated one hour off unless `FENGARDE_WINEVTLOG_TZ` is set on ws2
+or Winlogbeat (UTC) is used; see [windows.md](windows.md#time-zone-and-dst). **sshd time caveat.** `linux_ssh` events are stamped with receipt time, so replayed or backfilled sshd lines (journald, Docker) get "now"; see
+[linux-auth.md](linux-auth.md) and [docker.md](docker.md).
+
+## Delivery guarantees (what happens when ws1 is down)
+
+None of this was exercised against a real ws1 outage; it is what each vendor documents and is **unverified here** unless noted. ws1 itself answers `202` (spooled, if `INGEST_HTTP_SPOOL_PATH` / `SYSLOG_TCP_SPOOL_PATH` is set) or `503`/`429`
+and caps a body at `INGEST_HTTP_MAX_BODY_BYTES` (1 MiB, `413`); a retry after `429`/`503` without an idempotency key can duplicate events ([../ingest-http.md](../ingest-http.md)). Delivery is at-least-once everywhere downstream.
+
+| Shipper | On a ws1 outage (vendor docs, not run) | Loss risk with the committed config |
+|---|---|---|
+| Fluent Bit (`http` output; Windows, journald, Docker, n8n, dnsmasq) | failed flushes are retried with backoff up to `Retry_Limit` (documented default 1), then the chunk is dropped; chunks are buffered in **memory** unless `storage.type filesystem` is set | records in memory are lost on a Fluent Bit restart or after the retry limit; the committed configs set neither `Retry_Limit` nor filesystem storage. `tail`/`systemd` `DB` files only remember the read position |
+| Vector (`socket` sink, TCP) | sink retries with backoff and the default in-memory buffer (500 events, `when_full = block`) pushes back on the source; `buffer.type = "disk"` persists | the committed configs use the defaults: the event buffer does not survive a Vector restart; whether the `journald` checkpoint survives depends on a writable `data_dir` (not checked) |
+| rsyslog (`omfwd`) | the action is suspended while the target is down; with no action queue configured, messages are lost | no queue, `action.resumeRetryCount` or `queue.saveOnShutdown` in the committed configs, so an outage drops messages |
+| syslog-ng (`network()`) | in-memory buffer (`log-fifo-size`) with flow control; overflow drops (UDP never back-pressures); `disk-buffer()` persists | no `disk-buffer()` in the committed configs |
+
+If an outage must not lose events, add the persistence option in the right-hand column and test it against a stopped ws1: the committed configs do not.
+
+**Other operational notes.** The Fluent Bit journald `DB` directory (`/var/lib/fluent-bit/` in the recipe) must exist and be writable before Fluent Bit starts; it is not created for you. Docker's `partial` (split) lines, from json-file records over 16 KiB, are
+not reassembled: each fragment is a separate event ([docker.md](docker.md)).
 
 ## What was and was not verified
 
