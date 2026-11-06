@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (2026-11-06, ADR 011 draft: WS-8 edge time, docs only)
+
+- `docs/adr/011-ws8-edge-time-direction.md` (Status: Proposed, owner sign-off pending) proposes optional additive event-time
+  evidence fields on `incident.graph` v2 edges and a new time-aware graph metric with a stated minimum n. No code, contract,
+  eval or README change; `docs/adr/README.md` index updated. Options A and B of the 2026-10-02 proposal were already shipped.
+
 ### Added (2026-11-04, WP-1.3: shipper adapters for real Fluent Bit / Winlogbeat / Docker shapes)
 
 - `services/ws2-normalization/adapters/` — four pure, total adapters that
