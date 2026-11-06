@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed (2026-11-06, WS-1 HTTP ingest spool drain)
+
+- **The HTTP/JSON ingest spool now drains.** `INGEST_HTTP_SPOOL_PATH` wrote a
+  bounded spool (FIFO, byte-capped) but nothing ever replayed it — only the
+  UDP (and later TCP) syslog loops owned drain threads, so HTTP-spooled
+  events sat until the cap and then the edge dropped. The HTTP collector
+  (`HttpJsonCollector`) now starts its own `http-json-spool-drain` thread that
+  replays the spool into the bus every `spool_drain_interval_s` (default 5 s,
+  same default as the syslog loops); a bus outage fails the drain early and
+  retries next interval, at-most-once per FIFO rewrite (crash-safe). Startup
+  default unchanged (unset `INGEST_HTTP_SPOOL_PATH` = no spool, no thread).
+- **Test** `test_http_spool_drain.py` (fast tier): real collector, real HTTP,
+  flappable bus — bus down → 202 spooled, nothing on the bus; bus stays down →
+  drain attempts fail with no loss/duplication; bus up → every spooled event
+  arrives **exactly once**, spool empty, extra wait proves no re-replay.
+- **Enablement** `infra/docker-compose.homelab.yml` switches
+  `INGEST_HTTP_SPOOL_PATH` on in the ws1-spool volume (a minimal homelab
+  override that merges cleanly with the full WP-2.1 homelab profile in #154).
+
 ### Added (2026-11-04, WP-1.3: shipper adapters for real Fluent Bit / Winlogbeat / Docker shapes)
 
 - `services/ws2-normalization/adapters/` — four pure, total adapters that

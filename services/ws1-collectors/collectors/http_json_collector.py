@@ -80,6 +80,11 @@ DEFAULT_MAX_EVENTS_PER_SEC = 2000         # per-source, same shape as syslog
 DEFAULT_MAX_CONCURRENT = 16               # ThreadingHTTPServer thread guard
 _READ_CHUNK = 64 * 1024
 DEFAULT_MAX_SOURCES = 4096                # bound on the per-source bucket map (LRU)
+# How often the spool-drain thread retries replaying spooled events into the
+# bus (same default as the UDP/TCP syslog loops). A bus outage makes the drain
+# fail fast and retry next interval; nothing is dropped while the spool has
+# room.
+DEFAULT_SPOOL_DRAIN_INTERVAL_S = 5.0
 # A sender may label the device a batch came from (X-Fengarde-Source / ?source=). The label is only trusted as far as the
 # bearer token: it keys the per-source rate limit, the bus partition and the metrics, never an authorization decision.
 _SOURCE_ID_RE = re.compile(r"^[A-Za-z0-9._:@\-]{1,128}$")
@@ -142,6 +147,7 @@ class HttpJsonCollector:
                  max_concurrent: int = DEFAULT_MAX_CONCURRENT,
                  max_events_per_sec_per_source: float = 0,
                  spool: Optional[BoundedSpool] = None,
+                 spool_drain_interval_s: float = DEFAULT_SPOOL_DRAIN_INTERVAL_S,
                  extra_source_types=(),
                  logger=None):
         if not ingest_token and not (dev_loopback and _is_loopback(host)):
@@ -175,6 +181,7 @@ class HttpJsonCollector:
         self._source_buckets: "OrderedDict[str, _TokenBucket]" = OrderedDict()
         self._source_lock = threading.Lock()
         self._spool = spool
+        self._spool_drain_interval_s = float(spool_drain_interval_s)
 
         # Aggregate counters (flat numeric leaves -> real Prometheus gauges).
         self.events_accepted = 0
@@ -191,6 +198,7 @@ class HttpJsonCollector:
 
         self._server: Optional[_HttpIngestServer] = None
         self._thread: Optional[threading.Thread] = None
+        self._spool_thread: Optional[threading.Thread] = None
         self._running = threading.Event()
 
     # -- lifecycle ----------------------------------------------------------
@@ -211,6 +219,16 @@ class HttpJsonCollector:
         self._thread = threading.Thread(target=self._serve_loop,
                                         name="http-json-ingest", daemon=True)
         self._thread.start()
+        if self._spool is not None and self._spool_thread is None:
+            # Review (2026-11-06): only the syslog loops replayed their spools,
+            # so an HTTP spool filled during a bus outage was never drained.
+            # The HTTP edge now owns a drain loop for its own spool, same
+            # contract as the UDP/TCP loops (retry every interval until the
+            # bus accepts, never drop while the spool has room).
+            self._spool_thread = threading.Thread(
+                target=self._drain_spool_loop, name="http-json-spool-drain",
+                daemon=True)
+            self._spool_thread.start()
         if self.log is not None:
             self.log.info("http json ingest listening", host=self.host,
                           port=self.port, token_set=bool(self.token),
@@ -226,11 +244,37 @@ class HttpJsonCollector:
         finally:
             self._running.clear()
 
+    def _drain_spool_loop(self) -> None:
+        """Replay this listener's spool into the bus until stop().
+
+        A produce failure just means the outage has not cleared, so
+        drain_into() stops early (at-most-once per attempt; a crash between
+        drain and spool rewrite re-replays at most the in-flight batch) and
+        the loop retries next interval -- the same contract as the UDP and TCP
+        syslog drain loops.
+        """
+        while self._running.is_set():
+            spool = self._spool
+            if spool is None:
+                return
+            try:
+                drained = spool.drain_into(
+                    lambda item: self.bus.produce(
+                        self.topic, key=item["key"], payload=item["event"]))
+                if drained and self.log is not None:
+                    self.log.info("replayed spooled http events", count=drained,
+                                  pending=spool.pending_count())
+            except Exception as exc:  # never let the drain loop die silently
+                if self.log is not None:
+                    self.log.warn("http spool drain failed", error=str(exc))
+            self._running.wait(self._spool_drain_interval_s)
+
     def is_running(self) -> bool:
         return self._running.is_set() and bool(
             self._thread and self._thread.is_alive())
 
     def stop(self) -> None:
+        self._running.clear()
         if self._server is not None:
             self._server.shutdown()
             self._server.server_close()
@@ -238,7 +282,9 @@ class HttpJsonCollector:
         if self._thread is not None:
             self._thread.join(timeout=5)
             self._thread = None
-        self._running.clear()
+        if self._spool_thread is not None:
+            self._spool_thread.join(timeout=5)
+            self._spool_thread = None
 
     # -- batch handling -----------------------------------------------------
 
