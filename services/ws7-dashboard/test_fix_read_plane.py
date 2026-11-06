@@ -112,6 +112,17 @@ def run():
     check('if ($http_x_api_key != "' not in auth_b,
           "wp-6.1: /api/auth/ still carries the old X-Api-Key gate")
 
+    # Any auth_request-guarded location must still proxy somewhere -- a guard
+    # replacement that eats the location's upstream (live-caught on WP-6.1:
+    # /api/ai-triage 404'd from nginx for exactly this reason) is a regression
+    # no syntax check can catch, since a proxyless location is valid nginx.
+    for loc in (" = /api/alerts {", " = /api/events {", " = /api/ai-triage {",
+                "location /api/ops/ws1 {", "location /api/ops/ws8 {"):
+        anchor = f"location{loc}" if loc.startswith(" =") else loc
+        b = block(tpl, anchor)
+        check("proxy_pass" in b,
+              f"wp-6.1: {anchor} lost its proxy_pass when the gate was replaced")
+
     # ---- 2026-10-15: HTML entry points revalidate, hashed assets immutable ----
     blocks = {b.split("{", 1)[0].strip(): b.split("}", 1)[0]
               for b in re.split(r"\n\s*location ", tpl)[1:]}
