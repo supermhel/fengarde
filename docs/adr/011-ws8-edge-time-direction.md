@@ -93,7 +93,7 @@ closing sentence).
    them, so an `incident-graphs` template, if one is ever added, must list the
    four new keys or accept that they are stored but not searchable).
    **[UNVERIFIED]** Whether any consumer rejects unknown edge keys: I found no
-   strict-schema check in the files above; I did not audit every consumer
+   strict-schema check in the files above; re-checked 2026-11-06: the only in-repo consumers are the ws7 console (`app/src/data/api.ts` declares `IncidentGraph` as a TypeScript interface, no runtime schema validation; `Incidents.tsx` passes `graph.data.edges` to a `Graph` component) and ws3 storage, none of which rejects unknown keys; I did not audit every consumer
    (the roadmap section 5.2 "consumer strictness" check the 2026-10-02
    proposal asks for is therefore still open).
 
