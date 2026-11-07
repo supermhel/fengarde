@@ -36,6 +36,7 @@ if tier_on fast; then  # tier: fast
 echo "== Phase 0: contract validator =="; LAST_HEADER="== Phase 0: contract validator =="
 $PY tools/validate_contract.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 $PY tools/test_validate_contract.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+$PY tools/test_homelab_compose.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
 echo "== A6: anti-dormancy check (rules must be satisfiable by a real parser) =="; LAST_HEADER="== A6: anti-dormancy check (rules must be satisfiable by a real parser) =="
 $PY tools/check_rule_producers.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
@@ -483,6 +484,7 @@ echo "== ws1 HTTP/JSON ingest (WP-1.1): auth, 400/413/429, malformed-line skip, 
 $PY services/ws1-collectors/test_http_json_ingest.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 $PY services/ws1-collectors/test_http_json_ingest_hardening.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 $PY services/ws1-collectors/test_http_json_ingest_source_identity.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+$PY services/ws1-collectors/test_seed_switch.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
 echo "== ws1 health/metrics (gap-hunt #70/#71/#76: /health 503 on bus outage, flat gauges) =="; LAST_HEADER="== ws1 health/metrics (gap-hunt #70/#71/#76: /health 503 on bus outage, flat gauges) =="
 $PY services/ws1-collectors/test_main_health_metrics.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
