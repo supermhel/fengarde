@@ -83,18 +83,31 @@ def adapt_record(payload: dict) -> dict:
         # (or undeclared), so a record meant for another parser is never rewritten.
         return not declared or declared in module.SOURCE_TYPES
 
+    def run(module) -> Optional[dict]:
+        # Totality is enforced HERE, not only in each adapter: an unexpected exception means "decline" (the payload
+        # flows on unchanged to the normal resolve/dead-letter path). Exception, not BaseException: Ctrl-C still works.
+        try:
+            out = module.adapt(payload)
+        except Exception:  # noqa: BLE001
+            return None
+        return out if out is not payload and isinstance(out, dict) else None
+
     shipper = _shipper_of(payload)
     if shipper in ADAPTERS and in_family(ADAPTERS[shipper]):
-        out = ADAPTERS[shipper].adapt(payload)
-        if out is not payload:
+        out = run(ADAPTERS[shipper])
+        if out is not None:
             return out
         # The labelled adapter declined (wrong shape): fall through to the sniff rather than dead-lettering silently.
     # Deterministic shape detection. Order matters — a winlogbeat record never looks like a docker record, but be
     # conservative: the first sniffer that positively identifies the shape wins.
     for module in ADAPTERS.values():
-        if in_family(module) and module.sniffs(raw):
-            out = module.adapt(payload)
-            if out is not payload:
+        try:
+            hit = in_family(module) and module.sniffs(raw)
+        except Exception:  # noqa: BLE001
+            hit = False
+        if hit:
+            out = run(module)
+            if out is not None:
                 return out
     return payload
 

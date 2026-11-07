@@ -19,7 +19,7 @@ TCP 127.0.0.1:5515   (SYSLOG_TCP_HOST / SYSLOG_TCP_PORT; compose publishes 127.0
 | Value | Meaning |
 |---|---|
 | `newline` (default) | frames terminated by LF, trailing CR stripped. Netcat, `logger -n`, most one-shot tools. |
-| `octet-counting` | RFC 6587 §3.4.1 `MSG-LEN SP SYSLOG-MSG`; used by rsyslog's `omfwd` TCP and syslog-ng relays. One trailing LF after the message is tolerated for interop. |
+| `octet-counting` | RFC 6587 §3.4.1 `MSG-LEN SP SYSLOG-MSG`; what an rsyslog `omfwd` sender emits with `TCP_Framing="octet-counted"`. Listener-wide: a sender must match the configured value. One trailing LF after the message is tolerated for interop. |
 
 The listener holds a per-connection buffer, so a frame split across any
 number of TCP segments (including a length header arriving separately from
@@ -40,13 +40,16 @@ an idle timeout `SYSLOG_TCP_IDLE_TIMEOUT_S` (30 s).
 | rate limit (`SYSLOG_TCP_MAX_EVENTS_PER_SEC`, default 2000/s per source) | frames shed + counted like UDP (connection stays up) |
 | bus down | `SYSLOG_TCP_SPOOL_PATH` accepts to the bounded spool; without it, dropped+counted |
 
-## rsyslog (octet-counting)
+## rsyslog (newline, the listener default)
 
 ```
 # /etc/rsyslog.d/fengarde.conf
 *.* action(type="omfwd" Target="192.0.2.10" Port="5515" Protocol="tcp"
-          TCP_Framing="octet-counting")
+          TCP_Framing="traditional")
 ```
+
+`traditional` is LF-delimited and matches `SYSLOG_TCP_FRAMING=newline`. For octet-counted senders (`TCP_Framing="octet-counted"`)
+set `SYSLOG_TCP_FRAMING=octet-counting` on the listener; the setting applies to every sender of that listener.
 
 ## syslog-ng / netcat (newline)
 

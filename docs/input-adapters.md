@@ -19,7 +19,7 @@ shipper --NDJSON, X-Fengarde-Shipper: winlogbeat--> ws1 POST /v1/ingest
 
 | `shipper` id | source | target parser | what changes |
 |---|---|---|---|
-| `fluentbit-winevtlog` | Fluent Bit `winevtlog` input, **`event_data_as_map: true`** (Windows) | `sysmon` or `windows_eventlog` | `TimeCreated` string → epoch ms; Sysmon records routed by provider/EventID |
+| `fluentbit-winevtlog` | Fluent Bit `winevtlog` input, **`event_data_as_map: true`** (Windows) | `sysmon` or `windows_eventlog` | nested `EventData` map (real Fluent Bit 4.2.8 shape) flattened to the parser keys; `TimeCreated` string → epoch ms; Sysmon records routed by provider/EventID |
 | `winlogbeat` | Winlogbeat 7/8 ECS output (Windows) | `sysmon` or `windows_eventlog` | `winlog.*` nesting flattened to the parser keys; `winlog.time_created` → epoch ms |
 | `fluentbit-journald` | Fluent Bit `systemd` input (Linux) | `generic_syslog` → text-sniff routes sshd lines to `linux_ssh` | journald field map → RFC 3164 line built from record fields only |
 | `docker-json` | Docker `json-file` driver lines plus `docker_id`/`docker_name` added by the shipper config (e.g. a Lua filter; Fluent Bit has no `docker` filter) | `generic_syslog` | `{log,stream,time}` → RFC 3164 line; header rebuilt from record fields only |
@@ -46,7 +46,7 @@ documented Fluent Bit setup).
 
 ## Fixture provenance (honesty ledger)
 
-- `fluentbit-winevtlog` FIXTURE — **transcribed from a published real capture**: output of
+- `fluentbit-winevtlog` FIXTURE — **hand-transcribed from a published third-party output (not a capture made here)**: output of
   fluent-bit 2.0.6's `winevtlog` input on a Windows host (2023-01-17),
   published by ClickHouse in *"Send Windows Event Logs to ClickHouse with
   Fluent Bit"* (clickhouse.com/blog/...). Transcribed by hand, not byte-exact:
@@ -87,6 +87,9 @@ No specimen value was invented in any fixture.
   form is accepted; a naive timestamp is assumed UTC. Unparseable
   `TimeCreated` values simply drop the key (the parser falls back to its
   received_at default) — an adapter never fabricates a time.
+- Fluent Bit prints `TimeCreated` with the host's CURRENT UTC offset, not the one in force at the event time, so a record from the other side of a DST switch is dated one hour off by default (the real capture says `+0100`; the host log says `+02:00`). Setting `FENGARDE_WINEVTLOG_TZ` (IANA zone, read at call time, `fluentbit-winevtlog` only; invalid = ignored with one warning) interprets the printed wall clock in that zone instead; prefer Winlogbeat (UTC) where DST accuracy matters. See `docs/shipping/windows.md`.
+- The journald adapter only rebuilds a header from a plain-token `SYSLOG_IDENTIFIER`/`_COMM` (`[A-Za-z0-9_.@-]{1,64}`), a plain `_HOSTNAME` and a digits-only `_PID`; anything else (e.g. `logger -t 'sshd[9]: Accepted ...'`) leaves the record untouched.
+- `adapt_record` is itself total: an exception inside any adapter or sniffer is treated as "declined" and the payload passes on unchanged.
 - `meta.docker_time` is evidence only; nothing override the WS-1 receipt
   clock (`meta.received_at`, Q12 semantics).
 
@@ -122,5 +125,5 @@ the shipper label must match the record shape within a batch.
 - `services/ws2-normalization/test_adapters.py` — per-adapter fixture→parser
   checks through the full WS-2 path (incl. OCSF validation), sniff negative
   controls, shipper-label-vs-sniff precedence, no-op guarantee, and the
-  extreme-value totality sweep (2,850 mutations, none raised).
+  extreme-value totality sweep (3,039 mutations, none raised; includes year-1/9999 and offset timestamps for every time field).
 - Recipes for the shipping side are in `docs/shipping/` (WP-1.4).

@@ -1,0 +1,19 @@
+# Vector: dnsmasq/Pi-hole query log -> FENGARDE TCP syslog 5515. Linted and run live on Linux containers 2026-11-05 (README Verification log).
+# The file already carries "Mon DD HH:MM:SS dnsmasq[pid]: query[A] name from ip"; only a <PRI> is added.
+[sources.dns]
+type = "file"
+include = ["/var/log/pihole/pihole.log"]
+
+[transforms.to_line]
+type = "remap"
+inputs = ["dns"]
+source = '''
+.message = "<30>" + string!(.message)
+'''
+
+[sinks.fengarde]
+type = "socket"
+inputs = ["to_line"]
+mode = "tcp"
+address = "192.0.2.10:5515"
+encoding.codec = "text"

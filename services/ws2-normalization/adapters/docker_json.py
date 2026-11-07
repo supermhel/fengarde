@@ -83,9 +83,10 @@ def _rfc3164_date(iso: str) -> Optional[str]:
     base = iso[:-1] + "+00:00" if iso.endswith("Z") else iso
     try:
         dt = datetime.fromisoformat(base)
-    except ValueError:
+        # astimezone() overflows at year 1 / 9999 with an offset (OverflowError, or OSError on some platforms)
+        dt = dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt.astimezone(timezone.utc)
+    except (ValueError, OverflowError, OSError):
         return None
-    dt = dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt.astimezone(timezone.utc)
     return f"{dt:%b} {dt.day:>2} {dt:%H:%M:%S}"  # RFC3164 space-pads the day (not the hour)
 
 
