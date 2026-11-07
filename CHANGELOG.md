@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `docs/adr/011-ws8-edge-time-direction.md` (Status: Proposed, owner sign-off pending) proposes optional additive event-time
   evidence fields on `incident.graph` v2 edges and a new time-aware graph metric with a stated minimum n. No code, contract,
-  eval or README change; `docs/adr/README.md` index updated. Options A and B of the 2026-10-02 proposal were already shipped.
+  eval or README change; `docs/adr/README.md` index updated. Options A and B of the 2026-10-02 proposal were already shipped. The `[MEASURED]` numbers are reproducible from the repo (`docs/adr/011-measurements/`, manual scripts, not in CI; re-run 2026-11-07, all identical). Status still Proposed; the owner asked on 2026-11-06 to leave the CHANGELOG until the tag, so this entry is open for removal (ADR checklist item 13).
 
 ### Added (2026-11-04, WP-1.3: shipper adapters for real Fluent Bit / Winlogbeat / Docker shapes)
 
