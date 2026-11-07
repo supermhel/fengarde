@@ -42,31 +42,59 @@ contradict it. This ADR defines that, and what must be built to earn the word.
 | 4 | The OCSF contract has no process-parent/session fields | **Confirmed.** `contracts/ocsf-event.schema.json:68-92` has `actor.user{name,uid,domain}` and `actor.process{name,pid}` only; no `uid` on process, no `parent_process`, no `session`. (The schema root has `additionalProperties: true`, line 17, so extra keys validate today, which is exactly why they would be silently unversioned.) |
 | 5 | ws8 edges come from ONE alert's entity pairs (actor, ip, device); typed kinds come from MITRE tactic labels; `caused_by` has no shipped evidence | **Confirmed, with a nuance.** Edges: `_EDGE_KINDS` (`correlator.py:166-172`), one alert per edge. Typed kinds read `mitre.tactic`, `mitre.technique` and one scalar `unmapped.ot.anomaly_type` (`correlator.py:275-304`); `caused_by` needs that scalar on the *alert*, but `make_alert` forwards a fixed field list with no `unmapped` (`ws4-detection/main.py:660-700`), and the code itself says "`caused_by` is not evidenced by any shipped alert" (`correlator.py:285-290`). Nuance: `make_alert` DOES copy `actor` wholesale (`main.py:689`), so any `actor.process.*` / `actor.session.*` field a parser sets would ride on the alert with no ws4 change. |
 
-Two more corrections to the briefing:
+Two more corrections to the briefing (updated 2026-11-07 against PR #153,
+branch `origin/wp/1.4-shipper-recipes-v2`, tip `018d09e`, read with `git show`;
+it is open and unmerged, so its facts are cited as "on #153"):
 
-- **The "Windows 11 Fluent Bit record" is not Windows 11 and not a byte-exact
-  capture.** `adapters/fluentbit_winevtlog.py:22-31` says it is the output of
-  fluent-bit 2.0.6 on a Windows host (2023-01-17, computer name `EC2AMAZ-...`, an
-  AWS Windows Server) transcribed from a ClickHouse blog post; no capture file is
-  stored. The owner has no Windows 11 Sysmon capture yet (owner's own statement).
-- **That record carries its causal keys only inside the `Message` text**
-  (`ProcessGuid: {f51ddac1-...}`, `LogonId: 0xCE96D`, `ParentProcessId: 7720`,
-  `adapters/fluentbit_winevtlog.py:47-58`); it has no flat `Image`, `ProcessId`
-  or `ParentImage` keys. **[MEASURED]** (`m1_fixture.py`): adapted and parsed by
-  the real `SysmonParser`, the event is class 1002 with `actor = None` and
-  `unmapped.process_launch = {"suspicious": false}`. So on the one real Windows
-  record in the repo the pipeline extracts **no process identity at all**, not
-  merely no GUID. The adapter docstring says `event_data_as_map: true` is required
-  and "the recipe sets it", but the transcribed record is evidently not map-mode
-  output. **[UNVERIFIED]** whether real map-mode output carries flat
-  `ProcessGuid` etc.: I cannot capture one here. This is the first thing the
-  Windows 11 lab capture must settle.
+- **The Sysmon record in the adapter's own fixture is a 2023 transcription of a
+  Windows Server specimen, not a Windows 11 capture.**
+  `adapters/fluentbit_winevtlog.py:22-31` (on `origin/main`) says it is the output
+  of fluent-bit 2.0.6 (2023-01-17, computer name `EC2AMAZ-...`, an AWS Windows
+  Server) transcribed from a ClickHouse blog post; no capture file is stored.
+  #153 keeps it as a labelled hand transcription
+  (`docs/shipping/samples/windows-sysmon.fluentbit.json`, "not byte-verified").
+- **A REAL Windows 11 capture does exist on #153, but not of a causal source.**
+  `docs/shipping/samples/windows-application.fluentbit.json` is a record captured
+  on Windows 11 with Fluent Bit 4.2.8 on 2026-11-05 (Application channel,
+  EventRecordID 61384, Windows Error Reporting 1001, computer name scrubbed to
+  `WIN11-LAB`). `docs/shipping/windows.md` on #153 records the run: Application
+  and System channels only, normal user. What it settles: with
+  `Event_Data_As_Map true` the record is **not flat**: system fields sit at the top
+  level and the named event data is nested under `EventData` (1,544 of 2,640
+  records); providers whose template cannot be resolved (System 7045 among them)
+  carry only positional `StringInserts` and no `EventData`. #153's adapter now
+  flattens `EventData` into the top level (system keys win on collision). It also
+  records that `TimeCreated` carries the current, not the event-time, UTC offset
+  (DST), which matters for ADR-011 ordering. What it does NOT settle: no Security
+  (needs administrator) or Sysmon record has ever been captured, so whether real
+  Sysmon `ProcessGuid` / `ParentProcessGuid` / `LogonGuid` / `LogonId` appear in
+  `EventData` is still **[UNVERIFIED]**. #153's `windows-sysmon-eventdata.fluentbit.json` and
+  `windows-security.fluentbit.json` are template-derived (values invented), and
+  its `windows.md` says so; they show the adapter and parser handle that
+  *assumed* shape, nothing more.
+- **On `origin/main` the transcribed record carries its causal keys only inside
+  the `Message` text** (`ProcessGuid: {f51ddac1-...}`, `LogonId: 0xCE96D`,
+  `ParentProcessId: 7720`, `adapters/fluentbit_winevtlog.py:47-58`); no flat
+  `Image`, `ProcessId` or `ParentImage`. **[MEASURED]** (`m1_fixture.py`, on
+  `main` code): adapted and parsed by the real `SysmonParser`, the event is class
+  1002 with `actor = None` and `unmapped.process_launch = {"suspicious": false}`:
+  no process identity at all, not merely no GUID. That record predates map mode,
+  so it says nothing about map-mode output. #153 states the same limit for its
+  copy (the event reads `Process created: ? (by ?)`, asserted in its test). With
+  #153's flattening, a map-mode Sysmon record whose `EventData` holds
+  `ProcessGuid` would reach the parser as a flat key; whether the Sysmon parser
+  then keeps it is the WP-3 change below, and whether real output has the key
+  stays **[UNVERIFIED]** until the lab capture. The Windows 11 lab capture of
+  Security and Sysmon is therefore still the first thing to obtain.
 
 ### What is in the real or captured data (inventory)
 
-Fixtures available locally: the Fluent Bit record above (Sysmon EID 1, 1 record);
-`winlogbeat.py` fixtures (template-derived, not captured: 4688 with
-`NewProcessId`, `ParentProcessId`, `SubjectLogonId`; 4624 with `TargetLogonId`);
+Fixtures available locally (on `main`): the transcribed Fluent Bit Sysmon EID 1
+record above (1 record, not a capture); `winlogbeat.py` fixtures
+(template-derived, not captured: 4688 with `NewProcessId`, `ParentProcessId`,
+`SubjectLogonId`; 4624 with `TargetLogonId`). On unmerged #153 additionally: one
+REAL Windows 11 Application-channel record (no causal key) and template-derived
+Sysmon / Security samples;
 Suricata/Zeek fixtures on the unmerged PR #152 branch (REAL capture-derived, from
 public OISF pcaps, Suricata 8.0.8 and Zeek 9.0.1 per their provenance blocks).
 **The Sysmon/EVTX corpus is absent locally**: `eval/detection_accuracy/evtx-samples`
@@ -142,14 +170,64 @@ product ONLY for a link that satisfies all three conditions:
    | basis | key (self role -> related role) | scope the value is unique in | direction rule |
    |---|---|---|---|
    | `process_tree` | child `ParentProcessGuid` == parent `ProcessGuid` (Sysmon); or (4688) creator `ProcessId` == earlier `NewProcessId` on the SAME host **and** the child event time falls inside the parent's lifetime window known from logged events; PID-only matches without a start time are **not** causal-grade | tenant + host (Sysmon GUID embeds a machine part, still scope it) | parent -> child |
-   | `logon_session` | 4624 `TargetLogonId` == 4688/4672/4648 `SubjectLogonId` (or 4688 `TargetLogonId`) | tenant + **host** + boot epoch (LogonId is unique per host until reboot) | logon -> activity under it |
    | `network_flow` | same Suricata `flow_id` on one sensor, or same Zeek `uid` in one deployment, across conn/dns/modbus/alert | tenant + sensor id (not comparable across sensors) | none: **symmetric**, order from ADR-011 only |
    | `agent_session` | same MCP `session_id` (and optionally agent id) | tenant + agent runtime | none: symmetric; **self-declared**, so a link carries `trust: "declared"` and the UI must say so |
+
+   **`logon_session` is NOT claimable until a boot-epoch source exists.** A
+   Windows LogonId (4624 `TargetLogonId` == 4688/4672/4648 `SubjectLogonId`) is
+   unique per host only until reboot, so its scope must be (tenant, host, boot
+   epoch). No event provides the boot epoch: a 4624 carries no boot time, and
+   the candidates (Sysmon Event 4 service-start, Security 4608 startup) are
+   different events that would have to be correlated into every logon's scope,
+   which no parser does and no capture has shown. The Sysmon `LogonGuid` may be a
+   per-logon unique id that needs no boot epoch, but the only Sysmon samples in
+   the repo (on #153) are template-derived with invented values, so this is
+   **[UNVERIFIED]** and cannot be relied on; it is a candidate for the lab
+   capture, not a designed basis. Until one is verified, `logon_session` is
+   listed but emits no links (the `links[].basis` enum does not include it), and
+   `LogonId` extraction in WS-2 is optional groundwork only. A LogonId
+   match scoped by host alone is exactly the false-link case the Risks section
+   calls a release blocker.
 
    Not in scope until grounded in a real capture: CloudTrail/Kubernetes request
    ids, n8n execution ids, CI run ids (listed in the inventory as unexamined).
    A key outside this table, or a PID without a start time, makes a link at most
    `entity-linked`.
+
+   **Scope trust (who vouches for the scope).** The scope (a `Computer` name, a
+   sensor id) is read from the record body, which any holder of the ingest
+   token can write; ws1 has ONE shared bearer token
+   (`FENGARDE_INGEST_TOKEN`), and `X-Fengarde-Source` is a sender-chosen label
+   that the code itself says is "only trusted as far as the bearer token ... never
+   an authorization decision" (`http_json_collector.py:83-84`). What ws1
+   stamps into `meta` today (`handle_batch`, `:281-287`): `shipper_ip` (the TCP
+   peer address, `self.client_address[0]`, not a header, so a sender cannot choose
+   it, but behind a reverse proxy or NAT it is the proxy's address), `source` (the
+   self-label, only if sent) and `shipper` (self-label of the adapter). **None of
+   these reaches the normalized event today**: `shipper_ip` is read nowhere
+   outside ws1 and the OCSF `siem` object has no field for it. So the scope trust
+   is defined as follows, and WP 2/3 must carry `meta.shipper_ip` onto
+   `siem.sender` (a contract addition, see 2a):
+
+   | scope trust | meaning | how it is produced |
+   |---|---|---|
+   | `observed` | the scope is bound to an authenticated sender: the key hash includes the sender identity, so keys from two different senders can never be equal whatever the body claims | **sender identity = `siem.sender.ip` (ws1 `meta.shipper_ip`) when ws1 is reached directly, with no proxy/NAT in front; the operator must declare that (a ws1/ws4 setting, WP 5), default off.** A per-sender credential (token per host) mapped to a source id would be stronger and is out of scope here. `meta.source` alone never qualifies (self-label). |
+   | `asserted` | the scope comes only from the record body; the sender is unauthenticated or shared (proxy, relay, flat token, no `siem.sender`) | the default today |
+   | `declared` | the id is set by the monitored software itself (agent session) | `agent_session` |
+
+   Effect of binding the sender: an attacker holding the shared token, sending
+   from their own address with `Computer: victim-host`, hashes to a different
+   key than the victim's genuine events, so no link is forced. A host that
+   changes address, or a log relay that forwards many hosts, loses links (recall
+   only). A compromised host can still forge keys within its OWN sender scope;
+   that is the existing trust in the host itself, stated in Risks.
+
+   **Which links may be called what:** `causal` requires scope trust `observed`
+   (or `declared` for `agent_session`, always displayed as declared). A link
+   whose scope is `asserted` is at most `key-linked` and is labelled
+   `trust: "asserted"`. The README claim with only asserted scope is the
+   ADR-011 wording plus "key-linked (scope asserted by the log record, not
+   authenticated)"; the word "causal" is not allowed.
 
 2. **An order condition (ADR-011).** For a directed basis the parent/logon
    event must not be *strictly later* than the child by ADR-011's rule
@@ -185,7 +263,8 @@ beyond the names):
 | `process.session` and `actor.session` (session object with `uid`) | yes (session object is embedded by Actor, Process, Authentication, Network Connection Info) | `actor.session.uid` = canonical LogonId; on 4624 the **new** session is `Authentication.session.uid` = `TargetLogonId` |
 | `network_connection_info.uid` (string, "unique identifier of the connection") | yes; the 1.1.0 object has `uid`, `direction`, `protocol_name` but I did not find `community_uid` there | `connection_info.uid` = Suricata `flow_id` / Zeek `uid` |
 | a per-sensor scope for the flow key | no OCSF equivalent found | **extension**: `siem.key_scope` (see below) |
-| `siem.key_scope` (object `{sensor, boot}` or host-boot token) | **FENGARDE extension**, in the existing `siem` namespace ("never collides with OCSF fields", schema comment) | carries the uniqueness scope so a LogonId on host A can never match one on host B |
+| `siem.key_scope` (object `{host, sensor, boot}`; `boot` stays absent until a boot-epoch source exists) | **FENGARDE extension**, in the existing `siem` namespace ("never collides with OCSF fields", schema comment) | carries the uniqueness scope so a key on host A can never match one on host B |
+| `siem.sender` (`{ip, source}`) | **FENGARDE extension**; copied by WS-2 from ws1 `meta.shipper_ip` / `meta.source` (not carried today) | the authenticated-sender part of the key hash (see "Scope trust" above); `source` is a self-label and is recorded for display only |
 
 The restricted profile in `contracts/ocsf-event.schema.json` is hand-written, so
 these are additive optional properties on `actor.process` / `actor.session` /
@@ -201,8 +280,23 @@ unrelated event, so they are explicit negative tests).
 ```
 "causal_keys": [ {"ns": "proc"|"logon"|"flow"|"agent",
                   "role": "self"|"parent"|"issuer"|"member",
-                  "h": "<first 16 hex of sha256(tenant|ns|scope|canonical_value)>"} , ... ]
+                  "h": "<first 16 hex of sha256(canonical_json([tenant, ns, sender, scope, canonical_value]))>",
+                  "scope_trust": "observed"|"asserted"|"declared"} , ... ]
 ```
+
+- **Hash input encoding (normative).** The tuple is serialised as canonical
+  JSON (a JSON array of five strings, `ensure_ascii`, no whitespace, UTF-8) and
+  that byte string is hashed. A plain `a|b|c|d` join is **forbidden**: for agent
+  sessions both scope and value are free text from the log, so with `|` as a
+  separator `("a|b","c")` and `("a","b|c")` hash identically and a sender can
+  force a link between unrelated events. Canonical JSON (or an equivalent
+  length-prefixed encoding) is injective over string tuples, so the delimiter
+  cannot be forged. `sender` is `siem.sender.ip` when the operator declared ws1
+  directly reachable, else the empty string (and `scope_trust` is `asserted`).
+  The 16-hex truncation (64 bits) is a collision-rate choice, not a security
+  boundary against a chosen-key attacker; an attacker who can choose both
+  inputs still cannot make unequal tuples collide without a 64-bit preimage
+  search, which is accepted for a `declared`/`asserted` label and noted in Risks.
 
 - Computed from the **trigger event only**, by one shared helper (a pure function
   in `services/shared/`, so ws4 and the tests use the same code; ws8 never
@@ -223,10 +317,12 @@ rebuilds the graph from live member entries (`_build_incident_graph_v2`,
 `correlator.py`). Add `links[]` computed in the same pass:
 
 ```
-"links": [ {"from_event_id": "...", "to_event_id": "...", "basis": "process_tree"|"logon_session"|"network_flow"|"agent_session",
+"links": [ {"from_event_id": "...", "to_event_id": "...", "basis": "process_tree"|"network_flow"|"agent_session",
             "order": "forward"|"concurrent"|"conflict"|"unordered",
-            "from_ts_ms": int|null, "to_ts_ms": int|null, "trust": "observed"|"declared"} ]
+            "from_ts_ms": int|null, "to_ts_ms": int|null, "trust": "observed"|"asserted"|"declared"} ]
 ```
+(`logon_session` is not in the `basis` enum until a boot-epoch source exists.
+`trust` is the weaker `scope_trust` of the two endpoints' keys.)
 
 Rules, all inherited from ADR-010 and made explicit:
 
@@ -246,8 +342,13 @@ Rules, all inherited from ADR-010 and made explicit:
    pair is linked through its time-ordered neighbour chain, not a clique (a group
    of n members emits at most n-1 links, bounded by the 200-member cap and
    therefore <= 199 links per group, <= 600 per incident by the existing 3 x
-   members bound for edges; links get their own cap of 1,000 with a
-   `links_truncated` flag, **sizes unmeasured [UNVERIFIED]**).
+   members bound for edges. That "<= 600" is the EDGE bound
+   (`correlator.py:582`), not a links bound: a member carries up to 6 keys, so
+   links per incident can reach 6 x 199 = **1,194** (200 members all in the same
+   6 groups). Links therefore get their own cap of 1,000 with a
+   `links_truncated` flag; that cap is reachable by design, truncation follows
+   the deterministic sort below, and a test must hit it. Payload size is
+   **unmeasured [UNVERIFIED]**).
 4. **Determinism and idempotency.** Links are a pure function of the live member
    side table (keys captured at store time as `entry["causal_keys"]`, same pattern
    as `cooccur`/`typed_signal`), sorted by `(basis, from_event_id, to_event_id)`.
@@ -301,6 +402,7 @@ the existing `eval/adversarial/order_controls.py` pattern):
 | **`key_shuffle` (NEW)** | permute key values among events **within each namespace and scope**, preserving the multiset of values | `causal_link_precision` and `causal_link_recall` each fall to <= 0.25 x baseline (and toward the analytic chance rate p0 = truth links / candidate same-namespace pairs); if they do not, the linker is matching on something other than the key and the gate fails |
 | `key_drop` (NEW) | delete all causal keys | recall -> 0, `causal_coverage` -> 0, every link reverts to `entity-linked`; no link may remain labelled causal |
 | `key_collide` (NEW) | give two unrelated events the same bare PID (no start time) or `0x0` LogonId | zero causal links produced (the weak-key and null-value rules hold) |
+| `key_forge` (NEW) | a second sender (different `siem.sender.ip`) replays another host's `Computer`/scope and key values; and `("a\|b","c")` vs `("a","b\|c")` as scope/value | zero links between the forged and genuine events (sender is in the hash; the encoding is injective) |
 
 Minimum n (owner to ratify, same style as ADR-011): at least **40 gradable truth
 links**, over at least **4 keyed storylines**, covering at least **2 bases**,
@@ -321,24 +423,31 @@ Claim wording by outcome (to be used verbatim in README/SSOT/dashboard):
 | Precision gate passes on a basis, controls collapse, coverage reported | "key-linked causal links for <basis> on sources that emit <key> (coverage X %)". Per basis, per source. |
 | Precision passes but `causal_direction_accuracy` below threshold or `conflict` common | "key-linked", not "ordered causal"; investigate clocks |
 | `key_shuffle` does not collapse | no causal claim; defect in the linker |
-| Gate passes on process_tree and logon_session only | "causal on Windows endpoint telemetry" and nothing about network or cloud |
+| Gate passes on process_tree only, scope `observed` (authenticated sender) | "causal on Sysmon process trees" and nothing about logons, network or cloud |
+| Gate passes but scope is only `asserted` (shared token, proxy/relay, no `siem.sender`) | "key-linked (scope asserted by the log record)"; the word "causal" is not allowed |
 | Any basis with `trust: declared` (agent_session) | always shown as "declared by the agent", never "observed" |
+| `logon_session` | no wording: not claimable until a boot-epoch source exists |
 
 ### 4. Honest scope
 
-Can honestly claim causal links **once built**: Sysmon-sourced process trees
-(GUID), Windows logon-session to activity on one host (LogonId), Suricata/Zeek
-flows within one sensor. **Conditional**: Windows 4688-only process trees (PID
-reuse), `agent_session` (self-declared).
+Can honestly claim causal links **once built**, and only at scope trust
+`observed`: Sysmon-sourced process trees (GUID), Suricata/Zeek flows within one
+sensor. **Not claimable yet**: Windows logon-session to activity (LogonId needs a
+boot epoch no event provides; see section 1). **Conditional**: Windows
+4688-only process trees (PID reuse), `agent_session` (self-declared). With scope
+only `asserted`, every basis is capped at `key-linked`.
 **Never**, from the current formats: syslog text (`sshd[pid]` is a PID with no
 start time), Cisco ASA messages, DNS query logs, any source with no id the system
 itself assigned. A `src_ip` match, a shared username or a MITRE tactic order is
 `entity-linked` or `time-ordered` and is not upgraded.
 
-What the owner has: no Windows Security/Sysmon capture yet. A Windows 11 lab with
-Sysmon installed would produce EID 1/3/10/11 with GUIDs and Security 4624/4688
-with LogonIds; that capture is the missing real-data input, and it also settles
-the Fluent Bit mode question above. The EVTX corpus is available only through the
+What the owner has: a real Windows 11 Fluent Bit 4.2.8 capture of the
+Application channel (on #153; it settled the nested-`EventData` shape), but no
+Windows Security or Sysmon capture yet. A Windows 11 lab with Sysmon installed
+and an administrator-run Security channel would produce EID 1/3/10/11 with
+GUIDs and Security 4624/4688 with LogonIds; that capture is the missing
+real-data input, and it is what settles whether real map-mode Sysmon output
+carries `ProcessGuid` / `ParentProcessGuid` / `LogonGuid` in `EventData`. The EVTX corpus is available only through the
 CI lane (not local).
 
 ### 5. Work packages (order and size)
@@ -346,14 +455,14 @@ CI lane (not local).
 | WP | Work | Size | Depends on |
 |---|---|---|---|
 | 0 | Owner decisions on this ADR and ADR-011 acceptance | S | ADR-011 accepted (order condition) |
-| 1 | Windows 11 + Sysmon lab capture (owner): EID 1/3/10, 4624/4688/4672, via Fluent Bit and Winlogbeat; commit as labelled fixtures | S (owner) / M (integrate) | none |
-| 2 | OCSF restricted-profile additions + `siem.key_scope`; canonicaliser + negative tests (`0x0`, `-`, null GUID); `bus-topics.md` | S | 0 |
+| 1 | Windows 11 + Sysmon lab capture (owner): Sysmon EID 1/3/10 and (administrator) Security 4624/4688/4672 via Fluent Bit (Security and Sysmon channels were never run on #153's Application/System capture) and Winlogbeat; also look for a boot-epoch source and check Sysmon `LogonGuid`; commit as labelled fixtures | S (owner) / M (integrate) | none |
+| 2 | OCSF restricted-profile additions + `siem.key_scope` + `siem.sender` (WS-2 copies ws1 `meta.shipper_ip`/`meta.source`); canonicaliser + negative tests (`0x0`, `-`, null GUID); **key-hash tests: canonical-JSON/length-prefixed tuple encoding, with a collision test where `\|` appears in scope and value (`("a\|b","c")` must not equal `("a","b\|c")`)**; `bus-topics.md` | S | 0 |
 | 3 | WS-2: Sysmon + Windows 4688/4624/4672/4648 + AD parsers read the keys; Fluent Bit `Message` handling decided from WP 1 | M | 1, 2 |
 | 4 | After PR #152 merges: read `flow_id` / `uid` on **all** record kinds (dns/modbus/dnp3, modbus.log); decide cross-tool `community_id` (not claimed) | S | #152 merged |
-| 5 | WS-4: shared key helper + `causal_keys` on alerts | S | 2 |
-| 6 | WS-8: key capture at store time, links, ordering with ADR-011 intervals, `INTERFACE.md`, tests (redelivery, fresh-instance, cache invalidation, no cross-incident link, null-key, PID-collision) | L | 5, ADR-011 implemented |
-| 7 | Twin: keyed storylines (start with `win_credential_theft`, `ransomware`, `phishing_bec`, `supply_chain_ci`), oracle `causal_links`, metric, the six controls, minimum-n guard, scorecard rows | L | 3, 6 |
-| 8 | PR #153 [UNVERIFIED: not opened; I do not know its content] merge ordering with WP 3/5 | S | #153 |
+| 5 | WS-4: shared key helper + `causal_keys` on alerts (sender in the hash; `scope_trust`; operator setting declaring ws1 directly reachable, default off) | S | 2 |
+| 6 | WS-8: key capture at store time, links, ordering with ADR-011 intervals, `INTERFACE.md`, tests (redelivery, fresh-instance, cache invalidation, no cross-incident link, null-key, PID-collision, **links cap: a 200-member incident with 6 shared keys yields 1,194 candidates and exactly 1,000 emitted with `links_truncated`**, forged-scope/second-sender, `asserted` never labelled causal) | L | 5, ADR-011 implemented |
+| 7 | Twin: keyed storylines (start with `win_credential_theft`, `ransomware`, `phishing_bec`, `supply_chain_ci`; `logon_session` storylines wait for a boot-epoch source), oracle `causal_links`, metric, the seven controls (incl. `key_forge`), minimum-n guard, scorecard rows | L | 3, 6 |
+| 8 | PR #153 (open, unmerged; adapter flattens `EventData`, changes `fluentbit_winevtlog.py`, `windows_eventlog.py`, System 7045 `StringInserts`) merge ordering with WP 3/5: WP 3 must be written against the flattened shape, so it should land after #153 | S | #153 merged |
 | 9 | Product wording and dashboard rendering of `links` | M | 7 passes |
 
 ## Consequences
@@ -370,9 +479,17 @@ CI lane (not local).
 
 ## Risks
 
-- **Key forgery.** `agent_session` and any logged id are attacker-influenced;
-  Sysmon GUIDs are only as trustworthy as the host. `trust` marks this; the
-  `key_collide` control covers accidental, not malicious, collisions.
+- **Key and scope forgery.** `agent_session` and any logged id are
+  attacker-influenced; Sysmon GUIDs are only as trustworthy as the host. The
+  scope is also read from the record body and ws1 has one shared ingest token,
+  so a token holder could claim another host's scope: mitigated by putting the
+  authenticated sender (`siem.sender.ip`) into the hash and by capping any
+  link whose scope is merely `asserted` at `key-linked`. Not mitigated: a
+  compromised host forging its own keys, a proxy/NAT that makes all senders
+  share one address (then everything is `asserted`), and a 64-bit
+  hash truncation against a chosen-collision attacker. The `key_collide`
+  control covers accidental collisions; `key_forge` covers the scope and
+  delimiter attacks.
 - **Scope bugs** (LogonId reused after reboot, Suricata `flow_id` reused across
   sensors) would create false causal links; `siem.key_scope` and the collide tests
   exist for this and must be treated as release blockers.
@@ -381,9 +498,11 @@ CI lane (not local).
   helper, truth and prediction are not independent. The builder must emit raw
   source-shaped records and use its own key generation. **[UNVERIFIED]** until
   WP 7.
-- Fixture realism: the only real Windows record in the repo is a transcribed,
-  Message-only record from a Windows Server host; the winlogbeat fixtures are
-  template-derived.
+- Fixture realism: on `main` the only Windows Sysmon record is a transcribed,
+  Message-only record from a Windows Server host and the winlogbeat fixtures are
+  template-derived. On #153 there is one real Windows 11 record, but from the
+  Application channel with no causal key; the Sysmon and Security samples there
+  are template-derived. No real Sysmon or Security record exists anywhere.
 
 ## Alternatives considered and rejected
 
@@ -420,30 +539,41 @@ CI lane (not local).
    payload stays byte-for-byte untouched).
 2. Cross-incident key hits: count only, or emit a `related_incidents` hint later?
 3. Boot epoch for LogonId scope: no event carries boot time reliably;
-   **[UNVERIFIED]** which field (Sysmon `Event 4` start, Security 4608) is usable.
+   **[UNVERIFIED]** which field (Sysmon `Event 4` start, Security 4608, or
+   Sysmon `LogonGuid`) is usable. Until answered, `logon_session` is not
+   claimable (section 1).
 4. Does the dashboard need to draw `links` at all before WP 7 passes?
-5. What is in PR #153? **[UNVERIFIED]**.
+5. Sender authentication: is `siem.sender.ip` (direct ws1, no proxy) enough for
+   `observed`, or does the owner want per-host ingest credentials mapped to a
+   source id? The former ships sooner; the latter is the only fix behind a proxy.
 
 ## Owner sign-off checklist
 
 Tick each line (or edit it) before any code starts.
 
 - [ ] 1. Confirm the corrected fact list in the Context table (notably: `flow_id`
-  is read by nobody on `main`; Sysmon does not read `ParentProcessId`; the
-  "Windows 11" Fluent Bit record is a transcribed Windows Server specimen with its
-  keys only inside `Message`).
+  is read by nobody on `main`; Sysmon does not read `ParentProcessId`). Confirm
+  the Windows record facts as updated against #153: the old adapter fixture is a
+  2023 transcribed Windows Server Sysmon specimen (keys only inside `Message`),
+  while #153 carries a real Windows 11 Application-channel capture (no causal
+  key) showing the `EventData` nesting that its adapter flattens; no real
+  Security or Sysmon record exists yet.
 - [ ] 2. Approve the vocabulary: `entity-linked`, `time-ordered`, `key-linked`,
   `causal`, and that entity edges are never called causal.
 - [ ] 3. Approve the three conditions (key, order via ADR-011, every hop keyed)
-  and the namespace table, including that PID-only and `declared` keys are weak.
+  and the namespace table, including that PID-only and `declared` keys are weak,
+  that `logon_session` is not claimable until a boot-epoch source exists, and the
+  scope-trust rule (`observed` needed for "causal"; `asserted` caps at
+  `key-linked`; sender in the key hash; canonical-JSON hash encoding).
 - [ ] 4. Approve the amendment to no-transitive-inference (equal-key links within
   one incident only; tracks and incidents still never merge).
 - [ ] 5. Approve the contract additions: OCSF `actor.process.uid`,
-  `parent_process`, `actor.session.uid`, `connection_info.uid`; extension
-  `siem.key_scope`; alert `causal_keys` (hashed, <= 6, trigger event only);
+  `parent_process`, `actor.session.uid`, `connection_info.uid`; extensions
+  `siem.key_scope`, `siem.sender`; alert `causal_keys` (hashed, <= 6, trigger
+  event only);
   incident.graph optional `links[]` (`version` stays 2).
-- [ ] 6. Ratify the evaluation: metrics, six controls (incl. NEW `key_shuffle`,
-  `key_drop`, `key_collide`), minimum n (>= 40 links, >= 4 storylines, >= 2 bases,
+- [ ] 6. Ratify the evaluation: metrics, seven controls (incl. NEW `key_shuffle`,
+  `key_drop`, `key_collide`, `key_forge`), minimum n (>= 40 links, >= 4 storylines, >= 2 bases,
   <= 40 % per storyline, >= 15 per basis), Wilson intervals, `no_keys` handling.
 - [ ] 7. Ratify the claim-wording table.
 - [ ] 8. Commission the Windows 11 + Sysmon capture (WP 1) and confirm it comes
@@ -453,5 +583,22 @@ Tick each line (or edit it) before any code starts.
 
 ## Status
 
-Proposed 2026-11-06. Awaiting owner sign-off. No code, contract, schema or eval
-file is changed by this document.
+Proposed 2026-11-06 (revised 2026-11-07 after review). Awaiting owner sign-off.
+No code, contract, schema or eval file is changed by this document.
+
+**Review status.** An independent Opus review of 2026-11-06 found six issues;
+each was checked against the files and all six were real. Fixed in this
+revision: (1) stale statements about the Windows record, #153 and map-mode
+output, now updated with the facts on #153 (real Windows 11 Application capture,
+`EventData` nesting, 7045 `StringInserts`), with the still-unknown parts (no
+Security/Sysmon capture, Sysmon GUID presence in real output) kept
+**[UNVERIFIED]**, and checklist item 1 reworded; (2) the key hash joined fields
+with `|`, which is forgeable for free-text scope/value, now canonical-JSON with a
+required collision test (WP 2); (3) scope came from the record body, now
+sender-bound in the hash with a three-level scope trust and rules for which
+links may be called causal; (4) the link bound "<= 600" was the edge bound, now
+1,194 against the 1,000 cap; (5) `logon_session` is moved to not claimable until
+a boot-epoch source exists; (6) the branch was rebased onto ADR-011's current
+tip by merge (see git history). Not fixed because outside a docs change: the
+code and contract work itself, and every measurement still marked
+**[UNVERIFIED]**.
