@@ -33,6 +33,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   parser; winlogbeat `event_data` can no longer overwrite `EventID`/`Computer`/`TimeCreated`; docker ids and names are validated;
   journald without `_HOSTNAME` is a no-op; fixture provenance wording corrected (transcribed, not byte-exact).
 
+### Fixed (2026-11-07, WP-1.4 independent review of PR #153)
+
+- `fluentbit-journald` adapter + `fluent-bit-journald.conf`: OpenSSH 9.8+ (Debian 13) logs logins as `sshd-session` / `sshd-auth`, so the recipe's `Systemd_Filter SYSLOG_IDENTIFIER=sshd` shipped no login events and the rebuilt
+  `sshd-session[pid]:` header never reached `linux_ssh` (reproduced: class 1002 `generic_syslog`). The config now filters on `sshd`, `sshd-session` and `sshd-auth` (Fluent Bit 5.1.5 delivered the `sshd-session` entries of a Debian 13
+  journal and none of an unrelated one); the adapter maps exactly those two identifiers to the header program `sshd` after the usual identifier validation (any other `sshd-<x>` keeps its name; a forged one is still declined).
+  New captured sample `docs/shipping/samples/linux-sshd-session.journald.json` (`journalctl -o json`, `debian:trixie-slim`, OpenSSH 10.0p2, container, 2026-11-07) resolves to `linux_ssh` 3002 with user and source address. The Vector
+  recipe needed no change (it labels every record `sshd[pid]`); that, and that a socket-activated `ssh@...service` is not matched by `include_units` (untested), is now documented.
+- `fluent-bit-windows.conf`: `System` added to `Channels` (the source of 7045 and 104, which the earlier run did read); the file header and `windows.md` now say the run used a copy with `Application,System`, so only `System` of the committed
+  three channels ever ran. `Application` is not in the recipe.
+- Docs: one provenance class per sample from a closed set (README "Sample provenance"); the blanket "not captures" sentences are gone (three samples are captures); `docs/input-adapters.md` no longer calls the hand-transcribed 2023 Sysmon
+  output a "real capture".
+- Tests: `tools/test_shipping_recipes.py` reads port, transport, URI and Authorization from the output section/sink/action only (comments no longer satisfy them), requires the cleartext WARNING as a comment in the first 5 lines, tests
+  7045 with mixed named + positional fields (named wins per field), enforces the provenance classes and the "only captures are called captures" rule, and carries negative self-tests for each. `test_adapters.py` covers `sshd-session` / `sshd-auth`.
+- `docs/shipping/verification/e2e.py` (+ README): the manual Docker driver behind the 2026-11-05 live runs; not part of CI.
+
 ### Fixed (2026-11-06, WP-1.4 second review of PR #153)
 
 - `docker-json` adapter: `time` values at the calendar edges with an offset (`0001-01-01T00:00:00+05:00`, `9999-12-31T23:59:59-05:00`) raised `OverflowError` out of `adapt()` and, because `normalize_one` calls the adapter stage outside its
@@ -48,7 +63,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   "Delivery guarantees" section (vendor-documented, unverified here); journald `DB` directory must exist; Docker `partial` lines are not reassembled.
 - Tests: new `docs/shipping/samples/windows-sysmon-eventdata.fluentbit.json` (Sysmon 1 in the REAL nested-`EventData` shape; template-derived from Sysmon field names in the verified Windows 11 envelope, **not a capture**) with image, command line,
   user, parent image and pid asserted; the old 2023 Sysmon sample is asserted to keep its known no-field-mapping limitation; a System 7045 record in the real `StringInserts`-only shape is proven to fire `win_service_installed_suspicious_path`
-  through the ws4 engine (and a System32 service not to). `tools/test_shipping_recipes.py` now covers 16 samples.
+  through the ws4 engine (and a System32 service not to). `tools/test_shipping_recipes.py` now covers 16 samples (17 after the 2026-11-07 review fixes below).
 
 ### Added (2026-11-05, WP-1.4: shipper recipes in `docs/shipping/`)
 
@@ -61,7 +76,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `VECTOR_DANGEROUSLY_ALLOW_ENV_VAR_INTERPOLATION=true`), Fluent Bit journald `Read_From_Tail On` delivered nothing (now `Off` + `DB`), `join!` VRL warning. A second container pass (2026-11-05) then verified a real `pihole/pihole:2026.10.1` log (committed as `docs/shipping/samples/pihole-v6.dnsmasq.txt`
   and exercised by the test), rsyslog `address=` / syslog-ng `ip()` binding, Vector `include_units` against a journal from real systemd units, and changed the syslog-ng relay config to
   `keep-hostname(yes)` (the default replaced the appliance host name with the sender's resolved name). NOT run: any real OPNsense/pfSense/Proxmox/n8n output, TLS.
-  Third pass (2026-11-05, Windows 11, official `fluent-bit-4.2.8-win64.zip`, normal user, Application and System channels, output to a local ws1 listener): the Windows config ran; the `winevtlog` input exists;
+  Third pass (2026-11-05, Windows 11, official `fluent-bit-4.2.8-win64.zip`, normal user, Application and System channels, output to a local ws1 listener): a copy of the Windows config (Channels `Application,System`) ran; the `winevtlog` input exists;
   `Event_Data_As_Map` needs `event_template_cache_size` > 0 as documented; the real record nests the event data under `EventData` (not flat), so the `fluentbit-winevtlog` adapter now flattens it
   (regression test in `test_adapters.py`); `Ignore_Missing_Channels true` added to the config (a missing Sysmon channel otherwise stops the whole input); new real sample
   `docs/shipping/samples/windows-application.fluentbit.json`. Still NOT run: the Windows Security and Sysmon channels (no real 4624/Sysmon record seen), Fluent Bit 5.1.5 on Windows (exited at start-up

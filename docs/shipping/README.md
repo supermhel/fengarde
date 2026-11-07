@@ -13,18 +13,34 @@ the data, the ingest path and what is **not** covered. Background: [../input-ada
 | Windows 4688 (Winlogbeat) | [windows.md](windows.md) | HTTP via a relay (no config), `winlogbeat` | `windows_eventlog` | [windows-4688.winlogbeat.json](samples/windows-4688.winlogbeat.json) | template-derived |
 | Windows 4624 (Winlogbeat) | [windows.md](windows.md) | same | `windows_eventlog` | [windows-4624.winlogbeat.json](samples/windows-4624.winlogbeat.json) | template-derived |
 | Linux sshd (Fluent Bit journald) | [linux-auth.md](linux-auth.md) | HTTP, `source_type=generic_syslog`, `fluentbit-journald` | `linux_ssh` | [linux-sshd.fluentbit-journald.json](samples/linux-sshd.fluentbit-journald.json) | schema-derived |
+| Linux sshd, OpenSSH 9.8+ `sshd-session` (Fluent Bit journald, Debian 13) | [linux-auth.md](linux-auth.md) | HTTP, `source_type=generic_syslog`, `fluentbit-journald` | `linux_ssh` | [linux-sshd-session.journald.json](samples/linux-sshd-session.journald.json) | captured: a `journalctl -o json` entry from `debian:trixie-slim` (OpenSSH 10.0p2) in a container on 2026-11-07; it carries the field names Fluent Bit's systemd input emits but is journald output, not Fluent Bit output |
 | Linux sshd (Vector journald) | [linux-auth.md](linux-auth.md) | syslog TCP 5515 | `linux_ssh` | [linux-sshd.vector.syslog.txt](samples/linux-sshd.vector.syslog.txt) | adapter output shape plus `<38>` PRI (what the remap targets; not a Vector capture) |
 | Docker n8n container (Fluent Bit) | [docker.md](docker.md) | HTTP, `generic_syslog`, `docker-json` | `generic_syslog` | [docker-n8n.fluentbit.json](samples/docker-n8n.fluentbit.json) | documented example: adapter fixture shape, NOT this config's literal output (the config's Lua sets `docker_name` to a 12-hex id; `linux_ssh` needs a `sshd[pid]:` prefix in the container's own text, see docker.md) |
 | Docker sshd container (Fluent Bit) | [docker.md](docker.md) | same | `linux_ssh` | [docker-sshd.fluentbit.json](samples/docker-sshd.fluentbit.json) | documented example |
 | Docker (Vector) | [docker.md](docker.md) | syslog TCP 5515 | `generic_syslog` | [docker-n8n.vector.syslog.txt](samples/docker-n8n.vector.syslog.txt) | adapter output with the container name in the host slot, as the remap emits (not a Vector capture) |
-| dnsmasq / Pi-hole (Vector, rsyslog, syslog-ng) | [dnsmasq-pihole.md](dnsmasq-pihole.md) | syslog TCP 5515 | `dns_query` | [dnsmasq.syslog.txt](samples/dnsmasq.syslog.txt); real capture [pihole-v6.dnsmasq.txt](samples/pihole-v6.dnsmasq.txt) | documented (parser docstring); capture from `pihole/pihole:2026.10.1` |
+| dnsmasq / Pi-hole (Vector, rsyslog, syslog-ng) | [dnsmasq-pihole.md](dnsmasq-pihole.md) | syslog TCP 5515 | `dns_query` | [dnsmasq.syslog.txt](samples/dnsmasq.syslog.txt) | documented (parser docstring) |
+| dnsmasq / Pi-hole, real log (Vector, Fluent Bit) | [dnsmasq-pihole.md](dnsmasq-pihole.md) | syslog TCP 5515 | `dns_query` | [pihole-v6.dnsmasq.txt](samples/pihole-v6.dnsmasq.txt) | captured from `pihole/pihole:2026.10.1` on 2026-11-05, client addresses scrubbed |
 | dnsmasq / Pi-hole (Fluent Bit) | [dnsmasq-pihole.md](dnsmasq-pihole.md) | syslog TCP 5515 | `dns_query` | [dnsmasq.fluentbit-wrapped.syslog.txt](samples/dnsmasq.fluentbit-wrapped.syslog.txt) | template-derived (assumed header) |
 | n8n (Vector, Fluent Bit) | [n8n.md](n8n.md) | HTTP, `source_type=n8n_audit` | `n8n_audit` | [n8n-audit.json](samples/n8n-audit.json) | documented (parser docstring); native n8n shape unverified |
 | Proxmox sshd (rsyslog, syslog-ng) | [network-gear.md](network-gear.md) | syslog TCP 5515 | `linux_ssh` | [proxmox-sshd.syslog.txt](samples/proxmox-sshd.syslog.txt) | illustrative |
 | OPNsense/pfSense sshd (relay) | [network-gear.md](network-gear.md) | syslog TCP 5515 | `linux_ssh` | [opnsense-sshd.syslog.txt](samples/opnsense-sshd.syslog.txt) | illustrative |
 | OPNsense/pfSense filterlog (relay) | [network-gear.md](network-gear.md) | syslog TCP 5515 | `generic_syslog` (no firewall parser) | [pfsense-filterlog.syslog.txt](samples/pfsense-filterlog.syslog.txt) | illustrative |
 
-**Windows config caveat.** `configs/fluent-bit-windows.conf` lists the `Security` and `Sysmon` channels but that exact file was only ever run with `Application,System` (Security needs an administrator account, Sysmon was not installed); no real
+### Sample provenance
+
+One class per sample, from this closed set (enforced by `tools/test_shipping_recipes.py`, which also fails if any doc presents a non-captured sample as a capture):
+
+| Class | Meaning | Samples |
+|---|---|---|
+| captured | produced by real software and stored (scrubbed where noted) | `windows-application.fluentbit.json` (Fluent Bit 4.2.8, Windows 11, 2026-11-05), `pihole-v6.dnsmasq.txt` (`pihole/pihole:2026.10.1`, 2026-11-05), `linux-sshd-session.journald.json` (`journalctl -o json`, `debian:trixie-slim`, OpenSSH 10.0p2, container, 2026-11-07) |
+| hand-transcribed | copied by hand from a third-party published output, not byte-verified | `windows-sysmon.fluentbit.json` |
+| template-derived | built from vendor field names inside a verified envelope; values invented | `windows-sysmon-eventdata.fluentbit.json`, `windows-security.fluentbit.json`, `windows-4688.winlogbeat.json`, `windows-4624.winlogbeat.json`, `dnsmasq.fluentbit-wrapped.syslog.txt` |
+| schema-derived | field names from the vendor schema, values representative | `linux-sshd.fluentbit-journald.json` |
+| adapter-output | the adapter's own output with the transformation a config's remap performs | `linux-sshd.vector.syslog.txt`, `docker-n8n.vector.syslog.txt` |
+| documented | the shape a parser docstring or recipe documents | `docker-n8n.fluentbit.json`, `docker-sshd.fluentbit.json`, `dnsmasq.syslog.txt`, `n8n-audit.json` |
+| illustrative | hand-written example of a plausible line | `proxmox-sshd.syslog.txt`, `opnsense-sshd.syslog.txt`, `pfsense-filterlog.syslog.txt` |
+
+**Windows config caveat.** `configs/fluent-bit-windows.conf` lists `Security`, `System` and `Sysmon` but that exact file was never run: the run used a copy with `Channels Application,System` (so `System`, the source of 7045 and 104, did run; Security needs an administrator account, Sysmon was not installed); no real
 4624/4688/Sysmon record has been seen. **Windows time caveat.** Fluent Bit prints the *current* UTC offset on `TimeCreated`, so events from the other side of a DST switch are dated one hour off unless `FENGARDE_WINEVTLOG_TZ` is set on ws2
 or Winlogbeat (UTC) is used; see [windows.md](windows.md#time-zone-and-dst). **sshd time caveat.** `linux_ssh` events are stamped with receipt time, so replayed or backfilled sshd lines (journald, Docker) get "now"; see
 [linux-auth.md](linux-auth.md) and [docker.md](docker.md).
@@ -59,10 +75,11 @@ not reassembled: each fragment is a separate event ([docker.md](docker.md)).
   (Docker Desktop on Windows 11) against a real ws1 `HttpJsonCollector` / `SyslogTCPServer` on a memory bus, with the received payloads pushed through the real WS-2 path. That found and fixed four real defects
   (n8n Fluent Bit parser, n8n Vector decoding, Vector env-var expansion, journald `Read_From_Tail`).
 - **Verified in a second pass (2026-11-05):** a real `pihole/pihole:2026.10.1` log (committed as a sample), the rsyslog `address=` / syslog-ng `ip()` relay bindings, syslog-ng `keep-hostname`, and Vector `include_units` against a journal written by real systemd units.
-- **Run on Windows 11, 2026-11-05 (third pass, Application and System channels only):** the Windows Fluent Bit config ran as a normal user against a real ws1 listener; the real record shape differs from the earlier assumption
+- **Checked 2026-11-07 (review fixes):** OpenSSH 9.8+ `sshd-session` / `sshd-auth` on Debian 13 in a container (Fluent Bit `Systemd_Filter` lines, adapter mapping, a captured journal entry; see [linux-auth.md](linux-auth.md)); nothing new on Windows.
+- **Run on Windows 11, 2026-11-05 (third pass, Application and System channels only):** a modified copy of the Windows Fluent Bit config (`Channels Application,System`) ran as a normal user against a real ws1 listener; the shape Fluent Bit actually emits differs from the earlier assumption
   (nested `EventData`), which found and fixed an adapter defect (see windows.md and the Verification log).
 - **Still not verified:** the Windows `Security` channel (needs admin) and Sysmon channel, so no real 4624/Sysmon record has been seen; Fluent Bit 5.x on Windows; any real OPNsense / pfSense / Proxmox / n8n output (inputs were hand-written files, `logger`, `systemd-cat`
-  or a real systemd journal in a container); a real Pi-hole other than this container image and version (no hardware, no DHCP, no real LAN clients); TLS paths. Sample files other than `pihole-v6.dnsmasq.txt` are still adapter fixtures / templates, not captures.
+  or a real systemd journal in a container); a real Pi-hole other than this container image and version (no hardware, no DHCP, no real LAN clients); TLS paths. The only captured samples are `pihole-v6.dnsmasq.txt`, `windows-application.fluentbit.json` and `linux-sshd-session.journald.json` (see [Sample provenance](#sample-provenance)); every other sample is an adapter fixture, template, transcription or illustration.
 - **Optional lint:** `tools/lint_shipping_recipes.sh` runs `vector validate --no-environment`, `fluent-bit --dry-run -c`, `rsyslogd -N1 -f`, `syslog-ng --syntax-only -f` where those tools are installed, and skips cleanly otherwise
   (also the Windows-only and journald configs on a non-matching OS). It is a syntax lint only: `fluent-bit --dry-run` did **not** catch the unregistered `json` parser, and the
   Vector lint cannot see the missing env-var expansion. Not part of the default gate.

@@ -3,7 +3,7 @@
 > **Status of this recipe.** The configs were linted with the official container images (Vector 0.61.0, Fluent Bit 5.1.5, rsyslog 8.2610.0,
 > syslog-ng 4.12.0) and, where Linux-capable, run live on Docker Desktop against a real ws1 listener and the real WS-2 path
 > (see the [Verification log](README.md#verification-log)). What was not run is stated below. The committed samples are still adapter
-> fixtures / templates, not captures; `tools/test_shipping_recipes.py` runs them through WS-2.
+> fixtures / templates, except [linux-sshd-session.journald.json](samples/linux-sshd-session.journald.json), a `journalctl -o json` entry captured in a container (not Fluent Bit output; [sample provenance](README.md#sample-provenance)). `tools/test_shipping_recipes.py` runs them through WS-2.
 
 Parser: `linux_ssh` (class 3002 Authentication). Both paths below declare `generic_syslog`; the sshd identifier makes the
 WS-2 text sniff hand the line to `linux_ssh`.
@@ -46,7 +46,10 @@ and be dropped by ws1 with Fluent Bit logging a flush failure. This was measured
 [INPUT]
     Name               systemd
     Tag                host.auth
+    # OpenSSH 9.8+ (Debian 13) logs logins as sshd-session / sshd-auth; repeated Systemd_Filter lines are ORed.
     Systemd_Filter     SYSLOG_IDENTIFIER=sshd
+    Systemd_Filter     SYSLOG_IDENTIFIER=sshd-session
+    Systemd_Filter     SYSLOG_IDENTIFIER=sshd-auth
     Read_From_Tail     Off
     DB                 /var/lib/fluent-bit/journald.db
     Strip_Underscores  Off
@@ -67,18 +70,30 @@ and be dropped by ws1 with Fluent Bit logging a flush failure. This was measured
 Sample: [journald sshd failure, schema-derived](samples/linux-sshd.fluentbit-journald.json) (field names per `journal-fields(5)`;
 values representative) -> `linux_ssh`.
 
+**OpenSSH 9.8+ (Debian 13): `sshd-session` / `sshd-auth`.** Since OpenSSH 9.8 the login lines are written by the per-connection helpers, so the journal's `SYSLOG_IDENTIFIER` is `sshd-session` (pre-auth/PAM lines of the
+same attempt may say `sshd-auth`), not `sshd`; only start-up lines (`Server listening ...`) keep `sshd`. A filter on `SYSLOG_IDENTIFIER=sshd` alone therefore shipped none of the login events on such hosts, and the text sniff
+(`sshd[`) would not have matched `sshd-session[pid]:` anyway. Checked 2026-11-07 on `debian:trixie-slim` (OpenSSH 10.0p2, a container with systemd-journald, one failed password login):
+(1) before the fix the adapter rebuilt `... sshd-session[954]: Failed password for invalid user admin ...` and it resolved to `generic_syslog` (1002); (2) the recipe now filters on `sshd`, `sshd-session` and `sshd-auth`
+(repeated `Systemd_Filter` lines are ORed): Fluent Bit 5.1.5 reading that journal delivered the 2 `sshd` and 5 `sshd-session` entries and none of an unrelated `logger -t` entry (the `sshd`-only filter delivers the 2 start-up lines
+only, which is what the old recipe did); (3) the `fluentbit-journald` adapter maps exactly these two identifiers to the header program `sshd` (after the same identifier validation; any other `sshd-<x>` keeps its own name and a forged one
+is still declined), so the line becomes `... sshd[pid]: Failed password ...` and resolves to `linux_ssh` (3002) with the user and source address filled. The sample
+[linux-sshd-session.journald.json](samples/linux-sshd-session.journald.json) is that journal entry as `journalctl -o json` printed it (captured in a container, the host name is the container id; the source address is the loopback
+address of the test login). It is journald output, not Fluent Bit output; the field names are the ones the `systemd` input emits. Not covered: a socket-activated per-connection unit (`ssh@...service`), other distributions, and the
+Fluent Bit output itself being posted live for this sample.
+
 ## Vector -> TCP syslog 5515
 
 Vector builds the RFC 3164 line itself and sends it to the syslog TCP listener
 ([../syslog-tcp.md](../syslog-tcp.md); default newline framing, plaintext and unauthenticated: keep it on a trusted segment).
 Vendor docs: <https://vector.dev/docs/reference/configuration/sources/journald/> and
 <https://vector.dev/docs/reference/configuration/sinks/socket/>. **Verified live** (Vector 0.61.0 debian image, which ships `journalctl`; the alpine image does not): `.host`, `._PID`, `.message`, `.timestamp` exist; the socket sink with `codec = "text"` sent LF-terminated frames;
-`sshd` lines resolved to `linux_ssh`. **`include_units` verified** (Vector 0.61.0-debian reading the journal of a real systemd-as-PID-1 container, debian:trixie-slim, privileged, with `ssh.service` and an extra `noise.service`): the committed config shipped only the 9 `ssh.service` entries (no `noise.service`, kernel or systemd lines); with the line removed the same journal produced 4275 records, all labelled `sshd[pid]` (e.g. `noise-from-other-unit`, kernel network messages), and entries without `_PID` (kernel) fail the remap (`expected string, got null`) and are dropped. Of the 9 shipped lines, `Invalid user ...` resolved to `linux_ssh` (3002); `Server listening ...` and `Connection closed by ...` resolved to `generic_syslog` (1002). On Debian 13 (OpenSSH 10) the journal's own identifier for the per-connection process is `sshd-session`, which the hardcoded `sshd[pid]` label hides.
+`sshd` lines resolved to `linux_ssh`. **`include_units` verified** (Vector 0.61.0-debian reading the journal of a real systemd-as-PID-1 container, debian:trixie-slim, privileged, with `ssh.service` and an extra `noise.service`): the committed config shipped only the 9 `ssh.service` entries (no `noise.service`, kernel or systemd lines); with the line removed the same journal produced 4275 records, all labelled `sshd[pid]` (e.g. `noise-from-other-unit`, kernel network messages), and entries without `_PID` (kernel) fail the remap (`expected string, got null`) and are dropped. Of the 9 shipped lines, `Invalid user ...` resolved to `linux_ssh` (3002); `Server listening ...` and `Connection closed by ...` resolved to `generic_syslog` (1002). On Debian 13 (OpenSSH 10) the journal's own identifier for the per-connection process is `sshd-session`. **This recipe hardcodes `sshd[pid]` for every record, so those lines are labelled `sshd` and parse as `linux_ssh` (the real identifier is not shipped); this is why the Vector recipe needed no change for OpenSSH 9.8+, as long as the helper runs in the `ssh`/`sshd` unit. A socket-activated per-connection unit (`ssh@...service`) is not matched by `include_units`; untested.**
 
 ```toml vector-journald.toml
 # Vector (Linux) journald -> FENGARDE TCP syslog 5515. Linted and run live on Linux containers 2026-11-05 (README Verification log).
 # Verified on Vector 0.61.0 (debian image, which ships journalctl): .host, ._PID, .message, .timestamp. include_units verified 2026-11-05 on a journal written by real systemd units (README Verification log).
 # The sshd[pid] label is hardcoded for every record, so keep include_units: without it other units are mislabelled sshd. Unit names are given without the .service suffix (Debian's is `ssh`).
+# Because of that hardcoded label the OpenSSH 9.8+ helpers (sshd-session, sshd-auth) that run inside the ssh unit are labelled sshd too and parse as linux_ssh; their own identifier is not shipped. A socket-activated per-connection unit (ssh@...service) is NOT matched by include_units: untested.
 [sources.journal]
 type = "journald"
 include_units = ["ssh", "sshd"]

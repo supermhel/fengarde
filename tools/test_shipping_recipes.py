@@ -12,7 +12,7 @@ the samples claim while syslog configs target TCP 5515 (drift fails).
 
 NOT proven here: that Vector / Fluent Bit / rsyslog / syslog-ng accept the
 configs or emit the sample shapes (this test runs none of them). They were linted and run live once by hand
-(2026-11-05, container images; pihole-v6.dnsmasq.txt is a real pihole/pihole capture);
+(2026-11-05, container images; pihole-v6.dnsmasq.txt is a capture from the pihole/pihole image);
 see the Verification log in docs/shipping/README.md.
 
 Run: python tools/test_shipping_recipes.py
@@ -56,6 +56,8 @@ CASES = [
      "winlogbeat", "windows_eventlog", 3002, winlogbeat.SECURITY_LOGON_FIXTURE),
     ("linux-sshd.fluentbit-journald.json", "linux-auth.md", "generic_syslog",
      "fluentbit-journald", "linux_ssh", 3002, fluentbit_journald.FIXTURE),
+    ("linux-sshd-session.journald.json", "linux-auth.md", "generic_syslog",
+     "fluentbit-journald", "linux_ssh", 3002, None),
     ("linux-sshd.vector.syslog.txt", "linux-auth.md", "generic_syslog", None, "linux_ssh", 3002, None),
     ("docker-n8n.fluentbit.json", "docker.md", "generic_syslog", "docker-json", "generic_syslog", 1002, docker_json.FIXTURE),
     ("docker-sshd.fluentbit.json", "docker.md", "generic_syslog", "docker-json", "linux_ssh", 3002, docker_json.SSH_FIXTURE),
@@ -109,10 +111,123 @@ def check(cond, label):
         FAILS.append(label)
 
 
-def check_config(name: str, text: str, doc_text: str, sample: str | None) -> list[str]:
-    """Drift errors for one config: HTTP configs must carry the CASES source_type/shipper; syslog configs TCP 5515."""
+#: Closed set of sample provenance classes. Every sample must be listed here AND its README row must open with that class.
+#: Only "captured" may be called a capture / real record anywhere in the docs.
+PROVENANCE = {
+    "windows-sysmon.fluentbit.json": "hand-transcribed",
+    "windows-sysmon-eventdata.fluentbit.json": "template-derived",
+    "windows-application.fluentbit.json": "captured",
+    "windows-security.fluentbit.json": "template-derived",
+    "windows-4688.winlogbeat.json": "template-derived",
+    "windows-4624.winlogbeat.json": "template-derived",
+    "linux-sshd.fluentbit-journald.json": "schema-derived",
+    "linux-sshd-session.journald.json": "captured",
+    "linux-sshd.vector.syslog.txt": "adapter-output",
+    "docker-n8n.fluentbit.json": "documented",
+    "docker-sshd.fluentbit.json": "documented",
+    "docker-n8n.vector.syslog.txt": "adapter-output",
+    "dnsmasq.syslog.txt": "documented",
+    "dnsmasq.fluentbit-wrapped.syslog.txt": "template-derived",
+    "pihole-v6.dnsmasq.txt": "captured",
+    "n8n-audit.json": "documented",
+    "proxmox-sshd.syslog.txt": "illustrative",
+    "opnsense-sshd.syslog.txt": "illustrative",
+    "pfsense-filterlog.syslog.txt": "illustrative",
+}
+#: README provenance cell must open with one of these phrases for its class
+PROV_OPENING = {
+    "captured": r"captured?\b", "hand-transcribed": r"hand transcription", "template-derived": r"template-derived",
+    "schema-derived": r"schema-derived", "adapter-output": r"adapter output", "documented": r"documented",
+    "illustrative": r"illustrative",
+}
+
+
+def check_provenance(readme: str, docs: dict[str, str], sample_names: set[str]) -> list[str]:
+    """Drift errors: one provenance class per sample (closed set), README row agrees, nothing but a capture is called one."""
     errs: list[str] = []
-    m = re.search(r"^\s*URI\s+(\S+)", text, re.M) or re.search(r'^\s*uri\s*=\s*"([^"]+)"', text, re.M)
+    for n in sorted(sample_names - set(PROVENANCE)):
+        errs.append(f"sample {n}: no provenance class in PROVENANCE")
+    for n in sorted(set(PROVENANCE) - sample_names):
+        errs.append(f"PROVENANCE lists {n}, which is not a sample file")
+    for n, cls in PROVENANCE.items():
+        if cls not in PROV_OPENING:
+            errs.append(f"{n}: provenance {cls!r} is not in the closed set")
+    seen: set[str] = set()
+    for row in readme.splitlines():
+        if not row.startswith("|"):
+            continue
+        cells = [c.strip() for c in row.strip().strip("|").split("|")]
+        files = re.findall(r"\(samples/([^)]+)\)", row)
+        if len(files) != 1:
+            if files:
+                errs.append(f"README row carries {len(files)} samples, needs exactly one: {files}")
+            continue
+        n = files[0]
+        seen.add(n)
+        pcls = PROVENANCE.get(n)
+        if pcls in PROV_OPENING and not re.match(PROV_OPENING[pcls], cells[-1], re.I):
+            errs.append(f"README provenance for {n} must open as {pcls!r}, says {cells[-1][:50]!r}")
+    for n in sorted(sample_names - seen):
+        errs.append(f"README table has no row for {n}")
+    captured = {n for n, c in PROVENANCE.items() if c == "captured"}
+    for dn, dt in docs.items():
+        for m in re.finditer(r"\[([^\]]*)\]\(samples/([^)]+)\)", dt):
+            if m.group(2) in captured:
+                continue
+            txt = re.sub(r"\bnot an? (?:\w+ )?capture\b", "", m.group(1), flags=re.I)
+            if re.search(r"\breal\b|captur", txt, re.I):
+                errs.append(f"{dn}: link text calls non-captured sample {m.group(2)} real/captured: {m.group(1)[:60]!r}")
+        for ln in dt.splitlines():
+            if re.search(r"\breal (?:capture|record)\b", ln, re.I) and not any(c in ln for c in captured) and not re.search(r"\bnot an? (?:\w+ )?capture\b", ln, re.I):  # noqa: E501
+                errs.append(f"{dn}: 'real capture/record' on a line naming no captured sample: {ln.strip()[:80]!r}")
+        for ln in dt.splitlines():
+            if re.search(r"samples are still adapter fixtures / templates, not captures|not captures;", ln):
+                errs.append(f"{dn}: blanket 'not captures' contradicts the captured samples: {ln.strip()[:80]!r}")
+    return errs
+
+
+def _sections(text: str) -> list[tuple[str, str]]:
+    """(header, body) of every [section] with comment lines dropped (Fluent Bit ini and Vector toml)."""
+    out: list[tuple[str, list[str]]] = []
+    for ln in text.splitlines():
+        if ln.lstrip().startswith("#"):
+            continue
+        h = re.match(r"^\s*\[([^\]]+)\]\s*$", ln)
+        if h:
+            out.append((h.group(1).strip(), []))
+        elif out:
+            out[-1][1].append(ln)
+    return [(h, "\n".join(b)) for h, b in out]
+
+
+def output_construct(name: str, text: str) -> str:
+    """The part of a config that IS the output (comments dropped): Fluent Bit [OUTPUT], Vector [sinks.*], rsyslog omfwd action,
+    syslog-ng destination. Anything outside it (comments, inputs, other sections) must not satisfy a port/URI/auth check."""
+    code = "\n".join(ln for ln in text.splitlines() if not ln.lstrip().startswith("#"))
+    if name.startswith("fluent-bit"):
+        return "\n".join(b for h, b in _sections(text) if h.upper() == "OUTPUT")
+    if name.endswith(".toml"):
+        return "\n".join(b for h, b in _sections(text) if h.startswith("sinks."))
+    if name.startswith("rsyslog"):
+        return "\n".join(re.findall(r'action\(type="omfwd".*?\)', code, re.S))
+    if name.startswith("syslog-ng"):
+        return "\n".join(re.findall(r"destination\s+\w+\s*\{.*?\};", code, re.S))
+    return ""
+
+
+def check_config(name: str, text: str, doc_text: str, sample: str | None) -> list[str]:
+    """Drift errors for one config: HTTP configs must carry the CASES source_type/shipper; syslog configs TCP 5515.
+
+    Port, transport, URI and Authorization are read from the OUTPUT construct only (not from comments or inputs); the cleartext
+    WARNING must be a comment line in the first 5 lines.
+    """
+    errs: list[str] = []
+    out = output_construct(name, text)
+    if not out:
+        return [f"{name}: no output section/sink/action found"]
+    m = re.search(r"^\s*URI\s+(\S+)", out, re.M) or re.search(r'^\s*uri\s*=\s*"([^"]+)"', out, re.M)
+    pm = re.search(r'(?i)\bport\s*[=( ]\s*"?(\d+)', out) or re.search(r':(\d{2,5})(?:["/]|$)', out, re.M)
+    port = pm.group(1) if pm else None
     if m:  # HTTP ingest config
         want = next(c for c in CASES if c[0] == sample)
         uri = urlsplit(m.group(1))
@@ -121,23 +236,24 @@ def check_config(name: str, text: str, doc_text: str, sample: str | None) -> lis
             errs.append(f"{name}: path {uri.path!r} is not /v1/ingest")
         if st != want[2]:
             errs.append(f"{name}: URI source_type {st!r} != CASES {want[2]!r}")
-        sm = (re.search(r"^\s*Header\s+X-Fengarde-Shipper\s+(\S+)", text, re.M)
-              or re.search(r'"X-Fengarde-Shipper"\s*=\s*"([^"]+)"', text))
+        sm = (re.search(r"^\s*Header\s+X-Fengarde-Shipper\s+(\S+)", out, re.M)
+              or re.search(r'"X-Fengarde-Shipper"\s*=\s*"([^"]+)"', out))
         ship = sm.group(1) if sm else None
         if want[3] is not None and ship != want[3]:
             errs.append(f"{name}: X-Fengarde-Shipper {ship!r} != CASES {want[3]!r}")
         if want[3] is None and ship in ADAPTERS:
             errs.append(f"{name}: label {ship!r} would select a WS-2 adapter the recipe does not claim")
-        if not re.search(r"\b8554\b", text):
-            errs.append(f"{name}: HTTP ingest port 8554 not found")
-        if ("Authorization" in text or "auth.token" in text) and "WARNING" not in text:
-            errs.append(f"{name}: sends a bearer token without the cleartext WARNING comment")
+        if port != "8554":
+            errs.append(f"{name}: output section port {port!r}, recipe claims HTTP ingest 8554")
+        if re.search(r"(?i)authorization|auth\.token", out) and not any(
+                ln.lstrip().startswith("#") and "WARNING" in ln for ln in text.splitlines()[:5]):
+            errs.append(f"{name}: sends a bearer token without the cleartext WARNING comment in its first 5 lines")
     else:  # syslog TCP config
-        ports = set(re.findall(r"(?i)\bport[\s=:\x22(]{0,30}(\d+)", text)) | set(re.findall(r':(\d{4,5})"', text))
-        if "5515" not in ports or "5514" in ports:
-            errs.append(f"{name}: syslog ports {sorted(ports)}; recipe claims TCP 5515")
-        if not re.search(r"(?i)\btcp\b", text):
-            errs.append(f"{name}: no tcp transport found, recipe claims TCP 5515")
+        tm = re.search(r'(?i)\b(?:protocol|transport|mode)\s*[=( ]\s*"?(tcp|udp)', out)
+        if port != "5515":
+            errs.append(f"{name}: output section port {port!r}; recipe claims TCP 5515")
+        if not tm or tm.group(1).lower() != "tcp":
+            errs.append(f"{name}: output transport {tm and tm.group(1)!r}, recipe claims TCP 5515")
         if "5515" not in doc_text:
             errs.append(f"{name}: owning doc does not state port 5515")
     return errs
@@ -239,18 +355,29 @@ def main() -> int:
 
     # System 7045 in the REAL Fluent Bit shape (envelope as in WIN_CAPTURE: no EventData map, StringInserts only; values invented)
     # must fire win_service_installed_suspicious_path through the ws4 engine, and a System32 service must not
-    def svc_event(path: str):
+    def svc_event(path: str, named: dict | None = None):
         rec = {k: v for k, v in load(WIN_CAPTURE).items() if k not in ("EventData", "Message")}
         rec.update(ProviderName="Service Control Manager", Channel="System", EventID=7045, Computer="WIN11-LAB",
                    StringInserts=["Updater", path, "user mode service", "auto start", "LocalSystem"])
+        if named:
+            rec["EventData"] = named  # the adapter flattens it to the top level, as for a real nested map
         ev_, errs_ = normalize_one(adapt_record({"source_type": "windows_eventlog", "raw": rec, "meta": dict(meta_)}))
-        check(ev_ is not None and not errs_, f"System 7045 ({path}): no valid OCSF {errs_[:1]}")
+        check(ev_ is not None and not errs_, f"System 7045 ({path}, named={named}): no valid OCSF {errs_[:1]}")
         return ev_
     svc_rule = next(r for r in load_rules(ROOT / "contracts" / "rules") if r.title == "Service installed from a suspicious path")
     bad_svc, good_svc = svc_event(r"C:\Users\labuser\AppData\Local\Temp\u.exe"), svc_event(r"C:\Windows\System32\spoolsv.exe")
     check(bad_svc is not None and "Updater -> C:" in bad_svc["message"] and svc_rule.evaluate(bad_svc),
           "System 7045 (StringInserts only) in a Temp path must fire win_service_installed_suspicious_path")
     check(good_svc is not None and not svc_rule.evaluate(good_svc), "System 7045 in System32 must not fire the rule")
+    # MIXED named + positional: the named field wins PER FIELD. Name named, path positional (Temp) -> named name, positional path, fires;  # noqa: E501
+    # path named (System32), name+path positional (Temp) -> named path wins, positional name used, must not fire
+    tmp_path, sys_path = r"C:\Users\labuser\AppData\Local\Temp\u.exe", r"C:\Windows\System32\spoolsv.exe"
+    mix_a = svc_event(tmp_path, {"ServiceName": "NamedSvc"})
+    check(mix_a is not None and mix_a["message"].startswith("Service installed: NamedSvc -> C:\\Users") and svc_rule.evaluate(mix_a),
+          f"System 7045 mixed (named name, positional Temp path) wrong: {mix_a and mix_a['message']!r}")
+    mix_b = svc_event(tmp_path, {"ImagePath": sys_path})
+    check(mix_b is not None and "Updater -> C:\\Windows\\System32" in mix_b["message"] and not svc_rule.evaluate(mix_b),
+          f"System 7045 mixed (named System32 path beats positional Temp path) wrong: {mix_b and mix_b['message']!r}")
 
     # every sample file is used, every recipe doc is indexed in the README
     used = {c[0] for c in CASES} | {PIHOLE_CAPTURE, WIN_CAPTURE}
@@ -258,6 +385,22 @@ def main() -> int:
         check(p.name in used, f"unused sample file {p.name}")
     for doc in sorted({c[1] for c in CASES}):
         check(doc in readme, f"README does not link {doc}")
+
+    # provenance: one closed-set class per sample, README rows agree, only captures are called captures/real
+    docs_text = {d.name: d.read_text(encoding="utf-8") for d in HERE.glob("*.md")}
+    sample_names = {p.name for p in SAMPLES.iterdir()}
+    for e in check_provenance(readme, docs_text, sample_names):
+        check(False, e)
+    # negative self-tests: each drift below MUST be reported
+    bad_docs = dict(docs_text, **{"windows.md": docs_text["windows.md"] + "\n[real record](samples/windows-4624.winlogbeat.json)\n"})
+    check(check_provenance(readme, bad_docs, sample_names), "self-test: a non-captured sample called a real record not detected")
+    bad_line = dict(docs_text, **{"docker.md": docs_text["docker.md"] + "\nThis is a real capture of n8n.\n"})
+    check(check_provenance(readme, bad_line, sample_names), "self-test: 'real capture' on a line naming no captured sample not detected")  # noqa: E501
+    row = next(ln for ln in readme.splitlines() if "windows-security.fluentbit.json" in ln)
+    check(check_provenance(readme.replace(row, row.rsplit("| template-derived", 1)[0] + "| captured on a laptop |"), docs_text, sample_names),  # noqa: E501
+          "self-test: README class disagreeing with PROVENANCE not detected")
+    check(check_provenance(readme.replace(row, ""), docs_text, sample_names), "self-test: sample missing from the README table not detected")  # noqa: E501
+    check(check_provenance(readme, docs_text, sample_names | {"new-unclassified.json"}), "self-test: unclassified sample not detected")
 
     # config blocks: ```<lang> <filename> ... ``` must equal docs/shipping/configs/<filename>
     n_blocks = 0
@@ -288,13 +431,28 @@ def main() -> int:
         text = cfg.read_text(encoding="utf-8")
         for e in check_config(cfg.name, text, doc_text, cfg_sample):
             check(False, e)
-        if cfg.name == "vector-n8n.toml":  # negative self-test: a drifted config MUST be flagged
-            for old, new in (("source_type=n8n_audit", "source_type=bogus"), ("8554", "9999")):
-                check(old in text and check_config(cfg.name, text.replace(old, new), doc_text, cfg_sample),
-                      f"self-test: mutated {old!r} not detected")
+        # negative self-tests: each mutation MUST be reported (and a decoy elsewhere in the file must not satisfy the check)
+        muts: list[tuple[str, str]] = []
+        if cfg.name == "vector-n8n.toml":
+            muts = [("source_type bogus", text.replace("source_type=n8n_audit", "source_type=bogus")),
+                    ("port moved, old port left in a comment", "# decoy 8554\n" + text.replace(":8554/", ":9999/")),
+                    ("WARNING comment moved out of the first 5 lines", "\n".join(ln for ln in text.splitlines() if "WARNING" not in ln) + "\n# WARNING: late\n"),  # noqa: E501
+                    ("WARNING only in a non-comment line", text.replace("# WARNING:", "WARNING:"))]
+        if cfg.name == "fluent-bit-docker.conf":
+            muts = [("Port moved, decoy in an [INPUT]-side comment", text.replace("Port             8554", "Port             9999").replace("[SERVICE]", "# Port 8554\n[SERVICE]", 1)),  # noqa: E501
+                    ("WARNING comment removed", "\n".join(ln for ln in text.splitlines() if "WARNING" not in ln) + "\n")]
         if cfg.name == "rsyslog-forward.conf":
-            check(check_config(cfg.name, text.replace("5515", "5514"), doc_text, cfg_sample),
-                  "self-test: mutated syslog port not detected")
+            muts = [("syslog port", text.replace("5515", "5514")),
+                    ("port moved, decoy in a comment", text.replace('Port="5515"', 'Port="5514"') + '\n# omfwd Port="5515" Protocol="tcp"\n'),  # noqa: E501
+                    ("transport udp", text.replace('Protocol="tcp"', 'Protocol="udp"'))]
+        if cfg.name == "syslog-ng-forward.conf":
+            muts = [("transport udp", text.replace('transport("tcp")', 'transport("udp")')),
+                    ("port moved, decoy in a comment", text.replace("port(5515)", "port(5514)") + "# network(port(5515) transport(\"tcp\"))\n")]  # noqa: E501
+        if cfg.name == "vector-journald.toml":
+            muts = [("address port moved, decoy in a comment", text.replace(":5515", ":5514") + "# address = 192.0.2.10:5515\n")]
+        for label, mutated in muts:
+            check(mutated != text and check_config(cfg.name, mutated, doc_text, cfg_sample),
+                  f"self-test: {cfg.name} mutation ({label}) not detected")
     for d in HERE.glob("*.md"):
         for m in re.finditer(r"^```(ini|toml|lua|conf)[ \t]*$", d.read_text(encoding="utf-8"), re.M):
             check(False, f"{d.name}: unlabelled config-looking code fence ({m.group(1)})")

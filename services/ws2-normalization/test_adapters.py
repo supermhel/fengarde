@@ -184,6 +184,27 @@ def test_journald_sshd_fixture():
               "fluentbit-journald: actor user not parsed from the sshd line")
 
 
+def test_journald_sshd_session_capture():
+    # OpenSSH 9.8+ (Debian 13) logs logins as `sshd-session`: a real journalctl -o json entry (debian:trixie-slim, OpenSSH
+    # 10.0p2, 2026-11-07) must reach linux_ssh with user + source IP, not stay generic_syslog.
+    import json
+    sample = json.loads((ROOT / "docs" / "shipping" / "samples" / "linux-sshd-session.journald.json").read_text(encoding="utf-8"))
+    check(sample["SYSLOG_IDENTIFIER"] == "sshd-session" and sample["_COMM"] == "sshd-session", "sshd-session sample lost its identifier")  # noqa: E501
+    for ident in ("sshd-session", "sshd-auth"):
+        p, event, errors = full_path("generic_syslog", dict(sample, SYSLOG_IDENTIFIER=ident, _COMM=ident))
+        check(isinstance(p["raw"], str) and f" sshd[{sample['_PID']}]: " in p["raw"], f"{ident}: header not mapped to sshd: {p['raw']!r}")  # noqa: E501
+        check(event is not None and not errors and event.get("class_uid") == 3002, f"{ident}: expected class 3002, got {event and event.get('class_uid')} {errors[:1]}")  # noqa: E501
+        if event:
+            check((event.get("actor") or {}).get("user", {}).get("name") == "admin"
+                  and (event.get("src_endpoint") or {}).get("ip") == "127.0.0.1", f"{ident}: user/source ip not filled: {event.get('actor')} {event.get('src_endpoint')}")  # noqa: E501
+    # a forged helper-looking identifier is still declined (brackets/spaces fail the identifier check)
+    pl = {"source_type": "generic_syslog", "raw": dict(sample, SYSLOG_IDENTIFIER="sshd-session[9]: x"), "meta": {}}
+    check(fluentbit_journald.adapt(pl) is pl, "forged sshd-session identifier must decline the record")
+    # other sshd-<x> names are NOT rewritten (only the two known login helpers)
+    o = fluentbit_journald.adapt({"source_type": "generic_syslog", "meta": {}, "raw": dict(sample, SYSLOG_IDENTIFIER="sshd-evil")})
+    check(isinstance(o["raw"], str) and " sshd-evil[" in o["raw"], "unknown sshd-<x> must keep its own name")
+
+
 def test_journald_non_ssh_fixture():
     # Accepted-publickey line (still sshd) and a generic line fallback.
     p, event, errors = full_path("generic_syslog", fluentbit_journald.NON_SSH_FIXTURE)
@@ -498,6 +519,7 @@ def main():
              test_winlogbeat_process_fixture,
              test_winlogbeat_logon_fixture,
              test_journald_sshd_fixture,
+             test_journald_sshd_session_capture,
              test_journald_non_ssh_fixture,
              test_docker_json_fixture,
              test_shipper_label_beats_sniff_and_unknown_is_noop,

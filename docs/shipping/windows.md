@@ -3,14 +3,14 @@
 > **Status of this recipe.** The configs were linted with the official container images (Vector 0.61.0, Fluent Bit 5.1.5, rsyslog 8.2610.0,
 > syslog-ng 4.12.0) and, where Linux-capable, run live on Docker Desktop against a real ws1 listener and the real WS-2 path
 > (see the [Verification log](README.md#verification-log)). What was not run is stated below. The committed samples are still adapter
-> fixtures / templates, not captures; `tools/test_shipping_recipes.py` runs them through WS-2.
+> fixtures / templates, except [windows-application.fluentbit.json](samples/windows-application.fluentbit.json), captured from Fluent Bit 4.2.8 on Windows 11 ([sample provenance](README.md#sample-provenance)). `tools/test_shipping_recipes.py` runs them through WS-2.
 > **Windows, run once on 2026-11-05 (Windows 11, Fluent Bit 4.2.8, normal user, Application and System channels only):** the `winevtlog` input exists in the
-> Windows build and this config ran against a real ws1 listener; the real record shape differed from what the adapter assumed (event data is nested under `EventData`) and the
+> Windows build and a modified copy of this config (`Channels Application,System`; the committed file lists `Security`, `System` and Sysmon) ran against a real ws1 listener; the shape Fluent Bit actually emits differed from what the adapter assumed (event data is nested under `EventData`) and the
 > adapter was fixed. **NOT run:** the `Security` channel (needs an administrator), the Sysmon channel (not installed), Fluent Bit 5.x on Windows (5.1.5 would not start here), TLS.
 > See the [Verification log](README.md#verification-log).
 >
-> **The committed `fluent-bit-windows.conf` lists the `Security` and `Microsoft-Windows-Sysmon/Operational` channels, but that exact file was never run.** The live run used the same options with `Channels Application,System`
-> (Security needs an administrator account; Sysmon was not installed). `Ignore_Missing_Channels true` is there because a missing channel otherwise stops the whole input.
+> **The committed `fluent-bit-windows.conf` lists `Security`, `System` and `Microsoft-Windows-Sysmon/Operational`, but that exact file was never run.** The live run used a copy with `Channels Application,System` and the same other options
+> (so only `System` of the committed three was ever read; Security needs an administrator account and Sysmon was not installed; `Application` is not in the recipe because the events the parser maps do not come from that channel). `Ignore_Missing_Channels true` is there because a missing channel otherwise stops the whole input.
 
 The example host `192.0.2.10` is a placeholder: see [Reaching ws1 from another host](README.md#reaching-ws1-from-another-host) (published address change + firewall) before pointing a remote shipper at it.
 
@@ -23,7 +23,8 @@ Ingest path: `POST http://<ws1>:8554/v1/ingest?source_type=<type>&format=ndjson`
 |---|---|---|---|
 | `Microsoft-Windows-Sysmon/Operational` | `windows_eventlog` | `fluentbit-winevtlog` | `sysmon` (adapter re-routes by provider/EventID; Sysmon EventIDs 1, 3, 5, 11 on the sniff path) |
 | `Security` | `windows_eventlog` | `fluentbit-winevtlog` | `windows_eventlog` (channel itself not run: needs admin) |
-| `Application`, `System` (run) | `windows_eventlog` | `fluentbit-winevtlog` | `windows_eventlog`; only EventIDs the parser maps (e.g. System 7045) become events, every other EventID dead-letters as `parser returned None` |
+| `System` (in the recipe; run in a modified copy) | `windows_eventlog` | `fluentbit-winevtlog` | `windows_eventlog`; only EventIDs the parser maps (7045 service installed, 104 log cleared) become events, every other EventID dead-letters as `parser returned None` (2,638 of 2,640 in the run) |
+| `Application` (not in the recipe; run in the same copy) | `windows_eventlog` | `fluentbit-winevtlog` | `windows_eventlog`; the events the parser maps come from System, Security or PowerShell channels, so Application records are expected to dead-letter (the committed capture is one) |
 
 Send `source_type=windows_eventlog` for both channels: the adapter only rewrites records whose declared type is in the
 windows family (`windows_eventlog`/`sysmon`) and moves Sysmon records to `sysmon` itself. See [../input-adapters.md](../input-adapters.md).
@@ -69,15 +70,15 @@ occurrence; the zone database must exist in the ws2 image (`zoneinfo` worked in 
 The `http` output half (`Format json_lines`, `Header`, `Json_Date_Key false`, bearer header) is the same output block run live in the Docker/journald/n8n recipes: ws1 accepted the records.
 
 ```ini fluent-bit-windows.conf
-# Fluent Bit (Windows) -> FENGARDE HTTP ingest. NOT RUN AS WRITTEN: this file lists Security and Sysmon, but the 2026-11-05 run on Windows 11 / Fluent Bit 4.2.8 (normal user) used the same options with Channels=Application,System only.
-# Security needs an administrator account; Sysmon was not installed. Nothing in this file has seen a real Security or Sysmon record.
+# Fluent Bit (Windows) -> FENGARDE HTTP ingest. NOT RUN AS WRITTEN: this file lists Security, System and Sysmon, but the 2026-11-05 run on Windows 11 / Fluent Bit 4.2.8 (normal user) used a copy with Channels=Application,System only.
+# So System (7045 service install, 104 log cleared) has run; Security needs an administrator account and Sysmon was not installed, so nothing here has seen a real Security or Sysmon record. System is chatty: expect most of its records to dead-letter as unmapped EventIDs.
 # WARNING: Authorization: Bearer goes over plain http:// -- cleartext on the wire; use the TLS front from docs/deployment.md or keep it on a trusted segment.
 [SERVICE]
     Flush        5
 
 [INPUT]
     Name                 winevtlog
-    Channels             Security,Microsoft-Windows-Sysmon/Operational
+    Channels             Security,System,Microsoft-Windows-Sysmon/Operational
     Interval_Sec         1
     Event_Data_As_Map    true
     # A channel that does not exist (Sysmon not installed) otherwise fails the WHOLE input at start (error 15007), shipping nothing.
@@ -100,7 +101,7 @@ Samples checked: [real record, Fluent Bit 4.2.8 on Windows 11, Application chann
 Computer name scrubbed; Windows Error Reporting 1001) -> resolves to `windows_eventlog`, `EventData` flattened, and yields no event because EventID 1001 is not mapped, which is the honest result (it proves the shape and the
 adapter flattening, **not** that Security 4624 or Sysmon records parse); [Sysmon 1, hand transcription of a third-party published output, not byte-verified](samples/windows-sysmon.fluentbit.json) (fluent-bit 2.0.6, ClickHouse post, 2023-01-17;
 hand-transcribed, no capture file stored) -> `sysmon`, **but with no field mapping**: that 2023 output predates `Event_Data_As_Map`, so there is no `EventData` and the event reads `Process created: ? (by ?)` (the test asserts this limit
-explicitly); [Sysmon 1 in the real nested-`EventData` shape, **template-derived from Sysmon event 1 field names, not a capture**](samples/windows-sysmon-eventdata.fluentbit.json) (envelope and `EventData` nesting follow the verified Windows 11
+explicitly); [Sysmon 1 in the nested-`EventData` shape, **template-derived from Sysmon event 1 field names, not a capture**](samples/windows-sysmon-eventdata.fluentbit.json) (envelope and `EventData` nesting follow the verified Windows 11
 Application capture; values invented) -> `sysmon`, with image, command line, user, parent image and pid asserted in `tools/test_shipping_recipes.py` (this proves the adapter and parser handle that shape, **not** that a real Sysmon
 install emits it); [Security 4624, template-derived](samples/windows-security.fluentbit.json) -> `windows_eventlog`.
 

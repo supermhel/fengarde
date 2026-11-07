@@ -1,6 +1,7 @@
 # Vector (Linux) journald -> FENGARDE TCP syslog 5515. Linted and run live on Linux containers 2026-11-05 (README Verification log).
 # Verified on Vector 0.61.0 (debian image, which ships journalctl): .host, ._PID, .message, .timestamp. include_units verified 2026-11-05 on a journal written by real systemd units (README Verification log).
 # The sshd[pid] label is hardcoded for every record, so keep include_units: without it other units are mislabelled sshd. Unit names are given without the .service suffix (Debian's is `ssh`).
+# Because of that hardcoded label the OpenSSH 9.8+ helpers (sshd-session, sshd-auth) that run inside the ssh unit are labelled sshd too and parse as linux_ssh; their own identifier is not shipped. A socket-activated per-connection unit (ssh@...service) is NOT matched by include_units: untested.
 [sources.journal]
 type = "journald"
 include_units = ["ssh", "sshd"]

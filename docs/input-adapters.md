@@ -46,7 +46,7 @@ documented Fluent Bit setup).
 
 ## Fixture provenance (honesty ledger)
 
-- `fluentbit-winevtlog` FIXTURE — **transcribed from a published real capture**: output of
+- `fluentbit-winevtlog` FIXTURE — **hand-transcribed from a published third-party output (not a capture made here)**: output of
   fluent-bit 2.0.6's `winevtlog` input on a Windows host (2023-01-17),
   published by ClickHouse in *"Send Windows Event Logs to ClickHouse with
   Fluent Bit"* (clickhouse.com/blog/...). Transcribed by hand, not byte-exact:

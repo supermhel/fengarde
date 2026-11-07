@@ -3,7 +3,7 @@
 > **Status of this recipe.** The configs were linted with the official container images (Vector 0.61.0, Fluent Bit 5.1.5, rsyslog 8.2610.0,
 > syslog-ng 4.12.0) and, where Linux-capable, run live on Docker Desktop against a real ws1 listener and the real WS-2 path
 > (see the [Verification log](README.md#verification-log)). What was not run is stated below. The committed samples are still adapter
-> fixtures / templates, not captures; `tools/test_shipping_recipes.py` runs them through WS-2.
+> fixtures / templates; none of this recipe's samples is a capture ([sample provenance](README.md#sample-provenance)). `tools/test_shipping_recipes.py` runs them through WS-2.
 
 Parser: `generic_syslog` for ordinary container output; `linux_ssh` when the container line is an sshd line (via the text sniff).
 A container's application logs are **not** parsed by an app-specific parser, only as generic syslog text.

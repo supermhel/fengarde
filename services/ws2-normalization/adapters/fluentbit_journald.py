@@ -16,6 +16,8 @@ record (nothing is invented):
   so the existing text-sniff hands auth failures to the ``linux_ssh`` parser
   (journald strips the ``sshd[PID]:`` syslog prefix from MESSAGE);
 - ``_SOURCE_REALTIME_TIMESTAMP`` -> RFC 3164 date part;
+- ``sshd-session`` / ``sshd-auth`` (OpenSSH 9.8+, Debian 13) -> the same ``sshd[_PID]:`` header: the text sniff only
+  recognises ``sshd[``, so without this the login lines of those hosts would stay ``generic_syslog``;
 - any other identifier -> ``<ident>[<_PID>]:`` as present.
 
 Fixture provenance: field NAMES from systemd's ``journal-fields(5)`` manual
@@ -74,6 +76,8 @@ _IDENT_RE = re.compile(r"^[A-Za-z0-9_.@-]{1,64}$")
 _HOST_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,255}$")
 _PID_RE = re.compile(r"^[0-9]{1,10}$")
 _BAD = object()
+#: OpenSSH 9.8+ per-connection helpers that write the login lines; mapped to the header program ``sshd`` (validated first).
+_SSHD_HELPERS = frozenset({"sshd-session", "sshd-auth"})
 
 
 def _ident(raw: dict):
@@ -125,6 +129,8 @@ def adapt(payload: dict) -> dict:
     pid = _pid(raw)
     stamp = _rfc3164_time(raw.get("_SOURCE_REALTIME_TIMESTAMP")
                           or raw.get("__REALTIME_TIMESTAMP"))
+    if ident in _SSHD_HELPERS:
+        ident = "sshd"
     if ident == "sshd":
         ident = f"sshd[{pid}]" if pid else "sshd"
     elif ident and pid:
