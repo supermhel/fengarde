@@ -11,8 +11,10 @@ inference, tracks never merge, the `incidents` payload, partition key) is kept.
 read in the 2026-11-06 worktree (`origin/main` `182a4ab`). Anything I did not
 run or open is marked **[UNVERIFIED]**. Items tagged **[MEASURED 2026-11-06]**
 were produced by running the real twin pipeline in-process (memory bus, seed 7,
-all 11 registered storylines, HEAD `27b54a3`) with throwaway scripts kept
-outside the repo; the method, commands and full tables are in the new section
+all 11 registered storylines). The scripts are in the repo under
+`docs/adr/011-measurements/` (manual aids, not tests, not run by CI; see the
+README there) and were re-run from the repo on 2026-11-07 at `39dd67c`: every
+number reproduced (section "Reproduction"). The method and full tables are in
 "Measurements (2026-11-06)" before the sign-off checklist. No service,
 contract or eval file was changed to take them: the four proposed fields were
 computed inside the scripts only. The first draft of this ADR ran no code.
@@ -78,16 +80,21 @@ closing sentence).
    (`services/ws4-detection/main.py:665`). The `FENGARDE_WINDOW_TIME_SOURCE`
    clamp changes the clock WS-4's *windows* and alert-id bucket use
    (`services/ws4-detection/engine.py`, `_window_time_of`), not the alert's
-   `time`. I read lines 660-730 of `make_alert` and saw no `received_ms` or
-   `time_clamped` field copied onto the alert; I did not read the rest of the
-   function. **[UNVERIFIED beyond that range]** WS-8 then applies
+   `time`. **[VERIFIED 2026-11-07]** I read all of `make_alert`
+   (`main.py:654` to its `return alert`): the alert dict is built from a fixed
+   key list (`alert_id`, `time`, `rule_*`, `level`, `score`, `sector`, `mitre`,
+   `tenant_id`, `src/dst_endpoint`, `actor`, `event_ids`, `trigger_event_id`,
+   `triage`, optional `event_ids_omitted`); no `received_ms`, `time_clamped` or
+   other clamp field is copied, and `time` is the raw `event.get("time")`.
+   WS-8 then applies
    `_valid_window_time` (rejects bool, non-numeric, NaN/inf and times far ahead
    of wall clock; past times always pass) and falls back to processing time,
    flagged `time_fallback`, for a rejected time (`correlator.py:842-863`).
 8. **Consumers.** The dashboard types an edge as `{from, to, kind, ts_ms?,
    event_id?}` (`services/ws7-dashboard/app/src/data/api.ts:70`). WS-3's
-   evidence package sorts graph edges by `ts_ms or 0` for its timeline
-   (`services/ws3-indexer/evidence_package.py:369-373`). WS-3 indexes
+   NIS2 report template (not `evidence_package.py`; citation corrected
+   2026-11-07) sorts graph edges by `ts_ms or 0` for its timeline
+   (`services/ws3-indexer/nis2_template.py:373`). WS-3 indexes
    `incident.graph` into `incident-graphs[-{tenant}]` keyed by `incident_id`,
    and `_coalesce` keeps the last payload per `(index, doc_id)`
    (`services/ws3-indexer/main.py:137-150`, `router.py:99-110`). There is no
@@ -142,8 +149,64 @@ for causation and nowhere near sufficient. Consequence for the README: even
 if every measurement below passes, "causal" will not be *proven* by time order
 alone; the accurate wording after C is closer to "typed entity graph with
 event-time evidence". The owner decided to keep the README wording until the
-metric moves; checklist item 6 asks them to also decide what wording a pass
+metric moves; checklist item 5 asks them to also decide what wording a pass
 would justify.
+
+### Plainly: C as designed is evidence plumbing, and may not carry the claim
+
+Read the measurements before the schema change. Option C as designed (four
+edge-level fields) is **evidence plumbing**: it makes the graph carry when each
+edge's evidence was logged. By this ADR's own measurements it **may not, by
+itself, carry the README claim**:
+
+- The 0.375 identity score (6 of 16 pairs) is computed with *carrier*
+  attribution, i.e. it needs to know which alerts of which step evidence each
+  edge. The four fields do not expose that link; the harness had to re-derive it
+  from alerts. Restricting the metric to what the pipeline output alone supports
+  (winning-alert attribution, `causal_order.attribute_edges`) leaves 12 pairs
+  (8 allowed, 4 forbidden), below the n >= 30 and >= 10 forbidden bar, and one
+  storyline above the 25 % cap.
+- 10 of the 16 carrier pairs read `concurrent`: an edge's single interval spans
+  evidence from several steps. Checklist item 4 already concedes that 0.5 is
+  probably unreachable with these four fields.
+- Even a pass would justify "typed entity graph with event-time evidence"
+  (time order is necessary, not sufficient, for cause), not "causal".
+
+What the owner can still decide (checklist items 2 to 6):
+
+1. **C anyway**, as designed: cheap (+99 B per edge, no existing graded value
+   moves), useful as telemetry and as the base of any later metric, but the
+   README gate is then expected to stay unmet unless item 2 (new storylines) and
+   a better predicate land.
+2. **C plus richer link exposure**: add per-step or per-kind intervals, or the
+   carrier links, so the metric can be computed from pipeline output alone. A
+   different payload than this ADR proposes; needs its own sizing and sign-off.
+   **[UNVERIFIED]** that it reaches 0.5; nothing finer was built.
+3. **Alternative I**: change the README wording to "typed entity graph" now and
+   treat C as optional telemetry.
+
+### Owner answers recorded (2026-11-06)
+
+Recorded as given; nothing here is a decision the owner has not made.
+
+- On the schema change: "do C as designed". Recorded against checklist item 6.
+  The box stays unticked: the answer does not say whether it still stands once
+  items 2 to 5 (gate feasibility) are answered.
+- On the n gap: "write new storylines if the n>=30 / 10-forbidden bar proves
+  unreachable". The Measurements section shows the bar is not reachable on the
+  current twin (29 / 21 / 12 pairs; 6 / 5 / 4 forbidden), so the condition is
+  met on the evidence. Still **open**: how many storylines (about 5 at the best
+  observed rate, about 11 at the average), their design, and whether they are
+  sequenced before the schema change merges (checklist item 2).
+- On the changelog: "leave the CHANGELOG until the tag". The `CHANGELOG.md`
+  entry for this draft predates the answer; whether it should be removed or
+  reworded to wait for the tag is **open** (checklist item 13), and any
+  changelog entry for an implementation waits for the tag.
+- On the README wording after a pass: the owner asked whether the purpose was
+  the causal-graph level. The answer is recorded in ADR-012 (not on this
+  branch at the time of writing): C alone gives a time-ordered typed entity
+  graph; causal requires key-linked evidence. README wording stays unchanged
+  until a pass and a separate owner decision.
 
 ## Exact bus payload change
 
@@ -248,7 +311,7 @@ Consequences, stated plainly:
    committed test.
 3. Cross-source skew: two sources with different clock offsets can produce a
    false `before`. The ADR does **not** add a tolerance in this step.
-   Recommendation (checklist item 4): ship strict ordering, and let the
+   Recommendation (checklist item 8): ship strict ordering, and let the
    *metric* take an explicit tolerance parameter reported alongside the number,
    so skew sensitivity is measured, not hidden.
 4. Not in this step: a trust flag for clamped events (it would need WS-4 to
@@ -439,8 +502,8 @@ are weak exactly where a naive version would be weak:
 
 ## Measurements (2026-11-06)
 
-**Method.** Throwaway scripts, kept outside the repo (nothing under `services/`,
-`contracts/` or `eval/` was edited), drive the real twin in-process: payloads ->
+**Method.** Scripts in `docs/adr/011-measurements/` (nothing under `services/`,
+`contracts/` or `eval/` is edited), drive the real twin in-process: payloads ->
 real WS-2 parse -> real WS-4 rules -> real WS-8 `Correlator` on the memory bus,
 seed 7, all 11 registered storylines (`scenario_registry.ALL`), via
 `scenario_registry.grade()`. Two wrappers are installed at run time only: one
@@ -450,12 +513,11 @@ distinct member ids that evidence the edge's `(from, to)` pair, any kind,
 excluding `time_fallback` members; counts of distinct and of timed members)
 and returns the **unchanged** v2 graph; one around
 `causal_order.grade_causal_order` that records its inputs. The recorded graphs
-were asserted equal to the graphs the grader received. Scripts (names only,
-re-creatable from this paragraph): `cap.py` (harness), `a1.py` (pair funnel),
-`a2.py` (predicate and controls; ~3 min), `a3.py` (payload), `a4.py`
-(no-regression), `a5.py` (env). Run as `python aN.py` from one directory with
-the repo's `eval/twin`, `eval/adversarial`, `services` on `sys.path`; the
-controls reuse `eval/adversarial/order_controls.py` (`mirror_event_time`,
+were asserted equal to the graphs the grader received. Scripts: `cap.py` (harness), `a1.py` (pair funnel), `a2.py` (predicate and
+controls; ~2.5 min), `a3.py` (payload), `a4.py` (no-regression; ~1 min),
+`a5.py` (env). Run from the repo root as
+`python docs/adr/011-measurements/aN.py`; `cap.py` puts the repo's `eval/twin`,
+`eval/adversarial`, `services` on `sys.path` itself. The controls reuse `eval/adversarial/order_controls.py` (`mirror_event_time`,
 `swap_adjacent_steps`, `pick_swap_pair`) and `mutate_generic` `timing/shift_1h`
 unchanged. `cloud_iam_abuse` promotes no incident (0 graphs), so it contributes
 0 to every graph-based count.
@@ -674,6 +736,25 @@ Honest reading:
   changes with the variant, e.g. 16 to 15 under mirror), predicates that use
   per-kind or per-step intervals, and any tolerance parameter.
 
+## Reproduction
+
+The scripts in `docs/adr/011-measurements/` were re-run from the repo root on
+2026-11-07 at commit `39dd67c` (`origin/main` `182a4ab` plus this ADR; `git diff
+27b54a3 HEAD -- services eval contracts` is empty, so the code under test is the
+code the 2026-11-06 numbers came from). Seed 7, 11 storylines, memory bus.
+
+| ADR number | script | re-run result |
+|---|---|---|
+| gradable-pair table (49/16 raw to 23/6, 16/5, 8/4 totals, every storyline row) | `a1.py` (27 s) | identical |
+| payload 1,681.4 B to 1,997.2 B mean, p95/max 2,939 to 3,632, +315.9 B (+18.8 %), +99 B per edge, 21 graphs | `a3.py` | identical |
+| predicate scores: carrier P1 0.375 / 0.0 / 0.25 / 0.375; carrier P2 0.375 / 0.0 / 0.3125 / 0.375; winner P1 0.625 / 0.0 / 0.25 / 0.625; winner P2 0.875 / 0.111 / 0.5 / 0.875 (identity / mirror / swap / shift_1h), concurrent 10, forbidden realised 0/5 and 3/4 | `a2.py` (2 min 34 s) | identical |
+| no graded value moves (only echoed edges, wall-clock `assembly_*`, and `package_id` in 10 of 11 storylines differ) | `a4.py` (56 s) | identical |
+| 67 edges identical under `FENGARDE_WINDOW_TIME_SOURCE=event` and default | `a5.py` twice, byte compare | identical |
+
+No discrepancy was found; no number in this ADR was changed because of the
+re-run. The scripts are manual measurement aids, not tests: they are not named
+`test_*`, not wired into CI, and write nothing into the repo.
+
 ## Recommendation changes from the measurements
 
 1. The cost side is small: +99 B per edge, no existing graded value moves, no
@@ -681,7 +762,7 @@ Honest reading:
 2. The gate side is not reachable on the current twin (n 29/21/12 vs 30; forbidden
    6/5/4 vs 10) and the value on the usable set (0.375) is below 0.5 even if n
    were met. Decision for the owner: either fund roughly 5 to 11 new storylines
-   designed for distinct-edge forbidden pairs (checklist item 10), or accept
+   designed for distinct-edge forbidden pairs (checklist item 2), or accept
    alternative I (change the README wording to "typed entity graph") now and
    treat C as optional telemetry. This ADR does not recommend lowering n.
 3. The four fields as proposed probably cap the metric: if the owner wants a
@@ -692,62 +773,84 @@ Honest reading:
 
 ## Owner sign-off checklist
 
-Tick each line (or edit the line) before any code starts.
+Tick each line (or edit the line) before any code starts. **Order matters:**
+items 2 to 5 decide whether the README gate is reachable at all and with which
+evidence; item 6 (the bus-schema change) comes after them because the ADR's own
+measurements show the four fields alone cannot meet the item-5 gate.
 
 - [ ] 1. Confirm "option A first" means what is already shipped (2026-10-14:
   `ts_ms` contract + `timeline.py`), so the build step is C. Or say what else A
   should include.
-- [ ] 2. Approve the bus-schema change: four optional `incident.graph` v2 edge
-  fields (`first_ts_ms`, `last_ts_ms`, `evidence_count`,
-  `timed_evidence_count`), `version` stays 2, partition key `incident_id`
-  unchanged (roadmap section 5.2 gate). Measured cost: +99 B per edge, mean
-  +316 B (+18.8 %) per incident payload, max +693 B on the twin; no existing
-  graded value moves.
-- [ ] 3. Approve the semantics: evidence over live members of this incident,
+
+*Gate feasibility (decide these first)*
+
+- [ ] 2. Close the n gap, or accept I. The bar is not reachable on the current
+  twin (29 / 21 / 12 gradable pairs and 6 / 5 / 4 forbidden, vs 30 and 10).
+  Fund at least 5 new storylines (about 11 at the average observed rate)
+  authored so that at least one forbidden oracle pair per storyline survives to
+  two distinct timed edges (10 forbidden pairs needed, 5 exist), BEFORE the
+  bus-schema change merges. Or state that C is built as telemetry only and the
+  README wording changes now (alternative I). *Owner answer 2026-11-06: "write
+  new storylines if the n>=30 / 10-forbidden bar proves unreachable"; the
+  measurements say it is unreachable. Open: how many, which designs, sequencing.*
+- [ ] 3. Decide whether edge-to-step attribution may use the harness
+  re-deriving carriers from alerts (21 pairs today) or only what the graph
+  exposes through the winning alert (12 pairs). The four proposed fields
+  support only the second; the first needs the harness to re-derive evidence
+  from alerts, i.e. links the fields do not expose.
+- [ ] 4. Acknowledge that the four edge-level fields alone probably cannot
+  reach 0.5 (10 of 16 pairs read `concurrent`; the 0.375 needs carrier links the
+  fields do not expose), and say whether a finer payload (per-step or per-kind
+  intervals, or carrier links) should be evaluated before accepting C.
+- [ ] 5. Ratify the gate for changing README wording:
+  `directional_discrimination_timed >= 0.5`, n >= 30 gradable pairs, >= 6
+  storylines, <= 25 % per storyline, >= 10 forbidden pairs, controls fail it,
+  95 % interval reported. Decide also what wording a pass justifies (this ADR
+  argues "typed entity graph with event-time evidence", not "causal"; ADR-012
+  records that causal requires key-linked evidence). **Measured: this bar is
+  NOT reachable on the current twin.** Ratifying it means ratifying item 2, or
+  choosing alternative I.
+
+*Schema change (after items 2 to 5)*
+
+- [ ] 6. Choose the path and approve the bus-schema change: **C as designed**
+  (four optional `incident.graph` v2 edge fields: `first_ts_ms`, `last_ts_ms`,
+  `evidence_count`, `timed_evidence_count`; `version` stays 2; partition key
+  `incident_id` unchanged; roadmap section 5.2 gate), or **C plus richer link
+  exposure** (item 4), or **I now** with C as optional telemetry. Measured cost
+  of C as designed: +99 B per edge, mean +316 B (+18.8 %) per incident payload,
+  max +693 B on the twin; no existing graded value moves. Plainly: C as designed
+  is evidence plumbing and may not by itself carry the README claim (Decision
+  section). *Owner answer 2026-11-06: "do C as designed". Open: whether it
+  stands after items 2 to 5.*
+- [ ] 7. Approve the semantics: evidence over live members of this incident,
   any kind, time-less alerts excluded from the interval, `first_ts_ms` may move
   later under eviction.
-- [ ] 4. Approve strict ordering (ties and overlap are `concurrent`), no
+- [ ] 8. Approve strict ordering (ties and overlap are `concurrent`), no
   skew tolerance in the payload, tolerance as an explicit metric parameter.
-- [ ] 5. Accept that edge times are raw logged times and are NOT protected by
+- [ ] 9. Accept that edge times are raw logged times and are NOT protected by
   `FENGARDE_WINDOW_TIME_SOURCE=clamp` (and say whether Open question 1 should
   become its own ADR).
-- [ ] 6. Ratify the gate for changing README wording: `directional_discrimination_timed
-  >= 0.5`, n >= 30 gradable pairs, >= 6 storylines, <= 25 % per storyline,
-  >= 10 forbidden pairs, controls fail it, 95 % interval reported. Decide
-  also what wording a pass justifies (this ADR argues "typed entity graph with
-  event-time evidence", not "causal"). **Measured: this bar is NOT reachable on
-  the current twin** (29 / 21 / 12 gradable pairs and 6 / 5 / 4 forbidden, vs 30
-  and 10; the strict predicate reads 0.375 on the 21-pair set). Ratifying it
-  means ratifying item 10, or choosing alternative I.
-- [ ] 7. Confirm the legacy metrics and pinned atoms stay frozen and new atoms
+- [ ] 10. Confirm the legacy metrics and pinned atoms stay frozen and new atoms
   are added beside them. Measured: the process is `ratchet.py refresh --reason`
   (one history row, no waiver), after wiring the metric into
   `scenario_matrix.py`, `ratchet_measure.py` `base_fields` and `DIRECTION_RULES`,
   and re-running every lane (the fingerprint changes). Pin the new atoms first.
-- [ ] 8. Confirm the consumer-strictness audit (including `fengarde-sec`) is a
+- [ ] 11. Confirm the consumer-strictness audit (including `fengarde-sec`) is a
   precondition to merging step 1.
-- [ ] 9. Confirm D, E, F, G, J stay rejected and that alternative I is the
+- [ ] 12. Confirm D, E, F, G, J stay rejected and that alternative I is the
   fallback if the gate cannot be met. Measured: the gate cannot be met today.
-- [ ] 10. Decide how to close the n gap, or accept I: fund at least 5 new
-  storylines (about 11 at the average observed rate) authored so that at least
-  one forbidden oracle pair per storyline survives to two distinct timed edges
-  (10 forbidden pairs needed, 5 exist), BEFORE the bus-schema change merges.
-  Or state that C is built as telemetry only and the README wording changes now.
-- [ ] 11. Decide whether edge-to-step attribution may use the harness re-deriving
-  carriers from alerts (21 pairs today) or only what the graph exposes through
-  the winning alert (12 pairs). The four proposed fields support only the
-  second; the first needs the harness to re-derive evidence from alerts.
-- [ ] 12. Acknowledge that the four edge-level fields alone probably cannot
-  reach 0.5 (10 of 16 pairs read `concurrent`), and say whether a finer payload
-  (per-step or per-kind intervals) should be evaluated before accepting C.
+- [ ] 13. Changelog timing. *Owner answer 2026-11-06: "leave the CHANGELOG until
+  the tag".* Open: whether the existing 2026-11-06 draft entry stays or is
+  removed until the tag.
 
 ## Status
 
-Proposed 2026-11-06, measurements added the same day. Awaiting owner sign-off.
-No code, contract, schema or eval file is changed by this document. What remains
-**[UNVERIFIED]**: fact 7 beyond `make_alert` lines 660-730; consumer strictness
+Proposed 2026-11-06, measurements added the same day and reproduced from the repo
+on 2026-11-07. Awaiting owner sign-off. No code, contract, schema or eval file is
+changed by this document. What remains **[UNVERIFIED]**: consumer strictness
 for `fengarde-sec` and the unaudited in-repo consumers; whether any payload
 shape reaches 0.5; every extrapolated storyline count; Redis, WS-3 index and
 dashboard behaviour with the larger payload; the `_ORDER_BLIND` entry count (not
-re-run); the `incident-graphs` index mapping. The throwaway scripts are not in
-the repo, so the measurements are reproducible only from the Method paragraph.
+re-run); the `incident-graphs` index mapping. The measurement scripts are in
+`docs/adr/011-measurements/` and reproduce the numbers (see "Reproduction").
