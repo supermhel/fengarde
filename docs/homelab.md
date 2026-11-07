@@ -11,9 +11,8 @@ benign or malicious.
 
 ## Start, stop
 
-Prerequisites: Docker Engine / Docker Desktop with a Compose recent enough for the `!override` tag (this was tested with
-Compose v5.1.4 only; "needs >= 2.24" is **unverified**, the Compose release notes and merge docs checked on 2026-11-06 do not
-state which release added `!override`). Memory: the container limits in the override add up to **9.5 GiB**
+Prerequisites: Docker Engine / Docker Desktop with a Compose recent enough for the `!override` tag (tested with Compose v5.1.4 only.
+From the source history, checked 2026-11-07: the `!override` tag first appears in compose-go v2.0.0-rc.3 (`loader/reset.go`; rc.2 has no mention) and Docker Compose v2.24.4 is the first release that pins rc.3 (v2.24.3 pins rc.2), so use **v2.24.4 or newer**. That is inferred from two files in the source, not tested on an older Compose, and the release notes do not state it). Memory: the container limits in the override add up to **9.5 GiB**
 (`test_homelab_compose.py` keeps this number honest). That is a ceiling, not a reservation. Measured idle total of the whole
 stack on a throwaway run (2026-11-06, `docker stats --no-stream`, no data ingested): about **2.0 GiB**, of which OpenSearch
 1.6 GiB, OpenSearch Dashboards 0.17 GiB, each Python service 10-30 MiB, Redis 6 MiB. Give Docker at least 4 GiB for an idle
