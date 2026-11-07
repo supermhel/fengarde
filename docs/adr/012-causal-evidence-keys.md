@@ -12,7 +12,7 @@ never merge, the `incidents` payload is untouched, partition key
 `incident_id`, determinism under redelivery.
 
 **How to read the claims below.** Code facts cite `file:line` in the worktree
-at `origin/docs/ws8-edge-time-adr` (ADR-011 tip, `27b54a3`, on top of
+at `origin/docs/ws8-edge-time-adr` (ADR-011 tip, `39dd67c`, merged into this branch, on top of
 `origin/main` `182a4ab`). Numbers marked **[MEASURED]** come from throwaway
 scripts kept OUTSIDE the repo
 (`.../scratchpad/adr012/m1_fixture.py`, `m2_twin_keys.py`, plus a fixture count
