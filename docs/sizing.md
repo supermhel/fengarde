@@ -10,15 +10,17 @@ not been measured; assume nothing between the rows.
 
 ## Measured capacity (headline numbers)
 
-| Configuration | Sustained rate (measured) | Evidence |
+| Configuration | Rate (measured) | Evidence |
 |---|---|---|
 | 1 WS-4 replica, current engine (bulk ws3 writes, batched alert writes, single-EVALSHA window ops, capped evidence) | **~150 events/s** for 12 min, no loss — but not a flat-lag hold at the edge (event-path lag grew in the second half while the host got busier) | loadtest §5c (108,015 events) |
-| 3 WS-4 replicas (both WS-2 ×1 and WS-4 ×3 in the full pipeline) | **~300 events/s**, held with lag ~0-280 across the step | loadtest §5b ramp (300/s: WS-4 302.4, lag 279) |
+| 3 WS-4 replicas (full pipeline) | **100 events/s sustained** for 12 min, no loss, alert backlog flat (the longest 3-replica hold that is a soak) | loadtest §4d (72,010 events) |
+| 3 WS-4 replicas (full pipeline) | **300 events/s held in a 40-second ramp step only — not a soak.** Contended host; step-end lag 279 (lag at step start 353). The 400/500/600 steps of the same ramp fell to 190-255 events/s (host CPU was rising during it) | loadtest §5b, `raw/live-ramp-lua-cap-ws4x3-2026-10-29.json` |
 
 Supporting measured points (same contended laptop, use with the caveats):
 
 - 100 events/s, 12-min soak: held with **no loss** (72,010 events; §4d).
-  One replica holds 100 in a ramp comfortably (§5b/§4c).
+  This soak ran **three WS-4 replicas**, not one. One replica holds 100 in a
+  40-second ramp step (§5b), which is not a soak.
 - 60 events/s, 12-min soak: held, small alert-path backlog (§3b).
 - 500 events/s for 12 min (§7a, CONTENDED host): event path no loss, but
   **not steady state** — WS-8 correlation (1 replica) fell behind on the
@@ -27,8 +29,14 @@ Supporting measured points (same contended laptop, use with the caveats):
   explicitly treated as lower bounds on a shared machine.
 
 The numbers above are NOT a sizing table for arbitrary rates. The measured
-points give you: 1 replica ≈ up to ~150 events/s (contended), 3 replicas ≈ up
-to ~300 events/s (contended). What sits between or beyond (e.g. "what do I
+points give you: 1 replica ≈ up to ~150 events/s for 12 min (contended);
+3 replicas ≈ 100 events/s as a 12-min soak, and 300 events/s only as a
+40-second ramp step. A later 40-second ramp (§7, WS-2 ×2, WS-4 ×3) held up to
+500 events/s (step-end lag 756), and a 12-min soak at 500 events/s (§7a) lost
+no events but the WS-8 correlation consumer fell behind (above). The
+component limiting the full pipeline moved between runs (WS-2 count, Redis,
+host contention; §6b), so "number of WS-4 replicas" alone does not predict
+capacity. What sits between or beyond (e.g. "what do I
 need for 250 events/s on an idle 8-core server?") is **not measured** — size
 from the nearest measured point and leave headroom, or measure it yourself
 with `tools/fengarde_loadtest_live.py` on your host.
@@ -54,8 +62,8 @@ above and nothing more:
 
 ### Memory observations (measured, this host)
 
-- OpenSearch heap: 512 MB default; peaks 75-77% of it under the soaks
-  (§2/§3b/§4d). No upward trend inside a run; growth comes from more data,
+- OpenSearch heap: 512 MB default; peaks 66-78% of it across the soaks
+  (§2 69-78%, §3b 71-77%, §4d 66-77%). No upward trend inside a run; growth comes from more data,
   which the ISM policies below bound.
 - Redis: max ~52 MB in the 60/s soak, 441 MB in the 500/s soak (§3b/§7a —
   the second is inflated by the lagging WS-8 consumer group holding streams
@@ -75,8 +83,8 @@ not apply.
 | Index pattern | Policy file | Lifecycle |
 |---|---|---|
 | `events-common-*` | `ism-events-common-90d.json` | hot → **delete at 90d** |
-| `events-*` (data-center events) | `ism-events-90d.json` | hot 7d → warm (`force_merge` 1 segment) → **delete at 90d** |
-| `events-*` (banking, PCI-DSS) | `ism-events-400d-pci.json` | hot 30d → warm (`force_merge` 1 segment + `read_only`) → **delete at 400d** (PCI-DSS minimum 1 year) |
+| `events-dc-*` (data-center events) | `ism-events-90d.json` | hot 7d → warm (`force_merge` 1 segment) → **delete at 90d** |
+| `events-bank-*` (banking, PCI-DSS) | `ism-events-400d-pci.json` | hot 30d → warm (`force_merge` 1 segment + `read_only`) → **delete at 400d** (PCI-DSS minimum 1 year) |
 | `alerts-*` (incl. tenant-scoped `alerts-<tenant>-*`) | `ism-alerts-365d.json` | hot → **delete at 365d** |
 | `incidents-*` | `ism-incidents-365d.json` | hot → **delete at 365d** (matches the alerts lifetime: an incident is only as substantiable as the member alerts it cites) |
 | `reports-*` | `ism-reports-365d.json` | hot → **delete at 365d** (matches alerts; a NIS2/compliance report must not outlive the alert it cites) |
@@ -84,8 +92,12 @@ not apply.
 `force_merge` + `read_only` (warm state) shrink storage and stop writes to
 aged indices; deletion is a hard delete of the whole index at the stated age.
 Indices not matched by any pattern keep no ISM policy — retention does not
-apply to them (e.g. experiment/dev indices; give them their own policy or
-delete them yourself).
+apply to them and they grow without bound. That includes indices WS-3 writes
+in production: `incident-graphs*` (incident graphs; `router.py`), `entities*`
+(entity records), and `assets*` (an index template exists for `assets` in
+`infra/provision.sh`, but no ISM policy file matches it). Also experiment/dev
+indices. Give these their own policy or delete them yourself; do not count
+them as bounded when sizing disk.
 
 ## Storage estimate (events/sec to bytes — measured anchor only)
 
