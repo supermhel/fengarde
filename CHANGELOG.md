@@ -46,8 +46,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that proxy straight to something with no credential check of its own —
   OpenSearch direct reads `/api/alerts`, `/api/events`, `/api/ai-triage`, and
   `/api/ops/*`, `/api/prom/*` — now run an nginx `auth_request` to the new ws3
-  `GET /auth/check` (200 iff key-OR-session, else 401), so they stay protected
-  without a browser-side key.
+  `GET /auth/check` (200 iff valid key OR active session, else 401), so they stay
+  protected without a browser-side key. Review fix: with RBAC on and the key unset
+  an anonymous caller now gets 401 (it used to get 200, leaving these routes open
+  in a sessions-only deployment). Only RBAC off + key unset stays open.
+- **Known limit (SECURITY.md "Dashboard session gate"):** the gate checks for any
+  valid credential; it does not scope by role or tenant, and the OpenSearch-direct
+  routes have no tenant filter. Gated calls also depend on ws3 being up.
+- **Review fixes on the same PR:** opt-in `FENGARDE_COOKIE_SECURE=1` adds `Secure`
+  to the session cookie (no TLS profile ships; nginx is plain HTTP); the dashboard
+  container no longer receives `FENGARDE_API_KEY`; INTERFACE.md, SECURITY.md,
+  docs/gap-hunt-status.md and compose comments rewritten to match.
 - **ws3 `GET /auth/check` added** (`ROUTE_INVENTORY` + `contracts/triage-api.yaml`),
   mirroring `_check_auth`; the API key is retained for machine clients.
 - **Behavioral note:** browser console access now requires RBAC (there is no

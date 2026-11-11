@@ -7,8 +7,8 @@
 # entrypoint hook renders /etc/nginx/templates/*.template -> conf.d/*.conf at
 # container start, substituting only vars actually present in the container's
 # environment -- nginx's own lowercase $host/$uri/$content_type are untouched).
-# v0.4 Track S1: ${FENGARDE_API_KEY} lets nginx inject the shared secret on the
-# triage proxy so the browser never holds the key.
+# WP-6.1: nginx neither holds nor injects FENGARDE_API_KEY; browsers use RBAC
+# sessions and gated routes use auth_request to ws3 /auth/check.
 #
 # 2026-08-19: time-range picker. `/api/alerts` and the new `/api/events` proxy
 # both take a `?gte=<epoch_millis>` query param on the CLIENT's own request URI
