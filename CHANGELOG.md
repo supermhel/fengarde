@@ -33,6 +33,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   parser; winlogbeat `event_data` can no longer overwrite `EventID`/`Computer`/`TimeCreated`; docker ids and names are validated;
   journald without `_HOSTNAME` is a no-op; fixture provenance wording corrected (transcribed, not byte-exact).
 
+### Fixed (2026-11-06, WP-4.4 (GH-3): sampled and re-verified 16 of the 154 FIXED gap-hunt rows)
+
+- Second-reviewer re-verification of the gap-hunt tracker's FIXED rows on a fresh worktree of
+  `182a4ab` (origin/main), per GH-3. Hand-picked 16 distinct fixes (not random; the other FIXED rows are not re-verified) across ws1..ws6, shared, tools and
+  infra/CI — each row's covering suite (or a two-way run of the fixed script, for preflight) passed:
+  R4-72 (`test_syslog_udp.py` 54/54), R4-74/75 (`test_spool_perf.py`), R4-136 (`test_active_directory.py`
+  8/8), fuzz-parser bugs (`test_fuzz_findings.py`), R4 #6 (`test_fix_audit.py`), R3-43
+  (`test_nis2_template.py`), R4 #17 (`test_hot_reload.py`), R3-31 (`test_poison_pill_image_layout.py`),
+  R4 #33 + R3-57 (`test_llm_adapter.py` 22/22), R4-49 (`test_shared_write_lock.py`), R2-14
+  (`test_runner.py`), R4-107/108 (`test_bench_gates.py`), R3-47 (`test_validate_rules.py` 65/65),
+  R4-120 (`tools/check_test_wiring.py`), R3-28 (`infra/preflight.sh` with a bad and a good
+  `REDIS_PASSWORD`). No sampled row regressed.
+- Mutation-checked 4 fixes (only R3-57 and R4 #17 are security/integrity fixes; R4-49 is a MINOR SQLite write-lock fix and R2-14 is telemetry) (fix reverted in the working tree -> the row's test went
+  RED -> fix restored -> GREEN; nothing mutated was committed): R3-57 fail-closed no-redirect opener
+  (SSRF), R4 #17 hot reload keeps the old rule set on a zero-byte rule file, R4-49 ws6 stores share one
+  write lock on a shared SQLite file, R2-14 `bus_error` counted on each failing bus path. Evidence for
+  every RED and GREEN run is in `docs/gap-hunt-status.md`.
+- Explained the archived report's '65 vs 61 MINOR' discrepancy with exact per-section counts:
+  61 real numbered entries (R2=1, R3=20, R4=40); the section headers sum to 64 (R3 +1 net over the
+  real count: Eval header 5 vs 3 entries, shared header 7 vs 8; R4 +2: WS-3-indexer header 4 vs 3,
+  WS-5 header 5 vs 4); the totals table adds one more phantom on the round-2 row (2 vs 1). No
+  numbered MINOR entry is missing from the 2026-11-04 triage.
+
 ## [0.12.0] - 2026-11-05
 
 _Headline: real input. FENGARDE can now be fed over HTTP/JSON and TCP syslog, the gap-hunt tracker is closed, and the full-corpus benchmark has a CI lane. The two new listeners have unit and synthetic evidence only; no real-network deployment has exercised them. Notable changes: `5515/tcp` (TCP syslog) now starts in the default stack, bound to loopback; `POST /v1/ingest` on `127.0.0.1:8554` needs `FENGARDE_INGEST_TOKEN`; the TCP metric names changed during review (event counters are the unprefixed syslog ones when UDP is up). The graph is still entity-linked with direction from entity type, not event time (false_correlation_rate 1.0 on the twin)._
