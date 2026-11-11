@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (2026-11-06, WP-4.5: licence record for public data candidates for the ungraded rules)
+
+- **`docs/ungraded-data-licences.md`**: each public dataset candidate the survey looked at for
+  the ungraded OT / M365 / mail / agent rule families is licence-checked AT
+  the source and recorded with a verdict. **Cleared to use:** HAI 23.05 +
+  HAIEnd (ICS/OT — CC BY-SA 4.0 per the README license section, CC BY 4.0 per
+  the repo's own metadata; discrepancy recorded, both BY-family) and the
+  Office 365 Unified Audit Log BEC dataset by invictus-ir (CC BY 4.0 — real
+  victims' inbox-rule / mailbox-permission records containing personal data;
+  the closest fit by README). HAI is licence-cleared only: it is sensor CSV
+  and has no input for any of the 7 `ot_*` rules.
+  **Rejected:** SWaT/WADI/EPIC (SUTD free click-through terms that forbid sharing; open to non-academics too), the
+  Nature real-world ICS dataset (CC BY-NC-ND), the Morris/UAH ICS sets (cite
+  request, no licence text). **Not fitting:** SpamAssassin public corpus and
+  Enron (spam/ham and historical corpora — no macro-attachment labels).
+  **None found:** agent/MCP tool-call traffic in this survey (no exhaustive
+  search; MITRE ATLAS is knowledge, not logs) — the agent + mail families stay ungraded.
+- **Governing statement recorded verbatim: ungraded rules stay ungraded
+  until real data exists.** This WP downloads, ingests and commits NOTHING —
+  it is the licence record; a follow-up WP must fetch, replay end-to-end into
+  OCSF, and grade before any rule leaves the ungraded column (scorecard's
+  fixture-only discipline already keeps them out of the graded rows).
+
 ### Added (2026-11-04, WP-1.3: shipper adapters for real Fluent Bit / Winlogbeat / Docker shapes)
 
 - `services/ws2-normalization/adapters/` — four pure, total adapters that
