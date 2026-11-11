@@ -33,10 +33,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   parser; winlogbeat `event_data` can no longer overwrite `EventID`/`Computer`/`TimeCreated`; docker ids and names are validated;
   journald without `_HOSTNAME` is a no-op; fixture provenance wording corrected (transcribed, not byte-exact).
 
-### Fixed (2026-11-06, WP-4.4 (GH-3): re-verified the FIXED gap-hunt rows)
+### Fixed (2026-11-06, WP-4.4 (GH-3): sampled and re-verified 16 of the 154 FIXED gap-hunt rows)
 
 - Second-reviewer re-verification of the gap-hunt tracker's FIXED rows on a fresh worktree of
-  `182a4ab` (origin/main), per GH-3. Sampled 16 distinct fixes across ws1..ws6, shared, tools and
+  `182a4ab` (origin/main), per GH-3. Hand-picked 16 distinct fixes (not random; the other FIXED rows are not re-verified) across ws1..ws6, shared, tools and
   infra/CI — each row's covering suite (or a two-way run of the fixed script, for preflight) passed:
   R4-72 (`test_syslog_udp.py` 54/54), R4-74/75 (`test_spool_perf.py`), R4-136 (`test_active_directory.py`
   8/8), fuzz-parser bugs (`test_fuzz_findings.py`), R4 #6 (`test_fix_audit.py`), R3-43
@@ -45,7 +45,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`test_runner.py`), R4-107/108 (`test_bench_gates.py`), R3-47 (`test_validate_rules.py` 65/65),
   R4-120 (`tools/check_test_wiring.py`), R3-28 (`infra/preflight.sh` with a bad and a good
   `REDIS_PASSWORD`). No sampled row regressed.
-- Mutation-checked 4 security-relevant fixes (fix reverted in the working tree -> the row's test went
+- Mutation-checked 4 fixes (only R3-57 and R4 #17 are security/integrity fixes; R4-49 is a MINOR SQLite write-lock fix and R2-14 is telemetry) (fix reverted in the working tree -> the row's test went
   RED -> fix restored -> GREEN; nothing mutated was committed): R3-57 fail-closed no-redirect opener
   (SSRF), R4 #17 hot reload keeps the old rule set on a zero-byte rule file, R4-49 ws6 stores share one
   write lock on a shared SQLite file, R2-14 `bus_error` counted on each failing bus path. Evidence for
