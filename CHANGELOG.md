@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (2026-11-06, WP-3.4: sizing and retention guide from the measured loadtest)
+
+- **`docs/sizing.md`**: operator sizing + retention guide built ONLY from
+  measured numbers in `benchmark/loadtest.md` (headline: ~150 events/s held
+  by one WS-4 replica for 12 min — §5c — and, for three replicas, 100
+  events/s as a 12-min soak — §4d — with 300 events/s only as a 40 s ramp
+  step — §5b — all on one contended laptop; the supporting points at
+  60/500 events/s with their caveats). Explicitly no
+  extrapolation: the not-measured list (idle host, >12 min, multi-node
+  OpenSearch, >500-800 events/s, Windows-heavy mix) is restated with the
+  benchmark's own wording, and storage sizing tells the operator how to
+  measure their own bytes/event rather than inventing a number.
+- **Retention documented**: the six ISM policies in
+  `contracts/opensearch-mappings/ism-*.json` tabulated (events-common 90d;
+  data-center events 7d warm + 90d delete; PCI banking events 30d warm +
+  400d delete; alerts 365d; incidents 365d; reports 365d); `incident-graphs*`, `entities*` and `assets*` have no policy, how they attach
+  (`ism_template` patterns via provision.sh), and that matched indices only
+  are covered.
+
 ### Added (2026-11-04, WP-1.3: shipper adapters for real Fluent Bit / Winlogbeat / Docker shapes)
 
 - `services/ws2-normalization/adapters/` — four pure, total adapters that
