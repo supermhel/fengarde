@@ -359,9 +359,9 @@ services:
       retries: 3
       start_period: 10s
     environment:
-      # v0.4 Track S1: forwarded to ws3-indexer on the triage proxy so the
-      # browser never holds the key. Must match ws3-indexer's FENGARDE_API_KEY.
-      - FENGARDE_API_KEY=${FENGARDE_API_KEY:-}
+      # WP-6.1: FENGARDE_API_KEY is deliberately NOT passed here any more. The
+      # browser authenticates with its RBAC session (nginx auth_request to ws3
+      # /auth/check); nginx neither injects nor compares the key.
       # v0.4 Track S2: "off" = no dashboard auth (default). See
       # infra/docker-compose.auth.yml for the opt-in override.
       - DASHBOARD_AUTH_REALM=off

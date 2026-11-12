@@ -270,6 +270,109 @@ def test_rbac_off_by_default_no_auth_routes():
         srv.shutdown(); srv.server_close()
 
 
+def test_auth_check_accepts_session():
+    """WP-6.1: /auth/check (the nginx auth_request guard) must accept an
+    RBAC SESSION -- that is the whole browser path under option C (sessions
+    only). The OpenSearch/ops/prom routes are gated by auth_request to this
+    endpoint, and a logged-in browser presents only its session cookie.
+
+    The API key is set here to also cover the key-or-session case. The
+    key-unset case (anonymous must be 401 when RBAC is on) is covered by
+    test_auth_check_anonymous_401_when_rbac_on_key_unset."""
+    store, users = _make_store_and_users()
+    os.environ["FENGARDE_API_KEY"] = "s3cr3t-option-c"
+    try:
+        srv, port = _serve(store, users)
+        try:
+            code, _, _ = _request(port, "GET", "/auth/check")
+            check(code == 401, f"/auth/check with no session and no key must be 401, got {code}")
+
+            _, _, set_cookie = _request(port, "POST", "/auth/login",
+                                        {"username": "acme_analyst", "password": "pw-acme-1"})
+            cookie = _cookie_value(set_cookie)
+            code2, body2, _ = _request(port, "GET", "/auth/check", cookie=cookie)
+            check(code2 == 200, f"/auth/check with a valid session (no key header) must be 200, got {code2}")
+            check(body2.get("ok") is True, "/auth/check must carry ok:true")
+        finally:
+            srv.shutdown(); srv.server_close()
+    finally:
+        os.environ.pop("FENGARDE_API_KEY", None)
+
+
+def test_auth_check_anonymous_401_when_rbac_on_key_unset():
+    """Review F165-1 regression: sessions-only deployment (RBAC on,
+    FENGARDE_API_KEY unset). An anonymous /auth/check used to return 200
+    (the old docstring called it 'the zero-config contract'), so nginx's
+    auth_request let anyone read /api/alerts, /events, /ops/*, /prom. It must
+    be 401 with no session; a valid session still gets 200."""
+    os.environ.pop("FENGARDE_API_KEY", None)
+    store, users = _make_store_and_users()
+    srv, port = _serve(store, users)
+    try:
+        code, _, _ = _request(port, "GET", "/auth/check")
+        check(code == 401, f"anonymous /auth/check (RBAC on, key unset) must be 401, got {code}")
+        code, _, _ = _request(port, "GET", "/auth/check", cookie="fengarde_session=bogus")
+        check(code == 401, f"bogus-cookie /auth/check must be 401, got {code}")
+        _, _, set_cookie = _request(port, "POST", "/auth/login",
+                                    {"username": "acme_analyst", "password": "pw-acme-1"})
+        cookie = _cookie_value(set_cookie)
+        code, _, _ = _request(port, "GET", "/auth/check", cookie=cookie)
+        check(code == 200, f"/auth/check with a valid session must be 200, got {code}")
+    finally:
+        srv.shutdown(); srv.server_close()
+
+
+def test_auth_check_open_only_when_auth_fully_disabled():
+    """RBAC off + key unset = auth fully disabled (documented default) -> 200.
+    RBAC off + key set -> needs the matching X-Api-Key."""
+    os.environ.pop("FENGARDE_API_KEY", None)
+    store = MemoryStore()
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), triage_api.make_handler(store))
+    port = srv.server_address[1]
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        code, _, _ = _request(port, "GET", "/auth/check")
+        check(code == 200, f"RBAC off + key unset is open by design, got {code}")
+    finally:
+        srv.shutdown(); srv.server_close()
+    os.environ["FENGARDE_API_KEY"] = "k-1"
+    try:
+        srv = ThreadingHTTPServer(("127.0.0.1", 0), triage_api.make_handler(store))
+        port = srv.server_address[1]
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        try:
+            code, _, _ = _request(port, "GET", "/auth/check")
+            check(code == 401, f"RBAC off + key set, no key header -> 401, got {code}")
+        finally:
+            srv.shutdown(); srv.server_close()
+    finally:
+        os.environ.pop("FENGARDE_API_KEY", None)
+
+
+def test_login_cookie_secure_flag_opt_in():
+    """Session cookie has no Secure flag by default (plain-HTTP nginx);
+    FENGARDE_COOKIE_SECURE=1 adds it for TLS-terminated deployments."""
+    store, users = _make_store_and_users()
+    creds = {"username": "acme_analyst", "password": "pw-acme-1"}
+    srv, port = _serve(store, users)
+    try:
+        _, _, sc = _request(port, "POST", "/auth/login", creds)
+        check("secure" not in sc.lower(), f"default cookie must not be Secure: {sc}")
+    finally:
+        srv.shutdown(); srv.server_close()
+    os.environ["FENGARDE_COOKIE_SECURE"] = "1"
+    try:
+        store, users = _make_store_and_users()
+        srv, port = _serve(store, users)
+        try:
+            _, _, sc = _request(port, "POST", "/auth/login", creds)
+            check("secure" in sc.lower() and "httponly" in sc.lower(), f"opt-in cookie must be Secure+HttpOnly: {sc}")
+        finally:
+            srv.shutdown(); srv.server_close()
+    finally:
+        os.environ.pop("FENGARDE_COOKIE_SECURE", None)
+
+
 def test_session_suffices_when_api_key_also_set():
     """Gap-hunt 2026-09-04: with BOTH FENGARDE_RBAC_DB and FENGARDE_API_KEY
     configured, a valid RBAC session must be sufficient on its own -- the
@@ -320,6 +423,10 @@ def main():
     test_rbac_off_by_default_no_auth_routes()
     test_csrf_required_for_writes_when_session_active()
     test_csrf_not_required_when_rbac_off_or_no_session()
+    test_auth_check_accepts_session()
+    test_auth_check_anonymous_401_when_rbac_on_key_unset()
+    test_auth_check_open_only_when_auth_fully_disabled()
+    test_login_cookie_secure_flag_opt_in()
     test_session_suffices_when_api_key_also_set()
 
     if FAILS:

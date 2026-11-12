@@ -241,6 +241,7 @@ def _default_triage() -> dict:
 # ---------------------------------------------------------------------------
 ROUTE_INVENTORY: list[tuple[str, str, bool]] = [
     ("GET", "/auth/me", True),
+    ("GET", "/auth/check", False),
     ("GET", "/alerts", False),
     ("GET", "/incidents", False),
     ("GET", "/events", False),
@@ -307,6 +308,36 @@ def route_auth_me(self):
     # fresh login.
     return self._send(200, {"username": session.username, "role": session.role,
                              "tenant_id": session.tenant_id, "csrf_token": session.csrf_token})
+
+
+def route_auth_check(self):
+    """GET /auth/check -- credential gate for nginx auth_request.
+
+    Returns 200 only when the caller PRESENTS a valid credential:
+      * FENGARDE_API_KEY is set and the request carries a matching X-Api-Key
+        (machine clients), or
+      * RBAC is on and the request carries an active session cookie
+        (browsers, WP-6.1 option C).
+    Anonymous callers get 401 whenever RBAC is on, EVEN IF FENGARDE_API_KEY is
+    unset (review F165-1). The generic dispatch gate (_check_auth) is open
+    when the key is unset -- that is the zero-config contract for ws3's own
+    routes, which then do per-route session checks -- but this endpoint is the
+    ONLY check in front of nginx's OpenSearch-direct, /api/ops and /api/prom
+    routes, so it must not inherit that fail-open default. The one remaining
+    open state is RBAC off AND key unset (auth fully disabled, documented).
+    No tenant/role scoping happens here: any valid credential passes (see
+    SECURITY.md, "Dashboard session gate").
+    """
+    key_set = bool(os.getenv("FENGARDE_API_KEY"))
+    if key_set and check_api_key(self.headers):
+        return self._send(200, {"ok": True, "auth": "api-key"})
+    if self.deps.rbac_enabled:
+        if self._current_session() is not None:
+            return self._send(200, {"ok": True, "auth": "session"})
+        return self._send(401, {"error": "unauthorized"})
+    if not key_set:
+        return self._send(200, {"ok": True, "auth": "disabled"})
+    return self._send(401, {"error": "unauthorized"})
 
 
 def route_get_report(self, alert_id: str):
@@ -633,6 +664,10 @@ def route_auth_login(self):
     cookie[_SESSION_COOKIE]["httponly"] = True
     cookie[_SESSION_COOKIE]["path"] = "/"
     cookie[_SESSION_COOKIE]["samesite"] = "Strict"
+    # Opt-in Secure flag for deployments that terminate TLS in front of nginx
+    # (this repo ships no TLS profile; nginx listens on plain HTTP :80).
+    if os.getenv("FENGARDE_COOKIE_SECURE", "").strip().lower() in ("1", "true", "yes"):
+        cookie[_SESSION_COOKIE]["secure"] = True
     set_cookie = cookie[_SESSION_COOKIE].OutputString()
     self._audit("login_success", actor=row["username"],
                 tenant_id=row["tenant_id"],
@@ -1164,6 +1199,8 @@ class Handler(BaseHTTPRequestHandler):
             self._send(500, {"error": "internal error"})
 
     def _route_get(self, path: str):
+        if path == "/auth/check":
+            return route_auth_check(self)
         if path == "/alerts":
             return route_list_alerts(self)
         if path == "/incidents":
