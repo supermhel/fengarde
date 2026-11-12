@@ -10,6 +10,7 @@ Run: python tools/test_backup_restore.py
 from __future__ import annotations
 
 import io
+import json
 import sqlite3
 import sys
 import tarfile
@@ -292,6 +293,290 @@ def test_symlink_member_escaping_staging_is_rejected():
               "nothing must ever be written through the symlink to the outside target")
 
 
+# ---------------------------------------------------------------------------
+# PR #167 review-fix regressions (findings 1-6). Each was reproduced FAILING
+# on 78392d0 before the fix in backup.py / restore.py / docs/upgrade.md.
+# ---------------------------------------------------------------------------
+import os  # noqa: E402
+import subprocess  # noqa: E402
+import threading  # noqa: E402
+import time  # noqa: E402
+
+BACKUP_PY = HERE / "backup.py"
+RESTORE_PY = HERE / "restore.py"
+_STORE_ENV = ("FENGARDE_RBAC_DB", "INVENTORY_DB", "INVENTORY_KEYSTORE_DB", "FENGARDE_AUDIT_LOG",
+              "SYSLOG_SPOOL_PATH", "INGEST_HTTP_SPOOL_PATH", "SYSLOG_TCP_SPOOL_PATH",
+              "FENGARDE_PLUGIN_RULE_DIRS")
+
+
+def _cli(script: Path, args: list[str], env_extra: dict[str, str] | None = None):
+    env = {k: v for k, v in os.environ.items() if k not in _STORE_ENV}
+    env.update(env_extra or {})
+    return subprocess.run([sys.executable, str(script), *args], capture_output=True,
+                          text=True, env=env, timeout=120)
+
+
+def _archive_names(archive: Path) -> list[str]:
+    with tarfile.open(archive, "r:gz") as tar:
+        return tar.getnames()
+
+
+def _out_archive(out: Path) -> Path:
+    found = sorted(out.glob("fengarde-backup-*.tar.gz"))
+    return found[-1] if found else out / "MISSING"
+
+
+def _make_inventory_db(path: Path) -> None:
+    c = sqlite3.connect(str(path))
+    c.execute("CREATE TABLE assets (id TEXT)")
+    c.execute("INSERT INTO assets VALUES ('host-1')")
+    c.commit()
+    c.close()
+
+
+def test_f2_inventory_db_default_covers_keystore_and_inventory():
+    """Finding 2: INVENTORY_KEYSTORE_DB defaults to INVENTORY_DB (app.py:37-38,
+    manage_keys.py:36). With only INVENTORY_DB set the CLI used to exit 0 with
+    an archive that held neither the keystore nor the inventory data."""
+    with tempfile.TemporaryDirectory() as d:
+        d = Path(d)
+        inv = d / "inventory.db"
+        _make_inventory_db(inv)
+        r = _cli(BACKUP_PY, ["--out", str(d / "o"), "--no-contracts"], {"INVENTORY_DB": str(inv)})
+        check(r.returncode == 0, f"F2: backup with INVENTORY_DB only must succeed, rc={r.returncode} {r.stderr}")
+        names = _archive_names(_out_archive(d / "o")) if r.returncode == 0 else []
+        check("keystore/inventory.db" in names,
+              f"F2: INVENTORY_DB alone must be backed up (keystore falls back to it), got {names}")
+
+
+def test_f2_separate_keystore_and_inventory_both_backed_up():
+    with tempfile.TemporaryDirectory() as d:
+        d = Path(d)
+        inv, ks = d / "inventory.db", d / "keys.db"
+        _make_inventory_db(inv)
+        _make_inventory_db(ks)
+        r = _cli(BACKUP_PY, ["--out", str(d / "o"), "--no-contracts"],
+                 {"INVENTORY_DB": str(inv), "INVENTORY_KEYSTORE_DB": str(ks)})
+        names = _archive_names(_out_archive(d / "o")) if r.returncode == 0 else []
+        check("keystore/keys.db" in names and "inventory/inventory.db" in names,
+              f"F2: distinct keystore + inventory files must BOTH be archived, rc={r.returncode} got {names}")
+
+
+def test_f2_missing_inventory_db_fails_closed_nonzero():
+    with tempfile.TemporaryDirectory() as d:
+        d = Path(d)
+        r = _cli(BACKUP_PY, ["--out", str(d / "o"), "--no-contracts"],
+                 {"INVENTORY_DB": str(d / "does-not-exist.db")})
+        check(r.returncode != 0, "F2: a configured-but-missing INVENTORY_DB must abort non-zero")
+        check(not list((d / "o").glob("*.tar.gz")), "F2: no archive may be left behind on abort")
+
+
+def test_f2_unconfigured_stores_are_declared_not_silent():
+    """Nothing configured: contracts-only is allowed, but the archive and
+    stderr must SAY which stores were not covered."""
+    with tempfile.TemporaryDirectory() as d:
+        d = Path(d)
+        r = _cli(BACKUP_PY, ["--out", str(d / "o")])
+        check(r.returncode == 0, f"F2: contracts-only backup still works, rc={r.returncode} {r.stderr}")
+        check("NOT backed up" in r.stderr and "RBAC" in r.stderr,
+              f"F2: stderr must list unconfigured stores, got {r.stderr!r}")
+        arc = _out_archive(d / "o")
+        if arc.exists():
+            with tarfile.open(arc, "r:gz") as tar:
+                m = json.loads(tar.extractfile("manifest.json").read())
+            check(any("rbac" in x.lower() for x in m.get("not_backed_up", [])),
+                  f"F2: manifest.not_backed_up must name the RBAC DB, got {m.get('not_backed_up')}")
+
+
+def test_f2_docs_no_invented_keystore_fallback():
+    text = (ROOT / "docs" / "upgrade.md").read_text(encoding="utf-8")
+    check("/data/keystore.db" not in text,
+          "F2: docs/upgrade.md must not name the invented /data/keystore.db fallback")
+
+
+def test_f1_runbook_documents_volume_extraction_and_untested_status():
+    text = (ROOT / "docs" / "upgrade.md").read_text(encoding="utf-8")
+    check("docker run --rm" in text and "-v" in text,
+          "F1: runbook must document extracting named-volume stores before running backup.py")
+    check("untested" in text.lower() or "not been run" in text.lower(),
+          "F1: runbook must state plainly the compose volume steps were not run")
+
+
+def test_f3_spools_and_plugin_rule_dirs_backed_up_and_scope_listed():
+    with tempfile.TemporaryDirectory() as d:
+        d = Path(d)
+        spool = d / "udp.jsonl"
+        spool.write_text('{"raw": "a"}\n', encoding="utf-8")
+        tcp_missing = d / "tcp.jsonl"  # configured but never created: spool is lazy
+        pdir = d / "packs"
+        (pdir / "sub").mkdir(parents=True)
+        (pdir / "sub" / "r.yml").write_text("id: x\n", encoding="utf-8")
+        r = _cli(BACKUP_PY, ["--out", str(d / "o"), "--no-contracts"],
+                 {"SYSLOG_SPOOL_PATH": str(spool), "SYSLOG_TCP_SPOOL_PATH": str(tcp_missing),
+                  "FENGARDE_PLUGIN_RULE_DIRS": str(pdir)})
+        check(r.returncode == 0, f"F3: rc={r.returncode} {r.stderr}")
+        arc = _out_archive(d / "o")
+        names = _archive_names(arc) if arc.exists() else []
+        check(any(n.startswith("ws1-spool/") and n.endswith("udp.jsonl") for n in names),
+              f"F3: configured WS-1 spool file must be archived, got {names}")
+        check(any(n.startswith("plugin-rules/") and n.endswith("sub/r.yml") for n in names),
+              f"F3: plugin rule dir contents must be archived, got {names}")
+        if arc.exists():
+            with tarfile.open(arc, "r:gz") as tar:
+                m = json.loads(tar.extractfile("manifest.json").read())
+            nb = " | ".join(m.get("not_backed_up", []))
+            check("tcp.jsonl" in nb, f"F3: absent spool must be listed as not backed up, got {nb!r}")
+            for needle in ("Redis", "OpenSearch", "GEOIP"):
+                check(needle.lower() in nb.lower(),
+                      f"F3: out-of-scope list must name {needle}, got {nb!r}")
+
+
+def _wal_db_with_stale_sidecars(dest_db: Path) -> None:
+    """Leave `dest_db` holding the ORIGINAL (1 row) main file next to a
+    -wal/-shm that carry a later row -- what a crashed/killed service leaves."""
+    dest_db.parent.mkdir(parents=True, exist_ok=True)
+    live = dest_db.parent.parent / "_live.db"
+    c = sqlite3.connect(str(live))
+    c.execute("PRAGMA journal_mode=WAL")
+    c.execute("PRAGMA wal_autocheckpoint=0")
+    c.execute("CREATE TABLE t (v TEXT)")
+    c.execute("INSERT INTO t VALUES ('orig')")
+    c.commit()
+    c.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    c.execute("INSERT INTO t VALUES ('post-backup')")
+    c.commit()
+    dest_db.parent.mkdir(parents=True, exist_ok=True)
+    for suffix in ("", "-wal", "-shm"):
+        src = Path(str(live) + suffix)
+        if src.exists():
+            Path(str(dest_db) + suffix).write_bytes(src.read_bytes())
+    c.close()
+
+
+def test_f4_restore_removes_stale_wal_sidecars():
+    with tempfile.TemporaryDirectory() as d:
+        d = Path(d)
+        src = d / "src.db"
+        c = sqlite3.connect(str(src))
+        c.execute("PRAGMA journal_mode=WAL")
+        c.execute("CREATE TABLE t (v TEXT)")
+        c.execute("INSERT INTO t VALUES ('orig')")
+        c.commit()
+        c.close()
+        archive = backup.build_backup(d / "b", rbac_db=src, include_contracts=False)
+        dest = d / "restored"
+        target = dest / "rbac" / "src.db"
+        _wal_db_with_stale_sidecars(target)
+        check(Path(str(target) + "-wal").exists(), "F4: test setup must leave a -wal")
+
+        raised = False
+        try:
+            restore.verify_and_restore(archive, dest, force=False)
+        except restore.RestoreError:
+            raised = True
+        check(raised, "F4: collision/sidecar without --force must be refused")
+
+        restore.verify_and_restore(archive, dest, force=True)
+        conn = sqlite3.connect(str(target))
+        rows = sorted(r[0] for r in conn.execute("SELECT v FROM t"))
+        conn.close()
+        check(rows == ["orig"], f"F4: restored DB must be exactly the backup, stale WAL leaked: {rows}")
+        for suffix in ("-wal", "-shm"):
+            check(not Path(str(target) + suffix).exists(),
+                  f"F4: stale {suffix} must be removed on --force restore")
+
+
+def test_f4_sidecar_without_main_file_blocks_unforced_restore():
+    with tempfile.TemporaryDirectory() as d:
+        d = Path(d)
+        src = d / "src.db"
+        _make_inventory_db(src)
+        archive = backup.build_backup(d / "b", rbac_db=src, include_contracts=False)
+        dest = d / "restored"
+        (dest / "rbac").mkdir(parents=True)
+        (dest / "rbac" / "src.db-wal").write_bytes(b"leftover")
+        raised = False
+        try:
+            restore.verify_and_restore(archive, dest, force=False)
+        except restore.RestoreError:
+            raised = True
+        check(raised, "F4: a leftover -wal beside a missing main file must block an unforced restore")
+        check(not (dest / "rbac" / "src.db").exists(), "F4: nothing written when refused")
+
+
+def test_f4_cli_reports_where_files_landed():
+    with tempfile.TemporaryDirectory() as d:
+        d = Path(d)
+        src = d / "src.db"
+        _make_inventory_db(src)
+        archive = backup.build_backup(d / "b", rbac_db=src, include_contracts=False)
+        r = _cli(RESTORE_PY, [str(archive), "--dest", str(d / "r")])
+        check(r.returncode == 0, f"F4: restore CLI rc={r.returncode} {r.stderr}")
+        out = json.loads(r.stdout) if r.returncode == 0 else {}
+        landed = out.get("landed", [])
+        check(any(Path(p) == (d / "r" / "rbac" / "src.db").resolve() for p in landed),
+              f"F4: CLI must print absolute landing paths (not configured paths), got {landed}")
+        check("configured" in r.stderr.lower(),
+              f"F4: CLI must say files are NOT placed at configured paths, stderr={r.stderr!r}")
+
+
+def test_f5_audit_copy_waits_for_the_audit_lock():
+    """Finding 5: backup copied audit.jsonl without taking audit.py's
+    cross-process .lock, so it could capture a torn append / mid-trim file."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("_audit_probe", ROOT / "services" / "ws3-indexer" / "audit.py")
+    assert spec and spec.loader
+    audit = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(audit)
+    with tempfile.TemporaryDirectory() as d:
+        d = Path(d)
+        log = d / "audit.jsonl"
+        log.write_bytes(b'{"ts": 1}\n')
+        lock = audit._acquire_cross_process_lock(str(log))
+        if lock is None:
+            check(False, "F5: test could not take the audit lock on this platform")
+            return
+        result: dict = {}
+
+        def run():
+            result["archive"] = backup.build_backup(d / "b", rbac_db=None, include_contracts=False, audit_log=log)
+
+        t = threading.Thread(target=run)
+        t.start()
+        time.sleep(0.6)
+        blocked = t.is_alive()
+        log.write_bytes(b'{"ts": 1}\n{"ts": 2}\n')  # the "append" finishes under the lock
+        lock.close()
+        t.join(timeout=30)
+        check(blocked, "F5: backup must block while another process holds the audit lock")
+        if "archive" in result:
+            with tarfile.open(result["archive"], "r:gz") as tar:
+                got = tar.extractfile("ws3/audit.jsonl").read()
+            check(got == b'{"ts": 1}\n{"ts": 2}\n',
+                  f"F5: backup must see the post-append file after the lock is released, got {got!r}")
+        else:
+            check(False, "F5: backup did not finish after the lock was released")
+
+
+def test_f6_percent_in_sqlite_path():
+    # '%41' is the repro: sqlite's URI parser decodes it to 'A' (or errors) when
+    # the path is not percent-encoded. ('#' alone happened to mask the bug, so
+    # each odd character gets its own directory.)
+    for name in ("dir%41pct", "a%20b", "hash#dir", "sp ace"):
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            weird = d / name
+            weird.mkdir()
+            db = weird / "users.db"
+            _make_inventory_db(db)
+            try:
+                archive = backup.build_backup(d / "b", rbac_db=db, include_contracts=False)
+            except Exception as exc:  # noqa: BLE001 - the regression IS "this raised"
+                check(False, f"F6: {name!r} in a sqlite path must not break backup: {type(exc).__name__}: {exc}")
+                continue
+            check("rbac/users.db" in _archive_names(archive), f"F6: {name!r} DB must be archived")
+
+
 def main():
     test_full_round_trip_rbac_and_contracts()
     test_full_round_trip_all_non_docker_stores()
@@ -300,6 +585,18 @@ def main():
     test_collision_requires_force()
     test_path_traversal_in_archive_is_rejected()
     test_symlink_member_escaping_staging_is_rejected()
+    test_f2_inventory_db_default_covers_keystore_and_inventory()
+    test_f2_separate_keystore_and_inventory_both_backed_up()
+    test_f2_missing_inventory_db_fails_closed_nonzero()
+    test_f2_unconfigured_stores_are_declared_not_silent()
+    test_f2_docs_no_invented_keystore_fallback()
+    test_f1_runbook_documents_volume_extraction_and_untested_status()
+    test_f3_spools_and_plugin_rule_dirs_backed_up_and_scope_listed()
+    test_f4_restore_removes_stale_wal_sidecars()
+    test_f4_sidecar_without_main_file_blocks_unforced_restore()
+    test_f4_cli_reports_where_files_landed()
+    test_f5_audit_copy_waits_for_the_audit_lock()
+    test_f6_percent_in_sqlite_path()
 
     if FAILS:
         print(f"[FAIL] backup/restore: {len(FAILS)} problem(s)")

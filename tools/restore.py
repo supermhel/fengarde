@@ -33,6 +33,22 @@ class RestoreError(Exception):
     pass
 
 
+_SQLITE_MAGIC = b"SQLite format 3\x00"
+_SIDECAR_SUFFIXES = ("-wal", "-shm", "-journal")
+
+
+def _is_sqlite(path: Path) -> bool:
+    with open(path, "rb") as f:
+        return f.read(16) == _SQLITE_MAGIC
+
+
+def _sidecars(dst: Path) -> list[Path]:
+    """Leftover SQLite WAL/journal files beside `dst`. Replacing only the main
+    file under a stale -wal makes SQLite replay post-backup pages into the
+    restored DB (live-reproduced: restored rows != backup rows)."""
+    return [p for p in (Path(str(dst) + sfx) for sfx in _SIDECAR_SUFFIXES) if p.exists()]
+
+
 def _safe_join(base: Path, rel: str) -> Path:
     """Join `rel` onto `base`, refusing anything that would escape it.
 
@@ -104,6 +120,11 @@ def verify_and_restore(archive_path: Path, dest: Path, force: bool = False) -> l
                 if collision.exists():
                     raise RestoreError(
                         f"{collision} already exists -- pass --force to overwrite (nothing written yet)")
+                if _is_sqlite(_safe_join(staging, entry["path"])):
+                    for leftover in _sidecars(collision):
+                        raise RestoreError(
+                            f"{leftover} is a leftover SQLite sidecar -- pass --force to delete it "
+                            f"(restoring under a stale WAL would mix in post-backup data; nothing written yet)")
 
         restored: list[str] = []
         for entry in files:
@@ -111,6 +132,9 @@ def verify_and_restore(archive_path: Path, dest: Path, force: bool = False) -> l
             src = _safe_join(staging, rel)
             dst = _safe_join(dest, rel)
             dst.parent.mkdir(parents=True, exist_ok=True)
+            if _is_sqlite(src):
+                for leftover in _sidecars(dst):
+                    leftover.unlink()
             dst.write_bytes(src.read_bytes())
             restored.append(rel)
         return restored
@@ -127,7 +151,12 @@ def main() -> None:
         restored = verify_and_restore(Path(args.archive), Path(args.dest), force=args.force)
     except RestoreError as exc:
         sys.exit(f"restore failed, nothing written: {exc}")
-    print(json.dumps({"restored": restored, "dest": args.dest}))
+    dest_abs = Path(args.dest).resolve()
+    landed = [str(dest_abs / r) for r in restored]
+    print("[NOTE] files were written UNDER --dest by archive folder (rbac/, keystore/, inventory/, "
+          "ws3/, ws1-spool/, plugin-rules/, contracts/), NOT to your configured FENGARDE_*/INVENTORY_* "
+          "paths. Copy each into place (stopped stack) -- see docs/upgrade.md.", file=sys.stderr)
+    print(json.dumps({"restored": restored, "dest": args.dest, "landed": landed}))
 
 
 if __name__ == "__main__":

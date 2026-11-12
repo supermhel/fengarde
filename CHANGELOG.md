@@ -21,6 +21,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   store is then mutated in place (user deleted, key revoked, audit lines
   appended) and the restore brings back the ORIGINAL state -- the exact
   backup-then-restore an operator runs before an upgrade or a rollback.
+- **Review fixes on PR #167 (each reproduced failing first, regression test in
+  `tools/test_backup_restore.py`)**: `INVENTORY_KEYSTORE_DB` now defaults to
+  `INVENTORY_DB` like `ws6-inventory/app.py` (the default config used to exit 0
+  with neither the keystore nor the inventory data), `--inventory-db` added for
+  a separate inventory file; WS-1 spool files and plugin rule dirs are backed
+  up when configured; unconfigured stores and the permanent out-of-scope list
+  (OpenSearch, Redis, GeoIP map) are printed on stderr and recorded in
+  `manifest.json` (`not_backed_up`); the audit log is copied under its own
+  `.lock`; SQLite is opened via an encoded URI (a `%` in a path broke it);
+  `restore.py --force` deletes leftover `-wal`/`-shm`/`-journal` sidecars (a
+  stale WAL resurrected post-backup rows) and an unforced restore refuses
+  them; restore prints absolute `landed` paths and says they are not the
+  configured paths. `docs/upgrade.md` documents the Docker-volume extraction
+  step and states plainly that it is **untested against a live compose stack**;
+  the invented `/data/keystore.db` fallback is removed.
 - **`docs/upgrade.md`**: per-release upgrade/migration-note convention
   (every CHANGELOG release section documents its own upgrade contract),
   the standard no-migration upgrade procedure, migration-release guidance,
