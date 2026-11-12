@@ -72,6 +72,13 @@ class BoundedSpool:
         # silent.
         self._log = logger
         self.corrupt_lines_skipped = 0
+        # Drain observability (PR #166 review F166-4): a drain failing on a
+        # still-down bus used to be invisible. Cumulative, in-process.
+        self.replayed_total = 0
+        self.produce_failures = 0       # produce() raised during a drain
+        self.last_produce_error = ""    # most recent such error
+        self.dead_lettered = 0          # poison events moved to the .dead file
+        self.dead_letter_dropped = 0    # poison events lost: dead-letter at cap
         self._last_refusal_log: "dict[str, float]" = {}
         self._lock = threading.Lock()
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -212,12 +219,81 @@ class BoundedSpool:
             except OSError:
                 return 0
 
-    def drain_into(self, produce: Callable[[dict], None], *, limit: Optional[int] = None) -> int:
+    @property
+    def dead_letter_path(self) -> Path:
+        """Sidecar JSONL holding events `drain_into(skip_poison=True)` gave up on."""
+        return self.path.with_name(self.path.name + ".dead")
+
+    def _dead_letter(self, lines: list[str]) -> None:
+        """Append poison lines to the sidecar (fsync'd, capped at max_bytes).
+
+        Written BEFORE the spool rewrite that removes them, so a crash in
+        between leaves a duplicate dead-letter line, never a lost event.
+        """
+        dl = self.dead_letter_path
+        try:
+            size = dl.stat().st_size
+        except OSError:
+            size = 0
+        for line in lines:
+            data = (line + "\n").encode("utf-8")
+            if size + len(data) > self.max_bytes:
+                self.dead_letter_dropped += 1
+                if self._log is not None:
+                    self._log.warn("spool dead-letter full, poison event dropped",
+                                   path=str(dl), max_bytes=self.max_bytes)
+                continue
+            try:
+                with dl.open("ab") as f:
+                    f.write(data)
+                    f.flush()
+                    os.fsync(f.fileno())
+                size += len(data)
+                self.dead_lettered += 1
+            except OSError as exc:
+                self.dead_letter_dropped += 1
+                if self._log is not None:
+                    self._log.warn("spool dead-letter write failed, poison event dropped",
+                                   path=str(dl), error=str(exc))
+        if self._log is not None:
+            self._log.warn("spool drain dead-lettered poison event(s)",
+                           count=len(lines), dead_lettered_total=self.dead_lettered)
+
+    def drain_into(self, produce: Callable[[dict], None], *, limit: Optional[int] = None,
+                   checkpoint_every: Optional[int] = None,
+                   skip_poison: bool = False) -> int:
         """Replay spooled events in FIFO order via `produce(event) -> None`
         (raises on failure). Stops at the first failure (order-preserving) and
-        rewrites the spool file to contain only the un-replayed remainder --
-        so a crash between drain and rewrite re-replays at most the batch
-        already in flight, never silently drops it. Returns count replayed.
+        rewrites the spool file to contain only the un-replayed remainder.
+        Returns count replayed.
+
+        **Delivery is AT-LEAST-ONCE, not exactly-once and not "at most the
+        in-flight batch".** The file is rewritten only when the pass ends (or
+        at a checkpoint, below), so a hard crash (SIGKILL, power loss) after k
+        successful `produce()` calls but before the next rewrite replays those
+        k events again on restart. Consumers must stay idempotent on
+        `siem.ingest_id` (WS-3 does: it is the document `_id`). Reproduced by
+        the PR #166 review (1000 spooled, crash at 900 -> 900 duplicates).
+
+        `checkpoint_every=N` bounds that window: after every N replayed events
+        the spool is atomically rewritten without them (and without anything
+        before them), so a crash re-replays at most N events. Cost: one
+        fsync'd rewrite of the remainder per N events (O(remaining) each), so
+        pick N in the hundreds, not 1. Default None keeps the legacy
+        one-rewrite-per-pass behaviour (the syslog loops use it).
+
+        `skip_poison=True` stops one event the bus keeps rejecting from
+        blocking the whole spool (head-of-line blocking). When `produce()` of
+        the head fails, it is retried once; if it fails again, up to 3 following
+        events are tried. If any of THOSE succeeds, the bus is up and the
+        failing events are poison: they are moved to `<spool>.dead` (see
+        `dead_letter_path`, capped at `max_bytes`) and replay continues. If none
+        succeeds the bus is treated as down and the pass stops with the spool
+        intact. This is a heuristic: it cannot tell a payload the bus rejects
+        from a transient error that happened to hit the same event twice. The
+        trade is deliberate (a wedged spool drops live events once the byte cap
+        is hit); the dead-letter file keeps the event for an operator. Replay
+        order is not preserved across a dead-lettered event.
 
         P1-6 (2026-07-21 audit): two fixes to the flood-recovery path itself:
 
@@ -254,6 +330,7 @@ class BoundedSpool:
         n = len(lines)
 
         replayed = 0
+        since_checkpoint = 0
         i = 0
         while i < n:
             if limit is not None and replayed >= limit:
@@ -262,28 +339,39 @@ class BoundedSpool:
             if not line.strip():
                 i += 1
                 continue
-            try:
-                event = json.loads(line)
-            except (ValueError, TypeError):
-                # corrupt line (e.g. a torn write from a crash mid-append)
-                # -- drop just this one line, don't block the rest of the
-                # spool behind unparseable data forever. Gap-hunt (2026-08-26)
-                # #74: count it and log it so a replay with corrupt lines
-                # doesn't read as a fully-clean success -- the caller's
-                # "replayed N" line and this counter together tell the truth.
-                self.corrupt_lines_skipped += 1
-                if self._log is not None:
-                    self._log.warn("spool drain skipped corrupt line",
-                                   line_no=i + 1,
-                                   corrupt_total=self.corrupt_lines_skipped)
+            event = self._parse_line(line, i)
+            if event is None:
                 i += 1
                 continue
             try:
                 produce(event)  # network I/O -- deliberately outside the lock
-            except Exception:
-                break  # bus still unavailable / still over capacity; stop here
-            replayed += 1
-            i += 1
+            except Exception as exc:
+                self._note_produce_failure(exc)
+                if not skip_poison:
+                    break  # bus still unavailable / still over capacity; stop here
+                advanced = self._probe_poison(produce, lines, i, n)
+                if advanced is None:
+                    break  # nothing after the head got through: bus down
+                i, delivered = advanced
+                replayed += delivered
+                since_checkpoint += delivered
+            else:
+                replayed += 1
+                since_checkpoint += 1
+                i += 1
+            if checkpoint_every and since_checkpoint >= checkpoint_every and i < n:
+                # Bound the crash-replay window: persist progress now.
+                with self._lock:
+                    try:
+                        current = self.path.read_text(encoding="utf-8").splitlines()
+                    except OSError:
+                        current = None
+                    if current is not None:
+                        lines = lines[i:] + current[n:]
+                        self._rewrite(lines)
+                        n = len(lines)
+                        i = 0
+                        since_checkpoint = 0
 
         with self._lock:
             try:
@@ -294,7 +382,67 @@ class BoundedSpool:
             remaining = lines[i:] + newly_appended
             if replayed or remaining != current_lines:
                 self._rewrite(remaining)
+        self.replayed_total += replayed
         return replayed
+
+    def _parse_line(self, line: str, idx: int) -> Optional[dict]:
+        try:
+            return json.loads(line)
+        except (ValueError, TypeError):
+            # corrupt line (e.g. a torn write from a crash mid-append)
+            # -- drop just this one line, don't block the rest of the
+            # spool behind unparseable data forever. Gap-hunt (2026-08-26)
+            # #74: count it and log it so a replay with corrupt lines
+            # doesn't read as a fully-clean success -- the caller's
+            # "replayed N" line and this counter together tell the truth.
+            self.corrupt_lines_skipped += 1
+            if self._log is not None:
+                self._log.warn("spool drain skipped corrupt line",
+                               line_no=idx + 1,
+                               corrupt_total=self.corrupt_lines_skipped)
+            return None
+
+    def _note_produce_failure(self, exc: BaseException) -> None:
+        self.produce_failures += 1
+        self.last_produce_error = f"{type(exc).__name__}: {exc}"[:300]
+
+    def _probe_poison(self, produce, lines: list[str], i: int, n: int):
+        """Head `lines[i]` failed once. Decide poison vs bus-down.
+
+        Returns None (bus down: leave everything), or (next_i, delivered)
+        after dead-lettering the failing head (and any probed failures) and
+        delivering the probe event that got through.
+        """
+        head = lines[i]
+        # retry the head once: a single transient blip must not dead-letter it
+        try:
+            produce(json.loads(head))
+            return i + 1, 1
+        except Exception as exc:
+            self._note_produce_failure(exc)
+        failed = [head]
+        probed = 0
+        j = i + 1
+        while j < n and probed < 3:
+            line = lines[j]
+            if not line.strip():
+                j += 1
+                continue
+            event = self._parse_line(line, j)
+            if event is None:
+                j += 1
+                continue
+            probed += 1
+            try:
+                produce(event)
+            except Exception as exc:
+                self._note_produce_failure(exc)
+                failed.append(line)
+                j += 1
+                continue
+            self._dead_letter(failed)
+            return j + 1, 1
+        return None
 
     def _rewrite(self, lines: list[str]) -> None:
         """Atomically replace the spool file's contents (temp file + os.replace)
