@@ -7,6 +7,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed (2026-11-06, WS-1 HTTP ingest spool drain)
+
+- **The HTTP/JSON ingest spool now drains.** `INGEST_HTTP_SPOOL_PATH` wrote a
+  bounded spool (FIFO, byte-capped) but nothing ever replayed it — only the
+  UDP (and later TCP) syslog loops owned drain threads, so HTTP-spooled
+  events sat until the cap and then the edge dropped. The HTTP collector
+  (`HttpJsonCollector`) now starts its own `http-json-spool-drain` thread that
+  replays the spool into the bus every `spool_drain_interval_s` (default 5 s).
+  The loop sleeps on its own stop event; a first version waited on the
+  listener's already-set "running" event and busy-spun (measured in review:
+  2216 passes in 2 s, ~92% of a core) — `test_drain_interval_is_honored` fails
+  on that code (400 passes in 1.2 s at a 0.25 s interval).
+- **Delivery is at-least-once, not exactly-once.** A hard crash after k events
+  were produced but before the spool file is rewritten replays those k events
+  (review reproduced 900 duplicates from 1000). `BoundedSpool.drain_into` gains
+  `checkpoint_every`; the HTTP loop passes 500, so a crash re-replays at most 500
+  events (cost: one fsync'd rewrite of the remainder per 500 events). Replays
+  keep `meta.ingest_id`, WS-2 carries it to `siem.ingest_id` and WS-3 indexes on
+  it, so duplicates collapse to one document (the test pushes every event through
+  WS-2 `normalize_one` + WS-3 `route` + `MemoryStore` twice: 2 docs, not 4;
+  not run against a live OpenSearch). The syslog loops keep the old
+  one-rewrite-per-pass behaviour.
+- **A stuck spool is visible and one bad event cannot wedge it.** `drain_into`
+  gains `skip_poison` (HTTP loop: on). If the head event fails twice and one of
+  the next three then succeeds, the bus is up and the failing events are moved
+  to `<spool>.dead` (fsync'd, capped at the spool byte cap) instead of blocking
+  everything behind them. A plain outage (everything fails) dead-letters nothing.
+  This is a heuristic: a transient error that hits the same event twice while
+  the next event gets through also dead-letters it. Replay order is not
+  preserved across a dead-lettered event. New `/metrics` leaves:
+  `http_spool_pending_bytes`, `http_spool_pending_events` (as of the last pass),
+  `http_spool_replayed`, `http_spool_drain_passes`,
+  `http_spool_drain_failed_passes`, `http_spool_dead_lettered`,
+  `http_spool_dead_letter_dropped`, `http_spool_corrupt_lines_skipped`; a
+  throttled (30 s) `http spool drain: bus refused spooled events` warning logs
+  the last error.
+- **Ordering caveat.** While the bus is up, live batches are produced directly
+  and may overtake older spooled events: FIFO holds within the spool only.
+- **Test** `test_http_spool_drain.py` (fast tier): real collector, real HTTP,
+  flappable bus — bus down → 202 spooled, outage drains lose/duplicate nothing;
+  bus up → replay and empty spool; interval honored; stop()/start(); crash
+  mid-drain is at-least-once and bounded; duplicates collapse downstream;
+  poison dead-lettered while an outage is not.
+- **Enablement** `infra/docker-compose.homelab.yml` switches
+  `INGEST_HTTP_SPOOL_PATH` on in the ws1-spool volume. It adds a file that PR #154
+  (WP-2.1) also adds under the same name: the two branches conflict (add/add, plus
+  CHANGELOG/SSOT); whichever merges second must be resolved by hand.
+
 ### Added (2026-11-04, WP-1.3: shipper adapters for real Fluent Bit / Winlogbeat / Docker shapes)
 
 - `services/ws2-normalization/adapters/` — four pure, total adapters that

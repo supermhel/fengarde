@@ -80,6 +80,17 @@ DEFAULT_MAX_EVENTS_PER_SEC = 2000         # per-source, same shape as syslog
 DEFAULT_MAX_CONCURRENT = 16               # ThreadingHTTPServer thread guard
 _READ_CHUNK = 64 * 1024
 DEFAULT_MAX_SOURCES = 4096                # bound on the per-source bucket map (LRU)
+# How often the spool-drain thread retries replaying spooled events into the
+# bus (same default as the UDP/TCP syslog loops). A bus outage makes the drain
+# fail fast and retry next interval; nothing is dropped while the spool has
+# room.
+DEFAULT_SPOOL_DRAIN_INTERVAL_S = 5.0
+# The drain rewrites the spool file after every N replayed events so a hard
+# crash re-replays at most N (delivery is at-least-once; see spool.drain_into).
+DEFAULT_SPOOL_CHECKPOINT_EVERY = 500
+# Minimum seconds between "drain is failing" warnings (one per 5 s pass would
+# flood the log during a long outage).
+_DRAIN_FAIL_LOG_EVERY_S = 30.0
 # A sender may label the device a batch came from (X-Fengarde-Source / ?source=). The label is only trusted as far as the
 # bearer token: it keys the per-source rate limit, the bus partition and the metrics, never an authorization decision.
 _SOURCE_ID_RE = re.compile(r"^[A-Za-z0-9._:@\-]{1,128}$")
@@ -142,6 +153,7 @@ class HttpJsonCollector:
                  max_concurrent: int = DEFAULT_MAX_CONCURRENT,
                  max_events_per_sec_per_source: float = 0,
                  spool: Optional[BoundedSpool] = None,
+                 spool_drain_interval_s: float = DEFAULT_SPOOL_DRAIN_INTERVAL_S,
                  extra_source_types=(),
                  logger=None):
         if not ingest_token and not (dev_loopback and _is_loopback(host)):
@@ -175,6 +187,16 @@ class HttpJsonCollector:
         self._source_buckets: "OrderedDict[str, _TokenBucket]" = OrderedDict()
         self._source_lock = threading.Lock()
         self._spool = spool
+        self._spool_drain_interval_s = float(spool_drain_interval_s)
+        # Own stop event for the drain loop: it is the loop's sleep primitive.
+        # (The previous version waited on `_running`, which stays SET while the
+        # listener is up, so Event.wait() returned at once and the loop
+        # busy-spun -- PR #166 review F166-1.)
+        self._spool_stop = threading.Event()
+        self._spool_pending_events = 0       # as of the last drain pass
+        self.spool_drain_passes = 0
+        self.spool_drain_failed_passes = 0   # passes where the bus refused events
+        self._last_drain_fail_log = 0.0
 
         # Aggregate counters (flat numeric leaves -> real Prometheus gauges).
         self.events_accepted = 0
@@ -191,6 +213,7 @@ class HttpJsonCollector:
 
         self._server: Optional[_HttpIngestServer] = None
         self._thread: Optional[threading.Thread] = None
+        self._spool_thread: Optional[threading.Thread] = None
         self._running = threading.Event()
 
     # -- lifecycle ----------------------------------------------------------
@@ -211,6 +234,17 @@ class HttpJsonCollector:
         self._thread = threading.Thread(target=self._serve_loop,
                                         name="http-json-ingest", daemon=True)
         self._thread.start()
+        if self._spool is not None and self._spool_thread is None:
+            # Review (2026-11-06): only the syslog loops replayed their spools,
+            # so an HTTP spool filled during a bus outage was never drained.
+            # The HTTP edge now owns a drain loop for its own spool, same
+            # contract as the UDP/TCP loops (retry every interval until the
+            # bus accepts, never drop while the spool has room).
+            self._spool_stop.clear()
+            self._spool_thread = threading.Thread(
+                target=self._drain_spool_loop, name="http-json-spool-drain",
+                daemon=True)
+            self._spool_thread.start()
         if self.log is not None:
             self.log.info("http json ingest listening", host=self.host,
                           port=self.port, token_set=bool(self.token),
@@ -226,11 +260,65 @@ class HttpJsonCollector:
         finally:
             self._running.clear()
 
+    def _drain_spool_loop(self) -> None:
+        """Replay this listener's spool into the bus until stop().
+
+        Delivery is AT-LEAST-ONCE: a hard crash replays up to
+        DEFAULT_SPOOL_CHECKPOINT_EVERY already-delivered events on restart
+        (events keep their `meta.ingest_id`, and WS-3 indexes on it, so the
+        duplicates collapse to one document; see test_http_spool_drain.py).
+        A produce failure means the outage has not cleared: drain_into() stops
+        early and the loop retries after `spool_drain_interval_s`. An event the
+        bus keeps rejecting while later ones are accepted is moved to
+        `<spool>.dead` instead of blocking the spool. Live events are produced
+        directly while the bus is up, so they may overtake spooled ones: order
+        is FIFO within the spool only.
+        """
+        while not self._spool_stop.is_set():
+            spool = self._spool
+            if spool is None:
+                return
+            failures_before = spool.produce_failures
+            try:
+                drained = spool.drain_into(
+                    lambda item: self.bus.produce(
+                        self.topic, key=item["key"], payload=item["event"]),
+                    checkpoint_every=DEFAULT_SPOOL_CHECKPOINT_EVERY,
+                    skip_poison=True)
+                self.spool_drain_passes += 1
+                self._spool_pending_events = spool.pending_count()
+                if drained and self.log is not None:
+                    self.log.info("replayed spooled http events", count=drained,
+                                  pending=self._spool_pending_events)
+                if spool.produce_failures > failures_before:
+                    self._note_drain_failure(spool)
+            except Exception as exc:  # never let the drain loop die silently
+                self.spool_drain_failed_passes += 1
+                if self.log is not None:
+                    self.log.warn("http spool drain failed", error=str(exc))
+            self._spool_stop.wait(self._spool_drain_interval_s)
+
+    def _note_drain_failure(self, spool: BoundedSpool) -> None:
+        """A pass hit produce() errors (bus down, or still rejecting): count it
+        and say so in the log, throttled. Without this a stuck spool is silent
+        (PR #166 review F166-4)."""
+        self.spool_drain_failed_passes += 1
+        now = time.monotonic()
+        if self.log is not None and now - self._last_drain_fail_log >= _DRAIN_FAIL_LOG_EVERY_S:
+            self._last_drain_fail_log = now
+            self.log.warn("http spool drain: bus refused spooled events, will retry",
+                          pending=self._spool_pending_events,
+                          pending_bytes=spool.pending_bytes(),
+                          last_error=spool.last_produce_error,
+                          retry_in_s=self._spool_drain_interval_s)
+
     def is_running(self) -> bool:
         return self._running.is_set() and bool(
             self._thread and self._thread.is_alive())
 
     def stop(self) -> None:
+        self._running.clear()
+        self._spool_stop.set()
         if self._server is not None:
             self._server.shutdown()
             self._server.server_close()
@@ -238,7 +326,9 @@ class HttpJsonCollector:
         if self._thread is not None:
             self._thread.join(timeout=5)
             self._thread = None
-        self._running.clear()
+        if self._spool_thread is not None:
+            self._spool_thread.join(timeout=5)
+            self._spool_thread = None
 
     # -- batch handling -----------------------------------------------------
 
@@ -358,6 +448,25 @@ class HttpJsonCollector:
             "http_requests_429": self.requests_limited,
             "http_requests_4xx": self.requests_rejected,
             "http_requests_503": self.requests_failed,
+            **self._spool_metrics(),
+        }
+
+    def _spool_metrics(self) -> dict:
+        """Spool health gauges (empty when no spool is configured). A growing
+        pending_bytes with replayed flat and drain_failed_passes rising is a
+        stuck spool; dead_lettered > 0 means events were parked in <spool>.dead."""
+        spool = self._spool
+        if spool is None:
+            return {}
+        return {
+            "http_spool_pending_bytes": spool.pending_bytes(),
+            "http_spool_pending_events": self._spool_pending_events,
+            "http_spool_replayed": spool.replayed_total,
+            "http_spool_drain_passes": self.spool_drain_passes,
+            "http_spool_drain_failed_passes": self.spool_drain_failed_passes,
+            "http_spool_dead_lettered": spool.dead_lettered,
+            "http_spool_dead_letter_dropped": spool.dead_letter_dropped,
+            "http_spool_corrupt_lines_skipped": spool.corrupt_lines_skipped,
         }
 
 
