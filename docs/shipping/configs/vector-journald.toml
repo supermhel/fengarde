@@ -1,10 +1,16 @@
 # Vector (Linux) journald -> FENGARDE TCP syslog 5515. Linted and run live on Linux containers 2026-11-05 (README Verification log).
-# Verified on Vector 0.61.0 (debian image, which ships journalctl): .host, ._PID, .message, .timestamp. include_units verified 2026-11-05 on a journal written by real systemd units (README Verification log).
-# The sshd[pid] label is hardcoded for every record, so keep include_units: without it other units are mislabelled sshd. Unit names are given without the .service suffix (Debian's is `ssh`).
-# Because of that hardcoded label the OpenSSH 9.8+ helpers (sshd-session, sshd-auth) that run inside the ssh unit are labelled sshd too and parse as linux_ssh; their own identifier is not shipped. A socket-activated per-connection unit (ssh@...service) is NOT matched by include_units: untested.
+# Verified on Vector 0.61.0 (debian image, which ships journalctl): .host, ._PID, .message, .timestamp.
+# Selection is by SYSLOG_IDENTIFIER, not by unit. Verified 2026-11-11 (Debian 13, OpenSSH 10.0p1, systemd container): `include_units = ["ssh", "sshd"]`
+# delivered only the entries of ssh.service (17 of 33 in the test journal) and missed every `ssh@<n>-...service` (per-connection socket) entry and every
+# `session-cN.scope` entry (post-login lines); include_units has no wildcard. The identifier match below delivered all 33.
+# `sshd-auth` produced no journal entry in those runs (harmless to keep). The remap below hardcodes the sshd[pid] label for every delivered record, which is why the
+# selection must stay restricted to the sshd identifiers: an unrestricted journald source would label every unit's lines sshd.
+# Outage behaviour (measured 2026-11-11, README 'Delivery guarantees'): the TCP socket sink discards the events in flight when the connection drops (3 of 24 in a 60 s outage; a disk buffer did not help). The http sink with a disk buffer lost nothing. Use the http-based recipes (or a syslog-ng / rsyslog relay) if loss matters.
 [sources.journal]
 type = "journald"
-include_units = ["ssh", "sshd"]
+
+[sources.journal.include_matches]
+SYSLOG_IDENTIFIER = ["sshd", "sshd-session", "sshd-auth"]
 
 [transforms.to_line]
 type = "remap"

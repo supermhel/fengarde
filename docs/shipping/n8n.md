@@ -47,13 +47,21 @@ framing.method = "newline_delimited"
 auth.strategy = "bearer"
 auth.token = "${FENGARDE_INGEST_TOKEN}"
 request.headers = { "X-Fengarde-Shipper" = "vector", "X-Fengarde-Source" = "n8n-01" }
+
+# Outage behaviour (measured 2026-11-11, README 'Delivery guarantees'): with this default memory buffer the events held during a ws1 outage are lost if Vector restarts (11 of 11). With the buffer below nothing was lost across a restart.
+# [sinks.fengarde.buffer]
+# type = "disk"
+# max_size = 268435488
+# when_full = "block"
 ```
 
 ```ini fluent-bit-n8n.conf
 # Fluent Bit: JSON-lines file of n8n audit events -> FENGARDE HTTP ingest. Linted and run live on Linux containers 2026-11-05 (README Verification log).
 # WARNING: Authorization: Bearer goes over plain http:// -- cleartext on the wire; use the TLS front from docs/deployment.md or keep it on a trusted segment.
 # Records MUST already be in the n8n_audit parser's shape (eventType, user, ...). See n8n.md.
+# Outage handling (measured 2026-11-11, README 'Delivery guarantees'): Retry_Limit no_limits + filesystem storage + a tail DB. Create /var/lib/fluent-bit and make it writable by the Fluent Bit user first.
 [SERVICE]
+    storage.path  /var/lib/fluent-bit/storage/
     Parsers_File  fluent-bit-n8n-parsers.conf
 
 [INPUT]
@@ -61,6 +69,8 @@ request.headers = { "X-Fengarde-Shipper" = "vector", "X-Fengarde-Source" = "n8n-
     Path    /home/node/.n8n/fengarde-audit.log
     Parser  json
     Tag     n8n
+    DB            /var/lib/fluent-bit/n8n.db
+    storage.type  filesystem
 
 [OUTPUT]
     Name             http
@@ -73,6 +83,7 @@ request.headers = { "X-Fengarde-Shipper" = "vector", "X-Fengarde-Source" = "n8n-
     Header           Authorization Bearer ${FENGARDE_INGEST_TOKEN}
     Header           X-Fengarde-Shipper fluent-bit
     Header           X-Fengarde-Source n8n-01
+    Retry_Limit      no_limits
 ```
 
 ```ini fluent-bit-n8n-parsers.conf

@@ -90,3 +90,21 @@ with documentation-range IPs and invented values; the sshd line is modelled on t
 - Proxmox GUI/API auth (`pvedaemon`, `pveproxy`) and cluster/VM events.
 - RFC 5424 structured data from the appliance (whatever the generic path does with it is unchanged by this recipe).
 - TLS syslog; authenticated relay (the hardening note above is address binding and firewalling only).
+
+## Surviving a ws1 outage (measured, not in the committed configs)
+
+The committed rsyslog and syslog-ng configs lose data in an outage (see Delivery guarantees in [README.md](README.md)). These variants were run on 2026-11-11 against a ws1 listener stopped for 60 s, with and without a restart of the daemon, and lost nothing; they are test copies of the forward configs, not tested on the relay configs.
+
+```
+# rsyslog (global() workDirectory must exist and be writable)
+global(workDirectory="/var/spool/rsyslog")
+*.* action(type="omfwd" Target="192.0.2.10" Port="5515" Protocol="tcp" TCP_Framing="traditional"
+          action.resumeRetryCount="-1" action.resumeInterval="5"
+          queue.type="LinkedList" queue.filename="fgq" queue.maxDiskSpace="100m" queue.saveOnShutdown="on" queue.size="10000")
+
+# syslog-ng (dir() must exist and be writable)
+destination d_fengarde { network("192.0.2.10" port(5515) transport("tcp")
+    disk-buffer(reliable(yes) mem-buf-size(1000000) disk-buf-size(50000000) dir("/var/lib/syslog-ng/fgbuf"))); };
+```
+
+The run used `workDirectory="/tmp"` and `dir("/tmp/ngdb")`. Without the disk buffer syslog-ng delivered everything but 61-120 s late and lost the buffer on a restart. Black-holed networks and overflow were not tested.

@@ -24,3 +24,9 @@ framing.method = "newline_delimited"
 auth.strategy = "bearer"
 auth.token = "${FENGARDE_INGEST_TOKEN}"
 request.headers = { "X-Fengarde-Shipper" = "vector", "X-Fengarde-Source" = "n8n-01" }
+
+# Outage behaviour (measured 2026-11-11, README 'Delivery guarantees'): with this default memory buffer the events held during a ws1 outage are lost if Vector restarts (11 of 11). With the buffer below nothing was lost across a restart.
+# [sinks.fengarde.buffer]
+# type = "disk"
+# max_size = 268435488
+# when_full = "block"

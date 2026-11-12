@@ -26,7 +26,9 @@ recipe `docker_name` is the first 12 hex of the container id, not the human cont
 ```ini fluent-bit-docker.conf
 # Fluent Bit (Docker host) json-file logs -> FENGARDE HTTP ingest. Linted and run live on Linux containers 2026-11-05 (README Verification log).
 # WARNING: Authorization: Bearer goes over plain http:// -- cleartext on the wire; use the TLS front from docs/deployment.md or keep it on a trusted segment.
+# Outage handling (measured 2026-11-11, README 'Delivery guarantees'): Retry_Limit no_limits + filesystem storage + a tail DB. Create /var/lib/fluent-bit and make it writable by the Fluent Bit user first.
 [SERVICE]
+    storage.path  /var/lib/fluent-bit/storage/
     Flush         5
     Parsers_File  fluent-bit-docker-parsers.conf
 
@@ -44,6 +46,8 @@ recipe `docker_name` is the first 12 hex of the container id, not the human cont
     Match     docker.*
     script    docker_ids.lua
     call      add_ids
+    DB            /var/lib/fluent-bit/docker.db
+    storage.type  filesystem
 
 [OUTPUT]
     Name             http
@@ -56,6 +60,7 @@ recipe `docker_name` is the first 12 hex of the container id, not the human cont
     Header           Authorization Bearer ${FENGARDE_INGEST_TOKEN}
     Header           X-Fengarde-Shipper docker-json
     Header           X-Fengarde-Source docker-host-01
+    Retry_Limit      no_limits
 ```
 
 ```ini fluent-bit-docker-parsers.conf
@@ -107,6 +112,7 @@ Vendor docs: <https://vector.dev/docs/reference/configuration/sources/docker_log
 ```toml vector-docker.toml
 # Vector docker_logs -> FENGARDE TCP syslog 5515. Linted and run live on Linux containers 2026-11-05 (README Verification log).
 # Verified on Vector 0.61.0: .container_name, .stream, .timestamp and .message exist on docker_logs events. Needs the Docker socket mounted.
+# Outage behaviour (measured 2026-11-11, README 'Delivery guarantees'): the TCP socket sink discards the events in flight when the connection drops (3 of 24 in a 60 s outage; a disk buffer did not help). The http sink with a disk buffer lost nothing. Use the http-based recipes (or a syslog-ng / rsyslog relay) if loss matters.
 [sources.docker]
 type = "docker_logs"
 

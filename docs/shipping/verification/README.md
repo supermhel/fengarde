@@ -18,3 +18,5 @@ machine-specific paths. It is a **manual** tool:
 Run: `python docs/shipping/verification/e2e.py rs-fwd 8` (recipe, seconds to wait). Checked again on 2026-11-07 for `rs-fwd` (the `sshd` line resolved to `linux_ssh`, 3002) and
 `fb-journald` (the committed config, with the three `Systemd_Filter` lines, delivered journal entries through ws1 HTTP); the other recipes were not re-run for this commit.
 The ingest token is generated per run and passed to the container by variable name; it is not printed.
+
+**2026-11-11 additions (PR #153 verification, not in this folder's driver):** the socket-activated sshd journal and the 60 s outage runs were driven by scratch scripts, not committed. Limits: connection refused only, at most 40 records per run, shippers fed by `logger` on `/dev/log` or an appended file, the listener on the same host, Debian 13 only. See the Delivery guarantees table in `../README.md`.

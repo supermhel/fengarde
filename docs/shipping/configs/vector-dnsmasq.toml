@@ -1,5 +1,6 @@
 # Vector: dnsmasq/Pi-hole query log -> FENGARDE TCP syslog 5515. Linted and run live on Linux containers 2026-11-05 (README Verification log).
 # The file already carries "Mon DD HH:MM:SS dnsmasq[pid]: query[A] name from ip"; only a <PRI> is added.
+# Outage behaviour (measured 2026-11-11, README 'Delivery guarantees'): the TCP socket sink discards the events in flight when the connection drops (3 of 24 in a 60 s outage; a disk buffer did not help). The http sink with a disk buffer lost nothing. Use the http-based recipes (or a syslog-ng / rsyslog relay) if loss matters.
 [sources.dns]
 type = "file"
 include = ["/var/log/pihole/pihole.log"]

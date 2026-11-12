@@ -17,6 +17,7 @@ The example host `192.0.2.10` is a placeholder: see [Reaching ws1 from another h
 ```toml vector-dnsmasq.toml
 # Vector: dnsmasq/Pi-hole query log -> FENGARDE TCP syslog 5515. Linted and run live on Linux containers 2026-11-05 (README Verification log).
 # The file already carries "Mon DD HH:MM:SS dnsmasq[pid]: query[A] name from ip"; only a <PRI> is added.
+# Outage behaviour (measured 2026-11-11, README 'Delivery guarantees'): the TCP socket sink discards the events in flight when the connection drops (3 of 24 in a 60 s outage; a disk buffer did not help). The http sink with a disk buffer lost nothing. Use the http-based recipes (or a syslog-ng / rsyslog relay) if loss matters.
 [sources.dns]
 type = "file"
 include = ["/var/log/pihole/pihole.log"]
@@ -47,10 +48,16 @@ Vendor docs: <https://docs.fluentbit.io/manual/pipeline/outputs/syslog>. **Verif
 ```ini fluent-bit-dnsmasq.conf
 # Fluent Bit: dnsmasq/Pi-hole query log -> FENGARDE TCP syslog 5515. Linted and run live on Linux containers 2026-11-05 (README Verification log).
 # Observed (Fluent Bit 5.1.5): LF-terminated frames over TCP, each line wrapped as '<14>Mon DD HH:MM:SS pihole01 fluent-bit: <original line>'.
+# Outage handling (measured 2026-11-11, README 'Delivery guarantees'): Retry_Limit no_limits + filesystem storage + a tail DB. Create /var/lib/fluent-bit and make it writable by the Fluent Bit user first.
+[SERVICE]
+    storage.path  /var/lib/fluent-bit/storage/
+
 [INPUT]
     Name   tail
     Path   /var/log/pihole/pihole.log
     Tag    dns
+    DB            /var/lib/fluent-bit/dnsmasq.db
+    storage.type  filesystem
 
 [OUTPUT]
     Name                    syslog
@@ -62,6 +69,7 @@ Vendor docs: <https://docs.fluentbit.io/manual/pipeline/outputs/syslog>. **Verif
     Syslog_Message_Key      log
     Syslog_Hostname_Preset  pihole01
     Syslog_Appname_Preset   fluent-bit
+    Retry_Limit      no_limits
 ```
 
 Sample: [wrapped form](samples/dnsmasq.fluentbit-wrapped.syslog.txt) -- the wrapping header here was written from a template; the
