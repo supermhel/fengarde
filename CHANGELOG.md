@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security (2026-11-13, WP-6.2: tenant/role scoping for the dashboard's OpenSearch-direct routes — follow-up to PR #165)
+
+- **Console feeds are tenant-scoped.** nginx `/api/alerts`, `/api/events`, `/api/ai-triage`
+  no longer query OpenSearch directly behind an any-credential `auth_request`; they
+  proxy to new ws3 `GET /dashboard/alerts|events|ai-triage`, which return the same
+  OpenSearch-shaped body (console `api.ts` unchanged) filtered via
+  `_list_tenant_filter`: a session sees only its tenant, admin and the machine key see
+  all, anonymous gets 401 with RBAC on. New `StorageAdapter.dashboard_hits` (memory +
+  OpenSearch). The nginx `gte` map moved into ws3 (same rule: digits else 0).
+- **`/api/ops/*` and `/api/prom/*` are admin-only.** New ws3 `GET /auth/check-admin`
+  (key or admin session 200, anonymous 401, other roles 403) replaces
+  `/auth/check` as their `auth_request` target.
+- Behavior change: a missing index yields `200` with empty hits instead of
+  OpenSearch's `404` on those three console routes.
+- Tests: `services/ws3-indexer/test_dashboard_scope.py` (new), extended
+  `test_fix_read_plane.py`, `test_opensearch_list_default_filters.py`,
+  `test_route_decomposition.py`. Not run: a live console + OpenSearch end-to-end.
+
 ### Added (2026-11-04, WP-1.3: shipper adapters for real Fluent Bit / Winlogbeat / Docker shapes)
 
 - `services/ws2-normalization/adapters/` — four pure, total adapters that

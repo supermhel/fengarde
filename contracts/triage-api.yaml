@@ -88,6 +88,39 @@ paths:
             application/json:
               schema: { type: object, properties: { ok: { type: boolean } } }
         "401": { description: no valid session or API key }
+  /api/v1/auth/check-admin:
+    get:
+      summary: "Admin-only credential guard for nginx auth_request (WP-6.2). 200 for the FENGARDE_API_KEY (machine clients), an active session with role admin, or fully-disabled auth (RBAC off + key unset); 401 anonymous; 403 for a valid session of any other role. nginx gates /api/ops/* and /api/prom/* on it."
+      responses:
+        "200": { description: caller is admin or holds the API key }
+        "401": { description: no valid session or API key }
+        "403": { description: valid session, role is not admin }
+  /api/v1/dashboard/alerts:
+    get:
+      summary: "Console alert feed in OpenSearch response shape (WP-6.2; nginx /api/alerts proxies here). Newest 50 rule alerts (rule_title present) with time >= gte. Session callers are pinned to their own tenant; admin and the API key see all tenants (tenant_id may narrow). Invalid gte means 0."
+      parameters:
+        - { name: gte, in: query, schema: { type: integer, minimum: 0 }, description: epoch milliseconds lower bound }
+        - { name: tenant_id, in: query, schema: { type: string }, description: narrows admin/API-key callers only }
+      responses:
+        "200": { description: 'hits.hits[]._source alert documents' }
+        "401": { description: no valid session or API key }
+  /api/v1/dashboard/events:
+    get:
+      summary: "Console event feed in OpenSearch response shape (WP-6.2). Newest 100 events with time >= gte; same tenant scoping as /dashboard/alerts."
+      parameters:
+        - { name: gte, in: query, schema: { type: integer, minimum: 0 } }
+        - { name: tenant_id, in: query, schema: { type: string } }
+      responses:
+        "200": { description: 'hits.hits[]._source event documents' }
+        "401": { description: no valid session or API key }
+  /api/v1/dashboard/ai-triage:
+    get:
+      summary: "Console AI-triage feed in OpenSearch response shape (WP-6.2). Newest 200 alert docs whose alert_id starts ai-; same tenant scoping as /dashboard/alerts."
+      parameters:
+        - { name: tenant_id, in: query, schema: { type: string } }
+      responses:
+        "200": { description: 'hits.hits[]._source AI-triage documents' }
+        "401": { description: no valid session or API key }
   /api/v1/auth/mfa/enable:
     post:
       summary: "Provision a TOTP secret for the acting user (E3, 2026-08-06, opt-in). Requires, in the body, the acting user's own current password as a re-auth gate -- a session cookie alone cannot touch MFA config. Rate-limited per username (5 failures / 5 min, same budget as /auth/login)."
