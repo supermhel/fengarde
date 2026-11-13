@@ -27,5 +27,6 @@ conversation gets recorded once made).
 | [008](008-no-pydantic-shared-schema-package.md) | No shared pydantic schema package (JSON Schema + tolerant-reader stays) | Accepted (declined), live |
 | [009](009-entity-plane-bus-topics.md) | Entity/context plane — `entity.updates` + `incident.graph` v1 topics, WS-9 resolver | Accepted, live (Topic B payload superseded by 010) |
 | [010](010-incident-graph-v2-typed-causal-dag.md) | `incident.graph` v2 typed causal DAG (WS-9-canonical node identity, typed edge kinds) | Accepted (owner-ratified 2026-09-02, roadmap §5.2), live |
+| [011](011-ws8-edge-time-direction.md) | Event time on `incident.graph` v2 edges (optional `first_ts_ms`/`last_ts_ms`/evidence counts; WS-8 edge-time option C) | **Accepted 2026-11-13** (blanket owner decision; checklist items still open; no code yet) |
 
 Format: lightweight [Michael Nygard-style](https://cognitect.com/blog/2011/11/15/documenting-architecture-decisions) ADRs — Context / Decision / Consequences.
