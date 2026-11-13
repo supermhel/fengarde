@@ -1,9 +1,11 @@
 # ADR 012: Causal evidence keys (process tree, logon session, network flow, agent session) for the incident graph
 
-**Status:** Proposed. **Not Accepted: owner sign-off pending.** Nothing in
-`services/`, `contracts/` or `eval/` changes until the owner ticks the checklist
-at the end. **Date:** 2026-11-06. **Builds on:** ADR-011 (event-time ordering of
-graph evidence; also Proposed, so this ADR is conditional on it). **Amends, if
+**Status:** Accepted by the owner on 2026-11-13, as ONE blanket decision given in chat
+("PRs oeffnen, Status Accepted"), together with ADR-011, which this ADR depends on. The
+sign-off checklist at the end was NOT ticked item by item and stays open as the
+list of sub-decisions and conditions. Accepting changes no file in `services/`,
+`contracts/` or `eval/`; each of those changes needs its own work package and PR. **Date:** 2026-11-06. **Builds on:** ADR-011 (event-time ordering of
+graph evidence; Accepted 2026-11-13). **Amends, if
 accepted:** the no-transitive-inference rule of ADR-009 / ADR-010 by adding ONE
 narrowly defined exception (cross-alert link on an equal causal key), and the
 `incident.graph` v2 payload (additive optional field `links[]`; `version` stays
@@ -583,7 +585,7 @@ Tick each line (or edit it) before any code starts.
 
 ## Status
 
-Proposed 2026-11-06 (revised 2026-11-07 after review). Awaiting owner sign-off.
+Proposed 2026-11-06 (revised 2026-11-07 after review). Accepted 2026-11-13 by blanket owner decision (checklist items open).
 No code, contract, schema or eval file is changed by this document.
 
 **Review status.** An independent Opus review of 2026-11-06 found six issues;

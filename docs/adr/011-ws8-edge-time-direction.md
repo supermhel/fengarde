@@ -1,8 +1,12 @@
 # ADR 011: Event time on `incident.graph` edges (WS-8 edge-time, option C)
 
-**Status:** Proposed. **Not Accepted: owner sign-off pending.** Nothing in
-`services/`, `contracts/` or `eval/` changes until the owner ticks the
-checklist at the end. **Date:** 2026-11-06. **Amends, if accepted:** the
+**Status:** Accepted by the owner on 2026-11-13, as ONE blanket decision given in
+chat ("PRs oeffnen, Status Accepted"). The 13 items of the sign-off checklist at the
+end were NOT ticked one by one and stay unticked: they are the open sub-decisions and
+the conditions the text above attaches to option C (notably item 2, the n gap, and
+item 4, that the four edge fields alone probably cannot reach the 0.5 gate). Accepting
+does not change any file in `services/`, `contracts/` or `eval/`; each of those
+changes still needs its own work package and PR. **Date:** 2026-11-06. **Amends, if accepted:** the
 `incident.graph` v2 payload of ADR-010 (additive optional edge fields only;
 `version` stays 2). Everything else in ADR-009 / ADR-010 (no transitive
 inference, tracks never merge, the `incidents` payload, partition key) is kept.
