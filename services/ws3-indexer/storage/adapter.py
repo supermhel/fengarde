@@ -274,3 +274,17 @@ class StorageAdapter(abc.ABC):
         index ``family`` (``bank``/``dc``/``common``) and/or ``tenant_id``.
         Same "not free-text search" and "caller clamps limit" notes as
         :meth:`list_alerts` apply."""
+
+    # WP-6.2: the dashboard's three fixed reads (formerly inline OpenSearch
+    # queries in nginx). Not abstract: an adapter that lacks it just 501s the
+    # /dashboard/* routes instead of breaking every other subclass.
+    DASHBOARD_KINDS = {"alerts": 50, "events": 100, "ai-triage": 200}
+
+    def dashboard_hits(self, kind: str, *, tenant_id: str | None = None,
+                       gte_ms: int = 0) -> list[dict]:
+        """Newest-first documents for the console feed ``kind``:
+        ``alerts`` (rule alerts, i.e. with ``rule_title``, ``time >= gte_ms``,
+        50), ``events`` (``time >= gte_ms``, 100) or ``ai-triage`` (alert docs
+        whose ``alert_id`` starts ``ai-``, 200). ``tenant_id=None`` = every
+        tenant; callers enforcing RBAC must pass the session's own tenant."""
+        raise NotImplementedError

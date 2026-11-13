@@ -92,6 +92,7 @@ from __future__ import annotations
 import hmac
 import json
 import os
+import re
 import sys
 import threading
 import time
@@ -242,6 +243,10 @@ def _default_triage() -> dict:
 ROUTE_INVENTORY: list[tuple[str, str, bool]] = [
     ("GET", "/auth/me", True),
     ("GET", "/auth/check", False),
+    ("GET", "/auth/check-admin", False),
+    ("GET", "/dashboard/alerts", False),
+    ("GET", "/dashboard/events", False),
+    ("GET", "/dashboard/ai-triage", False),
     ("GET", "/alerts", False),
     ("GET", "/incidents", False),
     ("GET", "/events", False),
@@ -326,18 +331,77 @@ def route_auth_check(self):
     routes, so it must not inherit that fail-open default. The one remaining
     open state is RBAC off AND key unset (auth fully disabled, documented).
     No tenant/role scoping happens here: any valid credential passes (see
-    SECURITY.md, "Dashboard session gate").
+    SECURITY.md, "Dashboard session gate"). Since WP-6.2 nothing in nginx
+    uses this any-credential check any more (the OpenSearch-direct routes
+    moved to tenant-scoped /dashboard/*; /api/ops and /api/prom use
+    /auth/check-admin); it stays as the generic "is there a valid credential"
+    probe.
     """
+    kind, _ = _principal(self)
+    if kind is None:
+        return self._send(401, {"error": "unauthorized"})
+    return self._send(200, {"ok": True, "auth": kind})
+
+
+def _principal(self):
+    """Who is calling: (kind, session). kind is "api-key" (machine, valid
+    FENGARDE_API_KEY), "session" (active RBAC session), "disabled" (RBAC off
+    AND key unset: auth fully disabled, documented zero-config demo), or None
+    (anonymous / bad credential -> caller must 401). Never open when RBAC is
+    on, even with the key unset (review F165-1)."""
     key_set = bool(os.getenv("FENGARDE_API_KEY"))
     if key_set and check_api_key(self.headers):
-        return self._send(200, {"ok": True, "auth": "api-key"})
+        return "api-key", None
     if self.deps.rbac_enabled:
-        if self._current_session() is not None:
-            return self._send(200, {"ok": True, "auth": "session"})
-        return self._send(401, {"error": "unauthorized"})
+        session = self._current_session()
+        return ("session", session) if session is not None else (None, None)
     if not key_set:
-        return self._send(200, {"ok": True, "auth": "disabled"})
-    return self._send(401, {"error": "unauthorized"})
+        return "disabled", None
+    return None, None
+
+
+def route_auth_check_admin(self):
+    """GET /auth/check-admin -- admin-only credential gate for nginx
+    auth_request in front of /api/ops/* and /api/prom/*. 200 for a machine
+    key holder, an admin session, or fully disabled auth; 401 anonymous;
+    403 for a valid session of any other role."""
+    kind, session = _principal(self)
+    if kind is None:
+        return self._send(401, {"error": "unauthorized"})
+    if kind == "session" and session.role != "admin":
+        return self._send(403, {"error": "admin only"})
+    return self._send(200, {"ok": True, "auth": kind})
+
+
+_GTE_RE = re.compile(r"[0-9]{1,15}")
+
+
+def _dashboard_route(kind: str):
+    def route(self):
+        """GET /dashboard/{alerts,events,ai-triage}[?gte=<epoch ms>] -- the
+        console feeds that nginx used to fetch straight from OpenSearch
+        (WP-6.2), same `{"hits":{"hits":[{"_source":..}]}}` body, now
+        tenant-scoped: a session is pinned to its own tenant (admin and the
+        machine key see every tenant; `tenant_id` can only narrow those two).
+        An invalid/absent `gte` means 0, like the old nginx map."""
+        who, session = _principal(self)
+        if who is None or (session is not None and not role_at_least(session.role, "read_only")):
+            return self._send(401, {"error": "unauthorized"})
+        q = parse_qs(self._query())
+        tenant_id = self._list_tenant_filter(session or True, q.get("tenant_id", [None])[0])
+        raw = q.get("gte", ["0"])[0]
+        gte = int(raw) if _GTE_RE.fullmatch(raw) else 0
+        try:
+            docs = self.deps.store.dashboard_hits(kind, tenant_id=tenant_id, gte_ms=gte)
+        except NotImplementedError:
+            return self._send(501, {"error": "storage adapter has no dashboard feed"})
+        return self._send(200, {"hits": {"hits": [{"_source": d} for d in docs]}})
+    return route
+
+
+route_dashboard_alerts = _dashboard_route("alerts")
+route_dashboard_events = _dashboard_route("events")
+route_dashboard_ai_triage = _dashboard_route("ai-triage")
 
 
 def route_get_report(self, alert_id: str):
@@ -1201,6 +1265,14 @@ class Handler(BaseHTTPRequestHandler):
     def _route_get(self, path: str):
         if path == "/auth/check":
             return route_auth_check(self)
+        if path == "/auth/check-admin":
+            return route_auth_check_admin(self)
+        if path == "/dashboard/alerts":
+            return route_dashboard_alerts(self)
+        if path == "/dashboard/events":
+            return route_dashboard_events(self)
+        if path == "/dashboard/ai-triage":
+            return route_dashboard_ai_triage(self)
         if path == "/alerts":
             return route_list_alerts(self)
         if path == "/incidents":

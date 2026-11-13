@@ -36,10 +36,8 @@
 # through to "0" (epoch start = no effective lower bound), the same
 # unrestricted-by-time behavior every endpoint had before this feature
 # existed, never a query that raises or silently drops real data.
-map $arg_gte $fengarde_gte_ms {
-    default "0";
-    ~^[0-9]+$ $arg_gte;
-}
+# WP-6.2: that validation now lives in ws3 /dashboard/* (triage_api.py,
+# _GTE_RE): same rule, so the nginx `map` that used to do it is gone.
 
 server {
     listen 80;
@@ -97,46 +95,30 @@ server {
     # on every route (ws3/auth request still accepts X-Api-Key). Ws3 is the
     # single auth authority; nginx no longer compares the key itself except
     # as an nginx auth_request that passes the request through to ws3's
-    # /auth/check (key-OR-session) for routes that reach an auth-less
-    # upstream (OpenSearch reads, ops metrics, Prometheus) so those stay
-    # authenticated without re-introducing a browser-side key.
+    # /auth/check-admin (admin session or machine key only) for the routes
+    # that reach an auth-less upstream (ops metrics, Prometheus).
     #
-    # DX4: same-origin live-alerts endpoint. The front end fetches /api/alerts and
-    # nginx proxies it to OpenSearch's alerts-* search. The upstream is resolved at
-    # request time via Docker's embedded DNS (127.0.0.11) so nginx still starts even
-    # if OpenSearch is not yet up.
+    # WP-6.2: the console feeds /api/alerts, /api/events and /api/ai-triage
+    # used to go STRAIGHT to OpenSearch behind an any-credential auth_request,
+    # so a tenant-A session could read tenant B. They are now plain proxies to
+    # ws3 /dashboard/* (same OpenSearch-shaped body), which authenticates and
+    # applies the session's tenant scope itself -- so there is deliberately no
+    # auth_request here. The upstream is a variable (resolved at request time
+    # via Docker's embedded DNS, 127.0.0.11) so nginx starts before ws3 is up;
+    # `rewrite ... break` keeps the client's ?gte= query string, which a
+    # variable proxy_pass would otherwise drop.
     location = /api/alerts {
-        # Use a variable so nginx defers DNS resolution until request time (Docker's
-        # embedded DNS 127.0.0.11). Without the variable, nginx resolves `opensearch`
-        # at startup and fails if the container isn't up yet.
         resolver 127.0.0.11 ipv6=off valid=30s;
-        set $opensearch "http://${OPENSEARCH_HOST}";
-
-        # POST a JSON query body — the only reliable way to pass query params when
-        # using a variable upstream. With a variable, nginx ignores any query string
-        # appended to proxy_pass, so URI-search params are silently dropped.
-        # This query: newest 50 real rule alerts (excludes ai.results which lack rule_title).
-        # SECURITY FIX (WP-6.1): this location talks STRAIGHT to OpenSearch
-        # (which never checks X-Api-Key -- DISABLE_SECURITY_PLUGIN=true), so
-        # the nginx X-Api-Key comparison is replaced by an auth_request to
-        # ws3's /auth/check, the single auth authority: it accepts a valid
-        # X-Api-Key (machine clients) OR an active RBAC session cookie
-        # (browsers, option C). A caller with neither gets 401 here before
-        # OpenSearch is ever reached -- OpenSearch itself cannot enforce
-        # this. The subrequest carries the client's Cookie and X-Api-Key
-        # headers through the /api/auth/ proxy to ws3 /auth/check.
-        auth_request /api/auth/check;
-
-        proxy_pass $opensearch/alerts-*/_search;
-        proxy_method POST;
-        proxy_set_header Content-Type "application/json";
+        set $ws3_dashboard "http://ws3-indexer:${WS3_TRIAGE_PORT}";
+        rewrite ^/api/alerts$ /dashboard/alerts break;
+        proxy_pass $ws3_dashboard;
         proxy_set_header Host $host;
-        proxy_set_body '{"size":50,"sort":[{"time":"desc"}],"query":{"bool":{"filter":[{"exists":{"field":"rule_title"}},{"range":{"time":{"gte":$fengarde_gte_ms}}}]}}}';
+        proxy_set_header X-Api-Key $http_x_api_key;
+        proxy_set_header X-Forwarded-For $remote_addr;
 
         # Keep the dashboard resilient: on 5xx / timeout return an empty hits array so
-        # the front end falls back to mock data. NOTE: a 404 from OpenSearch (index not
-        # yet created on a fresh stack) is NOT intercepted here — it passes through as
-        # 404, and the JS `r.ok` check (false for 404) correctly falls back to mock data.
+        # the front end falls back to mock data. A 4xx (401 anonymous, 404, 501) is NOT
+        # intercepted: the JS `r.ok` check (false) correctly falls back / signs out.
         proxy_connect_timeout 3s;
         proxy_read_timeout 5s;
         proxy_intercept_errors on;
@@ -160,13 +142,12 @@ server {
     # shared event_ids field (getAiTriage()/attachAiTriage() in index.html).
     location = /api/ai-triage {
         resolver 127.0.0.11 ipv6=off valid=30s;
-        set $opensearch "http://${OPENSEARCH_HOST}";
-        auth_request /api/auth/check;
-        proxy_pass $opensearch/alerts-*/_search;
-        proxy_method POST;
-        proxy_set_header Content-Type "application/json";
+        set $ws3_dashboard "http://ws3-indexer:${WS3_TRIAGE_PORT}";
+        rewrite ^/api/ai-triage$ /dashboard/ai-triage break;
+        proxy_pass $ws3_dashboard;
         proxy_set_header Host $host;
-        proxy_set_body '{"size":200,"sort":[{"time":"desc"}],"query":{"prefix":{"alert_id":"ai-"}}}';
+        proxy_set_header X-Api-Key $http_x_api_key;
+        proxy_set_header X-Forwarded-For $remote_addr;
         proxy_connect_timeout 3s;
         proxy_read_timeout 5s;
         proxy_intercept_errors on;
@@ -179,13 +160,12 @@ server {
     # subset (alerts) was. Same time-range map as /api/alerts.
     location = /api/events {
         resolver 127.0.0.11 ipv6=off valid=30s;
-        set $opensearch "http://${OPENSEARCH_HOST}";
-        auth_request /api/auth/check;
-        proxy_pass $opensearch/events-*/_search;
-        proxy_method POST;
-        proxy_set_header Content-Type "application/json";
+        set $ws3_dashboard "http://ws3-indexer:${WS3_TRIAGE_PORT}";
+        rewrite ^/api/events$ /dashboard/events break;
+        proxy_pass $ws3_dashboard;
         proxy_set_header Host $host;
-        proxy_set_body '{"size":100,"sort":[{"time":"desc"}],"query":{"range":{"time":{"gte":$fengarde_gte_ms}}}}';
+        proxy_set_header X-Api-Key $http_x_api_key;
+        proxy_set_header X-Forwarded-For $remote_addr;
         proxy_connect_timeout 3s;
         proxy_read_timeout 5s;
         proxy_intercept_errors on;
@@ -421,7 +401,7 @@ server {
     location /api/ops/ws1 {
         resolver 127.0.0.11 ipv6=off valid=30s;
         set $ws1_ops "http://ws1-collectors:8001";
-        auth_request /api/auth/check;
+        auth_request /api/auth/check-admin;
         rewrite ^/api/ops/ws1$ /metrics break;
         proxy_pass $ws1_ops;
         proxy_set_header Host $host;
@@ -431,7 +411,7 @@ server {
     location /api/ops/ws2 {
         resolver 127.0.0.11 ipv6=off valid=30s;
         set $ws2_ops "http://ws2-normalization:8002";
-        auth_request /api/auth/check;
+        auth_request /api/auth/check-admin;
         rewrite ^/api/ops/ws2$ /metrics break;
         proxy_pass $ws2_ops;
         proxy_set_header Host $host;
@@ -441,7 +421,7 @@ server {
     location /api/ops/ws3 {
         resolver 127.0.0.11 ipv6=off valid=30s;
         set $ws3_ops "http://ws3-indexer:8003";
-        auth_request /api/auth/check;
+        auth_request /api/auth/check-admin;
         rewrite ^/api/ops/ws3$ /metrics break;
         proxy_pass $ws3_ops;
         proxy_set_header Host $host;
@@ -451,7 +431,7 @@ server {
     location /api/ops/ws4 {
         resolver 127.0.0.11 ipv6=off valid=30s;
         set $ws4_ops "http://ws4-detection:8004";
-        auth_request /api/auth/check;
+        auth_request /api/auth/check-admin;
         rewrite ^/api/ops/ws4$ /metrics break;
         proxy_pass $ws4_ops;
         proxy_set_header Host $host;
@@ -465,7 +445,7 @@ server {
         # view fully green. Same shape/gate as the other five.
         resolver 127.0.0.11 ipv6=off valid=30s;
         set $ws5_ops "http://ws5-ai:8005";
-        auth_request /api/auth/check;
+        auth_request /api/auth/check-admin;
         rewrite ^/api/ops/ws5$ /metrics break;
         proxy_pass $ws5_ops;
         proxy_set_header Host $host;
@@ -475,7 +455,7 @@ server {
     location /api/ops/ws8 {
         resolver 127.0.0.11 ipv6=off valid=30s;
         set $ws8_ops "http://ws8-correlation:8008";
-        auth_request /api/auth/check;
+        auth_request /api/auth/check-admin;
         rewrite ^/api/ops/ws8$ /metrics break;
         proxy_pass $ws8_ops;
         proxy_set_header Host $host;
@@ -506,7 +486,7 @@ server {
         resolver 127.0.0.11 ipv6=off valid=30s;
         resolver_timeout 1s;  # profile off -> fail fast so the panel says "not reachable" instead of waiting
         set $prometheus "http://prometheus:9090";
-        auth_request /api/auth/check;
+        auth_request /api/auth/check-admin;
         rewrite ^/api/prom/(.*)$ /$1 break;
         proxy_pass $prometheus;
         proxy_set_header Host $host;
