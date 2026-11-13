@@ -191,6 +191,9 @@ echo
 echo "== M4.2 RBAC: login/logout/roles/tenant isolation (real HTTP) =="; LAST_HEADER="== M4.2 RBAC: login/logout/roles/tenant isolation (real HTTP) =="
 $PY services/ws3-indexer/test_rbac_api.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
+echo "== WP-6.2 dashboard tenant scoping: /dashboard/* + /auth/check-admin (real HTTP) =="; LAST_HEADER="== WP-6.2 dashboard tenant scoping: /dashboard/* + /auth/check-admin (real HTTP) =="
+$PY services/ws3-indexer/test_dashboard_scope.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
 echo "== admin API: users CRUD + last-admin guard + session revocation, redacted webhooks, rule on/off (real HTTP) =="; LAST_HEADER="== admin API: users CRUD + last-admin guard + session revocation, redacted webhooks, rule on/off (real HTTP) =="
 $PY services/ws3-indexer/test_admin_api.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo

@@ -553,22 +553,36 @@ Read the limits before exposing port 8080:
 - **Sessions require RBAC.** With RBAC off the browser has no credential and the
   gated routes answer 401 if a key is set (or are open if no key is set either,
   the zero-config demo).
-- **Gated routes.** `/api/alerts`, `/api/events`, `/api/ai-triage`, `/api/ops/*`
-  and `/api/prom/*` reach auth-less upstreams (OpenSearch, service `/metrics`,
-  Prometheus). nginx guards them with `auth_request /api/auth/check`, answered by
-  ws3 `GET /auth/check`: 200 only for a valid `X-Api-Key` (key set) or an active
-  session (RBAC on); otherwise 401. With RBAC on and the key unset an anonymous
-  caller gets 401 (fixed in review of PR #165; regression test
-  `test_rbac_api.py::test_auth_check_anonymous_401_when_rbac_on_key_unset`).
-- **Known limit: no role or tenant scoping on those routes.** Any valid session,
-  including a `read_only` user of one tenant, passes the gate. `/api/alerts` and
-  `/api/events` query OpenSearch directly with no tenant filter, so such a user
-  can read alerts and events of all tenants there, and can read `/api/ops/*` and
-  the Prometheus allowlist (operator data). ws3's own routes (`/api/triage/*`,
-  incidents, entities, audit) do enforce role and tenant. Verified here only at
-  the ws3 level (the gate accepts a `read_only` tenant session); the nginx and
-  OpenSearch side is from reading the config, not run against a live stack. Do not
-  rely on multi-tenant isolation through these routes.
+- **Console feeds are tenant-scoped (WP-6.2).** `/api/alerts`, `/api/events` and
+  `/api/ai-triage` no longer go from nginx straight to OpenSearch. nginx proxies
+  them to ws3 `GET /dashboard/{alerts,events,ai-triage}`, which authenticates the
+  caller itself and returns the same OpenSearch-shaped body filtered by the
+  session's tenant (a non-admin session is pinned to its own tenant; a
+  `tenant_id` query parameter cannot widen it; `admin` and a valid
+  `FENGARDE_API_KEY` see all tenants). Anonymous callers get 401 whenever RBAC
+  is on, with or without a key set. Proven by
+  `services/ws3-indexer/test_dashboard_scope.py` (real HTTP, memory store, two
+  tenants) and `services/ws7-dashboard/test_fix_read_plane.py` (template has no
+  OpenSearch upstream or `auth_request` on those locations).
+- **Admin-only operator routes (WP-6.2).** `/api/ops/*` and `/api/prom/*` reach
+  auth-less upstreams (service `/metrics`, Prometheus). nginx guards them with
+  `auth_request /api/auth/check-admin`, answered by ws3 `GET /auth/check-admin`:
+  200 only for a valid `X-Api-Key` (key set) or an `admin` session; 401
+  anonymous; 403 for any other role. With RBAC on and the key unset an anonymous
+  caller gets 401 (same fail-closed rule as `GET /auth/check`, fixed in review
+  of PR #165). `GET /auth/check` (any valid credential) still exists but no
+  nginx location uses it any more.
+- **RBAC off.** With RBAC off and no key (zero-config demo) the new routes are
+  open and unscoped, as before; with RBAC off and a key set they need the key.
+- **What still holds.** OpenSearch itself has no authentication
+  (`DISABLE_SECURITY_PLUGIN=true` in the compose stack): anyone who can reach
+  port 9200 directly bypasses all of the above, so do not publish it. Tenant
+  scoping applies to documents by their `tenant_id` (events: `siem.tenant`); a
+  document stored without one is treated as tenant `default`, as in the other
+  list routes. The scoping was tested against the in-memory store and the
+  OpenSearch query bodies (wire-format test) and the nginx config with
+  `nginx -t`; it has NOT been exercised against a live OpenSearch + console
+  stack.
 - **Availability coupling.** Each gated request makes a sub-request to ws3. If ws3
   is down or rate-limiting, those panels fail (nginx returns 500; fail-closed).
 - **Cookie flags.** The session cookie is `HttpOnly; SameSite=Strict`, no expiry

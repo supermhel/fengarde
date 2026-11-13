@@ -79,23 +79,35 @@ def run():
     check("proxy_set_header X-Api-Key $http_x_api_key;" in tpl,
           "wp-6.1: machine-client X-Api-Key is no longer forwarded to ws3")
 
-    # ---- WP-6.1: auth_request guard on the auth-less upstreams ----------------
-    # OpenSearch direct-read routes (OpenSearch has no auth of its own).
-    for loc in (" = /api/alerts {", " = /api/events {", " = /api/ai-triage {"):
+    # ---- WP-6.2: dashboard reads go through ws3 (tenant-scoped), NOT OpenSearch ----
+    # ws3 authenticates and scopes these itself, so no nginx auth_request and no
+    # direct OpenSearch upstream: a tenant-A session must not be able to read tenant B.
+    for loc, up in ((" = /api/alerts {", "/dashboard/alerts"),
+                    (" = /api/events {", "/dashboard/events"),
+                    (" = /api/ai-triage {", "/dashboard/ai-triage")):
         b = block(tpl, f"location{loc}")
-        check("auth_request /api/auth/check;" in b,
-              f"wp-6.1: {loc.strip()} lacks the auth_request /auth/check guard")
-        check('if ($http_x_api_key != "' not in b,
-              f"wp-6.1: {loc.strip()} still carries the old X-Api-Key gate")
-    # Ops health endpoints + Prometheus -- auth_request too.
-    for loc in ("location /api/ops/ws1 {", "location /api/ops/ws8 {",
+        check(bool(b), f"wp-6.2: location{loc} missing")
+        check("auth_request" not in b, f"wp-6.2: {loc.strip()} still uses auth_request (ws3 gates it)")
+        check("$opensearch" not in b and "_search" not in b and "proxy_set_body" not in b,
+              f"wp-6.2: {loc.strip()} still talks to OpenSearch directly")
+        check(f"rewrite ^{loc.split()[1]}$ {up} break;" in b,
+              f"wp-6.2: {loc.strip()} does not rewrite to ws3 {up}")
+        check("proxy_pass $ws3_dashboard;" in b, f"wp-6.2: {loc.strip()} lacks proxy_pass to ws3")
+        check("proxy_set_header X-Api-Key $http_x_api_key;" in b,
+              f"wp-6.2: {loc.strip()} does not forward the caller's key")
+        check("error_page 502 503 504 = @alerts_unavailable;" in b,
+              f"wp-6.2: {loc.strip()} lost the empty-hits fallback")
+    check('"hits":{"hits":[]}' in block(tpl, "location @alerts_unavailable {"),
+          "wp-6.2: @alerts_unavailable fallback body changed")
+    # Ops health endpoints + Prometheus: auth-less upstreams, ADMIN-only now.
+    for loc in ("location /api/ops/ws1 {", "location /api/ops/ws2 {", "location /api/ops/ws3 {",
+                "location /api/ops/ws4 {", "location /api/ops/ws5 {", "location /api/ops/ws8 {",
                 "location ~ ^/api/prom/api/v1/(targets|query)$ {"):
         b = block(tpl, loc)
-        check("auth_request /api/auth/check;" in b,
-              f"wp-6.1: {loc} lacks the auth_request /auth/check guard")
-    ops_8 = block(tpl, "location /api/ops/ws8 {")
-    check("auth_request /api/auth/check;" in ops_8,
-          "wp-6.1: ws8 ops route is not gated behind auth_request")
+        check("auth_request /api/auth/check-admin;" in b,
+              f"wp-6.2: {loc} lacks the admin-only auth_request guard")
+    check("auth_request /api/auth/check;" not in tpl,
+          "wp-6.2: some location still uses the any-credential /auth/check guard")
 
     # ws3-served routes must NOT be nginx-key-gated (ws3 enforces key-or-session).
     ws3_locs = ("location /api/triage/ {", "location /api/rules {",
@@ -116,9 +128,8 @@ def run():
     # replacement that eats the location's upstream (live-caught on WP-6.1:
     # /api/ai-triage 404'd from nginx for exactly this reason) is a regression
     # no syntax check can catch, since a proxyless location is valid nginx.
-    for loc in (" = /api/alerts {", " = /api/events {", " = /api/ai-triage {",
-                "location /api/ops/ws1 {", "location /api/ops/ws8 {"):
-        anchor = f"location{loc}" if loc.startswith(" =") else loc
+    for loc in ("location /api/ops/ws1 {", "location /api/ops/ws8 {"):
+        anchor = loc
         b = block(tpl, anchor)
         check("proxy_pass" in b,
               f"wp-6.1: {anchor} lost its proxy_pass when the gate was replaced")
@@ -160,8 +171,8 @@ def run():
         check(rx.match(p) is None, f"prom: allowlist regex admits {p}")
     check(re.search(r"limit_except GET \{\s*deny all;\s*\}", allow) is not None,
           "prom: allowlist location does not restrict to GET (HEAD implied)")
-    check("auth_request /api/auth/check;" in allow,
-          "prom: allowlist location lacks the auth_request /auth/check guard")
+    check("auth_request /api/auth/check-admin;" in allow,
+          "prom: allowlist location lacks the admin-only auth_request guard")
     check("resolver 127.0.0.11" in allow and 'set $prometheus "http://prometheus:9090";' in allow
           and "proxy_pass $prometheus;" in allow,
           "prom: upstream not resolved at request time via a variable (nginx would fail to start without prometheus)")

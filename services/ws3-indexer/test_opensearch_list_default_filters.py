@@ -112,7 +112,36 @@ def test_list_alerts_still_has_default_filters():
           "list_alerts must still emit the default-tenant should-clause")
 
 
+def test_dashboard_hits_wire_format():
+    """WP-6.2: the three console feeds reproduce the queries nginx used to send
+    to OpenSearch (same index, size, filters) PLUS the tenant term."""
+    store = _make_store()
+    store.dashboard_hits("alerts", tenant_id="acme", gte_ms=123)
+    m, path, body = store._request.calls[-1]
+    check(path == "/alerts-*/_search" and body["size"] == 50, f"alerts target {path} {body['size']}")
+    must = body["query"]["bool"]["must"]
+    check({"term": {"tenant_id": "acme"}} in must, f"alerts lacks tenant term: {must}")
+    check({"exists": {"field": "rule_title"}} in must, "alerts lacks exists rule_title")
+    check({"range": {"time": {"gte": 123}}} in must, "alerts lacks time range")
+    store.dashboard_hits("events", tenant_id="acme", gte_ms=7)
+    _, path, body = store._request.calls[-1]
+    must = body["query"]["bool"]["must"]
+    check(path == "/events-*/_search" and body["size"] == 100, f"events target {path}")
+    check({"term": {"siem.tenant": "acme"}} in must and {"range": {"time": {"gte": 7}}} in must,
+          f"events clauses {must}")
+    store.dashboard_hits("ai-triage", tenant_id="acme")
+    _, path, body = store._request.calls[-1]
+    must = body["query"]["bool"]["must"]
+    check(path == "/alerts-*/_search" and body["size"] == 200, f"ai target {path}")
+    check({"prefix": {"alert_id": "ai-"}} in must and {"term": {"tenant_id": "acme"}} in must,
+          f"ai clauses {must}")
+    store.dashboard_hits("ai-triage", tenant_id=None)
+    must = store._request.calls[-1][2]["query"]["bool"]["must"]
+    check(must == [{"prefix": {"alert_id": "ai-"}}], f"all-tenant ai query must have no tenant term: {must}")
+
+
 def main():
+    test_dashboard_hits_wire_format()
     test_list_incidents_default_tenant_gets_should_clause()
     test_list_events_default_tenant_gets_should_clause()
     test_list_events_scoped_tenant_uses_plain_term()

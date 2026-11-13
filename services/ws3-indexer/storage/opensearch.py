@@ -778,7 +778,9 @@ class OpenSearchStore(StorageAdapter):
     # storage/test_opensearch_live.py where relevant (`make test-live`).
     def _list(self, index_pattern: str, term_filters: dict, limit: int,
               sort_field: str = "time",
-              default_filters: dict | None = None) -> list[dict]:
+              default_filters: dict | None = None,
+              extra_must: list[dict] | None = None) -> list[dict]:
+        # `extra_must`: additional ready-made query clauses (WP-6.2 dashboard feeds).
         # `default_filters` (e.g. {"tenant_id": "default", "triage.status":
         # "new"}): when a caller asks for the DEFAULT value of a field that
         # MemoryStore materializes (default tenant / initial triage) but
@@ -801,6 +803,7 @@ class OpenSearchStore(StorageAdapter):
             else:
                 clause = {"term": {k: v}}
             must.append(clause)
+        must.extend(extra_must or [])
         query = {"bool": {"must": must}} if must else {"match_all": {}}
         body = {
             "size": max(1, min(int(limit), 200)),
@@ -859,3 +862,17 @@ class OpenSearchStore(StorageAdapter):
         # carry tenant under siem.tenant, not top-level tenant_id.
         return self._list(pattern, filters, limit,
                           default_filters={"siem.tenant": "default"})
+
+    def dashboard_hits(self, kind: str, *, tenant_id: str | None = None,
+                       gte_ms: int = 0) -> list[dict]:
+        # Same queries nginx used to send straight to OpenSearch (WP-6.2 moved
+        # them here so the tenant filter is applied server-side).
+        rng = {"range": {"time": {"gte": gte_ms}}}
+        limit = self.DASHBOARD_KINDS[kind]
+        if kind == "events":
+            return self._list("events-*", {"siem.tenant": tenant_id}, limit,
+                              default_filters={"siem.tenant": "default"}, extra_must=[rng])
+        extra: list[dict] = ([{"exists": {"field": "rule_title"}}, rng] if kind == "alerts"
+                             else [{"prefix": {"alert_id": "ai-"}}])
+        return self._list("alerts-*", {"tenant_id": tenant_id}, limit,
+                          default_filters={"tenant_id": "default"}, extra_must=extra)
