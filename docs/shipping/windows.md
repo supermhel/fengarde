@@ -6,12 +6,11 @@
 > fixtures / templates, except [windows-application.fluentbit.json](samples/windows-application.fluentbit.json), captured from Fluent Bit 4.2.8 on Windows 11 ([sample provenance](README.md#sample-provenance)). `tools/test_shipping_recipes.py` runs them through WS-2.
 > **Windows, run once on 2026-11-05 (Windows 11, Fluent Bit 4.2.8, normal user, Application and System channels only):** the `winevtlog` input exists in the
 > Windows build and a modified copy of this config (`Channels Application,System`; the committed file lists `Security`, `System` and Sysmon) ran against a real ws1 listener; the shape Fluent Bit actually emits differed from what the adapter assumed (event data is nested under `EventData`) and the
-> adapter was fixed. **NOT run in that first pass:** the `Security` channel (needs an administrator), the Sysmon channel (not installed), Fluent Bit 5.x on Windows (5.1.5 would not start here), TLS.
-> **Second Windows run, 2026-11-13 (Windows 11 de-DE, Fluent Bit 4.2.8, administrator, Sysmon installed):** the `Security` channel did run (4624, 4625, 4688, 4720 seen) and so did Sysmon (EventIDs 1, 3, 5, 11 seen). It found that Security 4625 (failed logon) was dropped; fixed below. Still **NOT run:** Fluent Bit 5.x on Windows, a real DST boundary, TLS, a real Winlogbeat.
+> adapter was fixed. **NOT run in that first pass:** the `Security` channel (needs an administrator), the Sysmon channel (not installed), Fluent Bit 5.x on Windows (5.1.5 would not start here; it did run on 2026-11-13, below), TLS.
+> **Second Windows run, 2026-11-13 (Windows 11 de-DE, Fluent Bit 4.2.8, administrator, Sysmon installed):** the `Security` channel did run (4624, 4625, 4688, 4720 seen) and so did Sysmon (EventIDs 1, 3, 5, 11 seen). It found that Security 4625 (failed logon) was dropped; fixed below. **Fluent Bit 5.1.5 on Windows ran the same day** and produced records with the same keys and the same WS-2 results. Security 4798 (~3,100 records, unmapped) is dropped by a Lua filter in the config (tested on Linux only). Security 4648 is not mapped (3 records). Still **NOT run:** a real DST boundary, TLS, a real Winlogbeat, the 4798 filter on the Windows build.
 > See the [Verification log](README.md#verification-log).
 >
-> **The committed `fluent-bit-windows.conf` lists `Security`, `System` and `Microsoft-Windows-Sysmon/Operational`, but that exact file was never run.** The live run used a copy with `Channels Application,System` and the same other options
-> (so only `System` of the committed three was ever read; Security needs an administrator account and Sysmon was not installed; `Application` is not in the recipe because the events the parser maps do not come from that channel). `Ignore_Missing_Channels true` is there because a missing channel otherwise stops the whole input.
+> **The `[INPUT]` of the committed `fluent-bit-windows.conf` (`Security`, `System`, `Microsoft-Windows-Sysmon/Operational`) ran as written on 2026-11-13** (administrator, Sysmon installed, Fluent Bit 4.2.8 and 5.1.5; the lab wrote to a local file instead of the `http` output). The `[OUTPUT]` section and the Lua 4798 filter were not run as written on Windows. `Ignore_Missing_Channels true` is there because a missing channel otherwise stops the whole input.
 
 The example host `192.0.2.10` is a placeholder: see [Reaching ws1 from another host](README.md#reaching-ws1-from-another-host) (published address change + firewall) before pointing a remote shipper at it.
 
@@ -58,7 +57,7 @@ What the 2026-11-05 run (Windows 11, official `fluent-bit-4.2.8-win64.zip`, norm
 - `Read_Existing_Events true` (used only for the test; the recipe tails) produced a first batch over ws1's default 1 MiB body cap: ws1 counted `body_over_cap` and Fluent Bit logged `could not flush records (http_do=-1)`.
   If you backfill, raise `INGEST_HTTP_MAX_BODY_BYTES`.
 - **Not run in this first pass (superseded by the 2026-11-13 run, see the Verification log):** the `Security` channel needs an administrator, so no 4624/4625/4688 record was seen here; no Sysmon record either. Fluent Bit 5.1.5 (win64 zip) exited immediately on this machine
-  (`socketpair: No error` / `pipe: No error`, even for `--version`) while 4.2.8 ran; the cause was not determined, so 5.x on Windows is unverified.
+  (`socketpair: No error` / `pipe: No error`, even for `--version`) while 4.2.8 ran; the cause was not determined. The same 5.1.5 zip ran on 2026-11-13, so the failure was not reproducible there.
 
 ### Time zone and DST
 
@@ -73,8 +72,8 @@ occurrence; the zone database must exist in the ws2 image (`zoneinfo` worked in 
 The `http` output half (`Format json_lines`, `Header`, `Json_Date_Key false`, bearer header) is the same output block run live in the Docker/journald/n8n recipes: ws1 accepted the records.
 
 ```ini fluent-bit-windows.conf
-# Fluent Bit (Windows) -> FENGARDE HTTP ingest. NOT RUN AS WRITTEN: this file lists Security, System and Sysmon, but the 2026-11-05 run on Windows 11 / Fluent Bit 4.2.8 (normal user) used a copy with Channels=Application,System only.
-# So System (7045 service install, 104 log cleared) has run; Security needs an administrator account and Sysmon was not installed, so nothing here has seen a real Security or Sysmon record. System is chatty: expect most of its records to dead-letter as unmapped EventIDs.
+# Fluent Bit (Windows) -> FENGARDE HTTP ingest. The [INPUT] section (Security, System, Sysmon) RAN as written on 2026-11-13 (Windows 11, administrator, Sysmon installed, Fluent Bit 4.2.8 and 5.1.5): real Security 4624/4625/4688/4720 and Sysmon 1/3/5/11 records were read.
+# NOT run as written: the [OUTPUT] http section (the lab wrote to a local file instead) and the 4798 [FILTER] below (verified only on a Linux fluent-bit 5.1.5 container with synthetic records; the Windows build's Lua filter was not exercised). System is chatty: expect most of its records to dead-letter as unmapped EventIDs.
 # WARNING: Authorization: Bearer goes over plain http:// -- cleartext on the wire; use the TLS front from docs/deployment.md or keep it on a trusted segment.
 [SERVICE]
     Flush        5
@@ -86,6 +85,14 @@ The `http` output half (`Format json_lines`, `Header`, `Json_Date_Key false`, be
     Event_Data_As_Map    true
     # A channel that does not exist (Sysmon not installed) otherwise fails the WHOLE input at start (error 15007), shipping nothing.
     Ignore_Missing_Channels true
+
+# Security 4798 ("local group membership enumerated") is ~3,000 records on an ordinary desktop and no parser maps it. Dropped here so it never reaches ws1.
+# The grep filter does NOT work for this: EventID arrives as an integer and `Exclude EventID ^4798$` matched nothing (tested). Lua does.
+[FILTER]
+    Name    lua
+    Match   *
+    call    drop_noise
+    code    function drop_noise(tag, ts, rec) if tonumber(rec["EventID"]) == 4798 then return -1, ts, rec end return 0, ts, rec end
 
 [OUTPUT]
     Name             http
