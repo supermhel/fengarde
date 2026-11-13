@@ -35,6 +35,31 @@ from enrichment import enrich  # noqa: E402  -- v0.4: mirror the real parse->enr
 
 RULES_DIR = ROOT / "contracts" / "rules"
 
+def _real_fixtures(name: str, kind) -> list[dict]:
+    """One REAL sensor record per kind (first of each), loaded from the parser's capture-derived fixture file so the
+    records live in exactly one place. `kind(item)` returns a hashable key, or None to skip a record the parser drops."""
+    import json
+    items = json.loads((SERVICES / "ws2-normalization" / "parsers" / "test_fixtures" / name).read_text(encoding="utf-8"))["records"]
+    seen: dict = {}
+    for it in items:
+        k = kind(it)
+        if k is not None and k not in seen:
+            seen[k] = {"raw": it["record"], "meta": {}}
+    return list(seen.values())
+
+
+def _suricata_kind(it):
+    r = it["record"]
+    et = r.get("event_type")
+    if et not in ("alert", "flow", "dns", "modbus", "dnp3"):
+        return None
+    return (et, (r.get("dns") or r.get("dnp3") or {}).get("type"), r.get("app_proto") if et == "alert" else None)
+
+
+def _zeek_kind(it):
+    return None if it["log"] == "capture_loss.log" else (it["log"], it["record"].get("func"))
+
+
 # One real, representative raw payload per registered parser (source_type -> raw).
 # Mirrors each parser's own test fixtures -- kept minimal, just enough to populate
 # every field branch (e.g. windows_eventlog needs one raw per handled EventID).
@@ -170,6 +195,9 @@ FIXTURES: dict[str, list[dict]] = {
                  "sourceIp": "10.20.0.99", "destIp": "10.20.0.5"},
          "meta": {"changeTicketId": "CHG-FIXTURE-0001"}},
     ],
+    # WP-1.5: real Suricata 8 / Zeek 9 output on public pcaps (see the fixture-file headers).
+    "suricata_eve": _real_fixtures("suricata_eve_real.json", _suricata_kind),
+    "zeek_json": _real_fixtures("zeek_json_real.json", _zeek_kind),
     "inventory_diff": [
         {"raw": {"mac": "AA:BB:CC:DD:EE:FF", "ip": "10.20.0.77",
                  "hostname": "plc-line4", "device_type": "plc",
