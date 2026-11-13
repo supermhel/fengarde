@@ -6,7 +6,8 @@
 > fixtures / templates, except [windows-application.fluentbit.json](samples/windows-application.fluentbit.json), captured from Fluent Bit 4.2.8 on Windows 11 ([sample provenance](README.md#sample-provenance)). `tools/test_shipping_recipes.py` runs them through WS-2.
 > **Windows, run once on 2026-11-05 (Windows 11, Fluent Bit 4.2.8, normal user, Application and System channels only):** the `winevtlog` input exists in the
 > Windows build and a modified copy of this config (`Channels Application,System`; the committed file lists `Security`, `System` and Sysmon) ran against a real ws1 listener; the shape Fluent Bit actually emits differed from what the adapter assumed (event data is nested under `EventData`) and the
-> adapter was fixed. **NOT run:** the `Security` channel (needs an administrator), the Sysmon channel (not installed), Fluent Bit 5.x on Windows (5.1.5 would not start here), TLS.
+> adapter was fixed. **NOT run in that first pass:** the `Security` channel (needs an administrator), the Sysmon channel (not installed), Fluent Bit 5.x on Windows (5.1.5 would not start here), TLS.
+> **Second Windows run, 2026-11-13 (Windows 11 de-DE, Fluent Bit 4.2.8, administrator, Sysmon installed):** the `Security` channel did run (4624, 4625, 4688, 4720 seen) and so did Sysmon (EventIDs 1, 3, 5, 11 seen). It found that Security 4625 (failed logon) was dropped; fixed below. Still **NOT run:** Fluent Bit 5.x on Windows, a real DST boundary, TLS, a real Winlogbeat.
 > See the [Verification log](README.md#verification-log).
 >
 > **The committed `fluent-bit-windows.conf` lists `Security`, `System` and `Microsoft-Windows-Sysmon/Operational`, but that exact file was never run.** The live run used a copy with `Channels Application,System` and the same other options
@@ -22,12 +23,14 @@ Ingest path: `POST http://<ws1>:8554/v1/ingest?source_type=<type>&format=ndjson`
 | Channel | `source_type` sent | Shipper label | Parser that handles it |
 |---|---|---|---|
 | `Microsoft-Windows-Sysmon/Operational` | `windows_eventlog` | `fluentbit-winevtlog` | `sysmon` (adapter re-routes by provider/EventID; Sysmon EventIDs 1, 3, 5, 11 on the sniff path) |
-| `Security` | `windows_eventlog` | `fluentbit-winevtlog` | `windows_eventlog` (channel itself not run: needs admin) |
+| `Security` | `windows_eventlog` | `fluentbit-winevtlog` | `windows_eventlog` (4624 -> 3002, 4688 -> 1002, 4720 -> 3003 seen in the 2026-11-13 admin run); EventIDs only the `active_directory` parser maps (4625 failed logon, 4768, 4771) are re-routed by the adapter to `active_directory` (below) |
 | `System` (in the recipe; run in a modified copy) | `windows_eventlog` | `fluentbit-winevtlog` | `windows_eventlog`; only EventIDs the parser maps (7045 service installed, 104 log cleared) become events, every other EventID dead-letters as `parser returned None` (2,638 of 2,640 in the run) |
 | `Application` (not in the recipe; run in the same copy) | `windows_eventlog` | `fluentbit-winevtlog` | `windows_eventlog`; the events the parser maps come from System, Security or PowerShell channels, so Application records are expected to dead-letter (the committed capture is one) |
 
 Send `source_type=windows_eventlog` for both channels: the adapter only rewrites records whose declared type is in the
 windows family (`windows_eventlog`/`sysmon`) and moves Sysmon records to `sysmon` itself. See [../input-adapters.md](../input-adapters.md).
+
+**Security 4625 and the `active_directory` re-route (found 2026-11-13).** The real 4625 arrived as `source_type=windows_eventlog` and dead-lettered (`parser returned None`): `windows_eventlog` does not map it; the `active_directory` parser does, but reads flat `TargetUserName`/`IpAddress`/`WorkstationName`, which only exist after the adapter flattens `EventData`. Both adapters (`fluentbit_winevtlog`, `winlogbeat`) now flatten first, then send EventIDs mapped by `active_directory` and not by `windows_eventlog` (**4625, 4768, 4771**) to `active_directory` (provider `Microsoft-Windows-Security-Auditing` or unnamed). 4624/4634/4647 stay on `windows_eventlog` (both parsers map them). A 4625 is then class 3002 / type 300204, status Failure, with the target user, source IP and workstation, and the common brute-force rules see it. **Security 4798** (user's local group membership enumerated) is the volume source: about 3,100 records in the first read of one lab host, all dead-lettered as unmapped; filter it in the recipe (for example `Event_Query` excluding EventID 4798) rather than shipping noise, unless you add a mapping. That filter is a recommendation: it was not run.
 
 ## Fluent Bit (winevtlog)
 
@@ -54,7 +57,7 @@ What the 2026-11-05 run (Windows 11, official `fluent-bit-4.2.8-win64.zip`, norm
   without Sysmon still ships the other channels.
 - `Read_Existing_Events true` (used only for the test; the recipe tails) produced a first batch over ws1's default 1 MiB body cap: ws1 counted `body_over_cap` and Fluent Bit logged `could not flush records (http_do=-1)`.
   If you backfill, raise `INGEST_HTTP_MAX_BODY_BYTES`.
-- **Not run:** the `Security` channel needs an administrator (vendor docs; not tried), so no 4624/4625/4688 record was seen from a real Windows host; no Sysmon record either. Fluent Bit 5.1.5 (win64 zip) exited immediately on this machine
+- **Not run in this first pass (superseded by the 2026-11-13 run, see the Verification log):** the `Security` channel needs an administrator, so no 4624/4625/4688 record was seen here; no Sysmon record either. Fluent Bit 5.1.5 (win64 zip) exited immediately on this machine
   (`socketpair: No error` / `pipe: No error`, even for `--version`) while 4.2.8 ran; the cause was not determined, so 5.x on Windows is unverified.
 
 ### Time zone and DST
@@ -103,7 +106,7 @@ adapter flattening, **not** that Security 4624 or Sysmon records parse); [Sysmon
 hand-transcribed, no capture file stored) -> `sysmon`, **but with no field mapping**: that 2023 output predates `Event_Data_As_Map`, so there is no `EventData` and the event reads `Process created: ? (by ?)` (the test asserts this limit
 explicitly); [Sysmon 1 in the nested-`EventData` shape, **template-derived from Sysmon event 1 field names, not a capture**](samples/windows-sysmon-eventdata.fluentbit.json) (envelope and `EventData` nesting follow the verified Windows 11
 Application capture; values invented) -> `sysmon`, with image, command line, user, parent image and pid asserted in `tools/test_shipping_recipes.py` (this proves the adapter and parser handle that shape, **not** that a real Sysmon
-install emits it); [Security 4624, template-derived](samples/windows-security.fluentbit.json) -> `windows_eventlog`.
+install emits it); [Security 4624, template-derived](samples/windows-security.fluentbit.json) -> `windows_eventlog`; [Security 4625, template-derived](samples/windows-4625.fluentbit.json) -> `active_directory`: the EventData key set (TargetUserName, TargetDomainName, Status, SubStatus, FailureReason, LogonType, IpAddress, IpPort, WorkstationName, AuthenticationPackageName) was observed in the 2026-11-13 lab run, but every value here is invented and the record was rebuilt, not stored, so it is not a capture. The test asserts class 3002 / type 300204, actor, source IP, Failure, and the per-IP and per-account brute-force rules tripping on a burst of ten.
 
 ## Vector
 
@@ -116,7 +119,7 @@ invented shape as supported. If you need it, remap Vector's output to the `windo
 
 The `winlogbeat` adapter handles the ECS `winlog.*` shape. Winlogbeat has no HTTP output, so a relay is needed (not provided).
 Samples (template-derived from Elastic's exported-fields catalog): [4688](samples/windows-4688.winlogbeat.json) and
-[4624](samples/windows-4624.winlogbeat.json), both -> `windows_eventlog`, label `winlogbeat`.
+[4624](samples/windows-4624.winlogbeat.json), both -> `windows_eventlog`, label `winlogbeat`. The same 4625/4768/4771 -> `active_directory` re-route applies (tested with the 4625 EventData placed in `winlog.event_data`; no Winlogbeat output was ever seen).
 
 ## Not covered
 
@@ -124,5 +127,5 @@ Samples (template-derived from Elastic's exported-fields catalog): [4688](sample
 - Sysmon EventID 10 without `source_type=sysmon` (the content sniff omits it).
 - Mixing shapes under one `X-Fengarde-Shipper` label in a batch: the label is per request; mismatched shapes dead-letter.
 - Vector on Windows (above); remote collection (`remote.*` options); TLS.
-- Real `Security` and Sysmon records from Windows (never seen; the 4624 and Sysmon samples remain a template and a hand transcription of a 2023 capture that predates the event-data map).
+- Committed samples of Security/Sysmon records from a real host: such records were seen on 2026-11-13 (private host data, not stored), but the committed Security and Sysmon samples remain templates and a hand transcription of a 2023 capture that predates the event-data map. 4798 is unmapped (above).
 - Event data of other providers that arrive without an `EventData` map (`StringInserts` only): only System 7045 is read positionally.

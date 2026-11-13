@@ -51,6 +51,8 @@ CASES = [
      "fluentbit-winevtlog", "sysmon", 1002, None),
     ("windows-security.fluentbit.json", "windows.md", "windows_eventlog",
      "fluentbit-winevtlog", "windows_eventlog", 3002, fluentbit_winevtlog.SECURITY_FIXTURE),
+    ("windows-4625.fluentbit.json", "windows.md", "windows_eventlog",
+     "fluentbit-winevtlog", "active_directory", 3002, None),
     ("windows-4688.winlogbeat.json", "windows.md", "windows_eventlog", "winlogbeat", "windows_eventlog", 1002, winlogbeat.FIXTURE),
     ("windows-4624.winlogbeat.json", "windows.md", "windows_eventlog",
      "winlogbeat", "windows_eventlog", 3002, winlogbeat.SECURITY_LOGON_FIXTURE),
@@ -118,6 +120,7 @@ PROVENANCE = {
     "windows-sysmon-eventdata.fluentbit.json": "template-derived",
     "windows-application.fluentbit.json": "captured",
     "windows-security.fluentbit.json": "template-derived",
+    "windows-4625.fluentbit.json": "template-derived",
     "windows-4688.winlogbeat.json": "template-derived",
     "windows-4624.winlogbeat.json": "template-derived",
     "linux-sshd.fluentbit-journald.json": "schema-derived",
@@ -378,6 +381,47 @@ def main() -> int:
     mix_b = svc_event(tmp_path, {"ImagePath": sys_path})
     check(mix_b is not None and "Updater -> C:\\Windows\\System32" in mix_b["message"] and not svc_rule.evaluate(mix_b),
           f"System 7045 mixed (named System32 path beats positional Temp path) wrong: {mix_b and mix_b['message']!r}")
+
+    # Security 4625 (failed logon) is owned by the active_directory parser, which windows_eventlog does not map: with
+    # source_type=windows_eventlog it used to dead-letter ('parser returned None'), and a flat-keys-only AD parse gave actor None.
+    # Both adapters must flatten and re-route it (like Sysmon) and keep the windows_eventlog mappings. The AD-only set is derived
+    # from the two parsers' own maps so a new AD EventID cannot drift away from the adapters.
+    from parsers import active_directory as _ad, windows_eventlog as _wel  # noqa: E402
+    ad_only = set(_ad._EVENT_MAP) - set(_wel._EVENT_MAP)
+    check(ad_only == {4625, 4768, 4771}, f"AD-only EventIDs changed: {sorted(ad_only)}")
+    check(fluentbit_winevtlog.AD_ONLY_EVENTIDS == ad_only and winlogbeat.AD_ONLY_EVENTIDS == ad_only,
+          "adapter AD_ONLY_EVENTIDS drifted from active_directory minus windows_eventlog")
+    fraw = load("windows-4625.fluentbit.json")
+    ed = fraw["EventData"]
+    wlb = {"winlog": {"event_id": "4625", "channel": "Security", "computer_name": fraw["Computer"],
+                      "provider_name": fraw["ProviderName"], "time_created": "2026-11-13T09:15:30.000Z", "event_data": ed}}
+    brute_titles = ("Authentication brute-force from single source",
+                    "Authentication brute-force against one account (any number of sources)")
+    # (the third common rule, ..._sourceless, counts DISTINCT usernames per host for events with no source IP: not this event)
+    for tag, shipper_, rec in (("fluentbit", "fluentbit-winevtlog", fraw), ("winlogbeat", "winlogbeat", wlb)):
+        ev4625, errs4625 = normalize_one(adapt_record({"source_type": "windows_eventlog", "raw": rec,
+                                                      "meta": {"received_at": 1673963483, "shipper": shipper_}}))
+        ok = ev4625 is not None and not errs4625
+        check(ok, f"4625 [{tag}]: no valid OCSF ({errs4625[:1]})")
+        if ev4625:
+            check(ev4625.get("class_uid") == 3002 and ev4625.get("type_uid") == 300204 and ev4625.get("status") == "Failure"
+                  and ev4625.get("actor", {}).get("user", {}).get("name") == "labuser"
+                  and ev4625.get("src_endpoint", {}).get("ip") == "203.0.113.45"
+                  and "labuser" in ev4625.get("message", ""), f"4625 [{tag}]: field mapping wrong: {ev4625}")
+            # the rules are stateful (threshold 10 / 60 s): ten 4625s (distinct ingest_id) one second apart must trip both
+            fired = []
+            brute = [r for r in load_rules(ROOT / "contracts" / "rules") if r.title in brute_titles]  # fresh: windows are stateful
+            check(len(brute) == 2, f"4625 [{tag}]: brute-force rules not found: {[r.title for r in brute]}")
+            for r in brute:
+                hits = [r.evaluate(dict(ev4625, time=ev4625["time"] + i * 1000, siem={"ingest_id": f"{tag}-{i}"})) for i in range(10)]
+                fired.append(hits[-1] and not any(hits[:-1]))
+            check(all(fired), f"4625 [{tag}]: burst of 10 must trip the per-IP and per-account rules exactly at threshold: {fired}")
+    # the windows_eventlog-owned logon/process/account mappings must be untouched by the re-route
+    for eid_, cls_ in ((4624, 3002), (4688, 1002), (4720, 3003)):
+        rec_ = dict(fraw, EventID=eid_)
+        p_ = resolve(adapt_record({"source_type": "windows_eventlog", "raw": rec_, "meta": {"shipper": "fluentbit-winevtlog"}}))
+        check(p_ is not None and p_.SOURCE_TYPE == "windows_eventlog",
+              f"{eid_} must stay on windows_eventlog, got {p_ and p_.SOURCE_TYPE}")
 
     # every sample file is used, every recipe doc is indexed in the README
     used = {c[0] for c in CASES} | {PIHOLE_CAPTURE, WIN_CAPTURE}
