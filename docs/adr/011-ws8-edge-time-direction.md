@@ -851,7 +851,7 @@ measurements show the four fields alone cannot meet the item-5 gate.
 ## Status
 
 Proposed 2026-11-06, measurements added the same day and reproduced from the repo
-on 2026-11-07. Awaiting owner sign-off. No code, contract, schema or eval file is
+on 2026-11-07. Accepted 2026-11-13 by blanket owner decision (checklist items open). No code, contract, schema or eval file is
 changed by this document. What remains **[UNVERIFIED]**: consumer strictness
 for `fengarde-sec` and the unaudited in-repo consumers; whether any payload
 shape reaches 0.5; every extrapolated storyline count; Redis, WS-3 index and
