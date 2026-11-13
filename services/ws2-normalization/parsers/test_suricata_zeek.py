@@ -428,6 +428,30 @@ def coverage(parser, source_type, fix):
     return mapped, seen - mapped
 
 
+class TestConnStateNeverDeny(unittest.TestCase):
+    """Owner decision 2026-11-13 (real Zeek 9.0.1 run): REJ and S0 do not reliably mean 'denied', so no conn_state maps to Deny."""
+
+    # Row shapes taken from the real run (history / packet counts as Zeek wrote them); host names and ports are invented.
+    ROWS = {
+        "REJ": {"history": "Sr", "orig_pkts": 1, "resp_pkts": 1},
+        "S0": {"history": "S", "orig_pkts": 3, "resp_pkts": 0},
+        "RSTO": {"history": "ShR", "orig_pkts": 2, "resp_pkts": 1},
+        "RSTR": {"history": "ShADar", "orig_pkts": 3, "resp_pkts": 3},
+        "SH": {"history": "F", "orig_pkts": 1, "resp_pkts": 0},
+        "SF": {"history": "ShADadfF", "orig_pkts": 6, "resp_pkts": 6},
+    }
+
+    def test_no_conn_state_is_a_deny(self):
+        for state, extra in self.ROWS.items():
+            rec = {"ts": 1794560000.0, "uid": "Cabc123", "id.orig_h": "10.0.0.5", "id.orig_p": 40000,
+                   "id.resp_h": "10.0.0.9", "id.resp_p": 9999, "proto": "tcp", "conn_state": state, **extra}
+            ev = ZEEKP.parse(_raw("zeek_json", rec))
+            self.assertIsNotNone(ev, state)
+            self.assertEqual((ev["class_uid"], ev["activity_id"]), (4001, 2), f"{state} must stay Close, never Deny (6)")
+            self.assertNotEqual(ev["activity_id"], 6, state)
+            self.assertEqual(ev["unmapped"]["zeek"]["conn"]["conn_state"], state, f"{state}: raw state must be kept")
+
+
 class TestFieldCoverage(unittest.TestCase):
     def test_report_and_floor(self):
         for label, parser, st, fix, must in (

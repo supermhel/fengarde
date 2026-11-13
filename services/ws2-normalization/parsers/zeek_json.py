@@ -13,6 +13,12 @@ A Zeek JSON line does not name its log stream, so the stream is recognised by fi
     modbus_detailed.log  has ``func`` + ``unit``, no ``pdu_type``  -> same (CISA ICSNPP ``icsnpp-modbus`` package)
     conn.log             has ``conn_state`` / ``history``          -> 4001 / 2 (Close; conn.log is written at end)
 
+conn_state is NEVER mapped to Deny (activity 6), by owner decision 2026-11-13 on real evidence (Zeek 9.0.1 in Docker, 26 conn rows):
+REJ means only "the target answered with an RST" (a closed port and a firewall REJECT-with-tcp-reset give byte-identical rows) and
+S0 means only "no reply was seen" (a firewall DROP, an ICMP-reject, a closed UDP port and a dead host look the same). The raw state
+stays in ``unmapped.zeek.conn.conn_state``. The deny-counting rules (common_port_scan, common_port_scan_by_target, common_port_sweep)
+therefore do not fire on Zeek-only data; a rule on conn_state REJ/S0 would be the honest way to get that signal.
+
 Event time: ``ts`` is the time of the connection's FIRST packet, but conn.log is written at the end, so the Close event is
 stamped ``ts + duration`` (a 7200 s connection is no longer placed two hours early; with no ``duration`` it stays ``ts``).
 dns/notice/modbus rows keep ``ts``, the time of that message.

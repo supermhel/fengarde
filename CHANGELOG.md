@@ -22,6 +22,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   URL/sha256, image digest, command and the three locally-authored Suricata rules are in each file's `provenance` header.
   `parsers/test_suricata_zeek.py` (fast tier) checks mapping, dict-vs-line parity, routing, hostile-input totality and prints a
   mutation-based field-coverage report (mapped vs dropped fixture fields).
+- Zeek `conn_state` S0/REJ are deliberately NOT mapped to Deny (owner decision 2026-11-13, from a real Zeek 9.0.1 run over Docker-generated
+  traffic: a closed port and a firewall REJECT give identical REJ rows; a DROP, an ICMP-reject, closed UDP and a dead host give identical
+  S0 rows). Every conn row stays 4001 / 2; the raw state is kept in `unmapped.zeek.conn.conn_state`, so the three deny-counting scan
+  rules do not fire on Zeek-only data. Guarded by `TestConnStateNeverDeny`. Not tested: S1/S2/S3, a nonexistent-host SYN (no packet on
+  the wire), asymmetric capture, pf/ASA/Windows firewalls, the ws4 engine on these events.
 - Gates: `FIXTURES` entries in `tools/check_rule_producers.py` (loaded from the fixture files), contract-test samples in
   `mocks/raw_samples.json` + `test_contract.py`, `tools/fuzz/fuzz_suricata_eve.py` / `fuzz_zeek_json.py`, `fuzz.yml` matrix and
   `projects/fengarde/build.sh`; `contracts/detection-coverage.md` documents the new producers. Parser count 19 -> 21.
