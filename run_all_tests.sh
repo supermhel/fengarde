@@ -413,6 +413,9 @@ echo
 echo "== ws2 shipper adapters (WP-1.3: fluentbit-winevtlog / winlogbeat / fluentbit-journald / docker-json real shapes) =="; LAST_HEADER="== ws2 shipper adapters =="
 $PY services/ws2-normalization/test_adapters.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
+echo "== shipping recipes (WP-1.4: every docs/shipping sample through the real WS-2 path; configs NOT linted) =="; LAST_HEADER="== shipping recipes =="
+$PY tools/test_shipping_recipes.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
 echo "== ws2 parsers: db_audit (v0.3, un-dormants bank_db_priv_esc.yml) =="; LAST_HEADER="== ws2 parsers: db_audit (v0.3, un-dormants bank_db_priv_esc.yml) =="
 $PY services/ws2-normalization/parsers/test_db_audit.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo

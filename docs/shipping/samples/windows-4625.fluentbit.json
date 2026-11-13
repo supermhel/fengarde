@@ -1,0 +1,31 @@
+{
+  "ProviderName": "Microsoft-Windows-Security-Auditing",
+  "ProviderGuid": "{54849625-5478-4994-A5BA-3E3B0328C30D}",
+  "Qualifiers": "",
+  "EventID": 4625,
+  "Version": 0,
+  "Level": 0,
+  "Task": 12546,
+  "Opcode": 0,
+  "Keywords": "0x8010000000000000",
+  "TimeCreated": "2026-11-13 10:15:30 +0100",
+  "EventRecordID": 900001,
+  "ActivityID": "",
+  "RelatedActivityID": "",
+  "ProcessID": 724,
+  "ThreadID": 9100,
+  "Channel": "Security",
+  "Computer": "WIN11-LAB",
+  "EventData": {
+    "TargetUserName": "labuser",
+    "TargetDomainName": "WIN11-LAB",
+    "Status": "0xc000006d",
+    "SubStatus": "0xc000006a",
+    "FailureReason": "%%2313",
+    "LogonType": 3,
+    "IpAddress": "203.0.113.45",
+    "IpPort": "49822",
+    "WorkstationName": "ATTACKBOX",
+    "AuthenticationPackageName": "NTLM"
+  }
+}

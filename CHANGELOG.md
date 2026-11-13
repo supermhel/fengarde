@@ -26,12 +26,67 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   winevtlog; template/schema-derived and labelled as such for the rest).
 - `test_adapters.py` wired into the fast tier: every fixture through the full
   WS-2 path to valid OCSF, sniff negative controls, label-vs-sniff
-  precedence, and the extreme-value totality sweep (2,850 mutations, none
+  precedence, and the extreme-value totality sweep (3,039 mutations, none
   raised); existing parser fixtures and outputs unchanged.
 - Review fixes (2026-11-05): docker date padding for day >= 10 with hours 00-09; adapters only rewrite a record whose declared
   `source_type` is in the adapter's family; a wrong label falls through to the sniff; native numeric `TimeCreated` is left to the
   parser; winlogbeat `event_data` can no longer overwrite `EventID`/`Computer`/`TimeCreated`; docker ids and names are validated;
   journald without `_HOSTNAME` is a no-op; fixture provenance wording corrected (transcribed, not byte-exact).
+
+### Fixed (2026-11-07, WP-1.4 independent review of PR #153)
+
+- `fluentbit-journald` adapter + `fluent-bit-journald.conf`: OpenSSH 9.8+ (Debian 13) logs logins as `sshd-session` / `sshd-auth`, so the recipe's `Systemd_Filter SYSLOG_IDENTIFIER=sshd` shipped no login events and the rebuilt
+  `sshd-session[pid]:` header never reached `linux_ssh` (reproduced: class 1002 `generic_syslog`). The config now filters on `sshd`, `sshd-session` and `sshd-auth` (Fluent Bit 5.1.5 delivered the `sshd-session` entries of a Debian 13
+  journal and none of an unrelated one); the adapter maps exactly those two identifiers to the header program `sshd` after the usual identifier validation (any other `sshd-<x>` keeps its name; a forged one is still declined).
+  New captured sample `docs/shipping/samples/linux-sshd-session.journald.json` (`journalctl -o json`, `debian:trixie-slim`, OpenSSH 10.0p2, container, 2026-11-07) resolves to `linux_ssh` 3002 with user and source address. The Vector
+  recipe needed no change (it labels every record `sshd[pid]`); that, and that a socket-activated `ssh@...service` is not matched by `include_units` (untested), is now documented.
+- `fluent-bit-windows.conf`: `System` added to `Channels` (the source of 7045 and 104, which the earlier run did read); the file header and `windows.md` now say the run used a copy with `Application,System`, so only `System` of the committed
+  three channels ever ran. `Application` is not in the recipe.
+- Docs: one provenance class per sample from a closed set (README "Sample provenance"); the blanket "not captures" sentences are gone (three samples are captures); `docs/input-adapters.md` no longer calls the hand-transcribed 2023 Sysmon
+  output a "real capture".
+- Tests: `tools/test_shipping_recipes.py` reads port, transport, URI and Authorization from the output section/sink/action only (comments no longer satisfy them), requires the cleartext WARNING as a comment in the first 5 lines, tests
+  7045 with mixed named + positional fields (named wins per field), enforces the provenance classes and the "only captures are called captures" rule, and carries negative self-tests for each. `test_adapters.py` covers `sshd-session` / `sshd-auth`.
+- `docs/shipping/verification/e2e.py` (+ README): the manual Docker driver behind the 2026-11-05 live runs; not part of CI.
+
+### Fixed (2026-11-06, WP-1.4 second review of PR #153)
+
+- `docker-json` adapter: `time` values at the calendar edges with an offset (`0001-01-01T00:00:00+05:00`, `9999-12-31T23:59:59-05:00`) raised `OverflowError` out of `adapt()` and, because `normalize_one` calls the adapter stage outside its
+  try, out of ws2. The date helper now declines them, and `adapt_record` itself catches any exception from an adapter or sniffer (treated as "declined", payload unchanged; `KeyboardInterrupt` still propagates). The totality sweep
+  now also drives year 1 / 9999 / leap-day / nanosecond / out-of-range timestamps through every time field of every adapter and the real `normalize_one` entry: **3,039 mutations, none raised** (was 2,850, which missed the time fields).
+- `fluentbit-winevtlog`: Fluent Bit prints `TimeCreated` with the host's CURRENT UTC offset, not the offset at the event time. The committed real capture says `+0100`; the host log has the same event at `21:21:44+02:00` (W. Europe summer time),
+  so the old wording "converted correctly" was wrong and events across a DST switch were dated one hour off. New optional ws2 setting `FENGARDE_WINEVTLOG_TZ` (IANA zone, read per record, default unset = unchanged behaviour,
+  invalid zone = ignored with one warning) interprets the printed wall clock in that zone; the capture then yields `2026-08-11T19:21:44Z` (unset: `20:21:44Z`). Winlogbeat is untouched and is the recommended shipper where DST accuracy matters.
+- `fluentbit-journald` adapter: `SYSLOG_IDENTIFIER`, `_COMM`, `_HOSTNAME` and `_PID` went verbatim into the rebuilt line, so `logger -t 'sshd[9]: Accepted publickey for root ...'` forged a header that parsed as an sshd login. They are now
+  validated (plain tokens only; `_PID` digits only) and a record with a forged value is left untouched.
+- Docs: sshd events (`linux_ssh`) are stamped with receipt time per the clock-skew policy, so journald/Docker backfill and replay arrive as "now" (parser policy unchanged; documented in `docs/shipping/linux-auth.md`, `docker.md`, README) together with the
+  1 MiB ingest body-cap risk for backfills and what `Read_From_Tail On/Off` does; `fluent-bit-windows.conf` is flagged in the file, `windows.md` and the README as never run with Security/Sysmon, with the `Ignore_Missing_Channels` rationale; new README
+  "Delivery guarantees" section (vendor-documented, unverified here); journald `DB` directory must exist; Docker `partial` lines are not reassembled.
+- Tests: new `docs/shipping/samples/windows-sysmon-eventdata.fluentbit.json` (Sysmon 1 in the REAL nested-`EventData` shape; template-derived from Sysmon field names in the verified Windows 11 envelope, **not a capture**) with image, command line,
+  user, parent image and pid asserted; the old 2023 Sysmon sample is asserted to keep its known no-field-mapping limitation; a System 7045 record in the real `StringInserts`-only shape is proven to fire `win_service_installed_suspicious_path`
+  through the ws4 engine (and a System32 service not to). `tools/test_shipping_recipes.py` now covers 16 samples (17 after the 2026-11-07 review fixes below).
+
+### Added (2026-11-05, WP-1.4: shipper recipes in `docs/shipping/`)
+
+- `docs/shipping/` — one recipe per source (Windows Sysmon+Security, Linux auth/sshd, Docker, dnsmasq/Pi-hole, n8n, network gear via
+  rsyslog/syslog-ng for OPNsense/pfSense/Proxmox) with Vector and Fluent Bit configs where a verified shape exists, the real parser
+  `source_type`, the ingest path and an explicit "not covered" list; `README.md` holds the recipe-to-parser table. **No Vector Windows recipe**
+  (no sample of its output exists; stated in the doc). Configs were then linted with the official vendor images (vector 0.61.0, fluent-bit 5.1.5, rsyslog 8.2610.0, syslog-ng 4.12.0) and run live in Linux containers on
+  Docker Desktop against a real ws1 listener and the real WS-2 path (manual, 2026-11-05; see the Verification log in `docs/shipping/README.md`). Fixed as a result: Fluent Bit n8n parser
+  not registered (new `fluent-bit-n8n-parsers.conf`), Vector n8n `decoding` option (now a `remap`), Vector env-var expansion is off by default in 0.61 (needs
+  `VECTOR_DANGEROUSLY_ALLOW_ENV_VAR_INTERPOLATION=true`), Fluent Bit journald `Read_From_Tail On` delivered nothing (now `Off` + `DB`), `join!` VRL warning. A second container pass (2026-11-05) then verified a real `pihole/pihole:2026.10.1` log (committed as `docs/shipping/samples/pihole-v6.dnsmasq.txt`
+  and exercised by the test), rsyslog `address=` / syslog-ng `ip()` binding, Vector `include_units` against a journal from real systemd units, and changed the syslog-ng relay config to
+  `keep-hostname(yes)` (the default replaced the appliance host name with the sender's resolved name). NOT run: any real OPNsense/pfSense/Proxmox/n8n output, TLS.
+  Third pass (2026-11-05, Windows 11, official `fluent-bit-4.2.8-win64.zip`, normal user, Application and System channels, output to a local ws1 listener): a copy of the Windows config (Channels `Application,System`) ran; the `winevtlog` input exists;
+  `Event_Data_As_Map` needs `event_template_cache_size` > 0 as documented; the real record nests the event data under `EventData` (not flat), so the `fluentbit-winevtlog` adapter now flattens it
+  (regression test in `test_adapters.py`); `Ignore_Missing_Channels true` added to the config (a missing Sysmon channel otherwise stops the whole input); new real sample
+  `docs/shipping/samples/windows-application.fluentbit.json`. Still NOT run: the Windows Security and Sysmon channels (no real 4624/Sysmon record seen), Fluent Bit 5.1.5 on Windows (exited at start-up
+  here), TLS. System 7045 (no `EventData` map, data only in `StringInserts`) is now read positionally by the `windows_eventlog` parser, so `win_service_installed_suspicious_path` can fire on real Fluent Bit output; other providers' `StringInserts` are still not parsed.
+- `tools/test_shipping_recipes.py` (fast tier): 15 samples, each run through `adapt_record` -> `resolve` -> parse -> OCSF validation and
+  required to resolve to the parser the recipe claims; adapter-fixture samples asserted equal to the adapter constants; recipe config
+  blocks asserted identical to `docs/shipping/configs/`. Sample provenance (hand transcription of a third-party published output / template-derived /
+  documented / illustrative) is labelled per sample.
+- `tools/lint_shipping_recipes.sh`: optional, manual config lint (`vector validate`, `fluent-bit --dry-run`, `rsyslogd -N1`,
+  `syslog-ng --syntax-only`), skips tools that are absent; flags verified against the official images; syntax lint only; not in the default gate.
 
 ## [0.12.0] - 2026-11-05
 

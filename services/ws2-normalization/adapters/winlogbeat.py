@@ -40,6 +40,11 @@ from typing import Optional
 
 _SYSMON_PROVIDER = "microsoft-windows-sysmon"
 _SYSMON_EVENTIDS = {1, 3, 5, 11}
+#: Security EventIDs the active_directory parser maps and windows_eventlog does not (4624/4634/4647 are mapped by both and stay
+#: on windows_eventlog). With source_type=windows_eventlog these would dead-letter ("parser returned None"), so the adapter
+#: re-routes them, as it does for Sysmon. A test derives this set from the two parsers' maps so it cannot drift.
+AD_ONLY_EVENTIDS = frozenset({4625, 4768, 4771})
+_SECURITY_PROVIDER = "microsoft-windows-security-auditing"
 
 FIXTURE = {
     "@timestamp": "2023-01-17T12:50:59.303Z",
@@ -137,7 +142,7 @@ def _to_epoch_ms(value) -> Optional[int]:
     return int(dt.timestamp() * 1000)
 
 
-SOURCE_TYPES = frozenset({"windows_eventlog", "sysmon"})
+SOURCE_TYPES = frozenset({"windows_eventlog", "sysmon"})  # active_directory is an output-only re-route
 
 
 def _flatten_event_data(winlog: dict, out: dict) -> None:
@@ -197,6 +202,8 @@ def adapt(payload: dict) -> dict:
     if provider == _SYSMON_PROVIDER or (eid_int in _SYSMON_EVENTIDS
                                         and not provider):
         source_type = "sysmon"
+    elif eid_int in AD_ONLY_EVENTIDS and provider in ("", _SECURITY_PROVIDER):
+        source_type = "active_directory"
     else:
         source_type = "windows_eventlog"
     return {"source_type": source_type, "raw": out,
