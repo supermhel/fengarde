@@ -75,6 +75,7 @@ def _users():
     u.create_user("acme_analyst", "pw-acme-1", role="analyst", tenant_id="acme")
     u.create_user("globex_ro", "pw-globex-1", role="read_only", tenant_id="globex")
     u.create_user("admin_user", "pw-admin-1", role="admin", tenant_id="default")
+    u.create_user("dflt_analyst", "pw-dflt-1", role="analyst", tenant_id="default")
     return u
 
 
@@ -203,6 +204,37 @@ def test_response_shape_and_query_semantics():
             check(len(b["hits"]["hits"]) == n, f"{route} cap {len(b['hits']['hits'])} != {n}")
 
 
+def _ws5_alert_payload():
+    """The REAL ws5 `_alert_payload` (not a hand-stamped fixture): the review
+    of PR #175 found ai-* docs carried no tenant_id, so they read as tenant
+    "default" and leaked to every default-tenant session."""
+    import importlib.util
+    ws5_dir = HERE.parent / "ws5-ai"
+    sys.path.insert(0, str(ws5_dir))
+    spec = importlib.util.spec_from_file_location("ws5_main", ws5_dir / "main.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod._alert_payload
+
+
+def test_real_ws5_ai_doc_is_tenant_scoped():
+    payload = _ws5_alert_payload()(
+        {"event_id": "g-ev-1", "tier": "llm", "verdict": "malicious", "summary": "globex secret",
+         "level": "high", "classification": {"category": "auth", "priority": "high",
+                                             "confidence": 0.9},
+         "engine": "stub", "model": None},
+        {"event_id": "g-ev-1", "time": 2500, "siem": {"tenant": "globex", "sector": "bank"}})
+    check(payload.get("tenant_id") == "globex", f"ws5 ai doc tenant_id={payload.get('tenant_id')!r}")
+    with _Server(rbac=True, key=None) as s:
+        s.store.index("alerts-globex-2026.11.01", payload["alert_id"], payload)
+        for user, pw, sees in (("dflt_analyst", "pw-dflt-1", False), ("acme_analyst", "pw-acme-1", False),
+                               ("globex_ro", "pw-globex-1", True)):
+            _, body, _ = _req(s.port, "/dashboard/ai-triage", cookie=_login(s.port, user, pw))
+            ids = {h["_source"]["alert_id"] for h in body.get("hits", {}).get("hits", [])}
+            check((payload["alert_id"] in ids) == sees,
+                  f"real ws5 globex ai doc visible to {user}={not sees} (cross-tenant leak)")
+
+
 def test_check_admin():
     with _Server(rbac=True, key=KEY) as s:
         check(_req(s.port, "/auth/check-admin")[0] == 401, "check-admin anonymous")
@@ -229,6 +261,7 @@ def main():
     test_machine_key_sees_all_tenants()
     test_rbac_off_modes()
     test_response_shape_and_query_semantics()
+    test_real_ws5_ai_doc_is_tenant_scoped()
     test_check_admin()
     if FAILS:
         print(f"[FAIL] dashboard tenant scope: {len(FAILS)} problem(s)")

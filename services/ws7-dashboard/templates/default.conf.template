@@ -398,7 +398,7 @@ server {
     # container-to-container, so proxying them through the (host-published)
     # dashboard is a real posture change worth gating identically, even
     # though the upstream health-port server itself has no auth of its own.
-    location /api/ops/ws1 {
+    location = /api/ops/ws1 {
         resolver 127.0.0.11 ipv6=off valid=30s;
         set $ws1_ops "http://ws1-collectors:8001";
         auth_request /api/auth/check-admin;
@@ -408,7 +408,7 @@ server {
         proxy_connect_timeout 3s;
         proxy_read_timeout 5s;
     }
-    location /api/ops/ws2 {
+    location = /api/ops/ws2 {
         resolver 127.0.0.11 ipv6=off valid=30s;
         set $ws2_ops "http://ws2-normalization:8002";
         auth_request /api/auth/check-admin;
@@ -418,7 +418,7 @@ server {
         proxy_connect_timeout 3s;
         proxy_read_timeout 5s;
     }
-    location /api/ops/ws3 {
+    location = /api/ops/ws3 {
         resolver 127.0.0.11 ipv6=off valid=30s;
         set $ws3_ops "http://ws3-indexer:8003";
         auth_request /api/auth/check-admin;
@@ -428,7 +428,7 @@ server {
         proxy_connect_timeout 3s;
         proxy_read_timeout 5s;
     }
-    location /api/ops/ws4 {
+    location = /api/ops/ws4 {
         resolver 127.0.0.11 ipv6=off valid=30s;
         set $ws4_ops "http://ws4-detection:8004";
         auth_request /api/auth/check-admin;
@@ -438,7 +438,7 @@ server {
         proxy_connect_timeout 3s;
         proxy_read_timeout 5s;
     }
-    location /api/ops/ws5 {
+    location = /api/ops/ws5 {
         # Gap-hunt (2026-08-26) #57: ws5-ai WAS the one workstream with no
         # ops/health entry at all -- its /metrics (runner health server, port
         # 8005) was never proxied, so WS-5 dying left the dashboard's Ops
@@ -452,7 +452,7 @@ server {
         proxy_connect_timeout 3s;
         proxy_read_timeout 5s;
     }
-    location /api/ops/ws8 {
+    location = /api/ops/ws8 {
         resolver 127.0.0.11 ipv6=off valid=30s;
         set $ws8_ops "http://ws8-correlation:8008";
         auth_request /api/auth/check-admin;
