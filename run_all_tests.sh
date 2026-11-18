@@ -447,6 +447,8 @@ echo "== ws2 parsers: sysmon (P0-3, 2026-07-21 audit: first class-1001 producer)
 $PY services/ws2-normalization/parsers/test_sysmon.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo "== recall work (2026-10-20): service install / log cleared / lsass access parse + rules =="; LAST_HEADER="== recall events =="
 $PY services/ws2-normalization/parsers/test_recall_events.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo "== PR #153 review: AD 4625 edge cases =="; LAST_HEADER="== AD 4625 edges =="
+$PY services/ws2-normalization/parsers/test_ad_4625_edges.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo "== fuzz findings (2026-10-20): parser bugs found by the repaired atheris harnesses =="; LAST_HEADER="== fuzz findings =="
 $PY services/ws2-normalization/parsers/test_fuzz_findings.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo

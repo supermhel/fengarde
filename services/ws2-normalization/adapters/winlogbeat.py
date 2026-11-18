@@ -193,6 +193,10 @@ def adapt(payload: dict) -> dict:
         out["TimeCreated"] = ts
     elif isinstance(tc, (int, float)) and not isinstance(tc, bool):
         out["TimeCreated"] = tc  # native numeric time: the parser's timeutil owns seconds/ms/FILETIME
+    elif _to_epoch_ms(raw.get("@timestamp")) is not None:
+        # PR #153 review: without winlog.time_created the parser fell back to
+        # receive time although Beats always stamps the event time here.
+        out["TimeCreated"] = _to_epoch_ms(raw.get("@timestamp"))
     # Preserve winlog-level context the parsers don't read but operators may
     # want to audit (record_id, task, opcode, provider_guid) + the user
     # resolution artifacts, under a namespaced key — never dropped silently.
