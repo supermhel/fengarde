@@ -50,6 +50,9 @@ class BoundedSpool:
     SyslogUDPServer's single-process deployment model.
     """
 
+    POISON_PROBE_MIN = 3
+    POISON_PROBE_MAX = 256
+
     def __init__(self, path: Path | str, max_bytes: int = DEFAULT_MAX_BYTES, *,
                  min_free_bytes: int = DEFAULT_MIN_FREE_BYTES,
                  min_free_pct: float = DEFAULT_MIN_FREE_PCT,
@@ -81,6 +84,14 @@ class BoundedSpool:
         self.dead_letter_dropped = 0    # poison events lost: dead-letter at cap
         self._last_refusal_log: "dict[str, float]" = {}
         self._lock = threading.Lock()
+        # PR #166 review: two concurrent drain_into() calls each rewrite the
+        # file from their own snapshot and lose appended events. Serialize
+        # whole drains (append() never takes this lock, so it stays O(1)).
+        self._drain_lock = threading.Lock()
+        # Poison probe window: widened while consecutive passes end "bus down"
+        # on the same head, so a run of >3 poison events cannot wedge the spool.
+        self._probe_window = self.POISON_PROBE_MIN
+        self._probe_head: Optional[str] = None
         self.path.parent.mkdir(parents=True, exist_ok=True)
         if self.path.is_dir():
             # Live-Docker-caught (2026-08-21, ingestion-edge-redundancy step
@@ -207,7 +218,7 @@ class BoundedSpool:
     def pending_count(self) -> int:
         with self._lock:
             try:
-                with self.path.open("r", encoding="utf-8") as f:
+                with self.path.open("r", encoding="utf-8", errors="replace") as f:
                     return sum(1 for _ in f)
             except OSError:
                 return 0
@@ -262,6 +273,16 @@ class BoundedSpool:
     def drain_into(self, produce: Callable[[dict], None], *, limit: Optional[int] = None,
                    checkpoint_every: Optional[int] = None,
                    skip_poison: bool = False) -> int:
+        """Serialized drain: one drain at a time per spool (PR #166 review: two
+        concurrent drains lost appended events). Contract: `_drain_unlocked`."""
+        with self._drain_lock:
+            return self._drain_unlocked(produce, limit=limit,
+                                        checkpoint_every=checkpoint_every,
+                                        skip_poison=skip_poison)
+
+    def _drain_unlocked(self, produce: Callable[[dict], None], *, limit: Optional[int] = None,
+                        checkpoint_every: Optional[int] = None,
+                        skip_poison: bool = False) -> int:
         """Replay spooled events in FIFO order via `produce(event) -> None`
         (raises on failure). Stops at the first failure (order-preserving) and
         rewrites the spool file to contain only the un-replayed remainder.
@@ -322,7 +343,7 @@ class BoundedSpool:
         """
         with self._lock:
             try:
-                lines = self.path.read_text(encoding="utf-8").splitlines()
+                lines = self._read_lines_text().splitlines()
             except OSError:
                 return 0
             if not lines:
@@ -363,7 +384,7 @@ class BoundedSpool:
                 # Bound the crash-replay window: persist progress now.
                 with self._lock:
                     try:
-                        current = self.path.read_text(encoding="utf-8").splitlines()
+                        current = self._read_lines_text().splitlines()
                     except OSError:
                         current = None
                     if current is not None:
@@ -375,7 +396,7 @@ class BoundedSpool:
 
         with self._lock:
             try:
-                current_lines = self.path.read_text(encoding="utf-8").splitlines()
+                current_lines = self._read_lines_text().splitlines()
             except OSError:
                 current_lines = lines  # best-effort: fall back to our snapshot
             newly_appended = current_lines[n:]  # anything appended since our read
@@ -385,8 +406,17 @@ class BoundedSpool:
         self.replayed_total += replayed
         return replayed
 
+    def _read_lines_text(self) -> str:
+        # PR #166 review: one invalid UTF-8 byte raised UnicodeDecodeError (not
+        # an OSError) on every pass and wedged the spool for good. append()
+        # writes ensure_ascii JSON, so a U+FFFD here can only mean corruption;
+        # _parse_line skips that line as corrupt.
+        return self.path.read_text(encoding="utf-8", errors="replace")
+
     def _parse_line(self, line: str, idx: int) -> Optional[dict]:
         try:
+            if "�" in line:
+                raise ValueError("undecodable bytes in spool line")
             return json.loads(line)
         except (ValueError, TypeError):
             # corrupt line (e.g. a torn write from a crash mid-append)
@@ -423,7 +453,16 @@ class BoundedSpool:
         failed = [head]
         probed = 0
         j = i + 1
-        while j < n and probed < 3:
+        # PR #166 review: a fixed 3-event probe meant 4+ consecutive poison
+        # events wedged the spool forever. Each pass that ends "bus down" on
+        # the SAME head doubles the window (capped), so a longer poison run is
+        # eventually probed past; a real outage only costs a few more failed
+        # produce() calls per pass.
+        if head == self._probe_head:
+            self._probe_window = min(self._probe_window * 2, self.POISON_PROBE_MAX)
+        else:
+            self._probe_head, self._probe_window = head, self.POISON_PROBE_MIN
+        while j < n and probed < self._probe_window:
             line = lines[j]
             if not line.strip():
                 j += 1
@@ -441,10 +480,36 @@ class BoundedSpool:
                 j += 1
                 continue
             self._dead_letter(failed)
+            self._probe_head, self._probe_window = None, self.POISON_PROBE_MIN
             return j + 1, 1
         return None
 
     def _rewrite(self, lines: list[str]) -> None:
+        """Atomically replace the spool file's contents; on a full disk fall
+        back to shrinking the file in place (PR #166 review: the atomic temp
+        file could never be written, so every pass re-delivered the same events
+        and the spool never shrank until the cap dropped new ones)."""
+        try:
+            self._rewrite_atomic(lines)
+        except OSError:
+            data = "".join(line + "\n" for line in lines).encode("utf-8")
+            size = self.path.stat().st_size
+            if len(data) > size:
+                raise  # in place needs the result to fit the existing bytes
+            # shortcut: in-place shrink is not crash-atomic (a crash mid-write
+            # can tear one line, which the next drain skips as corrupt); only
+            # reached when the disk cannot hold a temp copy of the remainder.
+            with self.path.open("r+b") as f:
+                f.write(data)
+                f.truncate()
+                f.flush()
+                os.fsync(f.fileno())
+            self._tail_known_good = True
+            if self._log is not None:
+                self._log.warn("spool rewritten in place (atomic rewrite failed)",
+                               path=str(self.path), bytes=len(data))
+
+    def _rewrite_atomic(self, lines: list[str]) -> None:
         """Atomically replace the spool file's contents (temp file + os.replace)
         so a crash mid-rewrite never leaves a truncated/corrupt spool."""
         fd, tmp_path = tempfile.mkstemp(dir=str(self.path.parent), prefix=".spool-")

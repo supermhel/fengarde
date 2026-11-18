@@ -379,6 +379,98 @@ def test_poison_through_collector_end_to_end():
             c.stop()
 
 
+def test_review_edge_cases():
+    """Second PR #166 review: long poison runs, undecodable bytes, concurrent
+    drains and a full disk must not wedge or lose spooled events."""
+    import errno
+    import threading
+    with tempfile.TemporaryDirectory() as td:
+        # 4 consecutive poison events ahead of good ones: the probe window widens.
+        sp = BoundedSpool(str(Path(td) / "p.jsonl"))
+        for i in range(6):
+            sp.append({"key": "k", "event": {"i": i}})
+        got: list[int] = []
+
+        def picky(item):
+            if item["event"]["i"] < 4:
+                raise ValueError("poison")
+            got.append(item["event"]["i"])
+
+        for _ in range(4):
+            sp.drain_into(picky, skip_poison=True)
+        check(got == [4, 5] and sp.pending_count() == 0 and sp.dead_lettered == 4,
+              f"4-poison run must not wedge: got={got} pending={sp.pending_count()} "
+              f"dead={sp.dead_lettered}")
+
+        # one invalid UTF-8 byte: skipped as corrupt, the rest drains
+        bad = Path(td) / "u.jsonl"
+        bad.write_bytes(b'{"key":"k","event":{"i":1}}\n\xff\xfe junk\n{"key":"k","event":{"i":2}}\n')
+        sp2 = BoundedSpool(str(bad))
+        seen: list[int] = []
+        try:
+            n = sp2.pending_count()
+            sp2.drain_into(lambda it: seen.append(it["event"]["i"]))
+        except Exception as exc:  # noqa: BLE001
+            n = -1
+            check(False, f"undecodable byte raised {type(exc).__name__}: {exc}")
+        check(n == 3 and seen == [1, 2] and sp2.pending_count() == 0
+              and sp2.corrupt_lines_skipped == 1,
+              f"undecodable line: count={n} seen={seen} corrupt={sp2.corrupt_lines_skipped}")
+
+        # concurrent drains while appending: nothing lost
+        sp3 = BoundedSpool(str(Path(td) / "c.jsonl"))
+        delivered: set[int] = set()
+        lock = threading.Lock()
+
+        def slow(item):
+            time.sleep(0.001)
+            with lock:
+                delivered.add(item["event"]["i"])
+
+        stop = threading.Event()
+
+        def drainer():
+            while not stop.is_set():
+                sp3.drain_into(slow)
+
+        ths = [threading.Thread(target=drainer) for _ in range(2)]
+        for t in ths:
+            t.start()
+        for i in range(300):
+            sp3.append({"key": "k", "event": {"i": i}})
+        time.sleep(0.2)
+        stop.set()
+        for t in ths:
+            t.join()
+        sp3.drain_into(slow)
+        check(delivered == set(range(300)) and sp3.pending_count() == 0,
+              f"concurrent drains lost {300 - len(delivered)} event(s)")
+
+        # full disk on rewrite: falls back to an in-place shrink, no re-delivery
+        sp4 = BoundedSpool(str(Path(td) / "d.jsonl"))
+        for i in range(5):
+            sp4.append({"key": "k", "event": {"i": i}})
+
+        def enospc(*_a, **_k):
+            raise OSError(errno.ENOSPC, "No space left on device")
+
+        import collectors.spool as spool_mod
+        real_mkstemp = spool_mod.tempfile.mkstemp
+        spool_mod.tempfile.mkstemp = enospc  # the temp copy can never be created
+        out: list[int] = []
+        try:
+            for _ in range(2):
+                try:
+                    sp4.drain_into(lambda it: out.append(it["event"]["i"]), checkpoint_every=2)
+                except OSError:
+                    pass  # the collector loop swallows this and retries
+            again = len(out) - 5
+        finally:
+            spool_mod.tempfile.mkstemp = real_mkstemp
+        check(out == [0, 1, 2, 3, 4] and again == 0 and sp4.pending_count() == 0,
+              f"disk-full rewrite must shrink the spool: out={out} again={again}")
+
+
 def main():
     t0 = time.time()
     test_bus_down_then_up_spooled_events_are_replayed()
@@ -387,6 +479,7 @@ def main():
     test_replayed_duplicates_collapse_downstream()
     test_poison_event_is_dead_lettered_but_outage_is_not()
     test_poison_through_collector_end_to_end()
+    test_review_edge_cases()
     if FAILS:
         print(f"[FAIL] ws1 http spool drain: {len(FAILS)} problem(s) "
               f"({time.time() - t0:.1f}s)")

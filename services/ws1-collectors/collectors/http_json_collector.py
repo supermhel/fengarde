@@ -234,6 +234,15 @@ class HttpJsonCollector:
         self._thread = threading.Thread(target=self._serve_loop,
                                         name="http-json-ingest", daemon=True)
         self._thread.start()
+        if self._spool_thread is not None:
+            # PR #166 review: a previous stop() whose join timed out left the
+            # old drain thread alive; give it one more chance to exit before a
+            # second one starts (drain_into is serialized either way).
+            self._spool_thread.join(timeout=5)
+            if not self._spool_thread.is_alive():
+                self._spool_thread = None
+            else:
+                self._spool_stop.clear()  # still mid-drain: let it keep looping
         if self._spool is not None and self._spool_thread is None:
             # Review (2026-11-06): only the syslog loops replayed their spools,
             # so an HTTP spool filled during a bus outage was never drained.
@@ -328,7 +337,8 @@ class HttpJsonCollector:
             self._thread = None
         if self._spool_thread is not None:
             self._spool_thread.join(timeout=5)
-            self._spool_thread = None
+            if not self._spool_thread.is_alive():  # keep the ref if join timed out
+                self._spool_thread = None
 
     # -- batch handling -----------------------------------------------------
 
