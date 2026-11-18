@@ -91,6 +91,9 @@ DEFAULT_SPOOL_CHECKPOINT_EVERY = 500
 # Minimum seconds between "drain is failing" warnings (one per 5 s pass would
 # flood the log during a long outage).
 _DRAIN_FAIL_LOG_EVERY_S = 30.0
+# PR #166 review: how often a clean drain pass re-sends `<spool>.dead` (events
+# the poison heuristic parked, possibly during a bus flap).
+_DEAD_REDRIVE_EVERY_S = 300.0
 # A sender may label the device a batch came from (X-Fengarde-Source / ?source=). The label is only trusted as far as the
 # bearer token: it keys the per-source rate limit, the bus partition and the metrics, never an authorization decision.
 _SOURCE_ID_RE = re.compile(r"^[A-Za-z0-9._:@\-]{1,128}$")
@@ -197,6 +200,8 @@ class HttpJsonCollector:
         self.spool_drain_passes = 0
         self.spool_drain_failed_passes = 0   # passes where the bus refused events
         self._last_drain_fail_log = 0.0
+        self._last_dead_redrive = 0.0
+        self.dead_redrive_every_s = _DEAD_REDRIVE_EVERY_S
 
         # Aggregate counters (flat numeric leaves -> real Prometheus gauges).
         self.events_accepted = 0
@@ -288,11 +293,11 @@ class HttpJsonCollector:
             if spool is None:
                 return
             failures_before = spool.produce_failures
+            def produce(item):
+                self.bus.produce(self.topic, key=item["key"], payload=item["event"])
             try:
                 drained = spool.drain_into(
-                    lambda item: self.bus.produce(
-                        self.topic, key=item["key"], payload=item["event"]),
-                    checkpoint_every=DEFAULT_SPOOL_CHECKPOINT_EVERY,
+                    produce, checkpoint_every=DEFAULT_SPOOL_CHECKPOINT_EVERY,
                     skip_poison=True)
                 self.spool_drain_passes += 1
                 self._spool_pending_events = spool.pending_count()
@@ -301,6 +306,14 @@ class HttpJsonCollector:
                                   pending=self._spool_pending_events)
                 if spool.produce_failures > failures_before:
                     self._note_drain_failure(spool)
+                elif (spool.dead_letter_path.exists()
+                      and time.monotonic() - self._last_dead_redrive >= self.dead_redrive_every_s):
+                    # clean pass: the bus took everything we offered, so give
+                    # parked events another chance (PR #166 review)
+                    self._last_dead_redrive = time.monotonic()
+                    redriven = spool.redrive_dead_letter(produce)
+                    if redriven and self.log is not None:
+                        self.log.info("re-sent dead-lettered http events", count=redriven)
             except Exception as exc:  # never let the drain loop die silently
                 self.spool_drain_failed_passes += 1
                 if self.log is not None:
@@ -476,6 +489,7 @@ class HttpJsonCollector:
             "http_spool_drain_failed_passes": self.spool_drain_failed_passes,
             "http_spool_dead_lettered": spool.dead_lettered,
             "http_spool_dead_letter_dropped": spool.dead_letter_dropped,
+            "http_spool_dead_letter_redriven": spool.dead_letter_redriven,
             "http_spool_corrupt_lines_skipped": spool.corrupt_lines_skipped,
         }
 

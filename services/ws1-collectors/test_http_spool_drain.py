@@ -471,6 +471,64 @@ def test_review_edge_cases():
               f"disk-full rewrite must shrink the spool: out={out} again={again}")
 
 
+def test_lone_poison_and_dead_letter_redrive():
+    """A lone event the bus keeps refusing is parked after LONE_POISON_PASSES
+    passes, and parked events are sent again once the bus takes them."""
+    with tempfile.TemporaryDirectory() as td:
+        sp = BoundedSpool(str(Path(td) / "l.jsonl"))
+        sp.append({"key": "k", "event": {"i": 0}})
+
+        def refuse(_item):
+            raise RuntimeError("bus refuses")
+
+        for _ in range(BoundedSpool.LONE_POISON_PASSES - 1):
+            sp.drain_into(refuse, skip_poison=True)
+        check(sp.pending_count() == 1 and sp.dead_lettered == 0,
+              "lone event must not be parked before LONE_POISON_PASSES passes")
+        sp.drain_into(refuse, skip_poison=True)
+        check(sp.pending_count() == 0 and sp.dead_lettered == 1,
+              f"lone poison must be parked: pending={sp.pending_count()} dead={sp.dead_lettered}")
+
+        # redrive: the parked good event goes through, a real poison one stays
+        sp.dead_letter_path.write_text(
+            sp.dead_letter_path.read_text(encoding="utf-8") + '{"key":"k","event":{"i":99}}\n',
+            encoding="utf-8")
+        sent: list[int] = []
+
+        def picky(item):
+            if item["event"]["i"] == 99:
+                raise ValueError("still poison")
+            sent.append(item["event"]["i"])
+
+        check(sp.redrive_dead_letter(refuse) == 0, "redrive with a refusing bus sends nothing")
+        n = sp.redrive_dead_letter(picky)
+        left = [json.loads(x)["event"]["i"]
+                for x in sp.dead_letter_path.read_text(encoding="utf-8").splitlines()]
+        check(n == 1 and sent == [0] and left == [99] and sp.dead_letter_redriven == 1,
+              f"redrive: n={n} sent={sent} left={left}")
+        sp.redrive_dead_letter(lambda it: sent.append(it["event"]["i"]))
+        check(not sp.dead_letter_path.exists(), "empty .dead must be removed after full redrive")
+
+    # end to end: the collector re-sends .dead after a clean pass
+    with tempfile.TemporaryDirectory() as td:
+        bus = _FlappableBus(down=False)
+        spool_path = Path(td) / "http-spool.jsonl"
+        spool_path.with_name(spool_path.name + ".dead").write_text(
+            json.dumps({"key": "k", "event": {"raw": RECORD_A}}) + "\n", encoding="utf-8")
+        spool = BoundedSpool(str(spool_path))
+        c = HttpJsonCollector(bus, ingest_token=_TOKEN, host="127.0.0.1", port=0,
+                              spool=spool, spool_drain_interval_s=_DRAIN_INTERVAL)
+        c.dead_redrive_every_s = 0
+        c.start()
+        try:
+            check(_wait_for(lambda: not spool.dead_letter_path.exists()),
+                  "collector must re-send .dead once the bus is up")
+            check(len(bus.produced) == 1 and c.metrics()["http_spool_dead_letter_redriven"] == 1,
+                  f"redriven via collector: produced={len(bus.produced)} m={c.metrics()}")
+        finally:
+            c.stop()
+
+
 def main():
     t0 = time.time()
     test_bus_down_then_up_spooled_events_are_replayed()
@@ -480,6 +538,7 @@ def main():
     test_poison_event_is_dead_lettered_but_outage_is_not()
     test_poison_through_collector_end_to_end()
     test_review_edge_cases()
+    test_lone_poison_and_dead_letter_redrive()
     if FAILS:
         print(f"[FAIL] ws1 http spool drain: {len(FAILS)} problem(s) "
               f"({time.time() - t0:.1f}s)")

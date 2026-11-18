@@ -52,6 +52,7 @@ class BoundedSpool:
 
     POISON_PROBE_MIN = 3
     POISON_PROBE_MAX = 256
+    LONE_POISON_PASSES = 10
 
     def __init__(self, path: Path | str, max_bytes: int = DEFAULT_MAX_BYTES, *,
                  min_free_bytes: int = DEFAULT_MIN_FREE_BYTES,
@@ -92,6 +93,8 @@ class BoundedSpool:
         # on the same head, so a run of >3 poison events cannot wedge the spool.
         self._probe_window = self.POISON_PROBE_MIN
         self._probe_head: Optional[str] = None
+        self._probe_passes = 0
+        self.dead_letter_redriven = 0   # .dead events sent again by redrive_dead_letter()
         self.path.parent.mkdir(parents=True, exist_ok=True)
         if self.path.is_dir():
             # Live-Docker-caught (2026-08-21, ingestion-edge-redundancy step
@@ -401,9 +404,11 @@ class BoundedSpool:
                 current_lines = lines  # best-effort: fall back to our snapshot
             newly_appended = current_lines[n:]  # anything appended since our read
             remaining = lines[i:] + newly_appended
+            # count before the rewrite: if it raises, these events were still
+            # delivered (PR #166 review #8: replayed_total missed them)
+            self.replayed_total += replayed
             if replayed or remaining != current_lines:
                 self._rewrite(remaining)
-        self.replayed_total += replayed
         return replayed
 
     def _read_lines_text(self) -> str:
@@ -460,8 +465,10 @@ class BoundedSpool:
         # produce() calls per pass.
         if head == self._probe_head:
             self._probe_window = min(self._probe_window * 2, self.POISON_PROBE_MAX)
+            self._probe_passes += 1
         else:
             self._probe_head, self._probe_window = head, self.POISON_PROBE_MIN
+            self._probe_passes = 1
         while j < n and probed < self._probe_window:
             line = lines[j]
             if not line.strip():
@@ -482,7 +489,54 @@ class BoundedSpool:
             self._dead_letter(failed)
             self._probe_head, self._probe_window = None, self.POISON_PROBE_MIN
             return j + 1, 1
+        if probed == 0 and self._probe_passes >= self.LONE_POISON_PASSES:
+            # Nothing behind the head to tell poison from outage, and it has
+            # failed this many passes in a row: park it. Safe even during an
+            # outage, because redrive_dead_letter() sends it again once the
+            # bus accepts events (PR #166 review: a lone poison event retried
+            # and logged "bus refused" forever).
+            self._dead_letter(failed)
+            self._probe_head, self._probe_window = None, self.POISON_PROBE_MIN
+            return i + 1, 0
         return None
+
+    def redrive_dead_letter(self, produce: Callable[[dict], None]) -> int:
+        """Send `<spool>.dead` events again; keep only those still refused.
+
+        PR #166 review: a bus flap can make the poison heuristic park GOOD
+        events, and nothing ever sent them again. The collector calls this
+        after a clean drain pass (bus demonstrably up), throttled; a true
+        poison event costs one refused produce() per call. Returns the
+        number delivered."""
+        with self._drain_lock:
+            dl = self.dead_letter_path
+            try:
+                lines = dl.read_text(encoding="utf-8", errors="replace").splitlines()
+            except OSError:
+                return 0
+            keep: list[str] = []
+            sent = 0
+            for idx, line in enumerate(lines):
+                if not line.strip():
+                    continue
+                event = self._parse_line(line, idx)
+                if event is None:
+                    keep.append(line)  # corrupt: leave it for the operator
+                    continue
+                try:
+                    produce(event)
+                except Exception as exc:
+                    self._note_produce_failure(exc)
+                    keep.append(line)
+                    continue
+                sent += 1
+            if sent:
+                if keep:
+                    self._rewrite_atomic(keep, target=dl)
+                else:
+                    dl.unlink()
+                self.dead_letter_redriven += sent
+            return sent
 
     def _rewrite(self, lines: list[str]) -> None:
         """Atomically replace the spool file's contents; on a full disk fall
@@ -509,22 +563,23 @@ class BoundedSpool:
                 self._log.warn("spool rewritten in place (atomic rewrite failed)",
                                path=str(self.path), bytes=len(data))
 
-    def _rewrite_atomic(self, lines: list[str]) -> None:
+    def _rewrite_atomic(self, lines: list[str], target: Optional[Path] = None) -> None:
         """Atomically replace the spool file's contents (temp file + os.replace)
         so a crash mid-rewrite never leaves a truncated/corrupt spool."""
-        fd, tmp_path = tempfile.mkstemp(dir=str(self.path.parent), prefix=".spool-")
+        dest = target if target is not None else self.path
+        fd, tmp_path = tempfile.mkstemp(dir=str(dest.parent), prefix=".spool-")
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as f:
                 for line in lines:
                     f.write(line + "\n")
                 f.flush()
                 os.fsync(f.fileno())
-            os.replace(tmp_path, self.path)
+            os.replace(tmp_path, dest)
             # Durability (R4-#78): fsync the parent directory so the rename
             # itself is persisted, not just the file contents -- otherwise a
             # crash right after os.replace can still lose the new name.
             try:
-                dir_fd = os.open(str(self.path.parent), os.O_RDONLY)
+                dir_fd = os.open(str(dest.parent), os.O_RDONLY)
                 try:
                     os.fsync(dir_fd)
                 finally:
@@ -538,4 +593,5 @@ class BoundedSpool:
                 pass
             raise
         # Rewritten output is newline-terminated by construction.
-        self._tail_known_good = True
+        if dest == self.path:
+            self._tail_known_good = True

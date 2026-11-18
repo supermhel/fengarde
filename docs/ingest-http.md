@@ -40,9 +40,13 @@ Authorization: Bearer <FENGARDE_INGEST_TOKEN>
   one document). While the bus is up, live batches go straight to it and may
   overtake older spooled events (FIFO holds inside the spool only). An event the
   bus keeps rejecting is moved to `<spool>.dead` (capped at
-  `INGEST_HTTP_SPOOL_MAX_BYTES`) so it cannot block the rest. Watch
-  `http_spool_pending_bytes`, `http_spool_drain_failed_passes` and
-  `http_spool_dead_lettered` on WS-1 `/metrics`.
+  `INGEST_HTTP_SPOOL_MAX_BYTES`) so it cannot block the rest; a lone event with
+  nothing behind it is parked after 10 failed passes. Parked events are not
+  lost: after a clean drain pass the collector re-sends `<spool>.dead` at most
+  every 5 minutes and keeps only what the bus still refuses (this undoes a
+  bus flap that parked good events). Watch `http_spool_pending_bytes`,
+  `http_spool_drain_failed_passes`, `http_spool_dead_lettered` and
+  `http_spool_dead_letter_redriven` on WS-1 `/metrics`.
 
 ## Auth
 
