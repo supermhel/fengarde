@@ -138,6 +138,13 @@ def test_dashboard_hits_wire_format():
     store.dashboard_hits("ai-triage", tenant_id=None)
     must = store._request.calls[-1][2]["query"]["bool"]["must"]
     check(must == [{"prefix": {"alert_id": "ai-"}}], f"all-tenant ai query must have no tenant term: {must}")
+    # PR #175 review: the default tenant must also match docs stored WITHOUT
+    # the tenant field (MemoryStore parity) -- this was untested for all three feeds.
+    for kind, field in (("alerts", "tenant_id"), ("events", "siem.tenant"), ("ai-triage", "tenant_id")):
+        store = _make_store()
+        store.dashboard_hits(kind, tenant_id="default")
+        check(_expects_default_should_clause(field, store),
+              f"dashboard_hits({kind}, default) must emit bool-should(term | must_not exists {field})")
 
 
 def main():

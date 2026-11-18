@@ -100,14 +100,18 @@ def run():
     check('"hits":{"hits":[]}' in block(tpl, "location @alerts_unavailable {"),
           "wp-6.2: @alerts_unavailable fallback body changed")
     # Ops health endpoints + Prometheus: auth-less upstreams, ADMIN-only now.
-    for loc in ("location /api/ops/ws1 {", "location /api/ops/ws2 {", "location /api/ops/ws3 {",
-                "location /api/ops/ws4 {", "location /api/ops/ws5 {", "location /api/ops/ws8 {",
+    for loc in ("location = /api/ops/ws1 {", "location = /api/ops/ws2 {", "location = /api/ops/ws3 {",
+                "location = /api/ops/ws4 {", "location = /api/ops/ws5 {", "location = /api/ops/ws8 {",
                 "location ~ ^/api/prom/api/v1/(targets|query)$ {"):
         b = block(tpl, loc)
         check("auth_request /api/auth/check-admin;" in b,
               f"wp-6.2: {loc} lacks the admin-only auth_request guard")
     check("auth_request /api/auth/check;" not in tpl,
           "wp-6.2: some location still uses the any-credential /auth/check guard")
+    # PR #175 review: prefix matches let /api/ops/ws1/<x> or /api/ops/ws10 through
+    # with the original URI proxied to the health port; ops routes are exact now.
+    check(not re.search(r"location\s+/api/ops/ws\d", tpl),
+          "wp-6.2: an /api/ops/wsN location is a prefix match again (must be `location =`)")
 
     # ws3-served routes must NOT be nginx-key-gated (ws3 enforces key-or-session).
     ws3_locs = ("location /api/triage/ {", "location /api/rules {",
@@ -128,7 +132,7 @@ def run():
     # replacement that eats the location's upstream (live-caught on WP-6.1:
     # /api/ai-triage 404'd from nginx for exactly this reason) is a regression
     # no syntax check can catch, since a proxyless location is valid nginx.
-    for loc in ("location /api/ops/ws1 {", "location /api/ops/ws8 {"):
+    for loc in ("location = /api/ops/ws1 {", "location = /api/ops/ws8 {"):
         anchor = loc
         b = block(tpl, anchor)
         check("proxy_pass" in b,
