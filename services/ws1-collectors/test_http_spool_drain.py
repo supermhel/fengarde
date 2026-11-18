@@ -521,7 +521,8 @@ def test_lone_poison_and_dead_letter_redrive():
         c.dead_redrive_every_s = 0
         c.start()
         try:
-            check(_wait_for(lambda: not spool.dead_letter_path.exists()),
+            check(_wait_for(lambda: not spool.dead_letter_path.exists()
+                            and c.metrics()["http_spool_dead_letter_redriven"] == 1),
                   "collector must re-send .dead once the bus is up")
             check(len(bus.produced) == 1 and c.metrics()["http_spool_dead_letter_redriven"] == 1,
                   f"redriven via collector: produced={len(bus.produced)} m={c.metrics()}")

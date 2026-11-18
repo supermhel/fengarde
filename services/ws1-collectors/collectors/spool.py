@@ -531,11 +531,12 @@ class BoundedSpool:
                     continue
                 sent += 1
             if sent:
+                # count first: the file disappearing is what observers wait on
+                self.dead_letter_redriven += sent
                 if keep:
                     self._rewrite_atomic(keep, target=dl)
                 else:
                     dl.unlink()
-                self.dead_letter_redriven += sent
             return sent
 
     def _rewrite(self, lines: list[str]) -> None:
