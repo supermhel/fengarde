@@ -328,6 +328,10 @@ def _alert_payload(result: dict, event: dict) -> dict:
         # Gap-hunt (2026-08-27) #2: `siem` may be an explicit null -- coerce to
         # {} so .get("sector") never raises AttributeError.
         "sector": (event.get("siem") or {}).get("sector"),
+        # WP-6.2 review: /dashboard/ai-triage scopes on tenant_id; without it
+        # every ai-* doc read as tenant "default" (cross-tenant leak). Same
+        # stamping as ws4-detection/main.py alerts.
+        "tenant_id": (event.get("siem") or {}).get("tenant"),
         "event_ids": [stable_id],
     }
     if result["tier"] != "classifier":
