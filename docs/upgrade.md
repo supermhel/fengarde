@@ -43,8 +43,12 @@ heading is mandatory once any release adds a migration or a breaking change.
 
 ## Standard upgrade procedure (no migration)
 
+> **Warning: never use `make down` or `docker compose down -v` here.** Both
+> delete the named volumes, which are exactly the stores this runbook backs up.
+> Plain `docker compose ... down` (no `-v`) keeps them.
+
 ```sh
-# 1. stop the stack (services only; keep names/volumes)
+# 1. stop the stack (services only; keep names/volumes -- NO `-v`, NOT `make down`)
 docker compose -f infra/docker-compose.yml -f <overlays...> down
 
 # 2. back up the local stores. backup.py runs on the HOST and cannot see
@@ -97,22 +101,31 @@ files backwards -- that is what makes rollback below safe.
 
 Two independent layers; use the one that matches why you are backing out.
 
-1. **Image rollback (no data step).** If the failure is functional (a bug in
-   the new release) rather than data corruption:
+1. **Image rollback (no data step) -- only for a release with no migration.**
+   Use this only when the failed release's **Upgrade notes** say "None" (no
+   schema/migration change) and the failure is functional, not data corruption:
    ```sh
    git checkout <previous-tag>      # images rebuild from the pinned tag
    docker compose -f infra/docker-compose.yml -f <overlays...> up -d --build
    ```
-   No restore step: local stores were not rewritten by the failed release
-   (migrations are additive/forward-only on first start; a release that DID
-   migrate a store says so in its Upgrade notes, and that store's pre-migration
-   file is in your backup from step 2 above).
+   If the failed release's notes list **any** "Migrates:" entry, the new
+   release has already rewritten that store on first start and the previous
+   images may not read it: skip this layer and use the data restore (2).
 
 2. **Data restore (backup-then-restore).** If state must go back to before the
    upgrade -- the archive from `tools/backup.py`:
    ```sh
+   # a. stop (no -v, not `make down`: that deletes the volumes you restore into)
    docker compose -f infra/docker-compose.yml -f <overlays...> down
-   python tools/restore.py ./backups/fengarde-backup-*.tar.gz --dest ./restored
+   # b. unpack + verify into a staging dir (nothing touches the volumes yet)
+   python tools/restore.py ./backups/fengarde-backup-<timestamp>.tar.gz --dest ./restored
+   #    restore.py prints the release the backup was taken on
+   #    ("fengarde_release" in its JSON output). Roll back to THAT release:
+   git checkout <fengarde_release from the output>
+   # c. copy each restored file into its volume (table below), deleting any
+   #    -wal/-shm/-journal next to an SQLite target in the volume first
+   # d. start the previous release and verify (console, /api/ops/ws*, test ingest)
+   docker compose -f infra/docker-compose.yml -f <overlays...> up -d --build
    ```
    `--dest` is a staging ROOT, not your configured paths. Files land under
    it by archive folder and the tool prints the absolute `landed` paths:
@@ -129,23 +142,27 @@ Two independent layers; use the one that matches why you are backing out.
 
    Copy them into the volumes with the reverse of the extraction commands
    (`docker run --rm -v <volume>:/dst -v "$PWD/restored/...":/src alpine cp ...`;
-   also untested). When the target is an SQLite file that may carry
-   leftover `-wal`/`-shm`/`-journal` files, `restore.py --force` deletes them
-   (a stale WAL would replay post-backup rows into the restored DB, which
-   was reproduced); without `--force` a leftover sidecar blocks the restore.
-   When copying into a volume by hand, delete those sidecars yourself.
+   also untested). A stale `-wal`/`-shm`/`-journal` beside an SQLite file
+   replays post-backup rows into the restored DB (reproduced). `restore.py
+   --force` only removes such sidecars **under `--dest`** (the staging dir,
+   which normally has none); the real risk is in the **volume**, and
+   `restore.py` cannot reach it. Delete those sidecars in the volume yourself
+   before copying the DB in, e.g.
+   `docker run --rm -v <volume>:/dst alpine sh -c 'rm -f /dst/<db>-wal /dst/<db>-shm /dst/<db>-journal'`.
 
    `restore.py` verifies every file's sha256 against the archive manifest
    BEFORE writing anything, refuses overwrites (including leftover SQLite
    sidecars) without `--force`, and rejects path-traversal/symlink-escape
-   members (regression-tested in `tools/test_backup_restore.py`). Then start
-   the previous images.
+   members (regression-tested in `tools/test_backup_restore.py`). Each file is
+   written to a temp name and renamed into place with owner-only permissions.
 
 ## Honest scope
 
 The archive covers, when you configure them: RBAC DB, WS-6 inventory/keystore
-SQLite, WS-3 audit log, WS-1 spool files, plugin rule-pack directories and
-`contracts/`. It does **not** cover:
+SQLite, WS-3 audit log, WS-1 spool files (plus each spool's `.dead`
+dead-letter sidecar), plugin rule-pack directories and `contracts/`. Every
+manifest records the release it was taken on (`fengarde_release`, from
+`git describe`). It does **not** cover:
 
 - **OpenSearch** events/alerts/reports: use OpenSearch's own snapshot
   repository (https://opensearch.org/docs/latest/tuning-your-cluster/availability-and-recovery/snapshots/).
@@ -160,7 +177,7 @@ rule dirs are plain copies, so stop the collectors first.
 
 What is proven: `tools/test_backup_restore.py` (real SQLite + JSONL files,
 mutate-then-restore, WAL-sidecar, lock, `%`-in-path and env-default
-regressions). What is not: any run against a live compose stack, and the
-rollback claim that an image-only rollback needs no restore (a release that
-already migrated a store on start, e.g. the WS-6 keystore schema migration,
-needs the file restore).
+regressions, malformed-archive and Windows-path guards). What is not: any run
+against a live compose stack (volume extraction/re-injection), and POSIX
+`0600` permissions (the tests run on Windows, where `chmod` only toggles
+read-only).

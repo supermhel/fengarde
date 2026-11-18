@@ -91,6 +91,9 @@ def _backup_sqlite(src: Path, dest: Path) -> None:
     dest_conn = sqlite3.connect(dest)
     try:
         src_conn.backup(dest_conn)
+    except sqlite3.DatabaseError as exc:
+        # PR #167 review: a non-SQLite file here crashed with a raw traceback.
+        raise ValueError(f"{src} is not a readable SQLite database: {exc}") from exc
     finally:
         dest_conn.close()
         src_conn.close()
@@ -119,6 +122,18 @@ def _same_file(a: Path, b: Path) -> bool:
         return False
 
 
+def _release() -> str:
+    """The FENGARDE release this backup was taken on (git describe), so a
+    restore onto a different release is visible (PR #167 review)."""
+    import subprocess
+    try:
+        out = subprocess.run(["git", "-C", str(ROOT), "describe", "--tags", "--always", "--dirty"],
+                             capture_output=True, text=True, timeout=10)
+        return out.stdout.strip() or "unknown"
+    except (OSError, subprocess.SubprocessError):
+        return "unknown"
+
+
 def _require_file(label: str, src: Path) -> None:
     if not src.exists() or not src.is_file():
         raise FileNotFoundError(
@@ -145,6 +160,7 @@ def build_backup(out_dir: Path, rbac_db: Path | None, include_contracts: bool,
     manifest: dict = {
         "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "fengarde_component": "backup",
+        "fengarde_release": _release(),
         "note": "local state only -- see not_backed_up for what this archive does NOT cover",
         "files": [],
     }
@@ -198,10 +214,16 @@ def build_backup(out_dir: Path, rbac_db: Path | None, include_contracts: bool,
             if not spool.is_file():
                 not_backed_up.append(f"WS-1 spool {spool} (not present; spools are created on first shed)")
                 continue
-            dest = staging / "ws1-spool" / str(i) / spool.name
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            dest.write_bytes(spool.read_bytes())
-            _add(manifest, f"ws1-spool/{i}/{spool.name}", dest)
+            # PR #167 review: the spool's `.dead` sidecar (poison events
+            # dead-lettered by the drain, see collectors/spool.py) holds events
+            # no other copy has; back it up with its spool.
+            for src in (spool, spool.with_name(spool.name + ".dead")):
+                if not src.is_file():
+                    continue
+                dest = staging / "ws1-spool" / str(i) / src.name
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                dest.write_bytes(src.read_bytes())
+                _add(manifest, f"ws1-spool/{i}/{src.name}", dest)
 
         for i, pdir in enumerate(plugin_rule_dirs or []):
             if not pdir.is_dir():
@@ -234,10 +256,22 @@ def build_backup(out_dir: Path, rbac_db: Path | None, include_contracts: bool,
         manifest_path = staging / "manifest.json"
         manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
-        with tarfile.open(archive_path, "w:gz") as tar:
+        # PR #167 review: two backups in the same second overwrote each other.
+        # "x" refuses an existing name; take the next free suffix instead.
+        n = 0
+        while True:
+            try:
+                tar_cm = tarfile.open(archive_path, "x:gz")
+                break
+            except FileExistsError:
+                n += 1
+                archive_path = out_dir / f"fengarde-backup-{timestamp}-{n}.tar.gz"
+        with tar_cm as tar:
             tar.add(manifest_path, arcname="manifest.json")
             for entry in manifest["files"]:
                 tar.add(staging / entry["path"], arcname=entry["path"])
+        # the archive holds password hashes and API keys: owner-only (POSIX)
+        os.chmod(archive_path, 0o600)
 
     return archive_path
 
@@ -288,7 +322,7 @@ def main() -> None:
                                keystore_db=keystore_db, audit_log=_opt_path(args.audit_log),
                                inventory_db=inventory_db, spool_paths=spools,
                                plugin_rule_dirs=plugin_dirs)
-    except FileNotFoundError as exc:
+    except (FileNotFoundError, ValueError) as exc:
         sys.exit(f"[FAIL] backup aborted: {exc}")
     with tarfile.open(archive, "r:gz") as tar:
         member = tar.extractfile("manifest.json")

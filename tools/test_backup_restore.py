@@ -60,7 +60,7 @@ def test_full_round_trip_rbac_and_contracts():
               "the archive must contain real contracts/rules/*.yml files")
 
         dest = d / "restored"
-        restored = restore.verify_and_restore(archive, dest, force=False)
+        restored, _release = restore.verify_and_restore(archive, dest, force=False)
         check(len(restored) == len(names) - 1,  # -1 for manifest.json itself, not a manifest entry
               f"every manifest entry must have been restored, got {len(restored)} of {len(names) - 1}")
 
@@ -134,7 +134,7 @@ def test_full_round_trip_all_non_docker_stores():
 
         # ---- restore from the pre-mutation backup ----
         dest = d / "restored"
-        restored = restore.verify_and_restore(archive, dest, force=False)
+        restored, _release = restore.verify_and_restore(archive, dest, force=False)
         check(len(restored) == len(names) - 1,
               f"every manifest entry restored, got {len(restored)} of {len(names) - 1}")
 
@@ -225,7 +225,7 @@ def test_collision_requires_force():
         check(raised, "restoring into an already-populated dest without --force must be rejected")
 
         # With --force it must succeed (overwrite).
-        restored = restore.verify_and_restore(archive, dest, force=True)
+        restored, _release = restore.verify_and_restore(archive, dest, force=True)
         check(len(restored) > 0, "restoring with --force must succeed and overwrite")
 
 
@@ -577,6 +577,74 @@ def test_f6_percent_in_sqlite_path():
             check("rbac/users.db" in _archive_names(archive), f"F6: {name!r} DB must be archived")
 
 
+def _archive_with_manifest(path: Path, manifest_bytes: bytes, extra: dict | None = None) -> Path:
+    with tarfile.open(path, "w:gz") as tar:
+        for name, data in [("manifest.json", manifest_bytes)] + list((extra or {}).items()):
+            info = tarfile.TarInfo(name)
+            info.size = len(data)
+            tar.addfile(info, io.BytesIO(data))
+    return path
+
+
+def test_pr167_second_review_edges():
+    with tempfile.TemporaryDirectory() as td:
+        d = Path(td)
+        # path guard holds for Windows drive-relative / rooted names on every OS
+        for bad in ("C:evil.txt", "/abs/x", "\\abs\\x", "C:\\x", "a/../../x", "..\\x"):
+            try:
+                restore._safe_join(d, bad)
+                check(False, f"_safe_join accepted {bad!r}")
+            except restore.RestoreError:
+                pass
+        check(restore._safe_join(d, "rbac/users.db") == d / "rbac/users.db", "normal path rejected")
+
+        # malformed archives -> RestoreError, never a traceback
+        (d / "notgz.tar.gz").write_bytes(b"this is not gzip")
+        cases = {
+            "non-gzip": d / "notgz.tar.gz",
+            "bad json": _archive_with_manifest(d / "badjson.tar.gz", b"{not json"),
+            "manifest list": _archive_with_manifest(d / "list.tar.gz", b"[1, 2]"),
+            "entry no sha": _archive_with_manifest(
+                d / "nosha.tar.gz", json.dumps({"files": [{"path": "a"}]}).encode(), {"a": b"x"}),
+        }
+        for name, arc in cases.items():
+            try:
+                restore.verify_and_restore(arc, d / f"dest-{name.replace(' ', '_')}")
+                check(False, f"{name}: restore must fail")
+            except restore.RestoreError:
+                pass
+            except Exception as exc:  # noqa: BLE001
+                check(False, f"{name}: raised {type(exc).__name__} instead of RestoreError: {exc}")
+
+        # non-SQLite DB -> clear ValueError (main() reports it), not a sqlite3 traceback
+        fake = d / "fake.db"
+        fake.write_bytes(b"definitely not sqlite " * 10)
+        try:
+            backup.build_backup(d / "out-fake", fake, include_contracts=False)
+            check(False, "non-SQLite --rbac-db must abort")
+        except ValueError:
+            pass
+        except Exception as exc:  # noqa: BLE001
+            check(False, f"non-SQLite DB raised {type(exc).__name__}: {exc}")
+
+        # two backups in the same second get distinct names; release + .dead recorded
+        db = d / "users.db"
+        _make_rbac_db(db)
+        spool = d / "http-spool.jsonl"
+        spool.write_text('{"key":"k"}\n', encoding="utf-8")
+        spool.with_name(spool.name + ".dead").write_text('{"key":"poison"}\n', encoding="utf-8")
+        out = d / "out"
+        a1 = backup.build_backup(out, db, include_contracts=False, spool_paths=[spool])
+        a2 = backup.build_backup(out, db, include_contracts=False, spool_paths=[spool])
+        check(a1 != a2 and a1.exists() and a2.exists(), f"same-second backups collided: {a1} {a2}")
+        names = _archive_names(a1)
+        check("ws1-spool/0/http-spool.jsonl.dead" in names, f".dead sidecar missing: {names}")
+        restored, release = restore.verify_and_restore(a1, d / "dest-ok")
+        check(isinstance(release, str) and release, f"release not recorded: {release!r}")
+        check("ws1-spool/0/http-spool.jsonl.dead" in restored, ".dead not restored")
+        check(not list((d / "dest-ok").rglob("*.restore-tmp")), "restore left temp files")
+
+
 def main():
     test_full_round_trip_rbac_and_contracts()
     test_full_round_trip_all_non_docker_stores()
@@ -597,6 +665,7 @@ def main():
     test_f4_cli_reports_where_files_landed()
     test_f5_audit_copy_waits_for_the_audit_lock()
     test_f6_percent_in_sqlite_path()
+    test_pr167_second_review_edges()
 
     if FAILS:
         print(f"[FAIL] backup/restore: {len(FAILS)} problem(s)")
