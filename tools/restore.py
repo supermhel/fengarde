@@ -70,7 +70,7 @@ def _safe_join(base: Path, rel: str) -> Path:
     return base / rel
 
 
-def verify_and_restore(archive_path: Path, dest: Path, force: bool = False) -> list[str]:
+def verify_and_restore(archive_path: Path, dest: Path, force: bool = False) -> tuple[list[str], str]:
     """Extract `archive_path` into `dest` after verifying every manifest
     entry's checksum. Returns the list of restored (destination-relative)
     paths. Raises RestoreError on any integrity failure or (without
@@ -131,7 +131,7 @@ def verify_and_restore(archive_path: Path, dest: Path, force: bool = False) -> l
         for entry in files:
             rel = entry["path"]
             staged_file = _safe_join(staging, rel)
-            if not staged_file.exists():
+            if not staged_file.is_file():  # a directory entry crashed _sha256 (PR #167 review)
                 raise RestoreError(f"manifest references missing file: {rel}")
             actual = _sha256(staged_file)
             if actual != entry["sha256"]:
@@ -166,7 +166,7 @@ def verify_and_restore(archive_path: Path, dest: Path, force: bool = False) -> l
             os.chmod(tmp, 0o600)
             os.replace(tmp, dst)
             restored.append(rel)
-        return restored, manifest.get("fengarde_release", "unknown")
+        return restored, str(manifest.get("fengarde_release", "unknown"))
 
 
 def main() -> None:

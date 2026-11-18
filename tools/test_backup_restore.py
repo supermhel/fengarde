@@ -606,6 +606,9 @@ def test_pr167_second_review_edges():
             "manifest list": _archive_with_manifest(d / "list.tar.gz", b"[1, 2]"),
             "entry no sha": _archive_with_manifest(
                 d / "nosha.tar.gz", json.dumps({"files": [{"path": "a"}]}).encode(), {"a": b"x"}),
+            "entry is a dir": _archive_with_manifest(
+                d / "dir.tar.gz", json.dumps({"files": [{"path": "sub", "sha256": "0" * 64}]}).encode(),
+                {"sub/x": b"x"}),
         }
         for name, arc in cases.items():
             try:
@@ -643,6 +646,17 @@ def test_pr167_second_review_edges():
         check(isinstance(release, str) and release, f"release not recorded: {release!r}")
         check("ws1-spool/0/http-spool.jsonl.dead" in restored, ".dead not restored")
         check(not list((d / "dest-ok").rglob("*.restore-tmp")), "restore left temp files")
+
+        # owner-only permissions: archive and restored stores hold password
+        # hashes and API keys. Only meaningful on POSIX (CI runs Linux); on
+        # Windows chmod only toggles read-only, so the check is skipped there.
+        if os.name == "posix":
+            import stat
+            mode = stat.S_IMODE(a1.stat().st_mode)
+            check(mode == 0o600, f"backup archive mode {oct(mode)} != 0o600")
+            for rel in restored:
+                m = stat.S_IMODE((d / "dest-ok" / rel).stat().st_mode)
+                check(m == 0o600, f"restored {rel} mode {oct(m)} != 0o600")
 
 
 def main():

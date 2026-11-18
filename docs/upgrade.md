@@ -178,6 +178,6 @@ rule dirs are plain copies, so stop the collectors first.
 What is proven: `tools/test_backup_restore.py` (real SQLite + JSONL files,
 mutate-then-restore, WAL-sidecar, lock, `%`-in-path and env-default
 regressions, malformed-archive and Windows-path guards). What is not: any run
-against a live compose stack (volume extraction/re-injection), and POSIX
-`0600` permissions (the tests run on Windows, where `chmod` only toggles
-read-only).
+against a live compose stack (volume extraction/re-injection). The `0600`
+permission check runs on POSIX only (CI's Linux runner; skipped on Windows,
+where `chmod` only toggles read-only).
