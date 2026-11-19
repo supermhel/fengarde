@@ -60,6 +60,14 @@
   demo). On 502/503/504 nginx still answers an empty-hits body. A missing index
   now yields an empty hit list (200) instead of OpenSearch's 404. `/api/config.js`
   no longer exists (removed in WP-6.1). See SECURITY.md, "Dashboard session gate".
+- `/api/inventory/` (GET/HEAD) → WS-6, behind the same `auth_request /api/auth/check`
+  gate; nginx sends the server-side `WS6_INVENTORY_KEY` upstream when the caller
+  presents no `X-Api-Key` (empty by default = zero-config demo). Session-gated,
+  not tenant-scoped (SECURITY.md, "Dashboard session gate").
+- Upgrade note: `ai-*` documents written before the ws5 tenant fix have no
+  `tenant_id` and read as tenant `default`; purge or backfill them with an
+  `_update_by_query` / `_delete_by_query` on `alerts-*` (`alert_id` prefix `ai-`,
+  no `tenant_id`; exact snippets in SECURITY.md, "Dashboard session gate").
 
 ## Produces
 - **The console (2026-10-15)** is a React + Vite + TypeScript app in `app/`,

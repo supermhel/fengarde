@@ -371,6 +371,8 @@ services:
       # (nginx's own ${} parser rejects `:` as an invalid variable-name
       # character and refuses to start with "closing bracket... missing").
       - OPENSEARCH_HOST=${OPENSEARCH_HOST:-opensearch:9200}
+      # Server-side key nginx sends to ws6 on /api/inventory/ (same value ws6 uses).
+      - WS6_INVENTORY_KEY=${INVENTORY_API_KEY:-${FENGARDE_API_KEY:-}}
     # v0.4 Track S2: dashboard basic-auth is opt-in via a compose OVERRIDE file
     # (infra/docker-compose.auth.yml), not baked in here -- a conditional bind
     # mount of a possibly-missing host file would break the zero-friction

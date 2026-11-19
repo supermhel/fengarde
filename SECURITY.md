@@ -583,6 +583,32 @@ Read the limits before exposing port 8080:
   OpenSearch query bodies (wire-format test) and the nginx config with
   `nginx -t`; it has NOT been exercised against a live OpenSearch + console
   stack.
+- **Inventory route.** `/api/inventory/` (GET/HEAD only, ws6) is gated with the same
+  `auth_request /api/auth/check` (session or key). Browsers hold no key, so nginx
+  sends the server-side key `WS6_INVENTORY_KEY` (compose: `INVENTORY_API_KEY`, else
+  `FENGARDE_API_KEY`, else empty = zero-config demo) upstream; a caller-supplied
+  `X-Api-Key` takes precedence for machine clients (it must also pass the ws3
+  gate). ws6 IS tenant-aware, but it scopes by the key it receives, so every
+  session reads what that one key sees: the route is session-gated, NOT
+  tenant-scoped. The key stays inside nginx and is never sent to the browser.
+- **Legacy `ai-*` documents (WP-6.2 upgrade note).** AI-triage documents
+  (`alert_id` prefix `ai-`) written before the ws5 tenant fix carry no
+  `tenant_id`, so every scoped read treats them as tenant `default`: a `default`
+  session sees them and no other tenant does. Purge or backfill them once after
+  upgrading. Not run here; adjust the tenant and take a snapshot first:
+
+  ```
+  # backfill (assign the right tenant to old ai-* docs that lack one)
+  POST alerts-*/_update_by_query?conflicts=proceed
+  {"query":{"bool":{"filter":[{"prefix":{"alert_id":"ai-"}}],
+                    "must_not":[{"exists":{"field":"tenant_id"}}]}},
+   "script":{"source":"ctx._source.tenant_id='default'","lang":"painless"}}
+
+  # or purge them (ws5 re-emits triage for new alerts only)
+  POST alerts-*/_delete_by_query?conflicts=proceed
+  {"query":{"bool":{"filter":[{"prefix":{"alert_id":"ai-"}}],
+                    "must_not":[{"exists":{"field":"tenant_id"}}]}}}
+  ```
 - **Availability coupling.** Each gated request makes a sub-request to ws3. If ws3
   is down or rate-limiting, those panels fail (nginx returns 500; fail-closed).
 - **Cookie flags.** The session cookie is `HttpOnly; SameSite=Strict`, no expiry

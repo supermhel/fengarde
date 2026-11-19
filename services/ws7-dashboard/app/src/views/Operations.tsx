@@ -112,7 +112,13 @@ function Value({ v }: { v: unknown }) {
 /* Pipeline monitor + per-service health, every number read from that workstream's own /metrics.
    WS-6 (HTTP inventory API) and WS-7 (this page) are not bus runners and have no /metrics card. */
 export function Operations() {
-  const { t, lang, data } = useConsole();
+  const { t, lang, data, opsAllowed } = useConsole();
+  if (!opsAllowed) return (
+    <>
+      <h1 className="view-title">{t.operations}</h1>
+      <p className="empty">{H[lang].adminOnly}</p>
+    </>
+  );
   const alerts = data.alerts?.ok ? data.alerts.data : [];
   const events = data.events?.ok ? data.events.data : [];
   const stages = pipelineStages(t, data.ops, data.rules, alerts, events);

@@ -25,6 +25,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `test_fix_read_plane.py`, `test_opensearch_list_default_filters.py`,
   `test_route_decomposition.py`. Not run: a live console + OpenSearch end-to-end.
 
+### Fixed (2026-11-19, PR #178 review: console follow-ups)
+
+- Console no longer polls the six admin-only `/api/ops/*` feeds unless the session
+  role is admin (they 403 for analyst/read_only); the Operations view says so.
+- An admin's tenant filter is sent as `tenant_id` to `/api/alerts`, `/api/events`
+  and `/api/ai-triage`, so ws3 narrows server-side instead of the client filtering
+  the newest 50/100.
+- Docs: pre-upgrade `ai-*` documents lack `tenant_id` and read as tenant `default`;
+  SECURITY.md has `_update_by_query` / `_delete_by_query` snippets (not run).
+- `live_nginx_check.py` now also asserts `?gte=`/`tenant_id=` forwarding, the
+  `/api/prom/*` admin gate and the `/api/inventory/` gate; it fails on the
+  pre-fix inventory location.
+
+### Fixed (2026-11-19, PR #165 review: inventory under sessions-only auth)
+
+- `/api/inventory/` is now `auth_request`-gated (session or key) and nginx sends
+  the server-side key (`WS6_INVENTORY_KEY`, set from `INVENTORY_API_KEY` /
+  `FENGARDE_API_KEY` in compose, default empty) to ws6, so logged-in users no
+  longer get 401 on the Inventory view when a key is configured. Caller-supplied
+  `X-Api-Key` still wins. Not tenant-scoped (see SECURITY.md). Removed the dead
+  `/api/config.js` strip from `app/vite.config.ts`. Test: `test_fix_read_plane.py`.
+
 ### Added (2026-11-04, WP-1.3: shipper adapters for real Fluent Bit / Winlogbeat / Docker shapes)
 
 - `services/ws2-normalization/adapters/` — four pure, total adapters that
