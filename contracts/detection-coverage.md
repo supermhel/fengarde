@@ -276,6 +276,7 @@ Harness-measured on the bundled reference bursts (seed 7, deque counter backend)
 | `common_port_scan` | `common_port_scan`, `common_port_scan_by_target` | 8 | 18.008 | 0.349953 | dst_ip=immune, ip=immune | (2,2) | no | no | no | no | yes |
 | `common_port_sweep` | `common_port_sweep` | 1 | 32.001 | 0.233329 | ip=2 | n/a | no | no | no | no | yes |
 | `common_rapid_account_lifecycle` | `common_rapid_account_lifecycle` | 3 | 10620.003 | 0.000278 | target_account=4 | n/a | no | no | no | no | yes |
+| `common_refused_connection_scan` | `common_refused_connection_scan` | 1 | 32.001 | 0.233329 | ip=2 | n/a | no | no | no | no | yes |
 | `dc_mass_vm_delete` | `dc_mass_vm_delete`, `dc_mass_vm_delete_by_source` | 3 | 72.003 | 0.049999 | account=immune, ip=immune | (2,2) | evades | no | no | no | yes |
 | `ot_new_engineering_connection` | `ot_new_engineering_connection` | 3 | 1770.003 | 0.001667 | ot_server=4 | n/a | no | no | no | no | yes |
 <!-- evasion-cost:end -->

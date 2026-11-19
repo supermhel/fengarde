@@ -6,7 +6,7 @@ it and fails on any difference.
 
 - basis: `harness-measured`  |  seed: `7`
 - registry digest: `4e92119c731bc58b759c2000d7f7f03ab8b8c7588b2b8958fe5e905aeb619125` (`eval/scorecard_registry.py`)
-- 45 tagged rules, 28 ATT&CK/ATT&CK-ICS/ATLAS techniques, 11 storylines, 32 registered metrics
+- 46 tagged rules, 28 ATT&CK/ATT&CK-ICS/ATLAS techniques, 11 storylines, 32 registered metrics
 - pooled across storylines: 187/230 = 0.813 (convenience only -- the per-storyline numbers are the result)
 
 ## How to read this card
@@ -273,7 +273,7 @@ cover AI-to-OT. The other storylines show `not measured` for these; generalising
 | corpus cases fully matched | 8/8 | higher-better | Eight hand-curated cases. A miss is reported per case in the artifact; this cell says how many had NO missed rule, not how well the rules generalise. | `eval/adversarial/test_layer_a.py::_test_coverage` |
 | corpus incidents promoted | 1 | info | One deliberate shared-attacker merge is expected; the cross-case merge cleanliness flag is what proves no incident spans two corpus groups. | **NONE** |
 
-## Per-technique coverage (28 techniques, 45 tagged rules)
+## Per-technique coverage (28 techniques, 46 tagged rules)
 
 `rules` = tagged rules carrying the technique (`†` = companion rule).
 `verified` = rules that fired on their own producer fixture AND whose boundary or
@@ -292,7 +292,7 @@ decorative expectation (see the cross-cutting table), never as coverage.
 | T1003.001 | attack | TA0006 | 1 | 1/1 | 1/230 (win_credential_theft/drop_lsass_dump) | yes: win_credential_theft/lsass_dump | declared at an oracle step AND measured on the rule's own fixture; the two agree, which still says nothing about traffic the fixture does not model | `eval/attack/test_fire_check.py::test_under_threshold_probe_catches_an_off_by_one_rule` |
 | T1005 | attack | TA0009 | 1 | 1/1 | 4/230 (insider_exfil/drop_bulk_table_read, insider_exfil/stretch_2x, insider_exfil/stretch_6x, insider_exfil/thin_60pct) | yes: insider_exfil/bulk_table_read | declared at an oracle step AND measured on the rule's own fixture; the two agree, which still says nothing about traffic the fixture does not model | `eval/attack/test_fire_check.py::test_under_threshold_probe_catches_an_off_by_one_rule` |
 | T1021 | attack | TA0008 | 2 (1† companion) | 2/2 | 6/230 (it_intrusion/drop_lateral_movement, it_intrusion/stretch_6x, it_intrusion/thin_60pct, ransomware/drop_lateral_spread, ransomware/stretch_6x, ransomware/thin_60pct) | yes: it_intrusion/lateral_movement, ransomware/lateral_spread | declared at an oracle step AND measured on the rule's own fixture; the two agree, which still says nothing about traffic the fixture does not model | `eval/attack/test_fire_check.py::test_under_threshold_probe_catches_an_off_by_one_rule` |
-| T1046 | attack | TA0007 | 3 (1† companion) | 3/3 | 10/230 (it_intrusion/drop_recon_port_scan, it_intrusion/stretch_6x, it_intrusion/thin_60pct, network_credential_abuse/drop_recon_sweep, network_credential_abuse/ip_rotate_2, network_credential_abuse/ip_rotate_all, network_credential_abuse/shuffle_arrival, network_credential_abuse/stretch_6x, network_credential_abuse/thin_25pct, network_credential_abuse/thin_60pct) | yes: it_intrusion/recon_port_scan, network_credential_abuse/recon_sweep | declared at an oracle step AND measured on the rule's own fixture; the two agree, which still says nothing about traffic the fixture does not model | `eval/attack/test_fire_check.py::test_under_threshold_probe_catches_an_off_by_one_rule` |
+| T1046 | attack | TA0007 | 4 (1† companion) | 4/4 | 10/230 (it_intrusion/drop_recon_port_scan, it_intrusion/stretch_6x, it_intrusion/thin_60pct, network_credential_abuse/drop_recon_sweep, network_credential_abuse/ip_rotate_2, network_credential_abuse/ip_rotate_all, network_credential_abuse/shuffle_arrival, network_credential_abuse/stretch_6x, network_credential_abuse/thin_25pct, network_credential_abuse/thin_60pct) | yes: it_intrusion/recon_port_scan, network_credential_abuse/recon_sweep | declared at an oracle step AND measured on the rule's own fixture; the two agree, which still says nothing about traffic the fixture does not model | `eval/attack/test_fire_check.py::test_under_threshold_probe_catches_an_off_by_one_rule` |
 | T1059.001 | attack | TA0002 | 1 | 1/1 | 1/230 (win_credential_theft/drop_powershell_cradle) | yes: win_credential_theft/powershell_cradle | declared at an oracle step AND measured on the rule's own fixture; the two agree, which still says nothing about traffic the fixture does not model | `eval/attack/test_fire_check.py::test_under_threshold_probe_catches_an_off_by_one_rule` |
 | T1070.001 | attack | TA0005 | 1 | 1/1 | 1/230 (win_credential_theft/drop_log_clear) | yes: win_credential_theft/log_clear | declared at an oracle step AND measured on the rule's own fixture; the two agree, which still says nothing about traffic the fixture does not model | `eval/attack/test_fire_check.py::test_under_threshold_probe_catches_an_off_by_one_rule` |
 | T1071 | attack | TA0011 | 2 | 2/2 | 9/230 (ai_to_ot/drop_agent_mcp_tool_call, phishing_bec/drop_c2_beacon, phishing_bec/duplicate_all, phishing_bec/ip_rotate_2, phishing_bec/ip_rotate_all, phishing_bec/jitter_100pct, phishing_bec/thin_25pct, phishing_bec/thin_60pct, supply_chain_ci/drop_artifact_exfil) | yes: ai_to_ot/agent_mcp_tool_call, phishing_bec/c2_beacon, supply_chain_ci/artifact_exfil | declared at an oracle step AND measured on the rule's own fixture; the two agree, which still says nothing about traffic the fixture does not model | `eval/attack/test_fire_check.py::test_under_threshold_probe_catches_an_off_by_one_rule` |
@@ -544,7 +544,7 @@ TPR denominator, so a declared gap can never lower TPR -- read them here, not th
 7. The evasion search finds the boundary the rule YAML DECLARES. It proves the engine honours the rules as written, not that the rules are the right ones.
    - guard: OK -- 15 searched row(s): all_agree=true, so measured == predicted-from-declared at every searched boundary
 8. fire_check proves declared-vs-fired on each rule's OWN producer fixture. It is not a real-world detection result and says nothing about traffic the fixture does not model.
-   - guard: OK -- 45 tagged rule(s), every one fired on its own producer fixture
+   - guard: OK -- 46 tagged rule(s), every one fired on its own producer fixture
 9. No third-party labelled corpus runs in the blocking lane: run_all_tests.sh never invokes evtx_eval.py or splunk_eval.py, which are dataset-gated and opt-in only.
    - guard: OK -- run_all_tests.sh: 0 matches for the ANCHORED '$PY eval/detection_accuracy/(evtx OR splunk)_eval.py'; the H7 oracle-vs-engine test it does run (test_evtx_eval.py) uses no third-party corpus
 10. The oracles are self-authored: the answer key and the system under test were written by the same project. oracle_consistency reconciles them against an independently derived oracle, which bounds but does not remove that bias.
@@ -552,7 +552,7 @@ TPR denominator, so a declared gap can never lower TPR -- read them here, not th
 11. Per-technique attribution is per STEP, not per event: a step mapped to two techniques credits both, and mutation attrition on a multi-rule step can overstate one technique.
    - guard: OK -- 11 oracle step(s) carry >1 expected rule and are credited to every one of them: ai_to_ot/agent_mcp_tool_call (2), ai_to_ot/n8n_execution (2), infra_takeover/mass_vm_delete (2), it_intrusion/dns_exfil (2)
 12. `--check` proves the committed card matches a fresh render; it blocks nothing by itself. The atom ratchet (`eval/twin/ratchet.py check`, a gate stanza) blocks an unwaived drop of every atom it measures, but several card metrics have no atom behind them, and for those accepting a worse number is still a card regeneration plus a commit.
-   - guard: OK -- 4793 atoms in eval/twin/baseline_scenarios.json; 20 of 32 card metrics ratcheted; not ratcheted: mttr, peak_alert_score, severity_in_band, causal_order_fidelity, order_concordance, forbidden_order_realised_rate, degradation_behavior, decorative_expectations, oracle_new_disagreements, oracle_accepted_disagreements, oracle_stale_allowlist_entries, corpus_incidents_promoted
+   - guard: OK -- 4796 atoms in eval/twin/baseline_scenarios.json; 20 of 32 card metrics ratcheted; not ratcheted: mttr, peak_alert_score, severity_in_band, causal_order_fidelity, order_concordance, forbidden_order_realised_rate, degradation_behavior, decorative_expectations, oracle_new_disagreements, oracle_accepted_disagreements, oracle_stale_allowlist_entries, corpus_incidents_promoted
 
 ## Provenance
 
