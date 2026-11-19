@@ -1,0 +1,38 @@
+title: Refused or unanswered connections from one source across many ports (Zeek conn_state S0/REJ)
+id: 7b3e9d51-4c2a-4f86-a1d0-5e8c2b6f9a14
+status: stable
+description: >
+  One source IP producing Zeek conn.log rows with conn_state S0 (SYN seen, no reply) or REJ (SYN answered with a RST)
+  toward 15+ DISTINCT destination ports within 60 seconds -- a vertical scan or refused-connection burst, read from the
+  sensor's own connection states (OCSF Network Activity, class 4001, activity 2 Close, as zeek_json emits them).
+  Why this is a separate rule and not a mapping to Deny: the zeek_json parser deliberately never maps S0/REJ to Deny
+  (owner decision 2026-11-13, real Zeek 9.0.1 run): REJ only means "the target answered with an RST" and S0 only means
+  "no reply was seen", which is what a closed port, a firewall DROP/REJECT, a closed UDP port or a dead host all look
+  like. Mapping them would make common_port_scan* / common_port_sweep assert a firewall verdict the sensor never saw.
+  This rule makes no such claim: it counts how many different ports one source tried and failed to complete.
+  Distinct-count on dst_endpoint.port keeps 30 refused connections to ONE port (a retrying client against a stopped
+  service) silent, and completed connections (SF, S1, ...) never count.
+  Scope: vertical only (many ports); a horizontal refused sweep (one port, many hosts) is not covered. Only Zeek conn
+  rows qualify (the condition reads unmapped.zeek.conn.conn_state), so Suricata flow records and firewall denies are
+  untouched. Noise: vulnerability scanners and asset-discovery tools probe closed ports by design -- allowlist them.
+level: medium
+logsource:
+  category: network_activity
+detection:
+  refused_connection:
+    class_uid: 4001
+    unmapped.zeek.conn.conn_state: {in: [S0, REJ]}
+  condition: refused_connection
+fields:
+  - src_endpoint.ip
+  - dst_endpoint.port
+siem:
+  sector: common
+  score_weight: 45
+  window_seconds: 60
+  threshold: 15
+  group_by: src_endpoint.ip
+  distinct_field: dst_endpoint.port
+mitre:
+  tactic: TA0007      # Discovery
+  technique: T1046    # Network Service Discovery

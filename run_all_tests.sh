@@ -336,6 +336,7 @@ echo
 echo "== ws4 distinct-count window + port-scan/lateral-movement rules (v0.2) =="; LAST_HEADER="== ws4 distinct-count window + port-scan/lateral-movement rules (v0.2) =="
 $PY services/ws4-detection/test_window_distinct.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 $PY services/ws4-detection/test_engine_distinct_rules.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+$PY services/ws4-detection/test_refused_connection_scan.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
 echo "== ws4 v0.3: password-spray + priv-grant fire on REAL parser output =="; LAST_HEADER="== ws4 v0.3: password-spray + priv-grant fire on REAL parser output =="
 $PY services/ws4-detection/test_v03_new_rules.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
