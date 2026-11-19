@@ -1,0 +1,25 @@
+{
+  "ActivityID": "",
+  "Channel": "Microsoft-Windows-Sysmon/Operational",
+  "Computer": "EC2AMAZ-LPA5TA4",
+  "EventID": 1,
+  "EventRecordID": 483,
+  "Keywords": "0x8000000000000000",
+  "Level": 4,
+  "Message": "Process Create:\r\nRuleName: -\r\nUtcTime: 2023-01-17 12:50:59.303\r\nProcessGuid: {f51ddac1-99b3-63c6-bb01-00000000e100}\r\nProcessId: 5216\r\nImage: C:\\fluent\\fluent-bit-2.0.6-win64\\bin\\fluent-bit.exe\r\nCommandLine: fluent-bit.exe  -c ../conf/fluent-bit.conf\r\nUser: EC2AMAZ-LPA5TA4\\Administrator\r\nLogonId: 0xCE96D\r\nHashes: MD5=4A19C3D18B025F49AA157FD2D360283A\r\nParentProcessId: 7720\r\nParentImage: C:\\Windows\\System32\\cmd.exe",
+  "Opcode": 0,
+  "ProcessID": 7536,
+  "ProviderGuid": "{5770385F-C22A-43E0-BF4C-06F5698FFBD9}",
+  "ProviderName": "Microsoft-Windows-Sysmon",
+  "Qualifiers": "",
+  "RelatedActivityID": "",
+  "StringInserts": [
+    "-",
+    "2023-01-17 12:50:59.303"
+  ],
+  "Task": 1,
+  "ThreadID": 7456,
+  "TimeCreated": "2023-01-17 12:50:59 +0000",
+  "UserID": "S-1-5-18",
+  "Version": 5
+}

@@ -1,0 +1,81 @@
+Nov  5 09:11:16 dnsmasq[187]: started, version pi-hole-v2.93+30 cachesize 10000
+Nov  5 09:11:16 dnsmasq[187]: DNS service limited to local subnets
+Nov  5 09:11:16 dnsmasq[187]: compile time options: IPv6 GNU-getopt no-DBus no-UBus no-i18n IDN2 DHCP DHCPv6 Lua TFTP no-conntrack ipset no-nftset auth DNSSEC loop-detect inotify dumpfile
+Nov  5 09:11:16 dnsmasq[187]: using nameserver 8.8.8.8#53
+Nov  5 09:11:16 dnsmasq[187]: using nameserver 8.8.4.4#53
+Nov  5 09:11:16 dnsmasq[187]: using only locally-known addresses for onion
+Nov  5 09:11:16 dnsmasq[187]: using only locally-known addresses for bind
+Nov  5 09:11:16 dnsmasq[187]: using only locally-known addresses for invalid
+Nov  5 09:11:16 dnsmasq[187]: using only locally-known addresses for test
+Nov  5 09:11:16 dnsmasq[187]: using only locally-known addresses for pi.hole
+Nov  5 09:11:16 dnsmasq[187]: using only locally-known addresses for lan
+Nov  5 09:11:16 dnsmasq[187]: using only locally-known addresses for internal
+Nov  5 09:11:16 dnsmasq[187]: using only locally-known addresses for home.arpa
+Nov  5 09:11:16 dnsmasq[187]: read /etc/hosts - 9 names
+Nov  5 09:11:16 dnsmasq[187]: read /etc/pihole/hosts/custom.list - 0 names
+Nov  5 09:11:16 dnsmasq[187]: query[A] pi.hole from 127.0.0.1
+Nov  5 09:11:16 dnsmasq[187]: Pi-hole hostname pi.hole is 127.0.0.1
+Nov  5 09:11:48 dnsmasq[187]: query[A] pi.hole from 127.0.0.1
+Nov  5 09:11:48 dnsmasq[187]: Pi-hole hostname pi.hole is 127.0.0.1
+Nov  5 09:12:01 dnsmasq[187]: query[A] example.com from 127.0.0.1
+Nov  5 09:12:01 dnsmasq[187]: forwarded example.com to 8.8.8.8
+Nov  5 09:12:01 dnsmasq[187]: forwarded example.com to 8.8.4.4
+Nov  5 09:12:01 dnsmasq[187]: query[PTR] 1.0.0.127.in-addr.arpa from 127.0.0.1
+Nov  5 09:12:01 dnsmasq[187]: /etc/hosts 127.0.0.1 is localhost
+Nov  5 09:12:01 dnsmasq[187]: query[PTR] 8.8.8.8.in-addr.arpa from 127.0.0.1
+Nov  5 09:12:01 dnsmasq[187]: forwarded 8.8.8.8.in-addr.arpa to 8.8.8.8
+Nov  5 09:12:01 dnsmasq[187]: forwarded 8.8.8.8.in-addr.arpa to 8.8.4.4
+Nov  5 09:12:02 dnsmasq[187]: reply 8.8.8.8 is dns.google
+Nov  5 09:12:02 dnsmasq[187]: reply example.com is 172.66.147.243
+Nov  5 09:12:02 dnsmasq[187]: reply example.com is 104.20.23.154
+Nov  5 09:12:02 dnsmasq[187]: query[AAAA] example.com from 127.0.0.1
+Nov  5 09:12:02 dnsmasq[187]: forwarded example.com to 8.8.4.4
+Nov  5 09:12:02 dnsmasq[187]: reply example.com is 2606:4700:10::ac42:93f3
+Nov  5 09:12:02 dnsmasq[187]: reply example.com is 2606:4700:10::6814:179a
+Nov  5 09:12:02 dnsmasq[187]: query[A] evil-c2.example.com from 127.0.0.1
+Nov  5 09:12:02 dnsmasq[187]: forwarded evil-c2.example.com to 8.8.4.4
+Nov  5 09:12:03 dnsmasq[187]: query[PTR] 4.4.8.8.in-addr.arpa from 127.0.0.1
+Nov  5 09:12:03 dnsmasq[187]: forwarded 4.4.8.8.in-addr.arpa to 8.8.4.4
+Nov  5 09:12:04 dnsmasq[187]: reply 8.8.4.4 is dns.google
+Nov  5 09:12:04 dnsmasq[187]: reply evil-c2.example.com is NODATA-IPv4
+Nov  5 09:12:04 dnsmasq[187]: query[AAAA] evil-c2.example.com from 127.0.0.1
+Nov  5 09:12:04 dnsmasq[187]: forwarded evil-c2.example.com to 8.8.4.4
+Nov  5 09:12:04 dnsmasq[187]: reply evil-c2.example.com is NODATA-IPv6
+Nov  5 09:12:04 dnsmasq[187]: query[A] github.com from 127.0.0.1
+Nov  5 09:12:04 dnsmasq[187]: forwarded github.com to 8.8.4.4
+Nov  5 09:12:04 dnsmasq[187]: reply github.com is 140.82.121.4
+Nov  5 09:12:04 dnsmasq[187]: query[AAAA] github.com from 127.0.0.1
+Nov  5 09:12:04 dnsmasq[187]: forwarded github.com to 8.8.4.4
+Nov  5 09:12:04 dnsmasq[187]: reply github.com is NODATA-IPv6
+Nov  5 09:12:04 dnsmasq[187]: query[A] example.com from 127.0.0.1
+Nov  5 09:12:04 dnsmasq[187]: cached example.com is 172.66.147.243
+Nov  5 09:12:04 dnsmasq[187]: cached example.com is 104.20.23.154
+Nov  5 09:12:04 dnsmasq[187]: query[AAAA] example.com from 127.0.0.1
+Nov  5 09:12:04 dnsmasq[187]: cached example.com is 2606:4700:10::ac42:93f3
+Nov  5 09:12:04 dnsmasq[187]: cached example.com is 2606:4700:10::6814:179a
+Nov  5 09:12:19 dnsmasq[187]: query[A] pi.hole from 127.0.0.1
+Nov  5 09:12:19 dnsmasq[187]: Pi-hole hostname pi.hole is 127.0.0.1
+Nov  5 09:12:35 dnsmasq[187]: query[TXT] local.api.ftl from 127.0.0.1
+Nov  5 09:12:35 dnsmasq[187]: config local.api.ftl is <TXT>
+Nov  5 09:12:51 dnsmasq[187]: query[A] pi.hole from 127.0.0.1
+Nov  5 09:12:51 dnsmasq[187]: Pi-hole hostname pi.hole is 127.0.0.1
+Nov  5 09:13:22 dnsmasq[187]: query[A] pi.hole from 127.0.0.1
+Nov  5 09:13:22 dnsmasq[187]: Pi-hole hostname pi.hole is 127.0.0.1
+Nov  5 09:13:53 dnsmasq[187]: query[A] pi.hole from 127.0.0.1
+Nov  5 09:13:53 dnsmasq[187]: Pi-hole hostname pi.hole is 127.0.0.1
+Nov  5 09:14:25 dnsmasq[187]: query[A] pi.hole from 127.0.0.1
+Nov  5 09:14:25 dnsmasq[187]: Pi-hole hostname pi.hole is 127.0.0.1
+Nov  5 09:14:41 dnsmasq[187]: query[A] ssh-brute.example.org from 192.0.2.5
+Nov  5 09:14:41 dnsmasq[187]: forwarded ssh-brute.example.org to 8.8.4.4
+Nov  5 09:14:41 dnsmasq[187]: reply ssh-brute.example.org is NODATA-IPv4
+Nov  5 09:14:41 dnsmasq[187]: query[PTR] 3.0.17.172.in-addr.arpa from 127.0.0.1
+Nov  5 09:14:41 dnsmasq[187]: config 192.0.2.5 is NXDOMAIN
+Nov  5 09:14:41 dnsmasq[187]: query[A] ads.tracker.example from 192.0.2.5
+Nov  5 09:14:41 dnsmasq[187]: exactly denied ads.tracker.example is 0.0.0.0
+Nov  5 09:14:41 dnsmasq[187]: query[A] example.com from 192.0.2.5
+Nov  5 09:14:41 dnsmasq[187]: cached example.com is 104.20.23.154
+Nov  5 09:14:41 dnsmasq[187]: cached example.com is 172.66.147.243
+Nov  5 09:14:56 dnsmasq[187]: query[A] pi.hole from 127.0.0.1
+Nov  5 09:14:56 dnsmasq[187]: Pi-hole hostname pi.hole is 127.0.0.1
+Nov  5 09:15:27 dnsmasq[187]: query[A] pi.hole from 127.0.0.1
+Nov  5 09:15:27 dnsmasq[187]: Pi-hole hostname pi.hole is 127.0.0.1

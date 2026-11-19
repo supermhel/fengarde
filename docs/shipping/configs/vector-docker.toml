@@ -1,0 +1,22 @@
+# Vector docker_logs -> FENGARDE TCP syslog 5515. Linted and run live on Linux containers 2026-11-05 (README Verification log).
+# Verified on Vector 0.61.0: .container_name, .stream, .timestamp and .message exist on docker_logs events. Needs the Docker socket mounted.
+# Outage behaviour (measured 2026-11-11, README 'Delivery guarantees'): the TCP socket sink discards the events in flight when the connection drops (3 of 24 in a 60 s outage; a disk buffer did not help). The http sink with a disk buffer lost nothing. Use the http-based recipes (or a syslog-ng / rsyslog relay) if loss matters.
+[sources.docker]
+type = "docker_logs"
+
+[transforms.to_line]
+type = "remap"
+inputs = ["docker"]
+source = '''
+msg = string!(.message)
+name = string!(.container_name)
+pri = if .stream == "stderr" { "<11>" } else { "<14>" }
+.message = join([pri, format_timestamp!(.timestamp, format: "%b %e %H:%M:%S"), " ", name, " ", name, ": ", msg], separator: "")
+'''
+
+[sinks.fengarde]
+type = "socket"
+inputs = ["to_line"]
+mode = "tcp"
+address = "192.0.2.10:5515"
+encoding.codec = "text"

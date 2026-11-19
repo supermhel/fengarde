@@ -413,6 +413,9 @@ echo
 echo "== ws2 shipper adapters (WP-1.3: fluentbit-winevtlog / winlogbeat / fluentbit-journald / docker-json real shapes) =="; LAST_HEADER="== ws2 shipper adapters =="
 $PY services/ws2-normalization/test_adapters.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
+echo "== shipping recipes (WP-1.4: every docs/shipping sample through the real WS-2 path; configs NOT linted) =="; LAST_HEADER="== shipping recipes =="
+$PY tools/test_shipping_recipes.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
 echo "== ws2 parsers: db_audit (v0.3, un-dormants bank_db_priv_esc.yml) =="; LAST_HEADER="== ws2 parsers: db_audit (v0.3, un-dormants bank_db_priv_esc.yml) =="
 $PY services/ws2-normalization/parsers/test_db_audit.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
@@ -444,6 +447,8 @@ echo "== ws2 parsers: sysmon (P0-3, 2026-07-21 audit: first class-1001 producer)
 $PY services/ws2-normalization/parsers/test_sysmon.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo "== recall work (2026-10-20): service install / log cleared / lsass access parse + rules =="; LAST_HEADER="== recall events =="
 $PY services/ws2-normalization/parsers/test_recall_events.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo "== PR #153 review: AD 4625 edge cases =="; LAST_HEADER="== AD 4625 edges =="
+$PY services/ws2-normalization/parsers/test_ad_4625_edges.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo "== fuzz findings (2026-10-20): parser bugs found by the repaired atheris harnesses =="; LAST_HEADER="== fuzz findings =="
 $PY services/ws2-normalization/parsers/test_fuzz_findings.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo

@@ -242,6 +242,14 @@ class WindowsEventLogParser(Parser):
         if event_id in (4697, 7045):
             service_name = safe_str(rec.get("ServiceName"))
             service_path = safe_str(rec.get("ImagePath") or rec.get("ServiceFileName"))
+            if event_id == 7045 and not (service_name and service_path):
+                # Providers without a named-field template (what Fluent Bit's winevtlog really emits for System 7045)
+                # carry only positional StringInserts: Microsoft's order is ServiceName, ImagePath, ServiceType, StartType,
+                # AccountName (checked on a live 7045 event, 2026-11-05). Named fields, when present, win.
+                ins = rec.get("StringInserts")
+                if isinstance(ins, (list, tuple)):
+                    service_name = service_name or (safe_str(ins[0]) if len(ins) > 0 else None)
+                    service_path = service_path or (safe_str(ins[1]) if len(ins) > 1 else None)
             message = f"{verb}: {service_name or '?'} -> {service_path or '?'} (by {user or '?'})"
         elif event_id in (1102, 104):
             message = f"{verb} (by {user or '?'})"
