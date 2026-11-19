@@ -208,6 +208,7 @@ $PY services/ws3-indexer/test_webhooks.py || { fail=1; FAILED="${FAILED} ${LAST_
 echo
 echo "== v0.4 (R): incident-report hook (template backend, contract, HTTP fallback) =="; LAST_HEADER="== v0.4 (R): incident-report hook (template backend, contract, HTTP fallback) =="
 $PY services/ws3-indexer/test_reporting.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+$PY services/ws3-indexer/test_report_ai_http.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
 echo "== F3: router.py rejects (never normalizes) a malformed tenant_id in index names =="; LAST_HEADER="== F3: router.py rejects (never normalizes) a malformed tenant_id in index names =="
 $PY services/ws3-indexer/test_router.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }

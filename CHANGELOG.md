@@ -10,10 +10,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Honesty (2026-11-04, WP-4.6: AI triage is a seam, not a feature — engine named per verdict)
 
 - Per-alert incident report (`services/ws3-indexer/reporting.py` template)
-  now carries an **AI triage** section naming the engine on every verdict:
+  now carries an **AI triage** section naming the engine on every verdict
+  (generic report only; the NIS2 template report has no AI section):
   `stub` vs `ollama/<model>` (+ verdict, level, summary), and stating
   explicitly when NO verdict exists — a report never implies a model ran.
   (The console already names the engine per alert; Alarms view.)
+  The report joins the separate WS-5 `ai-*` doc, tolerates a failing lookup
+  (report says no AI verdict), and flattens newlines in verdict text so it
+  cannot forge report lines.
 - README + `eval/llm_triage/README.md` state the bar a model must clear
   before AI triage may be called a feature (on the committed 54-case set,
   `--direct`: beat the always-malicious baseline AND the score-driven stub,
