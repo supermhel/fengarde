@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (2026-11-06, ADR 012 draft: causal evidence keys, docs only)
+
+- `docs/adr/012-causal-evidence-keys.md` (Status: Proposed, owner sign-off pending; builds on the also-Proposed ADR 011) defines when an
+  incident-graph link may be called causal (equal process/logon/flow/agent-session key, ADR-011 order, every hop keyed), inventories which
+  real log keys each parser keeps or drops, and specifies the OCSF, alert (`causal_keys`) and `incident.graph` (`links[]`) additions plus a
+  causal-link precision/recall metric with a new key-shuffle control. Measured: 0 of 494 twin events (11 storylines, seed 7) author any
+  ProcessGuid, LogonId or flow id, so no causal-link score can be computed yet. No code, contract, eval or README change.
+
 ### Added (2026-11-06, ADR 011 draft: WS-8 edge time, docs only)
 
 - `docs/adr/011-ws8-edge-time-direction.md` (Status: Proposed, owner sign-off pending) proposes optional additive event-time
