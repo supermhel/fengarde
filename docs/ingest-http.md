@@ -75,6 +75,13 @@ must send `X-Fengarde-Idempotency-Key`, or the accepted records are ingested twi
   `meta.source` (the TCP peer is always kept as `meta.shipper_ip`). Without it the TCP peer is used; behind a published Docker
   port or a relay every sender then looks like one address. The label is as trustworthy as the bearer token: any holder can
   claim any name, so it is never an authorization input.
+- **Behind a reverse proxy (`INGEST_HTTP_TRUSTED_PROXIES`).** Default empty: `X-Forwarded-For` is ignored and the TCP peer is
+  the client (so behind Caddy every unlabelled sender shares the proxy's address). Set it to the proxy's CIDR(s)
+  (comma-separated) and, only when the TCP peer is inside that list, the client is the LAST `X-Forwarded-For` hop that is
+  not itself trusted (if every hop is in the trusted ranges, the leftmost is the client); hops to the left of the first
+  untrusted one are client-supplied and ignored, and an unparsable hop falls back to the peer. That
+  address becomes `meta.shipper_ip`, the rate-limit/partition key (when unlabelled) and the spool key; the proxy hop is kept
+  as `meta.shipper_proxy_ip`. A request from an untrusted peer can never spoof its address. The TLS profile sets this to Caddy's single fixed address (172.31.250.2), never to a whole private range: any other container on the compose network is then an ordinary client whose header is ignored. The forwarded IP is normalised (IPv6 case/compression, v4-mapped) before it becomes a key.
 - **Per-source cap.** `INGEST_HTTP_MAX_EVENTS_PER_SEC_PER_SOURCE` (default 0 = off) limits one source's share of the tenant
   ceiling (`INGEST_HTTP_MAX_EVENTS_PER_SEC`). The older nested per-IP bucket ran at the same rate as the tenant bucket and
   could never bind first, which is why a separate lower cap exists.

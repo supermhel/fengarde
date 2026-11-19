@@ -44,6 +44,9 @@ map $arg_gte $fengarde_gte_ms {
 server {
     listen 80;
     server_name _;
+    # TLS profile only (infra/docker-compose.tls.yml mounts a real_ip file here so $remote_addr -- and therefore the
+    # X-Forwarded-For nginx sends to ws3 -- is the client Caddy saw, not Caddy). Nothing mounted = no match = no-op.
+    include /etc/nginx/real-ip.d/*.conf;
     root /usr/share/nginx/html;
     index index.html;
 

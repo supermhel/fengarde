@@ -59,6 +59,9 @@ echo
 echo "== WP-2.2 labelling lane: export->label->scrub->publish refusal + eval/real per-rule precision =="; LAST_HEADER="== WP-2.2 labelling lane =="
 $PY tools/test_alert_labeller.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
+echo "== WP-3.1 TLS profile: plaintext publishes removed, caddy 443/local-CA only =="; LAST_HEADER="== WP-3.1 TLS profile =="
+$PY tools/test_tls_profile.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
 echo "== tools: fengarde_loadtest harness (percentiles + realistic profile stays alert-light) =="; LAST_HEADER="== tools: fengarde_loadtest harness (percentiles + realistic profile stays alert-light) =="
 $PY tools/test_fengarde_loadtest.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
