@@ -56,6 +56,9 @@ echo
 echo "== tools: alert_fp_report (WP-2.3: alerts per rule per day + top noisy sources, from a JSONL dump) =="; LAST_HEADER="== tools: alert_fp_report =="
 $PY tools/test_alert_fp_report.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
+echo "== WP-2.2 labelling lane: export->label->scrub->publish refusal + eval/real per-rule precision =="; LAST_HEADER="== WP-2.2 labelling lane =="
+$PY tools/test_alert_labeller.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
 echo "== tools: fengarde_loadtest harness (percentiles + realistic profile stays alert-light) =="; LAST_HEADER="== tools: fengarde_loadtest harness (percentiles + realistic profile stays alert-light) =="
 $PY tools/test_fengarde_loadtest.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
