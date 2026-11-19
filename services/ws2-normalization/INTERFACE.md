@@ -52,6 +52,13 @@ Optional: `FENGARDE_WINEVTLOG_TZ` (IANA zone, e.g. `Europe/Berlin`; unset by def
 
 ## Produces
 - Topic `normalized.events` — OCSF event (Contract A), partition key = `src_endpoint.ip`.
+  ADR-012 additive optional fields: `siem.sender`, `siem.key_scope`,
+  `actor.process.uid` / `parent_process`, `actor.session.uid`, `connection_info.uid`.
+  **`siem.sender` stamping rule:** WS-2 copies `meta.shipper_ip` -> `siem.sender.ip`
+  and `meta.source` -> `siem.sender.source` from ws1's `meta` ONLY (sanitised,
+  capped at 128, omitted when absent or not a string). Sender fields in the record
+  body are ignored; `source` is a self-label for display, never an authorization
+  decision.
 - Topic `raw.events.deadletter` — unparseable/invalid inputs with errors. Payload is
   the ORIGINAL `raw.events` payload verbatim (`source_type`/`raw`/`meta` at top
   level, so `tools/dlq_peek.py --requeue` genuinely re-processes it) plus

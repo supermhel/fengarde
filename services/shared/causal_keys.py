@@ -12,7 +12,9 @@ Canonical forms (WS-2 applies them before a value reaches the event):
 * ``flow``  : Suricata ``flow_id`` as a decimal string; a Zeek ``uid`` is kept verbatim.
 * ``agent`` : MCP ``session_id``, free text, stripped.
 
-All values are capped at 128 chars. An empty, ``-``, ``0x0``, all-zero or
+All values longer than 128 chars are DROPPED (fail closed), never truncated:
+truncation could make two distinct values share a key and force a false causal
+link. An empty, ``-``, ``0x0``, all-zero or
 null-GUID value is "none" in Windows/Suricata/Zeek and is DROPPED (returns
 None): treating it as a key would join every unrelated event.
 
@@ -51,6 +53,11 @@ def _clean(raw: Any) -> Optional[str]:
     return s
 
 
+def _fit(s: str) -> Optional[str]:
+    """Fail closed: over-length values are dropped, not truncated."""
+    return s if len(s) <= MAX_VALUE_LEN else None
+
+
 def canon_guid(raw: Any) -> Optional[str]:
     s = _clean(raw)
     if s is None:
@@ -67,7 +74,7 @@ def canon_logon_id(raw: Any) -> Optional[str]:
     if isinstance(raw, bool):
         return None
     if isinstance(raw, int):
-        return format(raw, "x")[:MAX_VALUE_LEN] if raw > 0 else None
+        return _fit(format(raw, "x")) if raw > 0 else None
     s = _clean(raw)
     if s is None:
         return None
@@ -77,25 +84,25 @@ def canon_logon_id(raw: Any) -> Optional[str]:
     s = s.lstrip("0")
     if not s or not _HEX.match(s):
         return None
-    return s[:MAX_VALUE_LEN]
+    return _fit(s)
 
 
 def canon_flow_id(raw: Any) -> Optional[str]:
     if isinstance(raw, bool):
         return None
     if isinstance(raw, int):
-        return str(raw)[:MAX_VALUE_LEN] if raw > 0 else None
+        return _fit(str(raw)) if raw > 0 else None
     s = _clean(raw)
     if s is None:
         return None
-    return s[:MAX_VALUE_LEN]
+    return _fit(s)
 
 
 def canon_agent_session(raw: Any) -> Optional[str]:
     s = _clean(raw)
     if s is None:
         return None
-    return s[:MAX_VALUE_LEN]
+    return _fit(s)
 
 
 CANONICALISERS: dict[str, Callable[[Any], Optional[str]]] = {

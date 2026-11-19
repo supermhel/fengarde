@@ -50,10 +50,15 @@ check(ck.canon_flow_id("CYZb5d1Tx9") == "CYZb5d1Tx9", "Zeek uid kept verbatim (c
 check(ck.canon_flow_id(True) is None, "bool is not a flow id")
 check(ck.canon_flow_id(1.5) is None, "float is not a flow id")
 
-# --- 128-char cap -----------------------------------------------------------
-long = "x" * 500
-check(len(ck.canon_flow_id(long) or "") == 128, "flow id capped at 128")
-check(len(ck.canon_agent_session(long) or "") == 128, "agent session capped at 128")
+# --- 128-char cap: over-length values are DROPPED, never truncated ----------
+check(ck.canon_flow_id("x" * 128) == "x" * 128, "128-char value kept")
+for fn in (ck.canon_flow_id, ck.canon_agent_session):
+    a, b = "x" * 128 + "A", "x" * 128 + "B"
+    check(fn(a) is None and fn(b) is None, f"{fn.__name__}: two distinct >128-char values both dropped")
+check(ck.key_hash("t", "agent", "s", "h", "x" * 129 + "A") is None, "key_hash drops over-length agent value")
+check(ck.key_hash("t", "flow", "s", "h", "9" * 129) is None, "key_hash drops over-length flow value")
+check(ck.canon_flow_id(10 ** 200) is None, "over-length int flow id dropped")
+check(ck.canon_logon_id("0x" + "f" * 129) is None, "over-length LogonId dropped")
 
 # --- negative tests: every dropped value, for every namespace ---------------
 NULL_GUIDS = ["00000000-0000-0000-0000-000000000000", "{00000000-0000-0000-0000-000000000000}", "0" * 32]

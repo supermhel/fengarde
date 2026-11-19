@@ -77,6 +77,15 @@ extensions** — an event without them is still a valid Contract A event; downst
 (WS-3/WS-4) are tolerant readers and nothing hard-depends on them. No topic or
 partition-key change.
 
+## Causal-key fields on `normalized.events` (ADR-012 WP 2, additive)
+
+Optional Contract A fields, all absent on old events: `siem.sender` (`{ip, source}`,
+copied by WS-2 from ws1 `meta.shipper_ip` / `meta.source`), `siem.key_scope`
+(`{host, sensor, boot}`), `actor.process.uid`, `actor.process.parent_process`
+(`uid`/`pid`/`name`), `actor.session.uid` and `connection_info.uid`. Values are
+canonicalised by `services/shared/causal_keys.py`. Tolerant readers; no topic or
+partition-key change.
+
 ## Why partition by `src_endpoint.ip`
 
 `normalized.events` and `scored.events` are partitioned by source IP so that **all
