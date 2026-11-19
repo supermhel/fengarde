@@ -98,32 +98,77 @@ this date are NOT in the integration branch.
 
 | PR | Branch | Merged head |
 |---|---|---|
-| #152 | `wp/1.5-zeek-suricata` | `3db6bd77b652` |
-| #153 | `wp/1.4-shipper-recipes-v2` | `f766452d10cf` |
+| #152 | `wp/1.5-zeek-suricata` | `c1194a616a63` (was `3db6bd77b652`) |
+| #153 | `wp/1.4-shipper-recipes-v2` | `400055df6f1c` (was `f766452d10cf`) |
 | #154 | `wp/2.1-homelab-profile` | `c4b7fc971d70` |
 | #160 | `wp/2.3-fp-report` | `68b0ba013959` |
-| #161 | `wp/2.2-labelling` | `2424b8976d36` |
-| #162 | `wp/3.1-tls` | `1693f3489893` |
-| #163 | `wp/3.2-secure-defaults` | `906fe5345cf8` |
-| #164 | `wp/4.6-triage-honesty` | `366895d0576e` |
-| #165 | `wp/6.1-gh2-sessions` | `8bfc7c88b9de` |
-| #178 | `wp/6.2-dashboard-tenant-scope-v2` | `3bf722ee9e41` |
-| #166 | `wp/http-spool-drain` | `6da09a3c0bd9` |
-| #167 | `wp/3.3-backup-restore` | `882d0a54acd1` |
+| #161 | `wp/2.2-labelling` | `c3be1addfb46` (was `2424b8976d36`) |
+| #162 | `wp/3.1-tls` | `e0a51111108f` (was `1693f3489893`) |
+| #163 | `wp/3.2-secure-defaults` | `380576cee2ff` (was `906fe5345cf8`) |
+| #164 | `wp/4.6-triage-honesty` | `cf672f2b9cf6` (was `366895d0576e`) |
+| #165 | `wp/6.1-gh2-sessions` | `4d92c0d4d548` (was `8bfc7c88b9de`) |
+| #178 | `wp/6.2-dashboard-tenant-scope-v2` | `cffe337969ad` (was `3bf722ee9e41`) |
+| #166 | `wp/http-spool-drain` | `ed8a8dd956e4` (was `6da09a3c0bd9`) |
+| #167 | `wp/3.3-backup-restore` | `64503d193f81` (was `882d0a54acd1`) |
 | #168 | `wp/3.4-sizing-retention` | `4613c54b5196` |
 | #169 | `wp/4.4-gh3-reverify` | `35c4996b0c89` |
-| #170 | `wp/4.5-public-labelled-data` | `c7b17253e22f` |
+| #170 | `wp/4.5-public-labelled-data` | `633daf1a4faf` (was `c7b17253e22f`) |
 | #176 | `docs/ws8-edge-time-adr` | `b1880d8b1579` |
 | #177 | `docs/ws8-causal-evidence-adr-v2` | `456423f2bb61` |
 
+## Refresh 2026-11-19 (review fixes landed on 11 PR branches)
+
+The 11 moved branches were merged again in the original order
+(`merge: <branch> (refresh)`); the head table above shows the new tips. #154, #160, #168, #169,
+#176 and #177 had not moved (not re-merged). Conflicts and
+resolutions (same conventions as above):
+
+- **#152 refresh**: `SSOT.md` (WP-1.5 row rewritten by the PR: take the incoming row, drop the incoming stale
+  WP-1.3 copy); `fixtures-ai-ot.json` (`--ours`, regenerated at the end).
+- **#153 refresh**: `SSOT.md` (WP-1.4 row rewritten: take incoming row).
+- **#161 refresh**, **#163 refresh**, **#166 refresh**, **#167 refresh**: clean.
+- **#162 refresh**, **#164 refresh**, **#170 refresh**: `SSOT.md` only, take the incoming rewritten row of the same PR.
+- **#165 refresh**: `CHANGELOG.md` (new "PR #165 review: inventory" section on top; ours below);
+  `SECURITY.md` and `services/ws7-dashboard/INTERFACE.md`: ours (already contained #178's tenant-scoped
+  text) plus #165's new "Inventory route" bullets; the sentence "`GET /auth/check` ... no nginx location uses it any
+  more" was changed to "is now used only by the inventory route" because #165 adds a location that uses it.
+- **#178 refresh**: `CHANGELOG.md` (new "PR #178 review: console follow-ups" section; the incoming copy of the
+  #165 inventory section was a duplicate of the one already present and was dropped);
+  `SECURITY.md` and `INTERFACE.md`: take the incoming side (#178 already integrates the inventory route and adds the
+  legacy `ai-*` upgrade note).
+- `fixtures-ai-ot.json` regenerated again (`chore(ws7): regenerate ai-ot demo fixtures after refresh merges`, #178).
+- `gate.exit`, a scratch file, was accidentally committed once by `git add -A`; removed from the index in the
+  next commit.
+
 ## Combination fixes
 
-None needed: no test, lint or type failure appeared only in combination. The one extra commit on the
-branch is the regeneration of `fixtures-ai-ot.json` (belongs to #178, see merge 10).
+Found by the full gate after the refresh (PR #152 added the stateful rule
+`common_refused_connection_scan`, which the eval lanes already on `main` did not know). Commit
+`fix(eval): wire WP-1.5 rule common_refused_connection_scan into the eval lanes`, belongs to **#152**:
+
+- `eval/adversarial/rule_probes.py`: new probe template `_common_refused_connection_scan` (15 Zeek conn
+  rows, S0/REJ, 15 distinct ports in 30 s from one source, ip rotation setter). Fixes B0, H3 (test_evasion_axes) and the
+  evasion-cost COVERAGE failure.
+- `eval/adversarial/evasion_floor.yaml` (`python eval/adversarial/evasion_cost.py --seed 7 --update-floor`: new row
+  `common_refused_connection_scan` loss 1, extra_s 32.001, stealth 0.233329, min_keys ip=2) and `contracts/detection-coverage.md`
+  (`--write-doc`, generated table).
+- `eval/adversarial/technique_waivers.yaml`: dated (2026-11-19) `unexercised` waiver for
+  `common_refused_connection_scan` (G2: no storyline exercises it yet). Replace by a storyline step later and delete the line.
+- `eval/twin/baseline_scenarios.json`, `eval/twin/ratchet_history.jsonl`: `ratchet.py refresh --reason ...` recorded the 3
+  new atoms of that rule's technique T1046 row (needs fresh lane artifacts, produced by running the eval tiers first).
+- Separate commit `chore(eval): regenerate SCORECARD.md (46 tagged rules)`: `python tools/generate_scorecard.py --write`
+  (the gate reported it STALE: 45 -> 46 tagged rules, T1046 row).
+
+Other combination fix: the fixtures regeneration above (#178).
+
+Replay on PR branches: for #152 apply the five eval files above on top of the PR (after rebasing onto the new main).
+
+(First integration, before the refresh: none needed apart from the fixtures regeneration.)
 
 ## Verification
 
-On the branch head before this file was added:
+On the refreshed branch (all checks re-run after the refresh and the combination fixes; the first gate run on the refreshed tree
+failed only on the eval items fixed above, the second run is the one reported here):
 
 - `PY=python PYTHON=python bash run_all_tests.sh`: exit 0, final line `ALL TESTS PASS` (the deliberate
   negative-control output, e.g. `[FAIL] fengarde-bench`, is expected).
