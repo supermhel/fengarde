@@ -1,0 +1,20 @@
+{
+  "Channel": "Security",
+  "Computer": "DC01",
+  "EventID": 4624,
+  "EventRecordID": 129345,
+  "Keywords": "0x8020000000000000",
+  "Level": 0,
+  "ProviderName": "Microsoft-Windows-Security-Auditing",
+  "Task": 12544,
+  "TimeCreated": "2023-01-17 12:50:59 +0000",
+  "IpAddress": "203.0.113.9",
+  "IpPort": "54000",
+  "SubjectDomainName": "BANKCORP",
+  "SubjectUserName": "-",
+  "TargetDomainName": "BANKCORP",
+  "TargetUserName": "jdoe",
+  "WorkstationName": "wks-jdoe",
+  "LogonType": "3",
+  "LogonProcessName": "Kerberos"
+}

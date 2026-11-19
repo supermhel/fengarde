@@ -21,3 +21,24 @@ Rules of reading a result: look at `stub share` first (a high value means the "m
 stub), then `n` and the interval, then the always-malicious baseline, then accuracy. Without `--direct`
 you measure the production path including its silent fallback; with it you measure the model alone.
 The harness never pulls a model.
+
+## The bar (WP-4.6: "seam, not a feature" until cleared)
+
+AI triage ships with a labelled **stub** as the default. A model may be called
+"the triage feature" only when it clears ALL of these on the committed
+54-case set, measured with `run_eval.py --all-local --direct` and rendered
+into `RESULTS.md` (owner chooses/buys the model; this repo only states the
+bar; the thresholds below are a maintainer-chosen policy, not derived from the data):
+
+1. accuracy strictly better than the **always-malicious baseline**;
+2. accuracy strictly better than the **score-driven stub**;
+3. **abstain < 20 %** and **error < 5 %** (abstentions and errors are honest
+   answers, but a model that mostly abstains is not a triage feature);
+4. **stub share = 0 %** under `--direct` (the run must be the model alone —
+   a production run may still fall back silently, which is exactly why the
+   console and the alert report name the engine per verdict).
+
+Until then the console (Alarms view) and the per-alert incident report name
+the engine — `stub` vs `ollama/<model>` — on every verdict, and the feature
+is documented as a seam: the number that counts is the labelled-set result,
+not the engine's existence.

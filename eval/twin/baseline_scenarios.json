@@ -3836,6 +3836,9 @@
     "tech/attack:T1046/rule/1d2c3b4a-5e6f-4708-8a91-0b1c2d3e4f05/boundary_too_loose_n": 0,
     "tech/attack:T1046/rule/1d2c3b4a-5e6f-4708-8a91-0b1c2d3e4f05/fires": true,
     "tech/attack:T1046/rule/1d2c3b4a-5e6f-4708-8a91-0b1c2d3e4f05/near_miss_held": false,
+    "tech/attack:T1046/rule/7b3e9d51-4c2a-4f86-a1d0-5e8c2b6f9a14/boundary_too_loose_n": 0,
+    "tech/attack:T1046/rule/7b3e9d51-4c2a-4f86-a1d0-5e8c2b6f9a14/fires": true,
+    "tech/attack:T1046/rule/7b3e9d51-4c2a-4f86-a1d0-5e8c2b6f9a14/near_miss_held": false,
     "tech/attack:T1046/rule/aaa9dc23-8550-41ae-acbc-0ae50837d8d6/boundary_too_loose_n": 0,
     "tech/attack:T1046/rule/aaa9dc23-8550-41ae-acbc-0ae50837d8d6/fires": true,
     "tech/attack:T1046/rule/aaa9dc23-8550-41ae-acbc-0ae50837d8d6/near_miss_held": false,
@@ -4801,7 +4804,7 @@
   },
   "basis": "harness-measured",
   "fingerprint": {
-    "system_fingerprint": "844a86a3e582e13e8fc99d23d58523aba2a55a6a1abfff584228b06e66eff6a2"
+    "system_fingerprint": "9d1a1c8e9bb32a9489fcacd4931e1d1863fb6e3f928ab6925fe1c86e6ad8c10f"
   },
   "retired": [],
   "schema": "fengarde-scenario-ratchet-v1",

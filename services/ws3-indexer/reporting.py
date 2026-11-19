@@ -39,6 +39,40 @@ def _report_index(now: float | None = None) -> str:
     return time.strftime("reports-%Y.%m.%d", time.gmtime(now))
 
 
+def attach_ai(store, alert: dict) -> dict:
+    """Return `alert` with the WS-5 verdict attached, if one was recorded.
+
+    WS-5 indexes verdicts as SEPARATE docs (alert_id "ai-<event id>", see
+    ws5-ai/main.py::_alert_payload); detection alerts never carry `ai`. Same
+    join as the console's attachAi.ts: match on event_ids, then
+    trigger_event_id. Works on any StorageAdapter (find_alerts)."""
+    if alert.get("ai"):
+        return alert
+    ids = [*(alert.get("event_ids") or []), alert.get("trigger_event_id")]
+    # shortcut: cap at 200 ids (distinct-count alerts list counted values), raise if needed
+    keys = [f"ai-{i}" for i in ids if i not in (None, "")][:200]
+    try:
+        docs = store.find_alerts(keys) if keys else []
+    except Exception as exc:  # noqa: BLE001 -- a lookup failure must not 500 report generation
+        import logging
+        logging.getLogger("ws3-indexer").warning(
+            "attach_ai: AI verdict lookup failed, report will say no AI verdict: %s", exc)
+        return alert
+    for doc in docs:
+        if doc.get("ai"):
+            return {**alert, "ai": doc["ai"]}
+    return alert
+
+
+def _one_line(value) -> str:
+    """LLM output / stored strings are untrusted: collapse newlines and other
+    control characters to single spaces so a verdict summary cannot forge
+    markdown lines (e.g. "\n- Status: closed") in the rendered report."""
+    return " ".join("".join(
+        " " if (ord(c) < 32 or ord(c) == 127 or c in "  ") else c
+        for c in str(value)).split())
+
+
 def _default_triage() -> dict:
     return {"status": "new", "note": "", "updated_at": None}
 
@@ -56,6 +90,7 @@ def _render_template(alert: dict, triage: dict) -> str:
     actor = alert.get("actor") or {}
     status = triage.get("status", "new")
     note = triage.get("note") or "(none)"
+    ai = alert.get("ai") or {}
 
     lines = [
         f"# Incident Report Draft — {rule_title}",
@@ -72,6 +107,16 @@ def _render_template(alert: dict, triage: dict) -> str:
         "## Triage state",
         f"- Status: {status}",
         f"- Analyst note: {note}",
+        "",
+        "## AI triage (WP-4.6 honesty: name the engine, always)",
+        # The engine/model line is MANDATORY signal: a verdict's provenance
+        # (labelled stub vs local model) decides how much the reader may
+        # trust it, so the report prints it even when absent.
+        (f"- Verdict: {_one_line(ai.get('verdict', '(none)'))} ({_one_line(ai.get('level', '-'))}) "
+         f"by {_one_line(ai.get('engine')) or 'NO ENGINE RECORDED'}"
+         + (f" / {_one_line(ai.get('model'))}" if ai.get("model") else "")
+         + (f" — {_one_line(ai.get('summary'))}" if ai.get("summary") else "")
+         if ai else "- Verdict: — (no AI verdict recorded for this alert)"),
         "",
         "## Fields an analyst must still provide",
         "- [ANALYST MUST PROVIDE: business impact assessment]",

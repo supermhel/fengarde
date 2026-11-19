@@ -36,6 +36,7 @@ if tier_on fast; then  # tier: fast
 echo "== Phase 0: contract validator =="; LAST_HEADER="== Phase 0: contract validator =="
 $PY tools/validate_contract.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 $PY tools/test_validate_contract.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+$PY tools/test_homelab_compose.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
 echo "== A6: anti-dormancy check (rules must be satisfiable by a real parser) =="; LAST_HEADER="== A6: anti-dormancy check (rules must be satisfiable by a real parser) =="
 $PY tools/check_rule_producers.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
@@ -51,6 +52,20 @@ $PY tools/test_validate_rules.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}";
 echo
 echo "== tools: dns_cardinality_report (measures the UNVERIFIED DNS allowlist; never edits it) =="; LAST_HEADER="== tools: dns_cardinality_report (measures the UNVERIFIED DNS allowlist; never edits it) =="
 $PY tools/test_dns_cardinality_report.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
+echo "== tools: alert_fp_report (WP-2.3: alerts per rule per day + top noisy sources, from a JSONL dump) =="; LAST_HEADER="== tools: alert_fp_report =="
+$PY tools/test_alert_fp_report.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
+echo "== WP-2.2 labelling lane: export->label->scrub->publish refusal + eval/real per-rule precision =="; LAST_HEADER="== WP-2.2 labelling lane =="
+$PY tools/test_alert_labeller.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
+echo "== WP-3.1 TLS profile: plaintext publishes removed, caddy 443/local-CA only =="; LAST_HEADER="== WP-3.1 TLS profile =="
+$PY tools/test_tls_profile.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
+echo "== WP-3.2 prod gate: FENGARDE_PROFILE=prod refuses insecure starts, first-boot file =="; LAST_HEADER="== WP-3.2 prod gate =="
+$PY tools/test_prodcheck.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+$PY tools/test_ws3_prod_ordering.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+$PY tools/test_compose_prod_env.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
 echo "== tools: fengarde_loadtest harness (percentiles + realistic profile stays alert-light) =="; LAST_HEADER="== tools: fengarde_loadtest harness (percentiles + realistic profile stays alert-light) =="
 $PY tools/test_fengarde_loadtest.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
@@ -191,6 +206,9 @@ echo
 echo "== M4.2 RBAC: login/logout/roles/tenant isolation (real HTTP) =="; LAST_HEADER="== M4.2 RBAC: login/logout/roles/tenant isolation (real HTTP) =="
 $PY services/ws3-indexer/test_rbac_api.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
+echo "== WP-6.2 dashboard tenant scoping: /dashboard/* + /auth/check-admin (real HTTP) =="; LAST_HEADER="== WP-6.2 dashboard tenant scoping: /dashboard/* + /auth/check-admin (real HTTP) =="
+$PY services/ws3-indexer/test_dashboard_scope.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
 echo "== admin API: users CRUD + last-admin guard + session revocation, redacted webhooks, rule on/off (real HTTP) =="; LAST_HEADER="== admin API: users CRUD + last-admin guard + session revocation, redacted webhooks, rule on/off (real HTTP) =="
 $PY services/ws3-indexer/test_admin_api.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
@@ -208,6 +226,7 @@ $PY services/ws3-indexer/test_webhooks.py || { fail=1; FAILED="${FAILED} ${LAST_
 echo
 echo "== v0.4 (R): incident-report hook (template backend, contract, HTTP fallback) =="; LAST_HEADER="== v0.4 (R): incident-report hook (template backend, contract, HTTP fallback) =="
 $PY services/ws3-indexer/test_reporting.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+$PY services/ws3-indexer/test_report_ai_http.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
 echo "== F3: router.py rejects (never normalizes) a malformed tenant_id in index names =="; LAST_HEADER="== F3: router.py rejects (never normalizes) a malformed tenant_id in index names =="
 $PY services/ws3-indexer/test_router.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
@@ -319,6 +338,7 @@ echo
 echo "== ws4 distinct-count window + port-scan/lateral-movement rules (v0.2) =="; LAST_HEADER="== ws4 distinct-count window + port-scan/lateral-movement rules (v0.2) =="
 $PY services/ws4-detection/test_window_distinct.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 $PY services/ws4-detection/test_engine_distinct_rules.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+$PY services/ws4-detection/test_refused_connection_scan.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
 echo "== ws4 v0.3: password-spray + priv-grant fire on REAL parser output =="; LAST_HEADER="== ws4 v0.3: password-spray + priv-grant fire on REAL parser output =="
 $PY services/ws4-detection/test_v03_new_rules.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
@@ -413,6 +433,9 @@ echo
 echo "== ws2 shipper adapters (WP-1.3: fluentbit-winevtlog / winlogbeat / fluentbit-journald / docker-json real shapes) =="; LAST_HEADER="== ws2 shipper adapters =="
 $PY services/ws2-normalization/test_adapters.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
+echo "== shipping recipes (WP-1.4: every docs/shipping sample through the real WS-2 path; configs NOT linted) =="; LAST_HEADER="== shipping recipes =="
+$PY tools/test_shipping_recipes.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
 echo "== ws2 parsers: db_audit (v0.3, un-dormants bank_db_priv_esc.yml) =="; LAST_HEADER="== ws2 parsers: db_audit (v0.3, un-dormants bank_db_priv_esc.yml) =="
 $PY services/ws2-normalization/parsers/test_db_audit.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
@@ -444,11 +467,18 @@ echo "== ws2 parsers: sysmon (P0-3, 2026-07-21 audit: first class-1001 producer)
 $PY services/ws2-normalization/parsers/test_sysmon.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo "== recall work (2026-10-20): service install / log cleared / lsass access parse + rules =="; LAST_HEADER="== recall events =="
 $PY services/ws2-normalization/parsers/test_recall_events.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo "== PR #153 review: AD 4625 edge cases =="; LAST_HEADER="== AD 4625 edges =="
+$PY services/ws2-normalization/parsers/test_ad_4625_edges.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo "== Windows 4648 explicit-credential logon =="; LAST_HEADER="== Windows 4648 =="
+$PY services/ws2-normalization/parsers/test_windows_4648.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo "== fuzz findings (2026-10-20): parser bugs found by the repaired atheris harnesses =="; LAST_HEADER="== fuzz findings =="
 $PY services/ws2-normalization/parsers/test_fuzz_findings.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
 echo "== ws2 parsers: modbus_anomaly (M7 Track X, 2026-07-22: OT protocol-anomaly detector, not a vendor-log parser -- un-dormants ot_modbus_unauthorized_write.yml) =="; LAST_HEADER="== ws2 parsers: modbus_anomaly (M7 Track X, 2026-07-22: OT protocol-anomaly detector, not a vendor-log parser -- un-dormants ot_modbus_unauthorized_write.yml) =="
 $PY services/ws2-normalization/parsers/test_modbus_anomaly.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
+echo "== ws2 parsers: suricata_eve + zeek_json (WP-1.5: normalise the logs of packet-capturing sensors; real-capture fixtures) =="; LAST_HEADER="== ws2 parsers: suricata_eve + zeek_json (WP-1.5: normalise the logs of packet-capturing sensors; real-capture fixtures) =="
+$PY services/ws2-normalization/parsers/test_suricata_zeek.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
 echo "== ws2 inventory_diff parser (M7 Track Y): OCSF shape + edge rejection =="; LAST_HEADER="== ws2 inventory_diff parser (M7 Track Y): OCSF shape + edge rejection =="
 $PY services/ws2-normalization/parsers/test_inventory_diff.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
@@ -483,6 +513,9 @@ echo "== ws1 HTTP/JSON ingest (WP-1.1): auth, 400/413/429, malformed-line skip, 
 $PY services/ws1-collectors/test_http_json_ingest.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 $PY services/ws1-collectors/test_http_json_ingest_hardening.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 $PY services/ws1-collectors/test_http_json_ingest_source_identity.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+$PY services/ws1-collectors/test_seed_switch.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
+$PY services/ws1-collectors/test_http_spool_drain.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
 echo "== ws1 health/metrics (gap-hunt #70/#71/#76: /health 503 on bus outage, flat gauges) =="; LAST_HEADER="== ws1 health/metrics (gap-hunt #70/#71/#76: /health 503 on bus outage, flat gauges) =="
 $PY services/ws1-collectors/test_main_health_metrics.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
@@ -513,6 +546,9 @@ $PY services/shared/test_users_migration.py || { fail=1; FAILED="${FAILED} ${LAS
 echo
 echo "== RBAC: UserStore reads are thread-safe (account re-check runs on every request) =="; LAST_HEADER="== RBAC: UserStore reads are thread-safe (account re-check runs on every request) =="
 $PY services/shared/test_users_threading.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
+echo "== RBAC: concurrent first start on a fresh users.db must not crash in migrate() =="; LAST_HEADER="== RBAC: concurrent first start migrate() =="
+$PY services/shared/test_users_migrate_race.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
 echo "== M4.6 ops lifecycle: disk-headroom guardrail (real shutil.disk_usage) =="; LAST_HEADER="== M4.6 ops lifecycle: disk-headroom guardrail (real shutil.disk_usage) =="
 $PY services/shared/test_diskguard.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
@@ -571,6 +607,14 @@ echo "== CI layout: tiers cover every stanza, eval path filter, new-rule cascade
 $PY tools/test_gate_tiers.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 $PY tools/test_ci_eval_filter.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 $PY tools/test_rule_cascade.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+
+echo
+echo "== make chaos re-runnability: alert query scoped to this run's window (zero-infra) =="; LAST_HEADER="== make chaos re-runnability: alert query scoped to this run's window (zero-infra) =="
+$PY tools/test_chaos_query.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+
+echo
+echo "== infra/preflight.sh: Git Bash/MSYS/Cygwin recognised, unknown OS still fails closed =="; LAST_HEADER="== infra/preflight.sh: Git Bash/MSYS/Cygwin recognised, unknown OS still fails closed =="
+$PY tools/test_preflight_os.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 
 echo
 echo "== React console: typecheck + unit tests (services/ws7-dashboard/app) =="; LAST_HEADER="== React console: typecheck + unit tests (services/ws7-dashboard/app) =="

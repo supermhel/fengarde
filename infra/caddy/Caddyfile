@@ -1,0 +1,35 @@
+# FENGARDE TLS profile (WP-3.1) — Caddy in front of the console and the
+# HTTP/JSON ingest endpoint.
+#
+# LOCAL-CA DEFAULT: `tls internal` makes Caddy issue self-signed certs from
+# its own internal CA, so the profile works with NO public DNS and NO ACME —
+# exactly the documented "tls internal" alternative in docs/deployment.md.
+# Do NOT install this CA root certificate machine-wide on shared hosts
+# (`caddy trust`): export only root.crt and pin it per client
+# (curl --cacert); see docs/tls-profile.md.
+#
+# The site names are internal-only. From a host that cannot resolve them,
+# curl --resolve maps them (root.crt exported as ./fengarde-root.crt):
+#   curl --cacert ./fengarde-root.crt --resolve siem.internal:443:127.0.0.1 https://siem.internal/
+#   curl --cacert ./fengarde-root.crt --resolve ingest.internal:443:127.0.0.1 https://ingest.internal/v1/ingest
+#
+# For a PUBLIC hostname + Let's Encrypt (automated certs), drop the
+# `tls internal` line and use your real domain as the site name (the ACME
+# HTTP challenge then needs port 80 reachable) — per docs/deployment.md.
+
+siem.internal {
+	# Local-CA self-signed by Caddy itself; no cert files to provision.
+	tls internal
+
+	# The console (ws7 inner port 80; plaintext publish removed by the
+	# tls override — TLS is the ONLY way in).
+	reverse_proxy ws7-dashboard:80
+}
+
+ingest.internal {
+	tls internal
+
+	# ws1's HTTP/JSON ingest (inner port 8554). The bearer-token check is
+	# ws1's own; TLS is the transport layer's job (docs/deployment.md).
+	reverse_proxy ws1-collectors:8554
+}

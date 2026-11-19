@@ -81,6 +81,10 @@ _EVENT_MAP: dict[int, tuple] = {
     4624: (_CLS_AUTH, 1, "Success", SEV_INFO, "Logon"),
     4634: (_CLS_AUTH, 2, "Success", SEV_INFO, "Logoff"),
     4647: (_CLS_AUTH, 2, "Success", SEV_INFO, "Logoff"),
+    # 4648 logon with explicit credentials (runas, net use /user:, scheduled tasks): Subject* is the account that
+    # supplied the credentials (actor), Target* the account whose credentials were used (unmapped.target_user),
+    # TargetServerName the destination. Not AD-only: it is not a failure, so it needs no re-route.
+    4648: (_CLS_AUTH, 1, "Success", SEV_INFO, "Logon with explicit credentials"),
     4688: (_CLS_PROC, _ACT_PROC_LAUNCH, None, SEV_INFO, "Process created"),
     4672: (_CLS_PROC, _ACT_PROC_PRIV, "Success", SEV_MEDIUM, "Special privileges assigned"),
     # 2026-10-20 (recall work, blind-recall funnel NO_PARSER/NO_RULE heads): a service was
@@ -213,7 +217,11 @@ class WindowsEventLogParser(Parser):
 
         # Subject = the account performing the action; Target = affected account
         # (4624/4672 carry both; logon classes prefer Target identity).
-        if class_uid == _CLS_AUTH:
+        if event_id == 4648:
+            user = safe_str(rec.get("SubjectUserName"))
+            domain = safe_str(rec.get("SubjectDomainName"))
+            user_sid = rec.get("SubjectUserSid")
+        elif class_uid == _CLS_AUTH:
             user = safe_str(rec.get("TargetUserName") or rec.get("SubjectUserName"))
             domain = safe_str(rec.get("TargetDomainName") or rec.get("SubjectDomainName"))
             user_sid = rec.get("TargetUserSid") or rec.get("SubjectUserSid")
@@ -225,6 +233,11 @@ class WindowsEventLogParser(Parser):
         ip = valid_ip(rec.get("IpAddress") or meta.get("ip"))
         src_host = safe_str(rec.get("WorkstationName"))   # origin workstation (logon source)
         target_host = safe_str(rec.get("Computer"))       # host the event occurred ON
+        if event_id == 4648:
+            # the server the explicit credentials were used against ('-' = none logged -> fall back to Computer)
+            tsn = safe_str(rec.get("TargetServerName"))
+            if tsn and tsn.strip() not in ("-", ""):
+                target_host = tsn
 
         # Account Change events (4720/4722/4726/4728/4732): the acting admin is
         # already captured above as `user` (Subject-first, via the `else` branch).
@@ -232,7 +245,7 @@ class WindowsEventLogParser(Parser):
         # identity -- exposed separately, per the module docstring, since OCSF's
         # actor/user slot is already spoken for by the acting admin.
         target_user = target_domain = target_user_sid = None
-        if class_uid == _CLS_ACCT:
+        if class_uid == _CLS_ACCT or event_id == 4648:
             target_user = rec.get("TargetUserName")
             target_domain = rec.get("TargetDomainName")
             target_user_sid = rec.get("TargetUserSid")
@@ -242,6 +255,14 @@ class WindowsEventLogParser(Parser):
         if event_id in (4697, 7045):
             service_name = safe_str(rec.get("ServiceName"))
             service_path = safe_str(rec.get("ImagePath") or rec.get("ServiceFileName"))
+            if event_id == 7045 and not (service_name and service_path):
+                # Providers without a named-field template (what Fluent Bit's winevtlog really emits for System 7045)
+                # carry only positional StringInserts: Microsoft's order is ServiceName, ImagePath, ServiceType, StartType,
+                # AccountName (checked on a live 7045 event, 2026-11-05). Named fields, when present, win.
+                ins = rec.get("StringInserts")
+                if isinstance(ins, (list, tuple)):
+                    service_name = service_name or (safe_str(ins[0]) if len(ins) > 0 else None)
+                    service_path = service_path or (safe_str(ins[1]) if len(ins) > 1 else None)
             message = f"{verb}: {service_name or '?'} -> {service_path or '?'} (by {user or '?'})"
         elif event_id in (1102, 104):
             message = f"{verb} (by {user or '?'})"

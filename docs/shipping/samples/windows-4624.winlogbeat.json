@@ -1,0 +1,38 @@
+{
+  "@timestamp": "2023-01-17T13:02:11.722Z",
+  "event": {
+    "code": "4624"
+  },
+  "host": {
+    "hostname": "dc01"
+  },
+  "winlog": {
+    "channel": "Security",
+    "computer_name": "dc01",
+    "event_data": {
+      "AuthenticationPackageName": "Kerberos",
+      "IpAddress": "203.0.113.9",
+      "IpPort": "54000",
+      "LogonProcessName": "Kerberos",
+      "LogonType": "3",
+      "SubjectDomainName": "-",
+      "SubjectUserName": "-",
+      "SubjectUserSid": "S-1-0-0",
+      "TargetDomainName": "BANKCORP",
+      "TargetLogonId": "0x2d42a6",
+      "TargetUserName": "jdoe",
+      "TargetUserSid": "S-1-5-21-3541430928-2051711210-1391384369-1001",
+      "WorkstationName": "wks-jdoe"
+    },
+    "event_id": 4624,
+    "provider_name": "Microsoft-Windows-Security-Auditing",
+    "record_id": 148210,
+    "time_created": "2023-01-17T13:02:11.722Z",
+    "user": {
+      "domain": "BANKCORP",
+      "identifier": "S-1-5-21-3541430928-2051711210-1391384369-1001",
+      "name": "jdoe"
+    },
+    "version": 2
+  }
+}

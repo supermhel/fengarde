@@ -499,10 +499,14 @@ def main():
     # consumer loop -- mirrors how WS-1 runs its UDP listener alongside the
     # runner's health thread (a second independent network listener, not
     # routed through the runner, which only owns bus consume loops + /health).
+    # WP-3.2: RBAC store + first-admin bootstrap run HERE on the main thread,
+    # so a prod failure (stale/unwritable first-boot file) exits the process
+    # instead of dying silently in the daemon thread while /health stays green.
+    users_db = triage_api.init_rbac()
     triage_thread = threading.Thread(
         target=triage_api.serve,
         args=(store,),
-        kwargs={"port": int(os.getenv("TRIAGE_PORT", "8013"))},
+        kwargs={"port": int(os.getenv("TRIAGE_PORT", "8013")), "users_db": users_db},
         daemon=True,
     )
     triage_thread.start()

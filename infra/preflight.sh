@@ -61,6 +61,17 @@ case "$OS" in
     ok "macOS: vm.max_map_count is managed inside the Docker Desktop VM (skipped)."
     note "         If OpenSearch still fails to boot, ensure Docker Desktop is up to date."
     ;;
+  MINGW*|MSYS*|CYGWIN*)
+    # Git Bash / MSYS2 / Cygwin on Windows. There is no Linux kernel to read
+    # here: the Linux containers run in Docker Desktop's WSL2 VM, which owns
+    # vm.max_map_count. Check what we can (docker, memory, ports) and skip this.
+    ok "Windows ($OS, Git Bash/MSYS): vm.max_map_count is managed by Docker Desktop's WSL2 VM (skipped)."
+    note "         Docker Desktop's WSL2 backend usually ships >= $REQUIRED_MAP_COUNT. To verify:"
+    note "           wsl -d docker-desktop sysctl vm.max_map_count"
+    note "         If it is lower, OpenSearch crashes on boot; fix from PowerShell:"
+    note "           wsl -d docker-desktop sysctl -w vm.max_map_count=$REQUIRED_MAP_COUNT"
+    note "         (resets when the WSL VM restarts; see README 'Windows without make')."
+    ;;
   *)
     fail "Unknown OS ($OS): cannot verify vm.max_map_count -- cannot bless this machine."
     note "         On Linux/WSL2 this must be >= $REQUIRED_MAP_COUNT:"

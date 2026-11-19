@@ -82,8 +82,9 @@ with actual per-user identity and roles:
   `services/ws6-inventory/authz.py`). **Unset (default) = every request
   allowed**, with one warning logged at service start
   (`"auth disabled: FENGARDE_API_KEY not set"`). Set it and every write/read on
-  those two APIs requires the matching header; the dashboard's nginx proxy
-  injects it server-side so the browser never holds the key.
+  those two APIs requires the matching header. The dashboard's nginx does NOT
+  inject or serve the key (WP-6.1): browsers use RBAC sessions, the key is for
+  machine clients.
 - **`FENGARDE_RBAC_DB`** (M4.2) — a SQLite file path. Unset (default) =
   the WS-3 triage/report endpoints stay exactly the pre-M4.2 API-key-only
   behavior; `/auth/login`, `/auth/logout`, `/auth/me` don't even exist. Set
@@ -542,12 +543,79 @@ review, the CI gate, and the threat boundary documented above. See
 
 ---
 
-## Dashboard API key is not an access-control boundary (gap-hunt R4-52)
+## Dashboard session gate (WP-6.1, replaces gap-hunt R4-52)
 
-When `FENGARDE_API_KEY` is set, nginx no longer injects it on proxied requests, but `/api/config.js` hands the key
-to the browser for any request whose `Sec-Fetch-Site` header is `same-origin`. That header is trivially forged by a
-script, so on port 8080 the shared API key is **not** an access-control boundary. Real access control is the RBAC
-login (`FENGARDE_RBAC_DB`, sessions + CSRF). Do not expose port 8080 beyond a trusted network without it.
+The dashboard no longer serves or injects `FENGARDE_API_KEY`: `/api/config.js` and
+the nginx key comparison are gone, and the dashboard container is not given the
+key. Browsers authenticate with the RBAC session cookie only (`FENGARDE_RBAC_DB`).
+Read the limits before exposing port 8080:
+
+- **Sessions require RBAC.** With RBAC off the browser has no credential and the
+  gated routes answer 401 if a key is set (or are open if no key is set either,
+  the zero-config demo).
+- **Console feeds are tenant-scoped (WP-6.2).** `/api/alerts`, `/api/events` and
+  `/api/ai-triage` no longer go from nginx straight to OpenSearch. nginx proxies
+  them to ws3 `GET /dashboard/{alerts,events,ai-triage}`, which authenticates the
+  caller itself and returns the same OpenSearch-shaped body filtered by the
+  session's tenant (a non-admin session is pinned to its own tenant; a
+  `tenant_id` query parameter cannot widen it; `admin` and a valid
+  `FENGARDE_API_KEY` see all tenants). Anonymous callers get 401 whenever RBAC
+  is on, with or without a key set. Proven by
+  `services/ws3-indexer/test_dashboard_scope.py` (real HTTP, memory store, two
+  tenants) and `services/ws7-dashboard/test_fix_read_plane.py` (template has no
+  OpenSearch upstream or `auth_request` on those locations).
+- **Admin-only operator routes (WP-6.2).** `/api/ops/*` and `/api/prom/*` reach
+  auth-less upstreams (service `/metrics`, Prometheus). nginx guards them with
+  `auth_request /api/auth/check-admin`, answered by ws3 `GET /auth/check-admin`:
+  200 only for a valid `X-Api-Key` (key set) or an `admin` session; 401
+  anonymous; 403 for any other role. With RBAC on and the key unset an anonymous
+  caller gets 401 (same fail-closed rule as `GET /auth/check`, fixed in review
+  of PR #165). `GET /auth/check` (any valid credential) still exists and only
+  `/api/inventory/` uses it (see below; session-gated, not tenant-scoped).
+- **RBAC off.** With RBAC off and no key (zero-config demo) the new routes are
+  open and unscoped, as before; with RBAC off and a key set they need the key.
+- **What still holds.** OpenSearch itself has no authentication
+  (`DISABLE_SECURITY_PLUGIN=true` in the compose stack): anyone who can reach
+  port 9200 directly bypasses all of the above, so do not publish it. Tenant
+  scoping applies to documents by their `tenant_id` (events: `siem.tenant`); a
+  document stored without one is treated as tenant `default`, as in the other
+  list routes. The scoping was tested against the in-memory store and the
+  OpenSearch query bodies (wire-format test) and the nginx config with
+  `nginx -t`; it has NOT been exercised against a live OpenSearch + console
+  stack.
+- **Inventory route.** `/api/inventory/` (GET/HEAD only, ws6) is gated with the same
+  `auth_request /api/auth/check` (session or key). Browsers hold no key, so nginx
+  sends the server-side key `WS6_INVENTORY_KEY` (compose: `INVENTORY_API_KEY`, else
+  `FENGARDE_API_KEY`, else empty = zero-config demo) upstream; a caller-supplied
+  `X-Api-Key` takes precedence for machine clients (it must also pass the ws3
+  gate). ws6 IS tenant-aware, but it scopes by the key it receives, so every
+  session reads what that one key sees: the route is session-gated, NOT
+  tenant-scoped. The key stays inside nginx and is never sent to the browser.
+- **Legacy `ai-*` documents (WP-6.2 upgrade note).** AI-triage documents
+  (`alert_id` prefix `ai-`) written before the ws5 tenant fix carry no
+  `tenant_id`, so every scoped read treats them as tenant `default`: a `default`
+  session sees them and no other tenant does. Purge or backfill them once after
+  upgrading. Not run here; adjust the tenant and take a snapshot first:
+
+  ```
+  # backfill (assign the right tenant to old ai-* docs that lack one)
+  POST alerts-*/_update_by_query?conflicts=proceed
+  {"query":{"bool":{"filter":[{"prefix":{"alert_id":"ai-"}}],
+                    "must_not":[{"exists":{"field":"tenant_id"}}]}},
+   "script":{"source":"ctx._source.tenant_id='default'","lang":"painless"}}
+
+  # or purge them (ws5 re-emits triage for new alerts only)
+  POST alerts-*/_delete_by_query?conflicts=proceed
+  {"query":{"bool":{"filter":[{"prefix":{"alert_id":"ai-"}}],
+                    "must_not":[{"exists":{"field":"tenant_id"}}]}}}
+  ```
+- **Availability coupling.** Each gated request makes a sub-request to ws3. If ws3
+  is down or rate-limiting, those panels fail (nginx returns 500; fail-closed).
+- **Cookie flags.** The session cookie is `HttpOnly; SameSite=Strict`, no expiry
+  attribute. nginx in this repo serves plain HTTP, so the cookie travels in clear
+  text unless you terminate TLS in front. This repo ships no TLS profile. Set
+  `FENGARDE_COOKIE_SECURE=1` on ws3 when TLS terminates in front to add `Secure`.
+  Do not expose port 8080 beyond a trusted network without TLS.
 
 ## Supported versions
 

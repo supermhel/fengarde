@@ -328,6 +328,10 @@ def _alert_payload(result: dict, event: dict) -> dict:
         # Gap-hunt (2026-08-27) #2: `siem` may be an explicit null -- coerce to
         # {} so .get("sector") never raises AttributeError.
         "sector": (event.get("siem") or {}).get("sector"),
+        # WP-6.2 review: /dashboard/ai-triage scopes on tenant_id; without it
+        # every ai-* doc read as tenant "default" (cross-tenant leak). Same
+        # stamping as ws4-detection/main.py alerts.
+        "tenant_id": (event.get("siem") or {}).get("tenant"),
         "event_ids": [stable_id],
     }
     if result["tier"] != "classifier":
@@ -368,6 +372,8 @@ def _make_handler(bus, worker: "AiWorker"):
 
 
 def main(worker: "AiWorker | None" = None):
+    from shared.prodcheck import prod_or_die  # noqa: E402
+    prod_or_die("ws5-ai", rbac=False)  # WP-3.2: prod needs the Redis bus password
     # Daemon (T0): consume ai.requests via the shared runner. run() above stays
     # the batch path used by tests / the e2e harness. Real local-Ollama triage
     # runs when OLLAMA_URL is set and reachable; otherwise the deterministic

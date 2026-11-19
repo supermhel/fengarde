@@ -1,21 +1,35 @@
-"""WS-7 read-plane gap-hunt regression test (static, no browser needed).
+"""WS-7 read-plane regression test (static, no browser needed).
 
-nginx read-plane regression (the legacy-console assertions that used to live here -- getAlerts/LIVE ownership, the
-outage marker, the honest badge copy -- went away with the legacy UI on 2026-10-20; the React console has its own vitest suite):
+nginx read-plane regression for the v1 console (the legacy-console assertions
+went away with the legacy UI on 2026-10-20; the React console has its own
+vitest suite). WP-6.1 (owner decision, option C: sessions only) re-routed the
+auth model in 2026-11-06:
 
-  * read-plane #6     the /api/config.js API-key bootstrap is served only to
-                      same-origin browser subresource fetches (Sec-Fetch-Site:
-                      same-origin, GET/HEAD only) and the residual exposure is
-                      documented loudly (see also SECURITY.md: not an access boundary).
+  * read-plane #6 (SUPERSEDED) the /api/config.js API-key bootstrap is REMOVED.
+    The browser no longer holds FENGARDE_API_KEY; the SPA does not even load
+    config.js, and index.html carries no script tag for it. The API key is
+    reserved for machine clients, which send X-Api-Key on their own.
+  * nginx key gate (REMOVED) the blanket `if ($http_x_api_key != ...) return
+    401;` guard is gone. Auth is delegated to ws3-indexer, whose _check_auth
+    accepts an X-Api-Key OR an RBAC session cookie -- the single authority.
+    /api/auth/* (login/me/logout/mfa) is intentionally keyless so a not-yet-
+    logged-in browser can still log in.
+  * auth-less upsteams (KEPT, reworded) routes that proxy to something that
+    cannot check credentials itself -- OpenSearch direct reads (/api/alerts,
+    /api/events, /api/ai-triage), the /api/ops/* health endpoints, and
+    /api/prom/* -- now carry `auth_request /api/auth/check;`, an nginx
+    subrequest to ws3 that returns 200 only when key-OR-session is valid, so
+    they stay protected without re-introducing a browser-side key.
   * cache (2026-10-15) the SPA index.html is served no-cache and /assets/
-                      immutable, and every location that sets its own
-                      add_header repeats all four security headers.
-  * prom (2026-10-15) /api/prom/ is a GET-only, X-Api-Key-gated allowlist
-                      onto Prometheus: /api/v1/targets and /api/v1/query only,
-                      no body or credentials forwarded, headers inherited.
+    immutable, and every location that sets its own add_header repeats all
+    four security headers.
+  * prom (2026-10-15) /api/prom/ is a GET-only allowlist onto Prometheus:
+    /api/v1/targets and /api/v1/query only, no body or credentials forwarded,
+    headers inherited -- now gated by the same auth_request as the other
+    auth-less upstreams.
 
-Substring assertions plus a node --check syntax gate (test_contract.py) are the
-static contract; this test proves the specific returns that the greps cannot.
+Substring assertions plus a node --check syntax gate (test_contract.py) are
+the static contract; this test proves the specific returns that greps cannot.
 """
 from __future__ import annotations
 
@@ -32,28 +46,123 @@ def check(c, m):
         FAILS.append(m)
 
 
+def block(tpl: str, head: str) -> str:
+    """Slice one location block (brace-naive: stops at the first '\\n    }\n')."""
+    if head not in tpl:
+        return ""
+    s = tpl.index(head)
+    return tpl[s:tpl.index("\n    }\n", s)]
+
+
 def run():
     tpl = (HERE / "templates" / "default.conf.template").read_text(encoding="utf-8")
 
-    # ---- read-plane #6: config.js served only to same-origin browser fetches ----
-    cfg = tpl[tpl.index("location = /api/config.js"):]
-    check("$http_sec_fetch_site" in cfg,
-          "read-plane #6: config.js location does not gate on Sec-Fetch-Site")
-    check('$http_sec_fetch_site = "same-origin"' in cfg,
-          "read-plane #6: config.js does not require Sec-Fetch-Site: same-origin")
-    check("limit_except GET HEAD" in cfg,
-          "read-plane #6: config.js location does not restrict to GET/HEAD")
-    check("fengarde_cfg_ok" in cfg,
-          "read-plane #6: config.js same-origin gate is missing the allow flag")
-    check("read-plane #6" in tpl,
-          "read-plane #6: the residual-exposure tradeoff is not documented loudly in the template")
+    # ---- WP-6.1 (option C): /api/config.js key bootstrap REMOVED --------------
+    check("location = /api/config.js" not in tpl,
+          "wp-6.1: /api/config.js location still exists (must be removed)")
+    check("window.FENGARDE_API_KEY" not in tpl,
+          "wp-6.1: template still serves window.FENGARDE_API_KEY")
+    # The SPA must not even load config.js (index.html carries no script tag
+    # for it). The template's own comments may LEGITIMATELY mention the
+    # removed bootstrap as prose, so the gone-gate assertion is on the serving
+    # lines, not on the phrase.
+    idx = (HERE / "app" / "index.html").read_text(encoding="utf-8")
+    check('src="/api/config.js"' not in idx,
+          "wp-6.1: index.html still loads the config.js bootstrap script")
+    check("/api/config.js" not in idx,
+          "wp-6.1: index.html still references the config.js endpoint")
 
-    # ---- 2026-10-15: HTML entry points revalidate, hashed assets are immutable ----
+    # ---- WP-6.1: blanket nginx X-Api-Key gate REMOVED -------------------------
+    check('if ($http_x_api_key != "' not in tpl,
+          "wp-6.1: nginx still compares X-Api-Key itself (gate must be removed)")
+    # A machine client's key must still be forwarded so ws3 can accept it.
+    check("proxy_set_header X-Api-Key $http_x_api_key;" in tpl,
+          "wp-6.1: machine-client X-Api-Key is no longer forwarded to ws3")
+
+    # ---- WP-6.2: dashboard reads go through ws3 (tenant-scoped), NOT OpenSearch ----
+    # ws3 authenticates and scopes these itself, so no nginx auth_request and no
+    # direct OpenSearch upstream: a tenant-A session must not be able to read tenant B.
+    for loc, up in ((" = /api/alerts {", "/dashboard/alerts"),
+                    (" = /api/events {", "/dashboard/events"),
+                    (" = /api/ai-triage {", "/dashboard/ai-triage")):
+        b = block(tpl, f"location{loc}")
+        check(bool(b), f"wp-6.2: location{loc} missing")
+        check("auth_request" not in b, f"wp-6.2: {loc.strip()} still uses auth_request (ws3 gates it)")
+        check("$opensearch" not in b and "_search" not in b and "proxy_set_body" not in b,
+              f"wp-6.2: {loc.strip()} still talks to OpenSearch directly")
+        check(f"rewrite ^{loc.split()[1]}$ {up} break;" in b,
+              f"wp-6.2: {loc.strip()} does not rewrite to ws3 {up}")
+        check("proxy_pass $ws3_dashboard;" in b, f"wp-6.2: {loc.strip()} lacks proxy_pass to ws3")
+        check("proxy_set_header X-Api-Key $http_x_api_key;" in b,
+              f"wp-6.2: {loc.strip()} does not forward the caller's key")
+        check("error_page 502 503 504 = @alerts_unavailable;" in b,
+              f"wp-6.2: {loc.strip()} lost the empty-hits fallback")
+    check('"hits":{"hits":[]}' in block(tpl, "location @alerts_unavailable {"),
+          "wp-6.2: @alerts_unavailable fallback body changed")
+    # Ops health endpoints + Prometheus: auth-less upstreams, ADMIN-only now.
+    for loc in ("location = /api/ops/ws1 {", "location = /api/ops/ws2 {", "location = /api/ops/ws3 {",
+                "location = /api/ops/ws4 {", "location = /api/ops/ws5 {", "location = /api/ops/ws8 {",
+                "location ~ ^/api/prom/api/v1/(targets|query)$ {"):
+        b = block(tpl, loc)
+        check("auth_request /api/auth/check-admin;" in b,
+              f"wp-6.2: {loc} lacks the admin-only auth_request guard")
+    # Only the inventory feed (ws6, tenant-unaware key) may keep the any-credential guard.
+    check(tpl.count("auth_request /api/auth/check;") == 1
+          and "auth_request /api/auth/check;" in block(tpl, "location /api/inventory/ {"),
+          "wp-6.2: a location other than /api/inventory/ uses the any-credential /auth/check guard")
+    # PR #175 review: prefix matches let /api/ops/ws1/<x> or /api/ops/ws10 through
+    # with the original URI proxied to the health port; ops routes are exact now.
+    check(not re.search(r"location\s+/api/ops/ws\d", tpl),
+          "wp-6.2: an /api/ops/wsN location is a prefix match again (must be `location =`)")
+
+    # ws3-served routes must NOT be nginx-key-gated (ws3 enforces key-or-session).
+    ws3_locs = ("location /api/triage/ {", "location /api/rules {",
+                "location /api/incidents {", "location /api/incidents/ {",
+                "location /api/entities/ {", "location /api/audit {")
+    for loc in ws3_locs:
+        b = block(tpl, loc)
+        check('if ($http_x_api_key != "' not in b,
+              f"wp-6.1: {loc} still carries the nginx X-Api-Key gate")
+    # The login/bootstrap surface must be keyless or a fresh browser could not log in.
+    auth_b = block(tpl, "location /api/auth/ {")
+    check("auth_request" not in auth_b,
+          "wp-6.1: /api/auth/ is auth_request-gated (must stay keyless for login)")
+    check('if ($http_x_api_key != "' not in auth_b,
+          "wp-6.1: /api/auth/ still carries the old X-Api-Key gate")
+
+    # Any auth_request-guarded location must still proxy somewhere -- a guard
+    # replacement that eats the location's upstream (live-caught on WP-6.1:
+    # /api/ai-triage 404'd from nginx for exactly this reason) is a regression
+    # no syntax check can catch, since a proxyless location is valid nginx.
+    for loc in ("location = /api/ops/ws1 {", "location = /api/ops/ws8 {"):
+        anchor = loc
+        b = block(tpl, anchor)
+        check("proxy_pass" in b,
+              f"wp-6.1: {anchor} lost its proxy_pass when the gate was replaced")
+
+    # ---- WP-6.1 follow-up: /api/inventory/ is session-gated, server key upstream
+    inv = block(tpl, "location /api/inventory/ {")
+    check("auth_request /api/auth/check;" in inv,
+          "inventory: location /api/inventory/ has no auth_request gate")
+    check("proxy_set_header X-Api-Key $http_x_api_key;" not in inv,
+          "inventory: still forwards ONLY the client X-Api-Key (session users get 401)")
+    check("proxy_set_header X-Api-Key $ws6_inventory_key;" in inv,
+          "inventory: does not send the server-side inventory key upstream")
+    m = tpl.find("map $http_x_api_key $ws6_inventory_key")
+    check(m >= 0 and "${WS6_INVENTORY_KEY}" in tpl[m:m + 400] and "default $http_x_api_key;" in tpl[m:m + 400],
+          "inventory: key map must prefer the caller's key and fall back to WS6_INVENTORY_KEY")
+    check("limit_except GET HEAD" in inv, "inventory: lost its GET/HEAD-only restriction")
+    check("proxy_pass" in inv, "inventory: lost its proxy_pass")
+    compose = (HERE.parents[1] / "infra" / "docker-compose.yml").read_text(encoding="utf-8")
+    ws7 = compose[compose.index("  ws7-dashboard:"):]
+    check("WS6_INVENTORY_KEY=${INVENTORY_API_KEY:-${FENGARDE_API_KEY:-}}" in ws7,
+          "inventory: compose does not pass WS6_INVENTORY_KEY to ws7-dashboard")
+
+    # ---- 2026-10-15: HTML entry points revalidate, hashed assets immutable ----
     blocks = {b.split("{", 1)[0].strip(): b.split("}", 1)[0]
               for b in re.split(r"\n\s*location ", tpl)[1:]}
-    for loc in ("= /index.html",):
-        check('add_header Cache-Control "no-cache";' in blocks.get(loc, ""),
-              f"cache: location {loc} does not send Cache-Control: no-cache")
+    check('add_header Cache-Control "no-cache";' in blocks.get("= /index.html", ""),
+          "cache: location = /index.html does not send Cache-Control: no-cache")
     check('Cache-Control "public, max-age=31536000, immutable"' in blocks.get("/assets/", ""),
           "cache: location /assets/ does not mark hashed bundles immutable")
     # Any location with its own add_header loses the server-level ones, so every
@@ -66,25 +175,16 @@ def run():
             check(f"add_header {h} " in body,
                   f"security headers: location {loc} sets add_header but drops {h}")
 
-    # ---- system health (2026-10-15): read-only Prometheus proxy ----
-    # Whole-block slices (the brace-naive `blocks` map above stops at the first
-    # inner `}`, e.g. limit_except's).
-    def block(head):
-        if head not in tpl:
-            return ""
-        s = tpl.index(head)
-        return tpl[s:tpl.index("\n    }\n", s)]
+    # ---- system health (2026-10-15): read-only Prometheus proxy --------------
     prom_locs = re.findall(r"\n\s*location\s+([^{]*?)\s*\{", tpl)
     prom_locs = [loc for loc in prom_locs if "/api/prom" in loc]
     allow_head = "location ~ ^/api/prom/api/v1/(targets|query)$ {"
     check(sorted(prom_locs) == sorted(["/api/prom/", "~ ^/api/prom/api/v1/(targets|query)$"]),
           f"prom: expected exactly the deny prefix + the 2-path allow regex, got {prom_locs}")
-    check("return 403;" in block("location /api/prom/ {"),
+    check("return 403;" in block(tpl, "location /api/prom/ {"),
           "prom: /api/prom/ prefix block does not deny every non-allowlisted path")
-    allow = block(allow_head)
+    allow = block(tpl, allow_head)
     check(bool(allow), "prom: allowlist location missing")
-    # The regex itself admits only the two read endpoints (nginx and Python
-    # regex agree on this subset: anchors, literal text, one alternation).
     rx = re.compile(r"^/api/prom/api/v1/(targets|query)$")
     for p in ("/api/prom/api/v1/targets", "/api/prom/api/v1/query"):
         check(rx.match(p) is not None, f"prom: allowlist regex rejects {p}")
@@ -95,8 +195,8 @@ def run():
         check(rx.match(p) is None, f"prom: allowlist regex admits {p}")
     check(re.search(r"limit_except GET \{\s*deny all;\s*\}", allow) is not None,
           "prom: allowlist location does not restrict to GET (HEAD implied)")
-    check('if ($http_x_api_key != "${FENGARDE_API_KEY}") { return 401; }' in allow,
-          "prom: allowlist location lacks the X-Api-Key gate used by /api/ops/* and /api/rules")
+    check("auth_request /api/auth/check-admin;" in allow,
+          "prom: allowlist location lacks the admin-only auth_request guard")
     check("resolver 127.0.0.11" in allow and 'set $prometheus "http://prometheus:9090";' in allow
           and "proxy_pass $prometheus;" in allow,
           "prom: upstream not resolved at request time via a variable (nginx would fail to start without prometheus)")

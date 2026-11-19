@@ -34,6 +34,22 @@ Authorization: Bearer <FENGARDE_INGEST_TOKEN>
   `collectors/spool.py` machinery as syslog if `INGEST_HTTP_SPOOL_PATH` is set
   → `202` (accepted for later delivery); without a spool → `503` (dropped,
   counted).
+  A failed produce marks the bus down for 3 s: the rest of the batch and following
+  batches in that window go straight to the spool (no per-event client timeout, so
+  a large batch still answers `202` promptly); the drain thread probes recovery.
+  A `http-json-spool-drain` thread replays the spool into the bus every 5 s
+  once it accepts events again. Replay is **at-least-once**: a hard crash can
+  re-send up to 500 already-delivered events (same `ingest_id`, so WS-3 stores
+  one document). While the bus is up, live batches go straight to it and may
+  overtake older spooled events (FIFO holds inside the spool only). An event the
+  bus keeps rejecting is moved to `<spool>.dead` (capped at
+  `INGEST_HTTP_SPOOL_MAX_BYTES`) so it cannot block the rest; a lone event with
+  nothing behind it is parked after 10 failed passes. Parked events are not
+  lost: after a clean drain pass the collector re-sends `<spool>.dead` at most
+  every 5 minutes and keeps only what the bus still refuses (this undoes a
+  bus flap that parked good events). If `<spool>.dead` cannot be written (disk error or its cap) the event stays in the spool, the pass stops and `http_spool_dead_letter_write_failures` counts it: nothing is dropped. A poison run of any length is walked past across passes (bounded work per pass), and one re-send call tries at most 500 parked lines. Watch `http_spool_pending_bytes`,
+  `http_spool_drain_failed_passes`, `http_spool_dead_lettered` and
+  `http_spool_dead_letter_redriven` on WS-1 `/metrics`.
 
 ## Auth
 
@@ -75,6 +91,13 @@ must send `X-Fengarde-Idempotency-Key`, or the accepted records are ingested twi
   `meta.source` (the TCP peer is always kept as `meta.shipper_ip`). Without it the TCP peer is used; behind a published Docker
   port or a relay every sender then looks like one address. The label is as trustworthy as the bearer token: any holder can
   claim any name, so it is never an authorization input.
+- **Behind a reverse proxy (`INGEST_HTTP_TRUSTED_PROXIES`).** Default empty: `X-Forwarded-For` is ignored and the TCP peer is
+  the client (so behind Caddy every unlabelled sender shares the proxy's address). Set it to the proxy's CIDR(s)
+  (comma-separated) and, only when the TCP peer is inside that list, the client is the LAST `X-Forwarded-For` hop that is
+  not itself trusted (if every hop is in the trusted ranges, the leftmost is the client); hops to the left of the first
+  untrusted one are client-supplied and ignored, and an unparsable hop falls back to the peer. That
+  address becomes `meta.shipper_ip`, the rate-limit/partition key (when unlabelled) and the spool key; the proxy hop is kept
+  as `meta.shipper_proxy_ip`. A request from an untrusted peer can never spoof its address. The TLS profile sets this to Caddy's single fixed address (172.31.250.2), never to a whole private range: any other container on the compose network is then an ordinary client whose header is ignored. The forwarded IP is normalised (IPv6 case/compression, v4-mapped) before it becomes a key.
 - **Per-source cap.** `INGEST_HTTP_MAX_EVENTS_PER_SEC_PER_SOURCE` (default 0 = off) limits one source's share of the tenant
   ceiling (`INGEST_HTTP_MAX_EVENTS_PER_SEC`). The older nested per-IP bucket ran at the same rate as the tenant bucket and
   could never bind first, which is why a separate lower cap exists.
@@ -122,7 +145,7 @@ HTTP=200
 # Unknown source_type -> 400 (lists the registered parsers)
 $ curl -s -w '\nHTTP=%{http_code}\n' -X POST 'http://127.0.0.1:8554/v1/ingest?source_type=bogus' \
     -H 'Authorization: Bearer <FENGARDE_INGEST_TOKEN>' --data '{"a":1}'
-{"error":"unknown source_type 'bogus'; registered: ['active_directory', 'cef', 'cisco_asa', 'cloudtrail', 'db_audit', 'dns_query', 'generic_syslog', 'inventory_diff', 'k8s_audit', 'linux_ssh', 'm365_audit', 'mail_gateway', 'mcp_agent', 'modbus_anomaly', 'n8n_audit', 'opcua_audit', 'sysmon', 'vmware_vsphere', 'windows_eventlog']"}
+{"error":"unknown source_type 'bogus'; registered: ['active_directory', 'cef', 'cisco_asa', 'cloudtrail', 'db_audit', 'dns_query', 'generic_syslog', 'inventory_diff', 'k8s_audit', 'linux_ssh', 'm365_audit', 'mail_gateway', 'mcp_agent', 'modbus_anomaly', 'n8n_audit', 'opcua_audit', 'suricata_eve', 'sysmon', 'vmware_vsphere', 'windows_eventlog', 'zeek_json']"}
 HTTP=400
 
 # No token -> 401; body over the 1 MiB cap -> 413
@@ -200,4 +223,13 @@ What each recipe does and does NOT cover, per source, is tracked in
 | `INGEST_HTTP_MAX_BODY_BYTES` | `1048576` | per-request body cap → 413 |
 | `INGEST_HTTP_MAX_EVENTS_PER_SEC` | `2000` | per-source token bucket → 429 |
 | `INGEST_HTTP_SPOOL_PATH` | unset | on-disk JSONL fallback when the bus is down |
-| `INGEST_HTTP_SPOOL_MAX_BYTES` | spool default | spool cap |
+| `INGEST_HTTP_SPOOL_MAX_BYTES` | spool default (64 MiB) | spool cap |
+| `TENANT_ID` | `default` | tenant stamped on events and keying the tenant rate bucket |
+
+**Docker Compose:** `infra/docker-compose.yml` passes `INGEST_HTTP_SPOOL_PATH`,
+`INGEST_HTTP_SPOOL_MAX_BYTES` and `TENANT_ID` through from the host environment or
+`.env` (empty spool path = disabled, so the default is unchanged). To enable the
+spool put `INGEST_HTTP_SPOOL_PATH=/var/lib/fengarde/spool/http-spool.jsonl` in
+`.env` (the `ws1-spool` volume is already mounted; keep it a different file from
+`SYSLOG_SPOOL_PATH`), or add `-f infra/docker-compose.homelab.yml`, then
+`docker compose ... up -d ws1-collectors`.

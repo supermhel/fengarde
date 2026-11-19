@@ -22,6 +22,8 @@
   `entries: [{cidr, country}]` shape holding your own egress prefixes to change that (gap-hunt R4-129). Lookups scan the
   list (behind a bounded LRU), so it suits tens to thousands of prefixes, not a full GeoIP database.
 
+Optional: `FENGARDE_WINEVTLOG_TZ` (IANA zone, e.g. `Europe/Berlin`; unset by default) makes the `fluentbit-winevtlog` adapter read Fluent Bit's printed `TimeCreated` wall clock in that zone with correct DST instead of trusting the printed UTC offset, which Fluent Bit takes from the current date, not the event's (see `docs/shipping/windows.md`). Read per record; an invalid zone is ignored with one warning.
+
 ## Routing (`parsers/__init__.py::resolve`)
 - A registered `source_type` is authoritative: an explicit product label (e.g.
   `tools/agent_log_shipper.py --source-type linux_ssh`) is never overridden by
@@ -78,7 +80,8 @@
 - `mail_gateway` → Email Activity (4009), sector common (2026-10-14: secure-email-gateway message log; attachment summary incl. macro-capable flag; read by `email_macro_attachment_delivered`)
 - `m365_audit` → API Activity (6003) / Authentication (3002), sector common (2026-10-14: Microsoft 365 unified audit log; `UserLoggedIn`/`UserLoginFailed` map to 3002, everything else to 6003; mailbox-rule facts under `unmapped.m365.inbox_rule`, read by `m365_inbox_rule_external_forward`)
 
-19 parsers total, re-synced 2026-10-22 against `parsers/__init__.py`'s `_REGISTRY` (this list had stopped at 17 since the two 2026-10-14 parsers).
+21 parsers total, re-synced 2026-11-05 against `parsers/__init__.py`'s `_REGISTRY`.
+- `suricata_eve` / `zeek_json` → Network Activity (4001) / DNS Activity (4002) (WP-1.5, 2026-11-05: JSON logs of the packet-capturing sensors Suricata 8 `eve.json` and Zeek 9 `LogAscii::use_json`; alert/flow/dns/modbus/dnp3 and conn/dns/notice/modbus(+ICSNPP `modbus_detailed`); activity 99 for IDS alerts, notices and OT application events so no Deny/Accept rule consumes them (an IPS `blocked` action stays in `unmapped.ids.action`, not Deny); Close events are stamped with the flow/connection END (Suricata `flow.end`, Zeek `ts`+`duration`); Suricata DNS v1/v2 (`query`/`answer`) and v3 (`request`/`response`) both map; Zeek Modbus needs Zeek >= 5.1.0 (`unit` column) and one transaction can yield several events; `raw` is a dict or one JSON line; fixtures are real sensor runs on public pcaps, see `parsers/test_fixtures/*_real.json` headers and the module docstrings)
 `sysmon` also maps EventID 5 (ProcessTerminate) and EventID 10 (ProcessAccess, 2026-10-20) to 1002.
 
 Adding a source = new module + one registry line. `type_uid` always derived.

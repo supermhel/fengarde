@@ -58,6 +58,12 @@ so any piece can be scaled or replaced without rewriting the others.
   labelled deterministic stub. Alert data is never piped through a third-party LLM
   API, and the console names which engine actually ran. Verdict quality is poor in the two models measured (`qwen2.5:3b` 1 of 54 labelled alerts correct, `qwen2.5:7b` 7 of 54, mostly `suspicious` answers); see
   [`eval/llm_triage/RESULTS.md`](eval/llm_triage/RESULTS.md).
+  **AI triage is a seam, not a feature** until a model clears the stated bar (defined in
+  `eval/llm_triage/README.md`, § The bar): on the committed 54-case evaluation it must beat
+  BOTH the always-malicious baseline AND the score-driven stub in accuracy, keep abstain
+  under 20 % and error under 5 %, and carry 0 % stub share when measured `--direct`.
+  Until then the console and the alert report name the engine (`stub` vs `ollama/<model>`)
+  on every verdict so nothing is silently attributed to a model that did not run.
 - **Evidence, not just alerts.** Incidents carry a typed causal graph and a
   Merkle hash-chain evidence package that the API verifies before serving it.
 - **Honest status.** What is proven, what is claimed and what is stubbed is
@@ -132,6 +138,42 @@ make ha-up    # opt-in: Redis Sentinel + 3-node OpenSearch HA (needs REDIS_PASSW
 make ha-down  # stop the HA profile, remove its volumes
 ```
 
+<details>
+<summary>Windows without <code>make</code> (Git Bash / PowerShell)</summary>
+
+Every `make` target above is a thin wrapper; without `make`, run the recipe
+directly from the repo root (use `python` where the Makefile says `python3`).
+`infra/preflight.sh` recognises Git Bash (MINGW/MSYS) and skips the
+`vm.max_map_count` check, which Docker Desktop's WSL2 VM manages (it prints how
+to check it: `wsl -d docker-desktop sysctl vm.max_map_count`).
+
+```sh
+# make preflight
+sh infra/preflight.sh
+# make up   (runs preflight first)
+sh infra/preflight.sh && docker compose -f infra/docker-compose.yml up -d
+# make down
+docker compose -f infra/docker-compose.yml down -v
+# make test
+bash run_all_tests.sh                 # set PYTHON=python if python3 is missing
+# make test-live  (needs the stack from `make up`)
+BUS_BACKEND=redis python services/shared/test_runner.py
+BUS_BACKEND=redis python services/shared/test_bus_trim_acked.py
+BUS_BACKEND=redis python services/shared/test_bus_lag.py
+BUS_BACKEND=redis python services/shared/test_bus_read_count.py
+python services/ws3-indexer/storage/test_opensearch_live.py
+python services/ws3-indexer/storage/test_opensearch_ha_failover_live.py
+python services/ws3-indexer/storage/test_opensearch_cas_concurrency_live.py
+python services/ws3-indexer/storage/test_opensearch_shared_store_concurrent_live.py
+SESSION_TEST_REDIS=1 FENGARDE_SESSION_SECRET=local-test-session-secret-not-for-production python services/shared/test_sessions.py
+# make chaos      (needs the stack from `make up`; re-runnable on a non-empty cluster)
+python tools/chaos_test.py
+```
+
+The `make test-live` list mirrors the Makefile; if it drifts, the Makefile wins.
+
+</details>
+
 | Port | Service | What it is |
 |------|---------|------------|
 | 6379 | `redis` (`siem-bus`) | Message bus between services |
@@ -195,7 +237,7 @@ and released in v0.11.0. Phase 5 ([PR #92](https://github.com/supermhel/fengarde
 | Capability | Status | Notes |
 |---|---|---|
 | Detection pipeline (collect, normalize, detect, index, console) | ✅ Works | End-to-end since v0.1 |
-| **Parsers (19)** | ✅ Works | Cisco ASA, Active Directory, VMware vSphere, Linux SSH, generic syslog, Windows Event Log, DB audit, MCP/AI-agent tool-call audit, OPC UA/OT audit, n8n audit, DNS query log, Kubernetes audit, CEF, AWS CloudTrail, Sysmon, Modbus/TCP anomaly detector, inventory-diff OT device detector, mail gateway, M365 audit; all to OCSF |
+| **Parsers (21)** | ✅ Works | Cisco ASA, Active Directory, VMware vSphere, Linux SSH, generic syslog, Windows Event Log, DB audit, MCP/AI-agent tool-call audit, OPC UA/OT audit, n8n audit, DNS query log, Kubernetes audit, CEF, AWS CloudTrail, Sysmon, Modbus/TCP anomaly detector, inventory-diff OT device detector, mail gateway, M365 audit, Suricata EVE JSON, Zeek JSON logs (these two read the logs of a sensor you run; FENGARDE captures no packets); all to OCSF |
 | **Live syslog routing** (console rebuild) | ✅ Works | A forwarded sshd, Cisco ASA or CEF line (also behind a syslog header) reaches its own parser, not the generic one; proven by a real UDP burst that raised the brute-force alarm |
 | **Detection rules (46)** | ✅ Works (43 stable; 3 experimental: `common_impossible_travel` (cannot fire on production traffic until a deployment supplies real egress prefixes or a GeoIP resolver), `common_credential_stuffing_sustained` and `ot_opcua_write_unauthorized_node`. 7 of the 2026-10-20 Windows/spray/sweep rules are proven by unit tests and fire checks, not yet by a twin storyline) | Brute-force, port-scan, lateral movement, password spray, privileged-group grant, after-hours admin, impossible travel, bank DB privilege escalation, mass VM delete, AI-agent rules (credential files, tool-call burst, prompt injection, destructive command, non-allowlisted egress), OT rules (write outside maintenance, new engineering connection, config change, Modbus unauthorized write, new device on segment), n8n, DNS exfiltration, privileged container, cloud root login, mass DB read, rapid account churn, beaconing. The full list is on the [project page](https://supermhel.github.io/fengarde/) |
 | Rule grammar and prefilter | ✅ Works | Boolean logic, comparisons, allowlist suppression (CIDR and exact), time of day; fails closed on malformed input; rules bucketed by `class_uid` |
@@ -279,7 +321,7 @@ never touches the bus, and no backend service depends on it.
 | WS | Service | Role |
 |----|---------|------|
 | 1 | `services/ws1-collectors` | Collect logs → `raw.events` |
-| 2 | `services/ws2-normalization` | Parsers → validated OCSF events (19 parsers) |
+| 2 | `services/ws2-normalization` | Parsers → validated OCSF events (21 parsers) |
 | 3 | `services/ws3-indexer` | Routing + OpenSearch indexing; entity/incident-graph/evidence read routes |
 | 4 | `services/ws4-detection` | Correlation rules + scoring + windowing (46 rules) |
 | 5 | `services/ws5-ai` | Triage — real local-LLM (Ollama), stub fallback, bounded concurrency |

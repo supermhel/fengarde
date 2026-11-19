@@ -13,7 +13,7 @@ export default defineConfig(({ mode }) => ({
     {
       name: "demo-html",
       transformIndexHtml: (html) => (mode === "demo"
-        ? html.replace('<script src="/api/config.js"></script>\n', "").replace("<title>FENGARDE</title>", "<title>FENGARDE console demo</title>")
+        ? html.replace("<title>FENGARDE</title>", "<title>FENGARDE console demo</title>")
         : html),
     },
   ],

@@ -37,6 +37,18 @@
   a mandatory disclaimer.
 - `GET /incidents` — newest-first (by `last_seen`) correlated-incident listing
   (WS-8 incidents), same bounded/filtered convention as `GET /alerts`.
+- `GET /dashboard/alerts|events|ai-triage` (WP-6.2) — the console feeds nginx used to
+  read straight from OpenSearch, now served here as `{"hits":{"hits":[{"_source":..}]}}`
+  (alerts: newest 50 with `rule_title`; events: newest 100; ai-triage: newest 200
+  with `alert_id` prefix `ai-`; `?gte=<epoch ms>` on alerts/events, invalid means 0).
+  Caller must hold a session or `FENGARDE_API_KEY` (401 otherwise whenever RBAC is
+  on). Scope: non-admin session = its own tenant (a `tenant_id` param cannot widen
+  it); `admin` and the key = all tenants (`tenant_id` narrows); RBAC off + no key =
+  open. Storage: `StorageAdapter.dashboard_hits(kind, tenant_id=, gte_ms=)`
+  (memory + OpenSearch; other adapters answer 501).
+- `GET /auth/check` (any valid credential) and `GET /auth/check-admin` (WP-6.2: key or
+  `admin` session only; 401 anonymous, 403 other roles) — nginx `auth_request`
+  targets; `/api/ops/*` and `/api/prom/*` use the admin one.
 - `GET /entities/{id}` (Phase 5, 2026-09-04) — a WS-9-resolved entity's
   current canonical state (`entity.updates` topic, indexed).
 - `GET /incidents/{id}/graph` (Phase 5) — the typed causal DAG WS-8 emitted

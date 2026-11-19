@@ -1,0 +1,195 @@
+# Integration branch 2026-11-19
+
+Branch `integration/2026-11-19`, cut from `origin/main` at `182a4ab`. It merges every
+open PR branch with `git merge --no-ff -s ort --signoff origin/<branch> -m "merge: <branch>"`,
+in the order below. Nothing here is merged into `main`; the PR branches are untouched.
+This file records, per merge, every conflicted file and how it was resolved, so each
+resolution can be replayed on the PR branch when it is rebased/merged onto the new `main`.
+
+Resolution conventions used throughout:
+
+- **CHANGELOG.md** (`## [Unreleased]`): every conflict was two blocks inserted at the same
+  spot. Keep both; the incoming PR's section(s) are placed first (newest merge on top),
+  the already-merged sections follow, blank line between. No section dropped or edited.
+- **SSOT.md** (status table): keep every row. The incoming PR's new row goes on top of the
+  already-merged rows. Several PRs also carry a stale copy of the WP-1.3 shipper-adapters
+  row (from the base); the copy already on the integration branch (the newer text, from #152)
+  is kept and the stale one dropped, so that row appears exactly once.
+- **run_all_tests.sh**: keep every stanza, in merge order, with a bare `echo` line between
+  stanzas (the file's own separator). After each conflict `python tools/test_gate_tiers.py`
+  and `python tools/check_lane_coverage.py` were run and pass.
+
+## Merges
+
+| # | Branch (PR) | Conflicted files |
+|---|---|---|
+| 1 | `wp/1.5-zeek-suricata` (#152) | none |
+| 2 | `wp/1.4-shipper-recipes-v2` (#153) | `SSOT.md` |
+| 3 | `wp/2.1-homelab-profile` (#154) | `CHANGELOG.md`, `SSOT.md` |
+| 4 | `wp/2.3-fp-report` (#160) | `CHANGELOG.md`, `SSOT.md` |
+| 5 | `wp/2.2-labelling` (#161) | `.gitignore`, `CHANGELOG.md`, `SSOT.md`, `run_all_tests.sh` |
+| 6 | `wp/3.1-tls` (#162) | `CHANGELOG.md`, `SSOT.md`, `run_all_tests.sh` |
+| 7 | `wp/3.2-secure-defaults` (#163) | `CHANGELOG.md`, `SSOT.md`, `run_all_tests.sh` |
+| 8 | `wp/4.6-triage-honesty` (#164) | `CHANGELOG.md`, `SSOT.md` |
+| 9 | `wp/6.1-gh2-sessions` (#165) | `CHANGELOG.md`, `SSOT.md` |
+| 10 | `wp/6.2-dashboard-tenant-scope-v2` (#178) | `CHANGELOG.md`, `services/ws7-dashboard/app/src/demo/fixtures-ai-ot.json` |
+| 11 | `wp/http-spool-drain` (#166) | `CHANGELOG.md`, `SSOT.md`, `run_all_tests.sh`, `infra/docker-compose.homelab.yml` (add/add) |
+| 12 | `wp/3.3-backup-restore` (#167) | `CHANGELOG.md`, `SSOT.md` |
+| 13 | `wp/3.4-sizing-retention` (#168) | `CHANGELOG.md`, `SSOT.md` |
+| 14 | `wp/4.4-gh3-reverify` (#169) | `CHANGELOG.md`, `SSOT.md`, `docs/gap-hunt-status.md` |
+| 15 | `wp/4.5-public-labelled-data` (#170) | `CHANGELOG.md`, `SSOT.md` |
+| 16 | `docs/ws8-edge-time-adr` (#176) | `CHANGELOG.md`, `SSOT.md` |
+| 17 | `docs/ws8-causal-evidence-adr-v2` (#177) | none |
+
+### Per-merge detail
+
+1. **#152** clean.
+2. **#153** `SSOT.md`: #152 added the WP-1.5 row, #153 added the WP-1.4 row and rewrote the
+   WP-1.3 row (adds "3,039-mutation totality sweep, boundary timestamps ...; `adapt_record`
+   is exception-total"). Result, top to bottom: WP-1.5, WP-1.4, WP-1.3 (the #153 text of WP-1.3).
+   Note: this is the only merge where the updated WP-1.3 text came from the incoming side; in
+   every later merge the incoming copy is the old text and is dropped (see conventions).
+3. **#154** `CHANGELOG.md`: #154 sections (WP-2.1 review fixes, WS1_SEED_MOCK, WP-2.1) above the
+   WP-1.5 sections. `SSOT.md`: WP-2.1 row on top; incoming stale WP-1.3 row dropped.
+4. **#160** `CHANGELOG.md`: WP-2.3 section on top. `SSOT.md`: WP-2.3 row on top.
+5. **#161**
+   - `.gitignore`: both sides appended after `tools/console_e2e/out/`. #161's block is a
+     superset (`eval/real/review/`, `labels.jsonl`, `out/`, `*.labels.jsonl`, `latest.json`,
+     `latest.md`); #160 only added `eval/real/out/`. Kept #161's block and re-attached #160's
+     comment as a note on `eval/real/out/` (it is also where `alert_fp_report.py --out` writes).
+   - `run_all_tests.sh`: kept the #160 `alert_fp_report` stanza then the #161 labelling stanza
+     (`test_alert_labeller.py`), `echo` between them.
+   - `CHANGELOG.md`, `SSOT.md`: WP-2.2 on top.
+6. **#162** `run_all_tests.sh`: kept #160, #161 stanzas, then `test_tls_profile.py`.
+   `CHANGELOG.md`/`SSOT.md`: WP-3.1 on top.
+7. **#163** `run_all_tests.sh`: kept all of the above, then the WP-3.2 stanza
+   (`test_prodcheck.py` + `test_compose_prod_env.py`). `CHANGELOG.md`/`SSOT.md`: WP-3.2 on top.
+8. **#164** `CHANGELOG.md`/`SSOT.md`: WP-4.6 on top.
+9. **#165** `CHANGELOG.md`/`SSOT.md`: WP-6.1 section/row. In `CHANGELOG.md` git anchored the
+   conflict below the WP-1.3 sections, so the WP-6.1 section sits between the WP-1.3 and
+   WP-1.4 sections rather than at the very top (order only; nothing lost).
+10. **#178** `CHANGELOG.md`: WP-6.2 Security section on top.
+    `services/ws7-dashboard/app/src/demo/fixtures-ai-ot.json` is a generated file: took the
+    `--ours` side to finish the merge, then regenerated after the last merge with
+    `python tools/build_ai_ot_fixtures.py` and committed it
+    (`chore(ws7): regenerate ai-ot demo fixtures ...`; belongs to #178).
+11. **#166**
+    - `infra/docker-compose.homelab.yml` (add/add: #154 adds the full profile, #166 adds only
+      the HTTP-spool enablement and says so in its header): kept the #154 file whole and added
+      to `ws1-collectors.environment`
+      `INGEST_HTTP_SPOOL_PATH=/var/lib/fengarde/spool/http-spool.jsonl` (same `ws1-spool` volume,
+      which #154 already declares) plus one header comment bullet. #166's own header comment
+      (the add/add warning) is dropped because it no longer applies.
+      `python tools/test_homelab_compose.py` passes on the result.
+    - `run_all_tests.sh`: `test_http_spool_drain.py` stanza appended after WP-3.2.
+    - `CHANGELOG.md`/`SSOT.md`: spool-drain section/row on top.
+12. **#167**, 13. **#168**, 15. **#170**, 16. **#176**: `CHANGELOG.md`/`SSOT.md` only,
+    incoming section/row on top.
+14. **#169** `docs/gap-hunt-status.md`, the open-tasks table: #165 rewrote the `GH-2` row
+    (implemented on PR #165, option C) and #169 rewrote the `GH-3` row (closed as a sample,
+    pointer to the WP-4.4 section) and also still carried the old `GH-2` row. Resolution: the
+    #165 `GH-2` row plus the #169 `GH-3` row. `CHANGELOG.md`/`SSOT.md`: WP-4.4 on top.
+17. **#177** clean.
+
+## PR heads merged
+
+These are the exact branch tips merged (12-char sha). Commits pushed to the PR branches after
+this date are NOT in the integration branch.
+
+| PR | Branch | Merged head |
+|---|---|---|
+| #152 | `wp/1.5-zeek-suricata` | `c1194a616a63` (was `3db6bd77b652`) |
+| #153 | `wp/1.4-shipper-recipes-v2` | `400055df6f1c` (was `f766452d10cf`) |
+| #154 | `wp/2.1-homelab-profile` | `c4b7fc971d70` |
+| #160 | `wp/2.3-fp-report` | `68b0ba013959` |
+| #161 | `wp/2.2-labelling` | `c3be1addfb46` (was `2424b8976d36`) |
+| #162 | `wp/3.1-tls` | `e0a51111108f` (was `1693f3489893`) |
+| #163 | `wp/3.2-secure-defaults` | `380576cee2ff` (was `906fe5345cf8`) |
+| #164 | `wp/4.6-triage-honesty` | `cf672f2b9cf6` (was `366895d0576e`) |
+| #165 | `wp/6.1-gh2-sessions` | `4d92c0d4d548` (was `8bfc7c88b9de`) |
+| #178 | `wp/6.2-dashboard-tenant-scope-v2` | `cffe337969ad` (was `3bf722ee9e41`) |
+| #166 | `wp/http-spool-drain` | `ed8a8dd956e4` (was `6da09a3c0bd9`) |
+| #167 | `wp/3.3-backup-restore` | `64503d193f81` (was `882d0a54acd1`) |
+| #168 | `wp/3.4-sizing-retention` | `4613c54b5196` |
+| #169 | `wp/4.4-gh3-reverify` | `35c4996b0c89` |
+| #170 | `wp/4.5-public-labelled-data` | `633daf1a4faf` (was `c7b17253e22f`) |
+| #176 | `docs/ws8-edge-time-adr` | `b1880d8b1579` |
+| #177 | `docs/ws8-causal-evidence-adr-v2` | `456423f2bb61` |
+
+## Refresh 2026-11-19 (review fixes landed on 11 PR branches)
+
+The 11 moved branches were merged again in the original order
+(`merge: <branch> (refresh)`); the head table above shows the new tips. #154, #160, #168, #169,
+#176 and #177 had not moved (not re-merged). Conflicts and
+resolutions (same conventions as above):
+
+- **#152 refresh**: `SSOT.md` (WP-1.5 row rewritten by the PR: take the incoming row, drop the incoming stale
+  WP-1.3 copy); `fixtures-ai-ot.json` (`--ours`, regenerated at the end).
+- **#153 refresh**: `SSOT.md` (WP-1.4 row rewritten: take incoming row).
+- **#161 refresh**, **#163 refresh**, **#166 refresh**, **#167 refresh**: clean.
+- **#162 refresh**, **#164 refresh**, **#170 refresh**: `SSOT.md` only, take the incoming rewritten row of the same PR.
+- **#165 refresh**: `CHANGELOG.md` (new "PR #165 review: inventory" section on top; ours below);
+  `SECURITY.md` and `services/ws7-dashboard/INTERFACE.md`: ours (already contained #178's tenant-scoped
+  text) plus #165's new "Inventory route" bullets; the sentence "`GET /auth/check` ... no nginx location uses it any
+  more" was changed to "is now used only by the inventory route" because #165 adds a location that uses it.
+- **#178 refresh**: `CHANGELOG.md` (new "PR #178 review: console follow-ups" section; the incoming copy of the
+  #165 inventory section was a duplicate of the one already present and was dropped);
+  `SECURITY.md` and `INTERFACE.md`: take the incoming side (#178 already integrates the inventory route and adds the
+  legacy `ai-*` upgrade note).
+- `fixtures-ai-ot.json` regenerated again (`chore(ws7): regenerate ai-ot demo fixtures after refresh merges`, #178).
+- `gate.exit`, a scratch file, was accidentally committed once by `git add -A`; removed from the index in the
+  next commit.
+
+## Combination fixes
+
+Found by the full gate after the refresh (PR #152 added the stateful rule
+`common_refused_connection_scan`, which the eval lanes already on `main` did not know). Commit
+`fix(eval): wire WP-1.5 rule common_refused_connection_scan into the eval lanes`, belongs to **#152**:
+
+- `eval/adversarial/rule_probes.py`: new probe template `_common_refused_connection_scan` (15 Zeek conn
+  rows, S0/REJ, 15 distinct ports in 30 s from one source, ip rotation setter). Fixes B0, H3 (test_evasion_axes) and the
+  evasion-cost COVERAGE failure.
+- `eval/adversarial/evasion_floor.yaml` (`python eval/adversarial/evasion_cost.py --seed 7 --update-floor`: new row
+  `common_refused_connection_scan` loss 1, extra_s 32.001, stealth 0.233329, min_keys ip=2) and `contracts/detection-coverage.md`
+  (`--write-doc`, generated table).
+- `eval/adversarial/technique_waivers.yaml`: dated (2026-11-19) `unexercised` waiver for
+  `common_refused_connection_scan` (G2: no storyline exercises it yet). Replace by a storyline step later and delete the line.
+- `eval/twin/baseline_scenarios.json`, `eval/twin/ratchet_history.jsonl`: `ratchet.py refresh --reason ...` recorded the 3
+  new atoms of that rule's technique T1046 row (needs fresh lane artifacts, produced by running the eval tiers first).
+- Separate commit `chore(eval): regenerate SCORECARD.md (46 tagged rules)`: `python tools/generate_scorecard.py --write`
+  (the gate reported it STALE: 45 -> 46 tagged rules, T1046 row).
+
+Other combination fix: the fixtures regeneration above (#178).
+
+Replay on PR branches: for #152 apply the five eval files above on top of the PR (after rebasing onto the new main).
+
+(First integration, before the refresh: none needed apart from the fixtures regeneration.)
+
+## Verification
+
+On the refreshed branch (all checks re-run after the refresh and the combination fixes; the first gate run on the refreshed tree
+failed only on the eval items fixed above, the second run is the one reported here):
+
+- `PY=python PYTHON=python bash run_all_tests.sh`: exit 0, final line `ALL TESTS PASS` (the deliberate
+  negative-control output, e.g. `[FAIL] fengarde-bench`, is expected).
+- `ruff check services/ tools/`: all checks passed.
+- mypy loop from `.github/workflows/ci.yml` (quality job), all 11 targets: no issues.
+- `python tools/check_dco.py $(git merge-base HEAD origin/main)`: 94/94 commits signed off.
+- `python tools/test_gate_tiers.py` and `python tools/check_lane_coverage.py`: pass.
+
+## Refresh 3 (final, before main)
+
+Merged again: `wp/1.5-zeek-suricata` (#152, now `9242efbca0a4`), `wp/http-spool-drain` (#166, `3e33f45949af`),
+`wp/3.3-backup-restore` (#167, `555bb217a088`), and the new branches `docs/ssot-truth-2026-11-19` (#179, `07b93ae25aa0`),
+`fix/live-tooling-2026-11-19` (#180, `b76a6e9e8727`), `docs/live-verification-2026-11-19` (#181, `35117aae4fb1`).
+Every other open non-dependabot PR head was already an ancestor of the integration branch.
+
+- **#152**: only `eval/twin/baseline_scenarios.json` conflicted (the PR regenerated the same eval wiring as the
+  integration commit `f68abfe`): took the incoming side. `rule_probes.py`, `technique_waivers.yaml`, `evasion_floor.yaml`,
+  `detection-coverage.md`, `SCORECARD.md` merged cleanly. `evasion_cost.py --seed 7 --update-floor/--write-doc` was
+  re-run on the merged tree and changed nothing; after re-running the eval tiers and `fire_check.py`, `ratchet.py check`
+  reports NEW=0 (no refresh needed) and `generate_scorecard.py --check` is green (no regeneration needed).
+- **#180**: `CHANGELOG.md` only (new "live-run tooling defects" section on top, kept both).
+- #166, #167, #179, #181: clean.
+- No new combination fixes. Gate: exit 0, `ALL TESTS PASS`; ruff, mypy loop, DCO (138/138), test_gate_tiers and
+  check_lane_coverage pass.

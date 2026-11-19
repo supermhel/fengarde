@@ -42,6 +42,8 @@ def run():
         "active_directory": (3002, "bank"),
         "vmware_vsphere": (6003, "datacenter"),
         "linux_ssh": (3002, "common"),
+        "suricata_eve": (4001, "common"),
+        "zeek_json": (4002, "common"),
     }
 
     check(set(known_sources()) >= set(expected), f"registry missing sources: {known_sources()}")

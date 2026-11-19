@@ -2,7 +2,9 @@
 
 ## Consumes (via nginx same-origin proxies, `templates/default.conf.template`
 ## — envsubst'd at container start; replaces the older `nginx.conf`)
-- `/api/alerts` → OpenSearch `alerts-*` (live alert list), polled every 10s when
+- `/api/alerts` → WS-3 `GET /dashboard/alerts` (WP-6.2; was OpenSearch directly),
+  same OpenSearch-shaped body `{"hits":{"hits":[{"_source":..}]}}`, newest 50 with
+  `rule_title`, `?gte=` epoch ms; tenant-scoped by the session. Polled every 10s when
   live + tab visible (C2, `document.hidden` guard, skips DOM rebuild when the
   fetched set is byte-identical — protects an in-progress triage-note edit).
 - `/api/triage/` → WS-3 triage API (`ws3-indexer:8013`) — GET/POST forwarded,
@@ -13,9 +15,11 @@
 - `/api/rules` (C3, MITRE coverage heatmap) → WS-3's `/rules` read model
   (`list_rule_summaries`) — feeds the dashboard's "Coverage" view, shaded by real
   alert counts per tactic×technique.
-- `/api/auth/` (M3 remainder) → WS-3's `/auth/{login,logout,me}`. Nginx injects
-  `FENGARDE_API_KEY` server-side on the triage/report proxies — the browser
-  never holds the key.
+- `/api/auth/` (M3 remainder) → WS-3's `/auth/{login,logout,me,check}`. Since WP-6.1
+  (GH-2) the browser authenticates by its RBAC session cookie only; nginx does
+  not hold, inject or compare `FENGARDE_API_KEY` (the dashboard container no
+  longer receives it). The key is for machine clients, who send `X-Api-Key`
+  and are passed through to WS-3.
 - `/api/inventory/` → WS-6 inventory API (`ws6-inventory:8000`), prefix
   stripped — `window.INVENTORY_API` now DEFAULTS to this (2026-08-20 fix: it
   previously had no default at all, unlike every other `*_API` constant, so
@@ -43,13 +47,27 @@
   own session check — the "Audit" nav view.
 - `/api/ops/{ws1,ws2,ws3,ws4,ws5,ws8}` (2026-08-20; `ws5` added later) → each workstream's own
   `GET /metrics` (`services/shared/runner.py`) — the "Ops" nav view. Gated by
-  the same `FENGARDE_API_KEY` check `/api/alerts` uses, since these health
-  ports were previously reachable only container-to-container.
-- `/api/events` and `/api/ai-triage` → OpenSearch directly, not via WS-3
-  (`events-*`, and `alerts-*` filtered to `alert_id` prefix `ai-`), both behind
-  the nginx `X-Api-Key` check like `/api/alerts`. `/api/config.js` serves the
-  browser runtime config (SECURITY.md explains why the key it carries is not an
-  access-control boundary).
+  `auth_request /api/auth/check-admin` (WP-6.2: admin session or valid API key;
+  401 anonymous, 403 other roles), since these health ports were previously
+  reachable only container-to-container. `/api/prom/*` (read-only Prometheus
+  allowlist) uses the same admin-only gate.
+- `/api/inventory/` (GET/HEAD) → WS-6, behind the same `auth_request /api/auth/check`
+  gate; nginx sends the server-side `WS6_INVENTORY_KEY` upstream when the caller
+  presents no `X-Api-Key` (empty by default = zero-config demo). Session-gated,
+  not tenant-scoped (SECURITY.md, "Dashboard session gate").
+- `/api/events` → WS-3 `GET /dashboard/events` (newest 100, `?gte=`) and
+  `/api/ai-triage` → WS-3 `GET /dashboard/ai-triage` (newest 200 alert docs with
+  `alert_id` prefix `ai-`) (WP-6.2; were OpenSearch directly). Same body shape, so
+  `app/src/data/api.ts` only adds an optional `?tenant_id=` (admin scope). nginx adds no `auth_request` there: WS-3
+  authenticates and scopes by tenant itself (non-admin session = own tenant,
+  `admin`/API key = all, anonymous = 401 with RBAC on; RBAC off + no key = open
+  demo). On 502/503/504 nginx still answers an empty-hits body. A missing index
+  now yields an empty hit list (200) instead of OpenSearch's 404. `/api/config.js`
+  no longer exists (removed in WP-6.1). See SECURITY.md, "Dashboard session gate".
+- Upgrade note: `ai-*` documents written before the ws5 tenant fix have no
+  `tenant_id` and read as tenant `default`; purge or backfill them with an
+  `_update_by_query` / `_delete_by_query` on `alerts-*` (`alert_id` prefix `ai-`,
+  no `tenant_id`; exact snippets in SECURITY.md, "Dashboard session gate").
 
 ## Produces
 - **The console (2026-10-15)** is a React + Vite + TypeScript app in `app/`,

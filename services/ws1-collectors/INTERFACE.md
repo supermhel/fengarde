@@ -66,6 +66,9 @@
 - Opt-in zero-loss spool (`SYSLOG_SPOOL_PATH`, off by default;
   `SYSLOG_SPOOL_MAX_BYTES`): shed/undelivered events buffered to a bounded on-disk
   JSONL file and replayed. See SECURITY.md §8 (cleartext on disk).
+- `WS1_SEED_MOCK` (default on): seed the bundled mock events and assets once per start (demo, e2e tests, quick-start).
+  `0`/`false`/`no`/`off` skips the seed (real installs; the homelab override sets it). Any other unrecognised value
+  keeps the seed on and logs a warning.
 - Other tuning env vars: `SYSLOG_UDP_WORKERS`, `SYSLOG_UDP_QUEUE_MAXSIZE`,
   `SYSLOG_UDP_SO_RCVBUF`, `PORT` (health server).
 

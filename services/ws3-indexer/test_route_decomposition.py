@@ -89,6 +89,15 @@ ROUTES_ADDED_SINCE_REFACTOR: list[tuple[str, str, bool]] = [
     ("PATCH", "/users/{username}", True),
     ("GET", "/webhooks", True),
     ("PUT", "/rules/{rule_id}/enabled", True),
+    # WP-6.1 (2026-11-06, GH-2 option C): nginx auth_request guard target.
+    # Not RBAC-only (available in both modes: key/enabled-session with the
+    # key, 200 RBAC-off when auth is disabled) -- hence False.
+    ("GET", "/auth/check", False),
+    # WP-6.2: admin-only auth_request target + tenant-scoped console feeds.
+    ("GET", "/auth/check-admin", False),
+    ("GET", "/dashboard/alerts", False),
+    ("GET", "/dashboard/events", False),
+    ("GET", "/dashboard/ai-triage", False),
 ]
 
 

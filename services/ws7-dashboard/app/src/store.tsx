@@ -27,6 +27,8 @@ interface Ctx {
   setLocalTriage: (id: string, v: { status: string; note: string }) => void;
   /** Admin-chosen tenant scope ("" = the session's own tenant). */
   tenant: string; setTenantScope: (t: string) => void; tenants: string[];
+  /** The six /api/ops/* feeds are admin-only server-side (403 for analyst/read_only); false = not polled. */
+  opsAllowed: boolean;
 }
 
 const C = createContext<Ctx | null>(null);
@@ -46,6 +48,8 @@ export function ConsoleProvider({ session, rbac, setSession, children }: {
   const [now, setNow] = useState(Date.now());
   const [tenant, setTenantScope] = useState("");
   const inflight = useRef(false);
+  // RBAC off (session null) keeps the old behaviour: ops are polled and the server decides.
+  const opsAllowed = !session || session.role === "admin";
 
   const setLang = (l: Lang) => {
     setLangState(l);
@@ -59,21 +63,23 @@ export function ConsoleProvider({ session, rbac, setSession, children }: {
     const t = Date.now();
     const gte = t - RANGES[range];
     setTenant(tenant || session?.tenant_id || null);
+    // Ops feeds are admin-only: other roles (or a failed role lookup) would just collect 403s.
+    const opsList = opsAllowed ? OPS_KEYS : [];
     const [rawAlerts, events, incidents, rules, ai, ...ops] = await Promise.all([
-      api.alerts(gte), api.events(gte), api.incidents(), api.rules(), api.aiTriage(), ...OPS_KEYS.map((k) => api.ops(k)),
+      api.alerts(gte, tenant), api.events(gte, tenant), api.incidents(), api.rules(), api.aiTriage(tenant), ...opsList.map((k) => api.ops(k)),
     ]);
-    // The alert/event routes proxy OpenSearch directly (no server-side tenant filter),
-    // so an admin-chosen tenant scope is applied here; the other routes take ?tenant_id=.
+    // ws3 narrows alerts/events/ai-triage to the chosen tenant (?tenant_id=); the client-side
+    // filter below is only a fallback for a backend that ignores the parameter (the demo adapter).
     const inTenant = (x: { tenant_id?: string; siem?: { tenant?: string } }) => !tenant || (x.tenant_id || x.siem?.tenant || "default") === tenant;
     const alerts = rawAlerts.ok
       ? { ...rawAlerts, data: attachAi(rawAlerts.data.filter(inTenant), ai.ok ? ai.data : []) }
       : rawAlerts;
     // Data refresh never touches view state (selection, open faceplate, built evidence).
     const scopedEvents = events.ok ? { ...events, data: events.data.filter(inTenant) } : events;
-    setData({ alerts, events: scopedEvents, incidents, rules, ops: Object.fromEntries(OPS_KEYS.map((k, i) => [k, ops[i]])), fetchedAt: t });
+    setData({ alerts, events: scopedEvents, incidents, rules, ops: Object.fromEntries(opsList.map((k, i) => [k, ops[i]])), fetchedAt: t });
     setNow(t);
     inflight.current = false;
-  }, [range, tenant, session]);
+  }, [range, tenant, session, opsAllowed]);
 
   useEffect(() => {
     refresh();
@@ -101,8 +107,8 @@ export function ConsoleProvider({ session, rbac, setSession, children }: {
     t: dicts[lang], lang, setLang, range, setRange, from: now - RANGES[range], to: now,
     session, rbac, setSession, data, refresh,
     triage, setLocalTriage: (id, v) => setTriage((m) => ({ ...m, [id]: v })),
-    tenant, setTenantScope, tenants,
-  }), [lang, range, now, session, rbac, data, refresh, triage, setSession, tenant, tenants]);
+    tenant, setTenantScope, tenants, opsAllowed,
+  }), [lang, range, now, session, rbac, data, refresh, triage, setSession, tenant, tenants, opsAllowed]);
 
   return <C.Provider value={value}>{children}</C.Provider>;
 }

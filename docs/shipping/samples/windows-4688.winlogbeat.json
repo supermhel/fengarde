@@ -1,0 +1,56 @@
+{
+  "@timestamp": "2023-01-17T12:50:59.303Z",
+  "agent": {
+    "hostname": "EC2AMAZ-LPA5TA4",
+    "type": "winlogbeat",
+    "version": "8.7.0"
+  },
+  "event": {
+    "code": "4688",
+    "kind": "event",
+    "provider": "Microsoft-Windows-Security-Auditing",
+    "original": "<Event xmlns='http://schemas.microsoft.com/win/2004/08/events/event'><System><Provider Name='Microsoft-Windows-Security-Auditing'/><EventID>4688</EventID><Computer>wks-jdoe</Computer><TimeCreated SystemTime='2023-01-17T12:50:59.3030000Z'/></System><EventData><Data Name='NewProcessName'>C:\\Program Files\\WindowsApps\\n8n.exe</Data></EventData></Event>",
+    "sequence": 148209
+  },
+  "host": {
+    "hostname": "wks-jdoe"
+  },
+  "log": {
+    "level": "Information"
+  },
+  "winlog": {
+    "channel": "Security",
+    "computer_name": "wks-jdoe",
+    "event_data": {
+      "CommandLine": "\"C:\\Program Files\\n8n\\n8n.exe\" --start",
+      "NewProcessId": "0x1f4",
+      "NewProcessName": "C:\\Program Files\\WindowsApps\\n8n.exe",
+      "ParentCommandLine": "C:\\Windows\\system32\\services.exe",
+      "ParentProcessId": "0x1a0",
+      "ParentProcessName": "C:\\Windows\\System32\\services.exe",
+      "SubjectDomainName": "BANKCORP",
+      "SubjectLogonId": "0x3e7",
+      "SubjectUserName": "WKS-JDOE$",
+      "SubjectUserSid": "S-1-5-18"
+    },
+    "event_id": 4688,
+    "opcode": "Info",
+    "process": {
+      "pid": 4952,
+      "thread": {
+        "id": 7292
+      }
+    },
+    "provider_guid": "{54849625-5478-4994-A5BA-3E3B0328C30D}",
+    "provider_name": "Microsoft-Windows-Security-Auditing",
+    "record_id": 148209,
+    "task": "Process Creation",
+    "time_created": "2023-01-17T12:50:59.303Z",
+    "user": {
+      "domain": "BANKCORP",
+      "identifier": "S-1-5-18",
+      "name": "WKS-JDOE$"
+    },
+    "version": 2
+  }
+}
