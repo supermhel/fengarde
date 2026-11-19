@@ -176,3 +176,20 @@ failed only on the eval items fixed above, the second run is the one reported he
 - mypy loop from `.github/workflows/ci.yml` (quality job), all 11 targets: no issues.
 - `python tools/check_dco.py $(git merge-base HEAD origin/main)`: 94/94 commits signed off.
 - `python tools/test_gate_tiers.py` and `python tools/check_lane_coverage.py`: pass.
+
+## Refresh 3 (final, before main)
+
+Merged again: `wp/1.5-zeek-suricata` (#152, now `9242efbca0a4`), `wp/http-spool-drain` (#166, `3e33f45949af`),
+`wp/3.3-backup-restore` (#167, `555bb217a088`), and the new branches `docs/ssot-truth-2026-11-19` (#179, `07b93ae25aa0`),
+`fix/live-tooling-2026-11-19` (#180, `b76a6e9e8727`), `docs/live-verification-2026-11-19` (#181, `35117aae4fb1`).
+Every other open non-dependabot PR head was already an ancestor of the integration branch.
+
+- **#152**: only `eval/twin/baseline_scenarios.json` conflicted (the PR regenerated the same eval wiring as the
+  integration commit `f68abfe`): took the incoming side. `rule_probes.py`, `technique_waivers.yaml`, `evasion_floor.yaml`,
+  `detection-coverage.md`, `SCORECARD.md` merged cleanly. `evasion_cost.py --seed 7 --update-floor/--write-doc` was
+  re-run on the merged tree and changed nothing; after re-running the eval tiers and `fire_check.py`, `ratchet.py check`
+  reports NEW=0 (no refresh needed) and `generate_scorecard.py --check` is green (no regeneration needed).
+- **#180**: `CHANGELOG.md` only (new "live-run tooling defects" section on top, kept both).
+- #166, #167, #179, #181: clean.
+- No new combination fixes. Gate: exit 0, `ALL TESTS PASS`; ruff, mypy loop, DCO (138/138), test_gate_tiers and
+  check_lane_coverage pass.
