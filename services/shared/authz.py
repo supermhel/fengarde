@@ -22,6 +22,7 @@ import os
 import sys
 
 from shared.log import get_logger
+from shared.prodcheck import prod_or_die  # noqa: E402
 
 
 def check_api_key(headers, env_var: str = "FENGARDE_API_KEY") -> bool:
@@ -52,7 +53,14 @@ def require_auth_or_die(service: str) -> None:
     byte-for-byte unchanged. Deployments that REQUIRE auth set
     ``FENGARDE_REQUIRE_AUTH=1`` and this refuses to boot rather than silently
     running default-open.
+
+    WP-3.2: ``FENGARDE_PROFILE=prod`` implies the requirement — the prod
+    gate (shared/prodcheck.py) aggregates the FULL obligation list (API key,
+    RBAC on, non-default admin credential, Redis password) and exits 1 with
+    the whole numbered list, so the two modes can never disagree about
+    "auth is required".
     """
+    prod_or_die(service)
     if os.getenv("FENGARDE_REQUIRE_AUTH", "").strip().lower() not in ("1", "true", "yes"):
         return
     missing = []

@@ -307,6 +307,8 @@ def run(bus) -> dict:
 
 
 def main():
+    from shared.prodcheck import prod_or_die  # noqa: E402
+    prod_or_die("ws2-normalization", rbac=False)  # WP-3.2: prod needs the Redis bus password
     # Daemon (T0): consume raw.events via the shared runner. run() above stays the
     # batch path used by tests / the e2e harness. BOTH funnel through _process
     # (via make_handler here) so the daemon and the tested path are one code

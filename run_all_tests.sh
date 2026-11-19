@@ -62,6 +62,10 @@ echo
 echo "== WP-3.1 TLS profile: plaintext publishes removed, caddy 443/local-CA only =="; LAST_HEADER="== WP-3.1 TLS profile =="
 $PY tools/test_tls_profile.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
+echo "== WP-3.2 prod gate: FENGARDE_PROFILE=prod refuses insecure starts, first-boot file =="; LAST_HEADER="== WP-3.2 prod gate =="
+$PY tools/test_prodcheck.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+$PY tools/test_compose_prod_env.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
 echo "== tools: fengarde_loadtest harness (percentiles + realistic profile stays alert-light) =="; LAST_HEADER="== tools: fengarde_loadtest harness (percentiles + realistic profile stays alert-light) =="
 $PY tools/test_fengarde_loadtest.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
@@ -532,6 +536,9 @@ $PY services/shared/test_users_migration.py || { fail=1; FAILED="${FAILED} ${LAS
 echo
 echo "== RBAC: UserStore reads are thread-safe (account re-check runs on every request) =="; LAST_HEADER="== RBAC: UserStore reads are thread-safe (account re-check runs on every request) =="
 $PY services/shared/test_users_threading.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
+echo "== RBAC: concurrent first start on a fresh users.db must not crash in migrate() =="; LAST_HEADER="== RBAC: concurrent first start migrate() =="
+$PY services/shared/test_users_migrate_race.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
 echo "== M4.6 ops lifecycle: disk-headroom guardrail (real shutil.disk_usage) =="; LAST_HEADER="== M4.6 ops lifecycle: disk-headroom guardrail (real shutil.disk_usage) =="
 $PY services/shared/test_diskguard.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }

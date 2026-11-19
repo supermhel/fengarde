@@ -83,6 +83,8 @@ def make_handler(bus, correlator: Correlator):
 
 
 if __name__ == "__main__":
+    from shared.prodcheck import prod_or_die  # noqa: E402
+    prod_or_die("ws8-correlation", rbac=False)  # WP-3.2: prod needs the Redis bus password
     correlator = make_correlator()
     bus = Bus()
     handlers = {"alerts": ("cg-correlate", make_handler(bus, correlator))}
