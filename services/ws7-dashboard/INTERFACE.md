@@ -48,6 +48,10 @@
   the same `auth_request /api/auth/check` gate `/api/alerts` uses (valid
   session or valid API key, else 401), since these health ports were previously
   reachable only container-to-container.
+- `/api/inventory/` (GET/HEAD) → WS-6, behind the same `auth_request /api/auth/check`
+  gate; nginx sends the server-side `WS6_INVENTORY_KEY` upstream when the caller
+  presents no `X-Api-Key` (empty by default = zero-config demo). Session-gated,
+  not tenant-scoped (SECURITY.md, "Dashboard session gate").
 - `/api/events` and `/api/ai-triage` → OpenSearch directly, not via WS-3
   (`events-*`, and `alerts-*` filtered to `alert_id` prefix `ai-`), both behind
   the same `auth_request /api/auth/check` gate as `/api/alerts`. `/api/config.js`

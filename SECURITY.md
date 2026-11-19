@@ -569,6 +569,14 @@ Read the limits before exposing port 8080:
   the ws3 level (the gate accepts a `read_only` tenant session); the nginx and
   OpenSearch side is from reading the config, not run against a live stack. Do not
   rely on multi-tenant isolation through these routes.
+- **Inventory route.** `/api/inventory/` (GET/HEAD only, ws6) is gated with the same
+  `auth_request /api/auth/check` (session or key). Browsers hold no key, so nginx
+  sends the server-side key `WS6_INVENTORY_KEY` (compose: `INVENTORY_API_KEY`, else
+  `FENGARDE_API_KEY`, else empty = zero-config demo) upstream; a caller-supplied
+  `X-Api-Key` takes precedence for machine clients (it must also pass the ws3
+  gate). ws6 IS tenant-aware, but it scopes by the key it receives, so every
+  session reads what that one key sees: the route is session-gated, NOT
+  tenant-scoped. The key stays inside nginx and is never sent to the browser.
 - **Availability coupling.** Each gated request makes a sub-request to ws3. If ws3
   is down or rate-limiting, those panels fail (nginx returns 500; fail-closed).
 - **Cookie flags.** The session cookie is `HttpOnly; SameSite=Strict`, no expiry

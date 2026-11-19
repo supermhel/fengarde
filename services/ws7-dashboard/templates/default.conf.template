@@ -41,6 +41,16 @@ map $arg_gte $fengarde_gte_ms {
     ~^[0-9]+$ $arg_gte;
 }
 
+# WP-6.1 follow-up: key presented to ws6 on /api/inventory/. A caller-supplied
+# X-Api-Key wins (machine clients); otherwise the server-side inventory key
+# (WS6_INVENTORY_KEY, "" in the zero-config demo -> header omitted). Session
+# browsers hold no key, so nginx supplies it AFTER auth_request has accepted
+# the session. The key never reaches the browser.
+map $http_x_api_key $ws6_inventory_key {
+    ""      "${WS6_INVENTORY_KEY}";
+    default $http_x_api_key;
+}
+
 server {
     listen 80;
     server_name _;
@@ -373,12 +383,20 @@ server {
         limit_except GET HEAD {
             deny all;
         }
+        # WP-6.1 follow-up: browsers hold no key (session-only), so the old
+        # "forward the caller-presented key" gave every logged-in user a 401
+        # whenever ws6 auth was on. Gate with ws3 key-OR-session like the other
+        # auth-less upstreams, then send the server-side inventory key
+        # upstream (WS6_INVENTORY_KEY; empty keeps the zero-config demo open).
+        # NOT tenant-scoped: ws6 scopes by its own key, so every session sees
+        # what that key sees (SECURITY.md, "Dashboard session gate").
+        auth_request /api/auth/check;
         resolver 127.0.0.11 ipv6=off valid=30s;
         set $ws6_inventory "http://ws6-inventory:8000";
         rewrite ^/api/inventory/(.*)$ /$1 break;
         proxy_pass $ws6_inventory;
         proxy_set_header Host $host;
-        proxy_set_header X-Api-Key $http_x_api_key;
+        proxy_set_header X-Api-Key $ws6_inventory_key;
         proxy_set_header X-Forwarded-For $remote_addr;
         proxy_connect_timeout 3s;
         proxy_read_timeout 5s;
