@@ -135,7 +135,10 @@ def verify_and_restore(archive_path: Path, dest: Path, force: bool = False) -> t
                 raise RestoreError(f"manifest references missing file: {rel}")
             actual = _sha256(staged_file)
             if actual != entry["sha256"]:
-                raise RestoreError(f"checksum mismatch for {rel}: archive is corrupted or tampered")
+                raise RestoreError(
+                    f"checksum mismatch for {rel}: archive is corrupted. The manifest travels "
+                    f"inside the archive, so this check detects corruption, not deliberate "
+                    f"tampering -- verify the archive's provenance separately")
 
         if not force:
             for entry in files:

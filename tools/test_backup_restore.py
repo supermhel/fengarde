@@ -659,6 +659,115 @@ def test_pr167_second_review_edges():
                 check(m == 0o600, f"restored {rel} mode {oct(m)} != 0o600")
 
 
+def test_pr167_third_review_fixes():
+    import os
+
+    # 2. unreadable source -> clean "[FAIL] backup aborted" + non-zero, no traceback
+    with tempfile.TemporaryDirectory() as d:
+        d = Path(d)
+        db = d / "users.db"
+        _make_rbac_db(db)
+        real = backup._backup_sqlite
+
+        def boom(src, dest):
+            raise PermissionError(13, "Permission denied", str(src))
+        backup._backup_sqlite = boom
+        argv = sys.argv
+        sys.argv = ["backup.py", "--out", str(d / "out"), "--rbac-db", str(db), "--no-contracts"]
+        try:
+            backup.main()
+            msg, code = None, 0
+        except SystemExit as exc:
+            msg, code = str(exc.code), exc.code
+        except BaseException as exc:  # noqa: BLE001 - a raw traceback is the bug
+            msg, code = f"RAW {type(exc).__name__}", 99
+        finally:
+            backup._backup_sqlite = real
+            sys.argv = argv
+        check(isinstance(code, str) and code.startswith("[FAIL] backup aborted"),
+              f"unreadable source must exit with a clean [FAIL] message, got {msg!r}")
+        check(msg is not None and "users.db" in msg and "chown" in msg,
+              f"message must name the file and suggest chown, got {msg!r}")
+
+    # 3. archive created 0o600 at open time, never chmod'ed after the fact
+    with tempfile.TemporaryDirectory() as d:
+        d = Path(d)
+        real_open, real_chmod = os.open, os.chmod
+        modes: list[int] = []
+
+        def rec_open(path, flags, mode=0o777, *a, **k):
+            if str(path).endswith(".tar.gz"):
+                modes.append(mode)
+            return real_open(path, flags, mode, *a, **k)
+
+        def no_chmod(*a, **k):
+            raise AssertionError("archive must be created 0600, not chmod'ed afterwards")
+        os.open, os.chmod = rec_open, no_chmod
+        archive = a2 = None
+        try:
+            archive = backup.build_backup(d / "out", rbac_db=None, include_contracts=False)
+            a2 = backup.build_backup(d / "out", rbac_db=None, include_contracts=False)
+        except AssertionError as exc:
+            check(False, str(exc))
+        finally:
+            os.open, os.chmod = real_open, real_chmod
+        check(modes[:1] == [0o600], f"archive must be os.open'ed with mode 0o600, saw {modes}")
+        check(archive is not None and a2 is not None and archive != a2 and archive.exists() and a2.exists(),
+              "same-second backups must still not overwrite each other")
+
+    # 4. checksum failure must not claim to detect tampering
+    with tempfile.TemporaryDirectory() as d:
+        d = Path(d)
+        src = d / "src.tar.gz"
+        with tarfile.open(src, "w:gz") as t:
+            data = b"hello"
+            ti = tarfile.TarInfo("rbac/x.db")
+            ti.size = len(data)
+            t.addfile(ti, io.BytesIO(data))
+            man = json.dumps({"files": [{"path": "rbac/x.db", "sha256": "0" * 64, "size": 5}]}).encode()
+            ti = tarfile.TarInfo("manifest.json")
+            ti.size = len(man)
+            t.addfile(ti, io.BytesIO(man))
+        try:
+            restore.verify_and_restore(src, d / "dest", force=False)
+            text = ""
+        except restore.RestoreError as exc:
+            text = str(exc)
+        check("checksum mismatch" in text and "not deliberate tampering" in text
+              and "or tampered" not in text,
+              f"checksum message must say corruption-only, got {text!r}")
+    doc = (ROOT / "docs" / "upgrade.md").read_text(encoding="utf-8")
+    check("not** deliberate tampering" in doc, "docs must say the manifest hash does not detect tampering")
+
+    # 1. runbook re-injection fixes ownership per volume
+    check("chown 10001:10001" in doc and "`10001:999`" in doc and "chmod 600" in doc,
+          "runbook re-injection must chown/chmod after copy (10001:10001, ws1 10001:999)")
+    check('chown -R "$(id -u):$(id -g)" stage' in doc, "runbook extraction must chown staged copies")
+
+    # 5. symlinks in plugin rule dirs / contracts are skipped, not followed
+    with tempfile.TemporaryDirectory() as d:
+        d = Path(d)
+        secret = d / "secret.txt"
+        secret.write_text("TOPSECRET", encoding="utf-8")
+        pdir = d / "rules"
+        pdir.mkdir()
+        (pdir / "ok.yml").write_text("id: ok\n", encoding="utf-8")
+        try:
+            (pdir / "link.yml").symlink_to(secret)
+        except (OSError, NotImplementedError):
+            print("[SKIP] symlink creation not permitted here; symlink test skipped")
+        else:
+            archive = backup.build_backup(d / "out", rbac_db=None, include_contracts=False,
+                                          plugin_rule_dirs=[pdir])
+            with tarfile.open(archive, "r:gz") as t:
+                names = t.getnames()
+                manifest = json.loads(t.extractfile("manifest.json").read())
+            check(any(n.endswith("ok.yml") for n in names), "regular rule file must be archived")
+            check(not any(n.endswith("link.yml") for n in names), "symlinked file must not be archived")
+            check(any("link.yml" in x for x in manifest["not_backed_up"]),
+                  "skipped symlink must be recorded in not_backed_up")
+
+
 def main():
     test_full_round_trip_rbac_and_contracts()
     test_full_round_trip_all_non_docker_stores()
@@ -680,6 +789,7 @@ def main():
     test_f5_audit_copy_waits_for_the_audit_lock()
     test_f6_percent_in_sqlite_path()
     test_pr167_second_review_edges()
+    test_pr167_third_review_fixes()
 
     if FAILS:
         print(f"[FAIL] backup/restore: {len(FAILS)} problem(s)")

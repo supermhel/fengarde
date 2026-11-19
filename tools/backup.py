@@ -57,6 +57,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import sqlite3
 import sys
 import tarfile
 import tempfile
@@ -85,7 +86,6 @@ def _sha256(path: Path) -> str:
 def _backup_sqlite(src: Path, dest: Path) -> None:
     """Hot-copy a SQLite DB via the backup API (consistent even if a live
     process still has it open), not a raw file copy."""
-    import sqlite3
     # as_uri() percent-encodes '%', '#', '?', spaces -- an f-string path broke on '%'.
     src_conn = sqlite3.connect(src.resolve().as_uri() + "?mode=ro", uri=True)
     dest_conn = sqlite3.connect(dest)
@@ -231,6 +231,10 @@ def build_backup(out_dir: Path, rbac_db: Path | None, include_contracts: bool,
                     f"--plugin-rule-dir {pdir} is not a directory -- refusing to create an "
                     f"archive that silently omits a configured plugin rule pack")
             for path in sorted(pdir.rglob("*")):
+                if path.is_symlink():
+                    # never follow a link out of the rule dir (could pull in /etc/...)
+                    not_backed_up.append(f"symlink skipped (not followed): {path}")
+                    continue
                 if not path.is_file():
                     continue
                 rel = f"plugin-rules/{i}-{pdir.name}/{path.relative_to(pdir).as_posix()}"
@@ -242,6 +246,9 @@ def build_backup(out_dir: Path, rbac_db: Path | None, include_contracts: bool,
         if include_contracts:
             contracts_src = ROOT / "contracts"
             for path in sorted(contracts_src.rglob("*")):
+                if path.is_symlink():
+                    not_backed_up.append(f"symlink skipped (not followed): {path}")
+                    continue
                 if not path.is_file():
                     continue
                 rel_path = path.relative_to(ROOT)  # e.g. contracts/tenants/acme.yml
@@ -258,20 +265,22 @@ def build_backup(out_dir: Path, rbac_db: Path | None, include_contracts: bool,
 
         # PR #167 review: two backups in the same second overwrote each other.
         # "x" refuses an existing name; take the next free suffix instead.
+        # The archive holds password hashes and API keys: create it 0600 from
+        # the first byte (O_EXCL, mode 0o600) -- not chmod after the fact, which
+        # leaves a umask-default window. O_EXCL also keeps same-second backups
+        # from overwriting each other. (Mode is a no-op on Windows.)
         n = 0
         while True:
             try:
-                tar_cm = tarfile.open(archive_path, "x:gz")
+                fd = os.open(archive_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0), 0o600)
                 break
             except FileExistsError:
                 n += 1
                 archive_path = out_dir / f"fengarde-backup-{timestamp}-{n}.tar.gz"
-        with tar_cm as tar:
+        with os.fdopen(fd, "wb") as raw, tarfile.open(fileobj=raw, mode="w:gz") as tar:
             tar.add(manifest_path, arcname="manifest.json")
             for entry in manifest["files"]:
                 tar.add(staging / entry["path"], arcname=entry["path"])
-        # the archive holds password hashes and API keys: owner-only (POSIX)
-        os.chmod(archive_path, 0o600)
 
     return archive_path
 
@@ -324,6 +333,14 @@ def main() -> None:
                                plugin_rule_dirs=plugin_dirs)
     except (FileNotFoundError, ValueError) as exc:
         sys.exit(f"[FAIL] backup aborted: {exc}")
+    except (OSError, sqlite3.Error) as exc:
+        # e.g. PermissionError on files extracted from a volume (owned by uid
+        # 10001): clean message instead of a traceback.
+        target = getattr(exc, "filename", None)
+        where = f" ({target})" if target else ""
+        sys.exit(f"[FAIL] backup aborted: cannot read a source file{where}: {exc}. "
+                 f"Files extracted from Docker volumes keep the container uid (10001); "
+                 f"chown them to your user (sudo chown -R \"$(id -u):$(id -g)\" stage) and retry.")
     with tarfile.open(archive, "r:gz") as tar:
         member = tar.extractfile("manifest.json")
         manifest = json.loads(member.read()) if member else {}
