@@ -10,8 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added (2026-11-06, WP-4.5: licence record for public data candidates for the ungraded rules)
 
 - **`docs/ungraded-data-licences.md`**: each public dataset candidate the survey looked at for
-  the ungraded OT / M365 / mail / agent rule families is licence-checked AT
-  the source and recorded with a verdict. **Cleared to use:** HAI 23.05 +
+  the ungraded OT / M365 / mail / agent rule families is recorded with a verdict (clauses read at
+  the source for the HAI, Nature, invictus-ir and SpamAssassin rows; SWaT/WADI/EPIC rest on the PR review's web check, not re-fetched). **Cleared to use:** HAI 23.05 +
   HAIEnd (ICS/OT — CC BY-SA 4.0 per the README license section, CC BY 4.0 per
   the repo's own metadata; discrepancy recorded, both BY-family) and the
   Office 365 Unified Audit Log BEC dataset by invictus-ir (CC BY 4.0 — real

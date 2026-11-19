@@ -1,9 +1,13 @@
 # Public labelled data for the ungraded rules — licence record (WP-4.5)
 
-Status: **licence survey recorded 2026-11-06.** Each dataset listed below (the ones
-the survey looked at; it is not an exhaustive search of all public data) was
-checked AT its source (licence text/README read on the linked page, not from
-a secondary citation) before a verdict was recorded. The verdicts decide
+Status: **licence survey recorded 2026-11-06.** The datasets listed below are the ones
+the survey looked at; it is not an exhaustive search of all public data. Provenance
+differs by row: the HAI, Nature (ICS network attack), invictus-ir and SpamAssassin rows quote a
+licence clause read at the linked source. The Morris/UAH row records that the page
+carries no licence text. The Enron and MITRE ATLAS rows quote no clause and
+are judged on fit. The SWaT, WADI and EPIC rows (one shared iTrust page) were **not
+re-fetched** when this was edited and rest on the independent PR review's web check of
+2026-11-11. The verdicts decide
 which public data MAY legally be used to grade FENGARDE's currently ungraded
 rule families. **Nothing in this WP downloads, ingests, or commits any of
 this data** — it is the licence record the brief asked for.
