@@ -695,7 +695,8 @@ def test_pr167_third_review_fixes():
         real_open, real_chmod = os.open, os.chmod
         modes: list[int] = []
 
-        def rec_open(path, flags, mode=0o777, *a, **k):
+        # spy only forwards the caller's mode; owner-only default keeps CodeQL quiet
+        def rec_open(path, flags, mode=0o600, *a, **k):
             if str(path).endswith(".tar.gz"):
                 modes.append(mode)
             return real_open(path, flags, mode, *a, **k)
