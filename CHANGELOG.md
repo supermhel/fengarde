@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-11-19
+
+_Headline: real input, sessions-only browser auth, tenant-scoped console feeds, and a live-verified operations path. Everything below up to the "prepared 2026-11-05" marker landed after the first 0.12.0 draft and ships in this release. Proven on the real compose stack on 2026-11-19 (`docs/live-verification-2026-11-19.md`): `make test-live`, `make chaos` (lost=0, duplicated=0), tenant scoping through nginx + OpenSearch, the HTTP ingest spool across a Redis outage, and backup/restore via the runbook. Not proven: a Linux host run, the HA profile, real Windows/Sysmon shippers beyond the lab captures. The incident graph is still entity-linked with direction from entity type; the event-time and causal-key work (ADR-011, ADR-012) is accepted but not implemented in this release._
+
+### Upgrade notes
+
+- **Breaks (browser console):** the browser no longer holds `FENGARDE_API_KEY` (`/api/config.js` is gone). With a key configured, console access needs RBAC: set `FENGARDE_RBAC_DB` and `FENGARDE_ADMIN_PASSWORD` (see `docs/upgrade.md`, "What the default compose persists"). Machine clients keep sending `X-Api-Key`.
+- **Breaks (roles):** `/api/ops/*` and `/api/prom/*` are admin-only (401 anonymous, 403 other roles). `/api/alerts`, `/api/events` and `/api/ai-triage` now go through ws3 `/dashboard/*` and are scoped to the session's tenant.
+- **Migrates (manual, optional):** `ai-*` triage documents written before this release carry no `tenant_id` and read as tenant `default`. Backfill or purge them with the `_update_by_query` / `_delete_by_query` snippets in `SECURITY.md` if you run more than one tenant.
+- **Changed defaults:** TCP syslog `5515/tcp` starts in the default stack (loopback). `POST /v1/ingest` on `127.0.0.1:8554` needs `FENGARDE_INGEST_TOKEN`. ws1 now receives `INGEST_HTTP_SPOOL_PATH`, `INGEST_HTTP_SPOOL_MAX_BYTES` and `TENANT_ID` from the compose env (empty spool path = off, tenant `default`, as before). `/api/inventory/` is session-gated and nginx sends the server-side inventory key (`WS6_INVENTORY_KEY`).
+- **New gate:** `FENGARDE_PROFILE=prod` refuses insecure start-up; it does not secure OpenSearch/Dashboards (see `docs/secure-defaults.md`).
+- **Steps:** back up first (`tools/backup.py`, `docs/upgrade.md`), stop the stack with `docker compose ... down` (never `-v`, never `make down`), `git checkout v0.12.0`, `docker compose ... up -d --build`, verify (console login, `/api/ops/*` as admin, a test ingest). Rollback: no entry in this release declares an automatic store migration, so the image-only rollback in `docs/upgrade.md` applies; restore the backup if you purged or backfilled `ai-*` documents.
+
 ### Fixed (2026-11-19, live-run tooling defects)
 
 - `tools/chaos_test.py` (`make chaos`) is re-runnable on a persistent
@@ -578,7 +591,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `tools/lint_shipping_recipes.sh`: optional, manual config lint (`vector validate`, `fluent-bit --dry-run`, `rsyslogd -N1`,
   `syslog-ng --syntax-only`), skips tools that are absent; flags verified against the official images; syntax lint only; not in the default gate.
 
-## [0.12.0] - 2026-11-05
+### Earlier in 0.12.0 (prepared 2026-11-05, never tagged on its own)
 
 _Headline: real input. FENGARDE can now be fed over HTTP/JSON and TCP syslog, the gap-hunt tracker is closed, and the full-corpus benchmark has a CI lane. The two new listeners have unit and synthetic evidence only; no real-network deployment has exercised them. Notable changes: `5515/tcp` (TCP syslog) now starts in the default stack, bound to loopback; `POST /v1/ingest` on `127.0.0.1:8554` needs `FENGARDE_INGEST_TOKEN`; the TCP metric names changed during review (event counters are the unprefixed syslog ones when UDP is up). The graph is still entity-linked with direction from entity type, not event time (false_correlation_rate 1.0 on the twin)._
 
@@ -3153,7 +3166,8 @@ Full Docker stack (Docker Desktop 4.80.0 / engine 29.6.1): a real UDP syslog pac
 
 - **Apache-2.0 license** — permissive license; use in commercial products, fork freely.
 
-[Unreleased]: https://github.com/supermhel/fengarde/compare/v0.11.3...HEAD
+[Unreleased]: https://github.com/supermhel/fengarde/compare/v0.12.0...HEAD
+[0.12.0]: https://github.com/supermhel/fengarde/compare/v0.11.3...v0.12.0
 [0.11.3]: https://github.com/supermhel/fengarde/compare/v0.11.2...v0.11.3
 [0.11.2]: https://github.com/supermhel/fengarde/compare/v0.11.1...v0.11.2
 [0.11.1]: https://github.com/supermhel/fengarde/compare/v0.11.0...v0.11.1
