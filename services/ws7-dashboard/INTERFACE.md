@@ -51,19 +51,19 @@
   401 anonymous, 403 other roles), since these health ports were previously
   reachable only container-to-container. `/api/prom/*` (read-only Prometheus
   allowlist) uses the same admin-only gate.
+- `/api/inventory/` (GET/HEAD) → WS-6, behind the same `auth_request /api/auth/check`
+  gate; nginx sends the server-side `WS6_INVENTORY_KEY` upstream when the caller
+  presents no `X-Api-Key` (empty by default = zero-config demo). Session-gated,
+  not tenant-scoped (SECURITY.md, "Dashboard session gate").
 - `/api/events` → WS-3 `GET /dashboard/events` (newest 100, `?gte=`) and
   `/api/ai-triage` → WS-3 `GET /dashboard/ai-triage` (newest 200 alert docs with
   `alert_id` prefix `ai-`) (WP-6.2; were OpenSearch directly). Same body shape, so
-  `app/src/data/api.ts` is unchanged. nginx adds no `auth_request` there: WS-3
+  `app/src/data/api.ts` only adds an optional `?tenant_id=` (admin scope). nginx adds no `auth_request` there: WS-3
   authenticates and scopes by tenant itself (non-admin session = own tenant,
   `admin`/API key = all, anonymous = 401 with RBAC on; RBAC off + no key = open
   demo). On 502/503/504 nginx still answers an empty-hits body. A missing index
   now yields an empty hit list (200) instead of OpenSearch's 404. `/api/config.js`
   no longer exists (removed in WP-6.1). See SECURITY.md, "Dashboard session gate".
-- `/api/inventory/` (GET/HEAD) → WS-6, behind the same `auth_request /api/auth/check`
-  gate; nginx sends the server-side `WS6_INVENTORY_KEY` upstream when the caller
-  presents no `X-Api-Key` (empty by default = zero-config demo). Session-gated,
-  not tenant-scoped (SECURITY.md, "Dashboard session gate").
 - Upgrade note: `ai-*` documents written before the ws5 tenant fix have no
   `tenant_id` and read as tenant `default`; purge or backfill them with an
   `_update_by_query` / `_delete_by_query` on `alerts-*` (`alert_id` prefix `ai-`,

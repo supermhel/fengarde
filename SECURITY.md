@@ -570,8 +570,8 @@ Read the limits before exposing port 8080:
   200 only for a valid `X-Api-Key` (key set) or an `admin` session; 401
   anonymous; 403 for any other role. With RBAC on and the key unset an anonymous
   caller gets 401 (same fail-closed rule as `GET /auth/check`, fixed in review
-  of PR #165). `GET /auth/check` (any valid credential) still exists but no
-  nginx location uses it any more.
+  of PR #165). `GET /auth/check` (any valid credential) still exists and only
+  `/api/inventory/` uses it (see below; session-gated, not tenant-scoped).
 - **RBAC off.** With RBAC off and no key (zero-config demo) the new routes are
   open and unscoped, as before; with RBAC off and a key set they need the key.
 - **What still holds.** OpenSearch itself has no authentication
