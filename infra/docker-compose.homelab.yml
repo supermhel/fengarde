@@ -1,0 +1,110 @@
+# FENGARDE homelab deployment profile (WP-2.1): a persistent single-site install.
+# Layered ON TOP of infra/docker-compose.yml -- it only changes what a long-lived
+# home install needs, nothing else:
+#
+#   docker compose -f infra/docker-compose.yml -f infra/docker-compose.homelab.yml up -d
+#
+# What it does (operator walkthrough: docs/homelab.md):
+#   * stable, project-name-independent volume names (survive `down`, a renamed
+#     checkout dir, and a different `-p`); prefix via FENGARDE_HOMELAB_VOL_PREFIX
+#   * every ingest port published to LOOPBACK by default -- including syslog UDP
+#     5514, which the base file publishes on all interfaces. LAN exposure is an
+#     explicit opt-in per listener (FENGARDE_SYSLOG_BIND / FENGARDE_HTTP_INGEST_BIND)
+#   * restart: unless-stopped on the infra services the base file leaves without one
+#   * memory ceilings and a larger OpenSearch heap (FENGARDE_HOMELAB_OS_HEAP)
+#   * the one-shot demo feeder is moved behind the `demo` profile so it does not
+#     inject a fake SSH brute-force burst into a real dataset
+#   * the ws1 zero-loss syslog spool is switched on (it lives in the ws1-spool volume)
+#
+# Requires Docker Compose >= 2.24 (the `!override` tag).
+#
+# Not changed here on purpose: retention. There is no env knob for it -- it is the
+# ISM policies in contracts/opensearch-mappings/ism-*.json (see docs/homelab.md).
+
+services:
+  redis:
+    restart: unless-stopped
+    mem_limit: 1g
+    # The base command plus `--maxmemory 768mb --maxmemory-policy noeviction`. Without a
+    # maxmemory a stalled consumer group pins the streams until the 1g container limit
+    # OOM-kills Redis, and the AOF replay on restart can loop. With it, Redis stays up
+    # and refuses writes (XADD -> OOM error) until consumers ack and the trimmer frees
+    # space; ws1 then spools or sheds (docs/homelab.md). Keep this list in step with
+    # the base command (test_homelab_compose.py checks that every base flag is kept).
+    command: !override
+      - sh
+      - -c
+      - |
+        if [ -n "$$REDIS_PASSWORD" ]; then
+          exec redis-server --appendonly yes --maxmemory 768mb --maxmemory-policy noeviction --requirepass "$$REDIS_PASSWORD";
+        else
+          exec redis-server --appendonly yes --maxmemory 768mb --maxmemory-policy noeviction;
+        fi
+
+  opensearch:
+    restart: unless-stopped
+    environment:
+      # Heap = half of the container limit at most (JVM guidance); keep Xms == Xmx.
+      - "OPENSEARCH_JAVA_OPTS=-Xms${FENGARDE_HOMELAB_OS_HEAP:-1g} -Xmx${FENGARDE_HOMELAB_OS_HEAP:-1g}"
+    # Measured idle with a 1g heap: ~1.75 GiB resident, so 2g left no headroom.
+    mem_limit: ${FENGARDE_HOMELAB_OS_MEM_LIMIT:-3g}
+
+  dashboards:
+    restart: unless-stopped
+    mem_limit: 768m
+
+  ws1-collectors:
+    # !override REPLACES the base list (a plain list in an override file would be
+    # appended, leaving the base's all-interface 5514/udp published).
+    ports: !override
+      - "${FENGARDE_SYSLOG_BIND:-127.0.0.1}:5514:5514/udp"
+      - "${FENGARDE_SYSLOG_BIND:-127.0.0.1}:5515:5515/tcp"
+      - "${FENGARDE_HTTP_INGEST_BIND:-127.0.0.1}:8554:8554"
+    environment:
+      # Bounded on-disk fallback when the bus is down, drained by the UDP loop.
+      # Needs the ws1-spool volume (already mounted by the base file).
+      - SYSLOG_SPOOL_PATH=/var/lib/fengarde/spool/spool.jsonl
+      # Real install: no bundled mock events/assets on start (default on elsewhere for the demo).
+      - WS1_SEED_MOCK=0
+    mem_limit: 512m
+
+  ws2-normalization:
+    mem_limit: 512m
+  ws3-indexer:
+    mem_limit: 768m
+    # ISM policies attach at index CREATION (ism_template), so ws3 must not create an
+    # index before `provision` has installed them. provision is one-shot (restart "no",
+    # exits 0 when done); if it fails, ws3-indexer does not start -- loud, on purpose.
+    depends_on:
+      provision: { condition: service_completed_successfully }
+  ws4-detection:
+    mem_limit: 768m
+  ws5-ai:
+    mem_limit: 512m
+  ws6-inventory:
+    mem_limit: 512m
+  ws7-dashboard:
+    mem_limit: 256m
+  ws8-correlation:
+    mem_limit: 512m
+  ws9-resolver:
+    mem_limit: 512m
+
+  # Demo-only: injects a synthetic SSH brute-force burst. Opt in with
+  # `--profile demo`; never part of a real install's data.
+  devkit-feeder:
+    profiles: [demo]
+
+volumes:
+  redis-data:
+    name: ${FENGARDE_HOMELAB_VOL_PREFIX:-fengarde-homelab}-redis
+  os-data:
+    name: ${FENGARDE_HOMELAB_VOL_PREFIX:-fengarde-homelab}-opensearch
+  ws3-indexer-data:
+    name: ${FENGARDE_HOMELAB_VOL_PREFIX:-fengarde-homelab}-ws3-data
+  ws1-spool:
+    name: ${FENGARDE_HOMELAB_VOL_PREFIX:-fengarde-homelab}-ws1-spool
+  inventory-data:
+    name: ${FENGARDE_HOMELAB_VOL_PREFIX:-fengarde-homelab}-inventory
+  tenants-config:
+    name: ${FENGARDE_HOMELAB_VOL_PREFIX:-fengarde-homelab}-tenants
