@@ -52,5 +52,6 @@ ENV WS3_TRIAGE_PORT=8013
 # profile overrides this to a reachable node and puts the dashboard on the ha
 # network, so the 502-to-empty-fallback it previously masked is gone.
 ENV OPENSEARCH_HOST=opensearch:9200
+ENV WS6_INVENTORY_KEY=
 EXPOSE 80
 # Alerts come LIVE from /api/alerts (proxied to OpenSearch); inventory from WS-6 via the /api/inventory/ proxy.

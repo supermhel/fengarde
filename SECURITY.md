@@ -570,8 +570,8 @@ Read the limits before exposing port 8080:
   200 only for a valid `X-Api-Key` (key set) or an `admin` session; 401
   anonymous; 403 for any other role. With RBAC on and the key unset an anonymous
   caller gets 401 (same fail-closed rule as `GET /auth/check`, fixed in review
-  of PR #165). `GET /auth/check` (any valid credential) still exists but no
-  nginx location uses it any more.
+  of PR #165). `GET /auth/check` (any valid credential) is now used only by
+  the inventory route (below).
 - **RBAC off.** With RBAC off and no key (zero-config demo) the new routes are
   open and unscoped, as before; with RBAC off and a key set they need the key.
 - **What still holds.** OpenSearch itself has no authentication
@@ -583,6 +583,14 @@ Read the limits before exposing port 8080:
   OpenSearch query bodies (wire-format test) and the nginx config with
   `nginx -t`; it has NOT been exercised against a live OpenSearch + console
   stack.
+- **Inventory route.** `/api/inventory/` (GET/HEAD only, ws6) is gated with the same
+  `auth_request /api/auth/check` (session or key). Browsers hold no key, so nginx
+  sends the server-side key `WS6_INVENTORY_KEY` (compose: `INVENTORY_API_KEY`, else
+  `FENGARDE_API_KEY`, else empty = zero-config demo) upstream; a caller-supplied
+  `X-Api-Key` takes precedence for machine clients (it must also pass the ws3
+  gate). ws6 IS tenant-aware, but it scopes by the key it receives, so every
+  session reads what that one key sees: the route is session-gated, NOT
+  tenant-scoped. The key stays inside nginx and is never sent to the browser.
 - **Availability coupling.** Each gated request makes a sub-request to ws3. If ws3
   is down or rate-limiting, those panels fail (nginx returns 500; fail-closed).
 - **Cookie flags.** The session cookie is `HttpOnly; SameSite=Strict`, no expiry

@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed (2026-11-19, PR #165 review: inventory under sessions-only auth)
+
+- `/api/inventory/` is now `auth_request`-gated (session or key) and nginx sends
+  the server-side key (`WS6_INVENTORY_KEY`, set from `INVENTORY_API_KEY` /
+  `FENGARDE_API_KEY` in compose, default empty) to ws6, so logged-in users no
+  longer get 401 on the Inventory view when a key is configured. Caller-supplied
+  `X-Api-Key` still wins. Not tenant-scoped (see SECURITY.md). Removed the dead
+  `/api/config.js` strip from `app/vite.config.ts`. Test: `test_fix_read_plane.py`.
+
 ### Added (2026-11-06, ADR 012 draft: causal evidence keys, docs only)
 
 - `docs/adr/012-causal-evidence-keys.md` (Status: Proposed, owner sign-off pending; builds on the also-Proposed ADR 011) defines when an

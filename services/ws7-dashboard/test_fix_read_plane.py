@@ -138,6 +138,24 @@ def run():
         check("proxy_pass" in b,
               f"wp-6.1: {anchor} lost its proxy_pass when the gate was replaced")
 
+    # ---- WP-6.1 follow-up: /api/inventory/ is session-gated, server key upstream
+    inv = block(tpl, "location /api/inventory/ {")
+    check("auth_request /api/auth/check;" in inv,
+          "inventory: location /api/inventory/ has no auth_request gate")
+    check("proxy_set_header X-Api-Key $http_x_api_key;" not in inv,
+          "inventory: still forwards ONLY the client X-Api-Key (session users get 401)")
+    check("proxy_set_header X-Api-Key $ws6_inventory_key;" in inv,
+          "inventory: does not send the server-side inventory key upstream")
+    m = tpl.find("map $http_x_api_key $ws6_inventory_key")
+    check(m >= 0 and "${WS6_INVENTORY_KEY}" in tpl[m:m + 400] and "default $http_x_api_key;" in tpl[m:m + 400],
+          "inventory: key map must prefer the caller's key and fall back to WS6_INVENTORY_KEY")
+    check("limit_except GET HEAD" in inv, "inventory: lost its GET/HEAD-only restriction")
+    check("proxy_pass" in inv, "inventory: lost its proxy_pass")
+    compose = (HERE.parents[1] / "infra" / "docker-compose.yml").read_text(encoding="utf-8")
+    ws7 = compose[compose.index("  ws7-dashboard:"):]
+    check("WS6_INVENTORY_KEY=${INVENTORY_API_KEY:-${FENGARDE_API_KEY:-}}" in ws7,
+          "inventory: compose does not pass WS6_INVENTORY_KEY to ws7-dashboard")
+
     # ---- 2026-10-15: HTML entry points revalidate, hashed assets immutable ----
     blocks = {b.split("{", 1)[0].strip(): b.split("}", 1)[0]
               for b in re.split(r"\n\s*location ", tpl)[1:]}
