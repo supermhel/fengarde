@@ -80,6 +80,43 @@ def main():
     check(out["raw"].get("TimeCreated") == 1673959859303,
           f"winlogbeat @timestamp fallback: {out['raw'].get('TimeCreated')!r}")
 
+    # null / empty SIDs are not an identity (real lab data: TargetUserSid S-1-0-0)
+    for null_sid in ("S-1-0-0", "-", "", " S-1-0-0 "):
+        ev = parse(TargetUserName="jdoe", TargetUserSid=null_sid)
+        check("uid" not in ev["actor"]["user"], f"null SID {null_sid!r} must not become actor.user.uid: {ev['actor']['user']}")
+    ev = parse(TargetUserName="jdoe", TargetUserSid="S-1-5-21-1-2-3-1001")
+    check(ev["actor"]["user"].get("uid") == "S-1-5-21-1-2-3-1001", "a real SID must be kept")
+
+    # positional-only 4625 (Fluent Bit without event_data_as_map): Microsoft template order
+    ins = ["S-1-5-18", "WIN11-LAB$", "WORKGROUP", "0x3e7", "S-1-0-0", "labuser", "WIN11-LAB", "0xc000006d",
+           "%%2313", "0xc000006a", "3", "NtLmSsp", "NTLM", "ATTACKBOX", "-", "-", "0", "0x0", "-",
+           "203.0.113.45", "49822"]
+    ev = P.parse({"raw": {"EventID": 4625, "TimeCreated": 1, "Computer": "WIN11-LAB", "StringInserts": ins}, "meta": {}})
+    check(ev is not None, "positional 4625 must parse")
+    if ev is not None:
+        check(user(ev) == "labuser", f"positional user: {user(ev)!r}")
+        check(ev["actor"]["user"].get("domain") == "WIN11-LAB", f"positional domain: {ev['actor']['user']}")
+        check("uid" not in ev["actor"]["user"], "positional null SID dropped")
+        check(ev.get("src_endpoint", {}).get("ip") == "203.0.113.45", f"positional ip: {ev.get('src_endpoint')}")
+        check(ev.get("src_endpoint", {}).get("hostname") == "ATTACKBOX", f"positional host: {ev.get('src_endpoint')}")
+        check((ev.get("unmapped") or {}).get("logon_status") == {"status": "0xc000006d", "sub_status": "0xc000006a",
+                                                                  "failure_reason": "%%2313"},
+              f"positional status codes: {ev.get('unmapped')}")
+    # named keys win: StringInserts is ignored when any named data exists
+    ev = P.parse({"raw": {"EventID": 4625, "TimeCreated": 1, "IpAddress": "10.0.0.9", "StringInserts": ins}, "meta": {}})
+    check(user(ev) is None, f"named data present -> inserts ignored: {user(ev)!r}")
+    # too-short inserts are still dropped
+    check(P.parse({"raw": {"EventID": 4625, "TimeCreated": 1, "StringInserts": ins[:5]}, "meta": {}}) is None,
+          "short StringInserts must be dropped")
+    # through the Fluent Bit adapter
+    from adapters import fluentbit_winevtlog  # noqa: E402
+    out = fluentbit_winevtlog.adapt({"raw": {"ProviderName": "Microsoft-Windows-Security-Auditing", "EventID": 4625,
+                                             "TimeCreated": "2026-11-13 10:15:30 +0100", "Computer": "WIN11-LAB",
+                                             "StringInserts": ins}, "meta": {}})
+    check(out["source_type"] == "active_directory", f"adapter route: {out['source_type']}")
+    ev = P.parse(out)
+    check(user(ev) == "labuser", f"adapter+positional user: {user(ev)!r}")
+
     if FAILS:
         print(f"[FAIL] AD 4625 edges: {len(FAILS)} problem(s)")
         for f in FAILS:

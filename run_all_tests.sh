@@ -467,6 +467,8 @@ echo "== recall work (2026-10-20): service install / log cleared / lsass access 
 $PY services/ws2-normalization/parsers/test_recall_events.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo "== PR #153 review: AD 4625 edge cases =="; LAST_HEADER="== AD 4625 edges =="
 $PY services/ws2-normalization/parsers/test_ad_4625_edges.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo "== Windows 4648 explicit-credential logon =="; LAST_HEADER="== Windows 4648 =="
+$PY services/ws2-normalization/parsers/test_windows_4648.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo "== fuzz findings (2026-10-20): parser bugs found by the repaired atheris harnesses =="; LAST_HEADER="== fuzz findings =="
 $PY services/ws2-normalization/parsers/test_fuzz_findings.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo

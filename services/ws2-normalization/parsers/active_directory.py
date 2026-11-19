@@ -65,6 +65,27 @@ _NAMED_DATA_KEYS = ("TargetUserName", "SubjectUserName", "IpAddress", "Workstati
                     "TargetDomainName", "TargetUserSid")
 
 
+# Microsoft's 4625 template order (positional StringInserts, what Fluent Bit's winevtlog emits without
+# event_data_as_map). Used ONLY when the record carries no named event data at all.
+_4625_INSERTS = ("SubjectUserSid", "SubjectUserName", "SubjectDomainName", "SubjectLogonId",
+                 "TargetUserSid", "TargetUserName", "TargetDomainName", "Status", "FailureReason",
+                 "SubStatus", "LogonType", "LogonProcessName", "AuthenticationPackageName",
+                 "WorkstationName", "TransmittedServices", "LmPackageName", "KeyLength",
+                 "ProcessId", "ProcessName", "IpAddress", "IpPort")
+_MIN_4625_INSERTS = 6  # through TargetUserName; fewer is too short to attribute anything
+
+#: SIDs that mean "no account" (S-1-0-0 is the null SID Windows logs when the target is unknown).
+_NULL_SIDS = ("", "-", "S-1-0-0")
+
+
+def _positional_4625(rec: dict) -> Optional[dict]:
+    ins = rec.get("StringInserts")
+    if not isinstance(ins, (list, tuple)) or len(ins) < _MIN_4625_INSERTS:
+        return None
+    named = {k: v for k, v in zip(_4625_INSERTS, ins) if isinstance(v, (str, int)) and not isinstance(v, bool)}
+    return dict(rec, **{k: v for k, v in named.items() if k not in rec})
+
+
 def _event_id(value) -> Optional[int]:
     """EventID as int; integral floats/strings ("4625.0") count, others not."""
     if isinstance(value, bool) or value is None:
@@ -101,7 +122,9 @@ class ActiveDirectoryParser(Parser):
         if event_id not in _EVENT_MAP:
             return None
         if not any(k in rec for k in _NAMED_DATA_KEYS):
-            return None
+            rec = _positional_4625(rec) if event_id == 4625 else None
+            if rec is None:
+                return None
         activity_id, status, severity_id = _EVENT_MAP[event_id]
 
         time_ms = self._time_ms(rec, meta)
@@ -169,7 +192,7 @@ class ActiveDirectoryParser(Parser):
             if domain:
                 actor_user["domain"] = domain
             user_sid = rec.get("TargetUserSid")
-            if user_sid:
+            if user_sid is not None and str(user_sid).strip() not in _NULL_SIDS:
                 # str(), not safe_str(): a SID is schema-typed as a plain
                 # string (no format pattern), same convention
                 # windows_eventlog.py already uses for this exact field --
