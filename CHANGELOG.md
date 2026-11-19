@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed (2026-11-19, live-run tooling defects)
+
+- `tools/chaos_test.py` (`make chaos`) is re-runnable on a persistent
+  OpenSearch: `verify()` now scopes each scenario's alert query to that
+  scenario's own event-time minute (`Scenario.window_start_s`), so alerts left
+  by an earlier run on the same fixed attacker IPs are no longer counted as
+  duplicates (live false result: `lost=0 duplicated=40`). A real duplicate
+  within the run still fails. Zero-infra test: `tools/test_chaos_query.py`.
+- `infra/preflight.sh` recognises Git Bash/MSYS/Cygwin on Windows (was "Unknown
+  OS ... cannot bless this machine"): skips `vm.max_map_count` (Docker Desktop's
+  WSL2 VM) with a how-to-check note; docker/memory/port checks still run. Test:
+  `tools/test_preflight_os.py`. README gains a "Windows without make" recipe list.
+
 ### Fixed (2026-11-19, PR #165 review: inventory under sessions-only auth)
 
 - `/api/inventory/` is now `auth_request`-gated (session or key) and nginx sends

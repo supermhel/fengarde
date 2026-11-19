@@ -609,6 +609,14 @@ $PY tools/test_ci_eval_filter.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}";
 $PY tools/test_rule_cascade.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 
 echo
+echo "== make chaos re-runnability: alert query scoped to this run's window (zero-infra) =="; LAST_HEADER="== make chaos re-runnability: alert query scoped to this run's window (zero-infra) =="
+$PY tools/test_chaos_query.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+
+echo
+echo "== infra/preflight.sh: Git Bash/MSYS/Cygwin recognised, unknown OS still fails closed =="; LAST_HEADER="== infra/preflight.sh: Git Bash/MSYS/Cygwin recognised, unknown OS still fails closed =="
+$PY tools/test_preflight_os.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+
+echo
 echo "== React console: typecheck + unit tests (services/ws7-dashboard/app) =="; LAST_HEADER="== React console: typecheck + unit tests (services/ws7-dashboard/app) =="
 # node is required: a console that cannot be typechecked must not pass the gate silently (R4-#69 stance).
 if command -v npm >/dev/null 2>&1; then
