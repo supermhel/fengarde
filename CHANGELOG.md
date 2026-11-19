@@ -429,6 +429,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Zeek Modbus function codes: `_MODBUS_CODES` now holds all 32 entries of Zeek's `Modbus::function_codes` (`scripts/base/protocols/modbus/consts.zeek`, master, fetched 2026-11-06: the 19 standard, `0x5B` OBJECT_MESSAGING and the 12 vendor codes) and maps Zeek's `unknown-N` names (N 0-255, exception bit masked) to a numeric code.
 - Documented, not changed: Zeek Modbus recognition needs the `unit` column, added in Zeek 5.1.0 (NEWS, zeek/zeek PR 2281); one Modbus transaction yields several events (modbus.log REQ and RESP rows, plus the ICSNPP `modbus_detailed.log` row(s)); an IPS `alert.action` of `blocked` stays only in `unmapped.ids.action` (not Deny, so port-scan rules do not count signature drops).
 - Docs: parser count 19 -> 21 in the README capability table and the fuzz target list in `project.yaml`; the registered list in `docs/ingest-http.md` now names the two new parsers. `TestProvenance` was weak (a 64-character check); `TestProvenanceAgainstContent` checks the headers against the fixture records (pcap names, one pinned suricata-verify commit, rule ids, protocols enabled by the command, ICSNPP present iff installed). It found that the Zeek header lists `dnp3-eve.pcap` although no selected Zeek record comes from it (Zeek has no dnp3 log in the fixture); not altered, because whether Zeek was run on that pcap cannot be known from the files.
+### Fixed (2026-11-19, live-run tooling defects)
+
+- `tools/chaos_test.py` (`make chaos`) is re-runnable on a persistent
+  OpenSearch: `verify()` now scopes each scenario's alert query to that
+  scenario's own event-time minute (`Scenario.window_start_s`), so alerts left
+  by an earlier run on the same fixed attacker IPs are no longer counted as
+  duplicates (live false result: `lost=0 duplicated=40`). A real duplicate
+  within the run still fails. Zero-infra test: `tools/test_chaos_query.py`.
+- `infra/preflight.sh` recognises Git Bash/MSYS/Cygwin on Windows (was "Unknown
+  OS ... cannot bless this machine"): skips `vm.max_map_count` (Docker Desktop's
+  WSL2 VM) with a how-to-check note; docker/memory/port checks still run. Test:
+  `tools/test_preflight_os.py`. README gains a "Windows without make" recipe list.
 
 ### Added (2026-11-04, WP-1.3: shipper adapters for real Fluent Bit / Winlogbeat / Docker shapes)
 
