@@ -15,6 +15,8 @@
 #   * the one-shot demo feeder is moved behind the `demo` profile so it does not
 #     inject a fake SSH brute-force burst into a real dataset
 #   * the ws1 zero-loss syslog spool is switched on (it lives in the ws1-spool volume)
+#   * the HTTP/JSON ingest spool (INGEST_HTTP_SPOOL_PATH) is switched on in the same
+#     volume; it drains back into the bus when the bus returns (WS-1 HTTP spool drain)
 #
 # Requires Docker Compose >= 2.24 (the `!override` tag).
 #
@@ -64,6 +66,11 @@ services:
       # Bounded on-disk fallback when the bus is down, drained by the UDP loop.
       # Needs the ws1-spool volume (already mounted by the base file).
       - SYSLOG_SPOOL_PATH=/var/lib/fengarde/spool/spool.jsonl
+      # HTTP/JSON zero-loss spool (WS-1 HTTP spool drain): bounded on-disk
+      # fallback when the bus is down, drained by the collector's own
+      # http-json-spool-drain thread (at-least-once; WS-3 dedupes on ingest_id;
+      # undeliverable events go to <spool>.dead). Same ws1-spool volume.
+      - INGEST_HTTP_SPOOL_PATH=/var/lib/fengarde/spool/http-spool.jsonl
       # Real install: no bundled mock events/assets on start (default on elsewhere for the demo).
       - WS1_SEED_MOCK=0
     mem_limit: 512m

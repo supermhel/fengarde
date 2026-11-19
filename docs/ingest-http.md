@@ -34,6 +34,19 @@ Authorization: Bearer <FENGARDE_INGEST_TOKEN>
   `collectors/spool.py` machinery as syslog if `INGEST_HTTP_SPOOL_PATH` is set
   → `202` (accepted for later delivery); without a spool → `503` (dropped,
   counted).
+  A `http-json-spool-drain` thread replays the spool into the bus every 5 s
+  once it accepts events again. Replay is **at-least-once**: a hard crash can
+  re-send up to 500 already-delivered events (same `ingest_id`, so WS-3 stores
+  one document). While the bus is up, live batches go straight to it and may
+  overtake older spooled events (FIFO holds inside the spool only). An event the
+  bus keeps rejecting is moved to `<spool>.dead` (capped at
+  `INGEST_HTTP_SPOOL_MAX_BYTES`) so it cannot block the rest; a lone event with
+  nothing behind it is parked after 10 failed passes. Parked events are not
+  lost: after a clean drain pass the collector re-sends `<spool>.dead` at most
+  every 5 minutes and keeps only what the bus still refuses (this undoes a
+  bus flap that parked good events). Watch `http_spool_pending_bytes`,
+  `http_spool_drain_failed_passes`, `http_spool_dead_lettered` and
+  `http_spool_dead_letter_redriven` on WS-1 `/metrics`.
 
 ## Auth
 
