@@ -149,6 +149,14 @@ services:
       # layer and vanished on recreate, silently defeating the entire point
       # of enabling it.
       # - SYSLOG_SPOOL_PATH=/var/lib/fengarde/spool/spool.jsonl
+      # HTTP/JSON ingest spool (same ws1-spool volume; use a DIFFERENT file than the syslog
+      # spool). Empty = disabled, today's behaviour (bus down -> 503). Enable by exporting
+      # INGEST_HTTP_SPOOL_PATH=/var/lib/fengarde/spool/http-spool.jsonl (or via .env, or the
+      # infra/docker-compose.homelab.yml overlay); optional INGEST_HTTP_SPOOL_MAX_BYTES.
+      - INGEST_HTTP_SPOOL_PATH=${INGEST_HTTP_SPOOL_PATH:-}
+      - INGEST_HTTP_SPOOL_MAX_BYTES=${INGEST_HTTP_SPOOL_MAX_BYTES:-67108864}
+      # Tenant stamped on events (single-tenant default = 'default').
+      - TENANT_ID=${TENANT_ID:-default}
     volumes:
       - ws1-spool:/var/lib/fengarde/spool
     depends_on:
