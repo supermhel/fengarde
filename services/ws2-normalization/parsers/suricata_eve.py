@@ -31,6 +31,10 @@ rule needs IPS drops.
 Modbus/DNP3 events deliberately never set ``unmapped.ot.anomaly_type``: that is modbus_anomaly.py's own classification
 (ot_modbus_unauthorized_write keys on it) and this parser makes no judgement of its own. Every other EVE ``event_type``
 (stats, anomaly, http, tls, ...) is dropped (returns None); its fields are not mapped.
+
+ADR-012 (network_flow): ``flow_id`` of every mapped record kind (alert, flow, dns, modbus, dnp3) becomes
+``connection_info.uid`` (decimal string) with ``siem.key_scope`` {sensor: "suricata", host: EVE ``host`` when present}.
+``community_id`` is kept in ``unmapped.community_id`` only; Suricata ``flow_id`` and Zeek ``uid`` are never equated.
 """
 from __future__ import annotations
 
@@ -40,7 +44,8 @@ from typing import Optional
 from .base import Parser, SEV_HIGH, SEV_INFO, SEV_LOW, SEV_MEDIUM
 from .dns_query import parent_domain
 from .timeutil import to_epoch_ms
-from ._netjson import drop_none, endpoint, envelope_meta, integer, load_record, sector, strings, text
+from ._netjson import (drop_none, endpoint, envelope_meta, integer, load_record, sector, stamp_flow_key, strings,
+                       text)
 
 _NET, _DNS = 4001, 4002
 _CLOSE, _OTHER = 2, 99
@@ -101,7 +106,14 @@ class SuricataEveParser(Parser):
             dst = dict(dst or {}, hostname=extra.pop("hostname"))
         if dst:
             event["dst_endpoint"] = dst
+        cid = text(rec.get("community_id"), 64)  # recorded only: a cross-tool join is NOT claimed (ADR-012 option E)
+        if cid:
+            extra["community_id"] = cid
         event["unmapped"] = extra
+        fid = rec.get("flow_id")  # an integer on the wire; a digit string is tolerated, anything else has no key
+        if isinstance(fid, str) and not fid.isdecimal():
+            fid = None
+        stamp_flow_key(event, fid, "suricata", rec.get("host"))
         return event
 
     # Each record kind returns (class, activity, severity, message, unmapped, is_ot) or None.

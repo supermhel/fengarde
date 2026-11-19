@@ -452,6 +452,90 @@ class TestConnStateNeverDeny(unittest.TestCase):
             self.assertEqual(ev["unmapped"]["zeek"]["conn"]["conn_state"], state, f"{state}: raw state must be kept")
 
 
+class TestFlowKeys(unittest.TestCase):
+    """ADR-012 WP 4: Suricata flow_id / Zeek uid -> connection_info.uid + siem.key_scope on every record kind read.
+
+    Positive cases use the REAL captures (suricata_eve_real.json, zeek_json_real.json). The negative cases are DERIVED:
+    a real record with one field replaced (no capture contains a bad flow_id / uid)."""
+
+    def test_suricata_real_records_carry_flow_id_as_decimal_string(self):
+        kinds = set()
+        for item in SURI["records"]:
+            rec = item["record"]
+            ev = SURICATA.parse(_raw("suricata_eve", rec))
+            if ev is None:
+                continue
+            kinds.add(rec["event_type"])
+            self.assertEqual(ev["connection_info"], {"uid": str(rec["flow_id"])}, rec["event_type"])
+            self.assertEqual(ev["siem"]["key_scope"], {"sensor": "suricata"})
+            self.assertEqual(validate(ev), [])
+        self.assertEqual(kinds, {"alert", "flow", "dns", "modbus", "dnp3"})  # every kind the parser maps
+
+    def test_zeek_real_records_carry_uid_verbatim(self):
+        kinds = set()
+        for item in ZEEK["records"]:
+            rec = item["record"]
+            ev = ZEEKP.parse(_raw("zeek_json", rec))
+            if ev is None:
+                continue
+            if "uid" not in rec:  # the real notice.log row has no uid: no key, no scope
+                self.assertNotIn("connection_info", ev)
+                self.assertNotIn("key_scope", ev["siem"])
+                continue
+            kinds.add(item["log"])
+            self.assertEqual(ev["connection_info"], {"uid": rec["uid"]}, item["log"])
+            self.assertEqual(ev["siem"]["key_scope"], {"sensor": "zeek"})
+            self.assertEqual(validate(ev), [])
+        self.assertEqual(kinds, {"conn.log", "dns.log", "modbus.log", "modbus_detailed.log"})
+
+    def test_suricata_host_becomes_key_scope_host(self):
+        rec = dict(_find(SURI, lambda r: r["record"]["event_type"] == "flow"), host="sensor-a")
+        ev = SURICATA.parse(_raw("suricata_eve", rec))
+        self.assertEqual(ev["siem"]["key_scope"], {"sensor": "suricata", "host": "sensor-a"})
+        self.assertEqual(validate(ev), [])
+
+    def test_rejected_suricata_flow_ids_are_dropped(self):
+        base = _find(SURI, lambda r: r["record"]["event_type"] == "alert")
+        for bad in (0, -5, True, "-", "", "0", "null", "abc", "9" * 129, None, 1.5, [1], {"a": 1}):
+            ev = SURICATA.parse(_raw("suricata_eve", dict(base, flow_id=bad)))
+            if ev is None:  # the content sniff / parser may refuse a record with a non-int flow_id outright
+                continue
+            self.assertNotIn("connection_info", ev, repr(bad))
+            self.assertNotIn("key_scope", ev["siem"], repr(bad))
+
+    def test_rejected_zeek_uids_are_dropped(self):
+        base = _find(ZEEK, lambda r: r["log"] == "conn.log")
+        for bad in ("-", "", "   ", "0", "null", "C" * 129, 7, True, None, ["C1"]):
+            ev = ZEEKP.parse(_raw("zeek_json", dict(base, uid=bad)))
+            self.assertIsNotNone(ev, repr(bad))
+            self.assertNotIn("connection_info", ev, repr(bad))
+            self.assertNotIn("key_scope", ev["siem"], repr(bad))
+            self.assertEqual(validate(ev), [], repr(bad))
+
+    def test_length_boundary_kept_whole(self):
+        base = _find(ZEEK, lambda r: r["log"] == "conn.log")
+        ev = ZEEKP.parse(_raw("zeek_json", dict(base, uid="C" * 65)))  # within canon limit: kept whole
+        self.assertEqual(ev["connection_info"]["uid"], "C" * 65)
+        ev = ZEEKP.parse(_raw("zeek_json", dict(base, uid="C" * 128)))
+        self.assertEqual(ev["connection_info"]["uid"], "C" * 128)
+
+    def test_community_id_is_recorded_but_not_a_cross_tool_key(self):
+        s_rec = dict(_find(SURI, lambda r: r["record"]["event_type"] == "flow"), community_id="1:abc=")
+        z_rec = dict(_find(ZEEK, lambda r: r["log"] == "conn.log"), community_id="1:abc=")
+        for parser, st, rec in ((SURICATA, "suricata_eve", s_rec), (ZEEKP, "zeek_json", z_rec)):
+            ev = parser.parse(_raw(st, rec))
+            self.assertEqual(ev["unmapped"]["community_id"], "1:abc=")
+            self.assertNotEqual(ev["connection_info"]["uid"], "1:abc=")
+            self.assertNotIn("1:abc=", str(ev["siem"]))
+        ev = SURICATA.parse(_raw("suricata_eve", dict(_find(SURI, lambda r: r["record"]["event_type"] == "flow"))))
+        self.assertNotIn("community_id", ev["unmapped"])
+
+    def test_no_cross_tool_scope_equality(self):
+        s = _suri(lambda r: r["record"]["event_type"] == "flow")
+        z = _zeek(lambda r: r["log"] == "conn.log")
+        self.assertNotEqual(s["siem"]["key_scope"], z["siem"]["key_scope"])
+
+
 class TestFieldCoverage(unittest.TestCase):
     def test_report_and_floor(self):
         for label, parser, st, fix, must in (
