@@ -61,6 +61,11 @@ docker run --rm -v <project>_ws3-indexer-data:/src:ro -v "$PWD/stage/ws3":/dst a
 docker run --rm -v <project>_inventory-data:/src:ro   -v "$PWD/stage/inventory":/dst alpine cp -a /src/. /dst/
 docker run --rm -v <project>_ws1-spool:/src:ro        -v "$PWD/stage/spool":/dst alpine cp -a /src/. /dst/
 
+#    `cp -a` keeps the container owner (uid 10001), so the host user cannot
+#    read the copies and backup.py would fail with PermissionError. Hand the
+#    staging copies to yourself first:
+sudo chown -R "$(id -u):$(id -g)" stage
+
 #    Then point backup.py at the EXTRACTED copies (container paths such as
 #    /app/ws3-indexer/data/audit.jsonl do not exist on the host). File names
 #    are the ones your overlay configured; examples:
@@ -140,9 +145,29 @@ Two independent layers; use the one that matches why you are backing out.
    | `plugin-rules/<n>-<dir>/...` | the matching `FENGARDE_PLUGIN_RULE_DIRS` entry |
    | `contracts/...` | `./contracts/` in the checkout |
 
-   Copy them into the volumes with the reverse of the extraction commands
-   (`docker run --rm -v <volume>:/dst -v "$PWD/restored/...":/src alpine cp ...`;
-   also untested). A stale `-wal`/`-shm`/`-journal` beside an SQLite file
+   Copy them into the volumes with the reverse of the extraction commands,
+   **and fix ownership in the same container**. `restore.py` writes owner-only
+   (`0600`) files; copied in as root they stay root-owned `0600` and the
+   services (which run as `USER app`, uid 10001) cannot read them. Per volume
+   (uid:gid as in `infra/docker-compose.yml`'s init containers):
+
+   | volume | owner after copy |
+   |---|---|
+   | `ws3-indexer-data` (rbac, audit log) | `10001:10001` |
+   | `inventory-data` (inventory/keystore DB) | `10001:10001` |
+   | `ws1-spool` (spool + `.dead`) | `10001:999` |
+
+   ```sh
+   # example: RBAC DB + audit log into ws3-indexer-data; repeat per volume
+   docker run --rm -v <project>_ws3-indexer-data:/dst -v "$PWD/restored/rbac":/src:ro alpine        sh -c 'cp /src/rbac.sqlite /dst/ && chown 10001:10001 /dst/rbac.sqlite && chmod 600 /dst/rbac.sqlite'
+   ```
+   Verify a service-uid read works before starting the stack:
+   `docker run --rm --user 10001:10001 -v <project>_ws3-indexer-data:/d alpine cat /d/rbac.sqlite >/dev/null`.
+   (Tested with a throwaway volume: a plain root `cp` of a `0600` file fails
+   that read with "Permission denied"; the command above succeeds. Not run
+   against a live stack.)
+
+   A stale `-wal`/`-shm`/`-journal` beside an SQLite file
    replays post-backup rows into the restored DB (reproduced). `restore.py
    --force` only removes such sidecars **under `--dest`** (the staging dir,
    which normally has none); the real risk is in the **volume**, and
@@ -151,7 +176,9 @@ Two independent layers; use the one that matches why you are backing out.
    `docker run --rm -v <volume>:/dst alpine sh -c 'rm -f /dst/<db>-wal /dst/<db>-shm /dst/<db>-journal'`.
 
    `restore.py` verifies every file's sha256 against the archive manifest
-   BEFORE writing anything, refuses overwrites (including leftover SQLite
+   BEFORE writing anything (the manifest is inside the same archive, so this
+   detects corruption/truncation, **not** deliberate tampering: keep the archive
+   somewhere trusted or sign it separately), refuses overwrites (including leftover SQLite
    sidecars) without `--force`, and rejects path-traversal/symlink-escape
    members (regression-tested in `tools/test_backup_restore.py`). Each file is
    written to a temp name and renamed into place with owner-only permissions.
@@ -178,6 +205,6 @@ rule dirs are plain copies, so stop the collectors first.
 What is proven: `tools/test_backup_restore.py` (real SQLite + JSONL files,
 mutate-then-restore, WAL-sidecar, lock, `%`-in-path and env-default
 regressions, malformed-archive and Windows-path guards). What is not: any run
-against a live compose stack (volume extraction/re-injection). The `0600`
+against a live compose stack (volume extraction/re-injection beyond the ownership check above). The `0600`
 permission check runs on POSIX only (CI's Linux runner; skipped on Windows,
 where `chmod` only toggles read-only).
