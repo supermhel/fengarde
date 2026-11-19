@@ -44,7 +44,7 @@ event = {
 - The version string is **hardcoded once** and shared by every parser: no parser module constructs
   `metadata` itself (repo-wide grep for `"metadata"` under `services/ws2-normalization/parsers/*.py`
   outside `base.py` returns zero hits) — **VERIFIED**.
-- Every parser output therefore carries `metadata.version = "1.1.0"`: all 19 built-in parsers
+- Every parser output therefore carries `metadata.version = "1.1.0"`: all 21 built-in parsers
   subclass `Parser` and build events through `base_event()` (each `parse()` calls
   `self.base_event(class_uid=..., ...)`, e.g. `linux_ssh.py:135`, `sysmon.py:219`,
   `windows_eventlog.py:272`), and plugin parsers (`parsers/plugins.py`) must also subclass `Parser`

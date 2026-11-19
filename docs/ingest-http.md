@@ -122,7 +122,7 @@ HTTP=200
 # Unknown source_type -> 400 (lists the registered parsers)
 $ curl -s -w '\nHTTP=%{http_code}\n' -X POST 'http://127.0.0.1:8554/v1/ingest?source_type=bogus' \
     -H 'Authorization: Bearer <FENGARDE_INGEST_TOKEN>' --data '{"a":1}'
-{"error":"unknown source_type 'bogus'; registered: ['active_directory', 'cef', 'cisco_asa', 'cloudtrail', 'db_audit', 'dns_query', 'generic_syslog', 'inventory_diff', 'k8s_audit', 'linux_ssh', 'm365_audit', 'mail_gateway', 'mcp_agent', 'modbus_anomaly', 'n8n_audit', 'opcua_audit', 'sysmon', 'vmware_vsphere', 'windows_eventlog']"}
+{"error":"unknown source_type 'bogus'; registered: ['active_directory', 'cef', 'cisco_asa', 'cloudtrail', 'db_audit', 'dns_query', 'generic_syslog', 'inventory_diff', 'k8s_audit', 'linux_ssh', 'm365_audit', 'mail_gateway', 'mcp_agent', 'modbus_anomaly', 'n8n_audit', 'opcua_audit', 'suricata_eve', 'sysmon', 'vmware_vsphere', 'windows_eventlog', 'zeek_json']"}
 HTTP=400
 
 # No token -> 401; body over the 1 MiB cap -> 413

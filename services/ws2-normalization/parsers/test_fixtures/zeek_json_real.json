@@ -1,0 +1,401 @@
+{
+ "provenance": {
+  "kind": "REAL CAPTURE-DERIVED: records produced by running Zeek on public pcaps (not hand-written)",
+  "tool": "Zeek 9.0.1 (+ CISA ICSNPP package zeek/cisagov/icsnpp-modbus v2.0.0 for modbus_detailed.log)",
+  "image": "zeek/zeek@sha256:524cb0ce29f26a6a954fb9c357a8f92b95812476d8240f0ece26617ace249dd0",
+  "command": "zeek -C -r <pcap> LogAscii::use_json=T local [icsnpp-modbus]  (icsnpp-modbus installed in the container with `zkg install --force icsnpp-modbus`)",
+  "notes": "notice.log record is Zeek's own CaptureLoss::Too_Little_Traffic (the pcap is 8 packets). modbus.log is Zeek's built-in analyzer; modbus_detailed.log is the ICSNPP package's log. A Zeek JSON line does not name its stream: `log` below is the file the record came from and is NOT part of the record handed to the parser.",
+  "pcaps": {
+   "dns-eve.pcap": {
+    "url": "https://raw.githubusercontent.com/OISF/suricata-verify/a6e2fdbcdf4906fbef2ef80f6990402e47f1ec3e/tests/dns/dns-eve/input.pcap",
+    "sha256": "e531b81543ad7188271a009fb773f525a7c21952fdfc71f4596fac00dfb123d6"
+   },
+   "modbus.pcap": {
+    "url": "https://raw.githubusercontent.com/OISF/suricata-verify/a6e2fdbcdf4906fbef2ef80f6990402e47f1ec3e/tests/modbus/modbus.pcap",
+    "sha256": "809e2bbded145ccf3491bbb7a1f7b04b3b296bcc6e98e0fbc08f20dfa85e0a7f"
+   },
+   "dnp3-eve.pcap": {
+    "url": "https://raw.githubusercontent.com/OISF/suricata-verify/a6e2fdbcdf4906fbef2ef80f6990402e47f1ec3e/tests/dnp3/dnp3-eve/input.pcap",
+    "sha256": "a92700c235b4dee12fcac9e729884b3661edb0431b6b1b28d0c2d17efd24f432"
+   }
+  },
+  "pcap_source_and_licence": "Public pcaps from the OISF suricata-verify repository at the commit above (MIT licence, LICENSE.txt in that repo: 'Permission is hereby granted, free of charge ... to use, copy, modify, merge, publish, distribute'). The licence is the repository's; the origin of each individual capture inside that repo was not independently traced. The pcaps are NOT committed here, only the sensor logs derived from them (unmodified records, a subset).",
+  "selection": "a handful of records per log, taken in file order, records unmodified. The capture_loss.log record is included on purpose: the parser drops it (returns None).",
+  "generated": "2026-11-05"
+ },
+ "records": [
+  {
+   "log": "conn.log",
+   "pcap": "dns-eve.pcap",
+   "record": {
+    "ts": 1464132421.96078,
+    "uid": "CR70ck3blasuJpa2oi",
+    "id.orig_h": "10.16.1.11",
+    "id.orig_p": 53679,
+    "id.resp_h": "10.16.1.1",
+    "id.resp_p": 53,
+    "proto": "udp",
+    "service": "dns",
+    "duration": 0.3723611831665039,
+    "orig_bytes": 39,
+    "resp_bytes": 55,
+    "conn_state": "SF",
+    "local_orig": true,
+    "local_resp": true,
+    "missed_bytes": 0,
+    "history": "Dd",
+    "orig_pkts": 1,
+    "orig_ip_bytes": 67,
+    "resp_pkts": 1,
+    "resp_ip_bytes": 83,
+    "ip_proto": 17
+   }
+  },
+  {
+   "log": "conn.log",
+   "pcap": "dns-eve.pcap",
+   "record": {
+    "ts": 1464132422.832606,
+    "uid": "CF5cRD1g7Ec31imbt3",
+    "id.orig_h": "10.16.1.11",
+    "id.orig_p": 49697,
+    "id.resp_h": "10.16.1.1",
+    "id.resp_p": 53,
+    "proto": "udp",
+    "service": "dns",
+    "duration": 0.38101792335510254,
+    "orig_bytes": 35,
+    "resp_bytes": 74,
+    "conn_state": "SF",
+    "local_orig": true,
+    "local_resp": true,
+    "missed_bytes": 0,
+    "history": "Dd",
+    "orig_pkts": 1,
+    "orig_ip_bytes": 63,
+    "resp_pkts": 1,
+    "resp_ip_bytes": 102,
+    "ip_proto": 17
+   }
+  },
+  {
+   "log": "conn.log",
+   "pcap": "modbus.pcap",
+   "record": {
+    "ts": 1093521953.490353,
+    "uid": "CGe96N6mId1xySy18",
+    "id.orig_h": "10.0.0.57",
+    "id.orig_p": 2579,
+    "id.resp_h": "10.0.0.8",
+    "id.resp_p": 502,
+    "proto": "tcp",
+    "service": "modbus",
+    "duration": 23.256630897521973,
+    "orig_bytes": 24,
+    "resp_bytes": 0,
+    "conn_state": "SF",
+    "local_orig": true,
+    "local_resp": true,
+    "missed_bytes": 0,
+    "history": "ShADaFf",
+    "orig_pkts": 6,
+    "orig_ip_bytes": 272,
+    "resp_pkts": 5,
+    "resp_ip_bytes": 208,
+    "ip_proto": 6
+   }
+  },
+  {
+   "log": "conn.log",
+   "pcap": "modbus.pcap",
+   "record": {
+    "ts": 1093521678.945447,
+    "uid": "CX1zbp3RCndHVDisa9",
+    "id.orig_h": "10.0.0.57",
+    "id.orig_p": 2387,
+    "id.resp_h": "10.0.0.3",
+    "id.resp_p": 502,
+    "proto": "tcp",
+    "duration": 0.0004930496215820312,
+    "orig_bytes": 0,
+    "resp_bytes": 0,
+    "conn_state": "SF",
+    "local_orig": true,
+    "local_resp": true,
+    "missed_bytes": 0,
+    "history": "FafA",
+    "orig_pkts": 2,
+    "orig_ip_bytes": 80,
+    "resp_pkts": 2,
+    "resp_ip_bytes": 80,
+    "ip_proto": 6
+   }
+  },
+  {
+   "log": "dns.log",
+   "pcap": "dns-eve.pcap",
+   "record": {
+    "ts": 1464132421.96078,
+    "uid": "CR70ck3blasuJpa2oi",
+    "id.orig_h": "10.16.1.11",
+    "id.orig_p": 53679,
+    "id.resp_h": "10.16.1.1",
+    "id.resp_p": 53,
+    "proto": "udp",
+    "trans_id": 39339,
+    "rtt": 0.3723611831665039,
+    "query": "client-cf.dropbox.com",
+    "qclass": 1,
+    "qclass_name": "C_INTERNET",
+    "qtype": 1,
+    "qtype_name": "A",
+    "rcode": 0,
+    "rcode_name": "NOERROR",
+    "AA": false,
+    "TC": false,
+    "RD": true,
+    "RA": true,
+    "Z": 0,
+    "answers": [
+     "52.85.112.21"
+    ],
+    "TTLs": [
+     47.0
+    ],
+    "rejected": false,
+    "opcode": 0,
+    "opcode_name": "query"
+   }
+  },
+  {
+   "log": "dns.log",
+   "pcap": "dns-eve.pcap",
+   "record": {
+    "ts": 1464132422.832606,
+    "uid": "CF5cRD1g7Ec31imbt3",
+    "id.orig_h": "10.16.1.11",
+    "id.orig_p": 49697,
+    "id.resp_h": "10.16.1.1",
+    "id.resp_p": 53,
+    "proto": "udp",
+    "trans_id": 3407,
+    "rtt": 0.38101792335510254,
+    "query": "block.dropbox.com",
+    "qclass": 1,
+    "qclass_name": "C_INTERNET",
+    "qtype": 1,
+    "qtype_name": "A",
+    "rcode": 0,
+    "rcode_name": "NOERROR",
+    "AA": false,
+    "TC": false,
+    "RD": true,
+    "RA": true,
+    "Z": 0,
+    "answers": [
+     "block.g1.dropbox.com",
+     "45.58.70.33"
+    ],
+    "TTLs": [
+     9.0,
+     8.0
+    ],
+    "rejected": false,
+    "opcode": 0,
+    "opcode_name": "query"
+   }
+  },
+  {
+   "log": "dns.log",
+   "pcap": "dns-eve.pcap",
+   "record": {
+    "ts": 1464132423.085375,
+    "uid": "CSTI7f1kLeQRUYawU6",
+    "id.orig_h": "10.16.1.11",
+    "id.orig_p": 33458,
+    "id.resp_h": "10.16.1.1",
+    "id.resp_p": 53,
+    "proto": "udp",
+    "trans_id": 44779,
+    "rtt": 0.4079580307006836,
+    "query": "codemonkey.net",
+    "qclass": 1,
+    "qclass_name": "C_INTERNET",
+    "qtype": 1,
+    "qtype_name": "A",
+    "rcode": 0,
+    "rcode_name": "NOERROR",
+    "AA": false,
+    "TC": false,
+    "RD": true,
+    "RA": true,
+    "Z": 2,
+    "answers": [
+     "104.131.202.103"
+    ],
+    "TTLs": [
+     435.0
+    ],
+    "rejected": false,
+    "opcode": 0,
+    "opcode_name": "query"
+   }
+  },
+  {
+   "log": "notice.log",
+   "pcap": "dns-eve.pcap",
+   "record": {
+    "ts": 1464132424.654238,
+    "note": "CaptureLoss::Too_Little_Traffic",
+    "msg": "Only observed 0 TCP ACKs and was expecting at least 1.",
+    "actions": [
+     "Notice::ACTION_LOG"
+    ],
+    "email_dest": [],
+    "suppress_for": 3600.0
+   }
+  },
+  {
+   "log": "modbus.log",
+   "pcap": "modbus.pcap",
+   "record": {
+    "ts": 1093522405.132184,
+    "uid": "CaxUeh1lYhrOM9bq5",
+    "id.orig_h": "10.0.0.9",
+    "id.orig_p": 3082,
+    "id.resp_h": "10.0.0.3",
+    "id.resp_p": 502,
+    "tid": 1,
+    "unit": 10,
+    "func": "READ_HOLDING_REGISTERS",
+    "pdu_type": "REQ"
+   }
+  },
+  {
+   "log": "modbus.log",
+   "pcap": "modbus.pcap",
+   "record": {
+    "ts": 1093522405.134171,
+    "uid": "CaxUeh1lYhrOM9bq5",
+    "id.orig_h": "10.0.0.9",
+    "id.orig_p": 3082,
+    "id.resp_h": "10.0.0.3",
+    "id.resp_p": 502,
+    "tid": 1,
+    "unit": 10,
+    "func": "READ_HOLDING_REGISTERS",
+    "pdu_type": "RESP"
+   }
+  },
+  {
+   "log": "modbus.log",
+   "pcap": "modbus.pcap",
+   "record": {
+    "ts": 1093522432.259088,
+    "uid": "CaxUeh1lYhrOM9bq5",
+    "id.orig_h": "10.0.0.9",
+    "id.orig_p": 3082,
+    "id.resp_h": "10.0.0.3",
+    "id.resp_p": 502,
+    "tid": 1,
+    "unit": 10,
+    "func": "WRITE_SINGLE_COIL",
+    "pdu_type": "REQ"
+   }
+  },
+  {
+   "log": "modbus.log",
+   "pcap": "modbus.pcap",
+   "record": {
+    "ts": 1093521694.213852,
+    "uid": "CBrqie1lhG3n4LvdHh",
+    "id.orig_h": "10.0.0.57",
+    "id.orig_p": 2578,
+    "id.resp_h": "10.0.0.3",
+    "id.resp_p": 502,
+    "tid": 0,
+    "unit": 10,
+    "func": "DIAGNOSTICS_EXCEPTION",
+    "pdu_type": "RESP",
+    "exception": "GATEWAY_TARGET_DEVICE_FAILED_TO_RESPOND"
+   }
+  },
+  {
+   "log": "modbus_detailed.log",
+   "pcap": "modbus.pcap",
+   "record": {
+    "ts": 1093522405.132184,
+    "uid": "CaxUeh1lYhrOM9bq5",
+    "id.orig_h": "10.0.0.9",
+    "id.orig_p": 3082,
+    "id.resp_h": "10.0.0.3",
+    "id.resp_p": 502,
+    "tid": 1,
+    "unit": 10,
+    "func": "READ_HOLDING_REGISTERS",
+    "address": 5,
+    "quantity": 2,
+    "response_values": [
+     9,
+     24
+    ],
+    "matched": true
+   }
+  },
+  {
+   "log": "modbus_detailed.log",
+   "pcap": "modbus.pcap",
+   "record": {
+    "ts": 1093522432.259088,
+    "uid": "CaxUeh1lYhrOM9bq5",
+    "id.orig_h": "10.0.0.9",
+    "id.orig_p": 3082,
+    "id.resp_h": "10.0.0.3",
+    "id.resp_p": 502,
+    "tid": 1,
+    "unit": 10,
+    "func": "WRITE_SINGLE_COIL",
+    "address": 2,
+    "quantity": 1,
+    "request_values": [
+     0
+    ],
+    "response_values": [
+     0
+    ],
+    "matched": true
+   }
+  },
+  {
+   "log": "modbus_detailed.log",
+   "pcap": "modbus.pcap",
+   "record": {
+    "ts": 1093521694.21194,
+    "uid": "CBrqie1lhG3n4LvdHh",
+    "id.orig_h": "10.0.0.57",
+    "id.orig_p": 2578,
+    "id.resp_h": "10.0.0.3",
+    "id.resp_p": 502,
+    "tid": 0,
+    "unit": 10,
+    "func": "DIAGNOSTICS",
+    "matched": true,
+    "request_subfunction_code": "Force Listen Only Mode",
+    "request_data": "\\x00\\x00",
+    "exception_code": "GATEWAY_TARGET_DEVICE_FAILED_TO_RESPOND"
+   }
+  },
+  {
+   "log": "capture_loss.log",
+   "pcap": "dns-eve.pcap",
+   "record": {
+    "ts": 1464132424.654238,
+    "ts_delta": 2.693458080291748,
+    "peer": "zeek",
+    "gaps": 0,
+    "acks": 0,
+    "percent_lost": 0.0
+   }
+  }
+ ]
+}

@@ -99,7 +99,8 @@ REGISTERED_SOURCE_TYPES: frozenset[str] = frozenset({
     "active_directory", "cef", "cisco_asa", "cloudtrail", "db_audit",
     "dns_query", "generic_syslog", "inventory_diff", "k8s_audit", "linux_ssh",
     "m365_audit", "mail_gateway", "mcp_agent", "modbus_anomaly", "n8n_audit",
-    "opcua_audit", "sysmon", "vmware_vsphere", "windows_eventlog",
+    "opcua_audit", "suricata_eve", "sysmon", "vmware_vsphere", "windows_eventlog",
+    "zeek_json",
 })
 
 FORMATS = ("ndjson", "json-array")

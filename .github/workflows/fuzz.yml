@@ -31,7 +31,7 @@ jobs:
       # L8 (2026-08-06 fix): grew from the original 3 to 5 parsers -- db_audit
       # (GRANT/priv-parse, FIX-3-adjacent) and vmware_vsphere (VM operation
       # classification) round out the high-value text parsers.
-      # 2026-08-13 audit: extended to all 19 registered parsers (17 at the 2026-08-13 audit; +mail_gateway, m365_audit 2026-10-14).
+      # 2026-08-13 audit: extended to all 21 registered parsers (17 at the 2026-08-13 audit; +mail_gateway, m365_audit 2026-10-14; +suricata_eve, zeek_json WP-1.5).
       # k8s_audit/cloudtrail/modbus_anomaly/inventory_diff use the run_json
       # harness (tools/fuzz/_common.py) since their parse() requires
       # raw['raw'] to already be a dict; every other target uses the
@@ -43,7 +43,7 @@ jobs:
                  generic_syslog, dns_query, cef, sysmon, active_directory,
                  opcua_audit, n8n_audit, mcp_agent,
                  k8s_audit, cloudtrail, modbus_anomaly, inventory_diff,
-                 mail_gateway, m365_audit]
+                 mail_gateway, m365_audit, suricata_eve, zeek_json]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
