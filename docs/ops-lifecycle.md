@@ -45,20 +45,16 @@ exercised against a live cluster by `make test-live`
 
 ## Backup and restore
 
-**`tools/backup.py`** bundles the two things that live only on this host
-and aren't already in version control into one checksummed `.tar.gz`:
-
-- The RBAC user database (`--rbac-db`, defaults to `$FENGARDE_RBAC_DB`),
-  snapshotted via SQLite's `.backup()` API — safe to run against a DB a
-  live service still has open, unlike a raw file copy.
-- `contracts/` — rules, tenant configs, webhook configs. Most of this is
-  already in git, but an operator's local `contracts/tenants/*.yml` /
-  `contracts/webhooks/*.yml` additions may not be committed anywhere else.
+**`tools/backup.py`** bundles host-only state into one checksummed `.tar.gz`:
+the RBAC DB, the WS-6 inventory/keystore SQLite, the WS-3 audit log, WS-1
+spool files, plugin rule dirs and `contracts/`. SQLite files use the
+`.backup()` API (safe against a live DB). See `docs/upgrade.md` for the full
+runbook, the Docker-volume extraction step (untested) and the explicit
+out-of-scope list (OpenSearch, Redis, GeoIP map).
 
 ```sh
-python tools/backup.py --out ./backups
-python tools/backup.py --out ./backups --rbac-db /data/users.db
-python tools/backup.py --out ./backups --no-contracts   # RBAC DB only
+python tools/backup.py --out ./backups --rbac-db ./users.db --audit-log ./audit.jsonl
+python tools/backup.py --out ./backups --no-contracts
 ```
 
 **`tools/restore.py`** verifies every file's sha256 against the archive's
