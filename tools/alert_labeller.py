@@ -53,6 +53,16 @@ _HOST_RE = re.compile(r"\b(?:[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A
 _USER_RE = re.compile(r"\buser(?:name)?[\"']?\s*[:=]\s*[\"']?([A-Za-z0-9_.@$-]{3,64})", re.I)
 _PSEUDO_RE = re.compile(r"^(?:user|host)-[0-9a-f]{8}$")
 _ALERT_PSEUDO_RE = re.compile(r"^alert-[0-9a-f]{12}$")
+# MAC (colon or dash, one separator style per address), Windows/POSIX profile
+# paths (user segment only) and domain/machine SIDs (S-1-5-21-...). Well-known
+# SIDs (S-1-5-18, S-1-5-32-544, ...) are public constants and stay readable.
+_MAC_RE = re.compile(
+    r"(?<![0-9A-Fa-f:-])[0-9A-Fa-f]{2}([:-])(?:[0-9A-Fa-f]{2}\1){4}[0-9A-Fa-f]{2}(?![0-9A-Fa-f:-])")
+_PROFILE_RE = re.compile(
+    r"((?:[A-Za-z]:)?[\\/]{1,2}Users[\\/]{1,2}|/home/)([^\\/\s\"':*?<>|,;]+)", re.I)
+_PROFILE_PUBLIC = frozenset({"public", "default", "shared", "all users", "default user"})
+_SID_RE = re.compile(r"(?<![\w-])S-1-5-21(?:-\d+){3,4}(?!\d)", re.I)
+_WELLKNOWN_SID_RE = re.compile(r"^S-1-\d+(?:-\d+)*$", re.I)
 _PSEUDO_NET = ipaddress.ip_network("198.18.0.0/15")  # RFC 2544 benchmark range
 
 # Values under these keys are private by key semantics (a bare 'jdoe' matches
@@ -66,6 +76,19 @@ _SAFE_TOP = frozenset({"rule_id", "rule_title", "level", "score", "time",
                        "deck", "alerts_digest", "scrubbed", "scrub_digest"})
 # Top-level fields dropped outright: free text / provenance names.
 _DROP_TOP = frozenset({"note", "alerts_source", "events_source"})
+
+
+def _is_sid_key(key: str) -> bool:
+    k = key.lower()
+    return k == "sid" or k.endswith(("_sid", "-sid", ".sid", "usersid"))
+
+
+def _profile_user_private(name: str) -> bool:
+    """A profile-path user segment that is neither pseudonymised, a public
+    profile dir, nor an unexpanded variable (%USERNAME%, $USER)."""
+    if _PSEUDO_RE.match(name) or name.lower() in _PROFILE_PUBLIC:
+        return False
+    return not name.startswith(("%", "$", "{"))
 
 
 def _digest(text: bytes) -> str:
@@ -140,6 +163,16 @@ class Scrubber:
             local, _, dom = m.group(0).partition("@")
             return f"{self.name('user', local)}@{self.name('host', dom)}"
 
+        def profile(m):
+            who = m.group(2)
+            if not _profile_user_private(who):
+                return m.group(0)
+            return m.group(1) + self.name("user", who)
+
+        text = _MAC_RE.sub(
+            lambda m: f"mac-{self._h('mac', m.group(0).lower().replace('-', ':'), 12)}", text)
+        text = _SID_RE.sub(lambda m: f"sid-{self._h('sid', m.group(0).upper(), 8)}", text)
+        text = _PROFILE_RE.sub(profile, text)
         text = _EMAIL_RE.sub(email, text)
         text = _IP_RE.sub(lambda m: self.ip(m.group(0)), text)
         text = _V6_RE.sub(v6, text)
@@ -172,6 +205,10 @@ class Scrubber:
                 return self.alert_id(node)
             if key in _NAME_KEYS:
                 return self.name("host" if key in _HOST_KEYS else "user", node)
+            if _is_sid_key(key):
+                if _WELLKNOWN_SID_RE.match(node) and not _SID_RE.search(node):
+                    return node
+                return self.name("user", node)
             return self.text(node)
         return node
 
@@ -184,6 +221,9 @@ class Scrubber:
 
 def _text_hits(s: str) -> list[str]:
     hits = []
+    hits += ["mac" for _ in _MAC_RE.finditer(s)]
+    hits += ["sid" for _ in _SID_RE.finditer(s)]
+    hits += ["profile-path" for m in _PROFILE_RE.finditer(s) if _profile_user_private(m.group(2))]
     for m in _IP_RE.finditer(s):
         try:
             if ipaddress.ip_address(m.group(0)) in _PSEUDO_NET:
@@ -219,6 +259,10 @@ def find_private(node: object, path: str = "$", key: str = "", top: bool = True)
         elif key in _NAME_KEYS:
             if not _PSEUDO_RE.match(node):
                 hits.append(f"{path}: name field not pseudonymised")
+        elif _is_sid_key(key):
+            if not (_PSEUDO_RE.match(node)
+                    or (_WELLKNOWN_SID_RE.match(node) and not _SID_RE.search(node))):
+                hits.append(f"{path}: sid field not pseudonymised")
         else:
             hits += [f"{path}: {h}" for h in _text_hits(node)]
     return hits
