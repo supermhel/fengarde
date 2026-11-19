@@ -93,6 +93,11 @@ ROUTES_ADDED_SINCE_REFACTOR: list[tuple[str, str, bool]] = [
     # Not RBAC-only (available in both modes: key/enabled-session with the
     # key, 200 RBAC-off when auth is disabled) -- hence False.
     ("GET", "/auth/check", False),
+    # WP-6.2: admin-only auth_request target + tenant-scoped console feeds.
+    ("GET", "/auth/check-admin", False),
+    ("GET", "/dashboard/alerts", False),
+    ("GET", "/dashboard/events", False),
+    ("GET", "/dashboard/ai-triage", False),
 ]
 
 

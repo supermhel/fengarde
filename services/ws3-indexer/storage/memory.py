@@ -303,3 +303,24 @@ class MemoryStore(StorageAdapter):
             docs = [d for d in docs if ((d.get("siem") or {}).get("tenant") or "default") == tenant_id]
         docs.sort(key=lambda d: d.get("time") or 0, reverse=True)
         return docs[:limit]
+
+    def dashboard_hits(self, kind: str, *, tenant_id: str | None = None,
+                       gte_ms: int = 0) -> list[dict]:
+        prefix = "events" if kind == "events" else "alerts"
+        with self._lock:
+            docs = [d for i, b in self._indices.items() if i.startswith(prefix)
+                    for d in b.values()]
+        if kind == "events":
+            docs = [d for d in docs if (d.get("time") or 0) >= gte_ms]
+        elif kind == "alerts":
+            docs = [d for d in docs
+                    if d.get("rule_title") is not None and (d.get("time") or 0) >= gte_ms]
+        else:
+            docs = [d for d in docs if str(d.get("alert_id", "")).startswith("ai-")]
+        if tenant_id is not None:
+            def tenant(d):
+                t = (d.get("siem") or {}).get("tenant") if kind == "events" else d.get("tenant_id")
+                return t or "default"
+            docs = [d for d in docs if tenant(d) == tenant_id]
+        docs.sort(key=lambda d: d.get("time") or 0, reverse=True)
+        return docs[:self.DASHBOARD_KINDS[kind]]

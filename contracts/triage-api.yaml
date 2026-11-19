@@ -80,13 +80,46 @@ paths:
         "401": { description: not logged in }
   /api/v1/auth/check:
     get:
-      summary: "Credential liveness guard for nginx auth_request (WP-6.1, option C: sessions only). Returns 200 iff the caller holds a valid credential -- the FENGARDE_API_KEY (machine clients) or an active RBAC session cookie (browsers) -- else 401. nginx routes that proxy to an auth-less upstream (OpenSearch direct reads /api/alerts|events|ai-triage, /api/ops/*, /api/prom/*) gate on this status code so those routes stay protected without a browser-side key. Matches _check_auth: key unset means auth-disabled and this returns 200 unconditionally."
+      summary: "Credential liveness guard for nginx auth_request (WP-6.1, option C: sessions only). Returns 200 iff the caller holds a valid credential -- the FENGARDE_API_KEY (machine clients) or an active RBAC session cookie (browsers) -- else 401. Since WP-6.2 no nginx location gates on it any more: the console feeds go through ws3's tenant-scoped /dashboard/* routes and /api/ops/*, /api/prom/* gate on /auth/check-admin. Matches _check_auth: with RBAC on, anonymous callers get 401 even when the key is unset (sessions only); it returns 200 unconditionally only when auth is fully disabled (RBAC off and key unset)."
       responses:
         "200":
           description: caller holds a valid session or API key
           content:
             application/json:
               schema: { type: object, properties: { ok: { type: boolean } } }
+        "401": { description: no valid session or API key }
+  /api/v1/auth/check-admin:
+    get:
+      summary: "Admin-only credential guard for nginx auth_request (WP-6.2). 200 for the FENGARDE_API_KEY (machine clients), an active session with role admin, or fully-disabled auth (RBAC off + key unset); 401 anonymous; 403 for a valid session of any other role. nginx gates /api/ops/* and /api/prom/* on it."
+      responses:
+        "200": { description: caller is admin or holds the API key }
+        "401": { description: no valid session or API key }
+        "403": { description: valid session, role is not admin }
+  /api/v1/dashboard/alerts:
+    get:
+      summary: "Console alert feed in OpenSearch response shape (WP-6.2; nginx /api/alerts proxies here). Newest 50 rule alerts (rule_title present) with time >= gte. Session callers are pinned to their own tenant; admin and the API key see all tenants (tenant_id may narrow). Invalid gte means 0."
+      parameters:
+        - { name: gte, in: query, schema: { type: integer, minimum: 0 }, description: epoch milliseconds lower bound }
+        - { name: tenant_id, in: query, schema: { type: string }, description: narrows admin/API-key callers only }
+      responses:
+        "200": { description: 'hits.hits[]._source alert documents' }
+        "401": { description: no valid session or API key }
+  /api/v1/dashboard/events:
+    get:
+      summary: "Console event feed in OpenSearch response shape (WP-6.2). Newest 100 events with time >= gte; same tenant scoping as /dashboard/alerts."
+      parameters:
+        - { name: gte, in: query, schema: { type: integer, minimum: 0 } }
+        - { name: tenant_id, in: query, schema: { type: string } }
+      responses:
+        "200": { description: 'hits.hits[]._source event documents' }
+        "401": { description: no valid session or API key }
+  /api/v1/dashboard/ai-triage:
+    get:
+      summary: "Console AI-triage feed in OpenSearch response shape (WP-6.2). Newest 200 alert docs whose alert_id starts ai-; same tenant scoping as /dashboard/alerts."
+      parameters:
+        - { name: tenant_id, in: query, schema: { type: string } }
+      responses:
+        "200": { description: 'hits.hits[]._source AI-triage documents' }
         "401": { description: no valid session or API key }
   /api/v1/auth/mfa/enable:
     post:
