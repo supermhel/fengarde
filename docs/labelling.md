@@ -93,6 +93,15 @@ mapping:
   occurs inside free text (`message`, etc.) of every file in the run. Scrubbing
   is deliberately aggressive (e.g. `process.name` is also hashed): the scrubbed
   copy exists for rule-level grading, not forensics;
+- MAC addresses (`aa:bb:cc:dd:ee:ff`, `00-11-22-33-44-55`) → `mac-<h>`;
+- Windows SIDs in the domain/machine range (`S-1-5-21-…`) → `sid-<h>`, and any
+  value under a `sid` / `*_sid` / `*usersid` key → `user-<h>` (like a name
+  key). Well-known SIDs (`S-1-5-18`, `S-1-5-32-544`, …) are public constants
+  and stay readable;
+- the user segment of profile paths (`C:\Users\<name>\…`, `C:/Users/…`,
+  `/Users/…`, `/home/<name>/…`) → the same `user-<h>` pseudonym the name gets
+  elsewhere; the path shape is kept. `Public`, `Default`, `Shared` and unexpanded
+  variables (`%USERNAME%`, `$USER`) are left alone;
 - `alert_id` → `alert-<h>` (make_alert ids are `rule:group:bucket`, so they
   embed the source IP/user). Review and labels must therefore be scrubbed in
   the **same run** (`--labels`) so their ids line up;
@@ -137,4 +146,8 @@ WP-2.3 report takes). Step 4+ can run anywhere — the scrub makes the
 artifacts shareable, which is the only way a labelled file ever leaves the
 box. Known limit: the scrub is pattern- and key-based, so free text carrying a
 private value that is neither under a name key nor regex-shaped (a bare
-nickname in prose) is not caught; skim the published files before sharing.
+nickname in prose) is not caught; skim the published files before sharing. Only the patterns
+listed above are scrubbed (and re-checked by `publish`): other private shapes
+are NOT caught, e.g. MACs written `0011.2233.4455` or `001122334455`, UNC
+paths (`\\server\share\bob`), profile roots other than `Users`/`home`,
+non-`S-1-5-21` SIDs that embed an identifier, GUIDs, phone numbers.

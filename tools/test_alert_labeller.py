@@ -285,6 +285,51 @@ def test_publish_gate():
         check(not (d / "dst_m").exists(), "partial publish happened")
 
 
+def test_scrub_mac_profile_path_sid():
+    sid = "S-1-5-21-1111111111-2222222222-3333333333-1001"
+    doc = {"alert_id": "a1", "rule_id": "r1", "contributing_events": [{
+        "message": "nic aa:bb:cc:dd:ee:ff peer 00-11-22-33-44-55 ran C:\\Users\\bob\\a.ps1 "
+                   "and /home/bob/.ssh/k and C:/Users/carol/x.txt as " + sid + " also S-1-5-18",
+        "user_sid": sid, "TargetUserSid": sid, "sid": "S-1-5-18", "extra_sid": "S-1-5-32-544"}]}
+    s = lab.Scrubber(b"k")
+    out = s.scrub_doc(doc)
+    blob = json.dumps(out)
+    for needle in ("aa:bb:cc:dd:ee:ff", "00-11-22-33-44-55", "bob", "carol", "1111111111", "2222222222",
+                   "3333333333"):
+        check(needle not in blob, f"scrub leaked {needle!r}: {blob}")
+    ev = out["contributing_events"][0]
+    check("S-1-5-18" in ev["message"], "well-known SID in text must survive")
+    check(ev["sid"] == "S-1-5-18" and ev["extra_sid"] == "S-1-5-32-544", "well-known SID under sid key must survive")
+    check(ev["user_sid"] != sid and ev["TargetUserSid"] != sid, "sid-key value must be pseudonymised")
+    check("C:\\Users\\user-" in ev["message"] and "/home/user-" in ev["message"], "path shape must be kept")
+    check(lab.find_private(lab._stamp(out)) == [], f"rescan flags clean output: {lab.find_private(out)}")
+    again = lab.Scrubber(b"k").scrub_doc(doc)
+    check(again == out, "scrub must stay deterministic under the same secret")
+    same_user = lab.Scrubber(b"k").scrub_doc({"user": "bob", "m": "C:\\Users\\bob\\x"})
+    check(same_user["m"].split("\\")[2] == same_user["user"], "path user must reuse the user pseudonym")
+    # publish gate refuses each unscrubbed shape, without echoing the value
+    d = scratch()
+    for i, (label, rec) in enumerate((
+            ("mac colon", {"message": "nic aa:bb:cc:dd:ee:ff"}),
+            ("mac dash", {"message": "nic 00-11-22-33-44-55"}),
+            ("win profile path", {"message": "C:\\Users\\bob\\a.ps1"}),
+            ("posix profile path", {"message": "/home/bob/x"}),
+            ("sid in text", {"message": "owner " + sid}),
+            ("sid key", {"user_sid": sid}),
+            ("sid key bare", {"sid": "bobsid"}))):
+        srcdir = stamped_dir(d / f"s{i}", [{"alert_id": "alert-0123456789ab", **rec}])
+        try:
+            lab.publish_dir(srcdir, d / f"dst_s{i}")
+            check(False, f"publish must REFUSE: {label}")
+        except ValueError as exc:
+            check("refuses to publish" in str(exc), f"{label}: refusal not explicit: {exc}")
+            check(not any(p in str(exc) for p in ("aa:bb", "00-11", "bob", "1111111111")),
+                  f"{label}: refusal echoes the private value: {exc}")
+    ok = stamped_dir(d / "ok", [{"alert_id": "alert-0123456789ab", "sid": "S-1-5-18",
+                                 "message": "S-1-5-32-544 C:\\Users\\Public\\x C:\\Users\\%USERNAME%\\y"}])
+    check(lab.publish_dir(ok, d / "dst_ok") == 1, "well-known SIDs / public profiles must publish")
+
+
 def test_output_paths_must_be_ignored():
     # finding 9 (+7 --dst): refuse targets git check-ignore does not cover
     d = scratch()
@@ -403,7 +448,7 @@ def main() -> int:
              test_pseudonyms_keyed_not_dictionary_reversible,
              test_ip_pseudonyms_consistent_and_collision_free,
              test_scrub_file_multiline_labels_and_note,
-             test_publish_gate, test_output_paths_must_be_ignored,
+             test_publish_gate, test_scrub_mac_profile_path_sid, test_output_paths_must_be_ignored,
              test_lane_end_to_end_and_grade_cli,
              test_grade_precision_n_ci_orphans_dupes, test_grade_fails_loudly]
     try:
