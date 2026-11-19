@@ -273,3 +273,38 @@ No volume was deleted; no `-v`, no `make down`. The only items I removed were my
 (`rbac-live.sqlite*`, `live-inventory.db*`, step 4) and my two `--rm` throwaway containers. Pre-run tar snapshots of the four
 small volumes are in the session scratchpad. Local, uncommitted leftovers in the worktree: `infra/.env`,
 `infra/docker-compose.live.yml`, `stage/`, `backups/`, `restored/`.
+
+## Re-run, 2026-11-19 (after `wp/http-spool-drain` 3e33f45 and `fix/live-tooling-2026-11-19` / PR #180)
+
+Both branches merged (signed off) into `live-2026-11-19` (`9ff6d27`, `5717f0f`; the only conflict was `CHANGELOG.md`, resolved by
+keeping both entries). Same host, same non-empty `os-data` (it now also holds the first run's alerts). This time **no live
+overlay**: `INGEST_HTTP_SPOOL_PATH` was set only in the gitignored `infra/.env`, and the stack was built with plain
+`docker compose -f infra/docker-compose.yml up -d --build` (18:38:02Z).
+
+| Check | Result |
+|---|---|
+| `bash infra/preflight.sh` | PASS: "[ OK ] Windows (MINGW64_NT-10.0-26200, Git Bash/MSYS): vm.max_map_count is managed by Docker Desktop's WSL2 VM (skipped)" ... "PRE-FLIGHT PASSED" |
+| compose pass-through | PASS: `docker exec infra-ws1-collectors-1 env` shows `INGEST_HTTP_SPOOL_PATH=/var/lib/fengarde/spool/http-spool.jsonl` and `TENANT_ID=default` with no overlay; all services healthy |
+| `python tools/chaos_test.py` on the non-empty cluster (18:40:39Z) | **PASS**: `scenarios=40 lost=0 duplicated=0 distinct_alert_ids=0` / `PASS -- zero lost alerts, zero duplicate alerts, one deterministic alert_id per scenario across 40 scenarios, 7 services killed mid-replay` |
+| HTTP spool outage, 12-event batch, 20 s client timeout | **PASS** |
+
+Chaos note: the first run's stale alerts (2026-10-14 and 2026-11-19 17:10Z) are still in the cluster and no longer trip the check,
+so the per-minute scoping works. The summary line prints `distinct_alert_ids=0` on a pass, which looks like a cosmetic counter
+quirk (each scenario did have exactly one alert); I did not investigate it.
+
+Spool outage (redis stopped 18:44:37Z):
+```
+POST (12 events, X-Fengarde-Idempotency-Key set, 20 s timeout)
+  -> 202 {"accepted":0,"spooled":12,"note":"accepted for later delivery (bus down)"} elapsed=2.56s     (first run: >20 s, timeout)
+metrics: http_events_spooled 12, http_spool_pending_events 12, http_spool_pending_bytes 4716, http_events_dropped 0   (gauge == spooled count)
+docker compose start redis (18:44:48Z); poll until pending 0:
+metrics: http_spool_pending_events 0, http_spool_replayed 11, http_spool_dead_lettered 1, http_spool_dead_letter_redriven 1, drain_failed_passes 1
+spool file: 0 bytes; no .dead sidecar left
+opensearch docs for src ip 198.51.100.66: total=12 distinct_ids=12
+```
+One event was parked in `.dead` after a failed pass while Redis was still coming back and was re-sent by the redrive
+(`dead_letter_redriven: 1`), so all 12 reached OpenSearch exactly once; pending went to 0 within the poll window. 2.56 s vs more than 20 s
+before, and the live gauge now matches the spooled count (it read 14 vs 15 before).
+
+Teardown: `docker compose -f infra/docker-compose.yml down` (no `-v`), 18:45:18Z. No `infra-ws*`/`siem-bus`/`siem-store`
+containers remain; all ten `infra_*` volumes still present. The live overlay is no longer needed and was moved out of `infra/`.
