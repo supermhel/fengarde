@@ -610,7 +610,11 @@ def test_per_technique_math() -> None:
     # P1 storylines 6-9 (2026-10-14): non-gap steps / declared steps, from the oracles
     for s, want in (("ransomware", (5, 9)), ("insider_exfil", (2, 7)),
                     ("cloud_iam_abuse", (1, 8)), ("supply_chain_ci", (5, 6)),
-                    ("win_credential_theft", (5, 5)), ("network_credential_abuse", (3, 3))):
+                    ("win_credential_theft", (5, 5)), ("network_credential_abuse", (3, 3)),
+                    # 2026-11-19: the five process-tree-keyed storylines (every step raises an alert)
+                    ("endpoint_macro_c2", (6, 6)), ("excel_loader_domain_abuse", (6, 6)),
+                    ("pdf_exploit_lateral", (7, 7)), ("outlook_script_backdoor", (7, 7)),
+                    ("reader_staged_loader", (6, 6))):
         check(den[s][:2] == want, f"{s} wrong: {den[s]} (want {want})")
 
     # (d) 2 of 12 applicable variants lose a technique's step; N/A excluded

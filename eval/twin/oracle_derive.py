@@ -144,7 +144,9 @@ _WAIVED: dict = {
 # 2026-10-03 phishing_bec: 1 -- common_beaconing's periodicity bound (coefficient of variation of the
 # inter-arrival times) is not modelled by this static interpreter, so c2_beacon is reported UNDECIDED
 # rather than guessed. The engine and the negative twins (5-of-6 beats, irregular interval) cover it.
-_F2_CAP: dict = {"phishing_bec": 1}
+# 2026-11-19 the keyed storylines that carry a c2_beacon step (endpoint_macro_c2, pdf_exploit_lateral,
+# outlook_script_backdoor): the same one undecidable rule, the same reason.
+_F2_CAP: dict = {"phishing_bec": 1, "endpoint_macro_c2": 1, "pdf_exploit_lateral": 1, "outlook_script_backdoor": 1}
 
 _REASON_RE = re.compile(r"^\d{4}-\d{2}-\d{2} \S.{8,}")
 

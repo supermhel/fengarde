@@ -1,0 +1,170 @@
+# =============================================================================
+# FENGARDE eval/twin/oracle_outlook_script_backdoor.yaml
+# Grading ground truth for the keyed Outlook-script backdoor storyline (storyline_outlook_script_backdoor.py):
+#   lolbin_shell -> ps_cradle -> lsass_read -> ephemeral_account -> group_add -> c2_beacon -> log_clear
+#
+# AUTHORING RULES (written 2026-11-19 BEFORE the builder was run through the pipeline; the builder was
+# written first only so the step labels and the raw process-tree keys exist; every expectation here comes
+# from the shipped rules' own description/detection blocks and the parser docstrings, not from observed output).
+#   1. NO RULE WAS INVENTED and NO MISSING-RULE GAP is declared: every step is covered by a shipped rule.
+#   2. incident_count: first written as 1. CORRECTED 2026-11-19, after reading report._incident_membership_grade
+#      and before the oracle was re-scored: that field counts the incidents carrying the FULL chain, and a chain
+#      whose every alert names the same account AND the same workstation is carried by BOTH WS-8 tracks (actor and
+#      device; tracks never merge), so the intent-first answer is 2, not 1.
+#   3. THE FORBIDDEN RELATIONSHIPS are the anti-causal reversals of allowed ones (a later step cannot cause an
+#      earlier one). They share the account with the steps they must not precede, so the actor track joins them
+#      in both directions; they are recorded on oracle_consistency's order-blind accepted list, not hidden. Their
+#      job is the ADR-011 n gap: each survives to two distinct timed edges of one incident graph.
+#   4. causal_links (ADR-012 WP 7) are DERIVED from the builder's RAW Sysmon records by
+#      sysmon_tree.derive_links (ProcessGuid lineage, scoped by Computer), never typed by hand; the storyline's
+#      test pins this block to that derivation. `via: spawn` = child ParentProcessGuid == parent ProcessGuid (the
+#      ADR table); `via: acting_process` = an EID 3 / EID 10 event done by the process an earlier EID 1 created.
+#   5. SCOPE HONESTY. The rules are single-shot heuristics or coarse volume rules: this shows they fire on
+#      attack-shaped input, not a false-positive rate on a real estate.
+# =============================================================================
+schema_version: 1
+oracle_id: "outlook-script-backdoor-v1"
+kind: "attack-chain-grading-oracle"
+scope: "outlook-script-backdoor"
+
+provenance:
+  authored: "2026-11-19"
+  pipeline_run_before_authoring: false
+  basis: "rule description/detection/siem blocks and parser docstrings only"
+  rules_read:
+    common_beaconing: "b83ae4d66ca4e8634540c5efeb8d35f21b595d2e4426793d76eb4115a7dd8b5e"
+    common_priv_grant: "3d7b783edf6df5e578f154446316404f07d0bcc5837ac9180d00481198f8c14d"
+    common_rapid_account_lifecycle: "5e3f99f11fd658621fc411e0777e39089937dee33285ba3c4c99f43f0416227a"
+    win_audit_log_cleared: "385255313468f912449ed7144d6533882a13ab07ff300f6759bc03ac418158e4"
+    win_lsass_access_suspicious: "02de7077b3428d4da203017261de603dc47bc14b919bbe3cb9474df0454aa1e9"
+    win_office_spawns_shell: "5365f833d20260efc2fafd6081b57526e11fa7bd5e7f243372769ccc9a234e14"
+    win_powershell_suspicious_script: "e6d74f5de73c351be57644faa6e92e8bad91160446ed56aa6a13a5f1db661373"
+
+expected_sequence:
+  - lolbin_shell
+  - ps_cradle
+  - lsass_read
+  - ephemeral_account
+  - group_add
+  - c2_beacon
+  - log_clear
+
+sequence_constraints:
+  strict_order: true
+  allow_extra_steps: false
+  max_clock_span_seconds: 3600
+
+allowed_relationships:
+  - {from: lolbin_shell, to: ps_cradle, allowed: true, causal_kind: execution}
+  - {from: ps_cradle, to: lsass_read, allowed: true, causal_kind: credential_access}
+  - {from: lsass_read, to: ephemeral_account, allowed: true, causal_kind: persistence}
+  - {from: ephemeral_account, to: group_add, allowed: true, causal_kind: privilege_escalation}
+  - {from: group_add, to: c2_beacon, allowed: true, causal_kind: command_and_control}
+  - {from: c2_beacon, to: log_clear, allowed: true, causal_kind: defense_evasion}
+  - {from: log_clear, to: lolbin_shell, allowed: false, causal_kind: none}
+  - {from: c2_beacon, to: lsass_read, allowed: false, causal_kind: none}
+  - {from: group_add, to: ps_cradle, allowed: false, causal_kind: none}
+
+detection_points:
+  lolbin_shell:
+    step: lolbin_shell
+    role: "a document host (Outlook) starts a script host (wscript)"
+    expected_event_source: "sysmon EventID 1 (class 1002, activity 1, unmapped.process_launch.suspicious)"
+    expected_rules:
+      - {rule_id: "5b7e0d3a-91c4-4f6e-8a2d-3c1f9e7b4a10", title: "Document host spawned a shell or script host", level: high, role: user execution (T1204.002)}
+    gap: {no_rule_exists: false}
+
+  ps_cradle:
+    step: ps_cradle
+    role: "script-block logging records a download-and-execute cradle"
+    expected_event_source: "windows_eventlog 4104 (class 1002, activity 6, unmapped.powershell.suspicious)"
+    expected_rules:
+      - {rule_id: "79a1b4be-2ffb-4aba-8051-f09b4863ffc4", title: "Suspicious PowerShell script content", level: high, role: execution detection (T1059.001)}
+    gap: {no_rule_exists: false}
+
+  lsass_read:
+    step: lsass_read
+    role: "an untrusted caller opens lsass.exe with a dump-capable access mask"
+    expected_event_source: "sysmon EventID 10 (class 1002, activity 5, unmapped.lsass_access_suspicious)"
+    expected_rules:
+      - {rule_id: "ed287553-9e4b-45c1-8189-625dfbad7442", title: "Suspicious process access to lsass.exe", level: critical, role: credential dumping (T1003.001)}
+    gap: {no_rule_exists: false}
+
+  ephemeral_account:
+    step: ephemeral_account
+    role: "a local account is created and deleted within the rule's hour (stateful: two events on one target)"
+    expected_event_source: "windows_eventlog 4720 + 4726 (class 3003, activity 1 and 4)"
+    expected_rules:
+      - {rule_id: "e5f60718-92a3-4b42-9c5d-6e7f80910415", title: "Rapid account create-then-delete (same target account)", level: high, role: persistence (T1136)}
+    gap: {no_rule_exists: false}
+
+  group_add:
+    step: group_add
+    role: "the account is added to the local Administrators group (single-shot)"
+    expected_event_source: "windows_eventlog 4728 / 4732 (class 3003, activity 5)"
+    expected_rules:
+      - {rule_id: "7d3e9a52-1f6c-4a88-9b3d-2e5c8f1a6d40", title: "Privileged group membership grant", level: high, role: account manipulation (T1098)}
+    gap: {no_rule_exists: false}
+
+  c2_beacon:
+    step: c2_beacon
+    role: "20+ accepted outbound connections from one source at a regular interval"
+    expected_event_source: "sysmon EventID 3 (class 4001, activity 7)"
+    expected_rules:
+      - {rule_id: "f6071829-a3b4-4c53-9d6e-7f8091a2b526", title: "Regular-interval outbound connections from one source (beaconing)", level: medium, role: command and control (T1071)}
+    gap: {no_rule_exists: false}
+
+  log_clear:
+    step: log_clear
+    role: "the Security event log is cleared (single-shot)"
+    expected_event_source: "windows_eventlog 1102 (class 1002, activity 4)"
+    expected_rules:
+      - {rule_id: "17dcc2b9-4d62-4fc2-9833-83954bf1b902", title: "Windows audit log cleared", level: high, role: defense evasion (T1070.001)}
+    gap: {no_rule_exists: false}
+
+# No step's detection needs another step's telemetry: every rule here keys on its own events.
+step_dependencies: {}
+
+severity_band:
+  score: {min: 40, max: 100}
+  severity_id: {min: 3, max: 6}
+  dominant_band: "high"
+
+evidence:
+  correlation_key: [actor.user.name]
+  per_step:
+    lolbin_shell: {fields: [actor.user.name, actor.process.name, unmapped.process_launch.parent]}
+    ps_cradle: {fields: [actor.user.name, src_endpoint.hostname, unmapped.powershell.indicators]}
+    lsass_read: {fields: [actor.process.name, unmapped.target_process, unmapped.granted_access]}
+    ephemeral_account: {fields: [actor.user.name, unmapped.target_user.name]}
+    group_add: {fields: [actor.user.name, unmapped.target_user.name]}
+    c2_beacon: {fields: [src_endpoint.ip, dst_endpoint.ip]}
+    log_clear: {fields: [actor.user.name, src_endpoint.hostname]}
+
+incident_membership:
+  incident_count: 2          # actor track + device track each carry the whole single-host chain (see authoring rule 2)
+  incident_key: "outlook-script-backdoor"
+  include: [lolbin_shell, ps_cradle, lsass_read, ephemeral_account, group_add, c2_beacon, log_clear]
+  cross_step_rule_ids:
+    - "f6071829-a3b4-4c53-9d6e-7f8091a2b526"
+    - "7d3e9a52-1f6c-4a88-9b3d-2e5c8f1a6d40"
+    - "e5f60718-92a3-4b42-9c5d-6e7f80910415"
+    - "17dcc2b9-4d62-4fc2-9833-83954bf1b902"
+    - "ed287553-9e4b-45c1-8189-625dfbad7442"
+    - "5b7e0d3a-91c4-4f6e-8a2d-3c1f9e7b4a10"
+    - "79a1b4be-2ffb-4aba-8051-f09b4863ffc4"
+
+# Read-side campaign view (links incidents sharing a member alert). REPORTED, never gated.
+campaign_membership:
+  campaign_count: 1
+  full_coverage: true
+
+# ADR-012 WP 7: process-tree links DERIVED from the builder's raw Sysmon keys (never hand-typed; the
+# storyline's test fails if this block differs from sysmon_tree.derive_links).
+causal_links:
+  - {from: lolbin_shell, to: ps_cradle, basis: process_tree, via: spawn}
+  - {from: ps_cradle, to: c2_beacon, basis: process_tree, via: spawn}
+  - {from: ps_cradle, to: ephemeral_account, basis: process_tree, via: spawn}
+  - {from: ps_cradle, to: group_add, basis: process_tree, via: spawn}
+  - {from: ps_cradle, to: log_clear, basis: process_tree, via: spawn}
+  - {from: ps_cradle, to: lsass_read, basis: process_tree, via: spawn}

@@ -148,6 +148,27 @@ _ACCEPTED: dict = {
     ("insider_exfil", "forbidden", "cover_tracks", "grant_self_access"): _ORDER_BLIND,
     ("insider_exfil", "forbidden", "exfil_upload", "bulk_table_read"): _ORDER_BLIND,
     ("supply_chain_ci", "forbidden", "privileged_runner", "ci_secret_read"): _ORDER_BLIND,
+    # 2026-11-19 the five keyed storylines (ADR-011 n gap / ADR-012 WP 7), measured on the first run (seed 7),
+    # not tuned: every rule fired as the intent-first oracles said; only this known order-blind channel
+    # disagreed. Each forbidden pair is the anti-causal reversal of an allowed one and shares the compromised
+    # account with the step it must not precede, so the actor track joins it in both directions. They are
+    # DELIBERATE: ADR-011 F4 counts a forbidden pair only if both sides reach distinct timed edges of one graph,
+    # which is exactly the case this channel cannot reject.
+    ("endpoint_macro_c2", "forbidden", "log_clear", "macro_shell"): _ORDER_BLIND,
+    ("endpoint_macro_c2", "forbidden", "c2_beacon", "lsass_read"): _ORDER_BLIND,
+    ("endpoint_macro_c2", "forbidden", "service_persistence", "ps_cradle"): _ORDER_BLIND,
+    ("excel_loader_domain_abuse", "forbidden", "log_clear", "loader_shell"): _ORDER_BLIND,
+    ("excel_loader_domain_abuse", "forbidden", "group_escalation", "lsass_read"): _ORDER_BLIND,
+    ("excel_loader_domain_abuse", "forbidden", "directory_tamper", "ps_cradle"): _ORDER_BLIND,
+    ("pdf_exploit_lateral", "forbidden", "log_clear", "pdf_shell"): _ORDER_BLIND,
+    ("pdf_exploit_lateral", "forbidden", "c2_beacon", "lsass_read"): _ORDER_BLIND,
+    ("pdf_exploit_lateral", "forbidden", "local_admin_add", "lateral_logons"): _ORDER_BLIND,
+    ("outlook_script_backdoor", "forbidden", "log_clear", "lolbin_shell"): _ORDER_BLIND,
+    ("outlook_script_backdoor", "forbidden", "c2_beacon", "lsass_read"): _ORDER_BLIND,
+    ("outlook_script_backdoor", "forbidden", "group_add", "ps_cradle"): _ORDER_BLIND,
+    ("reader_staged_loader", "forbidden", "log_clear", "reader_shell"): _ORDER_BLIND,
+    ("reader_staged_loader", "forbidden", "service_persistence", "ps_cradle"): _ORDER_BLIND,
+    ("reader_staged_loader", "forbidden", "directory_tamper", "lsass_read"): _ORDER_BLIND,
 }
 # History. The map was EMPTY from 2026-10-01: the three AI-to-OT disagreements that used to live here
 # (a stale process_anomaly gap; agent_tool_call_burst and agent_destructive_command

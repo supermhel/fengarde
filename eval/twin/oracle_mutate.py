@@ -616,6 +616,26 @@ _EQUIVALENT: dict = {
         "2026-10-14 no graph exists (no incident promotes), so a reversed pair is as unjoined as the original")},
     ("cloud_iam_abuse", "swap_adjacent_steps", "SURVIVED"): {"max": 7, "reason": (
         "2026-10-14 one alert-raising step only: no alert order exists to disagree about")},
+    # the five process-tree-keyed storylines (2026-11-19, measured on seed 7 on their first run; the same two
+    # order-blind mechanisms already waived for the older storylines, nothing tuned to fit). Every step raises
+    # an alert and all steps share one compromised account, so the graph joins each allowed pair in BOTH
+    # directions: reversing an allowed pair changes no graded output (SURVIVED), and re-labelling a forbidden
+    # (anti-causal) pair as allowed removes a joined forbidden pair, which scores BETTER (IMPROVED).
+    ("endpoint_macro_c2", "reverse_relationship", "SURVIVED"): {"max": 5, "reason": "2026-11-19 " + _ORDER_BLIND_M},
+    ("endpoint_macro_c2", "flip_relationship", "IMPROVED"): {"max": 3, "reason": (
+        "2026-11-19 three forbidden->allowed flips on anti-causal pairs the graph joins in both directions: " + _ORDER_BLIND_M)},
+    ("excel_loader_domain_abuse", "reverse_relationship", "SURVIVED"): {"max": 5, "reason": "2026-11-19 " + _ORDER_BLIND_M},
+    ("excel_loader_domain_abuse", "flip_relationship", "IMPROVED"): {"max": 3, "reason": (
+        "2026-11-19 three forbidden->allowed flips on anti-causal pairs the graph joins in both directions: " + _ORDER_BLIND_M)},
+    ("pdf_exploit_lateral", "reverse_relationship", "SURVIVED"): {"max": 6, "reason": "2026-11-19 " + _ORDER_BLIND_M},
+    ("pdf_exploit_lateral", "flip_relationship", "IMPROVED"): {"max": 3, "reason": (
+        "2026-11-19 three forbidden->allowed flips on anti-causal pairs the graph joins in both directions: " + _ORDER_BLIND_M)},
+    ("outlook_script_backdoor", "reverse_relationship", "SURVIVED"): {"max": 6, "reason": "2026-11-19 " + _ORDER_BLIND_M},
+    ("outlook_script_backdoor", "flip_relationship", "IMPROVED"): {"max": 3, "reason": (
+        "2026-11-19 three forbidden->allowed flips on anti-causal pairs the graph joins in both directions: " + _ORDER_BLIND_M)},
+    ("reader_staged_loader", "reverse_relationship", "SURVIVED"): {"max": 5, "reason": "2026-11-19 " + _ORDER_BLIND_M},
+    ("reader_staged_loader", "flip_relationship", "IMPROVED"): {"max": 3, "reason": (
+        "2026-11-19 three forbidden->allowed flips on anti-causal pairs the graph joins in both directions: " + _ORDER_BLIND_M)},
 }
 
 # normalised oracle key path -> "label: YYYY-MM-DD reason". ``declared-but-unenforced``: the oracle states it as a
@@ -711,6 +731,19 @@ _INERT_KEYS: dict = {
         "evasion_search.verify_subset_equivalence and scenario_matrix._dependents (cloud_iam_abuse's "
         "victim_session -> attacker_console_login displacement control); the mutation grader never moves on it"),
     "detection_points.*.gap.partial": _DOC,
+    # the five process-tree-keyed storylines (2026-11-19; ADR-012 WP 7). ``causal_links`` is derived from the
+    # builder's RAW Sysmon keys and pinned by each storyline's own test (keyed_storyline_checks); no grader reads
+    # it yet (the causal-link metric is the later WP), so perturbing it moves nothing here.
+    "provenance.rules_read.common_priv_grant": _PROV_PIN,
+    "causal_links[].basis": "cross-instrument: 2026-11-19 pinned to sysmon_tree.derive_links over the raw records by "
+                            "each keyed storyline's test_storyline_<name>.py; no mutation grader reads it (the "
+                            "causal-link metric is ADR-012 WP 7's later step)",
+    "causal_links[].from": "cross-instrument: 2026-11-19 pinned to sysmon_tree.derive_links over the raw records by "
+                           "each keyed storyline's test_storyline_<name>.py; no mutation grader reads it",
+    "causal_links[].to": "cross-instrument: 2026-11-19 pinned to sysmon_tree.derive_links over the raw records by "
+                         "each keyed storyline's test_storyline_<name>.py; no mutation grader reads it",
+    "causal_links[].via": "cross-instrument: 2026-11-19 pinned to sysmon_tree.derive_links over the raw records by "
+                          "each keyed storyline's test_storyline_<name>.py; no mutation grader reads it",
 }
 
 
