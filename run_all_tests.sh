@@ -54,6 +54,7 @@ $PY tools/test_dns_cardinality_report.py || { fail=1; FAILED="${FAILED} ${LAST_H
 echo
 echo "== WP-3.2 prod gate: FENGARDE_PROFILE=prod refuses insecure starts, first-boot file =="; LAST_HEADER="== WP-3.2 prod gate =="
 $PY tools/test_prodcheck.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+$PY tools/test_ws3_prod_ordering.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 $PY tools/test_compose_prod_env.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
 echo "== tools: fengarde_loadtest harness (percentiles + realistic profile stays alert-light) =="; LAST_HEADER="== tools: fengarde_loadtest harness (percentiles + realistic profile stays alert-light) =="

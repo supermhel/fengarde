@@ -133,13 +133,28 @@ Safety rails:
 | ws1 HTTP ingest | not the prod gate: it already refuses to start without `FENGARDE_INGEST_TOKEN` | own token |
 | ws7 dashboard | not wired: nginx image, no Python entrypoint (basic-auth via its own template) | out of scope |
 
+**`FENGARDE_PROFILE=prod` does NOT secure OpenSearch or OpenSearch Dashboards.** Both still run
+with the security plugin disabled (`DISABLE_SECURITY_PLUGIN=true` /
+`DISABLE_SECURITY_DASHBOARDS_PLUGIN=true` in `infra/docker-compose.yml`), and the prod gate
+does not check for it. They are published on loopback only (`127.0.0.1:9200`, `127.0.0.1:5601`);
+keep them off any reachable interface or secure them yourself.
+
 Network exposure (unchanged by this profile): the ws1 syslog UDP port 5514 is
 published on all interfaces and is plaintext by protocol; ws1 TCP syslog 5515
 and HTTP ingest 8554, the ws6 API, the console, Redis and OpenSearch are
 published on loopback only, and the ws3 triage API is not published at all.
 "Plaintext ports are not published" is therefore true only of the console and
 the ingest edge (loopback, TLS at the reverse proxy per `docs/deployment.md`),
-not of syslog UDP. The prod gate adds no TLS.
+not of syslog UDP. The prod gate adds no TLS. The opt-in `observability` profile publishes
+Prometheus on `127.0.0.1:9090`, Grafana on `127.0.0.1:3000` (admin password defaults to `admin`
+unless `GF_SECURITY_ADMIN_PASSWORD` is set; the prod gate does not check it) and GoatCounter on
+`127.0.0.1:8081`; all loopback, none covered by the gate.
+
+Ordering note (why the triage thread is safe): `serve()` calls
+`prod_or_die("ws3-indexer-triage")` inside a daemon thread, where `sys.exit` would only end the
+thread, not the process. That is safe only because ws3 `main()` runs `require_auth_or_die`
+(-> `prod_or_die`) on the main thread before the thread starts;
+`tools/test_ws3_prod_ordering.py` pins it.
 
 ## Example prod compose env (non-demo)
 
