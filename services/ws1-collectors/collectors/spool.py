@@ -228,7 +228,7 @@ class BoundedSpool:
         with self._lock:
             try:
                 with self.path.open("r", encoding="utf-8", errors="replace") as f:
-                    return sum(1 for _ in f)
+                    return sum(1 for ln in f if ln.strip())  # blank lines are not events
             except OSError:
                 return 0
 

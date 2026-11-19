@@ -681,8 +681,88 @@ def test_redrive_disk_full_and_cap():
               f"poison must remain parked: {_dead_ids(sp)}")
 
 
+class _SlowDownBus:
+    """produce() sleeps (client connect/retry timeout) then raises; counts attempts."""
+
+    def __init__(self, delay=0.2):
+        self.delay = delay
+        self.attempts = 0
+
+    def produce(self, topic, key, payload):
+        self.attempts += 1
+        time.sleep(self.delay)
+        raise ConnectionError("simulated redis connection refused")
+
+
+def test_bus_down_batch_spools_fast_and_flag_skips_bus():
+    with tempfile.TemporaryDirectory() as td:
+        bus = _SlowDownBus(delay=0.2)
+        # no drain interference: interval far longer than the test
+        c, hp, spool = _start_collector(bus, td, interval=3600)
+        try:
+            batch = _ndjson([dict(RECORD_A, NewProcessId=hex(i)) for i in range(50)])
+            t0 = time.time()
+            st, body = _post(hp, _INGEST, batch)
+            took = time.time() - t0
+            check(st == 202 and body.get("spooled") == 50,
+                  f"50-event outage batch must 202 with all spooled: {st} {body}")
+            check(took < 2.0, f"outage batch must not pay a timeout per event: {took:.1f}s")
+            check(bus.attempts == 1,
+                  f"only the first produce may touch the bus, got {bus.attempts}")
+            st2, body2 = _post(hp, _INGEST, _ndjson([RECORD_A, RECORD_B]))
+            check(st2 == 202 and body2.get("spooled") == 2 and bus.attempts == 1,
+                  f"next batch must skip the bus while flagged: {st2} {body2} "
+                  f"attempts={bus.attempts}")
+            m = c.metrics()
+            check(m["http_events_spooled"] == 52 and m["http_events_dropped"] == 0
+                  and m["http_spool_pending_events"] == 52,
+                  f"counters/gauge must match 52 spooled: {m}")
+            # flag lapses -> the bus is tried again
+            c._bus_down_until = 0.0
+            _post(hp, _INGEST, _ndjson([RECORD_A]))
+            check(bus.attempts == 2, f"after the hold lapses the bus is retried: {bus.attempts}")
+        finally:
+            c.stop()
+
+
+def test_payload_rejection_does_not_flag_bus_down():
+    with tempfile.TemporaryDirectory() as td:
+        bus = _FlappableBus(down=False, reject=lambda p: p["raw"].get("NewProcessId") == "0xbad")
+        c, hp, spool = _start_collector(bus, td, interval=3600)
+        try:
+            bad = dict(RECORD_A, NewProcessId="0xbad")
+            st, body = _post(hp, _INGEST, _ndjson([bad, RECORD_A, RECORD_B]))
+            m = c.metrics()
+            check(m["http_events_spooled"] == 1 and m["http_events_accepted"] == 2,
+                  f"one rejected payload spools, the rest go to the bus: {st} {body} {m}")
+        finally:
+            c.stop()
+
+
+def test_pending_gauge_is_live_not_a_stale_snapshot():
+    # PR #166 live run: http_spool_pending_events=14 while http_events_spooled=15. The gauge was the
+    # line count at the END OF THE LAST DRAIN PASS; an event spooled after that pass was invisible
+    # until the next pass. It is now counted live (non-blank lines).
+    with tempfile.TemporaryDirectory() as td:
+        bus = _FlappableBus(down=True)
+        c, hp, spool = _start_collector(bus, td, interval=0.05)
+        try:
+            check(_wait_for(lambda: c.spool_drain_passes >= 1), "drain pass must run")
+            c._spool_stop.set()        # freeze the loop: no further snapshot refresh
+            time.sleep(0.2)
+            _post(hp, _INGEST, _ndjson([RECORD_A, RECORD_B]))
+            m = c.metrics()
+            check(m["http_events_spooled"] == 2 and m["http_spool_pending_events"] == 2,
+                  f"gauge must see events spooled after the last pass: {m}")
+        finally:
+            c.stop()
+
+
 def main():
     t0 = time.time()
+    test_bus_down_batch_spools_fast_and_flag_skips_bus()
+    test_payload_rejection_does_not_flag_bus_down()
+    test_pending_gauge_is_live_not_a_stale_snapshot()
     test_dead_letter_refusal_keeps_event_in_spool()
     test_poison_run_longer_than_probe_cap_drains()
     test_redrive_disk_full_and_cap()

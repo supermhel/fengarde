@@ -138,12 +138,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   This is a heuristic: a transient error that hits the same event twice while
   the next event gets through also dead-letters it. Replay order is not
   preserved across a dead-lettered event. New `/metrics` leaves:
-  `http_spool_pending_bytes`, `http_spool_pending_events` (as of the last pass),
+  `http_spool_pending_bytes`, `http_spool_pending_events` (live),
   `http_spool_replayed`, `http_spool_drain_passes`,
   `http_spool_drain_failed_passes`, `http_spool_dead_lettered`,
   `http_spool_dead_letter_write_failures`, `http_spool_corrupt_lines_skipped`; a
   throttled (30 s) `http spool drain: bus refused spooled events` warning logs
   the last error.
+- **Outage latency and gauge fix.** With Redis down each HTTP event paid the
+  client's connect/retry timeout (~3.4 s) before being spooled, so a 12-event POST
+  took ~60 s. After one bus-unavailable produce failure (not a payload
+  TypeError/ValueError) the collector spools the rest of the batch and following
+  batches for 3 s without touching the bus (only when a spool is configured).
+  `http_spool_pending_events` was the line count at the end of the last drain pass,
+  so events spooled after that pass were missing (14 vs `http_events_spooled` 15);
+  it is now counted live from the spool file (non-blank lines). It can still differ
+  from `http_events_spooled` (a lifetime counter) after replays or dead-lettering.
+  `infra/docker-compose.yml` now passes `INGEST_HTTP_SPOOL_PATH` (empty = off),
+  `INGEST_HTTP_SPOOL_MAX_BYTES` and `TENANT_ID` (default `default`) to ws1-collectors.
 - **Ordering caveat.** While the bus is up, live batches are produced directly
   and may overtake older spooled events: FIFO holds within the spool only.
 - **Test** `test_http_spool_drain.py` (fast tier): real collector, real HTTP,

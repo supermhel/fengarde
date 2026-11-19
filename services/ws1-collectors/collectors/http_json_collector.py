@@ -80,6 +80,11 @@ DEFAULT_MAX_EVENTS_PER_SEC = 2000         # per-source, same shape as syslog
 DEFAULT_MAX_CONCURRENT = 16               # ThreadingHTTPServer thread guard
 _READ_CHUNK = 64 * 1024
 DEFAULT_MAX_SOURCES = 4096                # bound on the per-source bucket map (LRU)
+# After a bus-unavailable produce failure, how long (seconds) ingest requests skip the bus and
+# spool directly (only when a spool is configured). Bounds both the per-batch stall and the extra
+# time live events keep going to the spool after the bus returns (the drain loop replays them).
+DEFAULT_BUS_DOWN_HOLD_S = 3.0
+
 # How often the spool-drain thread retries replaying spooled events into the
 # bus (same default as the UDP/TCP syslog loops). A bus outage makes the drain
 # fail fast and retry next interval; nothing is dropped while the spool has
@@ -195,6 +200,7 @@ class HttpJsonCollector:
                  max_events_per_sec_per_source: float = 0,
                  spool: Optional[BoundedSpool] = None,
                  spool_drain_interval_s: float = DEFAULT_SPOOL_DRAIN_INTERVAL_S,
+                 bus_down_hold_s: float = DEFAULT_BUS_DOWN_HOLD_S,
                  extra_source_types=(),
                  trusted_proxies=(),
                  logger=None):
@@ -237,6 +243,12 @@ class HttpJsonCollector:
         # listener is up, so Event.wait() returned at once and the loop
         # busy-spun -- PR #166 review F166-1.)
         self._spool_stop = threading.Event()
+        # Live "bus is down" hint (monotonic deadline). Set when a produce fails with a
+        # bus-unavailable error; until it lapses, batches go straight to the spool instead of
+        # paying the client's connect/retry timeout (~3.4 s each with Redis stopped) per event.
+        # The drain loop, not the request path, is what probes recovery.
+        self._bus_down_hold_s = max(0.0, float(bus_down_hold_s))
+        self._bus_down_until = 0.0
         self._spool_pending_events = 0       # as of the last drain pass
         self.spool_drain_passes = 0
         self.spool_drain_failed_passes = 0   # passes where the bus refused events
@@ -443,10 +455,23 @@ class HttpJsonCollector:
                     **({"shipper": shipper_id} if shipper_id else {}),
                 }),
             }
+            if (self._spool is not None
+                    and time.monotonic() < self._bus_down_until):
+                # Bus known down: spool at once, no per-event client timeout.
+                if self._try_spool(key, event):
+                    spooled += 1
+                else:
+                    dropped += 1
+                continue
             try:
                 self.bus.produce(self.topic, key=key, payload=event)
                 accepted += 1
-            except Exception:
+            except Exception as exc:
+                # A payload the bus refuses (TypeError/ValueError) says nothing about
+                # availability; anything else (connection refused, timeout) does.
+                if (self._spool is not None
+                        and not isinstance(exc, (TypeError, ValueError))):
+                    self._bus_down_until = time.monotonic() + self._bus_down_hold_s
                 if self._try_spool(key, event):
                     spooled += 1
                 else:
@@ -520,13 +545,14 @@ class HttpJsonCollector:
     def _spool_metrics(self) -> dict:
         """Spool health gauges (empty when no spool is configured). A growing
         pending_bytes with replayed flat and drain_failed_passes rising is a
-        stuck spool; dead_lettered > 0 means events were parked in <spool>.dead."""
+        stuck spool; pending_events is counted live from the file (non-blank lines);
+        dead_lettered > 0 means events were parked in <spool>.dead."""
         spool = self._spool
         if spool is None:
             return {}
         return {
             "http_spool_pending_bytes": spool.pending_bytes(),
-            "http_spool_pending_events": self._spool_pending_events,
+            "http_spool_pending_events": spool.pending_count(),
             "http_spool_replayed": spool.replayed_total,
             "http_spool_drain_passes": self.spool_drain_passes,
             "http_spool_drain_failed_passes": self.spool_drain_failed_passes,

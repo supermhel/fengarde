@@ -34,6 +34,9 @@ Authorization: Bearer <FENGARDE_INGEST_TOKEN>
   `collectors/spool.py` machinery as syslog if `INGEST_HTTP_SPOOL_PATH` is set
   → `202` (accepted for later delivery); without a spool → `503` (dropped,
   counted).
+  A failed produce marks the bus down for 3 s: the rest of the batch and following
+  batches in that window go straight to the spool (no per-event client timeout, so
+  a large batch still answers `202` promptly); the drain thread probes recovery.
   A `http-json-spool-drain` thread replays the spool into the bus every 5 s
   once it accepts events again. Replay is **at-least-once**: a hard crash can
   re-send up to 500 already-delivered events (same `ingest_id`, so WS-3 stores
@@ -220,4 +223,13 @@ What each recipe does and does NOT cover, per source, is tracked in
 | `INGEST_HTTP_MAX_BODY_BYTES` | `1048576` | per-request body cap → 413 |
 | `INGEST_HTTP_MAX_EVENTS_PER_SEC` | `2000` | per-source token bucket → 429 |
 | `INGEST_HTTP_SPOOL_PATH` | unset | on-disk JSONL fallback when the bus is down |
-| `INGEST_HTTP_SPOOL_MAX_BYTES` | spool default | spool cap |
+| `INGEST_HTTP_SPOOL_MAX_BYTES` | spool default (64 MiB) | spool cap |
+| `TENANT_ID` | `default` | tenant stamped on events and keying the tenant rate bucket |
+
+**Docker Compose:** `infra/docker-compose.yml` passes `INGEST_HTTP_SPOOL_PATH`,
+`INGEST_HTTP_SPOOL_MAX_BYTES` and `TENANT_ID` through from the host environment or
+`.env` (empty spool path = disabled, so the default is unchanged). To enable the
+spool put `INGEST_HTTP_SPOOL_PATH=/var/lib/fengarde/spool/http-spool.jsonl` in
+`.env` (the `ws1-spool` volume is already mounted; keep it a different file from
+`SYSLOG_SPOOL_PATH`), or add `-f infra/docker-compose.homelab.yml`, then
+`docker compose ... up -d ws1-collectors`.
