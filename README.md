@@ -132,6 +132,42 @@ make ha-up    # opt-in: Redis Sentinel + 3-node OpenSearch HA (needs REDIS_PASSW
 make ha-down  # stop the HA profile, remove its volumes
 ```
 
+<details>
+<summary>Windows without <code>make</code> (Git Bash / PowerShell)</summary>
+
+Every `make` target above is a thin wrapper; without `make`, run the recipe
+directly from the repo root (use `python` where the Makefile says `python3`).
+`infra/preflight.sh` recognises Git Bash (MINGW/MSYS) and skips the
+`vm.max_map_count` check, which Docker Desktop's WSL2 VM manages (it prints how
+to check it: `wsl -d docker-desktop sysctl vm.max_map_count`).
+
+```sh
+# make preflight
+sh infra/preflight.sh
+# make up   (runs preflight first)
+sh infra/preflight.sh && docker compose -f infra/docker-compose.yml up -d
+# make down
+docker compose -f infra/docker-compose.yml down -v
+# make test
+bash run_all_tests.sh                 # set PYTHON=python if python3 is missing
+# make test-live  (needs the stack from `make up`)
+BUS_BACKEND=redis python services/shared/test_runner.py
+BUS_BACKEND=redis python services/shared/test_bus_trim_acked.py
+BUS_BACKEND=redis python services/shared/test_bus_lag.py
+BUS_BACKEND=redis python services/shared/test_bus_read_count.py
+python services/ws3-indexer/storage/test_opensearch_live.py
+python services/ws3-indexer/storage/test_opensearch_ha_failover_live.py
+python services/ws3-indexer/storage/test_opensearch_cas_concurrency_live.py
+python services/ws3-indexer/storage/test_opensearch_shared_store_concurrent_live.py
+SESSION_TEST_REDIS=1 FENGARDE_SESSION_SECRET=local-test-session-secret-not-for-production python services/shared/test_sessions.py
+# make chaos      (needs the stack from `make up`; re-runnable on a non-empty cluster)
+python tools/chaos_test.py
+```
+
+The `make test-live` list mirrors the Makefile; if it drifts, the Makefile wins.
+
+</details>
+
 | Port | Service | What it is |
 |------|---------|------------|
 | 6379 | `redis` (`siem-bus`) | Message bus between services |

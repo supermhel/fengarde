@@ -150,6 +150,12 @@ DEDUP_SETTLE_S = CLAIM_IDLE_MS / 1000.0 + 10.0  # window + margin
 class Scenario:
     attacker_ip: str
     events: list = field(default_factory=list)
+    # This scenario's own event-time minute (epoch seconds, minute-aligned).
+    # verify() only counts alerts whose `time` falls inside it, so alerts left
+    # in a persistent OpenSearch by an EARLIER run (same fixed attacker IP,
+    # different minute bucket => different alert_id) are not read as duplicates.
+    # None = unscoped (legacy behaviour: every alert ever seen for the IP).
+    window_start_s: int | None = None
 
 
 def attacker_ip(i: int) -> str:
@@ -204,7 +210,7 @@ def build_scenarios() -> list[Scenario]:
         minute_base = (BASE_S // 60 - i) * 60
         user = f"chaos{i:02d}"  # per-scenario user: see ssh_fail_event docstring
         events = [ssh_fail_event(ip, s, minute_base, user) for s in range(EVENTS_PER_SCENARIO)]
-        scenarios.append(Scenario(attacker_ip=ip, events=events))
+        scenarios.append(Scenario(attacker_ip=ip, events=events, window_start_s=minute_base))
     return scenarios
 
 
@@ -299,28 +305,58 @@ def replay(scenarios: list[Scenario], kills_done: threading.Event) -> None:
             time.sleep(REPLAY_PULSE_GAP_S)
 
 
-def alert_ids_for(ip: str) -> list[tuple[str, str | None]]:
-    """Query alerts-* for every alert doc whose src is this scenario's attacker
-    IP. Returns [(doc_id, alert_id)] -- the alert_id is the engine's
-    deterministic id (rule+group+window bucket); ALL docs for one scenario must
-    carry the SAME alert_id (one deterministic alert per window), which is the
-    property that makes at-least-once redelivery safe."""
-    body = json.dumps({
-        "query": {"term": {"src_endpoint.ip": ip}},
+# Slack on the upper edge of a scenario's minute window (ms). The alert `time`
+# is the triggering event's time, which lies inside the scenario's minute; the
+# pad only tolerates rounding and must stay far below the 60 s bucket spacing so
+# an adjacent scenario/run is never pulled in.
+WINDOW_PAD_MS = 1000
+
+
+def build_alert_query(ip: str, window_start_s: int | None = None) -> dict:
+    """The alerts-* search body for one scenario.
+
+    With ``window_start_s`` the query is restricted to alerts whose ``time``
+    lies in that scenario's own minute, so a re-run against a non-empty cluster
+    ignores alerts from earlier runs. A real duplicate WITHIN this run (same
+    window, two docs) still matches twice and is still reported -- the filter
+    narrows by run, it never collapses documents."""
+    filters: list[dict] = [{"term": {"src_endpoint.ip": ip}}]
+    if window_start_s is not None:
+        filters.append({"range": {"time": {
+            "gte": window_start_s * 1000,
+            "lt": (window_start_s + 60) * 1000 + WINDOW_PAD_MS,
+        }}})
+    return {
+        "query": {"bool": {"filter": filters}},
         "size": 50,
         "_source": ["alert_id"],
-    }).encode("utf-8")
+    }
+
+
+def _opensearch_search(body: dict) -> dict:
     req = urllib.request.Request(
-        f"{OPENSEARCH_URL}/alerts-*/_search", data=body, method="POST",
-        headers={"Content-Type": "application/json"},
+        f"{OPENSEARCH_URL}/alerts-*/_search", data=json.dumps(body).encode("utf-8"),
+        method="POST", headers={"Content-Type": "application/json"},
     )
     try:
         with urllib.request.urlopen(req, timeout=10) as resp:
-            payload = json.loads(resp.read())
+            return json.loads(resp.read())
     except urllib.error.HTTPError as exc:
         if exc.code == 404:  # no alerts-* index yet -- nothing has fired for this IP
-            return []
+            return {}
         raise
+
+
+def alert_ids_for(ip: str, window_start_s: int | None = None,
+                  search=_opensearch_search) -> list[tuple[str, str | None]]:
+    """Query alerts-* for every alert doc whose src is this scenario's attacker
+    IP (within the scenario's own window when given). Returns [(doc_id,
+    alert_id)] -- the alert_id is the engine's deterministic id
+    (rule+group+window bucket); ALL docs for one scenario must carry the SAME
+    alert_id (one deterministic alert per window), which is the property that
+    makes at-least-once redelivery safe. ``search`` is the transport
+    (body -> response dict); tests inject a fake."""
+    payload = search(build_alert_query(ip, window_start_s))
     hits = payload.get("hits", {}).get("hits", [])
     return [(h["_id"], (h.get("_source") or {}).get("alert_id")) for h in hits]
 
@@ -349,7 +385,7 @@ def verify(scenarios: list[Scenario]) -> int:
         duplicated = []
         distinct_alert_ids = []
         for sc in scenarios:
-            docs = alert_ids_for(sc.attacker_ip)  # [(doc_id, alert_id)]
+            docs = alert_ids_for(sc.attacker_ip, sc.window_start_s)  # [(doc_id, alert_id)]
             if len(docs) == 0:
                 lost.append(sc.attacker_ip)
             elif len(docs) > 1:
