@@ -39,6 +39,24 @@ def _report_index(now: float | None = None) -> str:
     return time.strftime("reports-%Y.%m.%d", time.gmtime(now))
 
 
+def attach_ai(store, alert: dict) -> dict:
+    """Return `alert` with the WS-5 verdict attached, if one was recorded.
+
+    WS-5 indexes verdicts as SEPARATE docs (alert_id "ai-<event id>", see
+    ws5-ai/main.py::_alert_payload); detection alerts never carry `ai`. Same
+    join as the console's attachAi.ts: match on event_ids, then
+    trigger_event_id. Works on any StorageAdapter (find_alerts)."""
+    if alert.get("ai"):
+        return alert
+    ids = [*(alert.get("event_ids") or []), alert.get("trigger_event_id")]
+    # shortcut: cap at 200 ids (distinct-count alerts list counted values), raise if needed
+    keys = [f"ai-{i}" for i in ids if i not in (None, "")][:200]
+    for doc in (store.find_alerts(keys) if keys else []):
+        if doc.get("ai"):
+            return {**alert, "ai": doc["ai"]}
+    return alert
+
+
 def _default_triage() -> dict:
     return {"status": "new", "note": "", "updated_at": None}
 
@@ -56,6 +74,7 @@ def _render_template(alert: dict, triage: dict) -> str:
     actor = alert.get("actor") or {}
     status = triage.get("status", "new")
     note = triage.get("note") or "(none)"
+    ai = alert.get("ai") or {}
 
     lines = [
         f"# Incident Report Draft — {rule_title}",
@@ -72,6 +91,16 @@ def _render_template(alert: dict, triage: dict) -> str:
         "## Triage state",
         f"- Status: {status}",
         f"- Analyst note: {note}",
+        "",
+        "## AI triage (WP-4.6 honesty: name the engine, always)",
+        # The engine/model line is MANDATORY signal: a verdict's provenance
+        # (labelled stub vs local model) decides how much the reader may
+        # trust it, so the report prints it even when absent.
+        (f"- Verdict: {ai.get('verdict', '(none)')} ({ai.get('level', '-')}) "
+         f"by {ai.get('engine') or 'NO ENGINE RECORDED'}"
+         + (f" / {ai.get('model')}" if ai.get("model") else "")
+         + (f" — {ai.get('summary')}" if ai.get("summary") else "")
+         if ai else "- Verdict: — (no AI verdict recorded for this alert)"),
         "",
         "## Fields an analyst must still provide",
         "- [ANALYST MUST PROVIDE: business impact assessment]",
