@@ -530,8 +530,162 @@ def test_lone_poison_and_dead_letter_redrive():
             c.stop()
 
 
+def _seed(sp, n):
+    for i in range(n):
+        sp.append({"key": "k", "event": {"i": i}})
+
+
+def _spool_ids(sp):
+    return [json.loads(x)["event"]["i"]
+            for x in sp.path.read_text(encoding="utf-8").splitlines() if x.strip()]
+
+
+def _dead_ids(sp):
+    if not sp.dead_letter_path.exists():
+        return []
+    return [json.loads(x)["event"]["i"]
+            for x in sp.dead_letter_path.read_text(encoding="utf-8").splitlines() if x.strip()]
+
+
+def test_dead_letter_refusal_keeps_event_in_spool():
+    """PR #166 re-review: a .dead write that fails (or hits the cap) must not
+    delete the poison event from the spool: it stays, the pass stops, and it is
+    parked once .dead accepts writes again."""
+    def picky(got):
+        def produce(item):
+            if item["event"]["i"] < 2:
+                raise ValueError("poison")
+            got.append(item["event"]["i"])
+        return produce
+
+    # unwritable .dead (a directory squats on the path)
+    with tempfile.TemporaryDirectory() as td:
+        sp = BoundedSpool(str(Path(td) / "u.jsonl"))
+        _seed(sp, 4)
+        sp.dead_letter_path.mkdir()
+        got: list[int] = []
+        sp.drain_into(picky(got), skip_poison=True)
+        left = _spool_ids(sp)
+        check(0 in left and 1 in left, f"unwritable .dead: poison must stay in spool, left={left}")
+        check(getattr(sp, "dead_letter_write_failures", 0) >= 1,
+              f"unwritable .dead: failure must be counted: {sp.__dict__.get('dead_letter_write_failures')}")
+        check(sorted(set(got) | {x for x in left if x >= 2}) == [2, 3],
+              f"unwritable .dead: no good event lost: got={got} left={left}")
+        sp.dead_letter_path.rmdir()
+        for _ in range(3):
+            sp.drain_into(picky(got), skip_poison=True)
+        check(sorted(set(got)) == [2, 3] and _dead_ids(sp) == [0, 1] and _spool_ids(sp) == [],
+              f"after .dead recovers: got={got} dead={_dead_ids(sp)} spool={_spool_ids(sp)}")
+
+    # .dead at its cap
+    with tempfile.TemporaryDirectory() as td:
+        sp = BoundedSpool(str(Path(td) / "c.jsonl"), max_bytes=4000)
+        _seed(sp, 4)
+        sp.dead_letter_path.write_bytes(b"x" * 3990 + b"\n")
+        got = []
+        sp.drain_into(picky(got), skip_poison=True)
+        left = _spool_ids(sp)
+        check(0 in left and 1 in left,
+              f"at-cap .dead: poison must stay in spool, left={left}")
+        check(getattr(sp, "dead_letter_write_failures", 0) >= 1, "at-cap .dead: refusal must be counted")
+
+
+def test_poison_run_longer_than_probe_cap_drains():
+    """PR #166 re-review: 257+ consecutive poison events must still be passed
+    (stateful probe cursor), within a bounded number of passes."""
+    with tempfile.TemporaryDirectory() as td:
+        sp = BoundedSpool(str(Path(td) / "r.jsonl"), max_bytes=10 * 1024 * 1024)
+        _seed(sp, 301)
+        got: list[int] = []
+
+        def produce(item):
+            if item["event"]["i"] < 300:
+                raise ValueError("poison")
+            got.append(item["event"]["i"])
+
+        passes = 0
+        while passes < 40 and not got:
+            sp.drain_into(produce, skip_poison=True)
+            passes += 1
+        check(got == [300] and passes <= 20,
+              f"300 poison then 1 good: got={got} passes={passes}")
+        check(len(_dead_ids(sp)) == 300 and sp.pending_count() == 0,
+              f"all 300 parked, spool empty: dead={len(_dead_ids(sp))} pending={sp.pending_count()}")
+
+    # a real outage with a long backlog must NOT park anything
+    with tempfile.TemporaryDirectory() as td:
+        sp = BoundedSpool(str(Path(td) / "o.jsonl"), max_bytes=10 * 1024 * 1024)
+        _seed(sp, 300)
+
+        def down(_item):
+            raise RuntimeError("bus down")
+
+        for _ in range(30):
+            sp.drain_into(down, skip_poison=True)
+        check(sp.pending_count() == 300 and sp.dead_lettered == 0,
+              f"outage parked events: pending={sp.pending_count()} dead={sp.dead_lettered}")
+
+
+def test_redrive_disk_full_and_cap():
+    """PR #166 re-review: redrive on a full disk must not re-send twice, and
+    one call must attempt a bounded number of lines."""
+    with tempfile.TemporaryDirectory() as td:
+        sp = BoundedSpool(str(Path(td) / "d.jsonl"))
+        sp.dead_letter_path.write_text(
+            "".join(json.dumps({"key": "k", "event": {"i": i}}) + "\n" for i in range(4)),
+            encoding="utf-8")
+        real = sp._rewrite_atomic
+
+        def full(lines, target=None):
+            raise OSError(28, "No space left on device")
+
+        sp._rewrite_atomic = full
+        sent: list[int] = []
+
+        def produce(item):
+            if item["event"]["i"] == 3:
+                raise ValueError("still poison")
+            sent.append(item["event"]["i"])
+
+        try:
+            n = sp.redrive_dead_letter(produce)
+        except OSError as exc:
+            n = -1
+            check(False, f"redrive raised on a full disk: {exc}")
+        sp._rewrite_atomic = real
+        sp.redrive_dead_letter(produce)
+        check(n == 3 and sorted(sent) == [0, 1, 2] and _dead_ids(sp) == [3],
+              f"redrive on full disk re-sent: n={n} sent={sent} dead={_dead_ids(sp)}")
+
+    with tempfile.TemporaryDirectory() as td:
+        sp = BoundedSpool(str(Path(td) / "k.jsonl"))
+        sp.REDRIVE_MAX_LINES = 5
+        sp.dead_letter_path.write_text(
+            "".join(json.dumps({"key": "k", "event": {"i": i}}) + "\n" for i in range(13)),
+            encoding="utf-8")
+        attempts: list[int] = []
+        sent = []
+
+        def produce2(item):
+            attempts.append(item["event"]["i"])
+            if item["event"]["i"] < 12:
+                raise ValueError("poison")
+            sent.append(item["event"]["i"])
+
+        sp.redrive_dead_letter(produce2)
+        check(len(attempts) <= 5, f"one redrive call attempted {len(attempts)} lines (cap 5)")
+        for _ in range(4):
+            sp.redrive_dead_letter(produce2)
+        check(sent == [12], f"capped redrive starved the tail: sent={sent}")
+        check(sorted(_dead_ids(sp)) == list(range(12)),
+              f"poison must remain parked: {_dead_ids(sp)}")
+
+
 def main():
     t0 = time.time()
+    test_dead_letter_refusal_keeps_event_in_spool()
+    test_poison_run_longer_than_probe_cap_drains()
+    test_redrive_disk_full_and_cap()
     test_bus_down_then_up_spooled_events_are_replayed()
     test_drain_interval_is_honored()
     test_crash_mid_drain_is_at_least_once_and_bounded()

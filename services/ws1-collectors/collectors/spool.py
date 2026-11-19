@@ -53,6 +53,7 @@ class BoundedSpool:
     POISON_PROBE_MIN = 3
     POISON_PROBE_MAX = 256
     LONE_POISON_PASSES = 10
+    REDRIVE_MAX_LINES = 500
 
     def __init__(self, path: Path | str, max_bytes: int = DEFAULT_MAX_BYTES, *,
                  min_free_bytes: int = DEFAULT_MIN_FREE_BYTES,
@@ -82,7 +83,9 @@ class BoundedSpool:
         self.produce_failures = 0       # produce() raised during a drain
         self.last_produce_error = ""    # most recent such error
         self.dead_lettered = 0          # poison events moved to the .dead file
-        self.dead_letter_dropped = 0    # poison events lost: dead-letter at cap
+        # .dead write refused (OSError / at cap): the event is NOT lost, it
+        # stays in the spool and the pass stops (counts attempts, cumulative)
+        self.dead_letter_write_failures = 0
         self._last_refusal_log: "dict[str, float]" = {}
         self._lock = threading.Lock()
         # PR #166 review: two concurrent drain_into() calls each rewrite the
@@ -94,6 +97,9 @@ class BoundedSpool:
         self._probe_window = self.POISON_PROBE_MIN
         self._probe_head: Optional[str] = None
         self._probe_passes = 0
+        # Probe cursor: offset (from the head) of the next line to probe, so a
+        # poison run longer than POISON_PROBE_MAX is walked across passes.
+        self._probe_off = 1
         self.dead_letter_redriven = 0   # .dead events sent again by redrive_dead_letter()
         self.path.parent.mkdir(parents=True, exist_ok=True)
         if self.path.is_dir():
@@ -238,8 +244,13 @@ class BoundedSpool:
         """Sidecar JSONL holding events `drain_into(skip_poison=True)` gave up on."""
         return self.path.with_name(self.path.name + ".dead")
 
-    def _dead_letter(self, lines: list[str]) -> None:
+    def _dead_letter(self, lines: list[str]) -> list[str]:
         """Append poison lines to the sidecar (fsync'd, capped at max_bytes).
+
+        Returns the lines it could NOT persist (a write error or the cap); the
+        caller must keep those in the spool, so an event is never dropped just
+        because the dead-letter file refused it. Stops at the first refusal so
+        the unpersisted lines are a contiguous tail.
 
         Written BEFORE the spool rewrite that removes them, so a crash in
         between leaves a duplicate dead-letter line, never a lost event.
@@ -249,14 +260,15 @@ class BoundedSpool:
             size = dl.stat().st_size
         except OSError:
             size = 0
-        for line in lines:
+        unpersisted: list[str] = []
+        for k, line in enumerate(lines):
             data = (line + "\n").encode("utf-8")
             if size + len(data) > self.max_bytes:
-                self.dead_letter_dropped += 1
+                unpersisted = lines[k:]
                 if self._log is not None:
-                    self._log.warn("spool dead-letter full, poison event dropped",
+                    self._log.warn("spool dead-letter full, poison event kept in spool",
                                    path=str(dl), max_bytes=self.max_bytes)
-                continue
+                break
             try:
                 with dl.open("ab") as f:
                     f.write(data)
@@ -265,13 +277,17 @@ class BoundedSpool:
                 size += len(data)
                 self.dead_lettered += 1
             except OSError as exc:
-                self.dead_letter_dropped += 1
+                unpersisted = lines[k:]
                 if self._log is not None:
-                    self._log.warn("spool dead-letter write failed, poison event dropped",
+                    self._log.warn("spool dead-letter write failed, poison event kept in spool",
                                    path=str(dl), error=str(exc))
-        if self._log is not None:
+                break
+        self.dead_letter_write_failures += len(unpersisted)
+        if self._log is not None and len(unpersisted) < len(lines):
             self._log.warn("spool drain dead-lettered poison event(s)",
-                           count=len(lines), dead_lettered_total=self.dead_lettered)
+                           count=len(lines) - len(unpersisted),
+                           dead_lettered_total=self.dead_lettered)
+        return unpersisted
 
     def drain_into(self, produce: Callable[[dict], None], *, limit: Optional[int] = None,
                    checkpoint_every: Optional[int] = None,
@@ -376,9 +392,11 @@ class BoundedSpool:
                 advanced = self._probe_poison(produce, lines, i, n)
                 if advanced is None:
                     break  # nothing after the head got through: bus down
-                i, delivered = advanced
+                i, delivered, stop = advanced
                 replayed += delivered
                 since_checkpoint += delivered
+                if stop:
+                    break  # a poison line could not be parked: keep it, end the pass
             else:
                 replayed += 1
                 since_checkpoint += 1
@@ -441,34 +459,59 @@ class BoundedSpool:
         self.produce_failures += 1
         self.last_produce_error = f"{type(exc).__name__}: {exc}"[:300]
 
+    def _park(self, lines: list[str], i: int, j: int, failed: list[str]):
+        """Dead-letter `failed` (all taken from lines[i:j]); the delivered probe
+        event is lines[j]. Lines the .dead file refused stay in the spool: they
+        are written back into lines[i:j+1] (length unchanged, so the caller's
+        snapshot length stays valid) and the pass must stop. Returns
+        (next_i, delivered, stop)."""
+        left = self._dead_letter(failed)
+        if not left:
+            return j + 1, 1, False
+        lines[j + 1 - len(left):j + 1] = left
+        return j + 1 - len(left), 1, True
+
     def _probe_poison(self, produce, lines: list[str], i: int, n: int):
         """Head `lines[i]` failed once. Decide poison vs bus-down.
 
-        Returns None (bus down: leave everything), or (next_i, delivered)
+        Returns None (bus down: leave everything), or (next_i, delivered, stop)
         after dead-lettering the failing head (and any probed failures) and
-        delivering the probe event that got through.
+        delivering the probe event that got through. `stop` means a failing
+        line could not be written to `.dead` and was kept in the spool.
         """
         head = lines[i]
         # retry the head once: a single transient blip must not dead-letter it
         try:
             produce(json.loads(head))
-            return i + 1, 1
+            return i + 1, 1, False
         except Exception as exc:
             self._note_produce_failure(exc)
         failed = [head]
         probed = 0
-        j = i + 1
         # PR #166 review: a fixed 3-event probe meant 4+ consecutive poison
         # events wedged the spool forever. Each pass that ends "bus down" on
-        # the SAME head doubles the window (capped), so a longer poison run is
-        # eventually probed past; a real outage only costs a few more failed
-        # produce() calls per pass.
+        # the SAME head doubles the window (capped), and a cursor remembers how
+        # far previous passes probed, so a poison run of any length is walked
+        # across passes at bounded cost per pass.
         if head == self._probe_head:
             self._probe_window = min(self._probe_window * 2, self.POISON_PROBE_MAX)
             self._probe_passes += 1
         else:
             self._probe_head, self._probe_window = head, self.POISON_PROBE_MIN
             self._probe_passes = 1
+            self._probe_off = 1
+        start = i + self._probe_off
+        if start > n:
+            start = i + 1
+        # lines before the cursor already failed in earlier passes: treat them
+        # as failed again without re-probing (redrive recovers any false ones)
+        skipped = 0
+        for k in range(i + 1, start):
+            line = lines[k]
+            if line.strip() and self._parse_line(line, k) is not None:
+                failed.append(line)
+                skipped += 1
+        j = start
         while j < n and probed < self._probe_window:
             line = lines[j]
             if not line.strip():
@@ -486,18 +529,23 @@ class BoundedSpool:
                 failed.append(line)
                 j += 1
                 continue
-            self._dead_letter(failed)
             self._probe_head, self._probe_window = None, self.POISON_PROBE_MIN
-            return j + 1, 1
-        if probed == 0 and self._probe_passes >= self.LONE_POISON_PASSES:
+            self._probe_off = 1
+            return self._park(lines, i, j, failed)
+        if probed == 0 and skipped == 0 and self._probe_passes >= self.LONE_POISON_PASSES:
             # Nothing behind the head to tell poison from outage, and it has
             # failed this many passes in a row: park it. Safe even during an
             # outage, because redrive_dead_letter() sends it again once the
             # bus accepts events (PR #166 review: a lone poison event retried
             # and logged "bus refused" forever).
-            self._dead_letter(failed)
+            if self._dead_letter(failed):
+                return None  # not parked: leave it in the spool
             self._probe_head, self._probe_window = None, self.POISON_PROBE_MIN
-            return i + 1, 0
+            self._probe_off = 1
+            return i + 1, 0, False
+        # every probed event failed: advance the cursor (wrap to the start once
+        # the whole tail has been walked so appended events are probed too)
+        self._probe_off = j - i if j < n else 1
         return None
 
     def redrive_dead_letter(self, produce: Callable[[dict], None]) -> int:
@@ -516,13 +564,21 @@ class BoundedSpool:
                 return 0
             keep: list[str] = []
             sent = 0
+            attempted = 0
+            untouched: list[str] = []
             for idx, line in enumerate(lines):
                 if not line.strip():
                     continue
+                if attempted >= self.REDRIVE_MAX_LINES:
+                    # bound the time _drain_lock is held; the rest waits for the
+                    # next call (and is tried first then, so nothing starves)
+                    untouched = [x for x in lines[idx:] if x.strip()]
+                    break
                 event = self._parse_line(line, idx)
                 if event is None:
                     keep.append(line)  # corrupt: leave it for the operator
                     continue
+                attempted += 1
                 try:
                     produce(event)
                 except Exception as exc:
@@ -530,39 +586,42 @@ class BoundedSpool:
                     keep.append(line)
                     continue
                 sent += 1
-            if sent:
+            if sent or untouched:
                 # count first: the file disappearing is what observers wait on
                 self.dead_letter_redriven += sent
-                if keep:
-                    self._rewrite_atomic(keep, target=dl)
+                rest = untouched + keep
+                if rest:
+                    self._rewrite(rest, target=dl)
                 else:
                     dl.unlink()
             return sent
 
-    def _rewrite(self, lines: list[str]) -> None:
+    def _rewrite(self, lines: list[str], target: Optional[Path] = None) -> None:
         """Atomically replace the spool file's contents; on a full disk fall
         back to shrinking the file in place (PR #166 review: the atomic temp
         file could never be written, so every pass re-delivered the same events
         and the spool never shrank until the cap dropped new ones)."""
         try:
-            self._rewrite_atomic(lines)
+            self._rewrite_atomic(lines, target=target)
         except OSError:
+            dest = target if target is not None else self.path
             data = "".join(line + "\n" for line in lines).encode("utf-8")
-            size = self.path.stat().st_size
+            size = dest.stat().st_size
             if len(data) > size:
                 raise  # in place needs the result to fit the existing bytes
             # shortcut: in-place shrink is not crash-atomic (a crash mid-write
             # can tear one line, which the next drain skips as corrupt); only
             # reached when the disk cannot hold a temp copy of the remainder.
-            with self.path.open("r+b") as f:
+            with dest.open("r+b") as f:
                 f.write(data)
                 f.truncate()
                 f.flush()
                 os.fsync(f.fileno())
-            self._tail_known_good = True
+            if dest == self.path:
+                self._tail_known_good = True
             if self._log is not None:
                 self._log.warn("spool rewritten in place (atomic rewrite failed)",
-                               path=str(self.path), bytes=len(data))
+                               path=str(dest), bytes=len(data))
 
     def _rewrite_atomic(self, lines: list[str], target: Optional[Path] = None) -> None:
         """Atomically replace the spool file's contents (temp file + os.replace)

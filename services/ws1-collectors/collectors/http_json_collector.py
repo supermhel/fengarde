@@ -531,7 +531,7 @@ class HttpJsonCollector:
             "http_spool_drain_passes": self.spool_drain_passes,
             "http_spool_drain_failed_passes": self.spool_drain_failed_passes,
             "http_spool_dead_lettered": spool.dead_lettered,
-            "http_spool_dead_letter_dropped": spool.dead_letter_dropped,
+            "http_spool_dead_letter_write_failures": spool.dead_letter_write_failures,
             "http_spool_dead_letter_redriven": spool.dead_letter_redriven,
             "http_spool_corrupt_lines_skipped": spool.corrupt_lines_skipped,
         }

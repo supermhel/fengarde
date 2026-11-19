@@ -141,7 +141,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `http_spool_pending_bytes`, `http_spool_pending_events` (as of the last pass),
   `http_spool_replayed`, `http_spool_drain_passes`,
   `http_spool_drain_failed_passes`, `http_spool_dead_lettered`,
-  `http_spool_dead_letter_dropped`, `http_spool_corrupt_lines_skipped`; a
+  `http_spool_dead_letter_write_failures`, `http_spool_corrupt_lines_skipped`; a
   throttled (30 s) `http spool drain: bus refused spooled events` warning logs
   the last error.
 - **Ordering caveat.** While the bus is up, live batches are produced directly
