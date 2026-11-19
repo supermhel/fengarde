@@ -4804,7 +4804,7 @@
   },
   "basis": "harness-measured",
   "fingerprint": {
-    "system_fingerprint": "06483dfd088accf83eb501a3441bc7223a474569565b4b986857b2a290a3437c"
+    "system_fingerprint": "9d1a1c8e9bb32a9489fcacd4931e1d1863fb6e3f928ab6925fe1c86e6ad8c10f"
   },
   "retired": [],
   "schema": "fengarde-scenario-ratchet-v1",
