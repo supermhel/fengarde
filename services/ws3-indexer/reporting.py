@@ -51,10 +51,26 @@ def attach_ai(store, alert: dict) -> dict:
     ids = [*(alert.get("event_ids") or []), alert.get("trigger_event_id")]
     # shortcut: cap at 200 ids (distinct-count alerts list counted values), raise if needed
     keys = [f"ai-{i}" for i in ids if i not in (None, "")][:200]
-    for doc in (store.find_alerts(keys) if keys else []):
+    try:
+        docs = store.find_alerts(keys) if keys else []
+    except Exception as exc:  # noqa: BLE001 -- a lookup failure must not 500 report generation
+        import logging
+        logging.getLogger("ws3-indexer").warning(
+            "attach_ai: AI verdict lookup failed, report will say no AI verdict: %s", exc)
+        return alert
+    for doc in docs:
         if doc.get("ai"):
             return {**alert, "ai": doc["ai"]}
     return alert
+
+
+def _one_line(value) -> str:
+    """LLM output / stored strings are untrusted: collapse newlines and other
+    control characters to single spaces so a verdict summary cannot forge
+    markdown lines (e.g. "\n- Status: closed") in the rendered report."""
+    return " ".join("".join(
+        " " if (ord(c) < 32 or ord(c) == 127 or c in "  ") else c
+        for c in str(value)).split())
 
 
 def _default_triage() -> dict:
@@ -96,10 +112,10 @@ def _render_template(alert: dict, triage: dict) -> str:
         # The engine/model line is MANDATORY signal: a verdict's provenance
         # (labelled stub vs local model) decides how much the reader may
         # trust it, so the report prints it even when absent.
-        (f"- Verdict: {ai.get('verdict', '(none)')} ({ai.get('level', '-')}) "
-         f"by {ai.get('engine') or 'NO ENGINE RECORDED'}"
-         + (f" / {ai.get('model')}" if ai.get("model") else "")
-         + (f" — {ai.get('summary')}" if ai.get("summary") else "")
+        (f"- Verdict: {_one_line(ai.get('verdict', '(none)'))} ({_one_line(ai.get('level', '-'))}) "
+         f"by {_one_line(ai.get('engine')) or 'NO ENGINE RECORDED'}"
+         + (f" / {_one_line(ai.get('model'))}" if ai.get("model") else "")
+         + (f" — {_one_line(ai.get('summary'))}" if ai.get("summary") else "")
          if ai else "- Verdict: — (no AI verdict recorded for this alert)"),
         "",
         "## Fields an analyst must still provide",
