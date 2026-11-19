@@ -78,6 +78,16 @@ paths:
             application/json:
               schema: { $ref: "#/components/schemas/SessionIdentity" }
         "401": { description: not logged in }
+  /api/v1/auth/check:
+    get:
+      summary: "Credential liveness guard for nginx auth_request (WP-6.1, option C: sessions only). Returns 200 iff the caller holds a valid credential -- the FENGARDE_API_KEY (machine clients) or an active RBAC session cookie (browsers) -- else 401. nginx routes that proxy to an auth-less upstream (OpenSearch direct reads /api/alerts|events|ai-triage, /api/ops/*, /api/prom/*) gate on this status code so those routes stay protected without a browser-side key. Matches _check_auth: key unset means auth-disabled and this returns 200 unconditionally."
+      responses:
+        "200":
+          description: caller holds a valid session or API key
+          content:
+            application/json:
+              schema: { type: object, properties: { ok: { type: boolean } } }
+        "401": { description: no valid session or API key }
   /api/v1/auth/mfa/enable:
     post:
       summary: "Provision a TOTP secret for the acting user (E3, 2026-08-06, opt-in). Requires, in the body, the acting user's own current password as a re-auth gate -- a session cookie alone cannot touch MFA config. Rate-limited per username (5 failures / 5 min, same budget as /auth/login)."

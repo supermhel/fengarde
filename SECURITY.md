@@ -82,8 +82,9 @@ with actual per-user identity and roles:
   `services/ws6-inventory/authz.py`). **Unset (default) = every request
   allowed**, with one warning logged at service start
   (`"auth disabled: FENGARDE_API_KEY not set"`). Set it and every write/read on
-  those two APIs requires the matching header; the dashboard's nginx proxy
-  injects it server-side so the browser never holds the key.
+  those two APIs requires the matching header. The dashboard's nginx does NOT
+  inject or serve the key (WP-6.1): browsers use RBAC sessions, the key is for
+  machine clients.
 - **`FENGARDE_RBAC_DB`** (M4.2) — a SQLite file path. Unset (default) =
   the WS-3 triage/report endpoints stay exactly the pre-M4.2 API-key-only
   behavior; `/auth/login`, `/auth/logout`, `/auth/me` don't even exist. Set
@@ -542,12 +543,39 @@ review, the CI gate, and the threat boundary documented above. See
 
 ---
 
-## Dashboard API key is not an access-control boundary (gap-hunt R4-52)
+## Dashboard session gate (WP-6.1, replaces gap-hunt R4-52)
 
-When `FENGARDE_API_KEY` is set, nginx no longer injects it on proxied requests, but `/api/config.js` hands the key
-to the browser for any request whose `Sec-Fetch-Site` header is `same-origin`. That header is trivially forged by a
-script, so on port 8080 the shared API key is **not** an access-control boundary. Real access control is the RBAC
-login (`FENGARDE_RBAC_DB`, sessions + CSRF). Do not expose port 8080 beyond a trusted network without it.
+The dashboard no longer serves or injects `FENGARDE_API_KEY`: `/api/config.js` and
+the nginx key comparison are gone, and the dashboard container is not given the
+key. Browsers authenticate with the RBAC session cookie only (`FENGARDE_RBAC_DB`).
+Read the limits before exposing port 8080:
+
+- **Sessions require RBAC.** With RBAC off the browser has no credential and the
+  gated routes answer 401 if a key is set (or are open if no key is set either,
+  the zero-config demo).
+- **Gated routes.** `/api/alerts`, `/api/events`, `/api/ai-triage`, `/api/ops/*`
+  and `/api/prom/*` reach auth-less upstreams (OpenSearch, service `/metrics`,
+  Prometheus). nginx guards them with `auth_request /api/auth/check`, answered by
+  ws3 `GET /auth/check`: 200 only for a valid `X-Api-Key` (key set) or an active
+  session (RBAC on); otherwise 401. With RBAC on and the key unset an anonymous
+  caller gets 401 (fixed in review of PR #165; regression test
+  `test_rbac_api.py::test_auth_check_anonymous_401_when_rbac_on_key_unset`).
+- **Known limit: no role or tenant scoping on those routes.** Any valid session,
+  including a `read_only` user of one tenant, passes the gate. `/api/alerts` and
+  `/api/events` query OpenSearch directly with no tenant filter, so such a user
+  can read alerts and events of all tenants there, and can read `/api/ops/*` and
+  the Prometheus allowlist (operator data). ws3's own routes (`/api/triage/*`,
+  incidents, entities, audit) do enforce role and tenant. Verified here only at
+  the ws3 level (the gate accepts a `read_only` tenant session); the nginx and
+  OpenSearch side is from reading the config, not run against a live stack. Do not
+  rely on multi-tenant isolation through these routes.
+- **Availability coupling.** Each gated request makes a sub-request to ws3. If ws3
+  is down or rate-limiting, those panels fail (nginx returns 500; fail-closed).
+- **Cookie flags.** The session cookie is `HttpOnly; SameSite=Strict`, no expiry
+  attribute. nginx in this repo serves plain HTTP, so the cookie travels in clear
+  text unless you terminate TLS in front. This repo ships no TLS profile. Set
+  `FENGARDE_COOKIE_SECURE=1` on ws3 when TLS terminates in front to add `Secure`.
+  Do not expose port 8080 beyond a trusted network without TLS.
 
 ## Supported versions
 

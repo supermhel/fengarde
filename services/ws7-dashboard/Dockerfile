@@ -33,7 +33,7 @@ COPY --from=console /build/dist/ /usr/share/nginx/html/
 # also served as a static file. Shipped as a TEMPLATE under
 # /etc/nginx/templates/ -- nginx:alpine's official entrypoint hook renders it
 # to conf.d/default.conf at container start via envsubst, substituting only
-# vars present in the environment (v0.4 Track S1: ${FENGARDE_API_KEY}).
+# vars present in the environment (${DASHBOARD_AUTH_REALM}; the API key is no longer substituted, WP-6.1).
 COPY services/ws7-dashboard/templates/default.conf.template /etc/nginx/templates/default.conf.template
 # Placeholder htpasswd so auth_basic_user_file always resolves to a real file
 # even when auth is off (S2 override mounts a real one over this path).
@@ -43,7 +43,6 @@ RUN touch /etc/nginx/dashboard.htpasswd
 # to start). docker-compose.yml also sets these explicitly, but the image
 # must be self-defaulting for anyone running it outside that compose file.
 ENV DASHBOARD_AUTH_REALM=off
-ENV FENGARDE_API_KEY=""
 # ws3-indexer's triage API port (templates/default.conf.template resolves the
 # upstream from this var; a compose override that moves ws3's triage port must
 # set the same var here so the dashboard proxy follows it -- gap-hunt #68).

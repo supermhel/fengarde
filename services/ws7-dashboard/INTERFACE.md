@@ -13,9 +13,11 @@
 - `/api/rules` (C3, MITRE coverage heatmap) → WS-3's `/rules` read model
   (`list_rule_summaries`) — feeds the dashboard's "Coverage" view, shaded by real
   alert counts per tactic×technique.
-- `/api/auth/` (M3 remainder) → WS-3's `/auth/{login,logout,me}`. Nginx injects
-  `FENGARDE_API_KEY` server-side on the triage/report proxies — the browser
-  never holds the key.
+- `/api/auth/` (M3 remainder) → WS-3's `/auth/{login,logout,me,check}`. Since WP-6.1
+  (GH-2) the browser authenticates by its RBAC session cookie only; nginx does
+  not hold, inject or compare `FENGARDE_API_KEY` (the dashboard container no
+  longer receives it). The key is for machine clients, who send `X-Api-Key`
+  and are passed through to WS-3.
 - `/api/inventory/` → WS-6 inventory API (`ws6-inventory:8000`), prefix
   stripped — `window.INVENTORY_API` now DEFAULTS to this (2026-08-20 fix: it
   previously had no default at all, unlike every other `*_API` constant, so
@@ -43,13 +45,15 @@
   own session check — the "Audit" nav view.
 - `/api/ops/{ws1,ws2,ws3,ws4,ws5,ws8}` (2026-08-20; `ws5` added later) → each workstream's own
   `GET /metrics` (`services/shared/runner.py`) — the "Ops" nav view. Gated by
-  the same `FENGARDE_API_KEY` check `/api/alerts` uses, since these health
-  ports were previously reachable only container-to-container.
+  the same `auth_request /api/auth/check` gate `/api/alerts` uses (valid
+  session or valid API key, else 401), since these health ports were previously
+  reachable only container-to-container.
 - `/api/events` and `/api/ai-triage` → OpenSearch directly, not via WS-3
   (`events-*`, and `alerts-*` filtered to `alert_id` prefix `ai-`), both behind
-  the nginx `X-Api-Key` check like `/api/alerts`. `/api/config.js` serves the
-  browser runtime config (SECURITY.md explains why the key it carries is not an
-  access-control boundary).
+  the same `auth_request /api/auth/check` gate as `/api/alerts`. `/api/config.js`
+  no longer exists (removed in WP-6.1). That gate checks only that SOME valid
+  credential is presented; it does not scope by role or tenant (SECURITY.md,
+  "Dashboard session gate").
 
 ## Produces
 - **The console (2026-10-15)** is a React + Vite + TypeScript app in `app/`,
