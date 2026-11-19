@@ -137,7 +137,9 @@ accept.
 
 ## Verification record (manual — NOT reproduced by CI)
 
-Run by hand on 2026-11-05 in a throwaway compose project on Docker Desktop
+Two manual runs, neither reproduced by CI: the first live verification on the
+compose stack was 2026-11-04 (console 200, ingest 200/401, plaintext ports refused; see the
+CHANGELOG entry); the transcript below is the re-run of 2026-11-05, done in a throwaway compose project on Docker Desktop
 (Windows), ws1/ws7/Caddy/Redis real, ws3 replaced by a header-echo stub; the
 token is a generated test value. CI cannot run this: it needs the docker
 engine and builds the console image. CI covers only the static/merged-config
@@ -163,6 +165,11 @@ publishes on all interfaces (`docker compose config` lists only
 their plaintext loopback publishes (redis 6379, opensearch 9200, dashboards
 5601, inventory API 8000, ws6 and the other 127.0.0.1 ports): the profile
 does not TLS-wrap them and does not remove them.
+
+Footnote (2026-11-04 run): the first ingest attempt returned 502 because ws1 had
+cold-started without `FENGARDE_INGEST_TOKEN`; ws1 refuses to start its listener without
+the token by design, so Caddy had no upstream. Recreating ws1 with the token fixed it. Not a
+proxy defect; if you see 502 on `ingest.internal`, check that ws1 is running and has the token.
 
 Update 2026-11-06 (review round 2, PR #162): the fixed Caddy address, the ipam
 subnet and the loopback default for 443 were added after the manual run above;
