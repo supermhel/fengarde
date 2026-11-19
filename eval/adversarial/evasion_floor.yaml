@@ -687,6 +687,50 @@ rule_sets:
         threshold: 2
         window_seconds: 3600
     production_reachable: true
+  common_refused_connection_scan:
+    fields:
+      clock_forgeable:
+        basis: harness-measured
+        better: min
+        value: false
+      extra_seconds:
+        basis: harness-measured
+        better: max
+        value: 32.001
+      forgery_evades:
+        basis: harness-measured
+        better: min
+        value: false
+      forgone_events:
+        basis: harness-measured
+        better: max
+        value: 1
+      min_keys.ip:
+        basis: harness-measured
+        better: max
+        value: 2
+      respelling_evades:
+        basis: harness-measured
+        better: min
+        value: false
+      respelling_evades_mapped:
+        basis: harness-measured
+        better: min
+        value: false
+      stealth_rate:
+        basis: harness-measured
+        better: min
+        value: 0.233329
+    fingerprint: 5130eca3d47acc8d929fec6e1000a22960680a69b34bf696b01aa0cedd84db75
+    params:
+      common_refused_connection_scan:
+        companion_of: null
+        distinct_field: dst_endpoint.port
+        group_by: src_endpoint.ip
+        periodicity: null
+        threshold: 15
+        window_seconds: 60
+    production_reachable: true
   dc_mass_vm_delete:
     fields:
       clock_forgeable:

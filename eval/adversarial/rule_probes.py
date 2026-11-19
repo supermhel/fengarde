@@ -204,8 +204,26 @@ def _ot_new_engineering_connection() -> Probe:
                  {"ot_server": _dict_setter("serverId", "plc-line{j}")})
 
 
+def _common_refused_connection_scan() -> Probe:
+    # 2026-11-19 (integration of WP-1.5 / PR #152): ONE source with Zeek conn_state S0/REJ toward 15 distinct
+    # ports in 30 s (threshold 15 / 60 s, distinct dst_endpoint.port). Raw row = the shape of a real Zeek
+    # conn.log TCP record (parsers/test_fixtures/zeek_json_real.json) with scan-shaped state/packets.
+    def build(i, t):
+        state = "S0" if i % 2 == 0 else "REJ"
+        return "zeek_json", {"ts": t / 1000.0, "uid": f"Cprobe{i:03d}", "id.orig_h": "198.18.9.10",
+                             "id.orig_p": 40000 + i, "id.resp_h": "10.0.0.8", "id.resp_p": 1000 + i,
+                             "proto": "tcp", "duration": 0.0, "conn_state": state,
+                             "history": "S" if state == "S0" else "Sr",
+                             "orig_pkts": 1, "resp_pkts": 0 if state == "S0" else 1}
+
+    def set_ip(p, j):
+        p["raw"]["id.orig_h"] = f"198.18.9.{j + 20}"
+        return True
+    return Probe("common_refused_connection_scan", "refused_scan", "zeek_json", 15, 2_000, build, {"ip": set_ip})
+
+
 _FACTORIES = (_agent_tool_call_burst, _bank_mass_card_read, _common_beaconing,
-              _common_bruteforce_sourceless, _common_impossible_travel, _common_password_spray,
+              _common_bruteforce_sourceless, _common_impossible_travel, _common_refused_connection_scan, _common_password_spray,
               _common_password_spray_by_source, _common_port_sweep, _common_rapid_account_lifecycle, _ot_new_engineering_connection)
 
 
