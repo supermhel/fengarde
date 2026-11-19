@@ -570,8 +570,8 @@ Read the limits before exposing port 8080:
   200 only for a valid `X-Api-Key` (key set) or an `admin` session; 401
   anonymous; 403 for any other role. With RBAC on and the key unset an anonymous
   caller gets 401 (same fail-closed rule as `GET /auth/check`, fixed in review
-  of PR #165). `GET /auth/check` (any valid credential) is now used only by
-  the inventory route (below).
+  of PR #165). `GET /auth/check` (any valid credential) still exists and only
+  `/api/inventory/` uses it (see below; session-gated, not tenant-scoped).
 - **RBAC off.** With RBAC off and no key (zero-config demo) the new routes are
   open and unscoped, as before; with RBAC off and a key set they need the key.
 - **What still holds.** OpenSearch itself has no authentication
@@ -591,6 +591,24 @@ Read the limits before exposing port 8080:
   gate). ws6 IS tenant-aware, but it scopes by the key it receives, so every
   session reads what that one key sees: the route is session-gated, NOT
   tenant-scoped. The key stays inside nginx and is never sent to the browser.
+- **Legacy `ai-*` documents (WP-6.2 upgrade note).** AI-triage documents
+  (`alert_id` prefix `ai-`) written before the ws5 tenant fix carry no
+  `tenant_id`, so every scoped read treats them as tenant `default`: a `default`
+  session sees them and no other tenant does. Purge or backfill them once after
+  upgrading. Not run here; adjust the tenant and take a snapshot first:
+
+  ```
+  # backfill (assign the right tenant to old ai-* docs that lack one)
+  POST alerts-*/_update_by_query?conflicts=proceed
+  {"query":{"bool":{"filter":[{"prefix":{"alert_id":"ai-"}}],
+                    "must_not":[{"exists":{"field":"tenant_id"}}]}},
+   "script":{"source":"ctx._source.tenant_id='default'","lang":"painless"}}
+
+  # or purge them (ws5 re-emits triage for new alerts only)
+  POST alerts-*/_delete_by_query?conflicts=proceed
+  {"query":{"bool":{"filter":[{"prefix":{"alert_id":"ai-"}}],
+                    "must_not":[{"exists":{"field":"tenant_id"}}]}}}
+  ```
 - **Availability coupling.** Each gated request makes a sub-request to ws3. If ws3
   is down or rate-limiting, those panels fail (nginx returns 500; fail-closed).
 - **Cookie flags.** The session cookie is `HttpOnly; SameSite=Strict`, no expiry

@@ -99,6 +99,7 @@ let csrf: string | null = null;
 let tenant: string | null = null;
 /** Tenant scope for the tenant-aware routes (rules, incidents, inventory), like the classic console's tenantQuery(). */
 export const setTenant = (t: string | null) => { tenant = t; };
+const scopeQuery = (scope?: string, sep: "?" | "&" = "&") => (scope ? `${sep}tenant_id=${encodeURIComponent(scope)}` : "");
 const tq = (sep: "?" | "&") => (tenant ? `${sep}tenant_id=${encodeURIComponent(tenant)}` : "");
 export const setCsrf = (t: string | null) => { csrf = t; };
 
@@ -148,9 +149,10 @@ export const api = {
     }),
   logout: () => call<unknown>("/api/auth/logout", { method: "POST" }),
 
-  alerts: async (gte: number) => unwrap(await call<Hits<Alert>>(`/api/alerts?gte=${gte}`)),
-  events: async (gte: number) => unwrap(await call<Hits<OcsfEvent>>(`/api/events?gte=${gte}`)),
-  aiTriage: async () => unwrap(await call<Hits<Alert>>("/api/ai-triage")),
+  // `scope` = an admin-chosen tenant: ws3 narrows server-side (a non-admin session is pinned to its own tenant there).
+  alerts: async (gte: number, scope?: string) => unwrap(await call<Hits<Alert>>(`/api/alerts?gte=${gte}${scopeQuery(scope)}`)),
+  events: async (gte: number, scope?: string) => unwrap(await call<Hits<OcsfEvent>>(`/api/events?gte=${gte}${scopeQuery(scope)}`)),
+  aiTriage: async (scope?: string) => unwrap(await call<Hits<Alert>>(`/api/ai-triage${scopeQuery(scope, "?")}`)),
   incidents: () => call<{ incidents: Incident[]; count: number }>(`/api/incidents${tq("?")}`),
   incidentGraph: (id: string) => call<IncidentGraph>(`/api/incidents/${encodeURIComponent(id)}/graph${tq("?")}`),
   incidentEvidence: (id: string) => call<EvidencePackage>(`/api/incidents/${encodeURIComponent(id)}/evidence${tq("?")}`),

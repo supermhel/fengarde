@@ -106,8 +106,10 @@ def run():
         b = block(tpl, loc)
         check("auth_request /api/auth/check-admin;" in b,
               f"wp-6.2: {loc} lacks the admin-only auth_request guard")
-    check("auth_request /api/auth/check;" not in tpl,
-          "wp-6.2: some location still uses the any-credential /auth/check guard")
+    # Only the inventory feed (ws6, tenant-unaware key) may keep the any-credential guard.
+    check(tpl.count("auth_request /api/auth/check;") == 1
+          and "auth_request /api/auth/check;" in block(tpl, "location /api/inventory/ {"),
+          "wp-6.2: a location other than /api/inventory/ uses the any-credential /auth/check guard")
     # PR #175 review: prefix matches let /api/ops/ws1/<x> or /api/ops/ws10 through
     # with the original URI proxied to the health port; ops routes are exact now.
     check(not re.search(r"location\s+/api/ops/ws\d", tpl),

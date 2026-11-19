@@ -174,6 +174,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `test_fix_read_plane.py`, `test_opensearch_list_default_filters.py`,
   `test_route_decomposition.py`. Not run: a live console + OpenSearch end-to-end.
 
+### Fixed (2026-11-19, PR #178 review: console follow-ups)
+
+- Console no longer polls the six admin-only `/api/ops/*` feeds unless the session
+  role is admin (they 403 for analyst/read_only); the Operations view says so.
+- An admin's tenant filter is sent as `tenant_id` to `/api/alerts`, `/api/events`
+  and `/api/ai-triage`, so ws3 narrows server-side instead of the client filtering
+  the newest 50/100.
+- Docs: pre-upgrade `ai-*` documents lack `tenant_id` and read as tenant `default`;
+  SECURITY.md has `_update_by_query` / `_delete_by_query` snippets (not run).
+- `live_nginx_check.py` now also asserts `?gte=`/`tenant_id=` forwarding, the
+  `/api/prom/*` admin gate and the `/api/inventory/` gate; it fails on the
+  pre-fix inventory location.
+
 ### Honesty (2026-11-04, WP-4.6: AI triage is a seam, not a feature — engine named per verdict)
 
 - Per-alert incident report (`services/ws3-indexer/reporting.py` template)
