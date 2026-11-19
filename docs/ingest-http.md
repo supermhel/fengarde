@@ -44,7 +44,7 @@ Authorization: Bearer <FENGARDE_INGEST_TOKEN>
   nothing behind it is parked after 10 failed passes. Parked events are not
   lost: after a clean drain pass the collector re-sends `<spool>.dead` at most
   every 5 minutes and keeps only what the bus still refuses (this undoes a
-  bus flap that parked good events). Watch `http_spool_pending_bytes`,
+  bus flap that parked good events). If `<spool>.dead` cannot be written (disk error or its cap) the event stays in the spool, the pass stops and `http_spool_dead_letter_write_failures` counts it: nothing is dropped. A poison run of any length is walked past across passes (bounded work per pass), and one re-send call tries at most 500 parked lines. Watch `http_spool_pending_bytes`,
   `http_spool_drain_failed_passes`, `http_spool_dead_lettered` and
   `http_spool_dead_letter_redriven` on WS-1 `/metrics`.
 
