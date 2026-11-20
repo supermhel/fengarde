@@ -1,0 +1,49 @@
+title: Suricata IDS alert with signature severity 1 (high)
+id: 0331c311-7985-47c8-b554-682781ef1069
+status: stable
+description: >
+  A Suricata signature of severity 1 matched (normalized by suricata_eve as OCSF Network Activity, class 4001,
+  activity 99 Other, carrying unmapped.ids.*). Suricata's own scale is 1 = most severe, and the parser maps 1 to OCSF
+  severity High, 2 to Medium, 3 to Low; this rule passes through ONLY severity 1, because that is the tier rule authors
+  reserve for the signatures they expect an analyst to read (ET Open uses 1 for exploit/malware/C2 classes). Severity 2
+  and 3 are bulk policy/info/recon signatures and stay indexed as events, not alerts.
+  Why it exists: nothing alerted on Suricata records before, so an IDS hit on the wire never reached an analyst. This is
+  deliberately a passthrough, not a new detection: it asserts "the sensor's own rule set called this high severity", and
+  it is exactly as good as that rule set. It makes no claim about the signature's content, the target's state or whether
+  the attack worked.
+  Dedupe: the rule is stateful with threshold 1 grouped by unmapped.ids.flow_id (Suricata's per-flow id), window 3600 s.
+  Threshold 1 means every high-severity hit still fires, but the alert id is (rule, tenant, flow_id, hour bucket), so a
+  signature that re-matches on every packet of one flow yields ONE alert document (idempotent indexing) instead of
+  hundreds. Limit of that choice: two DIFFERENT severity-1 signatures on the same flow in the same hour bucket share one
+  alert id (the alert lists the contributing event ids; both records stay searchable as events). A hit on a different
+  flow, or in the next hour bucket, is a new alert.
+  An IPS drop (alert.action blocked) is still alerted: the attempt happened; unmapped.ids.action carries the verdict.
+  Not covered: records without a flow_id (the parser keeps it when present; Suricata always writes it), Suricata
+  `anomaly` / `drop` event types (dropped by the parser), and severity 2 signatures. Noise comes from the rule set, not
+  from this rule: disable or threshold-suppress noisy signatures in Suricata (threshold.config / suppress), or tune the
+  rule set.
+level: high
+logsource:
+  category: network_activity
+detection:
+  ids_high:
+    class_uid: 4001
+    siem.source_type: suricata_eve
+    unmapped.ids.engine: suricata
+    unmapped.ids.severity: 1
+  condition: ids_high
+fields:
+  - src_endpoint.ip
+  - dst_endpoint.ip
+  - dst_endpoint.port
+  - unmapped.ids.signature
+  - unmapped.ids.signature_id
+  - unmapped.ids.category
+  - unmapped.ids.action
+  - unmapped.ids.flow_id
+siem:
+  sector: common
+  score_weight: 55
+  window_seconds: 3600
+  threshold: 1
+  group_by: unmapped.ids.flow_id

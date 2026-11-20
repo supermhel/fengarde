@@ -1,0 +1,71 @@
+title: OT write command (Modbus/TCP or DNP3) seen on the wire from a source not on the authorised-writer list
+id: 1256b853-33fb-425a-b954-f19add35285f
+# status: experimental is METADATA ONLY (no code gates on `status`); what keeps this rule quiet on a stock install is
+# `siem.default_enabled: false` below. Flip it to `stable` once contracts/allowlists/ot_authorized_writers.yml has
+# been populated from a reviewed baseline.
+status: experimental
+description: >
+  A Suricata (modbus / dnp3 event_type) or Zeek (modbus.log / modbus_detailed.log) record shows a WRITE-class command
+  sent by a source address that is NOT listed in contracts/allowlists/ot_authorized_writers.yml (OCSF Network Activity,
+  class 4001, activity 99, unmapped.ot.*; siem.source_type suricata_eve or zeek_json).
+  Write function codes: Modbus 5 Write Single Coil, 6 Write Single Register, 15 Write Multiple Coils, 16 Write Multiple
+  Registers, 21 Write File Record, 22 Mask Write Register, 23 Read/Write Multiple Registers; DNP3 2 WRITE, 4 OPERATE,
+  5 DIRECT_OPERATE, 6 DIRECT_OPERATE_NR (3 SELECT only arms a point and is not counted: the OPERATE that follows is).
+  Single-shot, one alert per record: one command to control logic from an undeclared host is already worth an analyst's
+  attention.
+  How this differs from ot_modbus_unauthorized_write: that rule keys on the modbus_anomaly parser's coarse address-range
+  heuristic for a protocol-anomaly tap and never sees Suricata or Zeek records (the sensor parsers deliberately never set
+  unmapped.ot.anomaly_type). This rule is source-based, protocol-aware (Modbus and DNP3), and reads the sensors the repo
+  now ingests. A write that both parsers describe would raise both alerts; that is two views of one fact, not a bug.
+  OFF BY DEFAULT (same precedent as ot_opcua_write_unauthorized_node, owner decision 2026-10-02): the allowlist ships
+  EMPTY, so enabling the rule before populating it alerts on EVERY write. Populate contracts/allowlists/
+  ot_authorized_writers.yml from a reviewed baseline, then opt in:
+    * per tenant: add this rule's id to `enabled_rules` in contracts/tenants/<tenant_id>.yml (a tenant that lists it in
+      `disabled_rules` too stays OFF); or
+    * single-tenant install: FENGARDE_OPT_IN_RULES=1256b853-33fb-425a-b954-f19add35285f on the WS-4 detection service.
+  Until then a write from an undeclared host is NOT alerted by this rule -- the coverage trade the owner already accepted
+  for the OPC UA allowlist rule.
+  Limits, stated plainly: the check is the SOURCE ADDRESS only. A spoofed source, or a compromised listed host, is not
+  caught; it says nothing about the register/coil or its meaning (contracts/ot-points/ per-point writers have no address
+  mapping and no reader here); it sees only traffic the sensor sees and decodes (a sensor placed after the HMI hop sees
+  the HMI as the source). Zeek RESP rows (responses, incl. *_EXCEPTION) are skipped so a transaction is not counted twice;
+  a site that enables BOTH modbus.log and the ICSNPP modbus_detailed.log still gets one alert per log for each write.
+  Suricata logs request and response in one modbus record, so a write the device rejected with an exception response is
+  still alerted (the attempt is the finding). Modbus function codes outside the list (reads, diagnostics) and DNP3
+  responses never match. Level high, as ot_modbus_unauthorized_write.
+level: high
+logsource:
+  category: network_activity
+detection:
+  modbus_write:
+    class_uid: 4001
+    siem.source_type: {in: [suricata_eve, zeek_json]}
+    unmapped.ot.protocol: modbus_tcp
+    unmapped.ot.function_code: {in: [5, 6, 15, 16, 21, 22, 23]}
+  dnp3_write:
+    class_uid: 4001
+    siem.source_type: suricata_eve
+    unmapped.ot.protocol: dnp3
+    unmapped.ot.function_code: {in: [2, 4, 5, 6]}
+  response_row:
+    unmapped.ot.pdu_type: RESP
+  unlisted_writer:
+    src_endpoint.ip: {exists: true, not_in: ot_authorized_writers}
+  condition: (modbus_write or dnp3_write) and not response_row and unlisted_writer
+fields:
+  - src_endpoint.ip
+  - dst_endpoint.ip
+  - unmapped.ot.protocol
+  - unmapped.ot.function_code
+  - unmapped.ot.function_name
+  - unmapped.ot.unit_id
+  - unmapped.ot.address
+siem:
+  sector: datacenter
+  # OFF until a tenant opts in (enabled_rules) -- see "OFF BY DEFAULT" above.
+  default_enabled: false
+  score_weight: 70
+mitre:
+  framework: attack-ics
+  tactic: TA0106      # Impair Process Control
+  technique: T0855    # Unauthorized Command Message

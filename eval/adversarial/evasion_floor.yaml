@@ -841,4 +841,7 @@ rule_sets:
         window_seconds: 600
     production_reachable: true
 version: 1
-waivers: {}
+waivers:
+  common_ids_high_severity_alert:
+    date: "2026-11-20"
+    reason: "threshold-1 passthrough of a Suricata severity-1 alert keyed on the per-flow id (used only to dedupe alert ids): there is no burst size or window to evade, and flow_id is not an attacker-rotatable grouping kind in KEY_KINDS. No storyline or rule_probes template exercises it; add one when a sensor-alert storyline step exists, then replace this waiver with a measured floor."

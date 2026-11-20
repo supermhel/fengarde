@@ -1,0 +1,27 @@
+# Source addresses that engineering/operations have DECLARED allowed to send OT write commands
+# (ot_write_unlisted_source.yml: Modbus/TCP and DNP3 writes seen by a Suricata or Zeek sensor).
+#
+# OPERATOR NOTE: the rule that reads this file is OFF BY DEFAULT (siem.default_enabled: false),
+# same as ot_opcua_write_unauthorized_node. Populate this list FIRST, then opt in -- per tenant with
+# `enabled_rules: [1256b853-33fb-425a-b954-f19add35285f]` in contracts/tenants/<tenant>.yml, or for a
+# single-tenant install with FENGARDE_OPT_IN_RULES=1256b853-33fb-425a-b954-f19add35285f on the WS-4
+# detection service. See contracts/tenants/README.md.
+#
+# Entries are matched against src_endpoint.ip: a plain IP is an exact match, a CIDR (e.g. a SCADA
+# server subnet) matches by network membership. List the HMIs, SCADA servers and engineering
+# workstations that legitimately write to your controllers.
+#
+# Shipped EMPTY on purpose, and read this before enabling the rule on a live plant: with no entries
+# NOTHING is authorised, so the rule alerts on EVERY observed OT write. That is the honest default for
+# a control network where nobody has yet declared who may write -- but it is noisy on day one. Build
+# the list from a reviewed baseline of observed writers (review them first: do not bulk-import what you
+# saw, that would whitelist an attacker who was already there).
+#
+# This matches the SOURCE ADDRESS only. A spoofed or compromised listed host is not caught, and
+# contracts/ot-points/ (per-point allowed_writers categories) has no reader that maps categories to
+# addresses yet, so it is not consulted here.
+#
+#   entries:
+#     - "10.20.0.5"          # SCADA server
+#     - "10.20.1.0/28"       # engineering workstations
+entries: []
