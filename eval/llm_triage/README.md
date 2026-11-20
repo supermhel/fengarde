@@ -6,7 +6,7 @@ instead of the model. Results and caveats: [`RESULTS.md`](RESULTS.md) (generated
 | File | Role |
 |---|---|
 | `build_labelled_set.py` | Builds `labelled_cases.json` from repo material (twin storyline attack steps, curated adversarial corpus, storyline decoys, twin negative controls) through the real WS-2 -> WS-4 path. `--check` fails if the committed file is stale. Slow (~70 s), so it runs in the `eval-twin` gate tier. |
-| `labelled_cases.json` | 54 cases: label, expected level, provenance, the exact `ai.requests` payload. Committed. |
+| `labelled_cases.json` | 54 cases: label, expected level, provenance, the exact `ai.requests` payload. Committed. Frozen snapshot: event fields added after the measured run (`POST_SNAPSHOT_FIELDS` in the builder, e.g. the ADR-012 causal keys) are projected out of the stored payload, so the sha256 pinned by the committed real-model results stays valid; detection still sees them. |
 | `run_eval.py` | Sends each case through the real `AiWorker.handle()`; scores accuracy (Wilson CI), per-class precision/recall, confusion matrix, abstain/error/stub share, severity, latency. |
 | `render_results.py` | Renders `RESULTS.md` from `results/*.json`. |
 | `test_llm_triage_eval.py` | Zero-infra contract tests (stub + loopback fake Ollama). Wired in `run_all_tests.sh`. |

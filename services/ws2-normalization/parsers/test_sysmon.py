@@ -142,5 +142,90 @@ class TestSysmonParser(unittest.TestCase):
                                   f"EventID {eid} must content-sniff to SysmonParser")
 
 
+# --- ADR-012 WP 3: causal process keys -------------------------------------------------------------------------
+# FIXTURE PROVENANCE: TEMPLATE-DERIVED. The GUIDs below are INVENTED to match the documented Sysmon
+# ProcessGuid / ParentProcessGuid shape ("{8-4-4-4-12}" hex). They are NOT from a real capture; whether real
+# Sysmon output reaches the parser with these field names is UNVERIFIED until the owner's lab capture (ADR-012 WP 1).
+_G_CHILD = "{AAAAAAAA-1111-2222-3333-444444444444}"
+_G_PARENT = "{BBBBBBBB-5555-6666-7777-888888888888}"
+_NULL = "{00000000-0000-0000-0000-000000000000}"
+_CHILD = "aaaaaaaa-1111-2222-3333-444444444444"
+_PARENT = "bbbbbbbb-5555-6666-7777-888888888888"
+
+
+class TestSysmonCausalKeys(unittest.TestCase):
+
+    def test_eid1_process_and_parent_keys_canonicalised(self):
+        rec = dict(REC_PROCESS, ProcessGuid=_G_CHILD, ParentProcessGuid=_G_PARENT)
+        ev = PARSER.parse(_raw(rec))
+        proc = ev["actor"]["process"]
+        self.assertEqual(proc["uid"], _CHILD)
+        self.assertEqual(proc["parent_process"],
+                         {"uid": _PARENT, "pid": 800, "name": r"C:\Windows\explorer.exe"})
+        self.assertEqual(ev["siem"]["key_scope"], {"host": "wks-jdoe", "sensor": "sysmon"})
+        self.assertNotIn("boot", ev["siem"]["key_scope"])
+        self.assertEqual(validate(ev), [])
+
+    def test_eid1_without_guids_has_no_uid_or_scope_but_keeps_parent_pid_name(self):
+        ev = PARSER.parse(_raw(REC_PROCESS))
+        self.assertNotIn("uid", ev["actor"]["process"])
+        self.assertNotIn("key_scope", ev["siem"])
+        self.assertEqual(ev["actor"]["process"]["parent_process"]["pid"], 800)
+        self.assertNotIn("uid", ev["actor"]["process"]["parent_process"])
+        self.assertEqual(validate(ev), [])
+
+    def test_eid3_eid5_eid11_carry_process_uid(self):
+        for rec in (REC_NETWORK, REC_TERMINATE, REC_FILE):
+            ev = PARSER.parse(_raw(dict(rec, ProcessGuid=_G_CHILD)))
+            self.assertEqual(ev["actor"]["process"]["uid"], _CHILD, rec["EventID"])
+            self.assertNotIn("parent_process", ev["actor"]["process"])
+            self.assertEqual(ev["siem"]["key_scope"]["host"], "wks-jdoe")
+            self.assertEqual(validate(ev), [])
+
+    def test_eid10_uses_source_guid_not_target(self):
+        rec = {"EventID": 10, "TimeCreated": 1750000005000, "Computer": "wks-jdoe",
+               "SourceImage": r"C:\Users\Public\x.exe", "SourceProcessId": "4242",
+               "SourceProcessGUID": _G_CHILD, "TargetProcessGUID": _G_PARENT,
+               "TargetImage": r"C:\Windows\System32\lsass.exe", "GrantedAccess": "0x1010"}
+        ev = PARSER.parse(_raw(rec))
+        self.assertEqual(ev["actor"]["process"]["uid"], _CHILD)
+        self.assertEqual(ev["actor"]["process"]["pid"], 4242)
+        self.assertEqual(validate(ev), [])
+        rec2 = {k: v for k, v in rec.items() if k != "SourceProcessGUID"}
+        ev2 = PARSER.parse(_raw(rec2))
+        self.assertNotIn("uid", ev2["actor"]["process"])   # a target GUID must never become the actor's key
+        self.assertNotIn("key_scope", ev2["siem"])
+
+    def test_negative_values_dropped(self):
+        bad = (_NULL, "00000000-0000-0000-0000-000000000000", "-", "0x0", "", "  ", None, 0, 12345,
+               "not-a-guid", "{AAAAAAAA-1111-2222-3333-44444444444}", "A" * 129,
+               ("{" + "a" * 200 + "}"))
+        for v in bad:
+            rec = dict(REC_PROCESS, ProcessGuid=v, ParentProcessGuid=v)
+            ev = PARSER.parse(_raw(rec))
+            self.assertIsNotNone(ev, repr(v))
+            self.assertNotIn("uid", ev["actor"]["process"], repr(v))
+            self.assertNotIn("uid", ev["actor"]["process"].get("parent_process", {}), repr(v))
+            self.assertNotIn("key_scope", ev["siem"], repr(v))
+            self.assertEqual(validate(ev), [], repr(v))
+
+    def test_one_bad_guid_does_not_drop_the_other(self):
+        ev = PARSER.parse(_raw(dict(REC_PROCESS, ProcessGuid=_G_CHILD, ParentProcessGuid=_NULL)))
+        self.assertEqual(ev["actor"]["process"]["uid"], _CHILD)
+        self.assertNotIn("uid", ev["actor"]["process"]["parent_process"])
+
+    def test_no_host_means_no_keys(self):
+        rec = {k: v for k, v in REC_PROCESS.items() if k != "Computer"}
+        ev = PARSER.parse(_raw(dict(rec, ProcessGuid=_G_CHILD, ParentProcessGuid=_G_PARENT)))
+        self.assertNotIn("uid", ev["actor"]["process"])
+        self.assertNotIn("uid", ev["actor"]["process"]["parent_process"])
+        self.assertNotIn("key_scope", ev["siem"])
+        self.assertEqual(validate(ev), [])
+
+    def test_type_uid_still_derived(self):
+        ev = PARSER.parse(_raw(dict(REC_PROCESS, ProcessGuid=_G_CHILD)))
+        self.assertEqual(ev["type_uid"], ev["class_uid"] * 100 + ev["activity_id"])
+
+
 if __name__ == "__main__":
     unittest.main()
