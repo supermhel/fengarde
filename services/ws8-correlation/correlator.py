@@ -676,7 +676,12 @@ class Correlator:
             value (non-str, or an ip ``valid_ip`` rejects) yields NO node --
             degrade, never fabricate (the WS-9 skip discipline).
           ``edges`` -- one object per co-occurring pair:
-            ``{"from", "to", "kind", "event_id", "ts_ms"}`` where ``from``/
+            ``{"from", "to", "kind", "event_id", "ts_ms"}`` plus the ADR-011
+            optional evidence-interval fields ``first_ts_ms``/``last_ts_ms``
+            (min/max sanitized event time over ALL distinct member alerts
+            carrying both endpoints, fallback-timed excluded; null iff
+            ``timed_evidence_count`` == 0), ``evidence_count``,
+            ``timed_evidence_count``; ``ts_ms`` semantics unchanged. ``from``/
             ``to`` are the endpoints' ``entity_id`` strings and ``kind`` is
             EXACTLY one of: the v1 field-pair kinds (used_ip/used_device/
             seen_at_ip) for the same pairs, OR a typed kind (caused_by/
@@ -704,6 +709,10 @@ class Correlator:
         nodes: dict[str, dict] = {}  # entity_id -> node object
         best: dict[tuple, tuple] = {}  # (from_id, to_id) -> (rank, ts_ms, event_id)
         best_kind: dict[tuple, str] = {}  # (from_id, to_id) -> winning kind
+        # ADR-011 option C: per pair, distinct member id -> sanitized event time
+        # (None when the member's time was the fallback). Keyed by member id so
+        # redelivery and one member reaching a pair twice count once.
+        evidence: dict[tuple, dict] = {}
         for member_id, entry in side.items():
             refs = [(entity_type, entity_value)]
             for other_type, other_value in entry.get("cooccur") or []:
@@ -749,14 +758,25 @@ class Correlator:
                         ).hexdigest()[:12], 16)
                     else:
                         ts = entry.get("time", 0)
+                    evidence.setdefault(key, {})[member_id] = (
+                        None if entry.get("time_fallback") else entry.get("time", 0))
                     cand = (_KIND_RANK.get(eff_kind, 99), ts,
                             entry.get("event_id") or member_id)
                     if key not in best or cand < best[key]:
                         best[key] = cand
                         best_kind[key] = eff_kind
-        edges = [{"from": f, "to": t, "kind": best_kind[(f, t)],
-                  "event_id": ev, "ts_ms": ts}
-                 for (f, t), (_, ts, ev) in sorted(best.items())]
+        edges = []
+        for (f, t), (_, ts, ev) in sorted(best.items()):
+            ev_times = evidence[(f, t)]
+            timed = [v for v in ev_times.values() if v is not None]
+            # ADR-011: fallback-timed members count in evidence_count only;
+            # their sha256-digest/wall-clock stand-in never reaches these fields.
+            edges.append({"from": f, "to": t, "kind": best_kind[(f, t)],
+                          "event_id": ev, "ts_ms": ts,
+                          "first_ts_ms": min(timed) if timed else None,
+                          "last_ts_ms": max(timed) if timed else None,
+                          "evidence_count": len(ev_times),
+                          "timed_evidence_count": len(timed)})
         tactic_sources = {
             tactic: sorted(mid for mid, e in side.items() if e.get("tactic") == tactic)
             for tactic in incident["tactics"]
