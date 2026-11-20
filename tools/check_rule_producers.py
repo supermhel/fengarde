@@ -30,8 +30,15 @@ SERVICES = ROOT / "services"
 sys.path.insert(0, str(SERVICES / "ws2-normalization"))
 sys.path.insert(0, str(SERVICES))
 
-sys.path.insert(0, str(SERVICES / "ws4-detection"))
-from engine import _CONDITION_TOKEN_RE, _parse_or  # noqa: E402  -- the engine's own condition grammar
+# ws4-detection is on sys.path ONLY while the engine is imported: it ships its own top-level `main` module, which
+# would otherwise shadow ws2-normalization's `main` for every importer of this file (test_adapters.py does
+# `from main import normalize_one`).
+_WS4 = str(SERVICES / "ws4-detection")
+sys.path.insert(0, _WS4)
+try:
+    from engine import _CONDITION_TOKEN_RE, _parse_or  # noqa: E402  -- the engine's own condition grammar
+finally:
+    sys.path.remove(_WS4)
 from parsers import _REGISTRY  # noqa: E402
 from enrichment import enrich  # noqa: E402  -- v0.4: mirror the real parse->enrich pipeline
 
