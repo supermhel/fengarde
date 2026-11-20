@@ -684,6 +684,9 @@ echo
 echo "== twin: oracle cross-check (mutation testing + independent derived oracle + triangulation) =="; LAST_HEADER="== twin: oracle cross-check (mutation testing + independent derived oracle + triangulation) =="
 $PY eval/twin/test_oracle_crosscheck.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
+echo "== twin: oracle-declared gaps (known_gaps): undeclared / wrong-kind / stale each turn the guard red =="; LAST_HEADER="== twin: oracle-declared gaps (known_gaps) =="
+$PY eval/twin/test_known_gaps.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
 echo "== twin: the oracle mutation instrument ITSELF (waiver table + inert-key table + ratchet over every storyline) =="; LAST_HEADER="== twin: the oracle mutation instrument itself =="
 $PY eval/twin/oracle_mutate.py --seed 7 || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo

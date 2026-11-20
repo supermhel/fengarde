@@ -204,3 +204,103 @@ incident_membership:
 campaign_membership:
   campaign_count: 1
   full_coverage: true
+
+
+# =============================================================================
+# known_gaps -- the disagreements between this oracle and the system that are KNOWN, DATED and
+# DECLARED HERE, in the storyline's own answer key (owner decision 2026-11-20; schema and failure
+# modes: eval/twin/known_gaps.py). This is declaration data, not oracle semantics: no grader
+# scores against it, the mutation probe skips it, and editing it is not an oracle semantic change.
+# Every entry is checked from both sides: a disagreement with no entry FAILS, an entry whose kind
+# does not match what is observed FAILS, and an entry that no longer reproduces FAILS (STALE) --
+# delete it, that is the ratchet working. Migrated 2026-11-20 from the name-keyed tables in
+# oracle_consistency / oracle_derive / oracle_mutate; reasons are carried over verbatim.
+# =============================================================================
+known_gaps:
+  # 2026-10-14 measured on the first run (seed 7), not tuned.
+  - kind: order_blind_join
+    from: mass_vm_delete
+    to: cred_spray
+    since: '2026-10-02'
+    reason: 'directional_discrimination=0.0 (SSOT 2026-10-01): the WS-8 graph joins every forbidden pair
+      because the entities at both ends overlap (per-entity tracks never merge, so a shared address/account
+      yields an edge in BOTH directions). The oracle''s anti-causal non-edges are therefore not enforceable
+      by this correlator. Waived by class, not hidden: closing it means grading edge direction by event
+      time or by WS-8 typed caused_by edges, a separate ratified step.'
+  - kind: order_blind_join
+    from: backdoor_account
+    to: foothold_logon
+    since: '2026-10-02'
+    reason: 'directional_discrimination=0.0 (SSOT 2026-10-01): the WS-8 graph joins every forbidden pair
+      because the entities at both ends overlap (per-entity tracks never merge, so a shared address/account
+      yields an edge in BOTH directions). The oracle''s anti-causal non-edges are therefore not enforceable
+      by this correlator. Waived by class, not hidden: closing it means grading edge direction by event
+      time or by WS-8 typed caused_by edges, a separate ratified step.'
+  - kind: mutant_survivor
+    operator: drop_expected_rule
+    outcome: SURVIVED
+    max: 2
+    since: '2026-10-14'
+    reason: 'the rule is a suppressed companion (siem.companion_of): WS-4 drops it when its sibling matched
+      the same event and already holds every event it would cite (the coverage condition, 2026-10-14) --
+      on these single-source bursts it always does -- so it never raises an alert here; TPR''s any-intersection
+      rule, the reconciler''s companion exemption and the severity matrix (one row per fired alert) all
+      ignore it'
+  - kind: mutant_survivor
+    operator: shift_level
+    outcome: SURVIVED
+    max: 3
+    since: '2026-10-14'
+    reason: 'the rule is a suppressed companion (siem.companion_of): WS-4 drops it when its sibling matched
+      the same event and already holds every event it would cite (the coverage condition, 2026-10-14) --
+      on these single-source bursts it always does -- so it never raises an alert here; TPR''s any-intersection
+      rule, the reconciler''s companion exemption and the severity matrix (one row per fired alert) all
+      ignore it'
+  - kind: mutant_survivor
+    operator: drop_step
+    outcome: SURVIVED
+    max: 2
+    since: '2026-10-14'
+    reason: inhibit_recovery and backup_wipe_cloud raise no alert (declared gaps), so dropping them from
+      the sequence changes no emitted alert and no graded output
+  - kind: mutant_survivor
+    operator: flip_gap_to_false
+    outcome: SURVIVED
+    max: 4
+    since: '2026-10-14'
+    reason: the four gap steps declare no expected rule and no rule fires there, so nothing reads the gap
+      flag (same mechanism as phishing_bec's waived flip_gap_to_false)
+  - kind: mutant_survivor
+    operator: flip_relationship
+    outcome: IMPROVED
+    max: 3
+    since: '2026-10-14'
+    reason: 'two forbidden->allowed flips on pairs the graph joins in both directions (directional_discrimination=0.0
+      (SSOT 2026-10-01): the pair is graded and joined, and the reverse direction is joined too (reverse_joined=True),
+      so the legacy join predicate cannot tell a relation from its reverse; the WS-8 tracks never merge
+      and share entities at both ends), and the allowed->forbidden flip of mass_vm_delete->encrypt_files,
+      an allowed pair the graph does NOT join (encrypt_files raises no alert): re-labelling an unmet requirement
+      as a met non-edge raises chain_fidelity'
+  - kind: mutant_survivor
+    operator: reverse_relationship
+    outcome: IMPROVED
+    max: 1
+    since: '2026-10-14'
+    reason: mass_vm_delete->encrypt_files is unmet forward and met in reverse (the account evidenced at
+      encrypt_files reaches back to the VM-delete alert), so reversing it makes the requirement MET -- the
+      it_intrusion recon->brute-force class
+  - kind: mutant_survivor
+    operator: reverse_relationship
+    outcome: SURVIVED
+    max: 5
+    since: '2026-10-14'
+    reason: 'directional_discrimination=0.0 (SSOT 2026-10-01): the pair is graded and joined, and the reverse
+      direction is joined too (reverse_joined=True), so the legacy join predicate cannot tell a relation
+      from its reverse; the WS-8 tracks never merge and share entities at both ends'
+  - kind: mutant_survivor
+    operator: swap_adjacent_steps
+    outcome: SURVIVED
+    max: 6
+    since: '2026-10-14'
+    reason: one of the two swapped steps raises no alert (and the entities are shared across the chain),
+      so neither alert order nor the entity-bridge fidelity predicate has anything to disagree about
