@@ -54,6 +54,7 @@ for _p in (str(TWIN), str(SERVICES), str(ROOT)):
 import report  # noqa: E402  (first: pins ws4's `main` before anything imports one)
 import yaml  # noqa: E402
 
+import known_gaps as kg  # noqa: E402
 import oracle_consistency as oc  # noqa: E402
 import oracle_derive as od  # noqa: E402
 import oracle_mutate as om  # noqa: E402
@@ -178,16 +179,21 @@ def test_derive_clean_tree() -> None:
         for sd in reg.ALL:
             res = _run(sd, _oracle(sd), seed)
             # 2026-10-03: the periodic beacon rule is NOT modelled by the static reader, so a storyline
-            # that exercises it has exactly the capped number of UNDECIDED steps (od._F2_CAP: 0 elsewhere).
+            # that exercises it has exactly the capped number of UNDECIDED steps (its oracle's f2_cap: 0 elsewhere).
+            cap = kg.f2_caps(kg.load(_oracle(sd), sd.name), sd.name).get(sd.name, 0)
             _check(f"DER-NEG-1 clean tree, {sd.name} seed {seed}: no unwaived finding, no stale waiver, "
-                   f"undecided == its declared cap ({od._F2_CAP.get(sd.name, 0)})",
-                   res["ok"] and res["f2_count"] == od._F2_CAP.get(sd.name, 0),
+                   f"undecided == its declared cap ({cap})",
+                   res["ok"] and res["f2_count"] == cap,
                    f"unwaived={[(f['kind'], f['item'][:8]) for f in res['unwaived']]} "
                    f"waived={[f['kind'] for f in res['findings'] if f['waived']]}")
     it = _run(IT, _oracle(IT), 7)
-    _check("DER-NEG-1 the only waived item on any storyline is it_intrusion's F14 (dated, with a reason)",
+    _check("DER-NEG-1 it_intrusion's F14 is waived (dated, with a reason) and nothing else is",
            [f["kind"] for f in it["findings"] if f["waived"]] == ["F14"]
            and all(not f["waived"] for sd in (AI, INFRA) for f in _run(sd, _oracle(sd), 7)["findings"]))
+    _check("DER-NEG-1 on every storyline the waived findings are EXACTLY the oracle's derive_waiver declarations",
+           all({(f["kind"], f["step"], f["item"]) for f in _run(sd, _oracle(sd), 7)["findings"] if f["waived"]}
+               == {(k[1], k[2], k[3]) for k in kg.derive_map(kg.load(_oracle(sd), sd.name), sd.name)}
+               for sd in reg.ALL))
     for sd in (AI, INFRA):
         for seed in (7, 11):
             res = _run(sd, _oracle(sd), seed)
@@ -272,12 +278,16 @@ def test_derive_hand_skew() -> None:
     o["detection_points"]["agent_mcp_tool_call"]["expected_rules"].append({"rule_id": no_tactic[0], "level": "medium"})
     _check("DER-POS-2 F6: an expected rule carrying no mitre.tactic is flagged (only the waived no_technique rules lack one)",
            set(no_tactic) == waived_ids and bool(_kinds(_run(AI, o)["findings"], "F6", no_tactic[0])), f"{no_tactic}")
-    # 2026-10-14: exactly one dated exception -- supply_chain_ci exercises agent_tool_call_burst, the
-    # rule that has no mitre block on purpose; its F6 is WAIVED, never unwaived
+    # 2026-10-14: a tactic-less rule (agent_tool_call_burst, no mitre block on purpose) is only legitimate where the
+    # storyline's OWN oracle declares it (derive_waiver F6); every F6 finding must be waived by such a declaration
     f6 = {sd.name: [f for f in _run(sd, _oracle(sd))["findings"] if f["kind"] == "F6"] for sd in reg.ALL}
-    _check("DER-NEG-2 F6: the shipped oracles expect no tactic-less rule, except supply_chain_ci's waived one",
-           all(not v for n, v in f6.items() if n != "supply_chain_ci")
-           and len(f6.get("supply_chain_ci", [])) == 1 and all(f["waived"] for f in f6["supply_chain_ci"]),
+    declared_f6 = {sd.name: {k[2:] for k in kg.derive_map(kg.load(_oracle(sd), sd.name), sd.name) if k[1] == "F6"}
+                   for sd in reg.ALL}
+    _check("DER-NEG-2 F6: every F6 finding on the shipped oracles is waived by that oracle's own declaration, "
+           "and every declared F6 waiver is observed",
+           all(all(f["waived"] for f in v) and {(f["step"], f["item"]) for f in v} == declared_f6[n]
+               for n, v in f6.items())
+           and any(declared_f6.values()),
            str({n: [(f["item"][:8], f["waived"]) for f in v] for n, v in f6.items() if v}))
 
 
@@ -344,7 +354,8 @@ def test_derive_rule_skew() -> None:
            f"unwaived={[f['kind'] for f in res['unwaived']]}")
     # waiver hygiene
     stale = {("it_intrusion", "F1", "x", "y"): "2026-10-02 this waiver no longer reproduces anything"}
-    res = _run(IT, _oracle(IT), waived={**od._WAIVED, **stale})
+    shipped = kg.derive_map(kg.load(_oracle(IT), IT.name), IT.name)
+    res = _run(IT, _oracle(IT), waived={**shipped, **stale})
     _check("DER-NEG-6 a waiver that no longer reproduces is a STALE waiver and fails",
            res["stale_waivers"] == [("it_intrusion", "F1", "x", "y")] and not res["ok"])
     bad = {("it_intrusion", "F14", "-", "incident_count"): "known"}
@@ -354,7 +365,8 @@ def test_derive_rule_skew() -> None:
     _check("DER-NEG-6 without its waiver, the day-one F14 is an unwaived FAIL",
            [f["kind"] for f in res["unwaived"]] == ["F14"])
     _check("every shipped waiver carries a dated reason",
-           all(od._REASON_RE.match(v) for v in od._WAIVED.values()))
+           all(od._REASON_RE.match(v) for sd in reg.ALL
+               for v in kg.derive_map(kg.load(_oracle(sd), sd.name), sd.name).values()))
 
 
 # ===========================================================================

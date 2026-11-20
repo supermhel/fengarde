@@ -217,6 +217,17 @@ class Parser:
             event["message"] = message
         return event
 
+    @staticmethod
+    def stamp_key_scope(event: dict, host: Optional[str], sensor: str) -> bool:
+        """ADR-012: record the uniqueness scope for the causal keys a parser set
+        (``siem.key_scope = {host, sensor}``; ``boot`` stays absent, no boot-epoch
+        source exists). Fail closed: without a host a Windows-side key would match
+        across machines, so the caller must then drop its keys (returns False)."""
+        if not host:
+            return False
+        event["siem"]["key_scope"] = {"host": host, "sensor": sensor}
+        return True
+
     def resolve_sector(self, meta: dict) -> str:
         """``meta.sector`` overrides this parser's default SECTOR, but only when
         it's a recognized value -- an unvalidated override reaching Contract A's

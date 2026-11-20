@@ -76,3 +76,62 @@ incident_membership:
     - "b2c3d4e5-6f70-4819-8a2b-3c4d5e6f7082"
     - "8c4e1f90-7a2b-4d33-9e55-6f1b2c3a4d03"
     - "9c86195a-8cd6-4b73-b526-a708bbb5299e"
+
+
+# =============================================================================
+# known_gaps -- the disagreements between this oracle and the system that are KNOWN, DATED and
+# DECLARED HERE, in the storyline's own answer key (owner decision 2026-11-20; schema and failure
+# modes: eval/twin/known_gaps.py). This is declaration data, not oracle semantics: no grader
+# scores against it, the mutation probe skips it, and editing it is not an oracle semantic change.
+# Every entry is checked from both sides: a disagreement with no entry FAILS, an entry whose kind
+# does not match what is observed FAILS, and an entry that no longer reproduces FAILS (STALE) --
+# delete it, that is the ratchet working. Migrated 2026-11-20 from the name-keyed tables in
+# oracle_consistency / oracle_derive / oracle_mutate; reasons are carried over verbatim.
+# =============================================================================
+known_gaps:
+  - kind: order_blind_join
+    from: mass_vm_delete
+    to: cloud_root_login
+    since: '2026-10-02'
+    reason: 'directional_discrimination=0.0 (SSOT 2026-10-01): the WS-8 graph joins every forbidden pair
+      because the entities at both ends overlap (per-entity tracks never merge, so a shared address/account
+      yields an edge in BOTH directions). The oracle''s anti-causal non-edges are therefore not enforceable
+      by this correlator. Waived by class, not hidden: closing it means grading edge direction by event
+      time or by WS-8 typed caused_by edges, a separate ratified step.'
+  - kind: mutant_survivor
+    operator: drop_expected_rule
+    outcome: SURVIVED
+    max: 1
+    since: '2026-10-02'
+    reason: 'the rule is a suppressed companion (siem.companion_of): WS-4 drops it when its sibling matched
+      the same event and already holds every event it would cite (the coverage condition, 2026-10-14) --
+      on these single-source bursts it always does -- so it never raises an alert here; TPR''s any-intersection
+      rule, the reconciler''s companion exemption and the severity matrix (one row per fired alert) all
+      ignore it'
+  - kind: mutant_survivor
+    operator: flip_relationship
+    outcome: IMPROVED
+    max: 1
+    since: '2026-10-02'
+    reason: 'forbidden->allowed flip on a pair the graph joins: the wrong oracle scores BETTER because directional_discrimination=0.0
+      (SSOT 2026-10-01): the pair is graded and joined, and the reverse direction is joined too (reverse_joined=True),
+      so the legacy join predicate cannot tell a relation from its reverse; the WS-8 tracks never merge
+      and share entities at both ends'
+  - kind: mutant_survivor
+    operator: reverse_relationship
+    outcome: SURVIVED
+    max: 2
+    since: '2026-10-02'
+    reason: 'directional_discrimination=0.0 (SSOT 2026-10-01): the pair is graded and joined, and the reverse
+      direction is joined too (reverse_joined=True), so the legacy join predicate cannot tell a relation
+      from its reverse; the WS-8 tracks never merge and share entities at both ends'
+  - kind: mutant_survivor
+    operator: shift_level
+    outcome: SURVIVED
+    max: 1
+    since: '2026-10-02'
+    reason: 'the rule is a suppressed companion (siem.companion_of): WS-4 drops it when its sibling matched
+      the same event and already holds every event it would cite (the coverage condition, 2026-10-14) --
+      on these single-source bursts it always does -- so it never raises an alert here; TPR''s any-intersection
+      rule, the reconciler''s companion exemption and the severity matrix (one row per fired alert) all
+      ignore it'

@@ -9,6 +9,7 @@ import json
 import math
 from typing import Optional
 
+from shared.causal_keys import canon_flow_id
 from shared.ocsf import valid_ip
 
 _TEXT_MAX = 512
@@ -83,3 +84,22 @@ def strings(v, limit: int = 16) -> list:
 
 def drop_none(d: dict) -> dict:
     return {k: v for k, v in d.items() if v is not None and v != []}
+
+
+def stamp_flow_key(event: dict, raw_id, sensor: str, host=None) -> None:
+    """ADR-012 ``network_flow``: ``connection_info.uid`` + ``siem.key_scope`` from a Suricata ``flow_id`` / Zeek ``uid``.
+
+    The id is canonicalised by ``shared.causal_keys.canon_flow_id`` (decimal string / verbatim); a rejected value (empty,
+    ``-``, zero, bool, over 128 chars) sets NOTHING, so no scope is claimed for a key that does not exist. ``sensor`` is
+    the tool label; ``host`` is the sensor host when the record names one. The scope is body-derived, so it is only as
+    trustworthy as the sender (ADR-012 "Scope trust"); the flow key is NOT comparable across tools or sensors.
+    """
+    uid = canon_flow_id(raw_id)
+    if uid is None:
+        return
+    event["connection_info"] = {"uid": uid}
+    scope = {"sensor": sensor}
+    h = text(host, 128)
+    if h:
+        scope["host"] = h
+    event["siem"]["key_scope"] = scope

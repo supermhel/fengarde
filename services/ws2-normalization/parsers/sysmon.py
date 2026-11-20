@@ -102,6 +102,7 @@ from typing import Optional
 
 from .base import Parser, SEV_INFO, SEV_MEDIUM
 from shared.ocsf import valid_ip, safe_str
+from shared.causal_keys import canon_guid
 from .timeutil import to_epoch_ms
 from .proc_launch import launch_info
 
@@ -241,6 +242,26 @@ class SysmonParser(Parser):
             if pid is not None:
                 proc["pid"] = pid
             actor["process"] = proc
+        # ADR-012 WP 3: process identity keys, canonicalised by the shared helper; a value it rejects (null GUID,
+        # '-', over-length, malformed) is dropped. Keys are only meaningful with a host scope, so no Computer = no keys.
+        proc_uid = canon_guid(self._field(rec, "SourceProcessGuid" if event_id == 10 else "ProcessGuid"))
+        parent_uid = canon_guid(self._field(rec, "ParentProcessGuid"))
+        if (proc_uid or parent_uid) and not self.stamp_key_scope(event, host, self.SOURCE_TYPE):
+            proc_uid = parent_uid = None
+        parent: dict = {}
+        if parent_uid:
+            parent["uid"] = parent_uid
+        parent_pid = self._parse_pid(rec.get("ParentProcessId"))
+        if parent_pid is not None:
+            parent["pid"] = parent_pid
+        parent_name = safe_str(rec.get("ParentImage"))
+        if parent_name:
+            parent["name"] = parent_name
+        if proc_uid:
+            actor.setdefault("process", {})["uid"] = proc_uid
+        if parent and ("process" in actor or parent_uid):
+            actor.setdefault("process", {})["parent_process"] = parent
+
         if actor:
             event["actor"] = actor
 
@@ -299,6 +320,18 @@ class SysmonParser(Parser):
         return event
 
     # ---- helpers ------------------------------------------------------
+
+    @staticmethod
+    def _field(rec: dict, name: str):
+        """Sysmon spells the GUID fields ProcessGuid / ParentProcessGuid but SourceProcessGUID / TargetProcessGUID
+        (EventID 10); accept either case so the exact manifest spelling is not load-bearing."""
+        if name in rec:
+            return rec[name]
+        low = name.lower()
+        for k, v in rec.items():
+            if isinstance(k, str) and k.lower() == low:
+                return v
+        return None
 
     @staticmethod
     def _epoch_ms(value) -> int:

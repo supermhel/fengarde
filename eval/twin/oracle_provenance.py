@@ -23,6 +23,11 @@ The block lives under a top-level ``provenance:`` key of an ``oracle_<name>.yaml
 (``expected_rules`` / ``must_not_fire``) to appear in ``rules_read``: an oracle may not lean on a
 rule it does not claim to have read.
 
+A second top-level block, ``known_gaps:`` (declared, dated disagreements between this oracle and the
+system; schema in ``known_gaps.py``), is deliberately NOT pinned here: it is declaration data, not the
+oracle's claims about the rules, so adding or editing it is not an oracle semantic change (the mutation
+probe skips it too).
+
 STDLIB + PyYAML. Deterministic.
 """
 from __future__ import annotations

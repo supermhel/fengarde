@@ -108,6 +108,9 @@ echo
 echo "== ADR-011: incident.graph v2 edge evidence intervals (first/last_ts_ms, counts; additive, ts_ms unchanged) =="; LAST_HEADER="== ADR-011 edge intervals =="
 $PY services/ws8-correlation/test_edge_intervals.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
+echo "== ADR-012: incident.graph v2 links[] from causal keys (cap 1000 + truncated, no cross-incident link, trust, order) =="; LAST_HEADER="== ADR-012 incident links =="
+$PY services/ws8-correlation/test_incident_links.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
 echo "== ws8 NEW-hunt regression: flat prometheus skip keys + skew-future/NaN time rejected + fully-anonymous deterministic member id + oldest-by-time member-cap eviction =="; LAST_HEADER="== ws8 NEW-hunt regression: flat prometheus skip keys + skew-future/NaN time rejected + fully-anonymous deterministic member id + oldest-by-time member-cap eviction =="
 $PY services/ws8-correlation/test_correlator_new_hunt.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
@@ -328,6 +331,9 @@ $PY services/ws4-detection/test_engine_hardening.py || { fail=1; FAILED="${FAILE
 echo
 echo "== ws4 P1-1 (2026-07-21 audit): non-stateful alert_key tenant isolation =="; LAST_HEADER="== ws4 P1-1 (2026-07-21 audit): non-stateful alert_key tenant isolation =="
 $PY services/ws4-detection/test_p1_1_alert_key_tenant.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
+echo "== ws4 ADR-012 WP 5: alert causal_keys (trigger event only, sender binding, size bound) =="; LAST_HEADER="== ws4 ADR-012 WP 5: alert causal_keys (trigger event only, sender binding, size bound) =="
+$PY services/ws4-detection/test_causal_keys_alert.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
 echo "== ws4 F2 (2026-10-14 owner decision): account group keys are the ADR-009 canonical actor =="; LAST_HEADER="== ws4 F2 (2026-10-14 owner decision): account group keys are the ADR-009 canonical actor =="
 $PY services/ws4-detection/test_group_canonical.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
@@ -678,6 +684,9 @@ if tier_on eval-twin; then  # tier: eval-twin
 echo
 echo "== twin: oracle cross-check (mutation testing + independent derived oracle + triangulation) =="; LAST_HEADER="== twin: oracle cross-check (mutation testing + independent derived oracle + triangulation) =="
 $PY eval/twin/test_oracle_crosscheck.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
+echo "== twin: oracle-declared gaps (known_gaps): undeclared / wrong-kind / stale each turn the guard red =="; LAST_HEADER="== twin: oracle-declared gaps (known_gaps) =="
+$PY eval/twin/test_known_gaps.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
 echo "== twin: the oracle mutation instrument ITSELF (waiver table + inert-key table + ratchet over every storyline) =="; LAST_HEADER="== twin: the oracle mutation instrument itself =="
 $PY eval/twin/oracle_mutate.py --seed 7 || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }

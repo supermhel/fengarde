@@ -75,6 +75,35 @@ class LabelledSet(unittest.TestCase):
             self.assertEqual(DOC["counts"][k], sum(c["label"] == k for c in cases))
 
 
+class FrozenProjection(unittest.TestCase):
+    """The committed real-model results pin the set's sha256; post-snapshot causal keys must not leak into it."""
+
+    def test_projection_drops_post_snapshot_fields_and_prunes_empty_parents(self):
+        import build_labelled_set as b
+        ev = {"actor": {"process": {"name": "p.exe", "pid": 1, "uid": "u", "parent_process": {"pid": 2}},
+                        "session": {"uid": "0x3e7"}, "user": {"name": "a"}},
+              "siem": {"key_scope": {"host": "h"}, "tenant": "t"}}
+        out = b._project_frozen(ev)
+        self.assertEqual(out, {"actor": {"process": {"name": "p.exe", "pid": 1}, "user": {"name": "a"}},
+                               "siem": {"tenant": "t"}})
+        self.assertIn("parent_process", ev["actor"]["process"], "input must not be mutated")
+        self.assertEqual(b._project_frozen({"actor": {"session": {"uid": "x"}}}), {})
+        self.assertEqual(b._project_frozen({"a": 1}), {"a": 1})
+
+    def test_committed_set_carries_no_post_snapshot_field(self):
+        import build_labelled_set as b
+
+        def walk(o, path=""):
+            if isinstance(o, dict):
+                for k, v in o.items():
+                    yield from walk(v, f"{path}.{k}" if path else k)
+            yield path
+        for c in DOC["cases"]:
+            paths = set(walk(c["request"]["event"]))
+            for f in b.POST_SNAPSHOT_FIELDS:
+                self.assertNotIn(f, paths, c["case_id"])
+
+
 class Scoring(unittest.TestCase):
     def test_known_confusion(self):
         rows = [_row("true_positive", "malicious"), _row("true_positive", "malicious"),

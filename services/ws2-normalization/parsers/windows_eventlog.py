@@ -61,6 +61,7 @@ from typing import Optional
 
 from .base import Parser, SEV_INFO, SEV_MEDIUM, SEV_HIGH
 from shared.ocsf import valid_ip, valid_mac, safe_str
+from shared.causal_keys import canon_logon_id
 from .timeutil import to_epoch_ms
 from .proc_launch import launch_info
 
@@ -341,6 +342,16 @@ class WindowsEventLogParser(Parser):
             if pid is not None:
                 proc["pid"] = pid
             actor["process"] = proc
+
+        # ADR-012 WP 3: logon-session key. 4624 names the NEW session in TargetLogonId; 4672/4648 carry the acting
+        # session in SubjectLogonId. 4688 deliberately sets no process uid: its pid is host-local and reused, and no
+        # start-time-qualified key exists. A LogonId is only unique per host between reboots, so the scope is the
+        # host that logged the event (Computer, NOT 4648's TargetServerName) and boot stays absent.
+        logon_field = {4624: "TargetLogonId", 4672: "SubjectLogonId", 4648: "SubjectLogonId"}.get(event_id)
+        if logon_field:
+            logon_id = canon_logon_id(rec.get(logon_field))
+            if logon_id and self.stamp_key_scope(event, safe_str(rec.get("Computer")), self.SOURCE_TYPE):
+                actor["session"] = {"uid": logon_id}
 
         if actor:
             event["actor"] = actor

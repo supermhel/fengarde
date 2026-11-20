@@ -33,6 +33,10 @@ because common_port_scan* and common_beaconing key on those; a Modbus transactio
 never sets ``unmapped.ot.anomaly_type`` (modbus_anomaly.py's own classification, which ot_modbus_unauthorized_write
 keys on) -- it makes no judgement of its own. Every other Zeek stream (http, ssl, files, weird, ...) is dropped
 (returns None); its fields are not mapped.
+
+ADR-012 (network_flow): ``uid`` of every mapped stream that carries it (conn, dns, notice when present, modbus,
+modbus_detailed) becomes ``connection_info.uid`` (verbatim) with ``siem.key_scope`` {sensor: "zeek"}. ``community_id``
+is kept in ``unmapped.community_id`` only; Zeek ``uid`` and Suricata ``flow_id`` are never equated.
 """
 from __future__ import annotations
 
@@ -43,8 +47,8 @@ from typing import Optional
 from .base import Parser, SEV_INFO, SEV_LOW
 from .dns_query import parent_domain
 from .timeutil import to_epoch_ms
-from ._netjson import (drop_none, endpoint, envelope_meta, integer, load_record, number, sector, strings,
-                       text)
+from ._netjson import (drop_none, endpoint, envelope_meta, integer, load_record, number, sector, stamp_flow_key,
+                       strings, text)
 
 _NET, _DNS = 4001, 4002
 _CLOSE, _OTHER = 2, 99
@@ -112,7 +116,12 @@ class ZeekJsonParser(Parser):
             dst = dict(dst or {}, hostname=extra.pop("hostname"))
         if dst:
             event["dst_endpoint"] = dst
+        cid = text(rec.get("community_id"), 64)  # recorded only: a cross-tool join is NOT claimed (ADR-012 option E)
+        if cid:
+            extra["community_id"] = cid
         event["unmapped"] = extra
+        uid = rec.get("uid")
+        stamp_flow_key(event, uid if isinstance(uid, str) else None, "zeek")  # no sensor host in Zeek JSON
         return event
 
     # Each record kind returns (class, activity, severity, message, unmapped, is_ot, src_endpoint, dst_endpoint) or None.

@@ -184,6 +184,165 @@ def _edge_spec(type_a: str, type_b: str) -> "tuple[str, str, str] | None":
     return _EDGE_KINDS[pair]
 
 
+# ---------------------------------------------------------------------------
+# ADR-012 WP 6: causal evidence keys -> ``links[]`` on incident.graph v2.
+# Keys are captured at STORE time (``entry["causal_keys"]``, same additive
+# pattern as ``cooccur``/``typed_signal``); links are a pure function of the
+# live member side table (+ the cross-incident suppression set), so they are
+# redelivery-stable. Keys never move an alert into an incident and never merge
+# incidents or tracks (ADR-010 "tracks never merge" is untouched).
+# ---------------------------------------------------------------------------
+LINKS_CAP = 1000
+_KEY_MAX = 6
+_KEY_NS = {"proc", "logon", "flow", "agent"}
+_KEY_TRUST_RANK = {"asserted": 0, "declared": 1, "observed": 2}
+# ns -> link basis. "logon" is deliberately absent: LogonId needs a boot epoch
+# no event carries, so logon keys are stored but emit NO links (ADR-012 s.1).
+_KEY_BASIS = {"proc": "process_tree", "flow": "network_flow", "agent": "agent_session"}
+
+
+def _causal_keys_signal(alert: dict) -> list:
+    """Bounded, validated copy of ``alert["causal_keys"]`` as
+    ``[ns, role, h, trust]`` lists (JSON-safe for the shared store). Malformed
+    entries are dropped (never guessed); at most ``_KEY_MAX`` are kept."""
+    raw = alert.get("causal_keys")
+    if not isinstance(raw, (list, tuple)):
+        return []
+    out: list = []
+    for k in raw:
+        if not isinstance(k, dict):
+            continue
+        ns, role, h = k.get("ns"), k.get("role"), k.get("h")
+        if ns not in _KEY_NS or not isinstance(role, str) or not role:
+            continue
+        if not isinstance(h, str) or not (1 <= len(h) <= 64):
+            continue
+        trust = k.get("scope_trust")
+        if trust not in _KEY_TRUST_RANK:
+            trust = "asserted"  # unknown trust never upgrades a link
+        item = [ns, role[:16], h, trust]
+        if item not in out:
+            out.append(item)
+        if len(out) >= _KEY_MAX:
+            break
+    return out
+
+
+def _entry_keys(entry: dict):
+    """Yield validated (ns, role, h, trust) tuples off a member entry."""
+    for k in entry.get("causal_keys") or ():
+        try:
+            ns, role, h, trust = k
+        except (TypeError, ValueError):
+            continue
+        if ns in _KEY_NS and isinstance(h, str) and isinstance(role, str):
+            yield ns, role, h, (trust if trust in _KEY_TRUST_RANK else "asserted")
+
+
+def _member_time(entry: dict) -> "int | None":
+    """Sanitized event time of a member, None when it was the fallback."""
+    t = entry.get("time")
+    if entry.get("time_fallback") or isinstance(t, bool) or not isinstance(t, int):
+        return None
+    return t
+
+
+def _link_order(from_ts, to_ts) -> str:
+    """ADR-011 strict rule on single-point intervals: forward iff from < to,
+    concurrent on a tie, conflict when reversed, unordered if a time is
+    missing."""
+    if from_ts is None or to_ts is None:
+        return "unordered"
+    if from_ts < to_ts:
+        return "forward"
+    if from_ts == to_ts:
+        return "concurrent"
+    return "conflict"
+
+
+def _weaker_trust(a: str, b: str) -> str:
+    return a if _KEY_TRUST_RANK[a] <= _KEY_TRUST_RANK[b] else b
+
+
+def _causal_link_candidates(side: dict, foreign=frozenset()) -> "tuple[list, int]":
+    """All candidate links for one incident's live members (uncapped,
+    unsorted): returns ``(candidates, suppressed_groups)``. Groups members by
+    ``(ns, h)``; a directed (process) group links the earliest ``self`` holder
+    to every ``parent``-role holder (n-1 bound); a symmetric group (flow/agent)
+    is a time-ordered chain of at most n-1 links. A group whose key is also
+    held by an alert of ANOTHER incident (``foreign``) emits nothing and is
+    counted."""
+    groups: dict = {}
+    for mid, entry in side.items():
+        for ns, role, h, trust in _entry_keys(entry):
+            if ns not in _KEY_BASIS:
+                continue  # logon: stored, never linked
+            roles = groups.setdefault((ns, h), {}).setdefault(mid, {})
+            prev = roles.get(role)
+            roles[role] = trust if prev is None else _weaker_trust(prev, trust)
+
+    def skey(mid):
+        e = side[mid]
+        t = _member_time(e)
+        return (t is None, t if t is not None else 0, str(e.get("event_id") or ""), str(mid))
+
+    def link(basis, f, t, trust):
+        fe = str(side[f].get("event_id") or f)
+        te = str(side[t].get("event_id") or t)
+        if fe == te:
+            return None  # two alerts of one event: no self-link
+        fts, tts = _member_time(side[f]), _member_time(side[t])
+        return {"from_event_id": fe, "to_event_id": te, "basis": basis,
+                "order": _link_order(fts, tts), "from_ts_ms": fts, "to_ts_ms": tts,
+                "trust": trust}
+
+    def member_trust(roles: dict, want) -> str:
+        vals = [v for r, v in roles.items() if r in want]
+        out = vals[0]
+        for v in vals[1:]:
+            out = _weaker_trust(out, v)
+        return out
+
+    out: list = []
+    suppressed = 0
+    for (ns, h), members in sorted(groups.items()):
+        if (ns, h) in foreign:
+            suppressed += 1
+            continue
+        basis = _KEY_BASIS[ns]
+        if ns == "proc":
+            selves = sorted((m for m, r in members.items() if "self" in r), key=skey)
+            kids = sorted((m for m, r in members.items() if "parent" in r), key=skey)
+            if not selves:
+                continue
+            anchor = selves[0]
+            for kid in kids:
+                if kid == anchor:
+                    continue
+                tr = _weaker_trust(member_trust(members[anchor], ("self",)),
+                                   member_trust(members[kid], ("parent",)))
+                lk = link(basis, anchor, kid, tr)
+                if lk:
+                    out.append(lk)
+        else:
+            want = ("self", "member")
+            chain = sorted((m for m, r in members.items() if any(x in r for x in want)),
+                           key=skey)
+            for a, b in zip(chain, chain[1:]):
+                lk = link(basis, a, b, _weaker_trust(member_trust(members[a], want),
+                                                     member_trust(members[b], want)))
+                if lk:
+                    out.append(lk)
+    return out, suppressed
+
+
+def _sort_links(cands: list) -> list:
+    return sorted(cands, key=lambda lk: (
+        lk["basis"], lk["from_event_id"], lk["to_event_id"], lk["order"], lk["trust"],
+        -1 if lk["from_ts_ms"] is None else lk["from_ts_ms"],
+        -1 if lk["to_ts_ms"] is None else lk["to_ts_ms"]))
+
+
 def _provenance_event_id(alert: dict, member_id: str) -> str:
     """The ``event_id`` provenance recorded on a graph edge.
 
@@ -449,6 +608,12 @@ class Correlator:
         # cached graph when the live member set's relevant fields are
         # unchanged since the last build. Pruned alongside `_incident_graphs`.
         self._graph_sigs: dict[str, tuple] = {}
+        # ADR-012: (tenant, ns, h) -> {incident_id: frozenset(member ids)}, the
+        # per-instance view used ONLY to suppress links for a key that another
+        # incident also holds; dies with the incident (see _sweep_dead_tracks).
+        self._key_holders: dict[tuple, dict] = {}
+        self._incident_key_refs: dict[str, set] = {}
+        self.links_cross_incident_total = 0
         # track_key -> {alert_id: {tactic, score, time}}. The window_counter
         # only knows MEMBERSHIP (alert_id + time); tactic/score need a side
         # table keyed the same way, pruned to the same live-member set on
@@ -641,7 +806,7 @@ class Correlator:
         }
 
     @staticmethod
-    def _graph_signature(side: dict) -> tuple:
+    def _graph_signature(side: dict, foreign=()) -> tuple:
         """Fingerprint of every field `_build_incident_graph_v2` reads off
         `side`'s member entries: ``(mid, time, tactic, event_id,
         time_fallback, cooccur, typed_signal)`` per member, sorted for a
@@ -650,15 +815,17 @@ class Correlator:
         (see `_update_track`'s cache-skip); this is a fingerprint of the
         INPUT, not a hash of the built graph, so it stays O(members) with no
         sha256/edge-derivation work -- the cost the cache exists to avoid."""
-        return tuple(sorted(
+        return (tuple(sorted(
             (mid, entry["time"], entry.get("tactic"), entry.get("event_id"),
              entry.get("time_fallback"), tuple(entry.get("cooccur") or ()),
-             entry.get("typed_signal"))
+             entry.get("typed_signal"),
+             tuple(tuple(k) for k in entry.get("causal_keys") or ()))
             for mid, entry in side.items()
-        ))
+        )), tuple(sorted(foreign)))
 
     def _build_incident_graph_v2(self, tenant: str, entity_type: str, entity_value: str,
-                                 incident: dict, side: dict) -> dict:
+                                 incident: dict, side: dict,
+                                 foreign=frozenset()) -> dict:
         """Build the ADR-009 ``incident.graph`` VERSION-2 payload -- the typed
         causal DAG (WP-3-A, 2026-09-02). SUPERSEDES v1 on the bus topic; the
         ``version`` field (integer 2) distinguishes the shape.
@@ -693,6 +860,13 @@ class Correlator:
             field-pair; ``_TYPED_KIND_ORDER`` among typed), then the EARLIEST
             (ts_ms, event_id) provenance -- same earliest-wins dedup as v1.
           ``tactic_sources`` -- identical to v1.
+          ``links`` / ``links_truncated`` -- ADR-012 additive key-evidence
+            links between member alerts (see ``_causal_link_candidates``):
+            ``{from_event_id, to_event_id, basis, order, from_ts_ms,
+            to_ts_ms, trust}`` sorted by (basis, from, to), capped at
+            ``LINKS_CAP`` with ``links_truncated``. A link is key evidence
+            only; ``trust`` says who vouches for the scope, and an
+            ``asserted``/``declared`` link is NEVER a causal claim.
 
         Same guarantees as v1, inherited verbatim: rebuilt from the track's
         LIVE members on every promotion -> deterministic + idempotent under
@@ -781,6 +955,10 @@ class Correlator:
             tactic: sorted(mid for mid, e in side.items() if e.get("tactic") == tactic)
             for tactic in incident["tactics"]
         }
+        cands, suppressed = _causal_link_candidates(side, foreign)
+        if suppressed:
+            self.links_cross_incident_total += suppressed
+        links = _sort_links(cands)
         return {
             "version": 2,
             "incident_id": incident["incident_id"],
@@ -788,7 +966,42 @@ class Correlator:
             "nodes": [nodes[eid] for eid in sorted(nodes)],
             "edges": edges,
             "tactic_sources": tactic_sources,
+            "links": links[:LINKS_CAP],
+            "links_truncated": len(links) > LINKS_CAP,
         }
+
+    def _unregister_causal_keys(self, incident_id: str) -> None:
+        for old in self._incident_key_refs.pop(incident_id, ()):
+            holders = self._key_holders.get(old)
+            if holders is not None:
+                holders.pop(incident_id, None)
+                if not holders:
+                    del self._key_holders[old]
+
+    def _register_causal_keys(self, tenant: str, incident_id: str, side: dict) -> frozenset:
+        """Record which of this incident's members hold which linkable keys and
+        return the ``(ns, h)`` pairs ALSO held by a member of a DIFFERENT
+        incident that is not a member of this one (cross-incident hits: no
+        link, counted). Per-instance and order-dependent by nature: an
+        incident built before its peer registered keeps its links until its
+        next update."""
+        self._unregister_causal_keys(incident_id)
+        mine: dict = {}
+        for mid, entry in side.items():
+            for ns, _role, h, _trust in _entry_keys(entry):
+                if ns in _KEY_BASIS:
+                    mine.setdefault((tenant, ns, h), set()).add(mid)
+        if not mine:
+            return frozenset()
+        foreign = set()
+        for k, mids in mine.items():
+            holders = self._key_holders.setdefault(k, {})
+            for other_id, other_mids in holders.items():
+                if other_id != incident_id and not other_mids <= mids:
+                    foreign.add((k[1], k[2]))
+            holders[incident_id] = frozenset(mids)
+        self._incident_key_refs[incident_id] = set(mine)
+        return frozenset(foreign)
 
     def _sweep_dead_tracks(self, now_ms: int) -> None:
         """Drop `_sides`/`_side_meta`/`_last_incident`/`_last_touch` entries
@@ -830,6 +1043,7 @@ class Correlator:
                 # branch, pruned together here) -- never an orphaned entry.
                 self._incident_graphs.pop(incident_id, None)
                 self._graph_sigs.pop(incident_id, None)
+                self._unregister_causal_keys(incident_id)
                 self.state.forget_incident(incident_id)
 
     def _update_track(self, tenant: str, entity_type: str, entity_value: str,
@@ -896,6 +1110,9 @@ class Correlator:
         # `unmapped` component is pre-reduced to one documented scalar), so
         # the member-cap/window-eviction discipline is untouched.
         entry["typed_signal"] = _typed_kind_signal(alert)
+        # ADR-012: the alert's causal evidence keys (<= 6 x [ns, role, h,
+        # trust], validated), captured at store time like typed_signal.
+        entry["causal_keys"] = _causal_keys_signal(alert)
         # Record (idempotent, atomic per alert), THEN snapshot the side table, THEN
         # read window members. That order matters with several replicas: a peer
         # hits the window before it records, so an entry visible in our snapshot is
@@ -1001,10 +1218,11 @@ class Correlator:
         # states to prove it actually distinguishes them (mutation-soundness:
         # a fingerprint that omitted a field `_build_incident_graph_v2` reads
         # could produce a FALSE cache hit and silently serve a stale graph).
-        graph_sig = self._graph_signature(side)
+        foreign = self._register_causal_keys(tenant, incident_id, side)
+        graph_sig = self._graph_signature(side, foreign)
         if graph_sig != self._graph_sigs.get(incident_id):
             self._incident_graphs[incident_id] = self._build_incident_graph_v2(
-                tenant, entity_type, entity_value, incident, side)
+                tenant, entity_type, entity_value, incident, side, foreign)
             self._graph_sigs[incident_id] = graph_sig
         if is_new:
             self.promotions_count += 1
@@ -1173,6 +1391,7 @@ class Correlator:
             "ws8_truncated_total": self.truncated_count,
             "ws8_skipped_alerts_by_reason": dict(self._skip_reasons),
             "ws8_skipped_total": sum(self._skip_reasons.values()),
+            "ws8_links_cross_incident_suppressed_total": self.links_cross_incident_total,
         }
         for reason, count in self._skip_reasons.items():
             out[f"ws8_skipped_reason_{reason}"] = count
