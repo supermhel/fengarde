@@ -133,8 +133,8 @@ def test_single_alert_cooccurrence_yields_edge_with_provenance():
           f"a: tactic_sources must attribute each tactic to its member "
           f"alerts, got {graph['tactic_sources']}")
     check(set(graph) == {"version", "incident_id", "tenant_id", "nodes",
-                         "edges", "tactic_sources"},
-          f"a: the v2 payload must have exactly the six documented keys, "
+                         "edges", "tactic_sources", "links", "links_truncated"},
+          f"a: the v2 payload must have the six documented keys plus the ADR-012 additive links/links_truncated, "
           f"got {sorted(graph)}")
 
 
