@@ -1,23 +1,44 @@
 # FENGARDE gitleaks configuration.
 #
 # Keeps the full default gitleaks ruleset (all real secret detectors stay on)
-# and adds one allowlist: canonical UUIDs.
+# and adds two narrow allowlists.
 #
-# Why: every detection rule carries a public `id:` UUID (contracts/rules/*.yml)
-# and the tests reference those ids as string constants
-# (e.g. services/ws4-detection/test_v03_new_rules.py). A v4 UUID has high
-# entropy, so the default `generic-api-key` heuristic flags it as a secret —
-# but a rule identifier is a public, non-sensitive value committed on purpose,
-# not a credential. Allowlisting the UUID *shape* suppresses these without
-# weakening detection of real keys (which are not UUID-formatted).
+# 1. Canonical UUIDs. Every detection rule carries a public `id:` UUID
+#    (contracts/rules/*.yml) and the tests reference those ids as string
+#    constants (e.g. services/ws4-detection/test_v03_new_rules.py). A v4 UUID
+#    has high entropy, so the default `generic-api-key` heuristic flags it as a
+#    secret, but a rule identifier is a public, non-sensitive value committed on
+#    purpose, not a credential. Allowlisting the UUID *shape* suppresses these
+#    without weakening detection of real keys (which are not UUID-formatted).
+#
+# 2. SHA-256 provenance pins in twin oracles. eval/twin/oracle_*.yaml pins each
+#    rule file it reads as `<rule_name>: <64 lowercase hex>` under
+#    provenance.rules_read. Rule names like common_password_spray make the
+#    generic-api-key heuristic read "password: <high-entropy>". These are content
+#    hashes of committed public rule files. The allowlist applies only when BOTH
+#    the path is a twin oracle AND the whole line is exactly that pin shape, so a
+#    real secret anywhere else, or in any other line shape of an oracle, is still
+#    reported. This replaces per-commit fingerprints in .gitleaksignore, which
+#    every new storyline broke again.
 title = "FENGARDE gitleaks config"
 
 [extend]
 useDefault = true
 
-[allowlist]
+[[allowlists]]
 description = "Rule/entity identifiers are public UUIDs, not secrets"
 regexTarget = "match"
 regexes = [
   '''[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}''',
+]
+
+[[allowlists]]
+description = "SHA-256 provenance pins of public rule files in twin oracles"
+condition = "AND"
+paths = [
+  '''(^|/)eval/twin/oracle_[a-z0-9_]+\.yaml$''',
+]
+regexTarget = "line"
+regexes = [
+  '''^\s*[a-z][a-z0-9_]*:\s*['"]?[0-9a-f]{64}['"]?\s*$''',
 ]
