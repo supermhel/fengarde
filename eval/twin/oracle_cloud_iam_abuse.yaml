@@ -171,3 +171,49 @@ incident_membership:
 campaign_membership:
   campaign_count: 0
   full_coverage: false
+
+
+# =============================================================================
+# known_gaps -- the disagreements between this oracle and the system that are KNOWN, DATED and
+# DECLARED HERE, in the storyline's own answer key (owner decision 2026-11-20; schema and failure
+# modes: eval/twin/known_gaps.py). This is declaration data, not oracle semantics: no grader
+# scores against it, the mutation probe skips it, and editing it is not an oracle semantic change.
+# Every entry is checked from both sides: a disagreement with no entry FAILS, an entry whose kind
+# does not match what is observed FAILS, and an entry that no longer reproduces FAILS (STALE) --
+# delete it, that is the ratchet working. Migrated 2026-11-20 from the name-keyed tables in
+# oracle_consistency / oracle_derive / oracle_mutate; reasons are carried over verbatim.
+# =============================================================================
+known_gaps:
+  - kind: mutant_survivor
+    operator: flip_gap_to_false
+    outcome: SURVIVED
+    max: 7
+    since: '2026-10-14'
+    reason: the seven non-alerting steps declare no expected rule and no rule fires there
+  - kind: mutant_survivor
+    operator: flip_relationship
+    outcome: SURVIVED
+    max: 6
+    since: '2026-10-14'
+    reason: no incident promotes (one alert, one tactic), so no graph exists and a flipped allowed pair
+      is as unjoined as the original
+  - kind: mutant_survivor
+    operator: flip_relationship
+    outcome: IMPROVED
+    max: 1
+    since: '2026-10-14'
+    reason: 'the sole forbidden pair (log_tampering->console_stuffing) flipped to allowed: with no graph
+      it is unjoined either way, and removing the only forbidden pair empties the false-correlation denominator,
+      which the comparison reads as a gain'
+  - kind: mutant_survivor
+    operator: reverse_relationship
+    outcome: SURVIVED
+    max: 7
+    since: '2026-10-14'
+    reason: no graph exists (no incident promotes), so a reversed pair is as unjoined as the original
+  - kind: mutant_survivor
+    operator: swap_adjacent_steps
+    outcome: SURVIVED
+    max: 7
+    since: '2026-10-14'
+    reason: 'one alert-raising step only: no alert order exists to disagree about'

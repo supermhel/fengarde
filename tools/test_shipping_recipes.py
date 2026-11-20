@@ -351,7 +351,13 @@ def main() -> int:
                                             "raw": load("windows-sysmon-eventdata.fluentbit.json"), "meta": dict(meta_)}))
     pl = (new_ev or {}).get("unmapped", {}).get("process_launch", {})
     act = (new_ev or {}).get("actor", {})
-    check(new_ev is not None and act.get("process") == {"name": r"C:\Windows\System32\cmd.exe", "pid": 8844}
+    # ADR-012 WP 3: the sample's (INVENTED, template-derived) ProcessGuid / ParentProcessGuid now reach actor.process.uid /
+    # parent_process, canonicalised, with the host scope. This proves the parser handles the ASSUMED flattened shape only.
+    check(new_ev is not None and act.get("process") == {
+              "name": r"C:\Windows\System32\cmd.exe", "pid": 8844, "uid": "5e2f1a7c-3b9d-6a2f-9c01-000000001d00",
+              "parent_process": {"uid": "5e2f1a7c-3a14-6a2f-e500-000000001d00", "pid": 7210,
+                                 "name": r"C:\Windows\explorer.exe"}}
+          and new_ev["siem"].get("key_scope") == {"host": "WIN11-LAB", "sensor": "sysmon"}
           and act.get("user") == {"name": r"WIN11-LAB\labuser"} and pl.get("image") == r"C:\Windows\System32\cmd.exe"
           and pl.get("command_line") == "cmd.exe /c whoami" and pl.get("parent") == r"C:\Windows\explorer.exe"
           and "?" not in new_ev["message"], f"windows-sysmon-eventdata.fluentbit.json: field mapping wrong: {new_ev}")

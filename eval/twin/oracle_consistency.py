@@ -87,94 +87,19 @@ for p in (str(TWIN), str(SERVICES), str(ROOT)):
     if p not in sys.path:
         sys.path.insert(0, p)
 
+import known_gaps  # noqa: E402
 import report  # noqa: E402
 import scenario_registry as reg  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
-# ACCEPTED DISAGREEMENTS (the frozen baseline)
+# ACCEPTED DISAGREEMENTS live in each storyline's OWN oracle (``known_gaps:``, schema and failure
+# modes in known_gaps.py; owner decision 2026-11-20). They used to be name-keyed tables here
+# (_ACCEPTED, _GAP_TECHNIQUE_WAIVED, _TRIANGULATION_WAIVED). The list is still CLOSED: an
+# observed disagreement with no declaration fails, a declaration of the wrong kind fails, and a
+# declaration that no longer reproduces fails as stale. Removing a declaration is how one is
+# closed for real (the ADR-011/012 ratchet).
 # ---------------------------------------------------------------------------
-# Every disagreement below was real and known on the date in its reason. They are NOT
-# waived because they are harmless -- they are recorded because resolving
-# them changes numbers the frozen baseline contract depends on
-# (eval/twin/baseline.json, the Phase 3.5 delta report, the severity-confusion
-# matrix), so each needs its own decision rather than a drive-by edit by
-# whoever happened to run this check.
-#
-# The point of the allowlist is that it is CLOSED: anything not on it fails
-# the gate. A new drift cannot hide behind these entries. Same shape as the
-# project's accepted-Scorecard-alert list -- accept knowingly, block silently
-# growing.
-#
-# Removing an entry here is the correct way to close one for real.
-_ORDER_BLIND = (
-    "2026-10-02 directional_discrimination=0.0 (SSOT 2026-10-01): the WS-8 graph joins every forbidden "
-    "pair because the entities at both ends overlap (per-entity tracks never merge, so a shared "
-    "address/account yields an edge in BOTH directions). The oracle's anti-causal non-edges are "
-    "therefore not enforceable by this correlator. Waived by class, not hidden: closing it means "
-    "grading edge direction by event time or by WS-8 typed caused_by edges, a separate ratified step."
-)
-_ACCEPTED: dict = {
-    # The forbidden-edge channel read ``edge['from_step']`` / ``edge['to_step']``, which no WS-8 graph
-    # edge carries (they carry from / to / kind / event_id / ts_ms), so it could never fire. It now reads
-    # the grader's own ``per_forbidden_pair`` (joined=True). Opening it surfaces what
-    # ``forbidden_denominator == forbidden_joins`` on every storyline already said: all five forbidden
-    # pairs ARE joined by the graph. One entry per pair, one shared reason; an entry that stops
-    # reproducing fails as a stale waiver, and a sixth forbidden join fails the gate.
-    ("ai_to_ot", "forbidden", "process_anomaly", "modbus_write"): _ORDER_BLIND,
-    ("ai_to_ot", "forbidden", "credential_use", "agent_mcp_tool_call"): _ORDER_BLIND,
-    ("it_intrusion", "forbidden", "dns_exfil", "initial_access"): _ORDER_BLIND,
-    ("it_intrusion", "forbidden", "priv_grant", "ssh_bruteforce"): _ORDER_BLIND,
-    ("infra_takeover", "forbidden", "mass_vm_delete", "cloud_root_login"): _ORDER_BLIND,
-    # 2026-10-03 phishing_bec: the same class on a fourth storyline. Both anti-causal pairs share the
-    # compromised account with the steps they must not precede, so the actor track joins them in
-    # both directions. Measured on the first run, not tuned: the rules all fired as the
-    # intent-first oracle said they would; only this known order-blind channel disagreed.
-    ("phishing_bec", "forbidden", "payment_redirect", "proxy_pool_logins"): _ORDER_BLIND,
-    ("phishing_bec", "forbidden", "foreign_login", "user_execution"): _ORDER_BLIND,
-    # 2026-10-14 ot_opcua_sabotage: the same class on the first OT storyline. The non-edge is
-    # anti-causal (the actuation cannot precede the device that performed it) and the pair shares the
-    # rogue device's own OT address, so the entity track joins it in both directions -- exactly the
-    # order blindness the five entries above record. The oracle declares the pair deliberately: with
-    # NO forbidden relationship the mutation lane's `fcr_unchanged` criterion is unsatisfiable (its
-    # baseline is None), so every scenario_matrix row would fail for a reason unrelated to detection.
-    ("ot_opcua_sabotage", "forbidden", "forged_ticket_write", "rogue_device"): _ORDER_BLIND,
-    # 2026-10-14 P1 storylines 6-9, measured on the first run of each (seed 7), not tuned: every rule
-    # fired as the intent-first oracles said; only this known order-blind channel disagreed. Each
-    # anti-causal pair shares the account or the address with the step it must not precede.
-    # cloud_iam_abuse has none: its only alert promotes no incident, so no edge exists at all.
-    ("ransomware", "forbidden", "mass_vm_delete", "cred_spray"): _ORDER_BLIND,
-    ("ransomware", "forbidden", "backdoor_account", "foothold_logon"): _ORDER_BLIND,
-    ("insider_exfil", "forbidden", "cover_tracks", "grant_self_access"): _ORDER_BLIND,
-    ("insider_exfil", "forbidden", "exfil_upload", "bulk_table_read"): _ORDER_BLIND,
-    ("supply_chain_ci", "forbidden", "privileged_runner", "ci_secret_read"): _ORDER_BLIND,
-}
-# History. The map was EMPTY from 2026-10-01: the three AI-to-OT disagreements that used to live here
-# (a stale process_anomaly gap; agent_tool_call_burst and agent_destructive_command
-# declared at agent_mcp_tool_call but never fired) were RESOLVED in oracle.yaml, not
-# waived: the process_anomaly step now declares the rule that really fires there, and
-# the two rules this storyline never triggers were dropped from its answer key. The
-# mechanism stays -- an entry is ``(scenario, kind, step_or_from, rule_or_to): reason``;
-# anything not on the list fails the gate, and an entry that stops reproducing fails
-# as a stale waiver -- so the next deliberate disagreement can be recorded rather than
-# ignored. The five entries above (2026-10-02) are the only ones, and they are accepted
-# because the correlator cannot do better today, not because the oracle is wrong.
-
-# Gaps that pre-date the ``attack_technique`` key. A closed list: new oracles must tag every
-# non-context gap. ``(scenario, step) -> "YYYY-MM-DD reason"``. Tagging these would edit oracle
-# files that the step-4 oracle-strength ratchet hashes, so it is left to that step's owner.
-_GAP_TECHNIQUE_WAIVED: dict = {
-    ("ai_to_ot", "external_content"):
-        "2026-10-03 oracle.yaml pre-dates the attack_technique key (pre-log ingress content)",
-    ("ai_to_ot", "plc_state_change"):
-        "2026-10-03 oracle.yaml pre-dates the attack_technique key (post-write process-side state change)",
-    ("it_intrusion", "initial_access"):
-        "2026-10-03 oracle_it_intrusion.yaml pre-dates the attack_technique key (T1078 candidate)",
-}
-
-# Three-way (hand / derived / observed) differences that are known: (scenario, step, rule_id) -> reason.
-# EMPTY: derived and observed agree on every step of every storyline. A reason must be dated.
-_TRIANGULATION_WAIVED: dict = {}
 
 _DATED_REASON = re.compile(r"^\d{4}-\d{2}-\d{2} \S")
 
@@ -255,6 +180,9 @@ def reconcile(seed: int = 7, sdef=None, *, oracle: dict | None = None, grade: di
     oracle = oracle if oracle is not None else reg.load_oracle(sdef)
     if grade is None:
         grade = report._grade_chain(reg.run(sdef, seed), oracle)
+    gaps = known_gaps.load(oracle, sdef.name)
+    accepted = known_gaps.accepted_map(gaps, sdef.name)
+    gap_technique_waived = known_gaps.gap_technique_map(gaps, sdef.name)
 
     fired_by_step: dict = {}
     for alert in grade.get("fired", []):
@@ -316,7 +244,7 @@ def reconcile(seed: int = 7, sdef=None, *, oracle: dict | None = None, grade: di
                                                            "this rule, and it fired"})
         if declared_gap and not entry.get("context") \
                 and not (entry.get("gap") or {}).get("attack_technique") \
-                and (sdef.name, step) not in _GAP_TECHNIQUE_WAIVED:
+                and (sdef.name, step) not in gap_technique_waived:
             gaps_untagged.append({"step": step,
                                   "why_it_matters": "a declared coverage gap names no ATT&CK technique, so "
                                                      "the technique matrix cannot list it as demonstrated "
@@ -368,10 +296,10 @@ def reconcile(seed: int = 7, sdef=None, *, oracle: dict | None = None, grade: di
     findings["total"] = (len(stale_gaps) + len(decorative) + len(unexpected) + len(forbidden_claimed)
                          + len(forbidden_rules) + len(unknown_rules) + len(gaps_untagged))
 
-    # Split every finding into accepted (on the frozen list) vs NEW. Only new
-    # ones gate -- and a stale allowlist entry is itself reported, so the list
-    # cannot quietly outlive the disagreement it was written for.
-    seen, new = set(), []
+    # Split every finding into accepted (declared in the oracle, of the right kind) vs NEW. Only
+    # new ones gate -- and a stale or wrong-kind declaration is itself reported, so a declaration
+    # cannot quietly outlive (or mislabel) the disagreement it was written for.
+    seen, matched, new = set(), set(), []
     for kind, items in (("stale_gap", stale_gaps), ("decorative", decorative),
                         ("unexpected", unexpected), ("forbidden", forbidden_claimed),
                         ("forbidden_rule", forbidden_rules), ("unknown_rule", unknown_rules),
@@ -379,20 +307,31 @@ def reconcile(seed: int = 7, sdef=None, *, oracle: dict | None = None, grade: di
         for item in items:
             k = _key(sdef.name, kind, item)
             seen.add(k)
-            if k not in _ACCEPTED:
+            decl = accepted.get(k)
+            # an order_blind_join is only the right kind for a pair joined purely through entity edges
+            # (the grader's per_forbidden_pair); a pair claimed by an explicit step-named edge is not that
+            if decl is not None and not (decl["kind"] == "order_blind_join"
+                                         and item.get("basis") != "per_forbidden_pair"):
+                matched.add(k)
+            else:
                 new.append({"kind": kind, **item})
     findings["new"] = new
-    findings["accepted_count"] = len(seen & set(_ACCEPTED))
-    # a waiver is "stale" only for ITS OWN scenario -- another storyline's
-    # waivers are simply not in scope for this run
-    mine = {k for k in _ACCEPTED if k[0] == sdef.name}
-    findings["stale_allowlist_entries"] = [
-        {"key": list(k), "reason": _ACCEPTED[k]} for k in sorted(mine - seen)
-    ]
-    # a gap-technique waiver is stale once its step is tagged (or stops being a gap): the table is closed
-    for (sc, step), reason in sorted(_GAP_TECHNIQUE_WAIVED.items()):
-        if sc != sdef.name:
-            continue
+    findings["accepted_count"] = len(matched)
+    observed_ab: dict = {}
+    for k in seen:
+        observed_ab.setdefault((k[2], k[3]), []).append(k[1])
+    findings["stale_allowlist_entries"] = []
+    for k in sorted(set(accepted) - matched):
+        entry = {"key": list(k), "reason": accepted[k]["reason"]}
+        other = sorted(x for x in observed_ab.get((k[2], k[3]), []) if x != k[1])
+        if k in seen:
+            entry["why"] = ("kind_mismatch: declared order_blind_join but the pair is claimed by an explicit "
+                            "step edge, not only through shared entities")
+        elif other:
+            entry["why"] = f"kind_mismatch: declared {k[1]} but observed as {other}"
+        findings["stale_allowlist_entries"].append(entry)
+    # a gap-technique waiver is stale once its step is tagged (or stops being a gap): the list is closed
+    for (sc, step), reason in sorted(gap_technique_waived.items()):
         entry = detection_points.get(step) or {}
         still_untagged = (bool((entry.get("gap") or {}).get("no_rule_exists")) and not entry.get("context")
                           and not (entry.get("gap") or {}).get("attack_technique"))
@@ -420,7 +359,8 @@ def triangulate(seed: int = 7, sdef=None, *, oracle: dict | None = None, grade: 
         grade = report._grade_chain(reg.run(sdef, seed), oracle)
     if derived is None:
         derived = oracle_derive.derive(sdef, seed)
-    waived = _TRIANGULATION_WAIVED if waived is None else waived
+    if waived is None:
+        waived = known_gaps.triangulation_map(known_gaps.load(oracle, sdef.name), sdef.name)
 
     observed: dict = {}
     for alert in grade.get("fired", []):
@@ -471,8 +411,11 @@ def _report_one(f: dict, warn_only: bool) -> int:
         print(f"  [REPORTED campaign_membership] {item['field']}: oracle expects {item['expected']}, "
               f"run produced {item['observed']} (not gated)")
     for entry in f["stale_allowlist_entries"]:
-        print(f"  [STALE WAIVER] {entry['key']} is on the accepted list but no longer "
-              "reproduces -- delete the entry, the disagreement is gone")
+        if entry.get("why"):
+            print(f"  [WRONG KIND]  {entry['key']} is declared in known_gaps but {entry['why']}")
+        else:
+            print(f"  [STALE WAIVER] {entry['key']} is declared in the oracle's known_gaps but no longer "
+                  "reproduces -- delete the declaration, the disagreement is gone")
 
     if f["total"] == 0 and not f["stale_allowlist_entries"]:
         print("  [OK] oracle and pipeline agree on every step, rule and forbidden edge.")
@@ -487,7 +430,7 @@ def _report_one(f: dict, warn_only: bool) -> int:
     print(f"  [{'WARN' if warn_only else 'FAIL'}] {len(f['new'])} NEW oracle/reality "
           f"disagreement(s) + {len(f['stale_allowlist_entries'])} stale waiver(s) -- the "
           "answer key and the system disagree in a way nobody has accepted. Fix whichever "
-          "is wrong, deliberately (both feed frozen baseline numbers), or add a dated entry.")
+          "is wrong, deliberately (both feed frozen baseline numbers), or declare it in the oracle's known_gaps.")
     return 0 if warn_only else 1
 
 

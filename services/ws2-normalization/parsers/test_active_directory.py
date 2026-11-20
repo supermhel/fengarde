@@ -169,5 +169,46 @@ class TestActiveDirectoryParser(unittest.TestCase):
         self.assertNotIn("dst_endpoint", PARSER.parse(_raw(no_computer)))
 
 
+# --- ADR-012 WP 3: logon-session key (AD 4624) -------------------------------------------------------------------
+# FIXTURE PROVENANCE: TEMPLATE-DERIVED (invented LogonId values in the documented field shape); not a real capture.
+class TestActiveDirectoryLogonKey(unittest.TestCase):
+    REC = {"EventID": 4624, "TimeCreated": 1750000000000, "TargetUserName": "jdoe",
+           "IpAddress": "10.0.0.5", "WorkstationName": "wks-jdoe", "Computer": "srv-file01",
+           "TargetLogonId": "0x00000000000CE96D"}
+
+    def test_4624_target_logon_id_canonicalised_and_scoped_to_computer(self):
+        ev = PARSER.parse(_raw(self.REC))
+        self.assertEqual(ev["actor"]["session"], {"uid": "ce96d"})
+        self.assertEqual(ev["siem"]["key_scope"], {"host": "srv-file01", "sensor": "active_directory"})
+        self.assertEqual(validate(ev), [])
+
+    def test_session_key_without_a_named_user(self):
+        rec = {k: v for k, v in self.REC.items() if k != "TargetUserName"}
+        rec["SubjectUserName"] = "-"
+        ev = PARSER.parse(_raw(rec))
+        self.assertEqual(ev["actor"], {"session": {"uid": "ce96d"}})
+        self.assertEqual(validate(ev), [])
+
+    def test_negative_values_dropped(self):
+        for v in ("0x0", "-", "", None, 0, "0xZZ", "f" * 129, {"x": 1}):
+            ev = PARSER.parse(_raw(dict(self.REC, TargetLogonId=v)))
+            self.assertNotIn("session", ev.get("actor", {}), repr(v))
+            self.assertNotIn("key_scope", ev["siem"], repr(v))
+            self.assertEqual(validate(ev), [], repr(v))
+
+    def test_no_computer_means_no_key(self):
+        rec = {k: v for k, v in self.REC.items() if k != "Computer"}
+        ev = PARSER.parse(_raw(rec))
+        self.assertNotIn("session", ev["actor"])
+        self.assertNotIn("key_scope", ev["siem"])
+
+    def test_failed_logon_and_ticket_events_carry_no_session(self):
+        for eid in (4625, 4768, 4771, 4634):
+            ev = PARSER.parse(_raw(dict(self.REC, EventID=eid)))
+            self.assertIsNotNone(ev, eid)
+            self.assertNotIn("session", ev.get("actor", {}), eid)
+            self.assertNotIn("key_scope", ev["siem"], eid)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

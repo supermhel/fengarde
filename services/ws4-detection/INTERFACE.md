@@ -39,6 +39,7 @@
 - Alert `event_ids` are the window's contributing ingest ids, except for distinct-count rules, where they are the counted
   values (ports, hosts). `trigger_event_id` is the ingest id of the event that tripped the rule (absent if the event has none);
   it is what joins a WS-5 triage doc to a distinct-count alert (the dashboard uses it). Not mapped in `alerts-*` (kept in `_source`).
+- Alert `causal_keys` (ADR-012 WP 5, `causal_alert.py`): optional list of at most 6 `{ns, role, h, scope_trust}` hashed keys (`shared.causal_keys.key_hash`) computed from the TRIGGER event only: `actor.process.uid` / `parent_process.uid` (`proc`, scope `siem.key_scope.host`), `actor.session.uid` (`logon`, host), `connection_info.uid` (`flow`, scope = `key_scope.sensor` qualified by `key_scope.host`, else `siem.sender.ip`, else `siem.sender.source`; none of them: no flow key), `unmapped.mcp.session_id` (`agent`, host). A key without a scope value is not emitted. Absent when the event has no keys, so keyless alerts and every `alert_id` are unchanged. `scope_trust` is `observed` and `siem.sender.ip` goes into the hash ONLY when `FENGARDE_WS1_DIRECT=1` (operator declares ws1 reached directly, no proxy/NAT; default off) and the event has a sender ip; otherwise `asserted` with sender "". `agent` keys are always `declared`.
 - Rule gates (CI): `tools/validate_rules.py` (schema/condition/operator/reference)
   and `tools/check_rule_producers.py` (anti-dormancy).
 
