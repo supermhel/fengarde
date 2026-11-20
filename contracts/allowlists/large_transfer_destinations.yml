@@ -1,0 +1,14 @@
+# Destinations that legitimately receive very large outbound transfers (common_large_outbound_flow.yml):
+# offsite-backup targets, software-mirror uploads, large-file SaaS endpoints your organisation uses.
+#
+# Matches dst_endpoint.ip: a plain IP is an exact match, a CIDR matches by network membership.
+# Loaded together with corp_ranges.yml (RFC 1918 destinations never count as "outbound").
+#
+# Shipped EMPTY: nothing is assumed legitimate. Add a destination only after confirming with its owner
+# that the volume is expected; an allowlisted destination can no longer raise this alert, including
+# when an attacker uses it as the exfiltration target.
+#
+#   entries:
+#     - "198.51.100.20"      # offsite backup appliance
+#     - "203.0.113.0/28"     # build-artifact mirror
+entries: []

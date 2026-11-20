@@ -270,10 +270,14 @@ def test_derive_hand_skew() -> None:
            bool(_kinds(_run(IT, o)["unwaived"], "F13")))
     # F6: an expected rule with no mitre.tactic
     no_tactic = sorted(rid for rid, r in _RULES.items() if not r.tactic)
+    # The rules with no mitre block are exactly the dated `no_technique` waivers of technique_waivers.yaml
+    # (agent_tool_call_burst, and since 2026-11-20 common_ids_high_severity_alert / common_large_outbound_flow).
+    waived_ids = {"2b3c4d5e-6f70-4899-8a1b-2c3d4e5f6a7c", "0331c311-7985-47c8-b554-682781ef1069",
+                  "8bde66cd-c1e9-45e5-83d7-fd091eb80f1d"}
     o = copy.deepcopy(_oracle(AI))
     o["detection_points"]["agent_mcp_tool_call"]["expected_rules"].append({"rule_id": no_tactic[0], "level": "medium"})
-    _check("DER-POS-2 F6: an expected rule carrying no mitre.tactic is flagged (agent_tool_call_burst is the only one)",
-           len(no_tactic) == 1 and bool(_kinds(_run(AI, o)["findings"], "F6", no_tactic[0])), f"{no_tactic}")
+    _check("DER-POS-2 F6: an expected rule carrying no mitre.tactic is flagged (only the waived no_technique rules lack one)",
+           set(no_tactic) == waived_ids and bool(_kinds(_run(AI, o)["findings"], "F6", no_tactic[0])), f"{no_tactic}")
     # 2026-10-14: a tactic-less rule (agent_tool_call_burst, no mitre block on purpose) is only legitimate where the
     # storyline's OWN oracle declares it (derive_waiver F6); every F6 finding must be waived by such a declaration
     f6 = {sd.name: [f for f in _run(sd, _oracle(sd))["findings"] if f["kind"] == "F6"] for sd in reg.ALL}

@@ -331,6 +331,42 @@ rule_sets:
         threshold: 40
         window_seconds: 60
     production_reachable: true
+  common_ids_high_severity_alert:
+    fields:
+      clock_forgeable:
+        basis: harness-measured
+        better: min
+        value: false
+      forgery_evades:
+        basis: harness-measured
+        better: min
+        value: false
+      forgone_events:
+        basis: harness-measured
+        better: max
+        value: 3
+      min_keys.ids_flow:
+        basis: harness-measured
+        better: max
+        value: immune
+      respelling_evades:
+        basis: harness-measured
+        better: min
+        value: false
+      respelling_evades_mapped:
+        basis: harness-measured
+        better: min
+        value: false
+    fingerprint: ec04fbecfd960d01bd3efe8cc0f6d09b1fb5cf1777c37ae9c3557695cdffd066
+    params:
+      common_ids_high_severity_alert:
+        companion_of: null
+        distinct_field: null
+        group_by: unmapped.ids.flow_id
+        periodicity: null
+        threshold: 1
+        window_seconds: 3600
+    production_reachable: true
   common_impossible_travel:
     fields:
       clock_forgeable:

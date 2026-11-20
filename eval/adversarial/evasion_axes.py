@@ -85,6 +85,7 @@ KEY_KINDS = {
     "unmapped.db.object": "db_object",
     "unmapped.target_user.name": "target_account",
     "unmapped.ot.server_id": "ot_server",
+    "unmapped.ids.flow_id": "ids_flow",
 }
 
 #: rule-set key -> (scenario, step): the storyline burst that exercises it. Every
@@ -621,6 +622,11 @@ def search_schedule(lab: Lab) -> dict:
     the uniform stretch ``evasion_search`` measures, for comparison."""
     pl, n = lab.burst.payloads, lab.burst.n
     cons = [(r.threshold, r.window_ms) for r in lab.rs.rules]
+    if cons and all(t <= 1 for t, _ in cons):
+        # threshold 1 (e.g. the Suricata severity-1 passthrough): every event fires on its own, so no delivery
+        # schedule can keep a rule below threshold -- there is nothing to slow down to. Not a disagreement.
+        return {"searched": False, "agree": True,
+                "reason": "threshold 1: every event fires by itself, no slow schedule exists"}
     maker = regular_slow_offsets if lab.rs.periodic else optimal_slow_offsets
     off = maker(n, cons)
     if not times_follow(lab, pl, off):
