@@ -51,6 +51,7 @@ for _p in (str(ADVERSARIAL), str(TWIN), str(SERVICES)):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
+import causal_order as co  # noqa: E402
 import mutate_generic as mg  # noqa: E402
 import scenario_registry as reg  # noqa: E402
 
@@ -240,6 +241,145 @@ def controls_ok(ctl: dict) -> list:
         if r["shift_1h"][k] != r["identity"][k]:
             bad.append(f"{name}: positive control shift_1h moved {k}: "
                        f"{r['identity'][k]!r} -> {r['shift_1h'][k]!r}")
+    return bad
+
+
+# ---------------------------------------------------------------------------
+# Controls for directional_discrimination_timed (ADR 011, WP-C)
+# ---------------------------------------------------------------------------
+# The same three controls (mirror / swap / shift_1h) applied at the level of the
+# EMITTED edge intervals (``first_ts_ms`` / ``last_ts_ms``), so the timed metric
+# can be shown to say no without depending on the service that emits the fields.
+# Pure: inputs are never mutated. Each mirrors its payload-level twin above:
+#   mirror    every interval reflected about the global midpoint ([a, b] ->
+#             [lo + hi - b, lo + hi - a]); the attack runs backwards.
+#   swap      the start times of two steps' blocks are exchanged (each keeps its
+#             internal offsets); only edges attributed to exactly one of the two
+#             steps move.
+#   shift_1h  every interval moved by +1 h: the POSITIVE control, no change.
+TIMED_SHIFT_MS = 3600 * 1000
+
+
+def _graph_edges(graph) -> list:
+    return graph.get("edges") if isinstance(graph, dict) else graph
+
+
+def _timed_edges(graphs: list):
+    for g in graphs:
+        for e in _graph_edges(g) or []:
+            iv = co.edge_interval(e)
+            if iv is not None:
+                yield e, iv
+
+
+def _map_intervals(graphs: list, fn) -> tuple:
+    """Deep-copy ``graphs`` and rewrite each timed edge's interval via
+    ``fn(edge, (first, last)) -> (first, last)``. Returns ``(graphs, changed)``."""
+    out = copy.deepcopy(graphs)
+    changed = 0
+    for g in out:
+        for e in _graph_edges(g) or []:
+            iv = co.edge_interval(e)
+            if iv is None:
+                continue
+            new = fn(e, iv)
+            if new != iv:
+                e["first_ts_ms"], e["last_ts_ms"] = new
+                changed += 1
+    return out, changed
+
+
+def mirror_graph_times(graphs: list) -> tuple:
+    ivs = [iv for _e, iv in _timed_edges(graphs)]
+    if not ivs:
+        return copy.deepcopy(graphs), 0
+    lo, hi = min(i[0] for i in ivs), max(i[1] for i in ivs)
+    return _map_intervals(graphs, lambda _e, iv: (lo + hi - iv[1], lo + hi - iv[0]))
+
+
+def shift_graph_times(graphs: list, delta_ms: int = TIMED_SHIFT_MS) -> tuple:
+    return _map_intervals(graphs, lambda _e, iv: (iv[0] + delta_ms, iv[1] + delta_ms))
+
+
+def swap_graph_steps(graphs: list, edge_steps, a: str, b: str) -> tuple:
+    """Exchange the block start times of steps ``a`` and ``b``. A step's start is
+    the minimum ``first_ts_ms`` over the timed edges attributed to it; edges
+    attributed to both (or neither) stay put. ``(copy, 0)`` if either has none."""
+    starts: dict = {}
+    for e, iv in _timed_edges(graphs):
+        for s in set(edge_steps(e) or ()) & {a, b}:
+            starts[s] = min(starts.get(s, iv[0]), iv[0])
+    if a not in starts or b not in starts:
+        return copy.deepcopy(graphs), 0
+    d = starts[b] - starts[a]
+
+    def _fn(e, iv):
+        own = set(edge_steps(e) or ()) & {a, b}
+        if own == {a}:
+            return (iv[0] + d, iv[1] + d)
+        if own == {b}:
+            return (iv[0] - d, iv[1] - d)
+        return iv
+    return _map_intervals(graphs, _fn)
+
+
+def run_timed_controls(graphs: list, rels: list, edge_steps, storyline: str = "",
+                       swap: tuple | None = None) -> dict:
+    """identity / mirror / swap / shift_1h graded with the timed metric.
+
+    Returns ``{rows: {variant: TimedResult}, swap_pair, changed: {variant: n}}``.
+    ``swap`` defaults to the first allowed pair whose swap lowers the score (the
+    same "can actually say NO" rule as ``pick_swap_pair``); ``None`` if none."""
+
+    def _g(gr):
+        return co.grade_timed_edges(gr, rels, edge_steps, storyline=storyline)
+
+    rows = {"identity": _g(graphs)}
+    changed = {"identity": 0}
+    m, changed["mirror"] = mirror_graph_times(graphs)
+    rows["mirror"] = _g(m)
+    ident = rows["identity"]["directional_discrimination_timed"]
+    pair = swap
+    if pair is None:
+        for r in rels:
+            if not r.get("allowed"):
+                continue
+            cand = (r["from"], r["to"])
+            sg, ch = swap_graph_steps(graphs, edge_steps, *cand)
+            sc = _g(sg)["directional_discrimination_timed"]
+            if ch and ident is not None and sc is not None and sc < ident:
+                pair = cand
+                break
+    if pair:
+        sg, changed["swap"] = swap_graph_steps(graphs, edge_steps, *pair)
+        rows["swap"] = _g(sg)
+    sh, changed["shift_1h"] = shift_graph_times(graphs)
+    rows["shift_1h"] = _g(sh)
+    return {"rows": rows, "swap_pair": list(pair) if pair else None, "changed": changed}
+
+
+def timed_controls_ok(ctl: dict) -> list:
+    """Self-check of one timed-control table; returns problems (empty = ok).
+
+    identity must be able to say yes (score > 0); mirror must drive it to ~0
+    (0.0, or None if nothing stays gradable); swap must be strictly below identity; shift_1h must leave
+    score, counts and classes unchanged."""
+    r = ctl["rows"]
+    k = "directional_discrimination_timed"
+    bad = []
+    ident = r["identity"][k]
+    if ident is None or ident <= 0.0:
+        bad.append(f"identity {k}={ident!r}: the control cannot say yes")
+    if r["mirror"][k] not in (0.0, None):
+        bad.append(f"mirror {k}={r['mirror'][k]!r}, expected ~0.0 (the control cannot say no)")
+    if "swap" not in r:
+        bad.append("no swap pair could lower the score")
+    elif ident is not None and (r["swap"][k] is None or r["swap"][k] >= ident):
+        bad.append(f"swap {k}={r['swap'][k]!r} did not drop below identity {ident!r}")
+    sh, idr = r["shift_1h"], r["identity"]
+    if any(sh[x] != idr[x] for x in (k, "discriminating", "concurrent", "reverse_only", "n_gradable",
+                                     "ungradable")):
+        bad.append("positive control shift_1h moved the timed metric")
     return bad
 
 

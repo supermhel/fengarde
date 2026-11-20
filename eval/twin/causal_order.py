@@ -65,7 +65,7 @@ so tests can mutate it and prove it load-bearing.
 """
 from __future__ import annotations
 
-from typing import Callable, Optional
+from typing import Callable, Optional, cast
 
 # Label printed next to every reported order_concordance (SSOT / report context).
 ORDER_BASIS = ("timestamp invariant, 1.0 by construction on the harness's own chains: it "
@@ -266,6 +266,193 @@ def grade_causal_order(graphs: list, step_entities: dict, rels: list, step_order
         "per_pair": per_pair,
         "per_forbidden_pair": per_forbidden,
     }
+
+
+# ---------------------------------------------------------------------------
+# directional_discrimination_timed (ADR 011, WP-C)
+# ---------------------------------------------------------------------------
+# Computed ONLY from the emitted ``incident.graph`` edge fields ``first_ts_ms``,
+# ``last_ts_ms``, ``evidence_count`` and ``timed_evidence_count`` (ADR 011 "Exact
+# bus payload change"). Not wired into report.py / the ratchet / the scorecard yet.
+#
+# STRICT predicate (ADR 011, Measurements #5, P1): for a graded pair f -> t with
+# edge sets E_f and E_t, forward iff ``last(E_f) < first(E_t)``. Ties and
+# overlaps are ``concurrent`` and count as a FAILURE to discriminate. The weak
+# "evidence starts earlier" predicate (P2) reads exactly 0.5 under the swap
+# control on the 8-pair set and would pass a ``>= 0.5`` bar, so it is not used.
+
+#: ADR 011 minimum-n bar for stating the claim.
+MIN_GRADABLE_PAIRS = 30
+MIN_FORBIDDEN_PAIRS = 10
+MIN_STORYLINES = 6
+MAX_STORYLINE_SHARE = 0.25
+
+
+def edge_forward(f_first, f_last, t_first, t_last) -> bool:
+    """STRICT: the from-side evidence ends before the to-side evidence begins.
+    Ties and overlapping intervals are NOT forward. Mutated by the tests to
+    prove the strict form is load-bearing."""
+    return f_last < t_first
+
+
+def wilson_interval(successes: int, n: int, z: float = 1.96) -> Optional[tuple]:
+    """Wilson score interval (default 95 %); ``None`` when ``n`` is 0."""
+    if n <= 0:
+        return None
+    p = successes / n
+    z2 = z * z
+    denom = 1 + z2 / n
+    centre = (p + z2 / (2 * n)) / denom
+    half = z * ((p * (1 - p) / n + z2 / (4 * n * n)) ** 0.5) / denom
+    return (round(max(0.0, centre - half), 4), round(min(1.0, centre + half), 4))
+
+
+def edge_interval(edge: dict) -> Optional[tuple]:
+    """``(first_ts_ms, last_ts_ms)`` of an edge, or ``None`` = "no time claim".
+
+    Absent and ``null`` are identical (ADR 011). An edge also carries no claim
+    when ``timed_evidence_count`` is absent/non-positive, a bound is not a real
+    number, or ``first > last`` (malformed): never read as time."""
+    if not isinstance(edge, dict):
+        return None
+    timed = edge.get("timed_evidence_count")
+    lo, hi = edge.get("first_ts_ms"), edge.get("last_ts_ms")
+    if not (_num(timed) and _num(lo) and _num(hi)):
+        return None
+    if cast(float, timed) <= 0 or cast(float, lo) > cast(float, hi):
+        return None
+    return (cast(float, lo), cast(float, hi))
+
+
+def steps_by_endpoints(step_entities: dict) -> Callable:
+    """Default edge attribution: an edge belongs to every step owning one of its
+    endpoints. Coarser than the ADR's per-alert "carrier" attribution (which
+    needs harness knowledge the four fields do not expose); pass ``edge_steps``
+    to ``grade_timed_edges`` for a finer one."""
+    def _fn(edge: dict) -> set:
+        ends = {edge.get("from"), edge.get("to")}
+        return {s for s, ents in step_entities.items() if ends & set(ents)}
+    return _fn
+
+
+class TimedResult(dict):
+    """Result of ``grade_timed_edges`` / ``combine_timed`` (a plain dict subclass,
+    JSON-serialisable). Never a bare number: ``directional_discrimination_timed``
+    travels with ``ungradable``, ``insufficient_n`` and the Wilson interval."""
+
+
+def _finalise(pairs: list, ungradable: int, reasons: dict) -> TimedResult:
+    allowed = [p for p in pairs if p["allowed"]]
+    forbidden = [p for p in pairs if not p["allowed"]]
+    disc = sum(1 for p in allowed if p["class"] == "forward")
+    concurrent = sum(1 for p in allowed if p["class"] == "concurrent")
+    reverse = sum(1 for p in allowed if p["class"] == "reverse")
+    realised = sum(1 for p in forbidden if p["class"] == "forward")
+    n_a, n_f = len(allowed), len(forbidden)
+    per_story: dict = {}
+    for p in pairs:
+        per_story[p["storyline"]] = per_story.get(p["storyline"], 0) + 1
+    n = len(pairs)
+    share = (max(per_story.values()) / n) if n else None
+    why = []
+    if n < MIN_GRADABLE_PAIRS:
+        why.append(f"gradable pairs {n} < {MIN_GRADABLE_PAIRS}")
+    if n_f < MIN_FORBIDDEN_PAIRS:
+        why.append(f"forbidden pairs {n_f} < {MIN_FORBIDDEN_PAIRS}")
+    if len(per_story) < MIN_STORYLINES:
+        why.append(f"storylines {len(per_story)} < {MIN_STORYLINES}")
+    if share is not None and share > MAX_STORYLINE_SHARE:
+        why.append(f"largest storyline share {share:.3f} > {MAX_STORYLINE_SHARE}")
+    return TimedResult(
+        directional_discrimination_timed=round(disc / n_a, 4) if n_a else None,
+        wilson95=wilson_interval(disc, n_a),
+        discriminating=disc, concurrent=concurrent, reverse_only=reverse,
+        n_allowed=n_a, n_forbidden=n_f, n_gradable=n,
+        forbidden_order_graph_realised_rate=round(realised / n_f, 4) if n_f else None,
+        forbidden_wilson95=wilson_interval(realised, n_f),
+        ungradable=ungradable, ungradable_reasons=dict(reasons),
+        insufficient_n=bool(why), insufficient_n_reasons=why,
+        storylines=len(per_story),
+        max_storyline_share=round(share, 4) if share is not None else None,
+        per_pair=pairs)
+
+
+def grade_timed_edges(graphs: list, rels: list, edge_steps: Callable,
+                      storyline: str = "") -> TimedResult:
+    """``directional_discrimination_timed`` for ONE storyline, from emitted edges.
+
+    ``graphs``     per-incident graphs (dicts with ``edges``, or bare edge lists)
+                   carrying ``first_ts_ms`` / ``last_ts_ms`` / ``evidence_count`` /
+                   ``timed_evidence_count`` per edge.
+    ``rels``       oracle relationships ``{from, to, allowed}``.
+    ``edge_steps`` ``edge -> iterable of step labels`` the edge is attributed to
+                   (see ``steps_by_endpoints``).
+
+    A pair is gradable iff, in ONE incident graph, a timed edge attributed to
+    ``from`` and a DISTINCT timed edge attributed to ``to`` both exist (an
+    edge-to-edge order test needs two edges). Everything else goes to
+    ``ungradable`` with a reason, never into a denominator. Each side's interval
+    is the union over its timed edges in the graphs where both sides appear
+    (min first, max last). Classes: ``forward`` / ``reverse`` / ``concurrent``;
+    only ``forward`` discriminates an allowed pair, and ``forward`` on a
+    forbidden pair means the graph realised the forbidden order.
+    Use ``combine_timed`` to pool storylines for the n bar."""
+    glist = [_edge_list(g) for g in graphs]
+    pairs: list = []
+    ungradable = 0
+    reasons: dict = {}
+
+    def _skip(why: str) -> None:
+        nonlocal ungradable
+        ungradable += 1
+        reasons[why] = reasons.get(why, 0) + 1
+
+    for rel in rels:
+        f, t = rel.get("from"), rel.get("to")
+        ef: list = []
+        et: list = []
+        distinct = False
+        any_f = any_t = False
+        for edges in glist:
+            gf = [(i, edge_interval(e)) for i, e in enumerate(edges) if f in set(edge_steps(e) or ())]
+            gt = [(i, edge_interval(e)) for i, e in enumerate(edges) if t in set(edge_steps(e) or ())]
+            any_f |= bool(gf)
+            any_t |= bool(gt)
+            gf = [(i, iv) for i, iv in gf if iv is not None]
+            gt = [(i, iv) for i, iv in gt if iv is not None]
+            if gf and gt and any(i != j for i, _ in gf for j, _ in gt):
+                distinct = True
+                ef += [iv for _, iv in gf]
+                et += [iv for _, iv in gt]
+        if not distinct:
+            _skip("no-edges" if not (any_f and any_t) else "untimed-or-single-edge")
+            continue
+        f_first, f_last = min(iv[0] for iv in ef), max(iv[1] for iv in ef)
+        t_first, t_last = min(iv[0] for iv in et), max(iv[1] for iv in et)
+        if edge_forward(f_first, f_last, t_first, t_last):
+            cls = "forward"
+        elif edge_forward(t_first, t_last, f_first, f_last):
+            cls = "reverse"
+        else:
+            cls = "concurrent"
+        pairs.append({"storyline": storyline, "from": f, "to": t, "allowed": bool(rel.get("allowed")),
+                      "class": cls, "from_interval": (f_first, f_last),
+                      "to_interval": (t_first, t_last)})
+    return _finalise(pairs, ungradable, reasons)
+
+
+def combine_timed(results: list) -> TimedResult:
+    """Pool per-storyline ``TimedResult``s; the n / storyline-count / 25 % share
+    rules are evaluated on the pooled pairs."""
+    pairs: list = []
+    ungradable = 0
+    reasons: dict = {}
+    for r in results:
+        pairs += list(r["per_pair"])
+        ungradable += r["ungradable"]
+        for k, v in r["ungradable_reasons"].items():
+            reasons[k] = reasons.get(k, 0) + v
+    return _finalise(pairs, ungradable, reasons)
 
 
 # ---------------------------------------------------------------------------
