@@ -29,6 +29,7 @@ from shared.bus import Bus  # noqa: E402
 from shared.envelope import valid_tenant_id  # noqa: E402
 import engine as _engine  # noqa: E402
 from engine import load_rules  # noqa: E402
+from causal_alert import build_causal_keys  # noqa: E402
 from shared.window import DequeWindowCounter  # noqa: E402
 from scoring import Scorer  # noqa: E402
 from tenants import tenant_of, load_disabled_rules, load_enabled_rules  # noqa: E402
@@ -710,6 +711,12 @@ def make_alert(event, rule, score):
         # analyst's saved triage on a pre-existing alert is never reset.
         "triage": event.get("triage") or {"status": "new"},
     }
+    # ADR-012 WP 5: hashed causal evidence keys of the TRIGGER event only (<= 6).
+    # Omitted when the event has none, so a keyless alert is byte-identical to
+    # before; alert_id is derived elsewhere and never sees this field.
+    causal_keys = build_causal_keys(event)
+    if causal_keys:
+        alert["causal_keys"] = causal_keys
     if event_ids_omitted:
         # Only present when the _MAX_CONTRIBUTING_IDS cap actually bit (same
         # "omitted when absent" convention this alert doc already uses for
