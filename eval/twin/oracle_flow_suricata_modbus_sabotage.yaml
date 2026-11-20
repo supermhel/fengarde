@@ -1,0 +1,220 @@
+# =============================================================================
+# FENGARDE eval/twin/oracle_flow_suricata_modbus_sabotage.yaml
+# Grading ground truth for the Suricata Modbus-sabotage flow storyline (storyline_flow_suricata_modbus_sabotage.py):
+#   asa_sweep -> ad_bruteforce -> lateral_logons -> modbus_poll_recon -> priv_grant -> modbus_write_coil
+#     -> modbus_ids_alert -> plc2_write -> plc2_ids_alert -> plc2_close -> modbus_session_close
+#
+# AUTHORING RULES (written 2026-11-20 BEFORE the builder was run through the pipeline; expectations come from
+# the rules' own description/detection/siem blocks and the parser docstrings).
+#   1. NO RULE WAS INVENTED. Four steps can fire a shipped rule (the ASA horizontal sweep, AD brute force, Windows
+#      lateral logons, a privileged-group add). The seven Suricata modbus / alert / flow steps are honest gaps: no
+#      shipped rule reads a Suricata record.
+#   2. causal_links (ADR-012 WP 7, basis network_flow) are DERIVED from the two flow_id values the builder mints
+#      (eval/twin/flow_kit.py), one per Modbus session, grouped per sensor. They are NOT typed here. Every endpoint
+#      of every link is a gap step, so NO link is gradable on the present rule set (ADR-012: reported, not hidden).
+#   3. FORBIDDEN PAIRS. The first three are anti-causal and share the workstation and the account. The fourth is the
+#      shared-entity control: bystander_historian_poll is a legitimate historian polling the SAME PLC over its OWN
+#      connection (a different flow_id on the same sensor): the entity join sees one device, the flow key says
+#      two flows, so there is no link.
+#   4. INCIDENT. The engineering workstation spans every alert-raising step: one ip track, one incident.
+# =============================================================================
+schema_version: 1
+oracle_id: "flow-suricata-modbus-sabotage-v1"
+kind: "attack-chain-grading-oracle"
+scope: "flow-suricata-modbus-sabotage"
+
+provenance:
+  authored: "2026-11-20"
+  pipeline_run_before_authoring: false
+  basis: "rule description/detection/siem blocks and parser docstrings only; causal_links derived from the builder's own minted flow keys"
+  rules_read:
+    common_bruteforce: "f685feb7ab0efe2e0cd9ed3427a2e0466c3a0de785cc28deef3c53a0b585919b"
+    common_lateral_movement: "2f010d5cf5adb6de7df93f6a30da3ed32029626dccc912f118af9813d0d4c8ae"
+    common_port_scan: "c0c97060ce0620959b450df333154677f2135130748a7cbefd452db7529f3786"
+    common_port_sweep: "ba865ca0603fcc06fa6fdbac0e9672ffdfaddd579b2645198b8dab02d9ec4b63"
+    common_priv_grant: "3d7b783edf6df5e578f154446316404f07d0bcc5837ac9180d00481198f8c14d"
+
+expected_sequence:
+  - asa_sweep
+  - ad_bruteforce
+  - lateral_logons
+  - modbus_poll_recon
+  - priv_grant
+  - modbus_write_coil
+  - modbus_ids_alert
+  - plc2_write
+  - plc2_ids_alert
+  - plc2_close
+  - modbus_session_close
+
+sequence_constraints:
+  strict_order: true
+  allow_extra_steps: false
+  max_clock_span_seconds: 21600
+
+allowed_relationships:
+  - {from: asa_sweep, to: ad_bruteforce, allowed: true, causal_kind: credential_access}   # same workstation
+  - {from: ad_bruteforce, to: lateral_logons, allowed: true, causal_kind: lateral_movement}   # same workstation and account
+  - {from: lateral_logons, to: modbus_poll_recon, allowed: true, causal_kind: discovery}   # same workstation
+  - {from: modbus_poll_recon, to: priv_grant, allowed: true, causal_kind: privilege}   # same workstation
+  - {from: priv_grant, to: modbus_write_coil, allowed: true, causal_kind: impact}   # same workstation
+  - {from: modbus_write_coil, to: modbus_ids_alert, allowed: true, causal_kind: impact}   # same workstation and PLC
+  - {from: modbus_ids_alert, to: plc2_write, allowed: true, causal_kind: impact}   # same workstation
+  - {from: plc2_write, to: plc2_ids_alert, allowed: true, causal_kind: impact}   # same workstation and PLC
+  - {from: plc2_ids_alert, to: plc2_close, allowed: true, causal_kind: impact}   # same workstation and PLC
+  - {from: plc2_close, to: modbus_session_close, allowed: true, causal_kind: impact}   # same workstation
+  - {from: lateral_logons, to: ad_bruteforce, allowed: false, causal_kind: none}   # the logons use the account the brute force had not yet guessed
+  - {from: priv_grant, to: ad_bruteforce, allowed: false, causal_kind: none}   # the privileged add can never precede the guess that enabled it
+  - {from: priv_grant, to: lateral_logons, allowed: false, causal_kind: none}   # the DC group add cannot precede the logons that reached the hosts
+  - {from: modbus_write_coil, to: bystander_historian_poll, allowed: false, causal_kind: none}   # the same PLC but a DIFFERENT flow_id: a shared entity is not a shared flow
+
+# network_flow truth, DERIVED from the flow keys the builder minted (flow_kit.derive_links), never typed by hand.
+# Symmetric: ADR-012 gives the basis no direction of its own; the order shown is event time (ADR-011).
+# test_flow_storylines.py re-derives this list and fails when it differs.
+causal_links:
+  - {from: modbus_poll_recon, to: modbus_write_coil, basis: network_flow}
+  - {from: modbus_write_coil, to: modbus_ids_alert, basis: network_flow}
+  - {from: modbus_ids_alert, to: modbus_session_close, basis: network_flow}
+  - {from: plc2_write, to: plc2_ids_alert, basis: network_flow}
+  - {from: plc2_ids_alert, to: plc2_close, basis: network_flow}
+
+detection_points:
+  asa_sweep:
+    step: asa_sweep
+    role: the engineering workstation is denied on port 502 across 16-22 OT hosts in under a minute
+    expected_event_source: cisco_asa 106023 Deny (class 4001, activity 6)
+    expected_rules:
+      - {rule_id: "d4a91b7c-62e8-4c3f-95a0-1e8b7d2f6c33", title: Horizontal sweep (one source denied across many distinct hosts), level: medium, role: network service discovery (T1046)}
+    must_not_fire:
+      - "1d2c3b4a-5e6f-4708-8a91-0b1c2d3e4f05"   # one port on many hosts, not many ports on one
+    gap: {no_rule_exists: false}
+
+  ad_bruteforce:
+    step: ad_bruteforce
+    role: the workstation fails logon 11-13 times in under a minute
+    expected_event_source: active_directory 4625 (class 3002, activity 4 Failure)
+    expected_rules:
+      - {rule_id: "6f1c8a2e-0d3b-4c11-9a21-7b5e2f9a1c01", title: Brute force (many failed logons from one source), level: high, role: credential access (T1110)}
+    gap: {no_rule_exists: false}
+
+  lateral_logons:
+    step: lateral_logons
+    role: the guessed account logs on to six hosts from the workstation in 125 s
+    expected_event_source: windows_eventlog 4624 (class 3002, activity 1 Success)
+    expected_rules:
+      - {rule_id: "2e3d4c5b-6f70-4819-9b02-1c2d3e4f5061", title: Lateral movement, level: high, role: lateral movement (T1021)}
+    gap: {no_rule_exists: false}
+
+  modbus_poll_recon:
+    step: modbus_poll_recon
+    role: five Modbus read requests on ONE long TCP session to PLC 1
+    expected_event_source: suricata_eve modbus (class 4001, activity 99, unmapped.ot.*)
+    expected_rules: []
+    gap:
+      no_rule_exists: true
+      attack_technique: "T0846"
+      reason: 'No shipped rule reads a Suricata modbus record: suricata_eve.py maps it to class 4001 / activity 99 with unmapped.ot.* and never sets unmapped.ot.anomaly_type (modbus_anomaly.py''s own classification, which the OT rules key on). Both endpoints of the links on this step are unalerted.'
+
+  priv_grant:
+    step: priv_grant
+    role: the account adds backdoor-svc to a privileged group on the OT DC
+    expected_event_source: windows_eventlog 4728 (class 3003, activity 5)
+    expected_rules:
+      - {rule_id: "7d3e9a52-1f6c-4a88-9b3d-2e5c8f1a6d40", title: Privileged group membership grant, level: high, role: persistence (T1098)}
+    gap: {no_rule_exists: false}
+
+  modbus_write_coil:
+    step: modbus_write_coil
+    role: a Modbus write-single-coil request on the same PLC 1 session
+    expected_event_source: suricata_eve modbus (class 4001, activity 99, unmapped.ot.*)
+    expected_rules: []
+    gap:
+      no_rule_exists: true
+      attack_technique: "T0855"
+      reason: 'No shipped rule reads a Suricata modbus record: suricata_eve.py maps it to class 4001 / activity 99 with unmapped.ot.* and never sets unmapped.ot.anomaly_type (modbus_anomaly.py''s own classification, which the OT rules key on). Both endpoints of the links on this step are unalerted.'
+
+  modbus_ids_alert:
+    step: modbus_ids_alert
+    role: the IDS alert on that write, on the same flow_id
+    expected_event_source: suricata_eve alert (class 4001, activity 99)
+    expected_rules: []
+    gap:
+      no_rule_exists: true
+      attack_technique: "T0855"
+      reason: 'No shipped rule reads a Suricata alert: the verdict is carried as data (unmapped.ids.*) and nothing selects it. Both endpoints of the links on this step are unalerted.'
+
+  plc2_write:
+    step: plc2_write
+    role: a Modbus write-single-register request on one session to PLC 2
+    expected_event_source: suricata_eve modbus (class 4001, activity 99, unmapped.ot.*)
+    expected_rules: []
+    gap:
+      no_rule_exists: true
+      attack_technique: "T0836"
+      reason: 'No shipped rule reads a Suricata modbus record: suricata_eve.py maps it to class 4001 / activity 99 with unmapped.ot.* and never sets unmapped.ot.anomaly_type (modbus_anomaly.py''s own classification, which the OT rules key on). Both endpoints of the links on this step are unalerted.'
+
+  plc2_ids_alert:
+    step: plc2_ids_alert
+    role: the IDS alert on that write, on the PLC 2 flow_id
+    expected_event_source: suricata_eve alert (class 4001, activity 99)
+    expected_rules: []
+    gap:
+      no_rule_exists: true
+      attack_technique: "T0836"
+      reason: 'No shipped rule reads a Suricata alert: the verdict is carried as data (unmapped.ids.*) and nothing selects it. Both endpoints of the links on this step are unalerted.'
+
+  plc2_close:
+    step: plc2_close
+    role: the PLC 2 flow record, written when that session ends
+    expected_event_source: suricata_eve flow (class 4001, activity 2 Close)
+    expected_rules: []
+    gap:
+      no_rule_exists: true
+      attack_technique: "T0836"
+      reason: No shipped rule reads a Suricata flow record (class 4001, activity 2 Close, unmapped.suricata.flow.*). Both endpoints of the links on this step are unalerted.
+
+  modbus_session_close:
+    step: modbus_session_close
+    role: the PLC 1 flow record, written when that session ends
+    expected_event_source: suricata_eve flow (class 4001, activity 2 Close)
+    expected_rules: []
+    gap:
+      no_rule_exists: true
+      attack_technique: "T0855"
+      reason: No shipped rule reads a Suricata flow record (class 4001, activity 2 Close, unmapped.suricata.flow.*). Both endpoints of the links on this step are unalerted.
+
+step_dependencies: {}
+
+severity_band:
+  score: {min: 40, max: 100}
+  severity_id: {min: 3, max: 6}
+  dominant_band: "high"
+
+evidence:
+  correlation_key: [src_endpoint.ip]
+  per_step:
+    asa_sweep: {fields: [src_endpoint.ip, dst_endpoint.ip]}
+    ad_bruteforce: {fields: [src_endpoint.ip, actor.user.name]}
+    lateral_logons: {fields: [src_endpoint.ip, actor.user.name, dst_endpoint.hostname]}
+    modbus_poll_recon: {fields: [src_endpoint.ip, dst_endpoint.ip]}
+    priv_grant: {fields: [src_endpoint.ip, actor.user.name]}
+    modbus_write_coil: {fields: [src_endpoint.ip, dst_endpoint.ip]}
+    modbus_ids_alert: {fields: [src_endpoint.ip, dst_endpoint.ip]}
+    plc2_write: {fields: [src_endpoint.ip, dst_endpoint.ip]}
+    plc2_ids_alert: {fields: [src_endpoint.ip, dst_endpoint.ip]}
+    plc2_close: {fields: [src_endpoint.ip, dst_endpoint.ip]}
+    modbus_session_close: {fields: [src_endpoint.ip, dst_endpoint.ip]}
+
+incident_membership:
+  incident_count: 1
+  incident_key: "flow-suricata-modbus-sabotage"
+  include: [asa_sweep, ad_bruteforce, lateral_logons, modbus_poll_recon, priv_grant, modbus_write_coil, modbus_ids_alert, plc2_write, plc2_ids_alert, plc2_close, modbus_session_close]
+  cross_step_rule_ids:
+    - "d4a91b7c-62e8-4c3f-95a0-1e8b7d2f6c33"
+    - "6f1c8a2e-0d3b-4c11-9a21-7b5e2f9a1c01"
+    - "2e3d4c5b-6f70-4819-9b02-1c2d3e4f5061"
+    - "7d3e9a52-1f6c-4a88-9b3d-2e5c8f1a6d40"
+
+campaign_membership:
+  campaign_count: 1
+  full_coverage: true

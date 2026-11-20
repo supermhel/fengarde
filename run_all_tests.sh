@@ -640,6 +640,9 @@ $PY eval/twin/negative_controls.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}
 echo
 echo "== twin: oracle <-> reality reconciliation (the answer key is self-authored; drift must not be silent) =="; LAST_HEADER="== twin: oracle <-> reality reconciliation (the answer key is self-authored; drift must not be silent) =="
 $PY eval/twin/oracle_consistency.py --out eval/twin/out/oracle_consistency.latest.json || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
+echo "== twin: flow_* storylines (network_flow keys minted by the builder, derived causal_links, scope controls, F4 forbidden pairs) =="; LAST_HEADER="== twin: flow_* storylines (network_flow keys, derived causal_links, scope controls, F4 forbidden pairs) =="
+$PY eval/twin/test_flow_storylines.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 fi  # tier: eval-twin
 
 # == Phase 4 adversarial system-level validation (WP-4-A) ==

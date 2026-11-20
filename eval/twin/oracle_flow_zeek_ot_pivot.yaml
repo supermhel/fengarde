@@ -1,0 +1,235 @@
+# =============================================================================
+# FENGARDE eval/twin/oracle_flow_zeek_ot_pivot.yaml
+# Grading ground truth for the Zeek OT-pivot flow storyline (storyline_flow_zeek_ot_pivot.py):
+#   refused_scan -> ssh_bruteforce -> dns_tunnel_open -> modbus_recon -> lateral_logons -> dns_tunnel_stage
+#     -> priv_grant -> modbus_write -> dns_tunnel_exfil -> modbus_restore -> modbus_close -> dns_tunnel_close
+#
+# AUTHORING RULES (written 2026-11-20 BEFORE the builder was run through the pipeline; expectations come from
+# the rules' own description/detection/siem blocks and the parser docstrings).
+#   1. NO RULE WAS INVENTED. Five steps can fire a shipped rule (the Zeek refused-connection scan, SSH brute force,
+#      the tunnel's first DNS burst, Windows lateral logons, a privileged-group add). The seven others are honest
+#      gaps: no shipped rule reads a Zeek Modbus row, a completed session's conn row or a slow DNS burst.
+#   2. causal_links (ADR-012 WP 7, basis network_flow) are DERIVED from the two Zeek uids the builder mints
+#      (eval/twin/flow_kit.py): the DNS-over-TCP tunnel (open, stage, exfil, close) and the Modbus session
+#      (recon, write, restore, close). They are NOT typed here. One alert-raising step (dns_tunnel_open) is an
+#      endpoint of a link; its other end is a gap step, so every link has at least one unalerted endpoint today.
+#   3. FORBIDDEN PAIRS. The first three are anti-causal and share the jump host and the account. The fourth is the
+#      shared-entity control: bystander_hmi_poll is a legitimate HMI polling the SAME PLC over its OWN connection
+#      (a different uid): the entity join sees one device, the flow key says two flows, so there is no link.
+#   4. INCIDENT. The jump host spans every alert-raising step: one ip track, one incident.
+# =============================================================================
+schema_version: 1
+oracle_id: "flow-zeek-ot-pivot-v1"
+kind: "attack-chain-grading-oracle"
+scope: "flow-zeek-ot-pivot"
+
+provenance:
+  authored: "2026-11-20"
+  pipeline_run_before_authoring: false
+  basis: "rule description/detection/siem blocks and parser docstrings only; causal_links derived from the builder's own minted flow keys"
+  rules_read:
+    common_bruteforce: "f685feb7ab0efe2e0cd9ed3427a2e0466c3a0de785cc28deef3c53a0b585919b"
+    common_dns_exfil: "eccf4032d315d46f73cc0bb5b16f96983bda04b3538418a1777aadbcc823008f"
+    common_dns_tunnel_by_domain: "e85a4cabcf5e211c12bdb5a8b2949bee0f156096a03eca0ea28c6bde84477fcf"
+    common_lateral_movement: "2f010d5cf5adb6de7df93f6a30da3ed32029626dccc912f118af9813d0d4c8ae"
+    common_port_scan: "c0c97060ce0620959b450df333154677f2135130748a7cbefd452db7529f3786"
+    common_priv_grant: "3d7b783edf6df5e578f154446316404f07d0bcc5837ac9180d00481198f8c14d"
+    common_refused_connection_scan: "0daf7661353c61161b639be69ef3610fe07abd8de9de0fcac7039e075e3a836e"
+
+expected_sequence:
+  - refused_scan
+  - ssh_bruteforce
+  - dns_tunnel_open
+  - modbus_recon
+  - lateral_logons
+  - dns_tunnel_stage
+  - priv_grant
+  - modbus_write
+  - dns_tunnel_exfil
+  - modbus_restore
+  - modbus_close
+  - dns_tunnel_close
+
+sequence_constraints:
+  strict_order: true
+  allow_extra_steps: false
+  max_clock_span_seconds: 21600
+
+allowed_relationships:
+  - {from: refused_scan, to: ssh_bruteforce, allowed: true, causal_kind: credential_access}   # same jump host
+  - {from: ssh_bruteforce, to: dns_tunnel_open, allowed: true, causal_kind: command_and_control}   # same jump host
+  - {from: dns_tunnel_open, to: modbus_recon, allowed: true, causal_kind: discovery}   # same jump host
+  - {from: modbus_recon, to: lateral_logons, allowed: true, causal_kind: lateral_movement}   # same jump host
+  - {from: lateral_logons, to: dns_tunnel_stage, allowed: true, causal_kind: command_and_control}   # same jump host
+  - {from: dns_tunnel_stage, to: priv_grant, allowed: true, causal_kind: privilege}   # same jump host
+  - {from: priv_grant, to: modbus_write, allowed: true, causal_kind: impact}   # same jump host
+  - {from: modbus_write, to: dns_tunnel_exfil, allowed: true, causal_kind: exfiltration}   # same jump host
+  - {from: dns_tunnel_exfil, to: modbus_restore, allowed: true, causal_kind: defense_evasion}   # same jump host
+  - {from: modbus_restore, to: modbus_close, allowed: true, causal_kind: impact}   # same jump host and PLC
+  - {from: modbus_close, to: dns_tunnel_close, allowed: true, causal_kind: command_and_control}   # same jump host
+  - {from: lateral_logons, to: ssh_bruteforce, allowed: false, causal_kind: none}   # the logons use the account the brute force had not yet guessed
+  - {from: priv_grant, to: ssh_bruteforce, allowed: false, causal_kind: none}   # the privileged add can never precede the guess that enabled it
+  - {from: priv_grant, to: lateral_logons, allowed: false, causal_kind: none}   # the DC group add cannot precede the logons that reached the hosts
+  - {from: modbus_write, to: bystander_hmi_poll, allowed: false, causal_kind: none}   # the same PLC but a DIFFERENT connection uid: a shared entity is not a shared flow
+
+# network_flow truth, DERIVED from the flow keys the builder minted (flow_kit.derive_links), never typed by hand.
+# Symmetric: ADR-012 gives the basis no direction of its own; the order shown is event time (ADR-011).
+# test_flow_storylines.py re-derives this list and fails when it differs.
+causal_links:
+  - {from: dns_tunnel_open, to: dns_tunnel_stage, basis: network_flow}
+  - {from: modbus_recon, to: modbus_write, basis: network_flow}
+  - {from: dns_tunnel_stage, to: dns_tunnel_exfil, basis: network_flow}
+  - {from: modbus_write, to: modbus_restore, basis: network_flow}
+  - {from: dns_tunnel_exfil, to: dns_tunnel_close, basis: network_flow}
+  - {from: modbus_restore, to: modbus_close, basis: network_flow}
+
+detection_points:
+  refused_scan:
+    step: refused_scan
+    role: the jump host is refused (S0) on 16-18 distinct ports of one OT host in ~34 s
+    expected_event_source: zeek_json conn (class 4001, activity 2 Close, conn_state S0)
+    expected_rules:
+      - {rule_id: "7b3e9d51-4c2a-4f86-a1d0-5e8c2b6f9a14", title: Refused or unanswered connections from one source across many ports (Zeek conn_state S0/REJ), level: medium, role: network service discovery (T1046)}
+    must_not_fire:
+      - "1d2c3b4a-5e6f-4708-8a91-0b1c2d3e4f05"   # Zeek S0/REJ is never mapped to Deny (activity 6): the firewall-deny rule must stay silent
+    gap: {no_rule_exists: false}
+
+  ssh_bruteforce:
+    step: ssh_bruteforce
+    role: the jump host fails SSH logon 11-13 times in under a minute
+    expected_event_source: linux_ssh Failed password (class 3002, activity 4 Failure)
+    expected_rules:
+      - {rule_id: "6f1c8a2e-0d3b-4c11-9a21-7b5e2f9a1c01", title: Brute force (many failed logons from one source), level: high, role: credential access (T1110)}
+    gap: {no_rule_exists: false}
+
+  dns_tunnel_open:
+    step: dns_tunnel_open
+    role: 42-45 distinct names under one parent on ONE DNS-over-TCP connection in ~53 s
+    expected_event_source: zeek_json dns (class 4002, activity 1)
+    expected_rules:
+      - {rule_id: "a1b2c3d4-5e6f-4708-9a1b-2c3d4e5f6071", title: DNS query volume to many distinct domains from one source, level: medium, role: DNS tunnelling (T1071.004)}
+    gap: {no_rule_exists: false}
+
+  modbus_recon:
+    step: modbus_recon
+    role: five Modbus read requests on ONE long TCP session to the PLC
+    expected_event_source: zeek_json modbus (class 4001, activity 99, unmapped.ot.*)
+    expected_rules: []
+    gap:
+      no_rule_exists: true
+      attack_technique: "T0846"
+      reason: 'No shipped rule reads a Zeek Modbus row: zeek_json.py maps it to class 4001 / activity 99 with unmapped.ot.* and never sets unmapped.ot.anomaly_type (modbus_anomaly.py''s own classification, which the OT rules key on). The link on this step is an unalerted endpoint.'
+
+  lateral_logons:
+    step: lateral_logons
+    role: the guessed account logs on to six hosts from the jump host in 125 s
+    expected_event_source: windows_eventlog 4624 (class 3002, activity 1 Success)
+    expected_rules:
+      - {rule_id: "2e3d4c5b-6f70-4819-9b02-1c2d3e4f5061", title: Lateral movement, level: high, role: lateral movement (T1021)}
+    gap: {no_rule_exists: false}
+
+  dns_tunnel_stage:
+    step: dns_tunnel_stage
+    role: 12 further TXT names on the same DNS-over-TCP connection, ten seconds apart
+    expected_event_source: zeek_json dns (class 4002, activity 1)
+    expected_rules: []
+    gap:
+      no_rule_exists: true
+      attack_technique: "T1071.004"
+      reason: The tunnel's later bursts are too slow for the 40-names/60 s rules (the first burst is the one that fires), so no rule fires at this step. The link on this step is an unalerted endpoint.
+
+  priv_grant:
+    step: priv_grant
+    role: the account adds backdoor-svc to a privileged group on the DC
+    expected_event_source: windows_eventlog 4728 (class 3003, activity 5)
+    expected_rules:
+      - {rule_id: "7d3e9a52-1f6c-4a88-9b3d-2e5c8f1a6d40", title: Privileged group membership grant, level: high, role: persistence (T1098)}
+    gap: {no_rule_exists: false}
+
+  modbus_write:
+    step: modbus_write
+    role: three Modbus write-single-coil requests on the same PLC session
+    expected_event_source: zeek_json modbus (class 4001, activity 99, unmapped.ot.*)
+    expected_rules: []
+    gap:
+      no_rule_exists: true
+      attack_technique: "T0855"
+      reason: 'No shipped rule reads a Zeek Modbus row: zeek_json.py maps it to class 4001 / activity 99 with unmapped.ot.* and never sets unmapped.ot.anomaly_type (modbus_anomaly.py''s own classification, which the OT rules key on). The link on this step is an unalerted endpoint.'
+
+  dns_tunnel_exfil:
+    step: dns_tunnel_exfil
+    role: 18 data-carrying TXT names on the same DNS-over-TCP connection, ten seconds apart
+    expected_event_source: zeek_json dns (class 4002, activity 1)
+    expected_rules: []
+    gap:
+      no_rule_exists: true
+      attack_technique: "T1048"
+      reason: The tunnel's later bursts are too slow for the 40-names/60 s rules (the first burst is the one that fires), so no rule fires at this step. The link on this step is an unalerted endpoint.
+
+  modbus_restore:
+    step: modbus_restore
+    role: two restoring Modbus writes on the same PLC session
+    expected_event_source: zeek_json modbus (class 4001, activity 99, unmapped.ot.*)
+    expected_rules: []
+    gap:
+      no_rule_exists: true
+      attack_technique: "T0836"
+      reason: 'No shipped rule reads a Zeek Modbus row: zeek_json.py maps it to class 4001 / activity 99 with unmapped.ot.* and never sets unmapped.ot.anomaly_type (modbus_anomaly.py''s own classification, which the OT rules key on). The link on this step is an unalerted endpoint.'
+
+  modbus_close:
+    step: modbus_close
+    role: the PLC session's conn.log row, written when it ends
+    expected_event_source: zeek_json conn (class 4001, activity 2 Close, conn_state SF)
+    expected_rules: []
+    gap:
+      no_rule_exists: true
+      attack_technique: "T0846"
+      reason: 'No shipped rule reads the conn.log row of a COMPLETED session: common_refused_connection_scan selects only conn_state S0/REJ, and this session ended SF. The link on this step is an unalerted endpoint.'
+
+  dns_tunnel_close:
+    step: dns_tunnel_close
+    role: the tunnel connection's conn.log row, written when it ends
+    expected_event_source: zeek_json conn (class 4001, activity 2 Close, conn_state SF)
+    expected_rules: []
+    gap:
+      no_rule_exists: true
+      attack_technique: "T1071.004"
+      reason: 'No shipped rule reads the conn.log row of a COMPLETED session: common_refused_connection_scan selects only conn_state S0/REJ, and this session ended SF. The link on this step is an unalerted endpoint.'
+
+step_dependencies: {}
+
+severity_band:
+  score: {min: 40, max: 100}
+  severity_id: {min: 3, max: 6}
+  dominant_band: "high"
+
+evidence:
+  correlation_key: [src_endpoint.ip]
+  per_step:
+    refused_scan: {fields: [src_endpoint.ip, dst_endpoint.ip, dst_endpoint.port]}
+    ssh_bruteforce: {fields: [src_endpoint.ip, actor.user.name]}
+    dns_tunnel_open: {fields: [src_endpoint.ip, dst_endpoint.hostname]}
+    modbus_recon: {fields: [src_endpoint.ip, dst_endpoint.ip]}
+    lateral_logons: {fields: [src_endpoint.ip, actor.user.name, dst_endpoint.hostname]}
+    dns_tunnel_stage: {fields: [src_endpoint.ip, dst_endpoint.hostname]}
+    priv_grant: {fields: [src_endpoint.ip, actor.user.name]}
+    modbus_write: {fields: [src_endpoint.ip, dst_endpoint.ip]}
+    dns_tunnel_exfil: {fields: [src_endpoint.ip, dst_endpoint.hostname]}
+    modbus_restore: {fields: [src_endpoint.ip, dst_endpoint.ip]}
+    modbus_close: {fields: [src_endpoint.ip, dst_endpoint.ip]}
+    dns_tunnel_close: {fields: [src_endpoint.ip, dst_endpoint.ip]}
+
+incident_membership:
+  incident_count: 1
+  incident_key: "flow-zeek-ot-pivot"
+  include: [refused_scan, ssh_bruteforce, dns_tunnel_open, modbus_recon, lateral_logons, dns_tunnel_stage, priv_grant, modbus_write, dns_tunnel_exfil, modbus_restore, modbus_close, dns_tunnel_close]
+  cross_step_rule_ids:
+    - "7b3e9d51-4c2a-4f86-a1d0-5e8c2b6f9a14"
+    - "6f1c8a2e-0d3b-4c11-9a21-7b5e2f9a1c01"
+    - "a1b2c3d4-5e6f-4708-9a1b-2c3d4e5f6071"
+    - "2e3d4c5b-6f70-4819-9b02-1c2d3e4f5061"
+    - "7d3e9a52-1f6c-4a88-9b3d-2e5c8f1a6d40"
+
+campaign_membership:
+  campaign_count: 1
+  full_coverage: true
