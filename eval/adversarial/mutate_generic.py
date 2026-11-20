@@ -182,8 +182,25 @@ def _first_key(raw: dict, keys: tuple):
     return None
 
 
+#: JSON-text sensor records: the raw key that carries the connection's source address.
+_JSON_TEXT_IP_KEY = {"suricata_eve": "src_ip", "zeek_json": "id.orig_h"}
+
+
+def _json_text_ip(p: dict):
+    import json
+    try:
+        rec = json.loads(p["raw"])
+    except ValueError:
+        return None, None
+    key = _JSON_TEXT_IP_KEY[p["source_type"]]
+    return (rec, key) if isinstance(rec, dict) and isinstance(rec.get(key), str) else (None, None)
+
+
 def get_src_ip(p: dict) -> Optional[str]:
     raw, st = p.get("raw"), p.get("source_type")
+    if isinstance(raw, str) and st in _JSON_TEXT_IP_KEY:
+        rec, key = _json_text_ip(p)
+        return rec[key] if rec else None
     if isinstance(raw, str):
         rx = _STR_IP_RX.get(st)
         mt = rx.search(raw) if rx else None
@@ -202,7 +219,12 @@ def set_src_ip(p: dict, ip: str) -> bool:
     old = get_src_ip(p)
     if old is None:
         return False
-    if isinstance(raw, str):
+    if isinstance(raw, str) and st in _JSON_TEXT_IP_KEY:
+        import json
+        rec, key = _json_text_ip(p)
+        rec[key] = ip
+        p["raw"] = json.dumps(rec, sort_keys=True)
+    elif isinstance(raw, str):
         p["raw"] = _STR_IP_RX[st].sub(lambda mt: mt.group(1) + ip, raw, count=1)
     elif st == "k8s_audit":
         raw["sourceIPs"] = [ip] + list(raw["sourceIPs"][1:])
