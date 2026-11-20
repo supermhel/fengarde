@@ -246,6 +246,9 @@ echo
 echo "== shared ocsf helpers (P0-1: IPv4-mapped-IPv6 normalization) =="; LAST_HEADER="== shared ocsf helpers (P0-1: IPv4-mapped-IPv6 normalization) =="
 $PY services/shared/test_ocsf.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
+echo "== shared causal_keys (ADR-012 WP2: canonicalisers, dropped none-values, injective key hash) =="; LAST_HEADER="== shared causal_keys (ADR-012 WP2) =="
+$PY services/shared/test_causal_keys.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
 echo "== shared bus trim_acked (P0-5: acked-stream reaper; RedisBus half is opt-in via make test-live) =="; LAST_HEADER="== shared bus trim_acked (P0-5: acked-stream reaper; RedisBus half is opt-in via make test-live) =="
 $PY services/shared/test_bus_trim_acked.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
@@ -432,6 +435,9 @@ $PY services/ws2-normalization/parsers/test_extreme_values.py || { fail=1; FAILE
 echo
 echo "== ws2 shipper adapters (WP-1.3: fluentbit-winevtlog / winlogbeat / fluentbit-journald / docker-json real shapes) =="; LAST_HEADER="== ws2 shipper adapters =="
 $PY services/ws2-normalization/test_adapters.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
+echo "== ws2 siem.sender stamp (ADR-012 WP2: meta.shipper_ip/source -> siem.sender; new optional Contract A fields) =="; LAST_HEADER="== ws2 siem.sender stamp =="
+$PY services/ws2-normalization/test_sender_stamp.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
 echo "== shipping recipes (WP-1.4: every docs/shipping sample through the real WS-2 path; configs NOT linted) =="; LAST_HEADER="== shipping recipes =="
 $PY tools/test_shipping_recipes.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
