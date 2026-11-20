@@ -126,6 +126,7 @@ def test_single_alert_cooccurrence_yields_edge_with_provenance():
     check(graph["edges"] == [{
         "from": alice_id, "to": ip_id, "kind": "authenticated_as",  # TA0001 -> typed
         "event_id": "ev-1", "ts_ms": 1000,
+        "first_ts_ms": 1000, "last_ts_ms": 1000, "evidence_count": 1, "timed_evidence_count": 1,
     }], f"a: the co-occurring actor+ip alert must yield exactly ONE "
         f"provenance-bearing typed edge, got {graph['edges']}")
     check(graph["tactic_sources"] == {"TA0001": ["p1"], "TA0002": ["p2"]},
@@ -219,6 +220,7 @@ def test_two_alerts_sharing_an_ip_produce_no_edge_between_their_actors():
     check(grace_graph["edges"] == [{
         "from": grace_id, "to": ip_id, "kind": "authenticated_as",  # s1 TA0001
         "event_id": "ev-1", "ts_ms": 1000,
+        "first_ts_ms": 1000, "last_ts_ms": 1000, "evidence_count": 1, "timed_evidence_count": 1,
     }], f"b: grace's incident must carry only her own direct edge, got "
         f"{grace_graph['edges']}")
 
@@ -232,9 +234,11 @@ def test_two_alerts_sharing_an_ip_produce_no_edge_between_their_actors():
           "would be transitive inference through the shared ip")
     check(ip_graph["edges"] == [
         {"from": heidi_id, "to": ip_id, "kind": "authenticated_as",
-         "event_id": "ev-3", "ts_ms": 3000},
+         "event_id": "ev-3", "ts_ms": 3000,
+         "first_ts_ms": 3000, "last_ts_ms": 4000, "evidence_count": 2, "timed_evidence_count": 2},
         {"from": grace_id, "to": ip_id, "kind": "authenticated_as",
-         "event_id": "ev-1", "ts_ms": 1000},
+         "event_id": "ev-1", "ts_ms": 1000,
+         "first_ts_ms": 1000, "last_ts_ms": 1000, "evidence_count": 1, "timed_evidence_count": 1},
     ], f"b: the ip incident must carry EXACTLY the two direct actor->ip edges "
        f"(sorted by (from,to) entity_id -- heidi's digest sorts first; "
        f"earliest provenance each -- s4 re-asserting heidi's pair must not "
@@ -268,9 +272,11 @@ def test_device_incident_graph_spans_ip_change_with_no_ip_ip_edge():
           "inference through the shared device")
     check(g["edges"] == [
         {"from": dev_id, "to": ip1, "kind": "seen_at_ip",
-         "event_id": "ev-d1", "ts_ms": 1000},
+         "event_id": "ev-d1", "ts_ms": 1000,
+         "first_ts_ms": 1000, "last_ts_ms": 1000, "evidence_count": 1, "timed_evidence_count": 1},
         {"from": dev_id, "to": ip2, "kind": "seen_at_ip",
-         "event_id": "ev-d2", "ts_ms": 2000},
+         "event_id": "ev-d2", "ts_ms": 2000,
+         "first_ts_ms": 2000, "last_ts_ms": 2000, "evidence_count": 1, "timed_evidence_count": 1},
     ], f"pivot: one seen_at_ip edge per alert with its provenance, and NO "
        f"ip-ip transitive edge, got {g['edges']}")
 
@@ -420,6 +426,7 @@ def test_cooccurring_ipv6_spelling_collapses_to_one_node():
     check(graph["edges"] == [{
         "from": ivy_id, "to": ip_node_id, "kind": "authenticated_as",
         "event_id": "ev-1", "ts_ms": 1000,
+        "first_ts_ms": 1000, "last_ts_ms": 2000, "evidence_count": 2, "timed_evidence_count": 2,
     }], f"ipv6: the pair must cite the earliest provenance; the TA0001 member "
         f"carries the typed kind authenticated_as (which outranks the v1 "
         f"fallback the TA0002 member would give), got {graph['edges']}")

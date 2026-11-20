@@ -72,7 +72,8 @@ bus topic — returns the v2 payload.
 ```
 {version: 2, incident_id, tenant_id,
  nodes: [{entity_id, entity_type, entity_value, label}, …],
- edges: [{from, to, kind, event_id, ts_ms}, …],
+ edges: [{from, to, kind, event_id, ts_ms,
+          first_ts_ms?, last_ts_ms?, evidence_count?, timed_evidence_count?}, …],
  tactic_sources}
 ```
 
@@ -170,6 +171,23 @@ bus topic — returns the v2 payload.
   3. A time-less alert yields `ts_ms = int(sha256(member_id)[:12], 16)`, a
      stable digest that is far outside any real epoch-ms range and so can
      never equal an alert's time; treat it as "no time", not as an instant.
+- **Edge evidence intervals** (ADR-011 option C, additive; `version` stays 2).
+  Each edge MAY carry four optional keys, computed in the same pass as
+  `edges` over all distinct live member alerts that carry both endpoints
+  (any kind): `first_ts_ms` / `last_ts_ms` = min / max sanitized event time
+  (same `_valid_window_time` basis as `ts_ms`); `evidence_count` = distinct
+  members carrying both endpoints (>= 1); `timed_evidence_count` = how many
+  of those had a real time. Members whose time was the fallback are counted
+  in `evidence_count` only; their sha256 digest / wall-clock stand-in never
+  enters `first_ts_ms`/`last_ts_ms`. Both timestamps are `null` iff
+  `timed_evidence_count == 0`. Consumers MUST treat an absent key (older
+  producer) and `null` identically: "no time claim". `ts_ms` meaning is
+  UNCHANGED (item above); when the winning alert was timed,
+  `first_ts_ms <= ts_ms <= last_ts_ms`. Values are over live members, so
+  `first_ts_ms` can move later when the horizon sweep or member cap evicts
+  old evidence; each message is the current snapshot. The times are "as
+  logged" (a forged event `time` forges them). Ties/overlap mean
+  concurrent, never ordered.
   One edge has one instant and its direction comes from the entity types,
   so the graph cannot say "A happened before B". For the attack's order use
   the read-side `timeline.py` (below), which sorts the member alerts.

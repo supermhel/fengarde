@@ -34,6 +34,9 @@ What this proves (every instrument has a positive AND a negative control):
       is still emitted, the new keys never enter delta_vs_baseline, baseline.json is
       byte-identical (sha256), the legacy numbers are unchanged, the invariant label is
       present, and main()'s order floors trip on a broken order (and pass on the real one).
+  (f) TIMED METRIC (ADR 011, WP-C) -- directional_discrimination_timed from synthetic emitted edges:
+      forward / reverse / concurrent (ties, overlaps) / ungradable / insufficient_n, Wilson bounds, and a
+      mutation proof that loosening the strict predicate to "evidence starts earlier" fails.
   (e) policy / helpers -- reporting_policy never relabels (mode stays co_reported),
       story_order_ok and parser_time_agreement can say yes and no.
 
@@ -452,6 +455,155 @@ def _test_policy_and_helpers() -> None:
            co.step_times(evs) == {"a": (5, 9)})
 
 
+# ---------------------------------------------------------------------------
+# (f) directional_discrimination_timed (ADR 011, WP-C): synthetic emitted-edge graphs
+# ---------------------------------------------------------------------------
+def _tedge(step, first, last, timed=None, evidence=None, idx=0):
+    """One synthetic emitted edge carrying the four ADR 011 fields."""
+    n = 1 if timed is None else timed
+    return {"from": f"{step}-a{idx}", "to": f"{step}-b{idx}", "kind": "same_ip", "step": step,
+            "first_ts_ms": first if n else None, "last_ts_ms": last if n else None,
+            "evidence_count": n if evidence is None else evidence, "timed_evidence_count": n}
+
+
+def _tsteps(edge):
+    return {edge["step"]}
+
+
+def _chain_graph(n_steps=6, width=100, gap=1000):
+    """One incident, one edge per step, step i at [i*gap, i*gap + width]."""
+    return {"edges": [_tedge(f"s{i}", i * gap, i * gap + width) for i in range(n_steps)]}
+
+
+def _chain_rels(n_steps=6):
+    rels = [{"from": f"s{i}", "to": f"s{i + 1}", "allowed": True} for i in range(n_steps - 1)]
+    rels += [{"from": "s1", "to": "s0", "allowed": False}, {"from": "s2", "to": "s1", "allowed": False}]
+    return rels
+
+
+def _pooled(sizes):
+    res = []
+    for i, n in enumerate(sizes):
+        res.append(co.grade_timed_edges([_chain_graph(n)], _chain_rels(n), _tsteps, storyline=f"story{i}"))
+    return co.combine_timed(res)
+
+
+def _overlap_case_ok() -> bool:
+    """Tie and overlap read ``concurrent`` (never forward); only a strict gap discriminates."""
+    g = {"edges": [_tedge("a", 0, 100), _tedge("b", 100, 200),      # tie: a.last == b.first
+                   _tedge("c", 0, 500), _tedge("d", 100, 600),      # overlap, c STARTS earlier
+                   _tedge("e", 0, 100), _tedge("f", 101, 200)]}     # strict gap
+    rels = [{"from": "a", "to": "b", "allowed": True}, {"from": "c", "to": "d", "allowed": True},
+            {"from": "e", "to": "f", "allowed": True}]
+    r = co.grade_timed_edges([g], rels, _tsteps, storyline="x")
+    return (r["directional_discrimination_timed"] == round(1 / 3, 4) and r["concurrent"] == 2
+            and r["discriminating"] == 1 and r["reverse_only"] == 0)
+
+
+def _test_timed() -> None:
+    # forward chain over 6 storylines: says yes, bar met
+    ok = _pooled([6] * 6)
+    _check("(f) timed: forward chain scores 1.0, forbidden realised 0.0, n bar met (42 pairs, 12 forbidden, "
+           "6 storylines, 16.7 % max share)",
+           ok["directional_discrimination_timed"] == 1.0 and ok["forbidden_order_graph_realised_rate"] == 0.0
+           and ok["n_gradable"] == 42 and ok["n_forbidden"] == 12 and ok["storylines"] == 6
+           and ok["insufficient_n"] is False and ok["ungradable"] == 0, str(ok["insufficient_n_reasons"]))
+    _check("(f) timed: result is an object (score + wilson + ungradable + insufficient_n), never a bare number",
+           isinstance(ok, dict) and {"directional_discrimination_timed", "wilson95", "ungradable",
+                                      "insufficient_n", "per_pair"} <= set(ok) and ok["wilson95"][1] == 1.0)
+
+    # reverse: mirrored intervals
+    g = _chain_graph()
+    lo, hi = 0, 5100
+    rev = {"edges": [dict(e, first_ts_ms=lo + hi - e["last_ts_ms"], last_ts_ms=lo + hi - e["first_ts_ms"])
+                     for e in g["edges"]]}
+    r = co.grade_timed_edges([rev], _chain_rels(), _tsteps, storyline="x")
+    _check("(f) timed: reverse-ordered evidence scores 0.0, every allowed pair reverse_only, forbidden "
+           "realised 1.0",
+           r["directional_discrimination_timed"] == 0.0 and r["reverse_only"] == 5 and r["concurrent"] == 0
+           and r["forbidden_order_graph_realised_rate"] == 1.0)
+
+    # concurrent: ties and overlaps, and the strict predicate is load-bearing
+    _check("(f) timed: ties and overlapping intervals are concurrent; only a strict gap discriminates",
+           _overlap_case_ok())
+
+    # ungradable: reported with a count, never in a denominator, never a fabricated 0
+    ug = {"edges": [_tedge("u1", 0, 0, timed=0, evidence=3),                      # untimed edge
+                    _tedge("u2", 10, 20),
+                    {"from": "x", "to": "y", "step": "u3"},                       # pre-ADR edge: no fields
+                    {"from": "x", "to": "y", "step": "u4", "first_ts_ms": 50, "last_ts_ms": 40,
+                     "evidence_count": 1, "timed_evidence_count": 1},             # malformed: first > last
+                    {"from": "x", "to": "y", "step": "u5", "first_ts_ms": True, "last_ts_ms": True,
+                     "evidence_count": 1, "timed_evidence_count": 1},             # bool is not a time
+                    _tedge("u6", 60, 70)]}
+    rels = [{"from": "u1", "to": "u2", "allowed": True}, {"from": "u3", "to": "u2", "allowed": True},
+            {"from": "u4", "to": "u2", "allowed": True}, {"from": "u5", "to": "u2", "allowed": True},
+            {"from": "u2", "to": "nowhere", "allowed": True}, {"from": "u2", "to": "u6", "allowed": True}]
+    r = co.grade_timed_edges([ug], rels, _tsteps, storyline="x")
+    _check("(f) timed: untimed / absent / malformed / bool-time / missing edges are ungradable (5), the one "
+           "real pair is graded (1)",
+           r["ungradable"] == 5 and r["n_gradable"] == 1 and r["directional_discrimination_timed"] == 1.0
+           and r["ungradable_reasons"] == {"untimed-or-single-edge": 4, "no-edges": 1},
+           str(r["ungradable_reasons"]))
+    allu = co.grade_timed_edges([ug], rels[:5], _tsteps)
+    _check("(f) timed: nothing gradable -> score None (never a fabricated 0), wilson None, insufficient_n",
+           allu["directional_discrimination_timed"] is None and allu["wilson95"] is None
+           and allu["n_gradable"] == 0 and allu["insufficient_n"] is True and allu["ungradable"] == 5)
+    one = co.grade_timed_edges([{"edges": [_tedge("p", 0, 10)]}], [{"from": "p", "to": "p", "allowed": True}],
+                               lambda e: {"p"})
+    _check("(f) timed: one edge owning both steps cannot be compared edge-to-edge -> ungradable",
+           one["ungradable"] == 1 and one["n_gradable"] == 0)
+
+    # insufficient_n: each bar from the ADR
+    s1 = co.grade_timed_edges([_chain_graph()], _chain_rels(), _tsteps, storyline="only")
+    _check("(f) timed: a single storyline (7 pairs) is insufficient_n on n, forbidden count and storylines",
+           s1["insufficient_n"] is True and len(s1["insufficient_n_reasons"]) >= 3
+           and s1["directional_discrimination_timed"] == 1.0)
+    big = _pooled([16, 6, 6, 6, 6, 6])   # 17 of 52 pairs from one storyline = 32.7 %
+    _check("(f) timed: one storyline above 25 % of the pairs flags insufficient_n although n and storylines pass",
+           big["n_gradable"] == 52 and big["storylines"] == 6 and big["max_storyline_share"] > 0.25
+           and big["insufficient_n"] is True
+           and any("share" in w for w in big["insufficient_n_reasons"]))
+    few = _pooled([7] * 5)
+    _check("(f) timed: 5 storylines flags insufficient_n (needs 6) even with n >= 30",
+           few["n_gradable"] >= 30 and few["insufficient_n"] is True
+           and any("storylines" in w for w in few["insufficient_n_reasons"]))
+    thin = co.combine_timed([co.grade_timed_edges([_chain_graph(6)],
+                                                  [r for r in _chain_rels(6) if r["allowed"]] + [
+                                                      {"from": "s1", "to": "s0", "allowed": False}],
+                                                  _tsteps, storyline=f"t{i}") for i in range(6)])
+    _check("(f) timed: 6 forbidden pairs (< 10) flags insufficient_n even with 36 pairs over 6 storylines",
+           thin["n_forbidden"] == 6 and thin["n_gradable"] == 36
+           and thin["insufficient_n"] is True and any("forbidden" in w for w in thin["insufficient_n_reasons"]))
+
+    # Wilson: the ADR's own figures (Measurements #5) plus the edges
+    w = co.wilson_interval(6, 16)
+    w2 = co.wilson_interval(5, 8)
+    _check("(f) wilson_interval: 6/16 -> (0.185, 0.614) and 5/8 -> (0.306, 0.863) as in ADR 011; "
+           "0/n lower bound 0, n/n upper bound 1, n=0 None",
+           (round(w[0], 3), round(w[1], 3)) == (0.185, 0.614) and (round(w2[0], 3), round(w2[1], 3)) == (0.306, 0.863)
+           and co.wilson_interval(0, 10)[0] == 0.0 and co.wilson_interval(10, 10)[1] == 1.0
+           and co.wilson_interval(0, 0) is None)
+
+    # carried through the result
+    mixed = {"edges": [_tedge("a", 0, 100), _tedge("b", 200, 300), _tedge("c", 0, 500), _tedge("d", 100, 600)]}
+    rr = co.grade_timed_edges([mixed], [{"from": "a", "to": "b", "allowed": True},
+                                        {"from": "c", "to": "d", "allowed": True}], _tsteps)
+    _check("(f) timed: score 0.5 over 2 pairs carries its Wilson interval",
+           rr["directional_discrimination_timed"] == 0.5 and rr["wilson95"] == co.wilson_interval(1, 2))
+
+    # mutation: loosening to the weak "evidence starts earlier" form must break the strict expectations
+    real = co.edge_forward
+    try:
+        co.edge_forward = lambda f_first, f_last, t_first, t_last: f_first < t_first
+        loosened_ok = _overlap_case_ok()
+    finally:
+        co.edge_forward = real
+    _check("(f) mutation: loosening edge_forward to the weak 'starts earlier' predicate FAILS the strict "
+           "tie/overlap check (and the restored predicate passes it)",
+           loosened_ok is False and _overlap_case_ok() is True)
+
+
 def main() -> int:
     print("== FENGARDE twin: causal-order metrics (eval/twin/causal_order.py) ==")
     _test_unit()
@@ -459,6 +611,7 @@ def main() -> int:
     _test_real()
     _test_report_wiring()
     _test_policy_and_helpers()
+    _test_timed()
     print("-" * 60)
     if _FAILURES:
         print(f"[FAIL] {len(_FAILURES)} check(s) failed: {', '.join(_FAILURES)}")
