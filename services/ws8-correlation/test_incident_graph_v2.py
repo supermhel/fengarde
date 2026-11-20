@@ -171,8 +171,8 @@ def test_v2_emitted_shape_and_incidents_topic_untouched():
     check(graph["version"] == 2 and isinstance(graph["version"], int),
           f"shape: version must be the INTEGER 2, got {graph['version']!r}")
     check(set(graph) == {"version", "incident_id", "tenant_id", "nodes",
-                         "edges", "tactic_sources"},
-          f"shape: exactly the six documented v2 keys, got {sorted(graph)}")
+                         "edges", "tactic_sources", "links", "links_truncated"},
+          f"shape: the six documented v2 keys plus ADR-012 additive links/links_truncated, got {sorted(graph)}")
     check(graph["incident_id"] == iid and graph["tenant_id"] == "default",
           "shape: incident_id/tenant_id must match the incident")
 
