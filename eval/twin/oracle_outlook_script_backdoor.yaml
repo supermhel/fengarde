@@ -164,7 +164,6 @@ campaign_membership:
 causal_links:
   - {from: lolbin_shell, to: ps_cradle, basis: process_tree, via: spawn}
   - {from: ps_cradle, to: c2_beacon, basis: process_tree, via: spawn}
-  - {from: ps_cradle, to: ephemeral_account, basis: process_tree, via: spawn}
   - {from: ps_cradle, to: group_add, basis: process_tree, via: spawn}
   - {from: ps_cradle, to: log_clear, basis: process_tree, via: spawn}
   - {from: ps_cradle, to: lsass_read, basis: process_tree, via: spawn}

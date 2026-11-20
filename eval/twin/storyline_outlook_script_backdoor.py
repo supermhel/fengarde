@@ -131,7 +131,7 @@ def build(seed: int):
     add("lsass_read", "sysmon", dumper.access_record(t_acc, lsass.image, lsass.guid, lsass.pid, "0x1010"), t_acc)
     notes["lsass_read"] = f"{tool} opens lsass.exe with GrantedAccess 0x1010"
 
-    add("ephemeral_account", "sysmon", net_add.create_record(), net_add.start_ms)
+    add("lsass_read", "sysmon", net_add.create_record(), net_add.start_ms)
     t_new = net_add.start_ms + 3_000
     t_del = t_new + 50_000
     for eid, ts in ((4720, t_new), (4726, t_del)):

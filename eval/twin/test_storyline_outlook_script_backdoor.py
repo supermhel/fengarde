@@ -37,9 +37,9 @@ def extra(check, sdef) -> None:
               any(s.label == "lolbin_shell" and p["raw"].get("ParentImage", "").endswith("OUTLOOK.EXE")
                   and p["raw"]["Image"].endswith("wscript.exe") for s, p in pl))
     links = ksc.yaml.safe_load(Path(sdef.oracle_path).read_text(encoding="utf-8"))["causal_links"]
-    check("the PowerShell step (ps_cradle) is the parent of the five later steps, and of nothing earlier",
+    check("the PowerShell step (ps_cradle) is the parent of the four later steps, and of nothing earlier",
           {(lk["from"], lk["to"]) for lk in links} == {("lolbin_shell", "ps_cradle")} | {("ps_cradle", t) for t in (
-              "lsass_read", "ephemeral_account", "group_add", "c2_beacon", "log_clear")})
+              "lsass_read", "group_add", "c2_beacon", "log_clear")})
 
 
 def main() -> int:

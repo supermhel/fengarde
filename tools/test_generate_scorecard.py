@@ -940,7 +940,7 @@ def test_oracle_shapes_and_storyline_registry() -> None:
     arts = real_arts()
     check("phishing_bec" in reg.STORYLINES,
           "phishing_bec is not a registered storyline")
-    check(len(reg.STORYLINES) == 11, f"expected 11 storylines, got {reg.STORYLINES}")
+    check(len(reg.STORYLINES) == 16, f"expected 16 storylines, got {reg.STORYLINES}")
     check(gs._check_storylines(arts) == [],
           f"the storyline cross-check failed on the real tree: {gs._check_storylines(arts)}")
     bad = copy.deepcopy(arts)
