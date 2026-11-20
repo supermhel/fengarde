@@ -149,7 +149,7 @@ def _make(seed: int, *, n_names: int | None = None):
                   app_proto="tls", bytes_ts=4_100_000, bytes_tc=15_000_000, alerted=True)
 
     # benign alert from a DIFFERENT sensor whose flow_id equals the C2 flow's (same value, other scope)
-    book.eve_alert("bystander_other_sensor", IDS_B, START_MS + 21 * _MIN, f_c2, ("10.40.7.15", 52111), ("192.0.2.80", 80),
+    book.eve_alert("bystander_other_sensor", IDS_B, START_MS - 2 * _MIN, f_c2, ("10.40.7.15", 52111), ("192.0.2.80", 80),
                    signature="ET POLICY Outdated Browser User-Agent", sid=2008120, category="Potentially Bad Traffic",
                    severity=3, app_proto="http")
     notes = {
@@ -197,7 +197,9 @@ def _build_decoys(seed: int) -> list:
 NEGATIVES: tuple[NegativeTwin, ...] = (
     NegativeTwin(
         name="dns_tunnel_39_of_40_names", step="dns_tunnel",
-        rule_ids=(_rule_id("common_dns_exfil"), _rule_id("common_dns_tunnel_by_domain")),
+        # only the per-source rule: the oracle's dns_tunnel step expects common_dns_exfil alone (the by-domain
+        # companion is not fired by a Suricata EVE dns record), so the restored twin must be judged on that rule.
+        rule_ids=(_rule_id("common_dns_exfil"),),
         attribute="distinct names queried by the workstation in 60 s: 39, one under the rule's 40",
         build=lambda seed, restored: _build(seed, n_names=40 if restored else 39)),
 )

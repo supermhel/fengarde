@@ -137,8 +137,8 @@ def _make(seed: int, *, n_hosts: int | None = None):
     book.eve_flow("modbus_session_close", TAP, t_recon - 5_000, START_MS + 75 * _MIN, f1, s1, d1, app_proto="modbus",
                   bytes_ts=1_900, bytes_tc=1_650, alerted=True)
 
-    # the legitimate historian: same PLC 1, its own long connection (different flow_id), one read a minute
-    for i in range(50):
+    # the legitimate historian: same PLC 1, its own long connection (different flow_id), one read a minute, ending before the write
+    for i in range(12):
         book.eve_modbus("bystander_historian_poll", TAP, START_MS + 22 * _MIN + i * _MIN, f_hist, ("10.50.2.40", 50120), d1,
                         function_raw=3, function_code="RdHoldRegs", access_type="READ | HOLDING", address=0, quantity=8,
                         unit_id=1, tx=500 + i)

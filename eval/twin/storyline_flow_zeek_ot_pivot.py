@@ -152,8 +152,8 @@ def _make(seed: int, *, n_ports: int | None = None):
     book.zeek_conn("dns_tunnel_close", ZEEK, t_open - 2_000, (95 * _MIN - (t_open - 2_000 - START_MS)) / 1000.0, u_t,
                    t_src, t_dst, service="dns", orig_bytes=51_000, resp_bytes=9_000)
 
-    # the legitimate HMI: same PLC, its own long connection (different uid), one read a minute for an hour
-    for i in range(60):
+    # the legitimate HMI: same PLC, its own long connection (different uid), one read a minute, ending before the write
+    for i in range(30):
         book.zeek_modbus("bystander_hmi_poll", ZEEK, START_MS + 20 * _MIN + i * _MIN, u_hmi, ("10.50.2.20", 50110),
                          m_dst, func="READ_HOLDING_REGISTERS", unit=1, tid=500 + i, address=0)
     notes = {

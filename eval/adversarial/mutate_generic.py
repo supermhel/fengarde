@@ -90,14 +90,55 @@ def _iso(ts: int, template) -> str:
     return dt.strftime("%Y-%m-%dT%H:%M:%S.%fZ" if "." in str(template) else "%Y-%m-%dT%H:%M:%SZ")
 
 
+#: sensors whose raw record is a JSON TEXT line carrying its own clock, which the parser prefers to
+#: ``meta.received_at`` (Suricata EVE ``timestamp`` / ``flow.start`` / ``flow.end`` as ISO-8601 with a
+#: ``+0000`` offset; Zeek ``ts`` as epoch seconds). Moving only the envelope would leave these events
+#: where they were and turn a time-shift or mirror control into a partial no-op.
+_JSON_TEXT_TIME_SOURCES = ("suricata_eve", "zeek_json")
+
+
+def _iso_shift(value, delta_ms: int):
+    if not isinstance(value, str):
+        return value
+    try:
+        dt = datetime.strptime(value, "%Y-%m-%dT%H:%M:%S.%f%z")
+    except ValueError:
+        return value
+    dt = dt + timedelta(milliseconds=delta_ms)
+    return dt.strftime("%Y-%m-%dT%H:%M:%S.") + f"{dt.microsecond:06d}+0000"
+
+
+def _shift_json_text_times(p: dict, delta_ms: int) -> None:
+    import json
+    try:
+        rec = json.loads(p["raw"])
+    except ValueError:
+        return
+    if not isinstance(rec, dict):
+        return
+    if "timestamp" in rec:
+        rec["timestamp"] = _iso_shift(rec["timestamp"], delta_ms)
+    flow = rec.get("flow")
+    if isinstance(flow, dict):
+        for key in ("start", "end"):
+            if key in flow:
+                flow[key] = _iso_shift(flow[key], delta_ms)
+    if isinstance(rec.get("ts"), (int, float)):
+        rec["ts"] = rec["ts"] + delta_ms / 1000.0
+    p["raw"] = json.dumps(rec, sort_keys=True)
+
+
 def set_time(p: dict, ts: int) -> bool:
     """Move an event to ``ts`` (epoch ms): the envelope clock AND the source's
     own timestamp field, so the parser cannot read the old time from either."""
     m = _meta(p)
     if m.get("received_at") is None:
         return False
+    delta = ts - m["received_at"]
     m["received_at"] = ts
     raw = p.get("raw")
+    if isinstance(raw, str) and p.get("source_type") in _JSON_TEXT_TIME_SOURCES:
+        _shift_json_text_times(p, delta)
     if isinstance(raw, dict):
         for key in _EPOCH_KEYS:
             if key in raw:
