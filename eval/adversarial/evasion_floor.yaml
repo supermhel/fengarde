@@ -344,7 +344,7 @@ rule_sets:
       forgone_events:
         basis: harness-measured
         better: max
-        value: 2
+        value: 3
       min_keys.ids_flow:
         basis: harness-measured
         better: max
@@ -357,7 +357,7 @@ rule_sets:
         basis: harness-measured
         better: min
         value: false
-    fingerprint: d349aecf4f4ace3875ba1eb70d71a61445560d1cd5dd36e2e5a106de008760ad
+    fingerprint: ec04fbecfd960d01bd3efe8cc0f6d09b1fb5cf1777c37ae9c3557695cdffd066
     params:
       common_ids_high_severity_alert:
         companion_of: null

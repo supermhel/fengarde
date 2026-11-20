@@ -219,7 +219,7 @@ def _common_ids_high_severity_alert() -> Probe:
     def set_flow(p, j):
         p["raw"]["flow_id"] = 3_000_000_000_000_000 + j
         return True
-    return Probe("common_ids_high_severity_alert", "ids_alert", "suricata_eve", 2, 1_000, build, {"ids_flow": set_flow})
+    return Probe("common_ids_high_severity_alert", "ids_alert", "suricata_eve", 3, 1_000, build, {"ids_flow": set_flow})
 
 
 def _common_refused_connection_scan() -> Probe:
