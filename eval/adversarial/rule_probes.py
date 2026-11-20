@@ -204,6 +204,24 @@ def _ot_new_engineering_connection() -> Probe:
                  {"ot_server": _dict_setter("serverId", "plc-line{j}")})
 
 
+def _common_ids_high_severity_alert() -> Probe:
+    # 2026-11-20 (branch wp/flow-record-rules): a threshold-1 passthrough, so the reference burst is ONE Suricata alert
+    # record of severity 1, in the shape of the real alert record (parsers/test_fixtures/suricata_eve_real.json) with
+    # alert.severity set to 1 (derived: the capture holds severity 3 only). The key kind is the per-flow id.
+    def build(i, t):
+        return "suricata_eve", {"timestamp": "2026-07-02T21:06:40.000000+0000", "flow_id": 2055533764596995 + i,
+                                "pcap_cnt": 4, "event_type": "alert", "src_ip": "198.18.9.10", "src_port": 33458,
+                                "dest_ip": "10.16.1.1", "dest_port": 53, "proto": "UDP",
+                                "alert": {"action": "allowed", "gid": 1, "signature_id": 9900001, "rev": 1,
+                                          "signature": "FENGARDE-FIXTURE local rule: DNS query seen",
+                                          "category": "", "severity": 1}, "app_proto": "dns"}
+
+    def set_flow(p, j):
+        p["raw"]["flow_id"] = 3_000_000_000_000_000 + j
+        return True
+    return Probe("common_ids_high_severity_alert", "ids_alert", "suricata_eve", 2, 1_000, build, {"ids_flow": set_flow})
+
+
 def _common_refused_connection_scan() -> Probe:
     # 2026-11-19 (integration of WP-1.5 / PR #152): ONE source with Zeek conn_state S0/REJ toward 15 distinct
     # ports in 30 s (threshold 15 / 60 s, distinct dst_endpoint.port). Raw row = the shape of a real Zeek
@@ -222,7 +240,7 @@ def _common_refused_connection_scan() -> Probe:
     return Probe("common_refused_connection_scan", "refused_scan", "zeek_json", 15, 2_000, build, {"ip": set_ip})
 
 
-_FACTORIES = (_agent_tool_call_burst, _bank_mass_card_read, _common_beaconing,
+_FACTORIES = (_agent_tool_call_burst, _bank_mass_card_read, _common_beaconing, _common_ids_high_severity_alert,
               _common_bruteforce_sourceless, _common_impossible_travel, _common_refused_connection_scan, _common_password_spray,
               _common_password_spray_by_source, _common_port_sweep, _common_rapid_account_lifecycle, _ot_new_engineering_connection)
 

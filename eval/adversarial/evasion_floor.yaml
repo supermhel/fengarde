@@ -331,6 +331,42 @@ rule_sets:
         threshold: 40
         window_seconds: 60
     production_reachable: true
+  common_ids_high_severity_alert:
+    fields:
+      clock_forgeable:
+        basis: harness-measured
+        better: min
+        value: false
+      forgery_evades:
+        basis: harness-measured
+        better: min
+        value: false
+      forgone_events:
+        basis: harness-measured
+        better: max
+        value: 2
+      min_keys.ids_flow:
+        basis: harness-measured
+        better: max
+        value: immune
+      respelling_evades:
+        basis: harness-measured
+        better: min
+        value: false
+      respelling_evades_mapped:
+        basis: harness-measured
+        better: min
+        value: false
+    fingerprint: d349aecf4f4ace3875ba1eb70d71a61445560d1cd5dd36e2e5a106de008760ad
+    params:
+      common_ids_high_severity_alert:
+        companion_of: null
+        distinct_field: null
+        group_by: unmapped.ids.flow_id
+        periodicity: null
+        threshold: 1
+        window_seconds: 3600
+    production_reachable: true
   common_impossible_travel:
     fields:
       clock_forgeable:
@@ -841,7 +877,4 @@ rule_sets:
         window_seconds: 600
     production_reachable: true
 version: 1
-waivers:
-  common_ids_high_severity_alert:
-    date: "2026-11-20"
-    reason: "threshold-1 passthrough of a Suricata severity-1 alert keyed on the per-flow id (used only to dedupe alert ids): there is no burst size or window to evade, and flow_id is not an attacker-rotatable grouping kind in KEY_KINDS. No storyline or rule_probes template exercises it; add one when a sensor-alert storyline step exists, then replace this waiver with a measured floor."
+waivers: {}

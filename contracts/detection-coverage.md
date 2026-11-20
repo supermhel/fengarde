@@ -272,6 +272,7 @@ Harness-measured on the bundled reference bursts (seed 7, deque counter backend)
 | `common_bruteforce` | `common_bruteforce`, `common_bruteforce_by_account` | 3 | 27.003 | 0.183324 | account=immune, ip=immune | (2,2) | no | no | no | no | yes |
 | `common_bruteforce_sourceless` | `common_bruteforce_sourceless` | 6 | 222.003 | 0.0375 | host=3 | n/a | no | no | no | no | yes |
 | `common_dns_exfil` | `common_dns_exfil`, `common_dns_tunnel_by_domain` | 13 | 9.013 | 0.849816 | ip=immune, parent_domain=immune | (2,2) | no | no | no | no | yes |
+| `common_ids_high_severity_alert` | `common_ids_high_severity_alert` | 2 | n/a | n/a | ids_flow=immune | n/a | no | no | no | no | yes |
 | `common_impossible_travel` | `common_impossible_travel` | 2 | 9000.003 | 0.000278 | account=4 | n/a | no | no | no | no | NO (sample map) |
 | `common_lateral_movement` | `common_lateral_movement`, `common_lateral_movement_by_source` | 3 | 150.003 | 0.02 | account=immune, ip=immune | (2,2) | evades | no | no | no | yes |
 | `common_password_spray` | `common_password_spray`, `common_credential_stuffing_sustained` | 17 | 86285.005 | 0.000266 | account=4 | n/a | no | no | no | no | yes |
