@@ -167,3 +167,35 @@ causal_links:
   - {from: ps_cradle, to: group_add, basis: process_tree, via: spawn}
   - {from: ps_cradle, to: log_clear, basis: process_tree, via: spawn}
   - {from: ps_cradle, to: lsass_read, basis: process_tree, via: spawn}
+known_gaps:
+  - kind: order_blind_join
+    from: log_clear
+    to: lolbin_shell
+    since: '2026-11-19'
+    reason: 'directional_discrimination=0.0 (SSOT 2026-10-01): the WS-8 graph joins every forbidden pair because the entities at both ends overlap (per-entity tracks never merge, so a shared address/account yields an edge in BOTH directions). The oracle''s anti-causal non-edges are therefore not enforceable by this correlator. Measured on the first run (seed 7), not tuned: every rule fired as the intent-first oracle said; only this known order-blind channel disagreed. The pair is the anti-causal reversal of an allowed one and is DELIBERATE: ADR-011 F4 counts a forbidden pair only if both sides reach distinct timed edges of one graph. Closing it means grading edge direction by event time or by typed caused_by edges, a separate ratified step.'
+  - kind: order_blind_join
+    from: c2_beacon
+    to: lsass_read
+    since: '2026-11-19'
+    reason: 'directional_discrimination=0.0 (SSOT 2026-10-01): the WS-8 graph joins every forbidden pair because the entities at both ends overlap (per-entity tracks never merge, so a shared address/account yields an edge in BOTH directions). The oracle''s anti-causal non-edges are therefore not enforceable by this correlator. Measured on the first run (seed 7), not tuned: every rule fired as the intent-first oracle said; only this known order-blind channel disagreed. The pair is the anti-causal reversal of an allowed one and is DELIBERATE: ADR-011 F4 counts a forbidden pair only if both sides reach distinct timed edges of one graph. Closing it means grading edge direction by event time or by typed caused_by edges, a separate ratified step.'
+  - kind: order_blind_join
+    from: group_add
+    to: ps_cradle
+    since: '2026-11-19'
+    reason: 'directional_discrimination=0.0 (SSOT 2026-10-01): the WS-8 graph joins every forbidden pair because the entities at both ends overlap (per-entity tracks never merge, so a shared address/account yields an edge in BOTH directions). The oracle''s anti-causal non-edges are therefore not enforceable by this correlator. Measured on the first run (seed 7), not tuned: every rule fired as the intent-first oracle said; only this known order-blind channel disagreed. The pair is the anti-causal reversal of an allowed one and is DELIBERATE: ADR-011 F4 counts a forbidden pair only if both sides reach distinct timed edges of one graph. Closing it means grading edge direction by event time or by typed caused_by edges, a separate ratified step.'
+  - kind: f2_cap
+    max: 1
+    since: '2026-11-19'
+    reason: 'common_beaconing''s periodicity bound (coefficient of variation of the inter-arrival times) is not modelled by the static interpreter, so c2_beacon is reported UNDECIDED rather than guessed. The engine and the negative twins (5-of-6 beats, irregular interval) cover it.'
+  - kind: mutant_survivor
+    operator: reverse_relationship
+    outcome: SURVIVED
+    max: 6
+    since: '2026-11-19'
+    reason: 'Measured on seed 7 on the first run, not tuned. Every step raises an alert and all steps share one compromised account, so the graph joins each allowed pair in BOTH directions. Reversing an allowed pair changes no graded output: directional_discrimination=0.0 (SSOT 2026-10-01): the pair is graded and joined, and the reverse direction is joined too (reverse_joined=True), so the legacy join predicate cannot tell a relation from its reverse; the WS-8 tracks never merge and share entities at both ends'
+  - kind: mutant_survivor
+    operator: flip_relationship
+    outcome: IMPROVED
+    max: 3
+    since: '2026-11-19'
+    reason: 'Measured on seed 7 on the first run, not tuned. Every step raises an alert and all steps share one compromised account, so the graph joins each allowed pair in BOTH directions. Three forbidden->allowed flips on anti-causal pairs the graph joins in both directions remove a joined forbidden pair, which scores BETTER because directional_discrimination=0.0 (SSOT 2026-10-01): the pair is graded and joined, and the reverse direction is joined too (reverse_joined=True), so the legacy join predicate cannot tell a relation from its reverse; the WS-8 tracks never merge and share entities at both ends'

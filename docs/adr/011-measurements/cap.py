@@ -14,8 +14,8 @@ _state = {}
 ws8 = CORR = _orig_build = _orig_grade = None
 
 
-def _build(self, tenant, entity_type, entity_value, incident, side):
-    g = _orig_build(self, tenant, entity_type, entity_value, incident, side)
+def _build(self, tenant, entity_type, entity_value, incident, side, foreign=frozenset()):
+    g = _orig_build(self, tenant, entity_type, entity_value, incident, side, foreign)
     # extra fields computed IN THE SCRIPT ONLY, mirroring the ADR definition
     ev = {}  # (f,t) -> list[(mid, time, fallback)]
     for mid, entry in side.items():

@@ -185,6 +185,7 @@ def normalize_one(raw_payload: dict):
         return None, ["parser returned None"]
     event = _sanitize_free_text(event)
     _stamp_clock_skew(event, raw_payload)
+    _stamp_sender(event, raw_payload)
     event = enrich(event)
     return event, validate(event)
 
@@ -204,6 +205,32 @@ def _stamp_clock_skew(event: dict, raw_payload: dict) -> None:
     skew = t - received
     if abs(skew) > _CLOCK_SKEW_FLAG_MS:
         siem["clock_skew_ms"] = skew
+
+
+#: ADR-012: cap on a copied ws1 sender value (a self-label can be arbitrarily long).
+_SENDER_MAX_LEN = 128
+
+
+def _stamp_sender(event: dict, raw_payload: dict) -> None:
+    """Copy ws1 ``meta.shipper_ip`` / ``meta.source`` onto ``siem.sender``
+    (ADR-012 WP 2). Read from ``meta`` ONLY, never from the record body: ws1
+    stamps ``meta``, a sender cannot choose ``shipper_ip`` (the TCP peer), while
+    ``source`` is a self-label kept for display (never an authorization
+    decision). A key is written only when ws1 supplied a usable string, so an
+    absent ``siem.sender`` means "no sender known", never an empty identity."""
+    meta = raw_payload.get("meta") if isinstance(raw_payload, dict) else None
+    siem = event.get("siem")
+    if not isinstance(meta, dict) or not isinstance(siem, dict):
+        return
+    sender: dict = {}
+    for src_key, dst_key in (("shipper_ip", "ip"), ("source", "source")):
+        v = meta.get(src_key)
+        if isinstance(v, str):
+            v = strip_ansi_and_control(v).strip()[:_SENDER_MAX_LEN]
+            if v:
+                sender[dst_key] = v
+    if sender:
+        siem["sender"] = sender
 
 
 def _deadletter_key(payload: dict, msg_key: Any = None) -> Any:

@@ -80,9 +80,33 @@
           "type": "object",
           "properties": {
             "name": { "type": "string" },
-            "pid": { "type": "integer" }
+            "pid": { "type": "integer" },
+            "uid": { "type": "string", "maxLength": 128, "description": "ADR-012 (additive): OCSF process.uid, the unique id the producing tool assigned (Sysmon ProcessGuid), canonicalised by shared.causal_keys (lowercase GUID, no braces). Absent when the source has none." },
+            "parent_process": {
+              "type": "object",
+              "description": "ADR-012 (additive): OCSF process.parent_process.",
+              "properties": {
+                "uid": { "type": "string", "maxLength": 128 },
+                "pid": { "type": "integer" },
+                "name": { "type": "string" }
+              }
+            }
+          }
+        },
+        "session": {
+          "type": "object",
+          "description": "ADR-012 (additive): OCSF session object.",
+          "properties": {
+            "uid": { "type": "string", "maxLength": 128, "description": "Canonical LogonId (lowercase hex, no leading zeros)." }
           }
         }
+      }
+    },
+    "connection_info": {
+      "type": "object",
+      "description": "ADR-012 (additive): OCSF network_connection_info subset.",
+      "properties": {
+        "uid": { "type": "string", "maxLength": 128, "description": "Unique connection id: Suricata flow_id (decimal string) or Zeek uid." }
       }
     },
     "siem": {
@@ -98,6 +122,23 @@
         "score": { "type": "integer", "minimum": 0, "maximum": 100, "description": "set by WS-4 detection, absent at ingest" },
         "received_ms": { "type": "integer", "description": "Q12 (2026-10-20, additive): WS-1 receipt time (meta.received_at) in epoch ms, stamped by WS-2 when usable. WS-4 windows use it when FENGARDE_WINDOW_TIME_SOURCE=ingest, and as the clamp reference by default (F4: record time vs received_ms, see time_clamped). Absent = no usable receipt time, so the record time is used." },
         "clock_skew_ms": { "type": "integer", "description": "F4 (2026-10-14, additive, flag only): record time minus meta.received_at, set by WS-2 ONLY when |skew| > 300000 ms. Absent = within tolerance or not measurable. Nothing changes behaviour on it; it makes a forged or drifting record clock visible." },
+        "key_scope": {
+          "type": "object",
+          "description": "ADR-012 (additive): the uniqueness scope a causal evidence key is valid in, so a key on host A can never match one on host B. `boot` stays absent until a boot-epoch source exists.",
+          "properties": {
+            "host": { "type": "string" },
+            "sensor": { "type": "string" },
+            "boot": { "type": "string" }
+          }
+        },
+        "sender": {
+          "type": "object",
+          "description": "ADR-012 (additive): who handed the record to WS-1, copied by WS-2 from meta.shipper_ip / meta.source. `ip` is the TCP peer (not sender-chosen; a proxy/NAT's address behind one). `source` is a self-label, recorded for display only and never an authorization decision.",
+          "properties": {
+            "ip": { "type": "string" },
+            "source": { "type": "string" }
+          }
+        },
         "time_clamped": { "type": "boolean", "description": "F4 clamp (2026-10-21, additive): set by WS-4 when |record time - received_ms| exceeded min(FENGARDE_WINDOW_MAX_SKEW_SECONDS (default 600), the rule's window_seconds / 2) so the stateful window was driven by the receipt time instead of the record time. Absent = not clamped. Replay/backfill opts out with FENGARDE_WINDOW_TIME_SOURCE=event." }
       }
     }

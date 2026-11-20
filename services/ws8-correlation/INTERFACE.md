@@ -72,9 +72,20 @@ bus topic — returns the v2 payload.
 ```
 {version: 2, incident_id, tenant_id,
  nodes: [{entity_id, entity_type, entity_value, label}, …],
- edges: [{from, to, kind, event_id, ts_ms}, …],
- tactic_sources}
+ edges: [{from, to, kind, event_id, ts_ms,
+          first_ts_ms?, last_ts_ms?, evidence_count?, timed_evidence_count?}, …],
+ tactic_sources,
+ links?: [{from_event_id, to_event_id, basis, order, from_ts_ms, to_ts_ms, trust}, …],
+ links_truncated?}
 ```
+
+**`links[]` (ADR-012 WP 6, additive; `version` stays 2).** Key evidence between member alerts of ONE incident, built from each alert's `causal_keys` (`{ns, role, h, scope_trust}`, captured on the member entry at store time and part of the cache fingerprint).
+- Members are grouped by `(ns, h)`. `proc`: the earliest `self` holder -> every `parent`-role holder (`process_tree`). `flow`/`agent`: a time-ordered chain of at most n-1 links (`network_flow`, `agent_session`). `logon` keys are stored but emit NO links (no boot epoch, ADR-012 s.1). Unequal `h` (PID collision, a second sender, different scope) never links; null/malformed keys are dropped.
+- `order` is the ADR-011 strict rule on the two endpoints' event times: `forward` (from < to), `concurrent` (tie), `conflict` (directed pair logged in reverse), `unordered` (a time missing/fallback; ts then `null`). `trust` is the weaker endpoint `scope_trust` (`asserted` < `declared` < `observed`).
+- **No link is ever labelled causal here.** An `asserted` or `declared` link is key-linked only; the payload carries no "causal" wording.
+- Sorted by `(basis, from_event_id, to_event_id)`, capped at 1,000 (`links_truncated: true` past it; a 200-member incident with 6 shared keys has 1,194 candidates). Identical links from different shared keys are not deduplicated.
+- **Never merges incidents.** A key also held by an alert of a different incident (not a member of this one) emits no link for that key; `ws8_links_cross_incident_suppressed_total` counts these (per graph build). The check uses this instance's view of other incidents, so it is order-dependent: an incident built before its peer registered keeps its links until its next update.
+- Redelivery and a fresh instance give byte-identical output (pure function of live members + suppression set). Payload growth: two fields on every graph (`"links":[]`, `"links_truncated":false` = about 36 bytes when keyless), about 190 bytes per link, at most about 190 KB at the cap.
 
 - **Nodes** are the incident's member entities as OBJECTS:
   - `entity_id` — the ADR-009 canonical identity: sha256 hexdigest of the
@@ -170,6 +181,23 @@ bus topic — returns the v2 payload.
   3. A time-less alert yields `ts_ms = int(sha256(member_id)[:12], 16)`, a
      stable digest that is far outside any real epoch-ms range and so can
      never equal an alert's time; treat it as "no time", not as an instant.
+- **Edge evidence intervals** (ADR-011 option C, additive; `version` stays 2).
+  Each edge MAY carry four optional keys, computed in the same pass as
+  `edges` over all distinct live member alerts that carry both endpoints
+  (any kind): `first_ts_ms` / `last_ts_ms` = min / max sanitized event time
+  (same `_valid_window_time` basis as `ts_ms`); `evidence_count` = distinct
+  members carrying both endpoints (>= 1); `timed_evidence_count` = how many
+  of those had a real time. Members whose time was the fallback are counted
+  in `evidence_count` only; their sha256 digest / wall-clock stand-in never
+  enters `first_ts_ms`/`last_ts_ms`. Both timestamps are `null` iff
+  `timed_evidence_count == 0`. Consumers MUST treat an absent key (older
+  producer) and `null` identically: "no time claim". `ts_ms` meaning is
+  UNCHANGED (item above); when the winning alert was timed,
+  `first_ts_ms <= ts_ms <= last_ts_ms`. Values are over live members, so
+  `first_ts_ms` can move later when the horizon sweep or member cap evicts
+  old evidence; each message is the current snapshot. The times are "as
+  logged" (a forged event `time` forges them). Ties/overlap mean
+  concurrent, never ordered.
   One edge has one instant and its direction comes from the entity types,
   so the graph cannot say "A happened before B". For the attack's order use
   the read-side `timeline.py` (below), which sorts the member alerts.

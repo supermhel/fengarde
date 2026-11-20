@@ -123,3 +123,72 @@ incident_membership:
 campaign_membership:
   campaign_count: 1
   full_coverage: true
+
+
+# =============================================================================
+# known_gaps -- the disagreements between this oracle and the system that are KNOWN, DATED and
+# DECLARED HERE, in the storyline's own answer key (owner decision 2026-11-20; schema and failure
+# modes: eval/twin/known_gaps.py). This is declaration data, not oracle semantics: no grader
+# scores against it, the mutation probe skips it, and editing it is not an oracle semantic change.
+# Every entry is checked from both sides: a disagreement with no entry FAILS, an entry whose kind
+# does not match what is observed FAILS, and an entry that no longer reproduces FAILS (STALE) --
+# delete it, that is the ratchet working. Migrated 2026-11-20 from the name-keyed tables in
+# oracle_consistency / oracle_derive / oracle_mutate; reasons are carried over verbatim.
+# =============================================================================
+known_gaps:
+  # 2026-10-14 measured on the first run (seed 7), not tuned.
+  - kind: order_blind_join
+    from: privileged_runner
+    to: ci_secret_read
+    since: '2026-10-02'
+    reason: 'directional_discrimination=0.0 (SSOT 2026-10-01): the WS-8 graph joins every forbidden pair
+      because the entities at both ends overlap (per-entity tracks never merge, so a shared address/account
+      yields an edge in BOTH directions). The oracle''s anti-causal non-edges are therefore not enforceable
+      by this correlator. Waived by class, not hidden: closing it means grading edge direction by event
+      time or by WS-8 typed caused_by edges, a separate ratified step.'
+  - kind: derive_waiver
+    finding: F6
+    step: agent_runaway
+    item: 2b3c4d5e-6f70-4899-8a1b-2c3d4e5f6a7c
+    since: '2026-10-14'
+    reason: 'agent_tool_call_burst carries no mitre block BY DESIGN (no single ATT&CK technique fits a generic
+      tool-call-volume burst; technique_waivers.yaml no_technique), and supply_chain_ci is the storyline
+      written to exercise it, so its expectation is tactic-less on purpose: tactic coverage falls back to
+      rule identity at this one step.'
+  - kind: mutant_survivor
+    operator: drop_step
+    outcome: SURVIVED
+    max: 1
+    since: '2026-10-14'
+    reason: malicious_dependency raises no alert (a declared gap), so dropping it changes nothing graded
+  - kind: mutant_survivor
+    operator: flip_gap_to_false
+    outcome: SURVIVED
+    max: 1
+    since: '2026-10-14'
+    reason: malicious_dependency declares no expected rule and no rule fires there
+  - kind: mutant_survivor
+    operator: flip_relationship
+    outcome: IMPROVED
+    max: 1
+    since: '2026-10-14'
+    reason: 'forbidden->allowed flip on privileged_runner->ci_secret_read, joined in both directions through
+      the runner address: the wrong oracle scores BETTER because directional_discrimination=0.0 (SSOT 2026-10-01):
+      the pair is graded and joined, and the reverse direction is joined too (reverse_joined=True), so the
+      legacy join predicate cannot tell a relation from its reverse; the WS-8 tracks never merge and share
+      entities at both ends'
+  - kind: mutant_survivor
+    operator: reverse_relationship
+    outcome: SURVIVED
+    max: 3
+    since: '2026-10-14'
+    reason: 'directional_discrimination=0.0 (SSOT 2026-10-01): the pair is graded and joined, and the reverse
+      direction is joined too (reverse_joined=True), so the legacy join predicate cannot tell a relation
+      from its reverse; the WS-8 tracks never merge and share entities at both ends'
+  - kind: mutant_survivor
+    operator: swap_adjacent_steps
+    outcome: SURVIVED
+    max: 1
+    since: '2026-10-14'
+    reason: one of the two swapped steps raises no alert (and the entities are shared across the chain),
+      so neither alert order nor the entity-bridge fidelity predicate has anything to disagree about

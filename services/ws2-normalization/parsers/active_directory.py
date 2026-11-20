@@ -22,6 +22,7 @@ from typing import Optional
 from .base import Parser, SEV_HIGH, SEV_INFO
 from .timeutil import to_epoch_ms
 from shared.ocsf import valid_ip, valid_mac, safe_str
+from shared.causal_keys import canon_logon_id
 
 _CLASS = 3002  # Authentication
 
@@ -203,6 +204,14 @@ class ActiveDirectoryParser(Parser):
                 # actor/user block.
                 actor_user["uid"] = str(user_sid)
             event["actor"] = {"user": actor_user}
+
+        # ADR-012 WP 3: a 4624 logon's NEW session id is TargetLogonId; scope = the host that logged it (Computer),
+        # boot absent (no boot-epoch source). 4625 logs 0x0 here and the ticket events have none: dropped by the
+        # canonicaliser. The session key does not depend on there being a named user.
+        if event_id == 4624:
+            logon_id = canon_logon_id(rec.get("TargetLogonId"))
+            if logon_id and self.stamp_key_scope(event, target_host, self.SOURCE_TYPE):
+                event.setdefault("actor", {})["session"] = {"uid": logon_id}
 
         # PR #153 review: 4625/4771 Status/SubStatus (bad password vs unknown
         # user vs locked/disabled) were dropped; keep them for triage.

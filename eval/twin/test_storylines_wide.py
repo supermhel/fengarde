@@ -45,6 +45,7 @@ for _p in (str(ADVERSARIAL), str(TWIN), str(SERVICES)):
 import layer_a  # noqa: E402  (import order: report.py collision guard, as test_scenario_harness)
 import evasion_search  # noqa: E402
 import mutate_generic as mg  # noqa: E402
+import known_gaps as kg  # noqa: E402
 import oracle_consistency as oc  # noqa: E402
 import oracle_provenance as prov  # noqa: E402
 import probe_session  # noqa: E402
@@ -199,8 +200,9 @@ def test_reconciler_kinds() -> None:
     _check("(c) every new kind has a waiver key shape",
            oc._key("s", "forbidden_rule", {"step": "a", "rule_id": "r"}) == ("s", "forbidden_rule", "a", "r")
            and oc._key("s", "gap_technique", {"step": "a"}) == ("s", "gap_technique", "a", ""))
-    _check("(c) the gap-technique waiver table is CLOSED and dated",
-           all(oc._DATED_REASON.match(v) for v in oc._GAP_TECHNIQUE_WAIVED.values()))
+    _check("(c) the gap-technique waivers (declared in each oracle's known_gaps) are dated",
+           all(oc._DATED_REASON.match(v) for sd in reg.ALL
+               for v in kg.gap_technique_map(kg.load(reg.load_oracle(sd), sd.name), sd.name).values()))
 
 
 # --------------------------------------------------------------------------

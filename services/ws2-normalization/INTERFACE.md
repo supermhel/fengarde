@@ -52,6 +52,20 @@ Optional: `FENGARDE_WINEVTLOG_TZ` (IANA zone, e.g. `Europe/Berlin`; unset by def
 
 ## Produces
 - Topic `normalized.events` — OCSF event (Contract A), partition key = `src_endpoint.ip`.
+  ADR-012 additive optional fields: `siem.sender`, `siem.key_scope`,
+  `actor.process.uid` / `parent_process`, `actor.session.uid`, `connection_info.uid`.
+  **`siem.sender` stamping rule:** WS-2 copies `meta.shipper_ip` -> `siem.sender.ip`
+  and `meta.source` -> `siem.sender.source` from ws1's `meta` ONLY (sanitised,
+  capped at 128, omitted when absent or not a string). Sender fields in the record
+  body are ignored; `source` is a self-label for display, never an authorization
+  decision.
+  **Key stamping (ADR-012 WP 3, parsers only populate fields, no links):** `sysmon` sets
+  `actor.process.uid` (ProcessGuid; EID 10: SourceProcessGUID) and `actor.process.parent_process.{uid,pid,name}`;
+  `windows_eventlog` (4624 TargetLogonId, 4672/4648 SubjectLogonId) and `active_directory` (4624 TargetLogonId) set
+  `actor.session.uid`. All values go through `shared.causal_keys` canonicalisers; a rejected value (null GUID, `0x0`,
+  `-`, over-length) is dropped. A key is written only together with `siem.key_scope = {host, sensor}` (host = the
+  record's `Computer`; no host, no key; `boot` stays absent). 4688 sets no process uid. Fixtures are template-derived,
+  not real captures.
 - Topic `raw.events.deadletter` — unparseable/invalid inputs with errors. Payload is
   the ORIGINAL `raw.events` payload verbatim (`source_type`/`raw`/`meta` at top
   level, so `tools/dlq_peek.py --requeue` genuinely re-processes it) plus

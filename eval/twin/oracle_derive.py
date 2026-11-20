@@ -82,6 +82,7 @@ for _p in (str(TWIN), str(SERVICES), str(ROOT)):
 
 import yaml  # noqa: E402
 
+import known_gaps  # noqa: E402
 import scenario_registry as reg  # noqa: E402
 
 RULES_DIR = ROOT / "contracts" / "rules"
@@ -115,38 +116,12 @@ _CATEGORY_CLASSES = {
     "email_activity": {4009},     # 2026-10-20: mail_gateway rule (class 4009)
 }
 
-# Dated, closed waiver table: (scenario, kind, step, item) -> "YYYY-MM-DD reason". A stale entry
-# (one that no longer reproduces) FAILS, so the table cannot quietly outlive the disagreement.
-_WAIVED: dict = {
-    ("it_intrusion", "F14", "-", "incident_count"): (
-        "2026-10-02 known and measured, not resolved: no single entity spans all five alert-raising "
-        "steps (attacker address -> stolen account -> foothold address), and WS-8 tracks never merge, "
-        "so incident_membership_ok=False / incident_count=3 is the correct reading of an "
-        "`incident_count: 1` that this correlator cannot meet. Owner decision pending (retarget "
-        "onto campaign_full_coverage, lower the target, or keep as a flagged gap); the WS-8 "
-        "invariant is not touched."),
-    ("phishing_bec", "F14", "-", "incident_count"): (
-        "2026-10-20 known and measured, not resolved: closing the phish_delivery and inbox_rule gaps (rules "
-        "email_macro_attachment_delivered, m365_inbox_rule_external_forward) adds two alert-raising steps whose entities "
-        "do not meet the endpoint/identity chain: a delivered message has no actor, and the M365 UserId is a UPN "
-        "(user@corp.example) while every other step uses the bare account name (WS-8 compares actors verbatim; "
-        "the DOMAIN\\/UPN residual is the open F2 finding). So no incident carries those two steps "
-        "(incident_membership_ok=False); since win_office_spawns_shell the run forms TWO incidents (the account track and "
-        "a workstation track, shape pinned in test_storylines_wide.py); detection coverage rose, chain joining fell. Owner decision pending (canonicalise UPN, add a recipient "
-        "entity, or retarget)."),
-    ("supply_chain_ci", "F6", "agent_runaway", "2b3c4d5e-6f70-4899-8a1b-2c3d4e5f6a7c"): (
-        "2026-10-14 agent_tool_call_burst carries no mitre block BY DESIGN (no single ATT&CK technique "
-        "fits a generic tool-call-volume burst; technique_waivers.yaml no_technique), and supply_chain_ci "
-        "is the storyline written to exercise it, so its expectation is tactic-less on purpose: "
-        "tactic coverage falls back to rule identity at this one step."),
-}
+# Waivers and the F2 cap are DECLARED IN EACH STORYLINE'S OWN ORACLE (``known_gaps:`` kinds
+# ``derive_waiver`` / ``f2_cap``; schema in known_gaps.py, owner decision 2026-11-20), not in a
+# name-keyed table here. A stale declaration (one that no longer reproduces), one of the wrong kind
+# (the (step, item) is observed under a different F-code) and an F2 cap larger than the undecidable
+# count all FAIL, so declarations cannot quietly outlive the disagreement.
 # F2 (rule undecidable by the static model) is a WARN, but capped per scenario so it cannot grow.
-# 2026-10-03 phishing_bec: 1 -- common_beaconing's periodicity bound (coefficient of variation of the
-# inter-arrival times) is not modelled by this static interpreter, so c2_beacon is reported UNDECIDED
-# rather than guessed. The engine and the negative twins (5-of-6 beats, irregular interval) cover it.
-# 2026-11-19 the keyed storylines that carry a c2_beacon step (endpoint_macro_c2, pdf_exploit_lateral,
-# outlook_script_backdoor): the same one undecidable rule, the same reason.
-_F2_CAP: dict = {"phishing_bec": 1, "endpoint_macro_c2": 1, "pdf_exploit_lateral": 1, "outlook_script_backdoor": 1}
 
 _REASON_RE = re.compile(r"^\d{4}-\d{2}-\d{2} \S.{8,}")
 
@@ -736,9 +711,11 @@ def diff(derived: dict, oracle: dict, rules: dict, *, scenario: str | None = Non
 
 def apply_waivers(findings: list, scenario: str, waived: dict | None = None,
                   f2_cap: dict | None = None) -> dict:
-    """Attach dated waivers; report stale ones and the F2 cap. ``unwaived`` is what fails the gate."""
-    waived = _WAIVED if waived is None else waived
-    f2_cap = _F2_CAP if f2_cap is None else f2_cap
+    """Attach dated waivers; report stale / wrong-kind ones and the F2 cap. ``unwaived`` is what fails
+    the gate. ``waived`` / ``f2_cap`` come from the oracle's ``known_gaps`` (``run_checks`` reads them);
+    omitted means none (the rule-file lint, scenario ``"*"``, has no oracle)."""
+    waived = {} if waived is None else waived
+    f2_cap = {} if f2_cap is None else f2_cap
     seen = set()
     bad_reasons = []
     for f in findings:
@@ -751,12 +728,20 @@ def apply_waivers(findings: list, scenario: str, waived: dict | None = None,
             bad_reasons.append(k)
     mine = {k for k in waived if k[0] == scenario}
     stale = sorted(mine - seen)
+    # wrong kind: the waiver's (step, item) IS observed, but under a different F-code
+    observed_other = {(f["step"], f["item"]): f["kind"] for f in findings if f["scenario"] == scenario}
+    kind_mismatches = [{"key": list(k), "observed_kind": observed_other[(k[2], k[3])]}
+                       for k in stale if observed_other.get((k[2], k[3]), k[1]) != k[1]]
     f2 = [f for f in findings if f["kind"] == "F2" and f["scenario"] == scenario]
-    f2_over = len([f for f in f2 if not f["waived"]]) > f2_cap.get(scenario, 0)
+    f2_unwaived = [f for f in f2 if not f["waived"]]
+    f2_over = len(f2_unwaived) > f2_cap.get(scenario, 0)
+    # a declared cap larger than the undecidable count is stale: lower or delete it (the ratchet)
+    stale_f2_cap = f2_cap.get(scenario, 0) > len(f2_unwaived)
     unwaived = [f for f in findings if f["waived"] is None and
                 (f["level"] == "FAIL" or (f["kind"] == "F2" and f2_over))]
     return {"unwaived": unwaived, "stale_waivers": stale, "bad_reasons": bad_reasons,
-            "f2_count": len(f2), "f2_over_cap": f2_over}
+            "kind_mismatches": kind_mismatches, "f2_count": len(f2), "f2_over_cap": f2_over,
+            "stale_f2_cap": stale_f2_cap}
 
 
 def run_checks(sdef, seed: int = 7, *, rules: dict | None = None, oracle: dict | None = None,
@@ -768,9 +753,15 @@ def run_checks(sdef, seed: int = 7, *, rules: dict | None = None, oracle: dict |
     findings = diff(derived, oracle, rules, scenario=sdef.name)
     if include_global:
         findings = lint_rules(rules) + findings
+    gaps = known_gaps.load(oracle, sdef.name)
+    if waived is None:
+        waived = known_gaps.derive_map(gaps, sdef.name)
+    if f2_cap is None:
+        f2_cap = known_gaps.f2_caps(gaps, sdef.name)
     verdict = apply_waivers(findings, sdef.name, waived, f2_cap)
     return {"scenario": sdef.name, "seed": seed, "derived": derived, "findings": findings, **verdict,
-            "ok": not verdict["unwaived"] and not verdict["stale_waivers"] and not verdict["bad_reasons"]}
+            "ok": not verdict["unwaived"] and not verdict["stale_waivers"] and not verdict["bad_reasons"]
+            and not verdict["stale_f2_cap"]}
 
 
 # ---------------------------------------------------------------------------
@@ -849,9 +840,16 @@ def main(argv: list | None = None) -> int:
         for f in res["findings"]:
             tag = f"WAIVED {f['waived'][:10]}" if f["waived"] else f["level"]
             print(f"  [{tag}] {f['kind']} {f['step']} {f['item']}: {f['detail']}")
+        wrong = {tuple(m["key"]): m["observed_kind"] for m in res["kind_mismatches"]}
         for k in res["stale_waivers"]:
             if k[0] != "*":
-                print(f"  [STALE WAIVER] {list(k)} no longer reproduces -- delete it")
+                if k in wrong:
+                    print(f"  [WRONG KIND] {list(k)} is declared in known_gaps but observed as {wrong[k]}")
+                else:
+                    print(f"  [STALE WAIVER] {list(k)} no longer reproduces -- delete it")
+        if res["stale_f2_cap"]:
+            print(f"  [STALE F2 CAP] known_gaps declares an f2_cap above the {res['f2_count']} undecidable "
+                  "step(s) -- lower or delete it")
         for k in res["bad_reasons"]:
             print(f"  [BAD WAIVER] {list(k)}: a waiver needs 'YYYY-MM-DD <reason>'")
         if res["ok"]:

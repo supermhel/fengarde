@@ -36,6 +36,10 @@ on the true one -- and the legacy pair must be shown NOT to.
                                                the row whitelist accepts them; scenario_matrix
                                                prints the control in a separate section, never
                                                pooled, and its self-check fails a broken control
+  (i) timed-metric controls (ADR 011, WP-C)    mirror / swap / shift_1h applied to emitted edge intervals:
+                                               directional_discrimination_timed mirror -> 0, swap -> drops,
+                                               shift_1h -> unchanged; the self-check can fail; loosening the
+                                               predicate to the weak form changes the graded result
 """
 from __future__ import annotations
 
@@ -375,6 +379,89 @@ def test_stage1_wiring(tables: dict) -> None:
            scenario_matrix._selfcheck(good) is True and scenario_matrix._selfcheck(bad) is False)
 
 
+def _tedge(step, first, last, idx=0):
+    return {"from": f"{step}-a{idx}", "to": f"{step}-b{idx}", "kind": "same_ip", "step": step,
+            "first_ts_ms": first, "last_ts_ms": last, "evidence_count": 1, "timed_evidence_count": 1}
+
+
+def _tsteps(edge):
+    return {edge["step"]}
+
+
+def _timed_fixture(n=6, width=100, gap=1000):
+    graphs = [{"edges": [_tedge(f"s{i}", i * gap, i * gap + width) for i in range(n)]}]
+    rels = [{"from": f"s{i}", "to": f"s{i + 1}", "allowed": True} for i in range(n - 1)]
+    rels += [{"from": "s1", "to": "s0", "allowed": False}, {"from": "s2", "to": "s1", "allowed": False}]
+    return graphs, rels
+
+
+def test_timed_controls() -> None:
+    """mirror / swap / shift_1h for directional_discrimination_timed (ADR 011, WP-C), on synthetic
+    emitted-edge graphs: mirror -> ~0, swap -> drops, shift_1h -> unchanged; inputs never mutated."""
+    k = "directional_discrimination_timed"
+    graphs, rels = _timed_fixture()
+    frozen = copy.deepcopy(graphs)
+    ctl = oc.run_timed_controls(graphs, rels, _tsteps, storyline="syn")
+    r = ctl["rows"]
+    _check("(i) timed controls: identity says yes (1.0), mirror drives it to 0.0 with forbidden realised 1.0",
+           r["identity"][k] == 1.0 and r["mirror"][k] == 0.0
+           and r["mirror"]["forbidden_order_graph_realised_rate"] == 1.0
+           and r["identity"]["forbidden_order_graph_realised_rate"] == 0.0, str({v: r[v][k] for v in r}))
+    _check("(i) timed controls: swap drops the score strictly below identity but not to 0 (a graded "
+           "intermediate, 0.8 on 5 allowed pairs)",
+           ctl["swap_pair"] is not None and 0.0 < r["swap"][k] < r["identity"][k], str(r["swap"][k]))
+    _check("(i) timed controls: shift_1h leaves score, counts and classes unchanged and moved every interval",
+           r["shift_1h"][k] == r["identity"][k] and r["shift_1h"]["discriminating"] == r["identity"]["discriminating"]
+           and r["shift_1h"]["n_gradable"] == r["identity"]["n_gradable"]
+           and ctl["changed"]["shift_1h"] == 6 and ctl["changed"]["mirror"] > 0, str(ctl["changed"]))
+    _check("(i) timed controls: the self-check passes a sound control", oc.timed_controls_ok(ctl) == [])
+    _check("(i) timed controls: input graphs are never mutated", graphs == frozen)
+
+    m, _ = oc.mirror_graph_times(graphs)
+    mm, _ = oc.mirror_graph_times(m)
+    _check("(i) mirror_graph_times is an involution on the clock and keeps first <= last",
+           mm == graphs and all(e["first_ts_ms"] <= e["last_ts_ms"] for e in m[0]["edges"]))
+    sw, ch = oc.swap_graph_steps(graphs, _tsteps, "s1", "s2")
+    iv = {e["step"]: (e["first_ts_ms"], e["last_ts_ms"]) for e in sw[0]["edges"]}
+    _check("(i) swap_graph_steps exchanges the two blocks' start times and nothing else",
+           ch == 2 and iv["s1"] == (2000, 2100) and iv["s2"] == (1000, 1100) and iv["s0"] == (0, 100)
+           and oc.swap_graph_steps(graphs, _tsteps, "s1", "nope")[1] == 0)
+    sh, _ = oc.shift_graph_times(graphs)
+    _check("(i) shift_graph_times moves every interval by exactly +1 h",
+           all(a["first_ts_ms"] - b["first_ts_ms"] == 3600000 and a["last_ts_ms"] - b["last_ts_ms"] == 3600000
+               for a, b in zip(sh[0]["edges"], graphs[0]["edges"])))
+
+    # the control can fail: a metric blind to the clock is caught
+    blind = copy.deepcopy(ctl)
+    blind["rows"]["mirror"] = blind["rows"]["identity"]
+    moved = copy.deepcopy(ctl)
+    moved["rows"]["shift_1h"] = moved["rows"]["mirror"]
+    noswap = copy.deepcopy(ctl)
+    noswap["rows"]["swap"] = noswap["rows"]["identity"]
+    _check("(i) timed_controls_ok FAILS a metric that cannot say no (mirror == identity), a shift that moves "
+           "the metric, and a swap that does not drop it",
+           len(oc.timed_controls_ok(blind)) >= 1 and len(oc.timed_controls_ok(moved)) >= 1
+           and len(oc.timed_controls_ok(noswap)) >= 1)
+
+    # mutation: loosening to the weak 'starts earlier' predicate changes the graded result on overlapping
+    # evidence, so the strict predicate is load-bearing for the controls too
+    co = oc.co
+    ov = [{"edges": [_tedge("a", 0, 500), _tedge("b", 100, 600), _tedge("c", 700, 800)]}]
+    ov_rels = [{"from": "a", "to": "b", "allowed": True}, {"from": "a", "to": "c", "allowed": True}]
+    strict = oc.run_timed_controls(ov, ov_rels, _tsteps)
+    real = co.edge_forward
+    try:
+        co.edge_forward = lambda f_first, f_last, t_first, t_last: f_first < t_first
+        weak = oc.run_timed_controls(ov, ov_rels, _tsteps)
+    finally:
+        co.edge_forward = real
+    _check("(i) mutation: with the weak 'evidence starts earlier' predicate the overlapping pair a->b "
+           "counts as forward (score 1.0 vs strict 0.5) and the timed self-check no longer rejects a mirror "
+           "that is not driven to 0",
+           strict["rows"]["identity"][k] == 0.5 and weak["rows"]["identity"][k] == 1.0
+           and strict["rows"]["mirror"][k] == 0.0 and weak["rows"]["identity"][k] != strict["rows"]["identity"][k])
+
+
 def main() -> int:
     print("== FENGARDE adversarial: reversed-order metric control ==")
     test_pure_helpers()
@@ -383,6 +470,7 @@ def main() -> int:
     test_control_can_fail(tables)
     test_policy_and_determinism(tables)
     test_stage1_wiring(tables)
+    test_timed_controls()
     print("-" * 60)
     if _FAILURES:
         print(f"[FAIL] {len(_FAILURES)} check(s) failed: {', '.join(_FAILURES)}")

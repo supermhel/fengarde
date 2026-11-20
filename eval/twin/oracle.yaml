@@ -299,3 +299,98 @@ incident_membership:
     - "6f708192-a3b4-4cd5-be3f-5a6b7c8d9e0f"
     - "1a2b3c4d-5e6f-4788-9a0b-1c2d3e4f5a6b"
     - "9c1d2e3f-4a5b-4c6d-8e7f-1a2b3c4d5e6f"
+
+
+# =============================================================================
+# known_gaps -- the disagreements between this oracle and the system that are KNOWN, DATED and
+# DECLARED HERE, in the storyline's own answer key (owner decision 2026-11-20; schema and failure
+# modes: eval/twin/known_gaps.py). This is declaration data, not oracle semantics: no grader
+# scores against it, the mutation probe skips it, and editing it is not an oracle semantic change.
+# Every entry is checked from both sides: a disagreement with no entry FAILS, an entry whose kind
+# does not match what is observed FAILS, and an entry that no longer reproduces FAILS (STALE) --
+# delete it, that is the ratchet working. Migrated 2026-11-20 from the name-keyed tables in
+# oracle_consistency / oracle_derive / oracle_mutate; reasons are carried over verbatim.
+# =============================================================================
+known_gaps:
+  - kind: order_blind_join
+    from: process_anomaly
+    to: modbus_write
+    since: '2026-10-02'
+    reason: 'directional_discrimination=0.0 (SSOT 2026-10-01): the WS-8 graph joins every forbidden pair
+      because the entities at both ends overlap (per-entity tracks never merge, so a shared address/account
+      yields an edge in BOTH directions). The oracle''s anti-causal non-edges are therefore not enforceable
+      by this correlator. Waived by class, not hidden: closing it means grading edge direction by event
+      time or by WS-8 typed caused_by edges, a separate ratified step.'
+  - kind: order_blind_join
+    from: credential_use
+    to: agent_mcp_tool_call
+    since: '2026-10-02'
+    reason: 'directional_discrimination=0.0 (SSOT 2026-10-01): the WS-8 graph joins every forbidden pair
+      because the entities at both ends overlap (per-entity tracks never merge, so a shared address/account
+      yields an edge in BOTH directions). The oracle''s anti-causal non-edges are therefore not enforceable
+      by this correlator. Waived by class, not hidden: closing it means grading edge direction by event
+      time or by WS-8 typed caused_by edges, a separate ratified step.'
+  - kind: gap_technique_waiver
+    step: external_content
+    since: '2026-10-03'
+    reason: oracle.yaml pre-dates the attack_technique key (pre-log ingress content)
+  - kind: gap_technique_waiver
+    step: plc_state_change
+    since: '2026-10-03'
+    reason: oracle.yaml pre-dates the attack_technique key (post-write process-side state change)
+  - kind: mutant_survivor
+    operator: delete_relationship
+    outcome: SURVIVED
+    max: 2
+    since: '2026-10-02'
+    reason: 'the edge starts at external_content, a step with no parsed event (pre-log by design: the declared
+      gap), so the grader excludes it from every denominator (step-not-entity-bearing)'
+  - kind: mutant_survivor
+    operator: drop_step
+    outcome: SURVIVED
+    max: 1
+    since: '2026-10-02'
+    reason: external_content raises no alert and carries no entity (pre-log by design), so dropping it from
+      the sequence changes no graded output
+  - kind: mutant_survivor
+    operator: flip_gap_to_false
+    outcome: SURVIVED
+    max: 2
+    since: '2026-10-02'
+    reason: the steps (external_content, plc_state_change) declare no expected rule and no rule fires there,
+      so nothing reads the gap flag; only a firing rule makes it observable
+  - kind: mutant_survivor
+    operator: flip_relationship
+    outcome: SURVIVED
+    max: 2
+    since: '2026-10-02'
+    reason: 'the edge starts at external_content, a step with no parsed event (pre-log by design: the declared
+      gap), so the grader excludes it from every denominator (step-not-entity-bearing)'
+  - kind: mutant_survivor
+    operator: flip_relationship
+    outcome: IMPROVED
+    max: 2
+    since: '2026-10-02'
+    reason: 'forbidden->allowed flip on a pair the graph joins in both directions: the wrong oracle scores
+      BETTER (the false-correlation count falls) because directional_discrimination=0.0 (SSOT 2026-10-01):
+      the pair is graded and joined, and the reverse direction is joined too (reverse_joined=True), so the
+      legacy join predicate cannot tell a relation from its reverse; the WS-8 tracks never merge and share
+      entities at both ends'
+  - kind: mutant_survivor
+    operator: reverse_relationship
+    outcome: SURVIVED
+    max: 7
+    since: '2026-10-02'
+    reason: 'two reversals start at external_content (the edge starts at external_content, a step with no
+      parsed event (pre-log by design: the declared gap), so the grader excludes it from every denominator
+      (step-not-entity-bearing)); the other five are graded and unobservable because directional_discrimination=0.0
+      (SSOT 2026-10-01): the pair is graded and joined, and the reverse direction is joined too (reverse_joined=True),
+      so the legacy join predicate cannot tell a relation from its reverse; the WS-8 tracks never merge
+      and share entities at both ends'
+  - kind: mutant_survivor
+    operator: swap_adjacent_steps
+    outcome: SURVIVED
+    max: 3
+    since: '2026-10-02'
+    reason: one of the two swapped steps raises no alert (and the entities are shared across the chain),
+      so neither alert order nor the entity-bridge fidelity predicate has anything to disagree about

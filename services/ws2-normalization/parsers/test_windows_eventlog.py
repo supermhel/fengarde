@@ -242,5 +242,59 @@ class TestWindowsEventLogParser(unittest.TestCase):
         self.assertNotIn("actor", event)
 
 
+# --- ADR-012 WP 3: logon-session keys ---------------------------------------------------------------------------
+# FIXTURE PROVENANCE: TEMPLATE-DERIVED. LogonId values are INVENTED to match the documented Security-event field
+# names/format ("0x" + hex). No real Security-channel capture exists in the repo (ADR-012: needs administrator on
+# the lab host); this proves the parser handles the ASSUMED shape, not that real events look like this.
+class TestWindowsLogonKeys(unittest.TestCase):
+
+    def _ev(self, rec):
+        ev = PARSER.parse(_raw(rec))
+        self.assertIsNotNone(ev)
+        self.assertEqual(validate(ev), [])
+        return ev
+
+    def test_4624_uses_target_logon_id(self):
+        ev = self._ev(dict(REC_4624, TargetLogonId="0x00000000000CE96D", SubjectLogonId="0x3e7"))
+        self.assertEqual(ev["actor"]["session"], {"uid": "ce96d"})
+        self.assertEqual(ev["siem"]["key_scope"], {"host": "dc01", "sensor": "windows_eventlog"})
+        self.assertNotIn("boot", ev["siem"]["key_scope"])
+
+    def test_4672_and_4648_use_subject_logon_id(self):
+        rec = dict(REC_4672, SubjectLogonId="0xCE96D", TargetLogonId="0x1", Computer="srv1")
+        ev = self._ev(rec)
+        self.assertEqual(ev["actor"]["session"], {"uid": "ce96d"})
+        self.assertEqual(ev["siem"]["key_scope"]["host"], "srv1")
+        rec48 = {"EventID": 4648, "TimeCreated": 1750000000000, "SubjectUserName": "jdoe",
+                 "SubjectLogonId": "0xCE96D", "TargetServerName": "other-host", "Computer": "wks-jdoe"}
+        ev48 = self._ev(rec48)
+        self.assertEqual(ev48["actor"]["session"], {"uid": "ce96d"})
+        # scope is the host that LOGGED the event, never the logon target
+        self.assertEqual(ev48["siem"]["key_scope"]["host"], "wks-jdoe")
+
+    def test_4688_sets_no_process_uid_and_no_session(self):
+        ev = self._ev(dict(REC_4688, SubjectLogonId="0xCE96D", NewProcessId="0x4d2",
+                           ProcessId="0x10", Computer="wks-jdoe"))
+        proc = ev["actor"]["process"]
+        self.assertNotIn("uid", proc)
+        self.assertNotIn("parent_process", proc)
+        self.assertNotIn("session", ev["actor"])
+        self.assertNotIn("key_scope", ev["siem"])
+
+    def test_negative_logon_ids_dropped(self):
+        bad = ("0x0", "0x00000000", "0", "-", "", "  ", None, 0, "0xZZ", "not hex", "0x" + "f" * 129,
+               "f" * 129, {"a": 1}, ["0xce96d"], True)
+        for v in bad:
+            ev = self._ev(dict(REC_4624, TargetLogonId=v, Computer="dc01"))
+            self.assertNotIn("session", ev.get("actor", {}), repr(v))
+            self.assertNotIn("key_scope", ev["siem"], repr(v))
+
+    def test_missing_computer_means_no_key(self):
+        rec = {k: v for k, v in REC_4624.items() if k != "Computer"}
+        ev = self._ev(dict(rec, TargetLogonId="0xCE96D"))
+        self.assertNotIn("session", ev["actor"])
+        self.assertNotIn("key_scope", ev["siem"])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
