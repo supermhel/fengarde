@@ -337,7 +337,10 @@ def _test_real() -> dict:
               "supply_chain_ci": (3, 1.0),
               # 2026-10-28, first run of storylines 10-11 (measured, not tuned). network_credential_abuse's
               # 0.5: the ASA sweep evidences only an address, so the sweep -> spray pair has no edge.
-              "win_credential_theft": (4, 0.75), "network_credential_abuse": (2, 0.5)}
+              "win_credential_theft": (4, 0.75), "network_credential_abuse": (2, 0.5),
+              # 2026-11-20, first run of the flow_* storylines (WP-D2; measured, not tuned)
+              "flow_suricata_c2_exfil": (12, 0.8333), "flow_suricata_modbus_sabotage": (10, 0.9),
+              "flow_zeek_ot_pivot": (11, 0.9091)}
     # 2026-10-03: measured on the first run of the 4th storyline; 2026-10-14: the 5th (ot_opcua_sabotage)
     got = {n: (g["causal_order"]["graded"], g["causal_order"]["causal_order_fidelity"]) for n, g in out.items()}
     _check("(c) identity causal_order_fidelity / graded-pair counts (seed 7) match the measured values",
