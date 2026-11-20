@@ -105,6 +105,9 @@ echo
 echo "== WP-3-A: incident.graph v2 typed causal DAG (canonical entity_id nodes, typed kinds, v1 builder byte-for-byte) =="; LAST_HEADER="== WP-3-A: incident.graph v2 typed causal DAG (canonical entity_id nodes, typed kinds, v1 builder byte-for-byte) =="
 $PY services/ws8-correlation/test_incident_graph_v2.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
+echo "== ADR-011: incident.graph v2 edge evidence intervals (first/last_ts_ms, counts; additive, ts_ms unchanged) =="; LAST_HEADER="== ADR-011 edge intervals =="
+$PY services/ws8-correlation/test_edge_intervals.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
 echo "== ws8 NEW-hunt regression: flat prometheus skip keys + skew-future/NaN time rejected + fully-anonymous deterministic member id + oldest-by-time member-cap eviction =="; LAST_HEADER="== ws8 NEW-hunt regression: flat prometheus skip keys + skew-future/NaN time rejected + fully-anonymous deterministic member id + oldest-by-time member-cap eviction =="
 $PY services/ws8-correlation/test_correlator_new_hunt.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo

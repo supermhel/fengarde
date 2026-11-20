@@ -199,12 +199,18 @@ def test_v2_emitted_shape_and_incidents_topic_untouched():
     check(graph["edges"] == [{
         "from": alice_id, "to": ip_id, "kind": "authenticated_as",
         "event_id": "ev-1", "ts_ms": 1000,
+        "first_ts_ms": 1000, "last_ts_ms": 1000,
+        "evidence_count": 1, "timed_evidence_count": 1,
     }], f"shape: exactly one typed edge (authenticated_as on the TA0001/"
         f"T1078.004 evidence) with provenance, got {graph['edges']}")
     check(all(isinstance(e, dict) and set(e) == {"from", "to", "kind",
-                                                 "event_id", "ts_ms"}
+                                                 "event_id", "ts_ms",
+                                                 "first_ts_ms", "last_ts_ms",
+                                                 "evidence_count",
+                                                 "timed_evidence_count"}
               for e in graph["edges"]),
-          "shape: every edge must carry exactly from/to/kind/event_id/ts_ms")
+          "shape: every edge must carry exactly from/to/kind/event_id/ts_ms "
+          "plus the four ADR-011 evidence-interval keys")
     check(graph["tactic_sources"] == {"TA0001": ["a1"], "TA0004": ["a2"]},
           f"shape: tactic_sources must keep the v1 shape, got "
           f"{graph['tactic_sources']}")
@@ -293,6 +299,8 @@ def test_ipv6_spelling_variants_collapse_to_one_canonical_digest():
     check(graph["edges"] == [{
         "from": ivy_id, "to": ip_node_id, "kind": "authenticated_as",
         "event_id": "ev-1", "ts_ms": 1000,
+        "first_ts_ms": 1000, "last_ts_ms": 2000,
+        "evidence_count": 2, "timed_evidence_count": 2,
     }], f"ipv6: earliest provenance wins and the TA0001 member's typed kind "
         f"outranks the v1 fallback the TA0002 member would give, got "
         f"{graph['edges']}")
@@ -787,6 +795,12 @@ def test_ts_ms_semantics_contract():
     check(e is not None and (e["kind"], e["event_id"], e["ts_ms"]) == ("authenticated_as", "ev-a2", 3000),
           f"ts_ms (a): the later typed kind must win and carry ITS time (3000), not the earlier "
           f"field-pair's (1000), got {e}")
+    # ADR-011: ts_ms is UNCHANGED (3000) while the interval spans ALL carriers of the pair
+    check(e is not None and (e["first_ts_ms"], e["last_ts_ms"], e["evidence_count"],
+                             e["timed_evidence_count"]) == (1000, 3000, 2, 2)
+          and e["first_ts_ms"] <= e["ts_ms"] <= e["last_ts_ms"],
+          f"ts_ms (a'): interval must span both carriers (1000..3000) around the unchanged "
+          f"ts_ms, got {e}")
     # (b) the same canonical pair carries DIFFERENT ts_ms in two incidents: tracks key on the
     #     raw spelling, so the ip track holds the "Lee" alert (t=1000) the actor track "lee" lacks
     c = _new_correlator()
@@ -814,6 +828,10 @@ def test_ts_ms_semantics_contract():
     check(e is not None and e["ts_ms"] == digest and e["ts_ms"] not in (0, 5000),
           f"ts_ms (c): a time-less alert must yield the sha256 digest of its member id "
           f"({digest}), never a wall clock or another alert's time, got {e}")
+    # ADR-011: the digest never leaks into the interval; the time-less member is counted only
+    check(e is not None and (e["first_ts_ms"], e["last_ts_ms"], e["evidence_count"],
+                             e["timed_evidence_count"]) == (None, None, 1, 0),
+          f"ts_ms (c'): a time-less sole carrier gives null/null, evidence 1, timed 0, got {e}")
 
 
 def run_all():
