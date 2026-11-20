@@ -640,6 +640,9 @@ $PY eval/twin/negative_controls.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}
 echo
 echo "== twin: oracle <-> reality reconciliation (the answer key is self-authored; drift must not be silent) =="; LAST_HEADER="== twin: oracle <-> reality reconciliation (the answer key is self-authored; drift must not be silent) =="
 $PY eval/twin/oracle_consistency.py --out eval/twin/out/oracle_consistency.latest.json || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
+echo "== twin: keyed twins of win_credential_theft/ransomware/phishing_bec/supply_chain_ci (ADR-012 WP 7: additive keys, derived causal_links, non-independent) =="; LAST_HEADER="== twin: keyed twins (ADR-012 WP 7) =="
+$PY eval/twin/test_keyed_twins.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 fi  # tier: eval-twin
 
 # == Phase 4 adversarial system-level validation (WP-4-A) ==
