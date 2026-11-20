@@ -60,6 +60,19 @@ FROZEN_STORYLINES = (
     "ot_opcua_sabotage", "phishing_bec", "ransomware", "supply_chain_ci",
 )
 
+# Causal-key fields added to the OCSF event AFTER the measured snapshot (ADR-012 WP 3: Sysmon/Windows/AD parsers).
+# The committed real-model results (qwen2.5 3b/7b via Ollama, not reproducible here) were measured on events that
+# did not carry them, so the frozen set records the model-visible payload WITHOUT them. Detection still ran on the
+# full event (`det.process` sees everything); only the stored `ai.requests` payload is projected back. Adding a field
+# to this tuple is a deliberate, reviewed act; including a new field in the set requires re-running every model.
+# Paths are dotted; a missing path is a no-op, and emptied parents are pruned.
+POST_SNAPSHOT_FIELDS = (
+    "actor.process.uid",
+    "actor.process.parent_process",
+    "actor.session.uid",
+    "siem.key_scope",
+)
+
 _EVENT_SEQ = [0]  # ingest ids are label-neutral and GLOBALLY unique (WS-5 dedups on event id)
 
 
@@ -78,6 +91,25 @@ def _level(rule_levels: list[str]) -> str:
     return _LEVEL_ORDER[idx]
 
 
+def _project_frozen(event: dict) -> dict:
+    """Return a deep copy of `event` without the POST_SNAPSHOT_FIELDS (empty parents pruned)."""
+    out = copy.deepcopy(event)
+    for path in POST_SNAPSHOT_FIELDS:
+        parts = path.split(".")
+        chain = [out]
+        for k in parts[:-1]:
+            nxt = chain[-1].get(k) if isinstance(chain[-1], dict) else None
+            if not isinstance(nxt, dict):
+                break
+            chain.append(nxt)
+        else:
+            chain[-1].pop(parts[-1], None)
+            for depth in range(len(parts) - 1, 0, -1):  # prune parents the removal emptied
+                if not chain[depth]:
+                    chain[depth - 1].pop(parts[depth - 1], None)
+    return out
+
+
 def _run(items, group: str, label: str, source: str, cases: list, excluded: list):
     """items: [(step_label, envelope)] processed in order by ONE fresh Detector (stateful
     windows need the burst). Appends one case per distinct (step, matched-rule-set)."""
@@ -92,6 +124,7 @@ def _run(items, group: str, label: str, source: str, cases: list, excluded: list
         if "trace_id" in event["siem"]:  # some parsers mint a random uuid; pin it so the file is reproducible
             event["siem"]["trace_id"] = f"trace-{event['siem']['ingest_id']}"
         event, matched, tier = det.process(event)
+        event = _project_frozen(event)
         if not matched:
             excluded.append({"group": group, "step": step, "why": "no rule fired (never reaches WS-5)"})
             continue
