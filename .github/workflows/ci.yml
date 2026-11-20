@@ -26,6 +26,9 @@ jobs:
         env:
           # Lets the action post a summary / comment on pull requests.
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # The action defaults to gitleaks 8.24.3, which predates [[allowlists]] (8.25.0) and so ignores
+          # every allowlist in .gitleaks.toml. Pin a version that reads them.
+          GITLEAKS_VERSION: "8.30.1"
 
   # CI SPLIT (see CONTRIBUTING.md "CI layout"). `bash run_all_tests.sh` used to be ONE ~25-30 min serial
   # step. It is now the same script run as tiers (GATE_TIER=<name>, see the tier_on blocks in
