@@ -515,6 +515,20 @@ _INERT_KEYS: dict = {
     "provenance.rules_read.common_bruteforce_by_account": _PROV_PIN,
     "provenance.rules_read.common_impossible_travel": _PROV_PIN,
     "provenance.rules_read.common_password_spray": _PROV_PIN,
+    # flow_* oracles (2026-11-20):
+    "provenance.rules_read.common_dns_exfil": _PROV_PIN,
+    "provenance.rules_read.common_dns_tunnel_by_domain": _PROV_PIN,
+    "provenance.rules_read.common_port_scan": _PROV_PIN,
+    "provenance.rules_read.common_priv_grant": _PROV_PIN,
+    "provenance.rules_read.common_refused_connection_scan": _PROV_PIN,
+    # flow_* oracles (2026-11-20): the causal_links block is re-derived from the builder's minted flow keys and
+    # pinned by eval/twin/test_flow_storylines.py; the mutation grader never reads it.
+    "causal_links[].from": ("cross-instrument: 2026-11-20 re-derived and pinned by "
+        "eval/twin/test_flow_storylines.py (ADR-012 network_flow truth links); the mutation grader never reads it"),
+    "causal_links[].to": ("cross-instrument: 2026-11-20 re-derived and pinned by "
+        "eval/twin/test_flow_storylines.py (ADR-012 network_flow truth links); the mutation grader never reads it"),
+    "causal_links[].basis": ("cross-instrument: 2026-11-20 re-derived and pinned by "
+        "eval/twin/test_flow_storylines.py (ADR-012 network_flow truth links); the mutation grader never reads it"),
     "step_dependencies.foreign_login[]": ("cross-instrument: 2026-10-13 read by "
         "evasion_search.verify_subset_equivalence and scenario_matrix._dependents (the foreign_login "
         "context-step displacement control); the mutation grader never moves on it"),

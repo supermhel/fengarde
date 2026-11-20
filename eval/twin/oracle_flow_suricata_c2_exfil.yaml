@@ -248,3 +248,57 @@ incident_membership:
 campaign_membership:
   campaign_count: 1
   full_coverage: true
+
+# known_gaps -- declared here per eval/twin/known_gaps.py (declaration data, not oracle semantics).
+known_gaps:
+  - kind: order_blind_join
+    from: lateral_logons
+    to: ad_bruteforce
+    since: '2026-11-20'
+    reason: 'directional_discrimination=0.0 (SSOT 2026-10-01): the WS-8 graph joins this forbidden pair because the entities at both ends overlap (per-entity tracks never merge, so a shared address/account yields an edge in BOTH directions); the oracle''s anti-causal non-edge is not enforceable until ADR-011/012 make the graph order-aware. Measured on the first run (seed 7), not tuned.'
+  - kind: order_blind_join
+    from: priv_grant
+    to: ad_bruteforce
+    since: '2026-11-20'
+    reason: 'directional_discrimination=0.0 (SSOT 2026-10-01): the WS-8 graph joins this forbidden pair because the entities at both ends overlap (per-entity tracks never merge, so a shared address/account yields an edge in BOTH directions); the oracle''s anti-causal non-edge is not enforceable until ADR-011/012 make the graph order-aware. Measured on the first run (seed 7), not tuned.'
+  - kind: order_blind_join
+    from: priv_grant
+    to: lateral_logons
+    since: '2026-11-20'
+    reason: 'directional_discrimination=0.0 (SSOT 2026-10-01): the WS-8 graph joins this forbidden pair because the entities at both ends overlap (per-entity tracks never merge, so a shared address/account yields an edge in BOTH directions); the oracle''s anti-causal non-edge is not enforceable until ADR-011/012 make the graph order-aware. Measured on the first run (seed 7), not tuned.'
+  - kind: mutant_survivor
+    operator: flip_gap_to_false
+    outcome: SURVIVED
+    max: 9
+    since: '2026-11-20'
+    reason: 'the step is a declared gap: no shipped rule fires there, so flipping it to a detected step changes nothing graded'
+  - kind: mutant_survivor
+    operator: flip_relationship
+    outcome: IMPROVED
+    max: 2
+    since: '2026-11-20'
+    reason: 'the wrong oracle scores BETTER because directional_discrimination=0.0 (SSOT 2026-10-01): the pair is graded and joined, and the reverse direction is joined too, so the legacy join predicate cannot tell a relation from its reverse; the WS-8 tracks never merge and share entities at both ends'
+  - kind: mutant_survivor
+    operator: reverse_relationship
+    outcome: IMPROVED
+    max: 2
+    since: '2026-11-20'
+    reason: 'the wrong oracle scores BETTER because directional_discrimination=0.0 (SSOT 2026-10-01): the pair is graded and joined, and the reverse direction is joined too, so the legacy join predicate cannot tell a relation from its reverse; the WS-8 tracks never merge and share entities at both ends'
+  - kind: mutant_survivor
+    operator: reverse_relationship
+    outcome: SURVIVED
+    max: 9
+    since: '2026-11-20'
+    reason: 'directional_discrimination=0.0 (SSOT 2026-10-01): the pair is graded and joined, and the reverse direction is joined too, so the legacy join predicate cannot tell a relation from its reverse; the WS-8 tracks never merge and share entities at both ends'
+  - kind: mutant_survivor
+    operator: swap_adjacent_steps
+    outcome: IMPROVED
+    max: 1
+    since: '2026-11-20'
+    reason: 'the wrong oracle scores BETTER because directional_discrimination=0.0 (SSOT 2026-10-01): the pair is graded and joined, and the reverse direction is joined too, so the legacy join predicate cannot tell a relation from its reverse; the WS-8 tracks never merge and share entities at both ends'
+  - kind: mutant_survivor
+    operator: swap_adjacent_steps
+    outcome: SURVIVED
+    max: 9
+    since: '2026-11-20'
+    reason: 'one of the two swapped steps raises no alert (and the entities are shared across the chain), so neither alert order nor the entity-bridge fidelity predicate has anything to disagree about'
