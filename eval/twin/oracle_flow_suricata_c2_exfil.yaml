@@ -33,6 +33,7 @@ provenance:
     common_bruteforce: "f685feb7ab0efe2e0cd9ed3427a2e0466c3a0de785cc28deef3c53a0b585919b"
     common_dns_exfil: "eccf4032d315d46f73cc0bb5b16f96983bda04b3538418a1777aadbcc823008f"
     common_dns_tunnel_by_domain: "e85a4cabcf5e211c12bdb5a8b2949bee0f156096a03eca0ea28c6bde84477fcf"
+    common_ids_high_severity_alert: "4b7889ef66883195f31ad9d383b3e98e9f30e285dea71dacf7ffabe8259ed350"
     common_lateral_movement: "2f010d5cf5adb6de7df93f6a30da3ed32029626dccc912f118af9813d0d4c8ae"
     common_password_spray: "c565b58f392c8e85ac08049c49d1ab119846540d7bcbea86f0ea2f4e30d1a089"
     common_priv_grant: "3d7b783edf6df5e578f154446316404f07d0bcc5837ac9180d00481198f8c14d"
@@ -91,11 +92,9 @@ detection_points:
     step: c2_checkin
     role: first IDS alert on the workstation's long TLS flow to an outside address
     expected_event_source: suricata_eve alert (class 4001, activity 99)
-    expected_rules: []
-    gap:
-      no_rule_exists: true
-      attack_technique: "T1071.001"
-      reason: 'No shipped rule reads a Suricata alert or flow record: the IDS verdict is carried as data (unmapped.ids.*, unmapped.suricata.flow.*) and nothing selects it. The link on this step is an unalerted endpoint until one does.'
+    expected_rules:
+      - {rule_id: "0331c311-7985-47c8-b554-682781ef1069", title: Suricata IDS alert with signature severity 1 (high), level: high, role: IDS severity-1 passthrough}
+    gap: {no_rule_exists: false}
 
   ad_bruteforce:
     step: ad_bruteforce
@@ -115,7 +114,7 @@ detection_points:
     gap:
       no_rule_exists: true
       attack_technique: "T1071.001"
-      reason: 'No shipped rule reads a Suricata alert or flow record: the IDS verdict is carried as data (unmapped.ids.*, unmapped.suricata.flow.*) and nothing selects it. The link on this step is an unalerted endpoint until one does.'
+      reason: 'common_ids_high_severity_alert fires on this step''s event but folds into c2_checkin''s alert: the rule groups by unmapped.ids.flow_id with a 3600 s window and threshold 1, and both records sit on one Suricata flow, so the engine mints ONE alert_id for the pair (the indexer upserts one alert). The step adds no alert of its own, so it stays a gap here and the firing is declared in known_gaps (accepted_disagreement stale_gap).'
 
   dns_tunnel:
     step: dns_tunnel
@@ -155,11 +154,9 @@ detection_points:
     step: c2_staging
     role: third IDS alert on the same TLS flow
     expected_event_source: suricata_eve alert
-    expected_rules: []
-    gap:
-      no_rule_exists: true
-      attack_technique: "T1105"
-      reason: 'No shipped rule reads a Suricata alert or flow record: the IDS verdict is carried as data (unmapped.ids.*, unmapped.suricata.flow.*) and nothing selects it. The link on this step is an unalerted endpoint until one does.'
+    expected_rules:
+      - {rule_id: "0331c311-7985-47c8-b554-682781ef1069", title: Suricata IDS alert with signature severity 1 (high), level: high, role: IDS severity-1 passthrough}
+    gap: {no_rule_exists: false}
 
   exfil_alert:
     step: exfil_alert
@@ -179,7 +176,7 @@ detection_points:
     gap:
       no_rule_exists: true
       attack_technique: "T1041"
-      reason: 'No shipped rule reads a Suricata alert or flow record: the IDS verdict is carried as data (unmapped.ids.*, unmapped.suricata.flow.*) and nothing selects it. The link on this step is an unalerted endpoint until one does.'
+      reason: 'common_ids_high_severity_alert fires on this step''s event but folds into c2_staging''s alert: the rule groups by unmapped.ids.flow_id with a 3600 s window and threshold 1, and both records sit on one Suricata flow, so the engine mints ONE alert_id for the pair (the indexer upserts one alert). The step adds no alert of its own, so it stays a gap here and the firing is declared in known_gaps (accepted_disagreement stale_gap).'
 
   rdp_close:
     step: rdp_close
@@ -221,14 +218,14 @@ severity_band:
 evidence:
   correlation_key: [src_endpoint.ip]
   per_step:
-    c2_checkin: {fields: [src_endpoint.ip, dst_endpoint.ip]}
+    c2_checkin: {fields: [src_endpoint.ip, dst_endpoint.ip, unmapped.ids.flow_id]}
     ad_bruteforce: {fields: [src_endpoint.ip, actor.user.name]}
     c2_tasking: {fields: [src_endpoint.ip, dst_endpoint.ip]}
     dns_tunnel: {fields: [src_endpoint.ip, dst_endpoint.hostname]}
     lateral_logons: {fields: [src_endpoint.ip, actor.user.name, dst_endpoint.hostname]}
     rdp_lateral_alert: {fields: [src_endpoint.ip, dst_endpoint.ip]}
     priv_grant: {fields: [src_endpoint.ip, actor.user.name]}
-    c2_staging: {fields: [src_endpoint.ip, dst_endpoint.ip]}
+    c2_staging: {fields: [src_endpoint.ip, dst_endpoint.ip, unmapped.ids.flow_id]}
     exfil_alert: {fields: [src_endpoint.ip, dst_endpoint.ip]}
     c2_exfil_ack: {fields: [src_endpoint.ip, dst_endpoint.ip]}
     rdp_close: {fields: [src_endpoint.ip, dst_endpoint.ip]}
@@ -269,7 +266,7 @@ known_gaps:
   - kind: mutant_survivor
     operator: flip_gap_to_false
     outcome: SURVIVED
-    max: 9
+    max: 5
     since: '2026-11-20'
     reason: 'the step is a declared gap: no shipped rule fires there, so flipping it to a detected step changes nothing graded'
   - kind: mutant_survivor
@@ -292,13 +289,43 @@ known_gaps:
     reason: 'directional_discrimination=0.0 (SSOT 2026-10-01): the pair is graded and joined, and the reverse direction is joined too, so the legacy join predicate cannot tell a relation from its reverse; the WS-8 tracks never merge and share entities at both ends'
   - kind: mutant_survivor
     operator: swap_adjacent_steps
-    outcome: IMPROVED
-    max: 1
-    since: '2026-11-20'
-    reason: 'the wrong oracle scores BETTER because directional_discrimination=0.0 (SSOT 2026-10-01): the pair is graded and joined, and the reverse direction is joined too, so the legacy join predicate cannot tell a relation from its reverse; the WS-8 tracks never merge and share entities at both ends'
-  - kind: mutant_survivor
-    operator: swap_adjacent_steps
     outcome: SURVIVED
-    max: 9
+    max: 7
     since: '2026-11-20'
     reason: 'one of the two swapped steps raises no alert (and the entities are shared across the chain), so neither alert order nor the entity-bridge fidelity predicate has anything to disagree about'
+  - kind: derive_waiver
+    finding: F6
+    step: c2_checkin
+    item: 0331c311-7985-47c8-b554-682781ef1069
+    since: '2026-11-20'
+    reason: 'common_ids_high_severity_alert carries no mitre block BY DESIGN (a severity-1 passthrough: the IDS signature, not the rule, says what the technique is; technique_waivers.yaml no_technique, 2026-11-20), so tactic coverage falls back to rule identity on this step. Declared here, not hidden.'
+  - kind: derive_waiver
+    finding: F6
+    step: c2_staging
+    item: 0331c311-7985-47c8-b554-682781ef1069
+    since: '2026-11-20'
+    reason: 'common_ids_high_severity_alert carries no mitre block BY DESIGN (a severity-1 passthrough: the IDS signature, not the rule, says what the technique is; technique_waivers.yaml no_technique, 2026-11-20), so tactic coverage falls back to rule identity on this step. Declared here, not hidden.'
+  - kind: accepted_disagreement
+    finding: stale_gap
+    step: c2_tasking
+    rule_id: 0331c311-7985-47c8-b554-682781ef1069
+    since: '2026-11-20'
+    reason: 'common_ids_high_severity_alert fires on this step''s event but folds into c2_checkin''s alert: the rule groups by unmapped.ids.flow_id with a 3600 s window and threshold 1, and both records sit on one Suricata flow, so the engine mints ONE alert_id for the pair (the indexer upserts one alert). The step adds no alert of its own, so it stays a gap here and the firing is declared in known_gaps (accepted_disagreement stale_gap).'
+  - kind: accepted_disagreement
+    finding: stale_gap
+    step: c2_exfil_ack
+    rule_id: 0331c311-7985-47c8-b554-682781ef1069
+    since: '2026-11-20'
+    reason: 'common_ids_high_severity_alert fires on this step''s event but folds into c2_staging''s alert: the rule groups by unmapped.ids.flow_id with a 3600 s window and threshold 1, and both records sit on one Suricata flow, so the engine mints ONE alert_id for the pair (the indexer upserts one alert). The step adds no alert of its own, so it stays a gap here and the firing is declared in known_gaps (accepted_disagreement stale_gap).'
+  - kind: derive_waiver
+    finding: F4
+    step: c2_tasking
+    item: 0331c311-7985-47c8-b554-682781ef1069
+    since: '2026-11-20'
+    reason: 'common_ids_high_severity_alert fires on this step''s event but folds into c2_checkin''s alert (same flow_id, one 3600 s window, threshold 1 -> one alert_id), so the step stays a declared gap; see the accepted_disagreement stale_gap on this step.'
+  - kind: derive_waiver
+    finding: F4
+    step: c2_exfil_ack
+    item: 0331c311-7985-47c8-b554-682781ef1069
+    since: '2026-11-20'
+    reason: 'common_ids_high_severity_alert fires on this step''s event but folds into c2_staging''s alert (same flow_id, one 3600 s window, threshold 1 -> one alert_id), so the step stays a declared gap; see the accepted_disagreement stale_gap on this step.'

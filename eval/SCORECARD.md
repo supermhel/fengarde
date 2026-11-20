@@ -6,7 +6,7 @@ it and fails on any difference.
 
 - basis: `harness-measured`  |  seed: `7`
 - registry digest: `f6bc0992d388c400742a9bd30d600911eeeba2270c5141fe29b842acb29dd0e9` (`eval/scorecard_registry.py`)
-- 46 tagged rules, 28 ATT&CK/ATT&CK-ICS/ATLAS techniques, 14 storylines, 32 registered metrics
+- 47 tagged rules, 28 ATT&CK/ATT&CK-ICS/ATLAS techniques, 14 storylines, 32 registered metrics
 - pooled across storylines: 255/317 = 0.8044 (convenience only -- the per-storyline numbers are the result)
 
 ## How to read this card
@@ -241,11 +241,11 @@ Oracle: 3 step(s), 0 declared gap(s), 3 non-gap step(s).
 
 a Suricata-watched C2 flow alerted four times, internal brute force, DNS tunnelling, RDP lateral movement, a privileged-group add and an exfil upload, each flow with its own flow_id (network_flow truth links)
 
-Oracle: 13 step(s), 9 declared gap(s), 4 non-gap step(s).
+Oracle: 13 step(s), 7 declared gap(s), 6 non-gap step(s).
 
 | metric | value | direction | blind spot | control |
 |---|---|---|---|---|
-| tpr | 1.0 (non-gap steps detected 4/4; oracle declares 13 step(s) and 9 gap(s)) | higher-better | Step COVERAGE, not rule completeness: the denominator excludes `no_rule_exists` gap steps (report._grade_chain skips them), so a gap can never lower TPR. Detection is judged by an oracle-listed rule, or by ATT&CK tactic equivalence in the mutation lane. | `eval/adversarial/test_scenario_harness.py::test_oracle_reconciliation` |
+| tpr | 1.0 (non-gap steps detected 6/6; oracle declares 13 step(s) and 7 gap(s)) | higher-better | Step COVERAGE, not rule completeness: the denominator excludes `no_rule_exists` gap steps (report._grade_chain skips them), so a gap can never lower TPR. Detection is judged by an oracle-listed rule, or by ATT&CK tactic equivalence in the mutation lane. | `eval/adversarial/test_scenario_harness.py::test_oracle_reconciliation` |
 | chain_fidelity | 0.5833 | higher-better | Measures entity SHARING, not causal order: the join predicate answers 'joined' for a step pair and for the same pair reversed (directional_discrimination is 0.0), so it reports 'is there an entity bridge', never 'was the chain reconstructed'. | `eval/adversarial/test_scenario_harness.py::test_directional_discrimination` |
 | false_correlation_rate | 0.75 | lower-better | Same order-blind predicate as chain_fidelity: a saturated 1.0 cannot distinguish a mutation that INDUCES false correlation from one that merely fails to improve an already-saturated number. The number is the share of oracle-forbidden pairs an ENTITY-BRIDGE join connected (ADR-009/010: per-entity tracks never merge), NOT a claim that the forbidden causal direction happened; the twin's time-aware counterpart is the `forbidden_order_realised_rate` row (0.0 on AI-to-OT: the clock never realises the oracle's anti-causal pairs). | `eval/adversarial/test_scenario_harness.py::test_directional_discrimination` |
 | directional_discrimination | 0.1667 | higher-better | The honest counterweight to the two rows above: 0.0 means the legacy join cannot tell a causal direction from its reverse. Order is graded separately (alert_order_ok; causal_order_* in the twin). | `eval/adversarial/test_scenario_harness.py::test_directional_discrimination` |
@@ -260,11 +260,11 @@ Oracle: 13 step(s), 9 declared gap(s), 4 non-gap step(s).
 
 an engineering workstation is swept, brute-forced and used laterally, then drives two Modbus/TCP sessions that Suricata logs as modbus + alert + flow under one flow_id each (network_flow truth links)
 
-Oracle: 11 step(s), 7 declared gap(s), 4 non-gap step(s).
+Oracle: 11 step(s), 5 declared gap(s), 6 non-gap step(s).
 
 | metric | value | direction | blind spot | control |
 |---|---|---|---|---|
-| tpr | 1.0 (non-gap steps detected 4/4; oracle declares 11 step(s) and 7 gap(s)) | higher-better | Step COVERAGE, not rule completeness: the denominator excludes `no_rule_exists` gap steps (report._grade_chain skips them), so a gap can never lower TPR. Detection is judged by an oracle-listed rule, or by ATT&CK tactic equivalence in the mutation lane. | `eval/adversarial/test_scenario_harness.py::test_oracle_reconciliation` |
+| tpr | 1.0 (non-gap steps detected 6/6; oracle declares 11 step(s) and 5 gap(s)) | higher-better | Step COVERAGE, not rule completeness: the denominator excludes `no_rule_exists` gap steps (report._grade_chain skips them), so a gap can never lower TPR. Detection is judged by an oracle-listed rule, or by ATT&CK tactic equivalence in the mutation lane. | `eval/adversarial/test_scenario_harness.py::test_oracle_reconciliation` |
 | chain_fidelity | 0.6 | higher-better | Measures entity SHARING, not causal order: the join predicate answers 'joined' for a step pair and for the same pair reversed (directional_discrimination is 0.0), so it reports 'is there an entity bridge', never 'was the chain reconstructed'. | `eval/adversarial/test_scenario_harness.py::test_directional_discrimination` |
 | false_correlation_rate | 0.75 | lower-better | Same order-blind predicate as chain_fidelity: a saturated 1.0 cannot distinguish a mutation that INDUCES false correlation from one that merely fails to improve an already-saturated number. The number is the share of oracle-forbidden pairs an ENTITY-BRIDGE join connected (ADR-009/010: per-entity tracks never merge), NOT a claim that the forbidden causal direction happened; the twin's time-aware counterpart is the `forbidden_order_realised_rate` row (0.0 on AI-to-OT: the clock never realises the oracle's anti-causal pairs). | `eval/adversarial/test_scenario_harness.py::test_directional_discrimination` |
 | directional_discrimination | 0.0 | higher-better | The honest counterweight to the two rows above: 0.0 means the legacy join cannot tell a causal direction from its reverse. Order is graded separately (alert_order_ok; causal_order_* in the twin). | `eval/adversarial/test_scenario_harness.py::test_directional_discrimination` |
@@ -325,12 +325,12 @@ cover AI-to-OT. The other storylines show `not measured` for these; generalising
 |---|---|---|---|---|
 | decorative_expectations (all storylines) | 0 | lower-better | A rule listed at a step that did NOT fire there. Per-technique coverage is credited from MEASURED firing (fire_check), so a decorative expectation is never counted as coverage; this row counts them so the omission is visible. | `eval/adversarial/test_scenario_harness.py::test_oracle_reconciliation` |
 | oracle_new_disagreements (all storylines) | 0 | lower-better | Counts disagreements NOT on the frozen waiver list. The list itself is checked for staleness separately (accepted_count / stale_allowlist_entries). | `eval/adversarial/test_scenario_harness.py::test_oracle_reconciliation` |
-| oracle_accepted_disagreements (all storylines) | 22 | lower-better | A non-zero value means the answer key and reality disagree somewhere the project has knowingly accepted; the reason lives in the artifact, not here. | `eval/adversarial/test_scenario_harness.py::test_oracle_reconciliation` |
+| oracle_accepted_disagreements (all storylines) | 24 | lower-better | A non-zero value means the answer key and reality disagree somewhere the project has knowingly accepted; the reason lives in the artifact, not here. | `eval/adversarial/test_scenario_harness.py::test_oracle_reconciliation` |
 | oracle_stale_allowlist_entries (all storylines) | 0 | lower-better | A waiver that no longer reproduces. Non-zero means the allowlist outlived the disagreement it was written for. | `eval/adversarial/test_scenario_harness.py::test_oracle_reconciliation` |
 | corpus cases fully matched | 8/8 | higher-better | Eight hand-curated cases. A miss is reported per case in the artifact; this cell says how many had NO missed rule, not how well the rules generalise. | `eval/adversarial/test_layer_a.py::_test_coverage` |
 | corpus incidents promoted | 1 | info | One deliberate shared-attacker merge is expected; the cross-case merge cleanliness flag is what proves no incident spans two corpus groups. | **NONE** |
 
-## Per-technique coverage (28 techniques, 46 tagged rules)
+## Per-technique coverage (28 techniques, 47 tagged rules)
 
 `rules` = tagged rules carrying the technique (`†` = companion rule).
 `verified` = rules that fired on their own producer fixture AND whose boundary or
@@ -344,7 +344,7 @@ decorative expectation (see the cross-cutting table), never as coverage.
 |---|---|---|---|---|---|---|---|---|
 | AML.T0051 | atlas | AML.TA0004 | 1 | 1/1 | 1/317 (ai_to_ot/drop_agent_mcp_tool_call) | yes: ai_to_ot/agent_mcp_tool_call | declared at an oracle step AND measured on the rule's own fixture; the two agree, which still says nothing about traffic the fixture does not model | `eval/attack/test_fire_check.py::test_under_threshold_probe_catches_an_off_by_one_rule` |
 | T0836 | attack-ics | TA0106 | 2 | 2/2 | 2/317 (ot_opcua_sabotage/drop_process_write_night, ot_opcua_sabotage/drop_setpoint_tamper) | yes: ot_opcua_sabotage/process_write_night, ot_opcua_sabotage/setpoint_tamper | declared at an oracle step AND measured on the rule's own fixture; the two agree, which still says nothing about traffic the fixture does not model | `eval/attack/test_fire_check.py::test_under_threshold_probe_catches_an_off_by_one_rule` |
-| T0855 | attack-ics | TA0106 | 3 | 3/3 | 5/317 (ai_to_ot/drop_modbus_write, ai_to_ot/drop_process_anomaly, ot_opcua_sabotage/drop_forged_ticket_write, ot_opcua_sabotage/drop_process_write_night, ot_opcua_sabotage/drop_setpoint_tamper) | yes: ai_to_ot/modbus_write, ai_to_ot/process_anomaly, ot_opcua_sabotage/forged_ticket_write, ot_opcua_sabotage/process_write_night, ot_opcua_sabotage/setpoint_tamper | declared at an oracle step AND measured on the rule's own fixture; the two agree, which still says nothing about traffic the fixture does not model | `eval/attack/test_fire_check.py::test_under_threshold_probe_catches_an_off_by_one_rule` |
+| T0855 | attack-ics | TA0106 | 4 | 3/4 | 5/317 (ai_to_ot/drop_modbus_write, ai_to_ot/drop_process_anomaly, ot_opcua_sabotage/drop_forged_ticket_write, ot_opcua_sabotage/drop_process_write_night, ot_opcua_sabotage/drop_setpoint_tamper) | yes: ai_to_ot/modbus_write, ai_to_ot/process_anomaly, ot_opcua_sabotage/forged_ticket_write, ot_opcua_sabotage/process_write_night, ot_opcua_sabotage/setpoint_tamper | a boundary/near-miss probe did NOT hold for 1 rule(s); fire_check proves declared-vs-fired on the rule's own producer fixture, not real-world detection | `eval/attack/test_fire_check.py::test_under_threshold_probe_catches_an_off_by_one_rule` |
 | T0864 | attack-ics | TA0108 | 2 | 2/2 | 2/317 (ot_opcua_sabotage/drop_engineering_sessions, ot_opcua_sabotage/drop_rogue_device) | yes: ot_opcua_sabotage/engineering_sessions, ot_opcua_sabotage/rogue_device | declared at an oracle step AND measured on the rule's own fixture; the two agree, which still says nothing about traffic the fixture does not model | `eval/attack/test_fire_check.py::test_under_threshold_probe_catches_an_off_by_one_rule` |
 | T1003.001 | attack | TA0006 | 1 | 1/1 | 1/317 (win_credential_theft/drop_lsass_dump) | yes: win_credential_theft/lsass_dump | declared at an oracle step AND measured on the rule's own fixture; the two agree, which still says nothing about traffic the fixture does not model | `eval/attack/test_fire_check.py::test_under_threshold_probe_catches_an_off_by_one_rule` |
 | T1005 | attack | TA0009 | 1 | 1/1 | 4/317 (insider_exfil/drop_bulk_table_read, insider_exfil/stretch_2x, insider_exfil/stretch_6x, insider_exfil/thin_60pct) | yes: insider_exfil/bulk_table_read | declared at an oracle step AND measured on the rule's own fixture; the two agree, which still says nothing about traffic the fixture does not model | `eval/attack/test_fire_check.py::test_under_threshold_probe_catches_an_off_by_one_rule` |
@@ -371,7 +371,7 @@ decorative expectation (see the cross-cutting table), never as coverage.
 | T1566.001 | attack | TA0001 | 1 | 1/1 | 1/317 (phishing_bec/drop_phish_delivery) | yes: phishing_bec/phish_delivery | declared at an oracle step AND measured on the rule's own fixture; the two agree, which still says nothing about traffic the fixture does not model | `eval/attack/test_fire_check.py::test_under_threshold_probe_catches_an_off_by_one_rule` |
 | T1610 | attack | TA0002 | 1 | 1/1 | 2/317 (infra_takeover/drop_privileged_container, supply_chain_ci/drop_privileged_runner) | yes: infra_takeover/privileged_container, supply_chain_ci/privileged_runner | declared at an oracle step AND measured on the rule's own fixture; the two agree, which still says nothing about traffic the fixture does not model | `eval/attack/test_fire_check.py::test_under_threshold_probe_catches_an_off_by_one_rule` |
 
-## Oracle gaps (45)
+## Oracle gaps (41)
 
 Steps the oracle records with `no_rule_exists: true`. These are excluded from the
 TPR denominator, so a declared gap can never lower TPR -- read them here, not there.
@@ -387,20 +387,16 @@ TPR denominator, so a declared gap can never lower TPR -- read them here, not th
 | cloud_iam_abuse | attach_admin_policy | No shipped rule reads cloud IAM policy attachment. |
 | cloud_iam_abuse | create_access_key | No shipped rule reads cloud credential creation. |
 | cloud_iam_abuse | log_tampering | No shipped rule reads audit-trail configuration changes. |
-| flow_suricata_c2_exfil | c2_checkin | No shipped rule reads a Suricata alert or flow record: the IDS verdict is carried as data (unmapped.ids.*, unmapped.suricata.flow.*) and nothing selects it. The link on this step i |
-| flow_suricata_c2_exfil | c2_tasking | No shipped rule reads a Suricata alert or flow record: the IDS verdict is carried as data (unmapped.ids.*, unmapped.suricata.flow.*) and nothing selects it. The link on this step i |
+| flow_suricata_c2_exfil | c2_tasking | common_ids_high_severity_alert fires on this step's event but folds into c2_checkin's alert: the rule groups by unmapped.ids.flow_id with a 3600 s window and threshold 1, and both  |
 | flow_suricata_c2_exfil | rdp_lateral_alert | No shipped rule reads a Suricata alert or flow record: the IDS verdict is carried as data (unmapped.ids.*, unmapped.suricata.flow.*) and nothing selects it. The link on this step i |
-| flow_suricata_c2_exfil | c2_staging | No shipped rule reads a Suricata alert or flow record: the IDS verdict is carried as data (unmapped.ids.*, unmapped.suricata.flow.*) and nothing selects it. The link on this step i |
 | flow_suricata_c2_exfil | exfil_alert | No shipped rule reads a Suricata alert or flow record: the IDS verdict is carried as data (unmapped.ids.*, unmapped.suricata.flow.*) and nothing selects it. The link on this step i |
-| flow_suricata_c2_exfil | c2_exfil_ack | No shipped rule reads a Suricata alert or flow record: the IDS verdict is carried as data (unmapped.ids.*, unmapped.suricata.flow.*) and nothing selects it. The link on this step i |
+| flow_suricata_c2_exfil | c2_exfil_ack | common_ids_high_severity_alert fires on this step's event but folds into c2_staging's alert: the rule groups by unmapped.ids.flow_id with a 3600 s window and threshold 1, and both  |
 | flow_suricata_c2_exfil | rdp_close | No shipped rule reads a Suricata alert or flow record: the IDS verdict is carried as data (unmapped.ids.*, unmapped.suricata.flow.*) and nothing selects it. The link on this step i |
 | flow_suricata_c2_exfil | exfil_close | No shipped rule reads a Suricata alert or flow record: the IDS verdict is carried as data (unmapped.ids.*, unmapped.suricata.flow.*) and nothing selects it. The link on this step i |
 | flow_suricata_c2_exfil | c2_close | No shipped rule reads a Suricata alert or flow record: the IDS verdict is carried as data (unmapped.ids.*, unmapped.suricata.flow.*) and nothing selects it. The link on this step i |
 | flow_suricata_modbus_sabotage | modbus_poll_recon | No shipped rule reads a Suricata modbus record: suricata_eve.py maps it to class 4001 / activity 99 with unmapped.ot.* and never sets unmapped.ot.anomaly_type (modbus_anomaly.py's  |
 | flow_suricata_modbus_sabotage | modbus_write_coil | No shipped rule reads a Suricata modbus record: suricata_eve.py maps it to class 4001 / activity 99 with unmapped.ot.* and never sets unmapped.ot.anomaly_type (modbus_anomaly.py's  |
-| flow_suricata_modbus_sabotage | modbus_ids_alert | No shipped rule reads a Suricata alert: the verdict is carried as data (unmapped.ids.*) and nothing selects it. Both endpoints of the links on this step are unalerted. |
 | flow_suricata_modbus_sabotage | plc2_write | No shipped rule reads a Suricata modbus record: suricata_eve.py maps it to class 4001 / activity 99 with unmapped.ot.* and never sets unmapped.ot.anomaly_type (modbus_anomaly.py's  |
-| flow_suricata_modbus_sabotage | plc2_ids_alert | No shipped rule reads a Suricata alert: the verdict is carried as data (unmapped.ids.*) and nothing selects it. Both endpoints of the links on this step are unalerted. |
 | flow_suricata_modbus_sabotage | plc2_close | No shipped rule reads a Suricata flow record (class 4001, activity 2 Close, unmapped.suricata.flow.*). Both endpoints of the links on this step are unalerted. |
 | flow_suricata_modbus_sabotage | modbus_session_close | No shipped rule reads a Suricata flow record (class 4001, activity 2 Close, unmapped.suricata.flow.*). Both endpoints of the links on this step are unalerted. |
 | flow_zeek_ot_pivot | modbus_recon | No shipped rule reads a Zeek Modbus row: zeek_json.py maps it to class 4001 / activity 99 with unmapped.ot.* and never sets unmapped.ot.anomaly_type (modbus_anomaly.py's own classi |
@@ -661,13 +657,13 @@ TPR denominator, so a declared gap can never lower TPR -- read them here, not th
 ## What this harness cannot prove
 
 1. TPR is step COVERAGE: a step counts when ANY oracle-listed rule fires there, and steps the oracle records as `no_rule_exists` are excluded from the denominator, so a declared gap can never lower TPR.
-   - guard: OK -- 14 scenario(s): 0 new disagreement, 0 stale waiver; 22 frozen dated waiver(s) reported; artifact states TPR is step coverage (report.py counts a step matched when ANY expected rule fires (step_fir...)
+   - guard: OK -- 14 scenario(s): 0 new disagreement, 0 stale waiver; 24 frozen dated waiver(s) reported; artifact states TPR is step coverage (report.py counts a step matched when ANY expected rule fires (step_fir...)
 2. For a burst step, mttd_seconds is measured to the FIRING event, not to the first event of the burst; it is a detection latency, not an exposure window.
    - static (unguarded)
 3. chain_fidelity and false_correlation_rate measure entity SHARING, not causal order: the legacy join predicate answers 'joined' for a pair and for that pair reversed, so both numbers describe 'is there an entity bridge', never 'was the causal chain reconstructed'. Order is graded in the twin by event time instead (forbidden_order_realised_rate, 0.0 on AI-to-OT).
    - guard: OK -- directional_discrimination (ai_to_ot=0.0, cloud_iam_abuse=None, flow_suricata_c2_exfil=0.1667, flow_suricata_modbus_sabotage=0.0, flow_zeek_ot_pivot=0.0, infra_takeover=0.0, insider_exfil=0.2, it_intrusion=0.0, network_credential_abuse=0.0, ot_opcua_sabotage=0.0, phishing_bec=0.0, ransomware=0.0, supply_chain_ci=0.0, win_credential_theft=0.0) < 0.5 on every storyline
 4. alert_order_ok is only meaningful with at least two alerting steps; where a storyline has fewer, it is reported as null rather than folded to true.
-   - guard: OK -- ai_to_ot: 5 non-gap step(s) of 7, alert_order_ok=true; cloud_iam_abuse: 1 non-gap step(s) of 8, alert_order_ok=null; flow_suricata_c2_exfil: 4 non-gap step(s) of 13, alert_order_ok=true; flow_suricata_modbus_sabotage: 4 non-gap step(s) of 11, alert_order_ok=true; flow_zeek_ot_pivot: 5 non-gap step(s) of 12, alert_order_ok=true; infra_takeover: 3 non-gap step(s) of 3, alert_order_ok=true; insider_exfil: 2 non-gap step(s) of 7, alert_order_ok=true; it_intrusion: 5 non-gap step(s) of 6, alert_order_ok=true; network_credential_abuse: 3 non-gap step(s) of 3, alert_order_ok=true; ot_opcua_sabotage: 5 non-gap step(s) of 5, alert_order_ok=true; phishing_bec: 6 non-gap step(s) of 8, alert_order_ok=true; ransomware: 5 non-gap step(s) of 9, alert_order_ok=true; supply_chain_ci: 5 non-gap step(s) of 6, alert_order_ok=true; win_credential_theft: 5 non-gap step(s) of 5, alert_order_ok=true
+   - guard: OK -- ai_to_ot: 5 non-gap step(s) of 7, alert_order_ok=true; cloud_iam_abuse: 1 non-gap step(s) of 8, alert_order_ok=null; flow_suricata_c2_exfil: 6 non-gap step(s) of 13, alert_order_ok=true; flow_suricata_modbus_sabotage: 6 non-gap step(s) of 11, alert_order_ok=true; flow_zeek_ot_pivot: 5 non-gap step(s) of 12, alert_order_ok=true; infra_takeover: 3 non-gap step(s) of 3, alert_order_ok=true; insider_exfil: 2 non-gap step(s) of 7, alert_order_ok=true; it_intrusion: 5 non-gap step(s) of 6, alert_order_ok=true; network_credential_abuse: 3 non-gap step(s) of 3, alert_order_ok=true; ot_opcua_sabotage: 5 non-gap step(s) of 5, alert_order_ok=true; phishing_bec: 6 non-gap step(s) of 8, alert_order_ok=true; ransomware: 5 non-gap step(s) of 9, alert_order_ok=true; supply_chain_ci: 5 non-gap step(s) of 6, alert_order_ok=true; win_credential_theft: 5 non-gap step(s) of 5, alert_order_ok=true
 5. decoy_contamination is null when a storyline declares no decoys, and a benign scanner sitting on the attacker's own target is POOLED into the attack incident by design -- a documented trade-off, not an oversight.
    - guard: OK -- measured on cloud_iam_abuse(max 0.0), flow_suricata_c2_exfil(max 0.0), flow_suricata_modbus_sabotage(max 0.0), flow_zeek_ot_pivot(max 0.0), infra_takeover(max 0.0), insider_exfil(max 0.0), it_intrusion(max 0.0), network_credential_abuse(max 0.0), ot_opcua_sabotage(max 0.0), phishing_bec(max 0.0), ransomware(max 0.0), supply_chain_ci(max 0.0), win_credential_theft(max 0.0); null on ai_to_ot
 6. mutation_robustness is measured RELATIVE to a baseline whose chain fidelity and false-correlation rate are already degraded, and variants that change nothing (N/A) are excluded from the denominator.
@@ -675,7 +671,7 @@ TPR denominator, so a declared gap can never lower TPR -- read them here, not th
 7. The evasion search finds the boundary the rule YAML DECLARES. It proves the engine honours the rules as written, not that the rules are the right ones.
    - guard: OK -- 25 searched row(s): all_agree=true, so measured == predicted-from-declared at every searched boundary
 8. fire_check proves declared-vs-fired on each rule's OWN producer fixture. It is not a real-world detection result and says nothing about traffic the fixture does not model.
-   - guard: OK -- 46 tagged rule(s), every one fired on its own producer fixture
+   - guard: OK -- 47 tagged rule(s), every one fired on its own producer fixture
 9. No third-party labelled corpus runs in the blocking lane: run_all_tests.sh never invokes evtx_eval.py or splunk_eval.py, which are dataset-gated and opt-in only.
    - guard: OK -- run_all_tests.sh: 0 matches for the ANCHORED '$PY eval/detection_accuracy/(evtx OR splunk)_eval.py'; the H7 oracle-vs-engine test it does run (test_evtx_eval.py) uses no third-party corpus
 10. The oracles are self-authored: the answer key and the system under test were written by the same project. oracle_consistency reconciles them against an independently derived oracle, which bounds but does not remove that bias.
@@ -683,7 +679,7 @@ TPR denominator, so a declared gap can never lower TPR -- read them here, not th
 11. Per-technique attribution is per STEP, not per event: a step mapped to two techniques credits both, and mutation attrition on a multi-rule step can overstate one technique.
    - guard: OK -- 11 oracle step(s) carry >1 expected rule and are credited to every one of them: ai_to_ot/agent_mcp_tool_call (2), ai_to_ot/n8n_execution (2), infra_takeover/mass_vm_delete (2), it_intrusion/dns_exfil (2)
 12. `--check` proves the committed card matches a fresh render; it blocks nothing by itself. The atom ratchet (`eval/twin/ratchet.py check`, a gate stanza) blocks an unwaived drop of every atom it measures, but several card metrics have no atom behind them, and for those accepting a worse number is still a card regeneration plus a commit.
-   - guard: OK -- 6292 atoms in eval/twin/baseline_scenarios.json; 20 of 32 card metrics ratcheted; not ratcheted: mttr, peak_alert_score, severity_in_band, causal_order_fidelity, order_concordance, forbidden_order_realised_rate, degradation_behavior, decorative_expectations, oracle_new_disagreements, oracle_accepted_disagreements, oracle_stale_allowlist_entries, corpus_incidents_promoted
+   - guard: OK -- 6415 atoms in eval/twin/baseline_scenarios.json; 20 of 32 card metrics ratcheted; not ratcheted: mttr, peak_alert_score, severity_in_band, causal_order_fidelity, order_concordance, forbidden_order_realised_rate, degradation_behavior, decorative_expectations, oracle_new_disagreements, oracle_accepted_disagreements, oracle_stale_allowlist_entries, corpus_incidents_promoted
 
 ## Provenance
 
@@ -828,7 +824,7 @@ TPR denominator, so a declared gap can never lower TPR -- read them here, not th
   "win_credential_theft": 13.0
  },
  "oracle_accepted_disagreements": {
-  "global": 22.0
+  "global": 24.0
  },
  "oracle_new_disagreements": {
   "global": 0.0

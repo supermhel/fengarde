@@ -413,7 +413,12 @@ def _evidence_reconstruction(alerts_by_step: list[dict], by_id: dict,
     unresolved = sum(len(p.get("unresolved_event_ids") or []) for p in provenance)
     # The order the WS-3 package PRESENTS the attack in (its alert blocks), as
     # (oracle step, alert time) -- graded by causal_order.story_order_ok.
-    step_of = {a["alert"].get("alert_id"): a.get("step") for a in alerts_by_step}
+    # Two chain events can mint ONE alert_id (a stateful rule grouped by a key two steps share, e.g. a Suricata
+    # flow_id inside one window): the indexer holds one alert for the id, so the alert belongs to the FIRST step
+    # that raised it (the same earliest-wins rule ws8 timeline.build_timeline applies to duplicate ids).
+    step_of: dict = {}
+    for a in alerts_by_step:
+        step_of.setdefault(a["alert"].get("alert_id"), a.get("step"))
     package_alert_order = [
         [step_of.get((b.get("content") or {}).get("alert_id")), (b.get("content") or {}).get("time")]
         for b in ((pkg or {}).get("blocks") or []) if b.get("type") == "alert"]

@@ -518,6 +518,7 @@ _INERT_KEYS: dict = {
     # flow_* oracles (2026-11-20):
     "provenance.rules_read.common_dns_exfil": _PROV_PIN,
     "provenance.rules_read.common_dns_tunnel_by_domain": _PROV_PIN,
+    "provenance.rules_read.common_ids_high_severity_alert": _PROV_PIN,   # 2026-11-20 (Suricata IDS gap steps closed by #199)
     "provenance.rules_read.common_port_scan": _PROV_PIN,
     "provenance.rules_read.common_priv_grant": _PROV_PIN,
     "provenance.rules_read.common_refused_connection_scan": _PROV_PIN,

@@ -29,6 +29,7 @@ provenance:
   basis: "rule description/detection/siem blocks and parser docstrings only; causal_links derived from the builder's own minted flow keys"
   rules_read:
     common_bruteforce: "f685feb7ab0efe2e0cd9ed3427a2e0466c3a0de785cc28deef3c53a0b585919b"
+    common_ids_high_severity_alert: "4b7889ef66883195f31ad9d383b3e98e9f30e285dea71dacf7ffabe8259ed350"
     common_lateral_movement: "2f010d5cf5adb6de7df93f6a30da3ed32029626dccc912f118af9813d0d4c8ae"
     common_port_scan: "c0c97060ce0620959b450df333154677f2135130748a7cbefd452db7529f3786"
     common_port_sweep: "ba865ca0603fcc06fa6fdbac0e9672ffdfaddd579b2645198b8dab02d9ec4b63"
@@ -137,11 +138,9 @@ detection_points:
     step: modbus_ids_alert
     role: the IDS alert on that write, on the same flow_id
     expected_event_source: suricata_eve alert (class 4001, activity 99)
-    expected_rules: []
-    gap:
-      no_rule_exists: true
-      attack_technique: "T0855"
-      reason: 'No shipped rule reads a Suricata alert: the verdict is carried as data (unmapped.ids.*) and nothing selects it. Both endpoints of the links on this step are unalerted.'
+    expected_rules:
+      - {rule_id: "0331c311-7985-47c8-b554-682781ef1069", title: Suricata IDS alert with signature severity 1 (high), level: high, role: IDS severity-1 passthrough}
+    gap: {no_rule_exists: false}
 
   plc2_write:
     step: plc2_write
@@ -157,11 +156,9 @@ detection_points:
     step: plc2_ids_alert
     role: the IDS alert on that write, on the PLC 2 flow_id
     expected_event_source: suricata_eve alert (class 4001, activity 99)
-    expected_rules: []
-    gap:
-      no_rule_exists: true
-      attack_technique: "T0836"
-      reason: 'No shipped rule reads a Suricata alert: the verdict is carried as data (unmapped.ids.*) and nothing selects it. Both endpoints of the links on this step are unalerted.'
+    expected_rules:
+      - {rule_id: "0331c311-7985-47c8-b554-682781ef1069", title: Suricata IDS alert with signature severity 1 (high), level: high, role: IDS severity-1 passthrough}
+    gap: {no_rule_exists: false}
 
   plc2_close:
     step: plc2_close
@@ -199,9 +196,9 @@ evidence:
     modbus_poll_recon: {fields: [src_endpoint.ip, dst_endpoint.ip]}
     priv_grant: {fields: [src_endpoint.ip, actor.user.name]}
     modbus_write_coil: {fields: [src_endpoint.ip, dst_endpoint.ip]}
-    modbus_ids_alert: {fields: [src_endpoint.ip, dst_endpoint.ip]}
+    modbus_ids_alert: {fields: [src_endpoint.ip, dst_endpoint.ip, unmapped.ids.flow_id]}
     plc2_write: {fields: [src_endpoint.ip, dst_endpoint.ip]}
-    plc2_ids_alert: {fields: [src_endpoint.ip, dst_endpoint.ip]}
+    plc2_ids_alert: {fields: [src_endpoint.ip, dst_endpoint.ip, unmapped.ids.flow_id]}
     plc2_close: {fields: [src_endpoint.ip, dst_endpoint.ip]}
     modbus_session_close: {fields: [src_endpoint.ip, dst_endpoint.ip]}
 
@@ -239,7 +236,7 @@ known_gaps:
   - kind: mutant_survivor
     operator: flip_gap_to_false
     outcome: SURVIVED
-    max: 7
+    max: 5
     since: '2026-11-20'
     reason: 'the step is a declared gap: no shipped rule fires there, so flipping it to a detected step changes nothing graded'
   - kind: mutant_survivor
@@ -266,3 +263,15 @@ known_gaps:
     max: 8
     since: '2026-11-20'
     reason: 'one of the two swapped steps raises no alert (and the entities are shared across the chain), so neither alert order nor the entity-bridge fidelity predicate has anything to disagree about'
+  - kind: derive_waiver
+    finding: F6
+    step: modbus_ids_alert
+    item: 0331c311-7985-47c8-b554-682781ef1069
+    since: '2026-11-20'
+    reason: 'common_ids_high_severity_alert carries no mitre block BY DESIGN (a severity-1 passthrough: the IDS signature, not the rule, says what the technique is; technique_waivers.yaml no_technique, 2026-11-20), so tactic coverage falls back to rule identity on this step. Declared here, not hidden.'
+  - kind: derive_waiver
+    finding: F6
+    step: plc2_ids_alert
+    item: 0331c311-7985-47c8-b554-682781ef1069
+    since: '2026-11-20'
+    reason: 'common_ids_high_severity_alert carries no mitre block BY DESIGN (a severity-1 passthrough: the IDS signature, not the rule, says what the technique is; technique_waivers.yaml no_technique, 2026-11-20), so tactic coverage falls back to rule identity on this step. Declared here, not hidden.'
