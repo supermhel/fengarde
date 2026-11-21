@@ -105,6 +105,13 @@ LEGACY_EXPECT = {
     # (it_intrusion, ransomware): the sweep evidences only an address, so sweep -> spray has no actor edge.
     "win_credential_theft": {"tpr": 1.0, "chain_fidelity": 1.0, "false_correlation_rate": 0.0,
                              "directional_discrimination": 0.0, "incident_count": 3},
+    # 2026-11-20: flow_* storylines (WP-D2), measured on the first run, seed 7, not tuned.
+    "flow_suricata_c2_exfil": {"tpr": 1.0, "chain_fidelity": 0.5833, "false_correlation_rate": 0.75,
+                               "directional_discrimination": 0.1667, "incident_count": 2},
+    "flow_suricata_modbus_sabotage": {"tpr": 1.0, "chain_fidelity": 0.6, "false_correlation_rate": 0.75,
+                                      "directional_discrimination": 0.0, "incident_count": 2},
+    "flow_zeek_ot_pivot": {"tpr": 1.0, "chain_fidelity": 0.6364, "false_correlation_rate": 0.75,
+                           "directional_discrimination": 0.0, "incident_count": 2},
     "network_credential_abuse": {"tpr": 1.0, "chain_fidelity": 0.5, "false_correlation_rate": 0.0,
                                  "directional_discrimination": 0.0, "incident_count": 1},
 

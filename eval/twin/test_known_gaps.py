@@ -231,9 +231,10 @@ def test_plumbing() -> None:
         paths = {om.normalise_path(p) for p, _ in om._leaves(kg.strip(o))}
         _check(f"PLUMBING {sd.name}: the mutation probe sees no known_gaps key (not oracle semantics)",
                not any(p.startswith("known_gaps") for p in paths) and "known_gaps" in o or not gaps)
-    n = sum(len(kg.load(_oracle(sd), sd.name)) for sd in reg.ALL)
     # 74 migrated from the legacy tables + 28 declared by the five process-tree-keyed storylines (2026-11-19):
-    # 15 order_blind_join, 3 f2_cap, 10 mutant_survivor.
+    # 15 order_blind_join, 3 f2_cap, 10 mutant_survivor. Storylines added later (flow_*) declare their own
+    # gaps and are not part of the migration count.
+    n = sum(len(kg.load(_oracle(sd), sd.name)) for sd in reg.ALL if not sd.name.startswith("flow_"))
     _check("PLUMBING all 74 migrated legacy entries + 28 keyed-storyline declarations live in the oracles",
            n == 102, f"{n}")
 

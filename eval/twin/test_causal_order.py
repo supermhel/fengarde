@@ -338,6 +338,9 @@ def _test_real() -> dict:
               # 2026-10-28, first run of storylines 10-11 (measured, not tuned). network_credential_abuse's
               # 0.5: the ASA sweep evidences only an address, so the sweep -> spray pair has no edge.
               "win_credential_theft": (4, 0.75), "network_credential_abuse": (2, 0.5),
+              # 2026-11-20, first run of the flow_* storylines (WP-D2; measured, not tuned)
+              "flow_suricata_c2_exfil": (12, 0.8333), "flow_suricata_modbus_sabotage": (10, 0.9),
+              "flow_zeek_ot_pivot": (11, 0.9091),
               # 2026-11-19, first run of the five process-tree-keyed storylines (measured, not tuned)
               "endpoint_macro_c2": (5, 0.8), "excel_loader_domain_abuse": (5, 1.0),
               "pdf_exploit_lateral": (6, 1.0), "outlook_script_backdoor": (6, 0.8333),

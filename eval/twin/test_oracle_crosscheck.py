@@ -335,10 +335,10 @@ def test_derive_rule_skew() -> None:
     # F2 (undecidable) is a WARN with a cap, and an unmodelled operator is UNDECIDED, never guessed
     rule_raw = {"title": "t", "id": "00000000-0000-4000-8000-0000000000aa", "level": "high",
                 "logsource": {"category": "account_change"},
-                "detection": {"s": {"class_uid": 3003, "src_endpoint.ip": {"gt": 5}}, "condition": "s"},
+                "detection": {"s": {"class_uid": 3003, "src_endpoint.ip": {"contains": "5"}}, "condition": "s"},
                 "mitre": {"tactic": "TA0003"}}
     undecided_rule = od.DRule(rule_raw)
-    _check("DER-NEG-1 an operator the reader does not model (gt) evaluates to UNDECIDED, not True/False",
+    _check("DER-NEG-1 an operator the reader does not model (contains) evaluates to UNDECIDED, not True/False",
            od.eval_condition(undecided_rule, {"class_uid": 3003, "src_endpoint": {"ip": "x"}}) is None
            and od.eval_condition(undecided_rule, {"class_uid": 3002, "src_endpoint": {"ip": "x"}}) is False)
     rules2 = dict(_RULES)

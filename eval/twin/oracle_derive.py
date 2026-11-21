@@ -155,6 +155,12 @@ def _tri_or(a, b):
 # ---------------------------------------------------------------------------
 # rule model
 # ---------------------------------------------------------------------------
+# Default-off rules (siem.default_enabled: false) the twin's detector opts in: the one rule the harness enables for
+# every storyline (eval/twin/report.py and negative_controls.py construct the Detector with exactly this opt-in).
+# Every other default-off rule (e.g. ot_write_unlisted_source, empty allowlist) never fires in the twin.
+TWIN_OPT_IN_RULES = frozenset({"e7a14b6d-3c52-4d90-8f1b-5a9c0d2e6b47"})  # ot_opcua_write_unauthorized_node
+
+
 class DRule:
     """One rule file as this module reads it (not engine.Rule)."""
 
@@ -170,6 +176,7 @@ class DRule:
         expr = self.condition or " and ".join(self.selections)
         self.tokens = _TOKEN_RE.findall(expr)
         siem = raw.get("siem") or {}
+        self.default_enabled = siem.get("default_enabled", True) is not False
         self.window_seconds = siem.get("window_seconds")
         self.threshold = siem.get("threshold")
         self.stateful = self.window_seconds is not None and self.threshold is not None
@@ -302,6 +309,28 @@ def _in_list(actual, choices) -> bool:
     return False
 
 
+_NUMERIC_OPS = ("gt", "gte", "lt", "lte", "ne")
+
+
+def _numeric_compare(op: str, actual, expected) -> bool:
+    """Mirror of engine._numeric_compare (fail closed: a bool or non-numeric operand is False).
+    Kept as an independent re-implementation, and fuzz-checked against the engine by
+    test_oracle_crosscheck (DER-NEG-2)."""
+    if isinstance(actual, bool) or isinstance(expected, bool):
+        return False
+    if not isinstance(actual, (int, float)) or not isinstance(expected, (int, float)):
+        return False
+    if op == "gt":
+        return actual > expected
+    if op == "gte":
+        return actual >= expected
+    if op == "lt":
+        return actual < expected
+    if op == "lte":
+        return actual <= expected
+    return actual != expected  # "ne"
+
+
 def _field_match(expected, actual, allowlists_dir=None):
     """Tri-state: does ``actual`` satisfy one selector clause ``expected``?"""
     if not isinstance(expected, dict):
@@ -318,8 +347,10 @@ def _field_match(expected, actual, allowlists_dir=None):
             v = isinstance(arg, str) and not _allowlist(arg, allowlists_dir).matches(actual)
         elif op == "outside_hours":
             v = _outside_hours(arg, actual)
+        elif op in _NUMERIC_OPS:
+            v = _numeric_compare(op, actual, arg)
         else:
-            v = None  # gt/lt/contains/glob/... are not modelled: say UNDECIDED, never guess
+            v = None  # contains/glob/... are not modelled: say UNDECIDED, never guess
         result = _tri_and(result, v)
     return result
 
@@ -455,6 +486,8 @@ def derive(sdef, seed: int = 7, *, rules: dict | None = None, result=None,
         evidence: dict = {}  # rid -> (kind, frozenset) the alert would cite (the companion coverage test)
         for rid in order:
             rule = rules[rid]
+            if not rule.default_enabled and rid not in TWIN_OPT_IN_RULES:
+                continue  # siem.default_enabled: false -- the twin's detector does not opt the rule in
             cond = eval_condition(rule, event, allowlists_dir)
             if cond is None:
                 st["undecided"].add(rid)

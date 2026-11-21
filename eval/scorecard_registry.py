@@ -191,13 +191,16 @@ VOLATILE: tuple[str, ...] = (
 #: storyline that lands must extend this list in the same commit (5th storyline
 #: ``ot_opcua_sabotage``, 2026-10-14; P1 storylines 6-9 ``ransomware``, ``insider_exfil``,
 #: ``cloud_iam_abuse``, ``supply_chain_ci``, 2026-10-14; storylines 10-11 ``win_credential_theft``,
-#: ``network_credential_abuse``, 2026-10-28, which name the last 8 rules no oracle named; the five
-#: process-tree-keyed storylines ``endpoint_macro_c2``, ``excel_loader_domain_abuse``, ``pdf_exploit_lateral``,
+#: ``network_credential_abuse``, 2026-10-28, which name the last 8 rules no oracle named;
+#: the three ``flow_*`` network-flow storylines, 2026-11-20; the five process-tree-keyed storylines
+#: ``endpoint_macro_c2``, ``excel_loader_domain_abuse``, ``pdf_exploit_lateral``,
 #: ``outlook_script_backdoor``, ``reader_staged_loader``, 2026-11-19, ADR-011 n gap / ADR-012 WP 7).
 STORYLINES: tuple[str, ...] = ("ai_to_ot", "it_intrusion", "infra_takeover",
                                "phishing_bec", "ot_opcua_sabotage", "ransomware",
                                "insider_exfil", "cloud_iam_abuse", "supply_chain_ci",
                                "win_credential_theft", "network_credential_abuse",
+                               "flow_suricata_c2_exfil", "flow_suricata_modbus_sabotage",
+                               "flow_zeek_ot_pivot",
                                "endpoint_macro_c2", "excel_loader_domain_abuse", "pdf_exploit_lateral",
                                "outlook_script_backdoor", "reader_staged_loader")
 
