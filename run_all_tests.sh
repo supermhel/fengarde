@@ -700,6 +700,13 @@ echo
 echo "== twin: the oracle mutation instrument ITSELF (waiver table + inert-key table + ratchet over every storyline) =="; LAST_HEADER="== twin: the oracle mutation instrument itself =="
 $PY eval/twin/oracle_mutate.py --seed 7 || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
+echo "== twin: ADR-011/012 process-tree-keyed storylines (determinism, real parsers, raw ProcessGuid keys, sender scope, oracle provenance, causal_links == derivation from the raw keys) =="; LAST_HEADER="== twin: keyed storylines (ADR-011/012) =="
+$PY eval/twin/test_storyline_endpoint_macro_c2.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+$PY eval/twin/test_storyline_excel_loader_domain_abuse.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+$PY eval/twin/test_storyline_pdf_exploit_lateral.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+$PY eval/twin/test_storyline_outlook_script_backdoor.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+$PY eval/twin/test_storyline_reader_staged_loader.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
 echo "== ws5 triage eval: committed labelled set still equals what the current rules/parsers/storylines produce =="; LAST_HEADER="== ws5 triage eval: labelled set not stale =="
 $PY eval/llm_triage/build_labelled_set.py --check || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 fi  # tier: eval-twin
