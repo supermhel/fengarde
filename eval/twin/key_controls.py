@@ -42,7 +42,7 @@ import json
 import random
 import sys
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 ROOT = Path(__file__).resolve().parents[2]
 TWIN = Path(__file__).resolve().parent
@@ -228,7 +228,7 @@ def key_collide(alerts: list, ns: str = "proc", value: str = "1234",
     hold no such pair (the control then says nothing)."""
     out = copy.deepcopy(alerts)
     pair = _pick_unrelated_pair(out)
-    info = {"control": "key_collide", "ns": ns, "value": value, "applied": False,
+    info: dict[str, Any] = {"control": "key_collide", "ns": ns, "value": value, "applied": False,
             "pair": None, "keys_attached": 0}
     if pair is None:
         return out, info
@@ -260,7 +260,7 @@ def key_forge(alerts: list, specs_by_handle: dict, forged_sender: str = FORGED_S
     joins the forger to whichever genuine event holds that key, not necessarily the one it copied) and none
     inside the encoding pair."""
     out = copy.deepcopy(alerts)
-    info = {"control": "key_forge", "applied": False, "pairs": [], "forged_handles": [],
+    info: dict[str, Any] = {"control": "key_forge", "applied": False, "pairs": [], "forged_handles": [],
             "encoding_pair": None, "forged_sender": forged_sender}
     genuine = [a for a in out if _handle(a) in specs_by_handle][:limit]
     if not genuine:

@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from typing import Any
 
 TWIN = Path(__file__).resolve().parent
 if str(TWIN) not in sys.path:
@@ -49,7 +50,7 @@ def ev(story: str, step: str) -> str:
 
 
 def item(story: str, step: str, keyed: bool = True) -> dict:
-    alert = {"alert_id": f"al-{story}-{step}", "event_ids": [ev(story, step)]}
+    alert: dict[str, Any] = {"alert_id": f"al-{story}-{step}", "event_ids": [ev(story, step)]}
     if keyed:
         alert["causal_keys"] = [dict(KEY)]
     return {"step": step, "alert": alert}

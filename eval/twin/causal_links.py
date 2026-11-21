@@ -46,7 +46,7 @@ can mutate them and prove they matter.
 """
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, Optional
 
 from causal_order import wilson_interval
 
@@ -308,7 +308,7 @@ def gate(results: list, key_shuffle: Optional[list] = None) -> dict:
     if share is not None and share > MAX_STORYLINE_SHARE:
         why.append(f"largest storyline share {share:.3f} > {MAX_STORYLINE_SHARE}")
 
-    out = {"verdict": None, "reasons": why, "failures": [], "pooled": pooled,
+    out: dict[str, Any] = {"verdict": None, "reasons": why, "failures": [], "pooled": pooled,
            "max_storyline_share": round(share, 4) if share is not None else None,
            "claimable_bases": qualified,
            "bases_below_min": sorted(b for b, v in pooled["per_basis"].items()
