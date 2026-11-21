@@ -4918,6 +4918,9 @@
     "tech/attack-ics:T0855/cell/ot_opcua_sabotage/setpoint_tamper/timing/to_night": "retained",
     "tech/attack-ics:T0855/cell/ot_opcua_sabotage/setpoint_tamper/volume/thin_25pct": "retained",
     "tech/attack-ics:T0855/cell/ot_opcua_sabotage/setpoint_tamper/volume/thin_60pct": "retained",
+    "tech/attack-ics:T0855/rule/1256b853-33fb-425a-b954-f19add35285f/boundary_too_loose_n": 0,
+    "tech/attack-ics:T0855/rule/1256b853-33fb-425a-b954-f19add35285f/fires": true,
+    "tech/attack-ics:T0855/rule/1256b853-33fb-425a-b954-f19add35285f/near_miss_held": false,
     "tech/attack-ics:T0855/rule/9c1d2e3f-4a5b-4c6d-8e7f-1a2b3c4d5e6f/boundary_too_loose_n": 0,
     "tech/attack-ics:T0855/rule/9c1d2e3f-4a5b-4c6d-8e7f-1a2b3c4d5e6f/fires": true,
     "tech/attack-ics:T0855/rule/9c1d2e3f-4a5b-4c6d-8e7f-1a2b3c4d5e6f/near_miss_held": true,
@@ -6928,7 +6931,7 @@
   },
   "basis": "harness-measured",
   "fingerprint": {
-    "system_fingerprint": "82cbdc24cba3950cd45e4763710674961fc5c54965dd031134f79f0c9fc36440"
+    "system_fingerprint": "46c6097b5441e08063ca7e9ec7c23eebdfc7a66a0a41d9c4ab50fce2000c10b8"
   },
   "retired": [],
   "schema": "fengarde-scenario-ratchet-v1",

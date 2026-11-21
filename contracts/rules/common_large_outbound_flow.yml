@@ -1,0 +1,52 @@
+title: Very large outbound transfer to a non-private destination (Suricata flow / Zeek conn, 1 GiB+)
+id: 8bde66cd-c1e9-45e5-83d7-fd091eb80f1d
+status: experimental
+description: >
+  One closed flow in which the initiator sent 1 GiB (1,073,741,824 bytes) or more to a destination outside the private
+  ranges in contracts/allowlists/corp_ranges.yml: Suricata `flow` records (unmapped.suricata.flow.bytes_toserver) or
+  Zeek conn.log rows (unmapped.zeek.conn.orig_bytes), OCSF Network Activity activity 2 Close, read from the sensors'
+  own byte counters. A data-volume heuristic for bulk exfiltration over any protocol; it does not look inside the
+  traffic and cannot tell exfiltration from a legitimate bulk upload.
+  Threshold choice: 1 GiB is deliberately high. Interactive web use, patch downloads (those are inbound, so
+  bytes-to-server stays small) and ordinary SaaS sync stay far below it, so the rule trades recall for a low
+  false-positive rate; an attacker staging data out in many smaller flows, or over a slow transfer split into several
+  flows, is NOT caught (this is a per-flow rule, there is no cross-flow sum). Suricata counts wire bytes and Zeek counts
+  payload bytes of the originator, so the two sources reach the line at slightly different payload sizes.
+  Direction: both sources name the INITIATOR as src_endpoint, and the counter is initiator -> responder. A non-private
+  destination therefore means "an internal-side initiator pushed 1 GiB out"; a large DOWNLOAD (the big counter belongs
+  to the responder) never matches. A flow initiated by an external host that uploads into an external destination is
+  out of scope for a sensor on the private side.
+  Noise and tuning: offsite backups, cloud-storage syncs, VM image pushes and software-mirror uploads match by design.
+  List their destination addresses in contracts/allowlists/large_transfer_destinations.yml (shipped empty). IPv6 and
+  non-RFC 1918 internal space (CGNAT 100.64/10, ULA, link-local, loopback) are NOT in corp_ranges, so such destinations
+  count as outbound until added to that allowlist. The flow is only logged at its END, so alerting is delayed until the
+  transfer finishes. Level medium. No mitre block on purpose: a byte-count heuristic fits no single ATT&CK technique honestly
+  (tactic Exfiltration, TA0010, is the only claim), so it is a dated no_technique waiver.
+level: medium
+logsource:
+  category: network_activity
+detection:
+  suricata_large_upload:
+    class_uid: 4001
+    activity_id: 2
+    siem.source_type: suricata_eve
+    unmapped.suricata.flow.bytes_toserver: {gte: 1073741824}
+  zeek_large_upload:
+    class_uid: 4001
+    activity_id: 2
+    siem.source_type: zeek_json
+    unmapped.zeek.conn.orig_bytes: {gte: 1073741824}
+  non_private_destination:
+    dst_endpoint.ip: {exists: true, not_in: corp_ranges}
+  not_expected_destination:
+    dst_endpoint.ip: {not_in: large_transfer_destinations}
+  condition: (suricata_large_upload or zeek_large_upload) and non_private_destination and not_expected_destination
+fields:
+  - src_endpoint.ip
+  - dst_endpoint.ip
+  - dst_endpoint.port
+  - unmapped.suricata.flow.bytes_toserver
+  - unmapped.zeek.conn.orig_bytes
+siem:
+  sector: common
+  score_weight: 35

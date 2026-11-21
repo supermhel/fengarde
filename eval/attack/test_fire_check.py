@@ -702,10 +702,22 @@ def _run_main_with_untagged_mutated(mutate, patch_try_fire=None) -> tuple[int, s
 
 def test_gate_exits_nonzero_on_a_too_loose_untagged_rule():
     """Dropping `+ untagged_results` from the too_loose gate must turn this red."""
-    rc, out = _run_main_with_untagged_mutated(_make_too_loose)
+    # "One event early" only means something for a rule with a count threshold of at least 2: a stateless
+    # untagged rule (threshold None, e.g. the large-outbound-flow rule) or a threshold-1 rule (the Suricata
+    # severity-1 IDS rule) has no under-threshold count to probe -- those two are covered by the near-miss
+    # (predicate-ignored) probes instead. So mutate, and demand the gate names, exactly the stateful ones.
+    stateful = [rid for rid, r in fresh_rules().items()
+                if rid in set(_untagged_ids()) and r.threshold is not None and r.threshold >= 2]
+    check(bool(stateful), "no stateful untagged rule left to mutate -- this test would be vacuous")
+
+    def mutate(rule):
+        if rule.id in stateful:
+            _make_too_loose(rule)
+
+    rc, out = _run_main_with_untagged_mutated(mutate)
     check(rc == 1, f"gate exited {rc} with a too-loose untagged rule loaded; expected 1")
     tail = out.split("fire BELOW their declared boundary")[-1]
-    check("fire BELOW their declared boundary" in out and all(i in tail for i in _untagged_ids()),
+    check("fire BELOW their declared boundary" in out and all(i in tail for i in stateful),
           "gate did not name the too-loose untagged rule")
     check("(untagged)" in tail, "the failure line must say the rule is untagged, not '(none)'")
 
@@ -759,8 +771,19 @@ def test_unverified_and_untagged_rules_are_warned_not_claimed_passing():
           "the untagged agent_tool_call_burst rule must be exercised and named, not skipped")
     check("under_threshold: held" in out and "window_overrun: held" in out,
           "the untagged rule's below-threshold and window-overrun probes must run and hold")
-    check(f"{len(untagged_ids)} fired AND held their negative half" in out,
-          "the output must state that the untagged rule fired and held its negative half")
+    # Only an untagged rule with a probe-able count threshold (>= 2) can hold a negative half here. A threshold-1
+    # rule (Suricata severity-1 IDS) has no sub-threshold count and a stateless one (large outbound flow) has no
+    # constructible near-miss, so they must be reported UNVERIFIED -- named in the WARN line, never counted as held.
+    rules_now = fresh_rules()
+    probeable = [i for i in untagged_ids if (rules_now[i].threshold or 0) >= 2]
+    unverified_ids = [i for i in untagged_ids if i not in probeable]
+    check(bool(probeable), "at least one untagged rule must be boundary-probeable for this test to mean anything")
+    check(f"{len(probeable)} fired AND held their negative half" in out,
+          "the output must state that the probeable untagged rule(s) fired and held their negative half")
+    warn = next((ln for ln in out.splitlines() if "have NO mitre.technique and their negative half" in ln), "")
+    check(all(i in warn for i in unverified_ids) and not any(i in warn for i in probeable)
+          and f"{len(unverified_ids)} rule(s) have NO mitre.technique" in warn,
+          f"untagged rules with no probe-able negative half must be named UNVERIFIED, not claimed held: {warn!r}")
     check("negatively verified by NEITHER half -- untested, not passing -- see"
           not in out, "the old [OK]-under-unverified phrasing must be gone")
 

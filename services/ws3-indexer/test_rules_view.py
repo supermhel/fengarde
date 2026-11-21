@@ -29,6 +29,24 @@ def check(cond, msg):
 OPCUA = "e7a14b6d-3c52-4d90-8f1b-5a9c0d2e6b47"   # ships siem.default_enabled: false
 
 
+def _shipped_default_off() -> set[str]:
+    """Rule ids the shipped rule files declare default-off: `siem.default_enabled: false`, plus a companion_of a
+    default-off sibling (engine convention). Derived from contracts/rules/*.yml so adding a default-off rule never
+    needs a hand-edit here; OPCUA stays asserted by id below as the positive control that the derivation finds one."""
+    import yaml
+    rules = {}
+    for f in sorted((HERE.parent.parent / "contracts" / "rules").glob("*.yml")):
+        d = yaml.safe_load(f.read_text(encoding="utf-8"))
+        if isinstance(d, dict) and d.get("id"):
+            rules[str(d["id"])] = d
+    off = {i for i, d in rules.items() if (d.get("siem") or {}).get("default_enabled") is False}
+    off |= {i for i, d in rules.items() if (d.get("siem") or {}).get("companion_of") in off}
+    return off
+
+
+DEFAULT_OFF = _shipped_default_off()
+
+
 def _only_default_off(summaries):
     """Every rule that is not enabled must be a default-off rule (nothing else
     may be silently off)."""
@@ -52,7 +70,7 @@ def test_list_all_rules_no_tenant():
                     "stateful", "mitre", "enabled", "default_enabled", "opt_in"):
             check(key in s, f"summary missing key {key!r}: {s}")
         check("condition" not in s, "summary must NEVER leak the raw condition")
-        if s["id"] != OPCUA:
+        if s["id"] not in DEFAULT_OFF:
             check(s["enabled"] is True, "no tenant context -> every default-on rule enabled")
     # a stateful rule (brute-force) reports stateful=True; a single-shot one False.
     by_id = {s["id"]: s for s in summaries}
@@ -62,8 +80,9 @@ def test_list_all_rules_no_tenant():
     check(op is not None and op["enabled"] is False and op["default_enabled"] is False
           and op["opt_in"] is False,
           f"ot_opcua_write_unauthorized_node must list as off-by-default, got {op}")
-    check(_only_default_off(summaries) == {OPCUA},
+    check(_only_default_off(summaries) == DEFAULT_OFF,
           f"only the default-off rule may be off with no tenant, got {_only_default_off(summaries)}")
+    check(OPCUA in DEFAULT_OFF and len(DEFAULT_OFF) >= 1, f"derivation must find the known default-off rule, got {DEFAULT_OFF}")
     bf = by_id.get("6f1c8a2e-0d3b-4c11-9a21-7b5e2f9a1c01")
     check(bf is not None and bf["stateful"] is True,
           "brute-force rule should report stateful=True")
@@ -75,7 +94,7 @@ def test_malformed_tenant_id_disables_nothing():
     # no exception, no read outside TENANTS_DIR.
     summaries = rules_view.list_rule_summaries("../../etc/passwd")
     check(len(summaries) > 0, "malformed tenant must still return the rule set")
-    check(_only_default_off(summaries) == {OPCUA},
+    check(_only_default_off(summaries) == DEFAULT_OFF,
           "a rejected tenant id must disable nothing and opt nothing in")
 
 
@@ -83,7 +102,7 @@ def test_unknown_tenant_disables_nothing():
     # A well-formed but unknown tenant (no contracts/tenants/<id>.yml) ->
     # nothing disabled, same fail-open-on-detection convention.
     summaries = rules_view.list_rule_summaries("nonexistent-tenant")
-    check(_only_default_off(summaries) == {OPCUA},
+    check(_only_default_off(summaries) == DEFAULT_OFF,
           "an unknown tenant must leave every default-on rule enabled and opt nothing in")
 
 
