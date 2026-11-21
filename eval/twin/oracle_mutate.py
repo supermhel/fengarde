@@ -570,6 +570,19 @@ _INERT_KEYS: dict = {
         "evasion_search.verify_subset_equivalence and scenario_matrix._dependents (cloud_iam_abuse's "
         "victim_session -> attacker_console_login displacement control); the mutation grader never moves on it"),
     "detection_points.*.gap.partial": _DOC,
+    # the five process-tree-keyed storylines (2026-11-19; ADR-012 WP 7). ``causal_links`` is derived from the
+    # builder's RAW Sysmon keys and pinned by each storyline's own test (keyed_storyline_checks); no grader reads
+    # it yet (the causal-link metric is the later WP), so perturbing it moves nothing here.
+    "provenance.rules_read.common_priv_grant": _PROV_PIN,
+    "causal_links[].basis": "cross-instrument: 2026-11-19 pinned to sysmon_tree.derive_links over the raw records by "
+                            "each keyed storyline's test_storyline_<name>.py; no mutation grader reads it (the "
+                            "causal-link metric is ADR-012 WP 7's later step)",
+    "causal_links[].from": "cross-instrument: 2026-11-19 pinned to sysmon_tree.derive_links over the raw records by "
+                           "each keyed storyline's test_storyline_<name>.py; no mutation grader reads it",
+    "causal_links[].to": "cross-instrument: 2026-11-19 pinned to sysmon_tree.derive_links over the raw records by "
+                         "each keyed storyline's test_storyline_<name>.py; no mutation grader reads it",
+    "causal_links[].via": "cross-instrument: 2026-11-19 pinned to sysmon_tree.derive_links over the raw records by "
+                          "each keyed storyline's test_storyline_<name>.py; no mutation grader reads it",
 }
 
 
