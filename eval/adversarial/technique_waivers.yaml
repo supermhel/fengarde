@@ -10,9 +10,7 @@
 # Dates are the date the entry was written; an entry is never extended by editing its date.
 
 unexercised:
-  common_ids_high_severity_alert: "2026-11-20 rule added on branch wp/flow-record-rules; no storyline drives a Suricata severity-1 alert yet (candidate: network_credential_abuse once a sensor-alert step exists). Add the storyline step, then delete this line."
   common_large_outbound_flow: "2026-11-20 rule added on branch wp/flow-record-rules; no storyline drives a 1 GiB+ outbound flow yet (candidate: insider_exfil). Add the storyline step, then delete this line."
-  common_refused_connection_scan: "2026-11-19 rule added by WP-1.5 (PR #152); no storyline drives a refused-connection scan yet (candidate: network_credential_abuse or it_intrusion recon step). Integration waiver: add the storyline step, then delete this line."
   ot_write_unlisted_source: "2026-11-20 rule added on branch wp/flow-record-rules (default-off, empty allowlist); no storyline drives a sensor-seen Modbus/DNP3 write yet (candidate: ot_opcua_sabotage via a Modbus leg). Add the storyline step, then delete this line."
 
 no_technique:

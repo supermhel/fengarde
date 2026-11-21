@@ -231,7 +231,9 @@ def test_plumbing() -> None:
         paths = {om.normalise_path(p) for p, _ in om._leaves(kg.strip(o))}
         _check(f"PLUMBING {sd.name}: the mutation probe sees no known_gaps key (not oracle semantics)",
                not any(p.startswith("known_gaps") for p in paths) and "known_gaps" in o or not gaps)
-    n = sum(len(kg.load(_oracle(sd), sd.name)) for sd in reg.ALL)
+    # The 74 entries migrated from the old name-keyed tables belong to the pre-existing storylines;
+    # storylines added later (flow_*) declare their own gaps and are not part of that migration count.
+    n = sum(len(kg.load(_oracle(sd), sd.name)) for sd in reg.ALL if not sd.name.startswith("flow_"))
     _check("PLUMBING all 74 legacy table entries live in the oracles", n == 74, f"{n}")
 
 

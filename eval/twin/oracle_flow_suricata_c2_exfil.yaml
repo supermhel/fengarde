@@ -1,0 +1,331 @@
+# =============================================================================
+# FENGARDE eval/twin/oracle_flow_suricata_c2_exfil.yaml
+# Grading ground truth for the Suricata C2/exfil flow storyline (storyline_flow_suricata_c2_exfil.py):
+#   c2_checkin -> ad_bruteforce -> c2_tasking -> dns_tunnel -> lateral_logons -> rdp_lateral_alert -> priv_grant
+#     -> c2_staging -> exfil_alert -> c2_exfil_ack -> rdp_close -> exfil_close -> c2_close
+#
+# AUTHORING RULES (written 2026-11-20 BEFORE the builder was run through the pipeline; expectations come from
+# the rules' own description/detection/siem blocks and the parser docstrings).
+#   1. NO RULE WAS INVENTED. Four steps can fire a shipped rule (AD brute force, DNS tunnelling, lateral logons,
+#      a privileged-group add). The nine Suricata alert / flow-record steps are honest gaps: no shipped rule
+#      reads a Suricata record.
+#   2. causal_links (ADR-012 WP 7, basis network_flow) are DERIVED from the flow_id values the builder mints
+#      (eval/twin/flow_kit.py), grouped per sensor, joined through time-ordered neighbours. They are NOT typed here.
+#      Most endpoints are gap steps, so most links are unalerted today: no alert-raising step shares a flow with
+#      another alert-raising step, hence NO link is gradable on the present rule set (ADR-012: reported, not hidden).
+#   3. FORBIDDEN PAIRS. The first three are anti-causal (a later stage never enables an earlier one) and share the
+#      workstation and the account with the steps they must not precede. The fourth is the scope control:
+#      bystander_other_sensor is a benign alert from a second sensor whose flow_id equals the C2 flow's. It shares
+#      no address with the attack and must never be joined.
+#   4. INCIDENT. The workstation address (and the account it used) spans every alert-raising step: one ip track,
+#      one incident.
+# =============================================================================
+schema_version: 1
+oracle_id: "flow-suricata-c2-exfil-v1"
+kind: "attack-chain-grading-oracle"
+scope: "flow-suricata-c2-exfil"
+
+provenance:
+  authored: "2026-11-20"
+  pipeline_run_before_authoring: false
+  basis: "rule description/detection/siem blocks and parser docstrings only; causal_links derived from the builder's own minted flow keys"
+  rules_read:
+    common_bruteforce: "f685feb7ab0efe2e0cd9ed3427a2e0466c3a0de785cc28deef3c53a0b585919b"
+    common_dns_exfil: "eccf4032d315d46f73cc0bb5b16f96983bda04b3538418a1777aadbcc823008f"
+    common_dns_tunnel_by_domain: "e85a4cabcf5e211c12bdb5a8b2949bee0f156096a03eca0ea28c6bde84477fcf"
+    common_ids_high_severity_alert: "4b7889ef66883195f31ad9d383b3e98e9f30e285dea71dacf7ffabe8259ed350"
+    common_lateral_movement: "2f010d5cf5adb6de7df93f6a30da3ed32029626dccc912f118af9813d0d4c8ae"
+    common_password_spray: "c565b58f392c8e85ac08049c49d1ab119846540d7bcbea86f0ea2f4e30d1a089"
+    common_priv_grant: "3d7b783edf6df5e578f154446316404f07d0bcc5837ac9180d00481198f8c14d"
+
+expected_sequence:
+  - c2_checkin
+  - ad_bruteforce
+  - c2_tasking
+  - dns_tunnel
+  - lateral_logons
+  - rdp_lateral_alert
+  - priv_grant
+  - c2_staging
+  - exfil_alert
+  - c2_exfil_ack
+  - rdp_close
+  - exfil_close
+  - c2_close
+
+sequence_constraints:
+  strict_order: true
+  allow_extra_steps: false
+  max_clock_span_seconds: 21600
+
+allowed_relationships:
+  - {from: c2_checkin, to: ad_bruteforce, allowed: true, causal_kind: credential_access}   # same workstation
+  - {from: ad_bruteforce, to: c2_tasking, allowed: true, causal_kind: command_and_control}   # same workstation
+  - {from: c2_tasking, to: dns_tunnel, allowed: true, causal_kind: command_and_control}   # same workstation
+  - {from: dns_tunnel, to: lateral_logons, allowed: true, causal_kind: lateral_movement}   # same workstation
+  - {from: lateral_logons, to: rdp_lateral_alert, allowed: true, causal_kind: lateral_movement}   # same workstation and account
+  - {from: rdp_lateral_alert, to: priv_grant, allowed: true, causal_kind: privilege}   # same workstation
+  - {from: priv_grant, to: c2_staging, allowed: true, causal_kind: command_and_control}   # same workstation
+  - {from: c2_staging, to: c2_exfil_ack, allowed: true, causal_kind: exfiltration}   # same C2 flow and workstation
+  - {from: exfil_alert, to: c2_exfil_ack, allowed: true, causal_kind: exfiltration}   # same outside address
+  - {from: c2_exfil_ack, to: rdp_close, allowed: true, causal_kind: lateral_movement}   # same workstation
+  - {from: rdp_close, to: exfil_close, allowed: true, causal_kind: exfiltration}   # same file server
+  - {from: exfil_close, to: c2_close, allowed: true, causal_kind: command_and_control}   # same outside address
+  - {from: lateral_logons, to: ad_bruteforce, allowed: false, causal_kind: none}   # the lateral logons use the account the brute force had not yet guessed
+  - {from: priv_grant, to: ad_bruteforce, allowed: false, causal_kind: none}   # the privileged add can never precede the guess that enabled it
+  - {from: priv_grant, to: lateral_logons, allowed: false, causal_kind: none}   # the DC group add cannot precede the logons that reached the servers
+  - {from: c2_checkin, to: bystander_other_sensor, allowed: false, causal_kind: none}   # same flow_id VALUE on a different sensor: a different flow, no link
+
+# network_flow truth, DERIVED from the flow keys the builder minted (flow_kit.derive_links), never typed by hand.
+# Symmetric: ADR-012 gives the basis no direction of its own; the order shown is event time (ADR-011).
+# test_flow_storylines.py re-derives this list and fails when it differs.
+causal_links:
+  - {from: c2_checkin, to: c2_tasking, basis: network_flow}
+  - {from: c2_tasking, to: c2_staging, basis: network_flow}
+  - {from: rdp_lateral_alert, to: rdp_close, basis: network_flow}
+  - {from: c2_staging, to: c2_exfil_ack, basis: network_flow}
+  - {from: exfil_alert, to: exfil_close, basis: network_flow}
+  - {from: c2_exfil_ack, to: c2_close, basis: network_flow}
+
+detection_points:
+  c2_checkin:
+    step: c2_checkin
+    role: first IDS alert on the workstation's long TLS flow to an outside address
+    expected_event_source: suricata_eve alert (class 4001, activity 99)
+    expected_rules:
+      - {rule_id: "0331c311-7985-47c8-b554-682781ef1069", title: Suricata IDS alert with signature severity 1 (high), level: high, role: IDS severity-1 passthrough}
+    gap: {no_rule_exists: false}
+
+  ad_bruteforce:
+    step: ad_bruteforce
+    role: the workstation fails logon 11-13 times in under a minute
+    expected_event_source: active_directory 4625 (class 3002, activity 4 Failure)
+    expected_rules:
+      - {rule_id: "6f1c8a2e-0d3b-4c11-9a21-7b5e2f9a1c01", title: Brute force (many failed logons from one source), level: high, role: credential access (T1110)}
+    must_not_fire:
+      - "4f8a2c61-9e3d-4b57-8a1c-6d2e5f7a8b90"   # one account, not many
+    gap: {no_rule_exists: false}
+
+  c2_tasking:
+    step: c2_tasking
+    role: second IDS alert on the same TLS flow
+    expected_event_source: suricata_eve alert
+    expected_rules: []
+    gap:
+      no_rule_exists: true
+      attack_technique: "T1071.001"
+      reason: 'common_ids_high_severity_alert fires on this step''s event but folds into c2_checkin''s alert: the rule groups by unmapped.ids.flow_id with a 3600 s window and threshold 1, and both records sit on one Suricata flow, so the engine mints ONE alert_id for the pair (the indexer upserts one alert). The step adds no alert of its own, so it stays a gap here and the firing is declared in known_gaps (accepted_disagreement stale_gap).'
+
+  dns_tunnel:
+    step: dns_tunnel
+    role: the workstation resolves 42-45 distinct names under one attacker parent in ~53 s
+    expected_event_source: suricata_eve dns request (class 4002, activity 1)
+    expected_rules:
+      - {rule_id: "a1b2c3d4-5e6f-4708-9a1b-2c3d4e5f6071", title: DNS query volume to many distinct domains from one source, level: medium, role: DNS tunnelling (T1071.004)}
+    gap: {no_rule_exists: false}
+
+  lateral_logons:
+    step: lateral_logons
+    role: the guessed account logs on to six file servers from the workstation in 125 s
+    expected_event_source: windows_eventlog 4624 (class 3002, activity 1 Success)
+    expected_rules:
+      - {rule_id: "2e3d4c5b-6f70-4819-9b02-1c2d3e4f5061", title: Lateral movement, level: high, role: lateral movement (T1021)}
+    gap: {no_rule_exists: false}
+
+  rdp_lateral_alert:
+    step: rdp_lateral_alert
+    role: IDS alert on one RDP flow from the workstation to a file server
+    expected_event_source: suricata_eve alert
+    expected_rules: []
+    gap:
+      no_rule_exists: true
+      attack_technique: "T1021.001"
+      reason: 'No shipped rule reads a Suricata alert or flow record: the IDS verdict is carried as data (unmapped.ids.*, unmapped.suricata.flow.*) and nothing selects it. The link on this step is an unalerted endpoint until one does.'
+
+  priv_grant:
+    step: priv_grant
+    role: the account adds backdoor-svc to a privileged group on the DC
+    expected_event_source: windows_eventlog 4728 (class 3003, activity 5)
+    expected_rules:
+      - {rule_id: "7d3e9a52-1f6c-4a88-9b3d-2e5c8f1a6d40", title: Privileged group membership grant, level: high, role: persistence (T1098)}
+    gap: {no_rule_exists: false}
+
+  c2_staging:
+    step: c2_staging
+    role: third IDS alert on the same TLS flow
+    expected_event_source: suricata_eve alert
+    expected_rules:
+      - {rule_id: "0331c311-7985-47c8-b554-682781ef1069", title: Suricata IDS alert with signature severity 1 (high), level: high, role: IDS severity-1 passthrough}
+    gap: {no_rule_exists: false}
+
+  exfil_alert:
+    step: exfil_alert
+    role: IDS alert on one outbound TLS upload flow from the file server to the attacker's address
+    expected_event_source: suricata_eve alert
+    expected_rules: []
+    gap:
+      no_rule_exists: true
+      attack_technique: "T1041"
+      reason: 'No shipped rule reads a Suricata alert or flow record: the IDS verdict is carried as data (unmapped.ids.*, unmapped.suricata.flow.*) and nothing selects it. The link on this step is an unalerted endpoint until one does.'
+
+  c2_exfil_ack:
+    step: c2_exfil_ack
+    role: fourth IDS alert on the same TLS flow
+    expected_event_source: suricata_eve alert
+    expected_rules: []
+    gap:
+      no_rule_exists: true
+      attack_technique: "T1041"
+      reason: 'common_ids_high_severity_alert fires on this step''s event but folds into c2_staging''s alert: the rule groups by unmapped.ids.flow_id with a 3600 s window and threshold 1, and both records sit on one Suricata flow, so the engine mints ONE alert_id for the pair (the indexer upserts one alert). The step adds no alert of its own, so it stays a gap here and the firing is declared in known_gaps (accepted_disagreement stale_gap).'
+
+  rdp_close:
+    step: rdp_close
+    role: the RDP flow record, written when the flow ends
+    expected_event_source: suricata_eve flow (class 4001, activity 2 Close)
+    expected_rules: []
+    gap:
+      no_rule_exists: true
+      attack_technique: "T1021.001"
+      reason: 'No shipped rule reads a Suricata alert or flow record: the IDS verdict is carried as data (unmapped.ids.*, unmapped.suricata.flow.*) and nothing selects it. The link on this step is an unalerted endpoint until one does.'
+
+  exfil_close:
+    step: exfil_close
+    role: the upload flow record, written when the flow ends
+    expected_event_source: suricata_eve flow (class 4001, activity 2 Close)
+    expected_rules: []
+    gap:
+      no_rule_exists: true
+      attack_technique: "T1041"
+      reason: 'No shipped rule reads a Suricata alert or flow record: the IDS verdict is carried as data (unmapped.ids.*, unmapped.suricata.flow.*) and nothing selects it. The link on this step is an unalerted endpoint until one does.'
+
+  c2_close:
+    step: c2_close
+    role: the long TLS flow record, written when it finally ends
+    expected_event_source: suricata_eve flow (class 4001, activity 2 Close)
+    expected_rules: []
+    gap:
+      no_rule_exists: true
+      attack_technique: "T1071.001"
+      reason: 'No shipped rule reads a Suricata alert or flow record: the IDS verdict is carried as data (unmapped.ids.*, unmapped.suricata.flow.*) and nothing selects it. The link on this step is an unalerted endpoint until one does.'
+
+step_dependencies: {}
+
+severity_band:
+  score: {min: 40, max: 100}
+  severity_id: {min: 3, max: 6}
+  dominant_band: "high"
+
+evidence:
+  correlation_key: [src_endpoint.ip]
+  per_step:
+    c2_checkin: {fields: [src_endpoint.ip, dst_endpoint.ip, unmapped.ids.flow_id]}
+    ad_bruteforce: {fields: [src_endpoint.ip, actor.user.name]}
+    c2_tasking: {fields: [src_endpoint.ip, dst_endpoint.ip]}
+    dns_tunnel: {fields: [src_endpoint.ip, dst_endpoint.hostname]}
+    lateral_logons: {fields: [src_endpoint.ip, actor.user.name, dst_endpoint.hostname]}
+    rdp_lateral_alert: {fields: [src_endpoint.ip, dst_endpoint.ip]}
+    priv_grant: {fields: [src_endpoint.ip, actor.user.name]}
+    c2_staging: {fields: [src_endpoint.ip, dst_endpoint.ip, unmapped.ids.flow_id]}
+    exfil_alert: {fields: [src_endpoint.ip, dst_endpoint.ip]}
+    c2_exfil_ack: {fields: [src_endpoint.ip, dst_endpoint.ip]}
+    rdp_close: {fields: [src_endpoint.ip, dst_endpoint.ip]}
+    exfil_close: {fields: [src_endpoint.ip, dst_endpoint.ip]}
+    c2_close: {fields: [src_endpoint.ip, dst_endpoint.ip]}
+
+incident_membership:
+  incident_count: 1
+  incident_key: "flow-suricata-c2-exfil"
+  include: [c2_checkin, ad_bruteforce, c2_tasking, dns_tunnel, lateral_logons, rdp_lateral_alert, priv_grant, c2_staging, exfil_alert, c2_exfil_ack, rdp_close, exfil_close, c2_close]
+  cross_step_rule_ids:
+    - "6f1c8a2e-0d3b-4c11-9a21-7b5e2f9a1c01"
+    - "a1b2c3d4-5e6f-4708-9a1b-2c3d4e5f6071"
+    - "2e3d4c5b-6f70-4819-9b02-1c2d3e4f5061"
+    - "7d3e9a52-1f6c-4a88-9b3d-2e5c8f1a6d40"
+
+campaign_membership:
+  campaign_count: 1
+  full_coverage: true
+
+# known_gaps -- declared here per eval/twin/known_gaps.py (declaration data, not oracle semantics).
+known_gaps:
+  - kind: order_blind_join
+    from: lateral_logons
+    to: ad_bruteforce
+    since: '2026-11-20'
+    reason: 'directional_discrimination=0.0 (SSOT 2026-10-01): the WS-8 graph joins this forbidden pair because the entities at both ends overlap (per-entity tracks never merge, so a shared address/account yields an edge in BOTH directions); the oracle''s anti-causal non-edge is not enforceable until ADR-011/012 make the graph order-aware. Measured on the first run (seed 7), not tuned.'
+  - kind: order_blind_join
+    from: priv_grant
+    to: ad_bruteforce
+    since: '2026-11-20'
+    reason: 'directional_discrimination=0.0 (SSOT 2026-10-01): the WS-8 graph joins this forbidden pair because the entities at both ends overlap (per-entity tracks never merge, so a shared address/account yields an edge in BOTH directions); the oracle''s anti-causal non-edge is not enforceable until ADR-011/012 make the graph order-aware. Measured on the first run (seed 7), not tuned.'
+  - kind: order_blind_join
+    from: priv_grant
+    to: lateral_logons
+    since: '2026-11-20'
+    reason: 'directional_discrimination=0.0 (SSOT 2026-10-01): the WS-8 graph joins this forbidden pair because the entities at both ends overlap (per-entity tracks never merge, so a shared address/account yields an edge in BOTH directions); the oracle''s anti-causal non-edge is not enforceable until ADR-011/012 make the graph order-aware. Measured on the first run (seed 7), not tuned.'
+  - kind: mutant_survivor
+    operator: flip_gap_to_false
+    outcome: SURVIVED
+    max: 5
+    since: '2026-11-20'
+    reason: 'the step is a declared gap: no shipped rule fires there, so flipping it to a detected step changes nothing graded'
+  - kind: mutant_survivor
+    operator: flip_relationship
+    outcome: IMPROVED
+    max: 2
+    since: '2026-11-20'
+    reason: 'the wrong oracle scores BETTER because directional_discrimination=0.0 (SSOT 2026-10-01): the pair is graded and joined, and the reverse direction is joined too, so the legacy join predicate cannot tell a relation from its reverse; the WS-8 tracks never merge and share entities at both ends'
+  - kind: mutant_survivor
+    operator: reverse_relationship
+    outcome: IMPROVED
+    max: 2
+    since: '2026-11-20'
+    reason: 'the wrong oracle scores BETTER because directional_discrimination=0.0 (SSOT 2026-10-01): the pair is graded and joined, and the reverse direction is joined too, so the legacy join predicate cannot tell a relation from its reverse; the WS-8 tracks never merge and share entities at both ends'
+  - kind: mutant_survivor
+    operator: reverse_relationship
+    outcome: SURVIVED
+    max: 9
+    since: '2026-11-20'
+    reason: 'directional_discrimination=0.0 (SSOT 2026-10-01): the pair is graded and joined, and the reverse direction is joined too, so the legacy join predicate cannot tell a relation from its reverse; the WS-8 tracks never merge and share entities at both ends'
+  - kind: mutant_survivor
+    operator: swap_adjacent_steps
+    outcome: SURVIVED
+    max: 7
+    since: '2026-11-20'
+    reason: 'one of the two swapped steps raises no alert (and the entities are shared across the chain), so neither alert order nor the entity-bridge fidelity predicate has anything to disagree about'
+  - kind: derive_waiver
+    finding: F6
+    step: c2_checkin
+    item: 0331c311-7985-47c8-b554-682781ef1069
+    since: '2026-11-20'
+    reason: 'common_ids_high_severity_alert carries no mitre block BY DESIGN (a severity-1 passthrough: the IDS signature, not the rule, says what the technique is; technique_waivers.yaml no_technique, 2026-11-20), so tactic coverage falls back to rule identity on this step. Declared here, not hidden.'
+  - kind: derive_waiver
+    finding: F6
+    step: c2_staging
+    item: 0331c311-7985-47c8-b554-682781ef1069
+    since: '2026-11-20'
+    reason: 'common_ids_high_severity_alert carries no mitre block BY DESIGN (a severity-1 passthrough: the IDS signature, not the rule, says what the technique is; technique_waivers.yaml no_technique, 2026-11-20), so tactic coverage falls back to rule identity on this step. Declared here, not hidden.'
+  - kind: accepted_disagreement
+    finding: stale_gap
+    step: c2_tasking
+    rule_id: 0331c311-7985-47c8-b554-682781ef1069
+    since: '2026-11-20'
+    reason: 'common_ids_high_severity_alert fires on this step''s event but folds into c2_checkin''s alert: the rule groups by unmapped.ids.flow_id with a 3600 s window and threshold 1, and both records sit on one Suricata flow, so the engine mints ONE alert_id for the pair (the indexer upserts one alert). The step adds no alert of its own, so it stays a gap here and the firing is declared in known_gaps (accepted_disagreement stale_gap).'
+  - kind: accepted_disagreement
+    finding: stale_gap
+    step: c2_exfil_ack
+    rule_id: 0331c311-7985-47c8-b554-682781ef1069
+    since: '2026-11-20'
+    reason: 'common_ids_high_severity_alert fires on this step''s event but folds into c2_staging''s alert: the rule groups by unmapped.ids.flow_id with a 3600 s window and threshold 1, and both records sit on one Suricata flow, so the engine mints ONE alert_id for the pair (the indexer upserts one alert). The step adds no alert of its own, so it stays a gap here and the firing is declared in known_gaps (accepted_disagreement stale_gap).'
+  - kind: derive_waiver
+    finding: F4
+    step: c2_tasking
+    item: 0331c311-7985-47c8-b554-682781ef1069
+    since: '2026-11-20'
+    reason: 'common_ids_high_severity_alert fires on this step''s event but folds into c2_checkin''s alert (same flow_id, one 3600 s window, threshold 1 -> one alert_id), so the step stays a declared gap; see the accepted_disagreement stale_gap on this step.'
+  - kind: derive_waiver
+    finding: F4
+    step: c2_exfil_ack
+    item: 0331c311-7985-47c8-b554-682781ef1069
+    since: '2026-11-20'
+    reason: 'common_ids_high_severity_alert fires on this step''s event but folds into c2_staging''s alert (same flow_id, one 3600 s window, threshold 1 -> one alert_id), so the step stays a declared gap; see the accepted_disagreement stale_gap on this step.'

@@ -70,7 +70,11 @@ def _correlate(items):
 def timeline_order_ok(items, expected_seq) -> tuple:
     """(ok, n_graded_incidents): ok is None when no incident spans two attack steps."""
     rank = {s: i for i, s in enumerate(expected_seq)}
-    step_of = {i["alert"]["alert_id"]: i["step"] for i in items if i["step"] in rank}
+    # one alert_id can be minted by two steps (same Suricata flow_id inside one window); the alert belongs to the
+    # first, matching build_timeline's earliest-time dedupe of duplicate ids
+    step_of: dict = {}
+    for i in sorted((i for i in items if i["step"] in rank), key=lambda i: i["alert"].get("time") or 0):
+        step_of.setdefault(i["alert"]["alert_id"], i["step"])
     alerts = [i["alert"] for i in items]
     graded, ok = 0, True
     for inc in _correlate(items).values():
