@@ -608,7 +608,8 @@ def test_per_technique_math() -> None:
     check(den["ot_opcua_sabotage"][:2] == (5, 5),
           f"ot_opcua_sabotage wrong: {den['ot_opcua_sabotage']}")
     # P1 storylines 6-9 (2026-10-14): non-gap steps / declared steps, from the oracles
-    for s, want in (("ransomware", (5, 9)), ("insider_exfil", (2, 7)),
+    # (ransomware 5 -> 6 non-gap steps on 2026-11-21: win_shadow_copy_deleted closed the inhibit_recovery gap)
+    for s, want in (("ransomware", (6, 9)), ("insider_exfil", (2, 7)),
                     ("cloud_iam_abuse", (1, 8)), ("supply_chain_ci", (5, 6)),
                     ("win_credential_theft", (5, 5)), ("network_credential_abuse", (3, 3))):
         check(den[s][:2] == want, f"{s} wrong: {den[s]} (want {want})")

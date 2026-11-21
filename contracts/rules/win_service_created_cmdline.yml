@@ -1,0 +1,42 @@
+title: Service created from the command line (sc.exe create)
+id: 1abfb057-d081-401d-be13-547958235343
+status: stable
+description: >
+  sc.exe was created with the create command and a binPath argument (Sysmon EventID 1, or Windows 4688 with
+  command-line auditing; OCSF class 1002, activity_id 1): sc create <name> binPath= <image>, the usual way to install a
+  service for persistence or for remote execution (sc \\host create ...). Case-folded plain substring tests: " create "
+  and "binpath" must both appear on the line, so sc query / start / stop / config / delete and a create with no binPath
+  do not match. Deliberately broad on the image path: unlike win_service_installed_suspicious_path, which judges the
+  path of the installed service (System 7045 / Security 4697), this rule fires on every sc create that names a binary,
+  because the creation itself is the stage. Installers, deployment scripts and some monitoring agents call sc create
+  routinely, so it is medium and expected to need per-site tuning (allowlist by actor.user.name or parent). Not
+  covered: service creation through New-Service, the registry, WMI or the Service Control Manager API, sc.exe renamed,
+  and a command line over 1000 characters cut by the parser. The trigger is a process-creation event, so it carries
+  actor.process.uid and parent_process.uid for ADR-012 process-tree links. Added 2026-11-21 (owner-approved).
+level: medium
+logsource:
+  category: process_activity
+detection:
+  launch:
+    class_uid: 1002
+    activity_id: 1
+  sc_image:
+    unmapped.process_launch.image_base: sc.exe
+  create_verb:
+    unmapped.process_launch.command_line_lc: {contains: " create "}
+  binpath:
+    unmapped.process_launch.command_line_lc: {contains: "binpath"}
+  condition: launch and sc_image and create_verb and binpath
+fields:
+  - actor.user.name
+  - actor.process.name
+  - actor.process.uid
+  - actor.process.parent_process.uid
+  - unmapped.process_launch.parent
+  - unmapped.process_launch.command_line
+siem:
+  sector: common
+  score_weight: 50
+mitre:
+  tactic: TA0003        # Persistence
+  technique: T1543.003  # Create or Modify System Process: Windows Service

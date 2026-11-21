@@ -1,0 +1,58 @@
+title: PowerShell started with an encoded command
+id: df8465f8-c959-404a-b7dd-611c7f084ee2
+status: stable
+description: >
+  powershell.exe or pwsh.exe was created with an encoded-command switch on its command line (Sysmon EventID 1, or
+  Windows 4688 with command-line auditing; OCSF class 1002, activity_id 1, read from unmapped.process_launch.image_base
+  and command_line_lc). Matches -EncodedCommand and every abbreviation PowerShell accepts for it (-e, -ec, -en, -enc ...
+  up to the full name), parent process any. A base64 payload on the command line is the usual way to hide a script
+  from a casual read of the process list. The match is a plain, case-folded substring test, not a classifier: " -e "
+  needs a space on both sides, so -ExecutionPolicy, -Encoding (a Get-Content / Out-File parameter inside a -Command
+  string) and -File do not match. A bare " -e " that is an argument to another tool inside a -Command string
+  (powershell -Command "grep -e x") also matches, because the rule cannot tell the PowerShell switch from text. Not
+  covered: the switch spelled with a slash or colon (/enc, -enc:), a command line over 1000 characters whose switch
+  sits past the cut (the parser truncates), and a renamed powershell.exe.
+  Management tooling (SCCM / MECM, Intune, Azure VM and Arc extensions, Exchange, some backup agents) launches
+  PowerShell with -EncodedCommand legitimately; tune per site. Sibling of win_powershell_suspicious_script, which reads
+  script-block content (4104) and needs PowerShell logging; this one needs only process creation. Because the trigger
+  is a process-creation event it carries actor.process.uid and parent_process.uid (Sysmon ProcessGuid /
+  ParentProcessGuid), so its alert can take part in an ADR-012 process-tree link. Added 2026-11-21 (owner-approved).
+level: medium
+logsource:
+  category: process_activity
+detection:
+  launch:
+    class_uid: 1002
+    activity_id: 1
+  ps_image:
+    unmapped.process_launch.image_base: {in: [powershell.exe, pwsh.exe]}
+  e_short:
+    unmapped.process_launch.command_line_lc: {contains: " -e "}
+  ec:
+    unmapped.process_launch.command_line_lc: {contains: " -ec "}
+  en:
+    unmapped.process_launch.command_line_lc: {contains: " -en "}
+  enc:
+    unmapped.process_launch.command_line_lc: {contains: " -enc "}
+  enco:
+    unmapped.process_launch.command_line_lc: {contains: " -enco "}
+  encod:
+    unmapped.process_launch.command_line_lc: {contains: " -encod "}
+  encode:
+    unmapped.process_launch.command_line_lc: {contains: " -encode "}
+  encoded_long:
+    unmapped.process_launch.command_line_lc: {contains: " -encoded"}
+  condition: launch and ps_image and (e_short or ec or en or enc or enco or encod or encode or encoded_long)
+fields:
+  - actor.user.name
+  - actor.process.name
+  - actor.process.uid
+  - actor.process.parent_process.uid
+  - unmapped.process_launch.parent
+  - unmapped.process_launch.command_line
+siem:
+  sector: common
+  score_weight: 55
+mitre:
+  tactic: TA0002        # Execution
+  technique: T1059.001  # Command and Scripting Interpreter: PowerShell

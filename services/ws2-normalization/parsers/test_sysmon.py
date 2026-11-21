@@ -222,6 +222,23 @@ class TestSysmonCausalKeys(unittest.TestCase):
         self.assertNotIn("key_scope", ev["siem"])
         self.assertEqual(validate(ev), [])
 
+    def test_process_launch_carries_case_folded_match_keys(self):
+        """2026-11-21: the EID 1 process-creation rules compare case-sensitively, Windows command lines are not, so the
+        parser adds image_base (executable basename) and command_line_lc next to the original command_line."""
+        ev = PARSER.parse(_raw(dict(REC_PROCESS, Image=r"C:\WINDOWS\System32\PowerShell.EXE",
+                                    CommandLine='"C:\\X\\PowerShell.EXE" -EncodedCommand SQBFAFgA')))
+        pl = ev["unmapped"]["process_launch"]
+        self.assertEqual(pl["image_base"], "powershell.exe")
+        self.assertEqual(pl["command_line"], '"C:\\X\\PowerShell.EXE" -EncodedCommand SQBFAFgA')  # original kept
+        self.assertEqual(pl["command_line_lc"], '"c:\\x\\powershell.exe" -encodedcommand sqbfafga')
+        self.assertEqual(validate(ev), [])
+        # absent source values leave the keys absent (no empty strings that could match a rule)
+        bare = PARSER.parse(_raw({k: v for k, v in REC_PROCESS.items() if k not in ("Image", "CommandLine")}))
+        self.assertEqual(bare["unmapped"]["process_launch"].keys() & {"image_base", "command_line_lc"}, set())
+        # the command line keeps the existing 1000-character cap, and the folded copy is the capped text
+        long_ev = PARSER.parse(_raw(dict(REC_PROCESS, CommandLine="A" * 1500)))
+        self.assertEqual(long_ev["unmapped"]["process_launch"]["command_line_lc"], "a" * 1000)
+
     def test_type_uid_still_derived(self):
         ev = PARSER.parse(_raw(dict(REC_PROCESS, ProcessGuid=_G_CHILD)))
         self.assertEqual(ev["type_uid"], ev["class_uid"] * 100 + ev["activity_id"])
