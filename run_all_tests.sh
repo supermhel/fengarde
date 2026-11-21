@@ -659,6 +659,12 @@ $PY eval/twin/oracle_consistency.py --out eval/twin/out/oracle_consistency.lates
 echo
 echo "== twin: flow_* storylines (network_flow keys minted by the builder, derived causal_links, scope controls, F4 forbidden pairs) =="; LAST_HEADER="== twin: flow_* storylines (network_flow keys, derived causal_links, scope controls, F4 forbidden pairs) =="
 $PY eval/twin/test_flow_storylines.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
+echo "== twin: causal-link grader + gate (precision/recall/direction/coverage with Wilson intervals, insufficient_n below the ADR-012 bar, mutation-proved) =="; LAST_HEADER="== twin: causal-link grader + gate (precision/recall/direction/coverage with Wilson intervals, insufficient_n below the ADR-012 bar, mutation-proved) =="
+$PY eval/twin/test_causal_links.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
+echo "== twin: ADR-012 key controls (key_shuffle/key_drop/key_collide/key_forge through the real ws8, each with a deliberately broken control that must fail) =="; LAST_HEADER="== twin: ADR-012 key controls (key_shuffle/key_drop/key_collide/key_forge through the real ws8, each with a deliberately broken control that must fail) =="
+$PY eval/twin/test_key_controls.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 fi  # tier: eval-twin
 
 # == Phase 4 adversarial system-level validation (WP-4-A) ==
