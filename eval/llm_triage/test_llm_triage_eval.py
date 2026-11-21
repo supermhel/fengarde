@@ -103,6 +103,19 @@ class FrozenProjection(unittest.TestCase):
             for f in b.POST_SNAPSHOT_FIELDS:
                 self.assertNotIn(f, paths, c["case_id"])
 
+    def test_post_snapshot_rules_are_shipped_rules_and_absent_from_the_frozen_set(self):
+        """2026-11-21: the EID 1 rules postdate the measured snapshot; the builder disables them for the eval tenant, so
+        no frozen case may cite one, and every listed id must still be a real shipped rule (a typo would silently
+        disable nothing and the set would drift on the next regeneration)."""
+        import build_labelled_set as b
+        import yaml
+        shipped = {yaml.safe_load(p.read_text(encoding="utf-8"))["id"]
+                   for p in (b.ROOT / "contracts" / "rules").glob("*.yml")}
+        self.assertEqual(len(b.POST_SNAPSHOT_RULES), 8)
+        self.assertEqual(set(b.POST_SNAPSHOT_RULES) - shipped, set())
+        for c in DOC["cases"]:
+            self.assertEqual(set(c["provenance"]["rules"]) & set(b.POST_SNAPSHOT_RULES), set(), c["case_id"])
+
 
 class Scoring(unittest.TestCase):
     def test_known_confusion(self):

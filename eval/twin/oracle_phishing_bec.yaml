@@ -55,6 +55,9 @@ provenance:
     m365_inbox_rule_external_forward: "d8a5b0c2ac3c1dab1c82641e3c7df3c60075bc011456863af0638c91238231ca"
     # 2026-10-20: also written after this oracle by the same author, to close the user_execution gap (T1204.002).
     win_office_spawns_shell: "5365f833d20260efc2fafd6081b57526e11fa7bd5e7f243372769ccc9a234e14"
+    # 2026-11-21: written AFTER this oracle, by the same author. The step's own role text already names "an encoded
+    # PowerShell"; the process-creation rule for that behaviour did not exist until now. NOT independent evidence.
+    win_powershell_encoded_command: "a693a8261d8aba9da49035624ae6701ed8b7e17a055f43d26fb29b7643fbb7b2"
 
 expected_sequence:
   - phish_delivery
@@ -98,6 +101,7 @@ detection_points:
     expected_event_source: "sysmon EventID 1 (class 1002, activity 1)"
     expected_rules:
       - {rule_id: "5b7e0d3a-91c4-4f6e-8a2d-3c1f9e7b4a10", title: "Document host spawned a shell or script host", level: high, role: user-execution detection (rule added 2026-10-20; gap closed)}
+      - {rule_id: "df8465f8-c959-404a-b7dd-611c7f084ee2", title: "PowerShell started with an encoded command", level: medium, role: encoded-PowerShell detection on the same process-creation event (rule added 2026-11-21)}
     gap: {no_rule_exists: false}
 
   c2_beacon:

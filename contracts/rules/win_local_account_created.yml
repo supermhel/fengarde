@@ -1,0 +1,48 @@
+title: Local account created or added to Administrators from the command line (net user /add)
+id: f909babc-7b4d-46f3-a2eb-b0ea711fa8c9
+status: stable
+description: >
+  net.exe or net1.exe was created with /add on a user or on the Administrators group (Sysmon EventID 1, or Windows 4688
+  with command-line auditing; OCSF class 1002, activity_id 1): "net user <name> <password> /add" creates an account,
+  "net localgroup administrators <name> /add" makes one a local administrator. Both are standard post-exploitation
+  persistence steps, so the rule maps to T1136.001 (Create Account: Local Account); the second form is strictly T1098
+  (Account Manipulation) and is covered here because the two almost always come as a pair. Case-folded plain
+  substring tests: " /add" together with either " user " or " localgroup " plus "administrators". net user (listing),
+  net user /delete, /active and net localgroup of another group ("Remote Desktop Users") do not match. Not covered: a
+  localised Administrators group name (Administratoren, Administrateurs), SID-based addition, net group on a domain,
+  New-LocalUser / Add-LocalGroupMember in PowerShell, WMI, and a command line over 1000 characters cut by the parser.
+  The Windows account-change events (4720, 4728/4732) are the log-side view of the same acts and feed common_priv_grant;
+  this rule fires earlier, from process creation, and names the process and its parent. Helpdesk and provisioning
+  scripts do use net user /add; tune per site. The trigger is a process-creation event, so it carries
+  actor.process.uid and parent_process.uid for ADR-012 process-tree links. Added 2026-11-21 (owner-approved).
+level: high
+logsource:
+  category: process_activity
+detection:
+  launch:
+    class_uid: 1002
+    activity_id: 1
+  net_image:
+    unmapped.process_launch.image_base: {in: [net.exe, net1.exe]}
+  add_flag:
+    unmapped.process_launch.command_line_lc: {contains: " /add"}
+  user_verb:
+    unmapped.process_launch.command_line_lc: {contains: " user "}
+  localgroup_verb:
+    unmapped.process_launch.command_line_lc: {contains: " localgroup "}
+  administrators:
+    unmapped.process_launch.command_line_lc: {contains: "administrators"}
+  condition: launch and net_image and add_flag and (user_verb or (localgroup_verb and administrators))
+fields:
+  - actor.user.name
+  - actor.process.name
+  - actor.process.uid
+  - actor.process.parent_process.uid
+  - unmapped.process_launch.parent
+  - unmapped.process_launch.command_line
+siem:
+  sector: common
+  score_weight: 70
+mitre:
+  tactic: TA0003        # Persistence
+  technique: T1136.001  # Create Account: Local Account

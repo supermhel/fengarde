@@ -39,6 +39,9 @@ provenance:
     common_rapid_account_lifecycle: "5e3f99f11fd658621fc411e0777e39089937dee33285ba3c4c99f43f0416227a"
     dc_mass_vm_delete: "38a2fca1e662c6e63775da687c95780852ce7f5d280a160009e166756ba0dd51"
     dc_mass_vm_delete_by_source: "c884e075f4c1d7bbdf6355eef232975985567d9483df43311109e8b6826cdc73"
+    # 2026-11-21: written AFTER this oracle, by the same author, to close the inhibit_recovery gap (T1490). It is NOT
+    # independent evidence of detection quality; the pin stops silent edits only.
+    win_shadow_copy_deleted: "f8f1b55bbc71f3ab378a6dca8644d6e2692ce970c0d8da1644eab17f80ef82d2"
 
 expected_sequence:
   - cred_spray
@@ -131,13 +134,9 @@ detection_points:
     step: inhibit_recovery
     role: "vssadmin deletes the volume shadow copies"
     expected_event_source: "sysmon EventID 1 (class 1002, activity 1)"
-    expected_rules: []
-    gap:
-      no_rule_exists: true
-      attack_technique: "T1490"           # Inhibit System Recovery
-      reason: >
-        Process-launch content (command line) has no rule; contracts/detection-coverage.md
-        lists class 1002 activity 1 as under-covered.
+    expected_rules:
+      - {rule_id: "d34cce6e-4cb8-4566-a8cf-ee13dc054256", title: "Volume shadow copies deleted or recovery disabled from the command line", level: high, role: inhibit-recovery detection (rule added 2026-11-21; gap closed)}
+    gap: {no_rule_exists: false}
 
   backup_wipe_cloud:
     step: backup_wipe_cloud
@@ -184,6 +183,7 @@ evidence:
     admin_privilege_use: {fields: [actor.user.name]}
     lateral_spread:      {fields: [actor.user.name, src_endpoint.ip, dst_endpoint.hostname]}
     backdoor_account:    {fields: [actor.user.name, unmapped.target_user.name]}
+    inhibit_recovery:    {fields: [actor.user.name, actor.process.name, src_endpoint.hostname]}
     mass_vm_delete:      {fields: [actor.user.name, src_endpoint.ip]}
 
 incident_membership:
@@ -191,7 +191,12 @@ incident_membership:
   # the address track. The compromised account is ALSO the actor on every alert-raising step (the
   # spray's crossing event is its own failed logon), so the actor track spans the chain as well:
   # WS-8 really produces TWO full-chain incidents (tracks never merge, ADR-009/010).
-  incident_count: 2
+  # 2026-11-21 (recorded, not tuned): ONE full-chain incident since win_shadow_copy_deleted gave inhibit_recovery an
+  # alert. That alert evidences the account (s.okafor) and the host (srv01) but no attacker address, so the address
+  # track does not reach it and only the account track holds the whole chain. The address track still carries its
+  # own alerts (see the base incident_count atom, 3 incidents in all). Same convention as above: the count is the
+  # full-chain incidents WS-8 really produces, not a target.
+  incident_count: 1
   incident_key: "ransomware"
   include: [cred_spray, foothold_logon, admin_privilege_use, lateral_spread, backdoor_account, inhibit_recovery, backup_wipe_cloud, mass_vm_delete, encrypt_files]
   cross_step_rule_ids:
@@ -261,14 +266,15 @@ known_gaps:
     outcome: SURVIVED
     max: 2
     since: '2026-10-14'
-    reason: inhibit_recovery and backup_wipe_cloud raise no alert (declared gaps), so dropping them from
-      the sequence changes no emitted alert and no graded output
+    reason: backup_wipe_cloud raises no alert (declared gap; inhibit_recovery stopped being one on 2026-11-21 and now
+      kills its drop_step mutant), so dropping it from the sequence changes no emitted alert and no graded output
   - kind: mutant_survivor
     operator: flip_gap_to_false
     outcome: SURVIVED
     max: 4
     since: '2026-10-14'
-    reason: the four gap steps declare no expected rule and no rule fires there, so nothing reads the gap
+    reason: the remaining gap steps (three since 2026-11-21, when inhibit_recovery gained a rule; the cap stays 4
+      and is not tightened here) declare no expected rule and no rule fires there, so nothing reads the gap
       flag (same mechanism as phishing_bec's waived flip_gap_to_false)
   - kind: mutant_survivor
     operator: flip_relationship

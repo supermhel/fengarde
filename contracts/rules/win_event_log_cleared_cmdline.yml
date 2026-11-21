@@ -1,0 +1,46 @@
+title: Event log cleared from the command line
+id: cebb9ee4-a72c-48d3-9aad-06b3aff0860c
+status: stable
+description: >
+  A process was created whose command line clears a Windows event log (Sysmon EventID 1, or Windows 4688 with
+  command-line auditing; OCSF class 1002, activity_id 1): wevtutil.exe with the cl (clear-log) command, or
+  powershell.exe / pwsh.exe running Clear-EventLog. Case-folded plain substring tests; " cl " and " clear-log " need a
+  space on both sides, so wevtutil qe / el / gl / epl do not match. Not covered: clearing through the Event Log API or
+  WMI from a non-PowerShell host, PowerShell's EventLogSession ClearLog method, Remove-EventLog (unregisters a log, a
+  different act), and a command line over 1000 characters cut by the parser. This is the command-line precursor of
+  win_audit_log_cleared, which fires on the log's own record of the clear (Security 1102 / System 104); the two can
+  both fire for one act, and the process-creation alert is the one that names the process and its parent. Legitimate
+  log maintenance (imaging, lab resets, scheduled housekeeping scripts) also clears logs; tune per site. The trigger
+  is a process-creation event, so it carries actor.process.uid and parent_process.uid for ADR-012 process-tree links.
+  Added 2026-11-21 (owner-approved).
+level: high
+logsource:
+  category: process_activity
+detection:
+  launch:
+    class_uid: 1002
+    activity_id: 1
+  wevtutil_image:
+    unmapped.process_launch.image_base: wevtutil.exe
+  cl_short:
+    unmapped.process_launch.command_line_lc: {contains: " cl "}
+  cl_long:
+    unmapped.process_launch.command_line_lc: {contains: " clear-log "}
+  ps_image:
+    unmapped.process_launch.image_base: {in: [powershell.exe, pwsh.exe]}
+  clear_eventlog:
+    unmapped.process_launch.command_line_lc: {contains: "clear-eventlog"}
+  condition: launch and ((wevtutil_image and (cl_short or cl_long)) or (ps_image and clear_eventlog))
+fields:
+  - actor.user.name
+  - actor.process.name
+  - actor.process.uid
+  - actor.process.parent_process.uid
+  - unmapped.process_launch.parent
+  - unmapped.process_launch.command_line
+siem:
+  sector: common
+  score_weight: 75
+mitre:
+  tactic: TA0005        # Defense Evasion
+  technique: T1070.001  # Indicator Removal: Clear Windows Event Logs

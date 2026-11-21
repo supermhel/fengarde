@@ -71,7 +71,30 @@ POST_SNAPSHOT_FIELDS = (
     "actor.process.parent_process",
     "actor.session.uid",
     "siem.key_scope",
+    # 2026-11-21: lower-cased match keys the EID 1 process-creation rules read (proc_launch.launch_info).
+    "unmapped.process_launch.image_base",
+    "unmapped.process_launch.command_line_lc",
 )
+
+# Rules added AFTER the measured snapshot (2026-11-21, the Sysmon EID 1 process-creation rules). They fire inside two
+# frozen storylines (phishing_bec user_execution, ransomware inhibit_recovery), which would add a rule to one case's
+# reason, change its score, and add a case: all of it changes the set the committed real-model results are keyed to.
+# So the builder runs its detector with these rules DISABLED for the eval tenant (the per-tenant `disabled_rules`
+# mechanism, nothing special-cased in ws4) and the frozen set stays byte-identical. Consequence, stated plainly: the
+# triage evaluation does not cover alerts from these rules. Including them means removing them here, regenerating, and
+# re-running run_eval.py and variants.py for every model (the old results then fail the sha test until redone).
+POST_SNAPSHOT_RULES = (
+    "df8465f8-c959-404a-b7dd-611c7f084ee2",  # win_powershell_encoded_command
+    "c933c309-6991-402e-ad83-332213c30856",  # win_lsass_dump_cmdline
+    "cebb9ee4-a72c-48d3-9aad-06b3aff0860c",  # win_event_log_cleared_cmdline
+    "1abfb057-d081-401d-be13-547958235343",  # win_service_created_cmdline
+    "d34cce6e-4cb8-4566-a8cf-ee13dc054256",  # win_shadow_copy_deleted
+    "976d13c4-7cb5-4b94-be44-1e623af130b9",  # win_scheduled_task_created
+    "0de0758f-a62c-405b-adcf-fb1d602cd321",  # win_certutil_download
+    "f909babc-7b4d-46f3-a2eb-b0ea711fa8c9",  # win_local_account_created
+)
+_EVAL_TENANT = "llm-eval"
+_FROZEN_TENANTS: list = []  # one temp tenants dir per process, created on first use
 
 _EVENT_SEQ = [0]  # ingest ids are label-neutral and GLOBALLY unique (WS-5 dedups on event id)
 
@@ -80,8 +103,24 @@ def _ws2():
     return report.scenario._get_ws2()
 
 
+def _frozen_tenants_dir() -> Path:
+    """A tenants dir whose only file disables POST_SNAPSHOT_RULES for the eval tenant."""
+    if not _FROZEN_TENANTS:
+        import atexit
+        import shutil
+        import tempfile
+
+        import yaml
+        d = Path(tempfile.mkdtemp(prefix="llm-eval-tenants-"))
+        (d / f"{_EVAL_TENANT}.yml").write_text(yaml.safe_dump({"disabled_rules": list(POST_SNAPSHOT_RULES)}),
+                                               encoding="utf-8")
+        atexit.register(shutil.rmtree, d, ignore_errors=True)
+        _FROZEN_TENANTS.append(d)
+    return _FROZEN_TENANTS[0]
+
+
 def _detector():
-    return report._WS4_MOD.Detector(plugin_rule_dirs=[], opt_in_rules=_OPT_IN)
+    return report._WS4_MOD.Detector(tenants_dir=_frozen_tenants_dir(), plugin_rule_dirs=[], opt_in_rules=_OPT_IN)
 
 
 def _level(rule_levels: list[str]) -> str:
@@ -120,7 +159,7 @@ def _run(items, group: str, label: str, source: str, cases: list, excluded: list
             excluded.append({"group": group, "step": step, "why": "did not normalize"})
             continue
         _EVENT_SEQ[0] += 1
-        event.setdefault("siem", {}).update({"tenant": "llm-eval", "ingest_id": f"llmeval:{_EVENT_SEQ[0]:04d}"})
+        event.setdefault("siem", {}).update({"tenant": _EVAL_TENANT, "ingest_id": f"llmeval:{_EVENT_SEQ[0]:04d}"})
         if "trace_id" in event["siem"]:  # some parsers mint a random uuid; pin it so the file is reproducible
             event["siem"]["trace_id"] = f"trace-{event['siem']['ingest_id']}"
         event, matched, tier = det.process(event)

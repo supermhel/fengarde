@@ -349,8 +349,13 @@ def _field_match(expected, actual, allowlists_dir=None):
             v = _outside_hours(arg, actual)
         elif op in _NUMERIC_OPS:
             v = _numeric_compare(op, actual, arg)
+        elif op == "contains":
+            # 2026-11-21: modelled for the EID 1 command-line rules. Independent re-statement of the engine's bounded
+            # plain-substring test (both operands strings, needle non-empty and at most 200 characters), fuzz-checked
+            # against the engine by test_oracle_crosscheck like the other operators.
+            v = isinstance(actual, str) and isinstance(arg, str) and 0 < len(arg) <= 200 and arg in actual
         else:
-            v = None  # contains/glob/... are not modelled: say UNDECIDED, never guess
+            v = None  # glob/... are not modelled: say UNDECIDED, never guess
         result = _tri_and(result, v)
     return result
 

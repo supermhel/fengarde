@@ -1,0 +1,41 @@
+title: Scheduled task created from the command line (schtasks /create)
+id: 976d13c4-7cb5-4b94-be44-1e623af130b9
+status: stable
+description: >
+  schtasks.exe was created with /create (Sysmon EventID 1, or Windows 4688 with command-line auditing; OCSF class 1002,
+  activity_id 1): the usual command-line way to plant a scheduled task for persistence, execution on a remote host
+  (schtasks /s host /create ...) or privilege escalation. Case-folded plain substring test on " /create" (also the dash
+  form " -create"), so schtasks /query, /run, /delete, /change and /end do not match. This is the broadest of the
+  process-creation rules: installers, software updaters and administrators create scheduled tasks all the time, so it
+  is level low with a low score and is meant as a chain stage, not as a stand-alone verdict; tune per site by
+  actor.user.name or parent. Not covered: task creation through the Task Scheduler COM API, PowerShell
+  Register-ScheduledTask, at.exe, schtasks.exe renamed, and a command line over 1000 characters cut by the parser. The
+  trigger is a process-creation event, so it carries actor.process.uid and parent_process.uid for ADR-012 process-tree
+  links. Added 2026-11-21 (owner-approved).
+level: low
+logsource:
+  category: process_activity
+detection:
+  launch:
+    class_uid: 1002
+    activity_id: 1
+  schtasks_image:
+    unmapped.process_launch.image_base: schtasks.exe
+  create_slash:
+    unmapped.process_launch.command_line_lc: {contains: " /create"}
+  create_dash:
+    unmapped.process_launch.command_line_lc: {contains: " -create"}
+  condition: launch and schtasks_image and (create_slash or create_dash)
+fields:
+  - actor.user.name
+  - actor.process.name
+  - actor.process.uid
+  - actor.process.parent_process.uid
+  - unmapped.process_launch.parent
+  - unmapped.process_launch.command_line
+siem:
+  sector: common
+  score_weight: 30
+mitre:
+  tactic: TA0003        # Persistence
+  technique: T1053.005  # Scheduled Task/Job: Scheduled Task
