@@ -611,7 +611,11 @@ def test_per_technique_math() -> None:
     # (ransomware 5 -> 6 non-gap steps on 2026-11-21: win_shadow_copy_deleted closed the inhibit_recovery gap)
     for s, want in (("ransomware", (6, 9)), ("insider_exfil", (2, 7)),
                     ("cloud_iam_abuse", (1, 8)), ("supply_chain_ci", (5, 6)),
-                    ("win_credential_theft", (5, 5)), ("network_credential_abuse", (3, 3))):
+                    ("win_credential_theft", (5, 5)), ("network_credential_abuse", (3, 3)),
+                    # 2026-11-19: the five process-tree-keyed storylines (every step raises an alert)
+                    ("endpoint_macro_c2", (6, 6)), ("excel_loader_domain_abuse", (6, 6)),
+                    ("pdf_exploit_lateral", (7, 7)), ("outlook_script_backdoor", (7, 7)),
+                    ("reader_staged_loader", (6, 6))):
         check(den[s][:2] == want, f"{s} wrong: {den[s]} (want {want})")
 
     # (d) 2 of 12 applicable variants lose a technique's step; N/A excluded
@@ -937,7 +941,7 @@ def test_oracle_shapes_and_storyline_registry() -> None:
     arts = real_arts()
     check("phishing_bec" in reg.STORYLINES,
           "phishing_bec is not a registered storyline")
-    check(len(reg.STORYLINES) == 14, f"expected 14 storylines, got {reg.STORYLINES}")
+    check(len(reg.STORYLINES) == 19, f"expected 19 storylines, got {reg.STORYLINES}")
     check(gs._check_storylines(arts) == [],
           f"the storyline cross-check failed on the real tree: {gs._check_storylines(arts)}")
     bad = copy.deepcopy(arts)

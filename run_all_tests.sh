@@ -660,6 +660,12 @@ $PY eval/twin/oracle_consistency.py --out eval/twin/out/oracle_consistency.lates
 echo
 echo "== twin: flow_* storylines (network_flow keys minted by the builder, derived causal_links, scope controls, F4 forbidden pairs) =="; LAST_HEADER="== twin: flow_* storylines (network_flow keys, derived causal_links, scope controls, F4 forbidden pairs) =="
 $PY eval/twin/test_flow_storylines.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
+echo "== twin: causal-link grader + gate (precision/recall/direction/coverage with Wilson intervals, insufficient_n below the ADR-012 bar, mutation-proved) =="; LAST_HEADER="== twin: causal-link grader + gate (precision/recall/direction/coverage with Wilson intervals, insufficient_n below the ADR-012 bar, mutation-proved) =="
+$PY eval/twin/test_causal_links.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
+echo "== twin: ADR-012 key controls (key_shuffle/key_drop/key_collide/key_forge through the real ws8, each with a deliberately broken control that must fail) =="; LAST_HEADER="== twin: ADR-012 key controls (key_shuffle/key_drop/key_collide/key_forge through the real ws8, each with a deliberately broken control that must fail) =="
+$PY eval/twin/test_key_controls.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 fi  # tier: eval-twin
 
 # == Phase 4 adversarial system-level validation (WP-4-A) ==
@@ -694,6 +700,13 @@ $PY eval/twin/test_known_gaps.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}";
 echo
 echo "== twin: the oracle mutation instrument ITSELF (waiver table + inert-key table + ratchet over every storyline) =="; LAST_HEADER="== twin: the oracle mutation instrument itself =="
 $PY eval/twin/oracle_mutate.py --seed 7 || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+echo
+echo "== twin: ADR-011/012 process-tree-keyed storylines (determinism, real parsers, raw ProcessGuid keys, sender scope, oracle provenance, causal_links == derivation from the raw keys) =="; LAST_HEADER="== twin: keyed storylines (ADR-011/012) =="
+$PY eval/twin/test_storyline_endpoint_macro_c2.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+$PY eval/twin/test_storyline_excel_loader_domain_abuse.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+$PY eval/twin/test_storyline_pdf_exploit_lateral.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+$PY eval/twin/test_storyline_outlook_script_backdoor.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
+$PY eval/twin/test_storyline_reader_staged_loader.py || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }
 echo
 echo "== ws5 triage eval: committed labelled set still equals what the current rules/parsers/storylines produce =="; LAST_HEADER="== ws5 triage eval: labelled set not stale =="
 $PY eval/llm_triage/build_labelled_set.py --check || { fail=1; FAILED="${FAILED} ${LAST_HEADER}"; }

@@ -114,6 +114,21 @@ LEGACY_EXPECT = {
                            "directional_discrimination": 0.0, "incident_count": 2},
     "network_credential_abuse": {"tpr": 1.0, "chain_fidelity": 0.5, "false_correlation_rate": 0.0,
                                  "directional_discrimination": 0.0, "incident_count": 1},
+
+    # 2026-11-19: measured on the first run of the five process-tree-keyed storylines (seed 7, not tuned).
+    # Every one carries anti-causal forbidden pairs the actor track JOINS in both directions (that is what
+    # ADR-011 F4 needs), so false_correlation_rate is 1.0 and directional_discrimination 0.0 -- the same
+    # order-blind reading as it_intrusion / ransomware.
+    "endpoint_macro_c2": {"tpr": 1.0, "chain_fidelity": 0.4, "false_correlation_rate": 1.0,
+                          "directional_discrimination": 0.0, "incident_count": 3},
+    "excel_loader_domain_abuse": {"tpr": 1.0, "chain_fidelity": 0.4, "false_correlation_rate": 1.0,
+                                  "directional_discrimination": 0.0, "incident_count": 3},
+    "pdf_exploit_lateral": {"tpr": 1.0, "chain_fidelity": 0.5, "false_correlation_rate": 1.0,
+                            "directional_discrimination": 0.0, "incident_count": 4},
+    "outlook_script_backdoor": {"tpr": 1.0, "chain_fidelity": 0.5, "false_correlation_rate": 1.0,
+                                "directional_discrimination": 0.0, "incident_count": 3},
+    "reader_staged_loader": {"tpr": 1.0, "chain_fidelity": 0.4, "false_correlation_rate": 1.0,
+                             "directional_discrimination": 0.0, "incident_count": 3},
 }
 
 #: ONE alert-raising step (cloud_iam_abuse): no alert order exists to grade, so the order checks
