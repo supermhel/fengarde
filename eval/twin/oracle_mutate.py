@@ -511,6 +511,12 @@ _INERT_KEYS: dict = {
     "provenance.rules_read.email_macro_attachment_delivered": _PROV_PIN,   # 2026-10-20 (phishing_bec gap closed)
     "provenance.rules_read.m365_inbox_rule_external_forward": _PROV_PIN,   # 2026-10-20 (phishing_bec gap closed)
     "provenance.rules_read.win_office_spawns_shell": _PROV_PIN,   # 2026-10-20 (phishing_bec user_execution gap closed)
+    "provenance.rules_read.win_powershell_encoded_command": _PROV_PIN,   # 2026-11-21 (EID 1 rule; phishing_bec user_execution)
+    "provenance.rules_read.win_shadow_copy_deleted": _PROV_PIN,   # 2026-11-21 (EID 1 rule; ransomware inhibit_recovery gap closed)
+    "provenance.rules_read.win_lsass_dump_cmdline": _PROV_PIN,   # 2026-11-21 (EID 1 rule; keyed sysmon storylines' dumper process creation)
+    "provenance.rules_read.win_service_created_cmdline": _PROV_PIN,   # 2026-11-21 (EID 1 rule; keyed sysmon storylines' sc.exe create)
+    "provenance.rules_read.win_event_log_cleared_cmdline": _PROV_PIN,   # 2026-11-21 (EID 1 rule; keyed sysmon storylines' wevtutil cl)
+    "provenance.rules_read.win_local_account_created": _PROV_PIN,   # 2026-11-21 (EID 1 rule; keyed sysmon storylines' net user/localgroup /add)
     "provenance.rules_read.common_bruteforce": _PROV_PIN,
     "provenance.rules_read.common_bruteforce_by_account": _PROV_PIN,
     "provenance.rules_read.common_impossible_travel": _PROV_PIN,

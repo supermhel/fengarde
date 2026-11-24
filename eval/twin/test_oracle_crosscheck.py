@@ -335,12 +335,24 @@ def test_derive_rule_skew() -> None:
     # F2 (undecidable) is a WARN with a cap, and an unmodelled operator is UNDECIDED, never guessed
     rule_raw = {"title": "t", "id": "00000000-0000-4000-8000-0000000000aa", "level": "high",
                 "logsource": {"category": "account_change"},
-                "detection": {"s": {"class_uid": 3003, "src_endpoint.ip": {"contains": "5"}}, "condition": "s"},
+                "detection": {"s": {"class_uid": 3003, "src_endpoint.ip": {"glob": "5*"}}, "condition": "s"},
                 "mitre": {"tactic": "TA0003"}}
     undecided_rule = od.DRule(rule_raw)
-    _check("DER-NEG-1 an operator the reader does not model (contains) evaluates to UNDECIDED, not True/False",
+    _check("DER-NEG-1 an operator the reader does not model (glob) evaluates to UNDECIDED, not True/False",
            od.eval_condition(undecided_rule, {"class_uid": 3003, "src_endpoint": {"ip": "x"}}) is None
            and od.eval_condition(undecided_rule, {"class_uid": 3002, "src_endpoint": {"ip": "x"}}) is False)
+    # contains was unmodelled until 2026-11-21 (this check used it as the unmodelled example); it is decided now and
+    # must agree with the engine's bounded plain-substring semantics, fail-closed on non-strings and bad needles.
+    contains_rule = od.DRule(dict(rule_raw, id="00000000-0000-4000-8000-0000000000ab", detection={
+        "s": {"class_uid": 3003, "src_endpoint.ip": {"contains": "5"}}, "condition": "s"}))
+    _check("DER-POS-1 contains is decided: True on a substring, False on a miss, a non-string and a missing field",
+           od.eval_condition(contains_rule, {"class_uid": 3003, "src_endpoint": {"ip": "a5b"}}) is True
+           and od.eval_condition(contains_rule, {"class_uid": 3003, "src_endpoint": {"ip": "ab"}}) is False
+           and od.eval_condition(contains_rule, {"class_uid": 3003, "src_endpoint": {"ip": 5}}) is False
+           and od.eval_condition(contains_rule, {"class_uid": 3003}) is False)
+    _check("DER-NEG-1 contains fails closed on an empty or over-long needle (engine bound 200)",
+           od._field_match({"contains": ""}, "abc") is False and od._field_match({"contains": "a" * 201}, "a" * 300) is False
+           and od._field_match({"contains": "a" * 200}, "a" * 300) is True and od._field_match({"contains": 5}, "a5") is False)
     rules2 = dict(_RULES)
     rules2[undecided_rule.id] = undecided_rule
     o = copy.deepcopy(_oracle(IT))

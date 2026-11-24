@@ -364,11 +364,14 @@ def test_phishing_bec() -> None:
            g["tpr"] == 1.0 and g["alert_order_ok"] is True and g["incident_membership_ok"] is False
            and g["incident_count"] == 2, f"tpr={g['tpr']} order={g['alert_order_ok']} incidents={g['incident_count']}")
     # Pin the SHAPE of the two incidents, not just their count, so a different chain break that still yields 2
-    # incidents fails here (2026-10-21, PR #112 review): the account track (4 alerts, 4 tactics) and the workstation
-    # track (Office spawn + beacon). When F14 is resolved this check changes on purpose.
+    # incidents fails here (2026-10-21, PR #112 review): the account track (5 alerts, 4 tactics) and the workstation
+    # track (Office spawn + encoded PowerShell + beacon). When F14 is resolved this check changes on purpose.
+    # 2026-11-21: win_powershell_encoded_command (EID 1 rule) fires on the same user_execution event as the Office-spawn
+    # rule, so each track gains one alert (4 -> 5 and 2 -> 3); the tactic sets (TA0002 already present) and the two-track
+    # shape are unchanged.
     shape = sorted((i["entity"].split(":")[0], i["member_count"], tuple(i["tactics"])) for i in g["incident_summary"])
     _check("(h) the two incidents are the account track and the workstation track (F14 measured shape)",
-           shape == [("actor", 4, ("TA0001", "TA0002", "TA0006", "TA0011")), ("device", 2, ("TA0002", "TA0011"))],
+           shape == [("actor", 5, ("TA0001", "TA0002", "TA0006", "TA0011")), ("device", 3, ("TA0002", "TA0011"))],
            str(shape))
     first: dict = {}
     for a in g["fired"]:

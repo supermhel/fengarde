@@ -1,0 +1,53 @@
+title: Volume shadow copies deleted or recovery disabled from the command line
+id: d34cce6e-4cb8-4566-a8cf-ee13dc054256
+status: stable
+description: >
+  A process was created whose command line destroys recovery data (Sysmon EventID 1, or Windows 4688 with
+  command-line auditing; OCSF class 1002, activity_id 1), the standard first step of ransomware: vssadmin.exe with
+  delete and shadows (vssadmin delete shadows /all /quiet), wmic.exe with shadowcopy and delete (wmic shadowcopy
+  delete, also the path win32_shadowcopy form), or bcdedit.exe with "recoveryenabled no" (bcdedit /set {default}
+  recoveryenabled no). Case-folded plain substring tests ("shadows" is a substring of "shadowstorage", so vssadmin
+  delete shadowstorage matches too, which is wanted). Not covered: vssadmin resize shadowstorage, diskshadow,
+  PowerShell or WMI calls to Win32_ShadowCopy.Delete, wbadmin delete catalog, bcdedit bootstatuspolicy,
+  "recoveryenabled" followed by extra whitespace, and a command line over 1000 characters cut by the parser. Backup
+  software and administrators also delete shadow copies (vssadmin delete shadows /for=C: /oldest is routine
+  housekeeping); the rule does not tell them apart from /all, so tune per site. The trigger is a process-creation
+  event, so it carries actor.process.uid and parent_process.uid for ADR-012 process-tree links. Added 2026-11-21
+  (owner-approved).
+level: high
+logsource:
+  category: process_activity
+detection:
+  launch:
+    class_uid: 1002
+    activity_id: 1
+  vssadmin_image:
+    unmapped.process_launch.image_base: vssadmin.exe
+  delete_word:
+    unmapped.process_launch.command_line_lc: {contains: "delete"}
+  shadows_word:
+    unmapped.process_launch.command_line_lc: {contains: "shadows"}
+  wmic_image:
+    unmapped.process_launch.image_base: wmic.exe
+  shadowcopy_word:
+    unmapped.process_launch.command_line_lc: {contains: "shadowcopy"}
+  bcdedit_image:
+    unmapped.process_launch.image_base: bcdedit.exe
+  recovery_off:
+    unmapped.process_launch.command_line_lc: {contains: "recoveryenabled no"}
+  condition: >-
+    launch and ((vssadmin_image and delete_word and shadows_word) or
+    (wmic_image and shadowcopy_word and delete_word) or (bcdedit_image and recovery_off))
+fields:
+  - actor.user.name
+  - actor.process.name
+  - actor.process.uid
+  - actor.process.parent_process.uid
+  - unmapped.process_launch.parent
+  - unmapped.process_launch.command_line
+siem:
+  sector: common
+  score_weight: 80
+mitre:
+  tactic: TA0040        # Impact
+  technique: T1490      # Inhibit System Recovery

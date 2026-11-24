@@ -20,13 +20,20 @@ def _base(path) -> str:
 
 
 def launch_info(parent_image, image, command_line: Optional[str] = None) -> dict:
-    """``{"parent", "image", "suspicious"}``; ``suspicious`` is True for a document host spawning a shell/script host."""
+    """``{"parent", "image", "suspicious"}``; ``suspicious`` is True for a document host spawning a shell/script host.
+
+    Also carries two lower-cased match keys for the process-creation rules (the rule engine compares case-sensitively and
+    Windows command lines are not): ``image_base`` (executable basename, e.g. ``powershell.exe``) and ``command_line_lc``
+    (the same text as ``command_line``, lower-cased). Each is present only when its source value is."""
     parent, child = _base(parent_image), _base(image)
     info: dict = {"suspicious": parent in _PARENTS and child in _CHILDREN}
     if parent_image:
         info["parent"] = str(parent_image)[:260]
     if image:
         info["image"] = str(image)[:260]
+        if child:
+            info["image_base"] = child
     if command_line:
         info["command_line"] = str(command_line)[:1000]
+        info["command_line_lc"] = info["command_line"].lower()
     return info

@@ -38,6 +38,11 @@ provenance:
     win_ad_sensitive_attribute_modified: "f0b2f3740c74321e81f447038f32a876559b8e00f04a8989a43e5f45fbc04fd9"
     common_priv_grant: "3d7b783edf6df5e578f154446316404f07d0bcc5837ac9180d00481198f8c14d"
     win_audit_log_cleared: "385255313468f912449ed7144d6533882a13ab07ff300f6759bc03ac418158e4"
+    # 2026-11-21: pinned AFTER this oracle was authored, by the same author, once the EID 1 process-creation rules
+    # (wp/eid1-process-rules) began firing on this storyline's raw process-tree records. NOT independent evidence:
+    # the pin stops silent edits only.
+    win_lsass_dump_cmdline: "59c684aa473d0ffdda0d168bfa1488833e6395dd9a6dc074eb89c393b9905df1"
+    win_event_log_cleared_cmdline: "dccea56d6d175feda9afa3d1c2d8ff1088ab2aa2cc6d05dc0e2a57b2ec649eb7"
 
 expected_sequence:
   - loader_shell
@@ -85,6 +90,7 @@ detection_points:
     expected_event_source: "sysmon EventID 10 (class 1002, activity 5, unmapped.lsass_access_suspicious)"
     expected_rules:
       - {rule_id: "ed287553-9e4b-45c1-8189-625dfbad7442", title: "Suspicious process access to lsass.exe", level: critical, role: credential dumping (T1003.001)}
+      - {rule_id: "c933c309-6991-402e-ad83-332213c30856", title: "LSASS memory dump started from the command line", level: critical, role: credential-dumping detection on the dumper's process-creation event (T1003.001) (rule added 2026-11-21; the storyline's raw process tree already carried this command line)}
     gap: {no_rule_exists: false}
 
   directory_tamper:
@@ -109,6 +115,7 @@ detection_points:
     expected_event_source: "windows_eventlog 1102 (class 1002, activity 4)"
     expected_rules:
       - {rule_id: "17dcc2b9-4d62-4fc2-9833-83954bf1b902", title: "Windows audit log cleared", level: high, role: defense evasion (T1070.001)}
+      - {rule_id: "cebb9ee4-a72c-48d3-9aad-06b3aff0860c", title: "Event log cleared from the command line", level: high, role: defense-evasion detection on the wevtutil cl process-creation event (T1070.001) (rule added 2026-11-21; the storyline's raw process tree already carried this command line)}
     gap: {no_rule_exists: false}
 
 # No step's detection needs another step's telemetry: every rule here is a single-event predicate.
