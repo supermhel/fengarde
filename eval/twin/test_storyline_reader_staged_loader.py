@@ -46,9 +46,13 @@ def extra(check, sdef) -> None:
               len(dc) == 1 and dc[0]["raw"]["Computer"] == "dc02" and dc[0]["meta"]["shipper_ip"] != wks_ip)
     links = {(lk["from"], lk["to"]) for lk in
              ksc.yaml.safe_load(Path(sdef.oracle_path).read_text(encoding="utf-8"))["causal_links"]}
-    check("step-level links run down the chain, then fan out from the loader's step",
-          links == {("reader_shell", "ps_cradle"), ("ps_cradle", "lsass_read"), ("lsass_read", "directory_tamper"),
-                    ("lsass_read", "service_persistence"), ("lsass_read", "log_clear")}, f"{sorted(links)}")
+    want = {("reader_shell", "ps_encoded"), ("ps_encoded", "lsass_read")} | {("lsass_read", t) for t in (
+        "tool_download", "service_persistence", "sched_task", "shadow_delete", "account_add", "log_clear")}
+    check("step-level links run down the chain (reader -> cmd -> PowerShell -> loader), then fan out from the loader's step",
+          links == want, f"{sorted(links ^ want)}")
+    ctx = {(lk["from"], lk["to"]) for lk in ksc.sysmon_tree.context_links(sdef.build(7)[0])}
+    check("context: the recon children and the ldifde helper are context only, never graded truth",
+          {("ps_encoded", "ps_cradle"), ("lsass_read", "directory_tamper")} <= ctx and not (ctx & links))
 
 
 def main() -> int:

@@ -344,9 +344,10 @@ def _test_real() -> dict:
               # 2026-11-19, first run of the five process-tree-keyed storylines (measured, not tuned). 2026-11-21:
               # outlook_script_backdoor 0.8333 -> 1.0 (measured, not tuned): the EID 1 rules add an alert on the net.exe
               # process-creation record, which gives the graded pair that had no joining edge an edge.
-              "endpoint_macro_c2": (5, 0.8), "excel_loader_domain_abuse": (5, 1.0),
-              "pdf_exploit_lateral": (6, 1.0), "outlook_script_backdoor": (6, 1.0),
-              "reader_staged_loader": (5, 0.8)}
+              "endpoint_macro_c2": (10, 0.7), "excel_loader_domain_abuse": (11, 0.8182),
+              "pdf_exploit_lateral": (10, 0.7), "outlook_script_backdoor": (11, 0.7273),
+              "reader_staged_loader": (10, 0.7)}
+    # 2026-11-25: the five keyed storylines were restructured into spawn chains (more graded pairs); re-measured, not tuned.
     # 2026-10-03: measured on the first run of the 4th storyline; 2026-10-14: the 5th (ot_opcua_sabotage)
     got = {n: (g["causal_order"]["graded"], g["causal_order"]["causal_order_fidelity"]) for n, g in out.items()}
     _check("(c) identity causal_order_fidelity / graded-pair counts (seed 7) match the measured values",

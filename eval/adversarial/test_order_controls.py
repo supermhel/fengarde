@@ -119,15 +119,17 @@ LEGACY_EXPECT = {
     # Every one carries anti-causal forbidden pairs the actor track JOINS in both directions (that is what
     # ADR-011 F4 needs), so false_correlation_rate is 1.0 and directional_discrimination 0.0 -- the same
     # order-blind reading as it_intrusion / ransomware.
-    "endpoint_macro_c2": {"tpr": 1.0, "chain_fidelity": 0.4, "false_correlation_rate": 1.0,
+    # 2026-11-25: process-tree spawn-chain restructure of the five keyed storylines (longer chains, more alerts);
+    # chain_fidelity re-measured at seed 7 (0.4/0.4/0.5/0.5/0.4 -> 0.7/0.7273/0.7/0.7273/0.7), not tuned.
+    "endpoint_macro_c2": {"tpr": 1.0, "chain_fidelity": 0.7, "false_correlation_rate": 1.0,
                           "directional_discrimination": 0.0, "incident_count": 3},
-    "excel_loader_domain_abuse": {"tpr": 1.0, "chain_fidelity": 0.4, "false_correlation_rate": 1.0,
+    "excel_loader_domain_abuse": {"tpr": 1.0, "chain_fidelity": 0.7273, "false_correlation_rate": 1.0,
                                   "directional_discrimination": 0.0, "incident_count": 3},
-    "pdf_exploit_lateral": {"tpr": 1.0, "chain_fidelity": 0.5, "false_correlation_rate": 1.0,
+    "pdf_exploit_lateral": {"tpr": 1.0, "chain_fidelity": 0.7, "false_correlation_rate": 1.0,
                             "directional_discrimination": 0.0, "incident_count": 4},
-    "outlook_script_backdoor": {"tpr": 1.0, "chain_fidelity": 0.5, "false_correlation_rate": 1.0,
+    "outlook_script_backdoor": {"tpr": 1.0, "chain_fidelity": 0.7273, "false_correlation_rate": 1.0,
                                 "directional_discrimination": 0.0, "incident_count": 3},
-    "reader_staged_loader": {"tpr": 1.0, "chain_fidelity": 0.4, "false_correlation_rate": 1.0,
+    "reader_staged_loader": {"tpr": 1.0, "chain_fidelity": 0.7, "false_correlation_rate": 1.0,
                              "directional_discrimination": 0.0, "incident_count": 3},
 }
 
