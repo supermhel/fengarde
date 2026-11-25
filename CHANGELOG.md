@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (2026-11-25, network_flow causal-link storylines, eval only)
+
+- The four `flow_*` twin storylines (`flow_suricata_c2_exfil`, `flow_zeek_ot_pivot`, `flow_suricata_modbus_sabotage`, new `flow_suricata_ci_runner_tunnels`) now raise several DISTINCT alerts per network flow (different rules or different hour buckets), so 21 trigger-level `network_flow` truth links are gradable (was 3 of 17), none above 6 per storyline. ws8 emits every one (precision 1.0, recall 1.0, seeds 7 and 11); `key_shuffle` collapses pooled precision/recall to 0.15/0.14 (seed 7). No change to `services/`; the grade is below the ADR-012 minimum n (40, 4 storylines), so the claim stays `insufficient_n`.
+- Grader: ONE folded-alert attribution rule (`causal_links.step_of_alert` / `owner_items`: the earliest step owns an alert id that several steps mint), now shared by `causal_links`, `report.py` and `test_timeline_order`.
+
 ### Added (2026-11-21, Sysmon EID 1 process-creation rules, owner-approved)
 
 - Eight single-event rules whose trigger is a process-creation event (Sysmon EventID 1; Windows 4688 fires them too when command-line auditing is on), one per common attack stage, so ADR-012 process-tree links can join two ALERTS that are a direct parent and child (the child alert's trigger event carries `actor.process.parent_process.uid`, the Sysmon `ParentProcessGuid`): `win_powershell_encoded_command` (medium, T1059.001), `win_lsass_dump_cmdline` (critical, T1003.001), `win_event_log_cleared_cmdline` (high, T1070.001), `win_service_created_cmdline` (medium, T1543.003), `win_shadow_copy_deleted` (high, T1490), `win_scheduled_task_created` (low, T1053.005), `win_certutil_download` (high, T1105), `win_local_account_created` (high, T1136.001). Plain case-folded substring tests, not classifiers; each rule file lists what it does not cover and which legitimate tooling will fire it. Rules 50 -> 58.

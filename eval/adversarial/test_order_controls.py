@@ -106,12 +106,19 @@ LEGACY_EXPECT = {
     "win_credential_theft": {"tpr": 1.0, "chain_fidelity": 1.0, "false_correlation_rate": 0.0,
                              "directional_discrimination": 0.0, "incident_count": 3},
     # 2026-11-20: flow_* storylines (WP-D2), measured on the first run, seed 7, not tuned.
-    "flow_suricata_c2_exfil": {"tpr": 1.0, "chain_fidelity": 0.5833, "false_correlation_rate": 0.75,
-                               "directional_discrimination": 0.1667, "incident_count": 2},
-    "flow_suricata_modbus_sabotage": {"tpr": 1.0, "chain_fidelity": 0.6, "false_correlation_rate": 0.75,
+    # 2026-11-24 (wp/flow-chains): the flow_* storylines were rebuilt so that every flow step raises its own alert
+    # (several distinct alerts per flow, trigger-level network_flow truth) and a fourth one was added. The legacy
+    # numbers were RE-MEASURED on the new builders, seed 7, not tuned: tpr stays 1.0 and incident_count 2; the
+    # chain_fidelity rises because far more steps now alert, and flow_suricata_c2_exfil's
+    # directional_discrimination falls 0.1667 -> 0.0 (the order-blind reading of every other storyline).
+    "flow_suricata_c2_exfil": {"tpr": 1.0, "chain_fidelity": 0.6667, "false_correlation_rate": 0.75,
+                               "directional_discrimination": 0.0, "incident_count": 2},
+    "flow_suricata_modbus_sabotage": {"tpr": 1.0, "chain_fidelity": 0.75, "false_correlation_rate": 0.75,
                                       "directional_discrimination": 0.0, "incident_count": 2},
-    "flow_zeek_ot_pivot": {"tpr": 1.0, "chain_fidelity": 0.6364, "false_correlation_rate": 0.75,
+    "flow_zeek_ot_pivot": {"tpr": 1.0, "chain_fidelity": 0.7143, "false_correlation_rate": 0.75,
                            "directional_discrimination": 0.0, "incident_count": 2},
+    "flow_suricata_ci_runner_tunnels": {"tpr": 1.0, "chain_fidelity": 0.6667, "false_correlation_rate": 0.75,
+                                        "directional_discrimination": 0.0, "incident_count": 2},
     "network_credential_abuse": {"tpr": 1.0, "chain_fidelity": 0.5, "false_correlation_rate": 0.0,
                                  "directional_discrimination": 0.0, "incident_count": 1},
 

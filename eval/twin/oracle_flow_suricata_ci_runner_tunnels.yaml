@@ -1,0 +1,494 @@
+# =============================================================================
+# FENGARDE eval/twin/oracle_flow_suricata_ci_runner_tunnels.yaml
+# Grading ground truth for the CI-runner flow storyline (storyline_flow_suricata_ci_runner_tunnels.py):
+#   asa_sweep -> ad_bruteforce -> lateral_logons -> rev_shell_open -> priv_grant -> tunnel_alert -> rev_shell_cmd
+#     -> upload_alert -> tunnel_alert2 -> rev_shell_loot -> upload_alert2 -> upload_close -> rev_shell_close
+#
+# Three Suricata flows raise several DISTINCT alerts: the reverse shell (three severity-1 signatures in three hours,
+# then the flow-end record with 1.1 GiB: 3 links), the SSH tunnel (two signatures: 1 link) and the bulk upload (two
+# signatures, then the flow-end record with 1.5 GiB: 2 links). Six gradable network_flow links; the bystander is a benign
+# alert on a SECOND sensor whose flow_id VALUE equals the reverse shell's (other scope: no link).
+#
+# AUTHORING RULES (written 2026-11-24 BEFORE the new builder was run through the pipeline; expectations come from the
+# rules' own description/detection/siem blocks and the parser docstrings).
+#   1. NO RULE WAS INVENTED. A step that no shipped rule reads is an honest gap and its records are CONTEXT, never a
+#      link endpoint.
+#   2. causal_links (ADR-012 WP 7, basis network_flow) are DERIVED from the flow keys the builder mints on its TRIGGER
+#      records (eval/twin/flow_kit.py), grouped per sensor scope, joined through time-ordered neighbours: n alerts on one
+#      flow give n-1 links. They are NOT typed here. test_flow_storylines.py re-derives the list and cross-checks every
+#      trigger declaration against the alerts the real detector raises.
+#   3. ONE ATTRIBUTION RULE FOR FOLDED ALERTS (grader, report.py, test_timeline_order, this oracle): an alert id minted by
+#      two steps belongs to the EARLIEST step. This storyline folds nothing: every step on a flow sits in its own rule
+#      bucket (severity-1 hits more than one hour apart, DNS bursts more than 60 s apart) or on a different rule.
+#   4. FORBIDDEN PAIRS are anti-causal (a later stage never enables an earlier one) and share the host and the account
+#      with the steps they must not precede; the last one is the scope/entity control (the bystander shares an address
+#      or a flow-id VALUE with the attack and no flow KEY).
+#   5. INCIDENT. One host address spans every alert-raising step: one ip track, one incident.
+# =============================================================================
+schema_version: 1
+oracle_id: flow-suricata-ci-runner-tunnels-v1
+kind: attack-chain-grading-oracle
+scope: flow-suricata-ci-runner-tunnels
+provenance:
+  authored: '2026-11-24'
+  pipeline_run_before_authoring: false
+  basis: rule description/detection/siem blocks and parser docstrings only; causal_links derived from the builder's own minted flow keys on its
+    TRIGGER records
+  rules_read:
+    common_bruteforce: f685feb7ab0efe2e0cd9ed3427a2e0466c3a0de785cc28deef3c53a0b585919b
+    common_ids_high_severity_alert: 4b7889ef66883195f31ad9d383b3e98e9f30e285dea71dacf7ffabe8259ed350
+    common_large_outbound_flow: fc46c10886f4fa397206860642bcbeae9f3a8f67c3d4da3973f76ffc5ab386fe
+    common_lateral_movement: 2f010d5cf5adb6de7df93f6a30da3ed32029626dccc912f118af9813d0d4c8ae
+    common_port_scan: c0c97060ce0620959b450df333154677f2135130748a7cbefd452db7529f3786
+    common_port_sweep: ba865ca0603fcc06fa6fdbac0e9672ffdfaddd579b2645198b8dab02d9ec4b63
+    common_priv_grant: 3d7b783edf6df5e578f154446316404f07d0bcc5837ac9180d00481198f8c14d
+expected_sequence: &id001
+- asa_sweep
+- ad_bruteforce
+- lateral_logons
+- rev_shell_open
+- priv_grant
+- tunnel_alert
+- rev_shell_cmd
+- upload_alert
+- tunnel_alert2
+- rev_shell_loot
+- upload_alert2
+- upload_close
+- rev_shell_close
+sequence_constraints:
+  strict_order: true
+  allow_extra_steps: false
+  max_clock_span_seconds: 21600
+allowed_relationships:
+- from: asa_sweep
+  to: ad_bruteforce
+  allowed: true
+  causal_kind: credential_access
+- from: ad_bruteforce
+  to: lateral_logons
+  allowed: true
+  causal_kind: lateral_movement
+- from: lateral_logons
+  to: rev_shell_open
+  allowed: true
+  causal_kind: command_and_control
+- from: rev_shell_open
+  to: priv_grant
+  allowed: true
+  causal_kind: privilege
+- from: priv_grant
+  to: tunnel_alert
+  allowed: true
+  causal_kind: command_and_control
+- from: tunnel_alert
+  to: rev_shell_cmd
+  allowed: true
+  causal_kind: command_and_control
+- from: rev_shell_cmd
+  to: upload_alert
+  allowed: true
+  causal_kind: exfiltration
+- from: upload_alert
+  to: tunnel_alert2
+  allowed: true
+  causal_kind: command_and_control
+- from: tunnel_alert2
+  to: rev_shell_loot
+  allowed: true
+  causal_kind: credential_access
+- from: rev_shell_loot
+  to: upload_alert2
+  allowed: true
+  causal_kind: exfiltration
+- from: upload_alert2
+  to: upload_close
+  allowed: true
+  causal_kind: exfiltration
+- from: upload_close
+  to: rev_shell_close
+  allowed: true
+  causal_kind: command_and_control
+- from: lateral_logons
+  to: ad_bruteforce
+  allowed: false
+  causal_kind: none
+- from: priv_grant
+  to: ad_bruteforce
+  allowed: false
+  causal_kind: none
+- from: priv_grant
+  to: lateral_logons
+  allowed: false
+  causal_kind: none
+- from: rev_shell_open
+  to: bystander_other_sensor
+  allowed: false
+  causal_kind: none
+causal_links:
+- from: rev_shell_open
+  to: rev_shell_cmd
+  basis: network_flow
+- from: tunnel_alert
+  to: tunnel_alert2
+  basis: network_flow
+- from: rev_shell_cmd
+  to: rev_shell_loot
+  basis: network_flow
+- from: upload_alert
+  to: upload_alert2
+  basis: network_flow
+- from: rev_shell_loot
+  to: rev_shell_close
+  basis: network_flow
+- from: upload_alert2
+  to: upload_close
+  basis: network_flow
+detection_points:
+  asa_sweep:
+    step: asa_sweep
+    role: the build runner is denied on port 22 across 16-22 build hosts in under a minute
+    expected_event_source: cisco_asa 106023 Deny (class 4001, activity 6)
+    expected_rules:
+    - rule_id: d4a91b7c-62e8-4c3f-95a0-1e8b7d2f6c33
+      title: Horizontal sweep (one source denied across many distinct hosts)
+      level: medium
+      role: network service discovery (T1046)
+    must_not_fire:
+    - 1d2c3b4a-5e6f-4708-8a91-0b1c2d3e4f05
+    gap:
+      no_rule_exists: false
+  ad_bruteforce:
+    step: ad_bruteforce
+    role: the runner fails logon 11-13 times in under a minute
+    expected_event_source: active_directory 4625 (class 3002, activity 4 Failure)
+    expected_rules:
+    - rule_id: 6f1c8a2e-0d3b-4c11-9a21-7b5e2f9a1c01
+      title: Brute force (many failed logons from one source)
+      level: high
+      role: credential access (T1110)
+    gap:
+      no_rule_exists: false
+  lateral_logons:
+    step: lateral_logons
+    role: the guessed account logs on to six build servers from the runner in 125 s
+    expected_event_source: windows_eventlog 4624 (class 3002, activity 1 Success)
+    expected_rules:
+    - rule_id: 2e3d4c5b-6f70-4819-9b02-1c2d3e4f5061
+      title: Lateral movement
+      level: high
+      role: lateral movement (T1021)
+    gap:
+      no_rule_exists: false
+  rev_shell_open:
+    step: rev_shell_open
+    role: severity-1 signature on a reverse shell from the runner to an outside address (hour 1)
+    expected_event_source: suricata_eve alert (class 4001, activity 99)
+    expected_rules:
+    - rule_id: 0331c311-7985-47c8-b554-682781ef1069
+      title: Suricata IDS alert with signature severity 1 (high)
+      level: high
+      role: IDS severity-1 passthrough
+    gap:
+      no_rule_exists: false
+  priv_grant:
+    step: priv_grant
+    role: the account adds backdoor-svc to a privileged group on the build DC
+    expected_event_source: windows_eventlog 4728 (class 3003, activity 5)
+    expected_rules:
+    - rule_id: 7d3e9a52-1f6c-4a88-9b3d-2e5c8f1a6d40
+      title: Privileged group membership grant
+      level: high
+      role: persistence (T1098)
+    gap:
+      no_rule_exists: false
+  tunnel_alert:
+    step: tunnel_alert
+    role: severity-1 signature on one long SSH flow from the runner to a second outside address
+    expected_event_source: suricata_eve alert (class 4001, activity 99)
+    expected_rules:
+    - rule_id: 0331c311-7985-47c8-b554-682781ef1069
+      title: Suricata IDS alert with signature severity 1 (high)
+      level: high
+      role: IDS severity-1 passthrough
+    gap:
+      no_rule_exists: false
+  rev_shell_cmd:
+    step: rev_shell_cmd
+    role: second severity-1 signature on the SAME reverse-shell flow, 75 minutes later
+    expected_event_source: suricata_eve alert (class 4001, activity 99)
+    expected_rules:
+    - rule_id: 0331c311-7985-47c8-b554-682781ef1069
+      title: Suricata IDS alert with signature severity 1 (high)
+      level: high
+      role: IDS severity-1 passthrough
+    gap:
+      no_rule_exists: false
+  upload_alert:
+    step: upload_alert
+    role: severity-1 signature on one outbound TLS flow carrying repository archives to an outside host
+    expected_event_source: suricata_eve alert (class 4001, activity 99)
+    expected_rules:
+    - rule_id: 0331c311-7985-47c8-b554-682781ef1069
+      title: Suricata IDS alert with signature severity 1 (high)
+      level: high
+      role: IDS severity-1 passthrough
+    gap:
+      no_rule_exists: false
+  tunnel_alert2:
+    step: tunnel_alert2
+    role: second severity-1 signature on the SAME SSH tunnel flow, 80 minutes later
+    expected_event_source: suricata_eve alert (class 4001, activity 99)
+    expected_rules:
+    - rule_id: 0331c311-7985-47c8-b554-682781ef1069
+      title: Suricata IDS alert with signature severity 1 (high)
+      level: high
+      role: IDS severity-1 passthrough
+    gap:
+      no_rule_exists: false
+  rev_shell_loot:
+    step: rev_shell_loot
+    role: third severity-1 signature on the SAME reverse-shell flow, 75 minutes after the second
+    expected_event_source: suricata_eve alert (class 4001, activity 99)
+    expected_rules:
+    - rule_id: 0331c311-7985-47c8-b554-682781ef1069
+      title: Suricata IDS alert with signature severity 1 (high)
+      level: high
+      role: IDS severity-1 passthrough
+    gap:
+      no_rule_exists: false
+  upload_alert2:
+    step: upload_alert2
+    role: second severity-1 signature on the SAME bulk-upload flow, 85 minutes after the first
+    expected_event_source: suricata_eve alert (class 4001, activity 99)
+    expected_rules:
+    - rule_id: 0331c311-7985-47c8-b554-682781ef1069
+      title: Suricata IDS alert with signature severity 1 (high)
+      level: high
+      role: IDS severity-1 passthrough
+    gap:
+      no_rule_exists: false
+  upload_close:
+    step: upload_close
+    role: 'the bulk-upload flow record: 1.5 GiB to an outside address, written when the flow ends'
+    expected_event_source: suricata_eve flow (class 4001, activity 2 Close)
+    expected_rules:
+    - rule_id: 8bde66cd-c1e9-45e5-83d7-fd091eb80f1d
+      title: Very large outbound transfer to a non-private destination (Suricata flow / Zeek conn, 1 GiB+)
+      level: medium
+      role: bulk exfiltration by byte count (TA0010)
+    gap:
+      no_rule_exists: false
+  rev_shell_close:
+    step: rev_shell_close
+    role: 'the reverse-shell flow record: 1.1 GiB to an outside address, written when the flow ends'
+    expected_event_source: suricata_eve flow (class 4001, activity 2 Close)
+    expected_rules:
+    - rule_id: 8bde66cd-c1e9-45e5-83d7-fd091eb80f1d
+      title: Very large outbound transfer to a non-private destination (Suricata flow / Zeek conn, 1 GiB+)
+      level: medium
+      role: bulk exfiltration by byte count (TA0010)
+    gap:
+      no_rule_exists: false
+step_dependencies: {}
+severity_band:
+  score:
+    min: 40
+    max: 100
+  severity_id:
+    min: 3
+    max: 6
+  dominant_band: high
+evidence:
+  correlation_key:
+  - src_endpoint.ip
+  per_step:
+    asa_sweep:
+      fields:
+      - src_endpoint.ip
+      - dst_endpoint.ip
+    ad_bruteforce:
+      fields:
+      - src_endpoint.ip
+      - actor.user.name
+    lateral_logons:
+      fields:
+      - src_endpoint.ip
+      - actor.user.name
+      - dst_endpoint.hostname
+    rev_shell_open:
+      fields:
+      - src_endpoint.ip
+      - dst_endpoint.ip
+      - unmapped.ids.flow_id
+    priv_grant:
+      fields:
+      - src_endpoint.ip
+      - actor.user.name
+    tunnel_alert:
+      fields:
+      - src_endpoint.ip
+      - dst_endpoint.ip
+      - unmapped.ids.flow_id
+    rev_shell_cmd:
+      fields:
+      - src_endpoint.ip
+      - dst_endpoint.ip
+      - unmapped.ids.flow_id
+    upload_alert:
+      fields:
+      - src_endpoint.ip
+      - dst_endpoint.ip
+      - unmapped.ids.flow_id
+    tunnel_alert2:
+      fields:
+      - src_endpoint.ip
+      - dst_endpoint.ip
+      - unmapped.ids.flow_id
+    rev_shell_loot:
+      fields:
+      - src_endpoint.ip
+      - dst_endpoint.ip
+      - unmapped.ids.flow_id
+    upload_alert2:
+      fields:
+      - src_endpoint.ip
+      - dst_endpoint.ip
+      - unmapped.ids.flow_id
+    upload_close:
+      fields:
+      - src_endpoint.ip
+      - dst_endpoint.ip
+    rev_shell_close:
+      fields:
+      - src_endpoint.ip
+      - dst_endpoint.ip
+incident_membership:
+  incident_count: 1
+  incident_key: flow-suricata-ci-runner-tunnels
+  include: *id001
+  cross_step_rule_ids:
+  - d4a91b7c-62e8-4c3f-95a0-1e8b7d2f6c33
+  - 6f1c8a2e-0d3b-4c11-9a21-7b5e2f9a1c01
+  - 2e3d4c5b-6f70-4819-9b02-1c2d3e4f5061
+  - 7d3e9a52-1f6c-4a88-9b3d-2e5c8f1a6d40
+campaign_membership:
+  campaign_count: 1
+  full_coverage: true
+known_gaps:
+- kind: order_blind_join
+  from: lateral_logons
+  to: ad_bruteforce
+  since: '2026-11-24'
+  reason: 'directional_discrimination=0.0 (SSOT 2026-10-01): the WS-8 graph joins this forbidden pair because the entities at both ends overlap
+    (per-entity tracks never merge, so a shared address/account yields an edge in BOTH directions); the oracle''s anti-causal non-edge is not
+    enforceable until ADR-011/012 make the graph order-aware. Measured on the first run (seed 7), not tuned.'
+- kind: order_blind_join
+  from: priv_grant
+  to: ad_bruteforce
+  since: '2026-11-24'
+  reason: 'directional_discrimination=0.0 (SSOT 2026-10-01): the WS-8 graph joins this forbidden pair because the entities at both ends overlap
+    (per-entity tracks never merge, so a shared address/account yields an edge in BOTH directions); the oracle''s anti-causal non-edge is not
+    enforceable until ADR-011/012 make the graph order-aware. Measured on the first run (seed 7), not tuned.'
+- kind: order_blind_join
+  from: priv_grant
+  to: lateral_logons
+  since: '2026-11-24'
+  reason: 'directional_discrimination=0.0 (SSOT 2026-10-01): the WS-8 graph joins this forbidden pair because the entities at both ends overlap
+    (per-entity tracks never merge, so a shared address/account yields an edge in BOTH directions); the oracle''s anti-causal non-edge is not
+    enforceable until ADR-011/012 make the graph order-aware. Measured on the first run (seed 7), not tuned.'
+- kind: mutant_survivor
+  operator: flip_relationship
+  outcome: IMPROVED
+  max: 4
+  since: '2026-11-24'
+  reason: 'the wrong oracle scores BETTER because directional_discrimination=0.0 (SSOT 2026-10-01): the pair is graded and joined, and the reverse
+    direction is joined too, so the legacy join predicate cannot tell a relation from its reverse; the WS-8 tracks never merge and share entities
+    at both ends'
+- kind: mutant_survivor
+  operator: reverse_relationship
+  outcome: IMPROVED
+  max: 1
+  since: '2026-11-24'
+  reason: 'the wrong oracle scores BETTER because directional_discrimination=0.0 (SSOT 2026-10-01): the pair is graded and joined, and the reverse
+    direction is joined too, so the legacy join predicate cannot tell a relation from its reverse; the WS-8 tracks never merge and share entities
+    at both ends'
+- kind: mutant_survivor
+  operator: reverse_relationship
+  outcome: SURVIVED
+  max: 12
+  since: '2026-11-24'
+  reason: 'directional_discrimination=0.0 (SSOT 2026-10-01): the pair is graded and joined, and the reverse direction is joined too, so the legacy
+    join predicate cannot tell a relation from its reverse; the WS-8 tracks never merge and share entities at both ends'
+- kind: derive_waiver
+  finding: F6
+  step: rev_shell_open
+  item: 0331c311-7985-47c8-b554-682781ef1069
+  since: '2026-11-24'
+  reason: 'common_ids_high_severity_alert carries no mitre block BY DESIGN (a severity-1 passthrough: the IDS signature, not the rule, says what
+    the technique is; technique_waivers.yaml no_technique, 2026-11-20), so tactic coverage falls back to rule identity on this step. Declared
+    here, not hidden.'
+- kind: derive_waiver
+  finding: F6
+  step: tunnel_alert
+  item: 0331c311-7985-47c8-b554-682781ef1069
+  since: '2026-11-24'
+  reason: 'common_ids_high_severity_alert carries no mitre block BY DESIGN (a severity-1 passthrough: the IDS signature, not the rule, says what
+    the technique is; technique_waivers.yaml no_technique, 2026-11-20), so tactic coverage falls back to rule identity on this step. Declared
+    here, not hidden.'
+- kind: derive_waiver
+  finding: F6
+  step: rev_shell_cmd
+  item: 0331c311-7985-47c8-b554-682781ef1069
+  since: '2026-11-24'
+  reason: 'common_ids_high_severity_alert carries no mitre block BY DESIGN (a severity-1 passthrough: the IDS signature, not the rule, says what
+    the technique is; technique_waivers.yaml no_technique, 2026-11-20), so tactic coverage falls back to rule identity on this step. Declared
+    here, not hidden.'
+- kind: derive_waiver
+  finding: F6
+  step: upload_alert
+  item: 0331c311-7985-47c8-b554-682781ef1069
+  since: '2026-11-24'
+  reason: 'common_ids_high_severity_alert carries no mitre block BY DESIGN (a severity-1 passthrough: the IDS signature, not the rule, says what
+    the technique is; technique_waivers.yaml no_technique, 2026-11-20), so tactic coverage falls back to rule identity on this step. Declared
+    here, not hidden.'
+- kind: derive_waiver
+  finding: F6
+  step: tunnel_alert2
+  item: 0331c311-7985-47c8-b554-682781ef1069
+  since: '2026-11-24'
+  reason: 'common_ids_high_severity_alert carries no mitre block BY DESIGN (a severity-1 passthrough: the IDS signature, not the rule, says what
+    the technique is; technique_waivers.yaml no_technique, 2026-11-20), so tactic coverage falls back to rule identity on this step. Declared
+    here, not hidden.'
+- kind: derive_waiver
+  finding: F6
+  step: rev_shell_loot
+  item: 0331c311-7985-47c8-b554-682781ef1069
+  since: '2026-11-24'
+  reason: 'common_ids_high_severity_alert carries no mitre block BY DESIGN (a severity-1 passthrough: the IDS signature, not the rule, says what
+    the technique is; technique_waivers.yaml no_technique, 2026-11-20), so tactic coverage falls back to rule identity on this step. Declared
+    here, not hidden.'
+- kind: derive_waiver
+  finding: F6
+  step: upload_alert2
+  item: 0331c311-7985-47c8-b554-682781ef1069
+  since: '2026-11-24'
+  reason: 'common_ids_high_severity_alert carries no mitre block BY DESIGN (a severity-1 passthrough: the IDS signature, not the rule, says what
+    the technique is; technique_waivers.yaml no_technique, 2026-11-20), so tactic coverage falls back to rule identity on this step. Declared
+    here, not hidden.'
+- kind: derive_waiver
+  finding: F6
+  step: upload_close
+  item: 8bde66cd-c1e9-45e5-83d7-fd091eb80f1d
+  since: '2026-11-24'
+  reason: common_large_outbound_flow carries no mitre block BY DESIGN (a byte-count heuristic fits no single ATT&CK technique honestly, tactic
+    TA0010 only; technique_waivers.yaml no_technique, 2026-11-20), so tactic coverage falls back to rule identity on this step. Declared here,
+    not hidden.
+- kind: derive_waiver
+  finding: F6
+  step: rev_shell_close
+  item: 8bde66cd-c1e9-45e5-83d7-fd091eb80f1d
+  since: '2026-11-24'
+  reason: common_large_outbound_flow carries no mitre block BY DESIGN (a byte-count heuristic fits no single ATT&CK technique honestly, tactic
+    TA0010 only; technique_waivers.yaml no_technique, 2026-11-20), so tactic coverage falls back to rule identity on this step. Declared here,
+    not hidden.

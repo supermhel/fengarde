@@ -483,7 +483,6 @@ _INERT_KEYS: dict = {
     "sequence_constraints.max_clock_span_seconds": _UNENFORCED,
     "allowed_relationships[].causal_kind": _UNENFORCED,
     "incident_membership.incident_key": _UNENFORCED,
-    "incident_membership.include[]": _UNENFORCED,
     "severity_band.severity_id.min": _UNENFORCED,
     "severity_band.severity_id.max": _UNENFORCED,
     "severity_band.dominant_band": _UNENFORCED,
@@ -525,6 +524,7 @@ _INERT_KEYS: dict = {
     "provenance.rules_read.common_dns_exfil": _PROV_PIN,
     "provenance.rules_read.common_dns_tunnel_by_domain": _PROV_PIN,
     "provenance.rules_read.common_ids_high_severity_alert": _PROV_PIN,   # 2026-11-20 (Suricata IDS gap steps closed by #199)
+    "provenance.rules_read.common_large_outbound_flow": _PROV_PIN,   # 2026-11-24 (flow_* storylines drive the 1 GiB+ flow-end step)
     "provenance.rules_read.common_port_scan": _PROV_PIN,
     "provenance.rules_read.common_priv_grant": _PROV_PIN,
     "provenance.rules_read.common_refused_connection_scan": _PROV_PIN,
