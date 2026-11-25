@@ -12,6 +12,13 @@ WHAT IS GRADED
                  ``causal_order.attribute_edges`` pairs ``event_id`` with ``ts_ms`` (see ``index_items``). A
                  key that names alerts of two different steps is ambiguous and maps to nothing.
 
+FOLDED ALERTS (ONE attribution rule, shared with report.py and test_timeline_order). Two steps of one rule on one
+group inside one window bucket mint ONE ``alert_id``; the indexer holds one document and ws8 keeps its last version.
+The alert belongs to the EARLIEST step that raised it (``owner_items``), exactly as ``report.py`` attributes the
+evidence package's alerts and as ``ws8 timeline.build_timeline`` dedupes duplicate ids. A later step folded into it is
+NOT alerted: its truth links are non-gradable (``*_unalerted``), never graded and never guessed. The twin storylines
+avoid the fold by construction (every step of a flow sits in its own bucket or on a different rule).
+
 DEFINITIONS (all computed at the STEP-PAIR level; several event links on one step pair count once)
     gradable truth link   BOTH endpoint steps raised an alert (appear in ``items``). Only these are
                           counted. Truth links with an unalerted endpoint are NOT dropped: they are listed
@@ -96,16 +103,44 @@ def _handle(alert: dict):
     return str(aid) if aid not in (None, "") else None
 
 
+def step_of_alert(items: list) -> dict:
+    """``{alert_id: owning step}``: the EARLIEST step (by alert time, then input order) that raised each alert id.
+
+    THE one attribution rule for a folded alert (see the module docstring). ``report.py`` (the evidence package's
+    alert order) and ``test_timeline_order`` call this same function, so the grader, the report and the oracle's
+    stale_gap declarations cannot drift apart."""
+    order = sorted(range(len(items or [])), key=lambda i: (
+        (items[i].get("alert") or {}).get("time") if _is_ms((items[i].get("alert") or {}).get("time"))
+        else float("inf"), i))
+    owner: dict = {}
+    for i in order:
+        aid = (items[i].get("alert") or {}).get("alert_id")
+        if aid not in (None, ""):
+            owner.setdefault(aid, items[i].get("step"))
+    return owner
+
+
+def owner_items(items: list) -> list:
+    """The items whose step OWNS its alert id (``step_of_alert``).
+
+    A later step whose alert id was already minted by an earlier step is folded into that alert and is dropped
+    here, so it is neither alerted nor mapped. Items with no alert id are kept."""
+    owner = step_of_alert(items)
+    return [it for it in items or []
+            if (it.get("alert") or {}).get("alert_id") in (None, "")
+            or owner[(it.get("alert") or {}).get("alert_id")] == it.get("step")]
+
+
 def index_items(items: list) -> dict:
     """``{(handle, time_ms): step, handle: step}`` for every key that names exactly one step.
 
-    The handle alone is NOT unique in real runs: a rule that folds several steps into one upserted alert
-    (``c2_checkin`` / ``c2_tasking`` share one Suricata flow, hence one ``alert_id``) re-emits that alert with
-    a longer ``event_ids`` list whose first element is unchanged. ws8 records the link endpoint's event time
+    The handle alone is NOT unique in real runs: a rule that folds several steps into one upserted alert re-emits
+    that alert with a longer ``event_ids`` list whose first element is unchanged (``owner_items`` keeps only the
+    earliest step's items, so a folded alert names ONE step here). ws8 records the link endpoint's event time
     (``from_ts_ms`` / ``to_ts_ms``), so a link is mapped through ``(handle, time)`` first, exactly like
     ``causal_order.attribute_edges`` pairs ``event_id`` with ``ts_ms``, and through the bare handle only when
-    the link has no time and the handle names one step. Ambiguous keys are absent (the link is then unmapped:
-    a false link, counted, never guessed)."""
+    the link has no time or the time names no item (the later version of a folded alert). Ambiguous keys are absent
+    (the link is then unmapped: a false link, counted, never guessed)."""
     seen: dict = {}
     for item in items or []:
         alert = item.get("alert") or {}
@@ -146,6 +181,7 @@ def _rate(k: int, n: int) -> dict:
 # ---------------------------------------------------------------------------
 def grade_storyline(name: str, emitted: list, truth: list, items: list) -> dict:
     """Grade one storyline. ``emitted`` may be the union of ``links`` over its incident graphs."""
+    items = owner_items(items)
     handle_step = index_items(items)
     alerted = {i.get("step") for i in items or [] if i.get("step") is not None}
 
