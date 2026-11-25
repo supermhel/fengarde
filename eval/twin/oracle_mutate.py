@@ -483,6 +483,7 @@ _INERT_KEYS: dict = {
     "sequence_constraints.max_clock_span_seconds": _UNENFORCED,
     "allowed_relationships[].causal_kind": _UNENFORCED,
     "incident_membership.incident_key": _UNENFORCED,
+    "incident_membership.include[]": _UNENFORCED,
     "severity_band.severity_id.min": _UNENFORCED,
     "severity_band.severity_id.max": _UNENFORCED,
     "severity_band.dominant_band": _UNENFORCED,

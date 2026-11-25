@@ -33,8 +33,8 @@ scope: flow-zeek-ot-pivot
 provenance:
   authored: '2026-11-24'
   pipeline_run_before_authoring: false
-  basis: rule description/detection/siem blocks and parser docstrings only; causal_links derived from the builder's own minted flow keys on its
-    TRIGGER records
+  basis: rule description/detection/siem blocks and parser docstrings only; causal_links derived from the builder's own minted flow keys on its TRIGGER
+    records
   rules_read:
     common_bruteforce: f685feb7ab0efe2e0cd9ed3427a2e0466c3a0de785cc28deef3c53a0b585919b
     common_dns_exfil: eccf4032d315d46f73cc0bb5b16f96983bda04b3538418a1777aadbcc823008f
@@ -42,7 +42,7 @@ provenance:
     common_port_scan: c0c97060ce0620959b450df333154677f2135130748a7cbefd452db7529f3786
     common_priv_grant: 3d7b783edf6df5e578f154446316404f07d0bcc5837ac9180d00481198f8c14d
     common_refused_connection_scan: 0daf7661353c61161b639be69ef3610fe07abd8de9de0fcac7039e075e3a836e
-expected_sequence: &id001
+expected_sequence:
 - refused_scan
 - ssh_bruteforce
 - dns_tunnel_open
@@ -389,7 +389,22 @@ evidence:
 incident_membership:
   incident_count: 1
   incident_key: flow-zeek-ot-pivot
-  include: *id001
+  include:
+  - refused_scan
+  - ssh_bruteforce
+  - dns_tunnel_open
+  - modbus_recon
+  - lateral_logons
+  - dns_tunnel_stage
+  - priv_grant
+  - dns_backup_open
+  - modbus_write
+  - dns_backup_resume
+  - dns_tunnel_exfil
+  - modbus_restore
+  - dns_tunnel_final
+  - modbus_close
+  - dns_tunnel_close
   cross_step_rule_ids:
   - 7b3e9d51-4c2a-4f86-a1d0-5e8c2b6f9a14
   - 6f1c8a2e-0d3b-4c11-9a21-7b5e2f9a1c01
@@ -404,23 +419,23 @@ known_gaps:
   from: lateral_logons
   to: ssh_bruteforce
   since: '2026-11-24'
-  reason: 'directional_discrimination=0.0 (SSOT 2026-10-01): the WS-8 graph joins this forbidden pair because the entities at both ends overlap
-    (per-entity tracks never merge, so a shared address/account yields an edge in BOTH directions); the oracle''s anti-causal non-edge is not
-    enforceable until ADR-011/012 make the graph order-aware. Measured on the first run (seed 7), not tuned.'
+  reason: 'directional_discrimination=0.0 (SSOT 2026-10-01): the WS-8 graph joins this forbidden pair because the entities at both ends overlap (per-entity
+    tracks never merge, so a shared address/account yields an edge in BOTH directions); the oracle''s anti-causal non-edge is not enforceable until ADR-011/012
+    make the graph order-aware. Measured on the first run (seed 7), not tuned.'
 - kind: order_blind_join
   from: priv_grant
   to: ssh_bruteforce
   since: '2026-11-24'
-  reason: 'directional_discrimination=0.0 (SSOT 2026-10-01): the WS-8 graph joins this forbidden pair because the entities at both ends overlap
-    (per-entity tracks never merge, so a shared address/account yields an edge in BOTH directions); the oracle''s anti-causal non-edge is not
-    enforceable until ADR-011/012 make the graph order-aware. Measured on the first run (seed 7), not tuned.'
+  reason: 'directional_discrimination=0.0 (SSOT 2026-10-01): the WS-8 graph joins this forbidden pair because the entities at both ends overlap (per-entity
+    tracks never merge, so a shared address/account yields an edge in BOTH directions); the oracle''s anti-causal non-edge is not enforceable until ADR-011/012
+    make the graph order-aware. Measured on the first run (seed 7), not tuned.'
 - kind: order_blind_join
   from: priv_grant
   to: lateral_logons
   since: '2026-11-24'
-  reason: 'directional_discrimination=0.0 (SSOT 2026-10-01): the WS-8 graph joins this forbidden pair because the entities at both ends overlap
-    (per-entity tracks never merge, so a shared address/account yields an edge in BOTH directions); the oracle''s anti-causal non-edge is not
-    enforceable until ADR-011/012 make the graph order-aware. Measured on the first run (seed 7), not tuned.'
+  reason: 'directional_discrimination=0.0 (SSOT 2026-10-01): the WS-8 graph joins this forbidden pair because the entities at both ends overlap (per-entity
+    tracks never merge, so a shared address/account yields an edge in BOTH directions); the oracle''s anti-causal non-edge is not enforceable until ADR-011/012
+    make the graph order-aware. Measured on the first run (seed 7), not tuned.'
 - kind: mutant_survivor
   operator: flip_gap_to_false
   outcome: SURVIVED
@@ -432,28 +447,26 @@ known_gaps:
   outcome: IMPROVED
   max: 4
   since: '2026-11-24'
-  reason: 'the wrong oracle scores BETTER because directional_discrimination=0.0 (SSOT 2026-10-01): the pair is graded and joined, and the reverse
-    direction is joined too, so the legacy join predicate cannot tell a relation from its reverse; the WS-8 tracks never merge and share entities
-    at both ends'
+  reason: 'the wrong oracle scores BETTER because directional_discrimination=0.0 (SSOT 2026-10-01): the pair is graded and joined, and the reverse direction
+    is joined too, so the legacy join predicate cannot tell a relation from its reverse; the WS-8 tracks never merge and share entities at both ends'
 - kind: mutant_survivor
   operator: reverse_relationship
   outcome: IMPROVED
   max: 1
   since: '2026-11-24'
-  reason: 'the wrong oracle scores BETTER because directional_discrimination=0.0 (SSOT 2026-10-01): the pair is graded and joined, and the reverse
-    direction is joined too, so the legacy join predicate cannot tell a relation from its reverse; the WS-8 tracks never merge and share entities
-    at both ends'
+  reason: 'the wrong oracle scores BETTER because directional_discrimination=0.0 (SSOT 2026-10-01): the pair is graded and joined, and the reverse direction
+    is joined too, so the legacy join predicate cannot tell a relation from its reverse; the WS-8 tracks never merge and share entities at both ends'
 - kind: mutant_survivor
   operator: reverse_relationship
   outcome: SURVIVED
   max: 14
   since: '2026-11-24'
-  reason: 'directional_discrimination=0.0 (SSOT 2026-10-01): the pair is graded and joined, and the reverse direction is joined too, so the legacy
-    join predicate cannot tell a relation from its reverse; the WS-8 tracks never merge and share entities at both ends'
+  reason: 'directional_discrimination=0.0 (SSOT 2026-10-01): the pair is graded and joined, and the reverse direction is joined too, so the legacy join
+    predicate cannot tell a relation from its reverse; the WS-8 tracks never merge and share entities at both ends'
 - kind: mutant_survivor
   operator: swap_adjacent_steps
   outcome: SURVIVED
   max: 8
   since: '2026-11-24'
-  reason: one of the two swapped steps raises no alert (and the entities are shared across the chain), so neither alert order nor the entity-bridge
-    fidelity predicate has anything to disagree about
+  reason: one of the two swapped steps raises no alert (and the entities are shared across the chain), so neither alert order nor the entity-bridge fidelity
+    predicate has anything to disagree about

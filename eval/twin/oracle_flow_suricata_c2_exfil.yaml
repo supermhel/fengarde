@@ -33,8 +33,8 @@ scope: flow-suricata-c2-exfil
 provenance:
   authored: '2026-11-24'
   pipeline_run_before_authoring: false
-  basis: rule description/detection/siem blocks and parser docstrings only; causal_links derived from the builder's own minted flow keys on its
-    TRIGGER records
+  basis: rule description/detection/siem blocks and parser docstrings only; causal_links derived from the builder's own minted flow keys on its TRIGGER
+    records
   rules_read:
     common_bruteforce: f685feb7ab0efe2e0cd9ed3427a2e0466c3a0de785cc28deef3c53a0b585919b
     common_dns_exfil: eccf4032d315d46f73cc0bb5b16f96983bda04b3538418a1777aadbcc823008f
@@ -43,7 +43,7 @@ provenance:
     common_lateral_movement: 2f010d5cf5adb6de7df93f6a30da3ed32029626dccc912f118af9813d0d4c8ae
     common_password_spray: c565b58f392c8e85ac08049c49d1ab119846540d7bcbea86f0ea2f4e30d1a089
     common_priv_grant: 3d7b783edf6df5e578f154446316404f07d0bcc5837ac9180d00481198f8c14d
-expected_sequence: &id002
+expected_sequence:
 - c2_checkin
 - ad_bruteforce
 - dns_tunnel
@@ -313,11 +313,14 @@ evidence:
       fields:
       - src_endpoint.ip
       - actor.user.name
-    dns_tunnel: &id001
+    dns_tunnel:
       fields:
       - src_endpoint.ip
       - dst_endpoint.hostname
-    dns_tunnel_resume: *id001
+    dns_tunnel_resume:
+      fields:
+      - src_endpoint.ip
+      - dst_endpoint.hostname
     lateral_logons:
       fields:
       - src_endpoint.ip
@@ -363,7 +366,20 @@ evidence:
 incident_membership:
   incident_count: 1
   incident_key: flow-suricata-c2-exfil
-  include: *id002
+  include:
+  - c2_checkin
+  - ad_bruteforce
+  - dns_tunnel
+  - dns_tunnel_resume
+  - lateral_logons
+  - rdp_lateral_alert
+  - priv_grant
+  - c2_tasking
+  - rdp_clipboard_alert
+  - c2_staging
+  - exfil_alert
+  - exfil_close
+  - c2_close
   cross_step_rule_ids:
   - 6f1c8a2e-0d3b-4c11-9a21-7b5e2f9a1c01
   - a1b2c3d4-5e6f-4708-9a1b-2c3d4e5f6071
@@ -377,107 +393,97 @@ known_gaps:
   from: lateral_logons
   to: ad_bruteforce
   since: '2026-11-24'
-  reason: 'directional_discrimination=0.0 (SSOT 2026-10-01): the WS-8 graph joins this forbidden pair because the entities at both ends overlap
-    (per-entity tracks never merge, so a shared address/account yields an edge in BOTH directions); the oracle''s anti-causal non-edge is not
-    enforceable until ADR-011/012 make the graph order-aware. Measured on the first run (seed 7), not tuned.'
+  reason: 'directional_discrimination=0.0 (SSOT 2026-10-01): the WS-8 graph joins this forbidden pair because the entities at both ends overlap (per-entity
+    tracks never merge, so a shared address/account yields an edge in BOTH directions); the oracle''s anti-causal non-edge is not enforceable until ADR-011/012
+    make the graph order-aware. Measured on the first run (seed 7), not tuned.'
 - kind: order_blind_join
   from: priv_grant
   to: ad_bruteforce
   since: '2026-11-24'
-  reason: 'directional_discrimination=0.0 (SSOT 2026-10-01): the WS-8 graph joins this forbidden pair because the entities at both ends overlap
-    (per-entity tracks never merge, so a shared address/account yields an edge in BOTH directions); the oracle''s anti-causal non-edge is not
-    enforceable until ADR-011/012 make the graph order-aware. Measured on the first run (seed 7), not tuned.'
+  reason: 'directional_discrimination=0.0 (SSOT 2026-10-01): the WS-8 graph joins this forbidden pair because the entities at both ends overlap (per-entity
+    tracks never merge, so a shared address/account yields an edge in BOTH directions); the oracle''s anti-causal non-edge is not enforceable until ADR-011/012
+    make the graph order-aware. Measured on the first run (seed 7), not tuned.'
 - kind: order_blind_join
   from: priv_grant
   to: lateral_logons
   since: '2026-11-24'
-  reason: 'directional_discrimination=0.0 (SSOT 2026-10-01): the WS-8 graph joins this forbidden pair because the entities at both ends overlap
-    (per-entity tracks never merge, so a shared address/account yields an edge in BOTH directions); the oracle''s anti-causal non-edge is not
-    enforceable until ADR-011/012 make the graph order-aware. Measured on the first run (seed 7), not tuned.'
+  reason: 'directional_discrimination=0.0 (SSOT 2026-10-01): the WS-8 graph joins this forbidden pair because the entities at both ends overlap (per-entity
+    tracks never merge, so a shared address/account yields an edge in BOTH directions); the oracle''s anti-causal non-edge is not enforceable until ADR-011/012
+    make the graph order-aware. Measured on the first run (seed 7), not tuned.'
 - kind: mutant_survivor
   operator: flip_relationship
   outcome: IMPROVED
   max: 4
   since: '2026-11-24'
-  reason: 'the wrong oracle scores BETTER because directional_discrimination=0.0 (SSOT 2026-10-01): the pair is graded and joined, and the reverse
-    direction is joined too, so the legacy join predicate cannot tell a relation from its reverse; the WS-8 tracks never merge and share entities
-    at both ends'
+  reason: 'the wrong oracle scores BETTER because directional_discrimination=0.0 (SSOT 2026-10-01): the pair is graded and joined, and the reverse direction
+    is joined too, so the legacy join predicate cannot tell a relation from its reverse; the WS-8 tracks never merge and share entities at both ends'
 - kind: mutant_survivor
   operator: reverse_relationship
   outcome: IMPROVED
   max: 1
   since: '2026-11-24'
-  reason: 'the wrong oracle scores BETTER because directional_discrimination=0.0 (SSOT 2026-10-01): the pair is graded and joined, and the reverse
-    direction is joined too, so the legacy join predicate cannot tell a relation from its reverse; the WS-8 tracks never merge and share entities
-    at both ends'
+  reason: 'the wrong oracle scores BETTER because directional_discrimination=0.0 (SSOT 2026-10-01): the pair is graded and joined, and the reverse direction
+    is joined too, so the legacy join predicate cannot tell a relation from its reverse; the WS-8 tracks never merge and share entities at both ends'
 - kind: mutant_survivor
   operator: reverse_relationship
   outcome: SURVIVED
   max: 12
   since: '2026-11-24'
-  reason: 'directional_discrimination=0.0 (SSOT 2026-10-01): the pair is graded and joined, and the reverse direction is joined too, so the legacy
-    join predicate cannot tell a relation from its reverse; the WS-8 tracks never merge and share entities at both ends'
+  reason: 'directional_discrimination=0.0 (SSOT 2026-10-01): the pair is graded and joined, and the reverse direction is joined too, so the legacy join
+    predicate cannot tell a relation from its reverse; the WS-8 tracks never merge and share entities at both ends'
 - kind: derive_waiver
   finding: F6
   step: c2_checkin
   item: 0331c311-7985-47c8-b554-682781ef1069
   since: '2026-11-24'
-  reason: 'common_ids_high_severity_alert carries no mitre block BY DESIGN (a severity-1 passthrough: the IDS signature, not the rule, says what
-    the technique is; technique_waivers.yaml no_technique, 2026-11-20), so tactic coverage falls back to rule identity on this step. Declared
-    here, not hidden.'
+  reason: 'common_ids_high_severity_alert carries no mitre block BY DESIGN (a severity-1 passthrough: the IDS signature, not the rule, says what the technique
+    is; technique_waivers.yaml no_technique, 2026-11-20), so tactic coverage falls back to rule identity on this step. Declared here, not hidden.'
 - kind: derive_waiver
   finding: F6
   step: rdp_lateral_alert
   item: 0331c311-7985-47c8-b554-682781ef1069
   since: '2026-11-24'
-  reason: 'common_ids_high_severity_alert carries no mitre block BY DESIGN (a severity-1 passthrough: the IDS signature, not the rule, says what
-    the technique is; technique_waivers.yaml no_technique, 2026-11-20), so tactic coverage falls back to rule identity on this step. Declared
-    here, not hidden.'
+  reason: 'common_ids_high_severity_alert carries no mitre block BY DESIGN (a severity-1 passthrough: the IDS signature, not the rule, says what the technique
+    is; technique_waivers.yaml no_technique, 2026-11-20), so tactic coverage falls back to rule identity on this step. Declared here, not hidden.'
 - kind: derive_waiver
   finding: F6
   step: c2_tasking
   item: 0331c311-7985-47c8-b554-682781ef1069
   since: '2026-11-24'
-  reason: 'common_ids_high_severity_alert carries no mitre block BY DESIGN (a severity-1 passthrough: the IDS signature, not the rule, says what
-    the technique is; technique_waivers.yaml no_technique, 2026-11-20), so tactic coverage falls back to rule identity on this step. Declared
-    here, not hidden.'
+  reason: 'common_ids_high_severity_alert carries no mitre block BY DESIGN (a severity-1 passthrough: the IDS signature, not the rule, says what the technique
+    is; technique_waivers.yaml no_technique, 2026-11-20), so tactic coverage falls back to rule identity on this step. Declared here, not hidden.'
 - kind: derive_waiver
   finding: F6
   step: rdp_clipboard_alert
   item: 0331c311-7985-47c8-b554-682781ef1069
   since: '2026-11-24'
-  reason: 'common_ids_high_severity_alert carries no mitre block BY DESIGN (a severity-1 passthrough: the IDS signature, not the rule, says what
-    the technique is; technique_waivers.yaml no_technique, 2026-11-20), so tactic coverage falls back to rule identity on this step. Declared
-    here, not hidden.'
+  reason: 'common_ids_high_severity_alert carries no mitre block BY DESIGN (a severity-1 passthrough: the IDS signature, not the rule, says what the technique
+    is; technique_waivers.yaml no_technique, 2026-11-20), so tactic coverage falls back to rule identity on this step. Declared here, not hidden.'
 - kind: derive_waiver
   finding: F6
   step: c2_staging
   item: 0331c311-7985-47c8-b554-682781ef1069
   since: '2026-11-24'
-  reason: 'common_ids_high_severity_alert carries no mitre block BY DESIGN (a severity-1 passthrough: the IDS signature, not the rule, says what
-    the technique is; technique_waivers.yaml no_technique, 2026-11-20), so tactic coverage falls back to rule identity on this step. Declared
-    here, not hidden.'
+  reason: 'common_ids_high_severity_alert carries no mitre block BY DESIGN (a severity-1 passthrough: the IDS signature, not the rule, says what the technique
+    is; technique_waivers.yaml no_technique, 2026-11-20), so tactic coverage falls back to rule identity on this step. Declared here, not hidden.'
 - kind: derive_waiver
   finding: F6
   step: exfil_alert
   item: 0331c311-7985-47c8-b554-682781ef1069
   since: '2026-11-24'
-  reason: 'common_ids_high_severity_alert carries no mitre block BY DESIGN (a severity-1 passthrough: the IDS signature, not the rule, says what
-    the technique is; technique_waivers.yaml no_technique, 2026-11-20), so tactic coverage falls back to rule identity on this step. Declared
-    here, not hidden.'
+  reason: 'common_ids_high_severity_alert carries no mitre block BY DESIGN (a severity-1 passthrough: the IDS signature, not the rule, says what the technique
+    is; technique_waivers.yaml no_technique, 2026-11-20), so tactic coverage falls back to rule identity on this step. Declared here, not hidden.'
 - kind: derive_waiver
   finding: F6
   step: exfil_close
   item: 8bde66cd-c1e9-45e5-83d7-fd091eb80f1d
   since: '2026-11-24'
-  reason: common_large_outbound_flow carries no mitre block BY DESIGN (a byte-count heuristic fits no single ATT&CK technique honestly, tactic
-    TA0010 only; technique_waivers.yaml no_technique, 2026-11-20), so tactic coverage falls back to rule identity on this step. Declared here,
-    not hidden.
+  reason: common_large_outbound_flow carries no mitre block BY DESIGN (a byte-count heuristic fits no single ATT&CK technique honestly, tactic TA0010 only;
+    technique_waivers.yaml no_technique, 2026-11-20), so tactic coverage falls back to rule identity on this step. Declared here, not hidden.
 - kind: derive_waiver
   finding: F6
   step: c2_close
   item: 8bde66cd-c1e9-45e5-83d7-fd091eb80f1d
   since: '2026-11-24'
-  reason: common_large_outbound_flow carries no mitre block BY DESIGN (a byte-count heuristic fits no single ATT&CK technique honestly, tactic
-    TA0010 only; technique_waivers.yaml no_technique, 2026-11-20), so tactic coverage falls back to rule identity on this step. Declared here,
-    not hidden.
+  reason: common_large_outbound_flow carries no mitre block BY DESIGN (a byte-count heuristic fits no single ATT&CK technique honestly, tactic TA0010 only;
+    technique_waivers.yaml no_technique, 2026-11-20), so tactic coverage falls back to rule identity on this step. Declared here, not hidden.

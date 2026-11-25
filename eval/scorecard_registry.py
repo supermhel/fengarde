@@ -200,7 +200,7 @@ STORYLINES: tuple[str, ...] = ("ai_to_ot", "it_intrusion", "infra_takeover",
                                "insider_exfil", "cloud_iam_abuse", "supply_chain_ci",
                                "win_credential_theft", "network_credential_abuse",
                                "flow_suricata_c2_exfil", "flow_suricata_modbus_sabotage",
-                               "flow_zeek_ot_pivot",
+                               "flow_zeek_ot_pivot", "flow_suricata_ci_runner_tunnels",
                                "endpoint_macro_c2", "excel_loader_domain_abuse", "pdf_exploit_lateral",
                                "outlook_script_backdoor", "reader_staged_loader")
 
