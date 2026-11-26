@@ -505,6 +505,8 @@ _INERT_KEYS: dict = {
     "provenance.authored": ("cross-instrument: 2026-10-13 checked by eval/twin/oracle_provenance.py's pin "
         "(authored must be present); the mutation grader never reads it"),
     "provenance.basis": "doc-only: 2026-10-13 authoring statement; no grader is meant to read it",
+    "provenance.telemetry": ("doc-only: 2026-11-25 states the keyed sysmon storylines' records are builder-authored "
+                             "synthetic telemetry; no grader is meant to read it"),
     "provenance.pipeline_run_before_authoring": ("cross-instrument: 2026-10-13 checked by "
         "eval/twin/oracle_provenance.py's pin (must be explicitly false); the mutation grader never reads it"),
     "provenance.rules_read.common_beaconing": _PROV_PIN,
@@ -517,6 +519,8 @@ _INERT_KEYS: dict = {
     "provenance.rules_read.win_service_created_cmdline": _PROV_PIN,   # 2026-11-21 (EID 1 rule; keyed sysmon storylines' sc.exe create)
     "provenance.rules_read.win_event_log_cleared_cmdline": _PROV_PIN,   # 2026-11-21 (EID 1 rule; keyed sysmon storylines' wevtutil cl)
     "provenance.rules_read.win_local_account_created": _PROV_PIN,   # 2026-11-21 (EID 1 rule; keyed sysmon storylines' net user/localgroup /add)
+    "provenance.rules_read.win_certutil_download": _PROV_PIN,   # 2026-11-24 (EID 1 rule; keyed storylines' certutil download step)
+    "provenance.rules_read.win_scheduled_task_created": _PROV_PIN,   # 2026-11-24 (EID 1 rule; keyed storylines' schtasks /create step)
     "provenance.rules_read.common_bruteforce": _PROV_PIN,
     "provenance.rules_read.common_bruteforce_by_account": _PROV_PIN,
     "provenance.rules_read.common_impossible_travel": _PROV_PIN,

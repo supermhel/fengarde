@@ -12,8 +12,6 @@
 unexercised:
   common_large_outbound_flow: "2026-11-20 rule added on branch wp/flow-record-rules; no storyline drives a 1 GiB+ outbound flow yet (candidate: insider_exfil). Add the storyline step, then delete this line."
   ot_write_unlisted_source: "2026-11-20 rule added on branch wp/flow-record-rules (default-off, empty allowlist); no storyline drives a sensor-seen Modbus/DNP3 write yet (candidate: ot_opcua_sabotage via a Modbus leg). Add the storyline step, then delete this line."
-  win_certutil_download: "2026-11-21 rule added on branch wp/eid1-process-rules; no storyline has a certutil -urlcache download step yet (candidate: win_credential_theft or phishing_bec as a stager step). Add the storyline step, then delete this line."
-  win_scheduled_task_created: "2026-11-21 rule added on branch wp/eid1-process-rules; no storyline has a schtasks /create step yet (candidate: win_credential_theft persistence or ransomware). Add the storyline step, then delete this line."
 
 no_technique:
   agent_tool_call_burst: "2026-10-03 no solid single ATT&CK mapping for a generic tool-call-volume burst; the rule omits the mitre block on purpose (contracts/detection-coverage.md, C3 rule)"
