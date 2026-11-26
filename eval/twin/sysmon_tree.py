@@ -18,21 +18,30 @@ TWO JOBS, deliberately kept apart:
 
 LINK DEFINITION (the one this harness grades; ADR-012 table row ``process_tree``, parent -> child):
 
-    spawn          event B is a Sysmon EID 1 whose ``ParentProcessGuid`` equals the ``ProcessGuid`` of
-                   an EID 1 event A on the same ``Computer``                  (A's process is B's parent)
-    acting_process event B is a Sysmon EID 3 (``ProcessGuid``) or EID 10 (``SourceProcessGUID``)
-                   whose acting process guid equals the ``ProcessGuid`` of an EID 1 event A on the same
-                   ``Computer``                                               (B is done BY A's process)
+    A step's TRIGGER is the one raw record the builder marks (``Emitter.add(..., trigger=True)``, written
+    to ``meta.twin_trigger``) as the record whose rule raises that step's alert. ws4 builds an alert's
+    causal keys from its trigger event only, so only a trigger can carry a key onto an alert. Helper
+    records (process-tree ancestors, recon children, the EID 10 / EID 3 records of a step) are never
+    triggers. The mark is the builder's declaration; it is NOT inferred from rules.
 
-A pair of raw events inside ONE step is a *candidate* but not a step link (a step is the unit the
-oracle grades). The ADR table names only ``spawn``; ``acting_process`` is carried with its own ``via``
-tag so a consumer that wants the strict table can filter it out.
+    spawn   step B's trigger is a Sysmon EID 1 whose ``ParentProcessGuid`` equals the guid of the process that
+            performed step A's trigger, on the same ``Computer``                  (A's process is B's parent)
+
+    The guid of A's process is the ``ProcessGuid`` of A's trigger when that is a Sysmon EID 1 (the process it
+    created) or EID 3 (the process that connected), and the ``SourceProcessGUID`` when it is an EID 10 (the
+    process that opened the target). B must be an EID 1: only a process creation carries a parent key.
+
+``derive_links`` returns exactly these (the GRADED truth set; every link is ``via: spawn``). What it does
+NOT return is available from ``context_links`` as non-graded context: ``acting_process`` (an EID 3 / EID 10
+done BY the process an EID 1 created) and ``helper_spawn`` (a cross-step spawn that touches a non-trigger
+record). A step whose alert-raising record is not an EID 1 carries no parent key and a helper record raises
+no alert, so neither could ever be an emitted link: grading them would only manufacture misses.
 """
 from __future__ import annotations
 
 import hashlib
 
-__all__ = ["Emitter", "Host", "Proc", "derive_links", "candidate_counts"]
+__all__ = ["Emitter", "Host", "Proc", "derive_links", "context_links", "candidate_counts", "trigger_problems"]
 
 
 def _h(*parts: str) -> str:
@@ -53,12 +62,17 @@ class Emitter:
         self._seen: dict = {}
         self.payloads: list = []
 
-    def add(self, label: str, source_type: str, raw: dict, ts: int, ip: str) -> None:
+    def add(self, label: str, source_type: str, raw: dict, ts: int, ip: str, *, trigger: bool = False) -> None:
+        """Queue one raw record under step ``label``. ``trigger=True`` marks it as the step's alert-raising
+        record (``meta.twin_trigger``): the only record of the step a causal-link truth may start or end at."""
         from scenario_kit import meta  # noqa: PLC0415 - kept lazy so this module stays import-pure
         k = self._seen.get(label, 0)
         self._seen[label] = k + 1
         m = meta(self.seed, self.tag, self._ordinal[label] * 100 + k, ts, ip)
         m["shipper_ip"] = ip
+        m["twin_synthetic"] = True      # builder-authored: no real Sysmon / Windows capture exists in this repo
+        if trigger:
+            m["twin_trigger"] = True
         self.payloads.append((self.specs[label], {"source_type": source_type, "raw": raw, "meta": m}))
 
 
@@ -133,10 +147,74 @@ def _rec(payload: dict) -> dict:
     return raw if isinstance(raw, dict) else {}
 
 
+def _is_trigger(payload: dict) -> bool:
+    m = payload.get("meta")
+    return isinstance(m, dict) and m.get("twin_trigger") is True
+
+
+def trigger_problems(payloads: list) -> list:
+    """Authoring defects of the trigger marks: a step marked more than once. (A step with no mark is legal:
+    the non-Sysmon steps have none.)"""
+    seen: dict = {}
+    for spec, p in payloads:
+        if _is_trigger(p):
+            seen[spec.label] = seen.get(spec.label, 0) + 1
+    return [f"step {k!r} has {v} trigger records" for k, v in sorted(seen.items()) if v != 1]
+
+
+def _acting_guid(payload: dict):
+    """The guid of the process a Sysmon trigger record is ABOUT: EID 1 / 3 ``ProcessGuid``, EID 10
+    ``SourceProcessGUID``; ``None`` for any other record."""
+    r = _rec(payload)
+    if payload.get("source_type") != "sysmon":
+        return None
+    eid = str(r.get("EventID"))
+    if eid in ("1", "3"):
+        return r.get("ProcessGuid") or None
+    if eid == "10":
+        return r.get("SourceProcessGUID") or None
+    return None
+
+
+def _triggers(payloads: list) -> dict:
+    """``{step label: payload}`` of each step's single marked trigger that is a Sysmon EID 1 / 3 / 10 carrying
+    its process guid. A step marked more than once is ambiguous and left out (``trigger_problems`` reports it)."""
+    marked: dict = {}
+    for spec, p in payloads:
+        if _is_trigger(p):
+            marked.setdefault(spec.label, []).append(p)
+    out = {}
+    for label, ps in marked.items():
+        if len(ps) != 1:
+            continue
+        if _acting_guid(ps[0]) is not None:
+            out[label] = ps[0]
+    return out
+
+
+def derive_links(payloads: list) -> list:
+    """The GRADED truth: step-level ``spawn`` links ``[{"from", "to", "basis": "process_tree", "via": "spawn"}]``
+    sorted by (from, to). Step B's trigger is a Sysmon EID 1 whose ParentProcessGuid equals the guid of the
+    process that performed step A's trigger (see the module docstring), same ``Computer``. Reads raw records only."""
+    trig = _triggers(payloads)
+    by_guid = {(_rec(p).get("Computer"), _acting_guid(p)): label for label, p in trig.items()}
+    seen: dict = {}
+    for label, p in trig.items():
+        r = _rec(p)
+        if str(r.get("EventID")) != "1":
+            continue
+        parent = r.get("ParentProcessGuid")
+        a = by_guid.get((r.get("Computer"), parent)) if parent else None
+        if a is not None and a != label:
+            seen[(a, label)] = {"from": a, "to": label, "basis": "process_tree", "via": "spawn"}
+    return [seen[k] for k in sorted(seen)]
+
+
 def _event_links(payloads: list) -> list:
-    """Every event-level process-tree link: ``(i, j, via)`` with ``i``/``j`` positions in ``payloads``.
-    Scope is the ``Computer`` field (a guid is only compared against records of its own machine)."""
-    created: dict = {}      # (Computer, ProcessGuid) -> position of the EID 1 that created that process
+    """Every event-level process-tree link over ALL raw records: ``(i, j, via)`` with ``i`` / ``j`` positions
+    in ``payloads``. Scope is the ``Computer`` field. ``spawn`` is an EID 1 child of an EID 1; ``acting_process``
+    an EID 3 / 10 done by an EID 1's process. Context only (see ``context_links``)."""
+    created: dict = {}
     for i, (_spec, p) in enumerate(payloads):
         r = _rec(p)
         if p.get("source_type") == "sysmon" and str(r.get("EventID")) == "1" and r.get("ProcessGuid"):
@@ -159,25 +237,27 @@ def _event_links(payloads: list) -> list:
     return out
 
 
-def derive_links(payloads: list, *, strict_table_only: bool = False) -> list:
-    """Step-level links ``[{"from", "to", "basis": "process_tree", "via": ...}]`` sorted by
-    (from, to, via), duplicates folded. ``strict_table_only`` keeps ``spawn`` only (ADR-012 table)."""
+def context_links(payloads: list) -> list:
+    """Step-level process relations that are NOT graded truth, tagged by why: ``acting_process`` (an EID 3 / 10
+    of one step done by the process an EID 1 of another step created) and ``helper_spawn`` (a cross-step
+    spawn that is not trigger-to-trigger). A reader may use them as context; nothing grades them."""
+    graded = {(lk["from"], lk["to"]) for lk in derive_links(payloads)}
     seen: dict = {}
     for i, j, via in _event_links(payloads):
         a, b = payloads[i][0].label, payloads[j][0].label
-        if a == b or (strict_table_only and via != "spawn"):
+        if a == b or (a, b) in graded:
             continue
-        # one link per step pair; ``spawn`` (the ADR table's rule) wins over ``acting_process`` when both hold
-        if (a, b) not in seen or via == "spawn":
-            seen[(a, b)] = {"from": a, "to": b, "basis": "process_tree", "via": via}
+        tag = "acting_process" if via == "acting_process" else "helper_spawn"
+        if (a, b) not in seen or tag == "helper_spawn":
+            seen[(a, b)] = {"from": a, "to": b, "basis": "process_tree", "via": tag}
     return [seen[k] for k in sorted(seen)]
 
 
 def candidate_counts(payloads: list) -> dict:
-    """Event-level candidate counts: ``spawn`` / ``acting_process`` pairs, and how many cross a step boundary."""
-    ev = _event_links(payloads)
-    out = {"spawn": 0, "acting_process": 0, "cross_step": 0}
-    for i, j, via in ev:
+    """Event-level candidate counts over ALL raw records (``spawn`` / ``acting_process`` pairs and how many cross
+    a step boundary) plus ``graded``: the number of step-level trigger-to-trigger links ``derive_links`` returns."""
+    out = {"spawn": 0, "acting_process": 0, "cross_step": 0, "graded": len(derive_links(payloads))}
+    for i, j, via in _event_links(payloads):
         out[via] += 1
         if payloads[i][0].label != payloads[j][0].label:
             out["cross_step"] += 1
@@ -214,8 +294,12 @@ def main(argv: list | None = None) -> int:  # pragma: no cover - authoring helpe
             continue
         path = Path(sdef.oracle_path)
         text = path.read_text(encoding="utf-8")
-        i = text.index("\ncausal_links:")
-        path.write_text(text[: i + 1] + block, encoding="utf-8")
+        i = text.index("\ncausal_links:") + 1
+        j = text.find("\n", i)
+        while j != -1 and text[j + 1: j + 3] == "  ":        # the block's own indented rows
+            j = text.find("\n", j + 1)
+        tail = text[j + 1:] if j != -1 else ""
+        path.write_text(text[:i] + block + tail, encoding="utf-8")
         print(f"wrote {len(links)} links to {path.name}")
     return 0
 

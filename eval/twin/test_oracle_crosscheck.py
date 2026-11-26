@@ -888,10 +888,13 @@ def test_catalogue_size_and_read_only() -> None:
     # already 98% consumed by the first four). P1 storylines 6-9 (2026-10-14) took it to 649 over nine.
     # Both bounds stay real, scaled per storyline: a collapsed catalogue (a builder that stopped
     # generating mutants) or an explosion (a duplicate-emitting one) still fails.
+    # 2026-11-25 (owner-approved): ceiling 90*k -> 120*k. Measured 1932 over 19 storylines = 101.7/storyline
+    # (seed 7); cause: the five keyed storylines became longer spawn chains (11-12 steps), so more mutants each.
+    # Floor stays 40*k.
     k = len(reg.ALL)
     _check("the catalogue holds the expected number of mutants over every registered storyline "
            "(WRONG + WEAKER, identity excluded)",
-           40 * k <= n <= 90 * k, f"{n} over {k} storylines")
+           40 * k <= n <= 120 * k, f"{n} over {k} storylines")
     before = {p.name: _sha(p) for p in ORACLE_FILES}
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):

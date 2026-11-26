@@ -13,9 +13,16 @@ CHECKS (``run(name)``)
   sender scope      every record carries ``meta.shipper_ip`` (== ``meta.ip``), one address per monitored
                     (Sysmon) host, distinct across hosts
   oracle provenance ``oracle_provenance.check`` passes; NEGATIVE: a changed rule digest fails it
+  synthetic         every record carries ``meta.twin_synthetic`` and the oracle's ``provenance.telemetry`` says
+                    ``synthetic`` (no real Sysmon / Windows capture exists in the repo)
+  triggers          each step marks AT MOST one record as its alert-raising trigger (``meta.twin_trigger``);
+                    every link endpoint is a marked Sysmon trigger and every child is an EID 1; NEGATIVE: an
+                    unmarked trigger drops its links
   causal_links      the oracle's ``causal_links`` equal ``sysmon_tree.derive_links`` over the RAW payloads
-                    for seeds 7 / 11 / 23; NEGATIVE: with one raw ParentProcessGuid broken the derivation
-                    loses exactly that link, so the pin is load-bearing
+                    (trigger-level, spawn-only: B's trigger EID 1 has ParentProcessGuid == A's trigger
+                    ProcessGuid) for seeds 7 / 11 / 23; no ``acting_process`` / helper-record link is in the
+                    graded set; NEGATIVE: with one raw ParentProcessGuid broken the derivation loses
+                    exactly that link, so the pin is load-bearing
   oracle shape      >= 2 forbidden pairs, each anti-causal (to-step earlier than from-step), none a link
 """
 from __future__ import annotations
@@ -134,13 +141,41 @@ def run(name: str, extra=None) -> int:
     # ---- causal_links: derived, never hand-typed ------------------------------------------------
     declared = oracle.get("causal_links") or []
     check("causal_links: declared, process_tree basis, each with a via tag",
-          bool(declared) and all(lk.get("basis") == "process_tree" and lk.get("via") in ("spawn", "acting_process")
+          bool(declared) and all(lk.get("basis") == "process_tree" and lk.get("via") == "spawn"
                                  for lk in declared))
     for s in SEEDS:
         derived = sysmon_tree.derive_links(sdef.build(s)[0])
         check(f"causal_links: oracle == derivation from the raw keys (seed {s})", declared == derived,
               f"declared-derived={[lk for lk in declared if lk not in derived]} "
               f"derived-declared={[lk for lk in derived if lk not in declared]}")
+    # ---- synthetic: every record is builder-authored; the oracle's provenance says so ---------------------
+    for s in SEEDS:
+        check(f"synthetic: every builder record carries meta.twin_synthetic (seed {s})",
+              all(p["meta"].get("twin_synthetic") is True for _sp, p in sdef.build(s)[0]))
+    check("synthetic: oracle provenance.telemetry declares the records synthetic",
+          str((oracle.get("provenance") or {}).get("telemetry", "")).startswith("synthetic"))
+    # ---- triggers: the graded truth starts and ends only at marked alert-raising records ------------
+    for s in SEEDS:
+        pl = sdef.build(s)[0]
+        check(f"triggers: no step marks more than one trigger record (seed {s})", sysmon_tree.trigger_problems(pl) == [],
+              f"{sysmon_tree.trigger_problems(pl)}")
+        ends = {x for lk in declared for x in (lk["from"], lk["to"])}
+        children = {lk["to"] for lk in declared}
+        by_label = {sp.label: p for sp, p in pl if p["meta"].get("twin_trigger") is True}
+        check(f"triggers: every link endpoint is a marked Sysmon trigger; every child is an EID 1 (seed {s})",
+              ends <= set(by_label) and all(by_label[x]["source_type"] == "sysmon" and by_label[x]["raw"]["EventID"] in (1, 3, 10)
+                                            for x in ends)
+              and all(by_label[x]["raw"]["EventID"] == 1 for x in children), f"{sorted(ends - set(by_label))}")
+        ctx = {(lk["from"], lk["to"]) for lk in sysmon_tree.context_links(pl)}
+        check(f"triggers: context links (acting_process / helper_spawn) are never in the graded truth (seed {s})",
+              not (ctx & {(lk["from"], lk["to"]) for lk in declared}))
+    unmarked = copy.deepcopy(a)
+    victim0 = declared[0]
+    for st, pl in unmarked:
+        if st.label == victim0["to"]:
+            pl["meta"].pop("twin_trigger", None)
+    check("triggers NEGATIVE: dropping the mark on one step's trigger removes every link into it",
+          not any(lk["to"] == victim0["to"] for lk in sysmon_tree.derive_links(unmarked)))
     broken = copy.deepcopy(a)
     victim = next(lk for lk in declared if lk["via"] == "spawn")
     for st, pl in broken:       # cut the parent key on every record of the link's target step

@@ -31,14 +31,25 @@ def extra(check, sdef) -> None:
         check(f"two hosts: the DC-side records name another Computer and ship from another address (seed {seed})",
               len(dc) == 2 and all(p["raw"]["Computer"] == "dc01" and p["raw"]["Computer"] != wks
                                    and p["meta"]["shipper_ip"] != wks_ip for p in dc))
-        check(f"loader_shell: the alert-raising record is an Excel -> mshta creation (seed {seed})",
-              any(s.label == "loader_shell" and p["raw"].get("ParentImage", "").endswith("EXCEL.EXE")
+        check(f"loader_shell: the alert-raising record is an Excel -> mshta creation, marked as the step's trigger (seed {seed})",
+              any(s.label == "loader_shell" and p["meta"].get("twin_trigger") and p["raw"].get("ParentImage", "").endswith("EXCEL.EXE")
                   and p["raw"]["Image"].endswith("mshta.exe") for s, p in pl))
-    links = ksc.yaml.safe_load(Path(sdef.oracle_path).read_text(encoding="utf-8"))["causal_links"]
-    check("spawn-only tree: every declared link is a spawn link", all(lk["via"] == "spawn" for lk in links))
-    check("the PowerShell step (ps_cradle) is the parent of the four later steps",
-          {(lk["from"], lk["to"]) for lk in links} >= {("ps_cradle", t) for t in
-                                                    ("lsass_read", "directory_tamper", "group_escalation", "log_clear")})
+        helpers = {s.label for s, p in pl if p["source_type"] == "sysmon" and p["raw"]["EventID"] == 1
+                   and not p["meta"].get("twin_trigger")}
+        check(f"the DC-side steps carry only helper process records (ldifde, net group): never link endpoints (seed {seed})",
+              {"directory_tamper", "group_escalation"} <= helpers
+              and not any(p["meta"].get("twin_trigger") for s, p in pl if s.label in ("directory_tamper", "group_escalation")))
+    declared = {(lk["from"], lk["to"]) for lk in
+                ksc.yaml.safe_load(Path(sdef.oracle_path).read_text(encoding="utf-8"))["causal_links"]}
+    want = {("loader_shell", "ps_encoded"), ("loader_shell", "tool_download"), ("ps_encoded", "lsass_read"),
+            ("ps_encoded", "service_persistence"), ("ps_encoded", "stage2_shell"), ("stage2_shell", "shadow_delete"),
+            ("stage2_shell", "sched_task"), ("stage2_shell", "log_clear")}
+    check("causal_links: the eight trigger-to-trigger spawn links (two roots' children, a second-stage parent), nothing else",
+          declared == want, f"{sorted(declared ^ want)}")
+    ctx = {(lk["from"], lk["to"]) for lk in ksc.sysmon_tree.context_links(sdef.build(7)[0])}
+    check("context: the ps_cradle recon children and the DC-side helpers are context only, not graded truth",
+          {("ps_encoded", "ps_cradle"), ("ps_encoded", "directory_tamper"), ("ps_encoded", "group_escalation")} <= ctx
+          and not (ctx & declared))
 
 
 def main() -> int:

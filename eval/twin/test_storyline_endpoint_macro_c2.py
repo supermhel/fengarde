@@ -29,18 +29,27 @@ def extra(check, sdef) -> None:
         check(f"beacon: >= 20 connections from ONE implant process, one destination (seed {seed})",
               len(beats) >= 20 and len({p["raw"]["ProcessGuid"] for p in beats}) == 1
               and len({p["raw"]["DestinationIp"] for p in beats}) == 1)
-        check(f"macro_shell: the alert-raising record is a Word -> PowerShell creation (seed {seed})",
-              any(s.label == "macro_shell" and p["raw"].get("ParentImage", "").endswith("WINWORD.EXE")
-                  and p["raw"]["Image"].endswith("powershell.exe") for s, p in pl))
-        check(f"lsass_read: the EID 10 source is the dumper the PowerShell spawned (seed {seed})",
-              any(s.label == "lsass_read" and p["raw"]["EventID"] == 10 for s, p in pl))
+        check(f"macro_shell: the alert-raising record is a Word -> cmd.exe creation (seed {seed})",
+              any(s.label == "macro_shell" and p["meta"].get("twin_trigger")
+                  and p["raw"].get("ParentImage", "").endswith("WINWORD.EXE")
+                  and p["raw"]["Image"].endswith("cmd.exe") for s, p in pl))
+        check(f"lsass_read: the EID 10 is a helper record (not a trigger) done by the dumper the PowerShell spawned (seed {seed})",
+              any(s.label == "lsass_read" and p["raw"]["EventID"] == 10 and not p["meta"].get("twin_trigger") for s, p in pl))
     check("structure varies with the seed (account / host)",
           len({sdef.build(s)[0][0][1]["raw"]["Computer"] + sdef.build(s)[0][0][1]["raw"]["User"] for s in ksc.SEEDS}) > 1)
-    strict = ksc.sysmon_tree.derive_links(sdef.build(7)[0], strict_table_only=True)
-    declared = ksc.yaml.safe_load(Path(sdef.oracle_path).read_text(encoding="utf-8"))["causal_links"]
-    check("causal_links: the strict ADR-table (spawn-only) reading is a proper subset of the declared links "
-          "(the c2_beacon link is an acting_process link)",
-          0 < len(strict) < len(declared) and all(lk in declared for lk in strict))
+    declared = {(lk["from"], lk["to"]) for lk in
+                ksc.yaml.safe_load(Path(sdef.oracle_path).read_text(encoding="utf-8"))["causal_links"]}
+    want = ({("macro_shell", "ps_encoded")}
+            | {("ps_encoded", t) for t in ("tool_download", "lsass_read", "service_persistence", "log_clear")}
+            | {("log_clear", t) for t in ("shadow_delete", "sched_task", "account_add")})
+    check("causal_links: the eight trigger-to-trigger spawn links of the chain, and nothing else", declared == want,
+          f"{sorted(declared ^ want)}")
+    ctx = {(lk["from"], lk["to"]): lk["via"] for lk in ksc.sysmon_tree.context_links(sdef.build(7)[0])}
+    check("context: the beacon (EID 3 by the service implant) is context only, never graded truth",
+          ctx.get(("service_persistence", "c2_beacon")) == "acting_process"
+          and ("service_persistence", "c2_beacon") not in declared)
+    check("no step before the first trigger is a link endpoint (the Outlook/Word ancestors never alert)",
+          all(lk[0] != "explorer" for lk in declared) and ("macro_shell", "ps_cradle") not in declared)
 
 
 def main() -> int:
