@@ -1,5 +1,10 @@
 # What the benchmark does and does not measure, rule by rule
 
+> **Dated note (2026-11-26).** This page was written on the 46-rule build (2026-10-28), and every count below ("46 rules", "46 of 46",
+> "11 storylines") is a statement about that build, kept as the record of what was measured then. `contracts/rules/*.yml` now holds
+> **58** rules (55 MITRE-tagged); the twin has **19** storylines. The 12 rules added
+> since have not been re-audited here; for current per-rule evidence use `python tools/rule_evidence_table.py` and `eval/SCORECARD.md`.
+
 The headline benchmark numbers (`README.md`) grade **six** rules against real third-party attack data. That is a fact about
 what oracle-labelled public corpora exist, not a claim that the other 40 rules are unmeasured. Evidence for the whole catalog
 comes from several instruments, each with a different scope. This page says which, so no number is read as covering more than it does.
