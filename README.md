@@ -80,7 +80,7 @@ so any piece can be scaled or replaced without rewriting the others.
 
 | Way | Needs | What you get |
 |---|---|---|
-| **[The project page](https://supermhel.github.io/fengarde/)** | A browser | The real console on a *recording* of a lab run, with a replayable attack, the architecture, all 46 rules and four recorded walkthroughs. Static; writes stay in your browser ([`docs/console-demo.md`](docs/console-demo.md) says exactly what is real). |
+| **[The project page](https://supermhel.github.io/fengarde/)** | A browser | The real console on a *recording* of a lab run, with a replayable attack, the architecture, the rule list as recorded (46 of the 58 rules the repo ships today; the page has not been regenerated since) and four recorded walkthroughs. Static; writes stay in your browser ([`docs/console-demo.md`](docs/console-demo.md) says exactly what is real). |
 | **`make e2e`** | Python 3 | SSH brute-force to a real alert, idempotent under replay. No Docker, Redis or OpenSearch. |
 | **`make demo`** | Docker | The full live stack; a real brute-force alert appears in the console within about a minute. |
 
@@ -239,9 +239,9 @@ and released in v0.11.0. Phase 5 ([PR #92](https://github.com/supermhel/fengarde
 | Detection pipeline (collect, normalize, detect, index, console) | ✅ Works | End-to-end since v0.1 |
 | **Parsers (21)** | ✅ Works | Cisco ASA, Active Directory, VMware vSphere, Linux SSH, generic syslog, Windows Event Log, DB audit, MCP/AI-agent tool-call audit, OPC UA/OT audit, n8n audit, DNS query log, Kubernetes audit, CEF, AWS CloudTrail, Sysmon, Modbus/TCP anomaly detector, inventory-diff OT device detector, mail gateway, M365 audit, Suricata EVE JSON, Zeek JSON logs (these two read the logs of a sensor you run; FENGARDE captures no packets); all to OCSF |
 | **Live syslog routing** (console rebuild) | ✅ Works | A forwarded sshd, Cisco ASA or CEF line (also behind a syslog header) reaches its own parser, not the generic one; proven by a real UDP burst that raised the brute-force alarm |
-| **Detection rules (46)** | ✅ Works (43 stable; 3 experimental: `common_impossible_travel` (cannot fire on production traffic until a deployment supplies real egress prefixes or a GeoIP resolver), `common_credential_stuffing_sustained` and `ot_opcua_write_unauthorized_node`. 7 of the 2026-10-20 Windows/spray/sweep rules are proven by unit tests and fire checks, not yet by a twin storyline) | Brute-force, port-scan, lateral movement, password spray, privileged-group grant, after-hours admin, impossible travel, bank DB privilege escalation, mass VM delete, AI-agent rules (credential files, tool-call burst, prompt injection, destructive command, non-allowlisted egress), OT rules (write outside maintenance, new engineering connection, config change, Modbus unauthorized write, new device on segment), n8n, DNS exfiltration, privileged container, cloud root login, mass DB read, rapid account churn, beaconing. The full list is on the [project page](https://supermhel.github.io/fengarde/) |
+| **Detection rules (58)** | ✅ Works (53 stable; 5 experimental: `common_impossible_travel` (cannot fire on production traffic until a deployment supplies real egress prefixes or a GeoIP resolver), `common_credential_stuffing_sustained`, `ot_opcua_write_unauthorized_node`, `common_large_outbound_flow` and `ot_write_unlisted_source` (the last two ship with an empty allowlist; the latter is off by default). 55 of the 58 rules carry a MITRE tag. Counted from `contracts/rules/*.yml` on 2026-11-26. Two rules (`common_large_outbound_flow`, `ot_write_unlisted_source`) are named in no twin storyline oracle: they are proven by unit tests and fire checks only. The Sysmon process-creation rules and the Suricata/Zeek flow rules rest on hand-written or derived producer fixtures, not on a real sensor capture) | Brute-force, port-scan, lateral movement, password spray, privileged-group grant, after-hours admin, impossible travel, bank DB privilege escalation, mass VM delete, AI-agent rules (credential files, tool-call burst, prompt injection, destructive command, non-allowlisted egress), OT rules (write outside maintenance, new engineering connection, config change, Modbus unauthorized write, new device on segment), n8n, DNS exfiltration, privileged container, cloud root login, mass DB read, rapid account churn, beaconing, Sysmon process-creation command lines (encoded PowerShell, LSASS dump, log clear, shadow-copy delete and others), Suricata/Zeek flow records (high-severity IDS alert, large outbound flow, OT write from an unlisted source). The full list is on the [project page](https://supermhel.github.io/fengarde/) |
 | Rule grammar and prefilter | ✅ Works | Boolean logic, comparisons, allowlist suppression (CIDR and exact), time of day; fails closed on malformed input; rules bucketed by `class_uid` |
-| Anti-dormancy and rule-boundary guardrails | ✅ Works | CI proves every rule is satisfiable by a real parser's output and that declared thresholds are enforced (`python eval/attack/fire_check.py`, 2026-10-22: 20 stateful and 25 stateless rules held; all 45 MITRE-tagged rules fire; one untagged rule is unverified): engine-versus-declaration agreement, not a claim that thresholds are well chosen |
+| Anti-dormancy and rule-boundary guardrails | ✅ Works | CI proves every rule is satisfiable by a real parser's output and that declared thresholds are enforced (`python eval/attack/fire_check.py`, re-run 2026-11-26: 21 stateful and 26 stateless rules held; all 55 MITRE-tagged rules fire on their own producer fixture; 8 tagged rules and 2 of the 3 untagged rules are not negatively verified, and the script says so): engine-versus-declaration agreement, not a claim that thresholds are well chosen |
 | **Cross-alert correlation** (WS-8) | ✅ Works | Promotes an incident once an entity shows two or more distinct MITRE tactics; deterministic `incident_id`; bounded memory |
 | **Causal incident graph** | ✅ Works | Typed DAG per incident, each edge grounded in one alert's own evidence, never a transitive inference |
 | Entity resolution (WS-9) | ✅ Works | Deterministic entity ids, idempotent under redelivery |
@@ -323,7 +323,7 @@ never touches the bus, and no backend service depends on it.
 | 1 | `services/ws1-collectors` | Collect logs → `raw.events` |
 | 2 | `services/ws2-normalization` | Parsers → validated OCSF events (21 parsers) |
 | 3 | `services/ws3-indexer` | Routing + OpenSearch indexing; entity/incident-graph/evidence read routes |
-| 4 | `services/ws4-detection` | Correlation rules + scoring + windowing (46 rules) |
+| 4 | `services/ws4-detection` | Correlation rules + scoring + windowing (58 rules) |
 | 5 | `services/ws5-ai` | Triage — real local-LLM (Ollama), stub fallback, bounded concurrency |
 | 6 | `services/ws6-inventory` | IP/MAC inventory API (SQLite); stores sector and type; thread-safe reads |
 | 7 | `services/ws7-dashboard` | Console (React); a static demo build for the project page |
@@ -346,7 +346,7 @@ python tools/fengarde_loadtest.py --repeat 3 --max-events 20000   # zero-infra, 
 python tools/fengarde_bench.py --events 20000 --mixed             # older one-shot batch baseline
 ```
 
-| Zero-infra (46 rules, in-memory bus, realistic mix, median of 3) | Value |
+| Zero-infra (measured 2026-10-28 on the 46-rule build, in-memory bus, realistic mix, median of 3; not re-measured on the 58-rule set) | Value |
 |---|---|
 | WS-2 normalize, events/s (p50 / p95 per event) | ~2,100 (0.34 ms / 1.1 ms) |
 | WS-4 detect, events/s (p50 / p95 per event) | ~4,500 (0.08 ms / 0.6 ms) |
