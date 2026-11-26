@@ -196,18 +196,34 @@ def test_gradable() -> None:
     _check("(b) a handle that names alerts of two steps is ambiguous and maps to nothing",
            amb["unmapped"] >= 1 and amb["recall"]["value"] < 1.0)
 
-    # folded / upserted alerts: one event_ids[0] heads two steps; the endpoint time disambiguates
+    # folded / upserted alerts: ONE alert_id minted by two steps. ONE attribution rule everywhere (grader, report.py,
+    # test_timeline_order): the EARLIEST step owns the alert; the later step is folded in, so it is not alerted.
     fold = [{"step": "s0", "alert": {"alert_id": "f", "event_ids": ["e0"], "time": 100}},
             {"step": "s1", "alert": {"alert_id": "f", "event_ids": ["e0", "e1"], "time": 200}},
             {"step": "s2", "alert": {"alert_id": "g", "event_ids": ["e2"], "time": 300}}]
-    ftruth = [{"from": "s1", "to": "s2", "basis": "network_flow"}]
+    _check("(b) owner_items: the earliest step owns a folded alert id; the later step's item is dropped",
+           [i["step"] for i in cl.owner_items(fold)] == ["s0", "s2"])
+    _check("(b) owner_items: input order does not decide ownership (alert time does)",
+           [i["step"] for i in cl.owner_items(list(reversed(fold)))] == ["s2", "s0"])
+    folded_truth = [{"from": "s1", "to": "s2", "basis": "network_flow"}, {"from": "s0", "to": "s2", "basis": "network_flow"}]
     timed = {"from_event_id": "e0", "to_event_id": "e2", "basis": "network_flow", "order": "forward",
              "from_ts_ms": 200, "to_ts_ms": 300}
-    _check("(b) a shared event_ids[0] is disambiguated by the endpoint time (handle + ts, as causal_order does)",
-           cl.grade_storyline("A", [timed], ftruth, fold)["matched"] == 1)
+    g = cl.grade_storyline("A", [timed], folded_truth, fold)
+    _check("(b) a truth link on the FOLDED (later) step is non-gradable: from_unalerted, never graded or guessed",
+           g["n_gradable"] == 1 and [x["reason"] for x in g["non_gradable"]] == ["from_unalerted"])
+    _check("(b) the link whose endpoint is the folded alert's LATER version maps to the OWNER step (s0 -> s2)",
+           g["matched"] == 1 and g["unmapped"] == 0)
+    same_step = [{"step": "s0", "alert": {"alert_id": "f", "event_ids": ["e0"], "time": 100}},
+                 {"step": "s0", "alert": {"alert_id": "f", "event_ids": ["e0", "e1"], "time": 200}}]
+    _check("(b) several versions of one alert id raised by ONE step are all kept",
+           len(cl.owner_items(same_step)) == 2)
     untimed = dict(timed, from_ts_ms=None, to_ts_ms=None)
-    _check("(b) NEGATIVE: the same link without a time cannot be mapped (ambiguous handle), so it is a false link",
-           cl.grade_storyline("A", [untimed], ftruth, fold)["unmapped"] == 1)
+    _check("(b) a link without times maps through the bare handle: the folded alert names ONE step now",
+           cl.grade_storyline("A", [untimed], folded_truth, fold)["matched"] == 1)
+    twin_ids = [{"step": "s0", "alert": {"alert_id": "x", "event_ids": ["e0"], "time": 100}},
+                {"step": "s1", "alert": {"alert_id": "y", "event_ids": ["e0"], "time": 100}}]
+    _check("(b) NEGATIVE: two DIFFERENT alert ids sharing one handle and time stay ambiguous and unmapped",
+           cl.grade_storyline("A", [dict(timed, from_ts_ms=100)], folded_truth, twin_ids + [fold[2]])["unmapped"] == 1)
 
     dup = cl.grade_storyline("A", emitted + [dict(emitted[0])], truth, items)
     _check("(b) the same event link repeated across incident graphs counts once",

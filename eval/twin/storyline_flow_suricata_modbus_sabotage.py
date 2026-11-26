@@ -1,33 +1,45 @@
 """storyline_flow_suricata_modbus_sabotage -- an engineering workstation is swept, brute-forced and used to log on
-laterally, then drives TWO Modbus/TCP sessions to two PLCs that a Suricata sensor on the OT tap watches.
+laterally, then drives TWO long Modbus/TCP sessions to two PLCs that a Suricata sensor on the OT tap watches, and
+pushes a historian dump to the outside.
 
 Registered by ``scenario_registry._discover`` (module name ``storyline_*``, exports ``STORYLINE``).
 
     asa_sweep -> ad_bruteforce -> lateral_logons -> modbus_poll_recon -> priv_grant -> modbus_write_coil
-        -> modbus_ids_alert -> plc2_write -> plc2_ids_alert -> plc2_close -> modbus_session_close
+        -> modbus_ids_alert -> plc2_write -> plc2_ids_alert -> modbus_ids_diag -> plc2_ids_resume
+        -> hist_exfil_alert -> modbus_ids_bulk -> hist_exfil_alert2 -> plc2_close -> modbus_session_close
+        -> hist_exfil_close
 
-WHY IT EXISTS (ADR-012 WP 7, basis ``network_flow``). Suricata writes the ``modbus`` records, the IDS ``alert`` and
-the ``flow`` record of one TCP session under the SAME ``flow_id``, so a Modbus session is the textbook
-network_flow group:
+WHY IT EXISTS (ADR-012 WP 7, basis ``network_flow``). Suricata writes the ``modbus`` records, the IDS ``alert``
+records and the ``flow`` record of one TCP session under the SAME ``flow_id``. A Modbus/TCP session to a PLC stays
+open for hours, and an ICS signature set keeps matching on it, so each session is a chain of alert-raising records:
 
-    * PLC 1 session:  recon reads, a write, an IDS alert on the write, and the flow record written when the session
-      ends 55 minutes later (four steps, three links);
-    * PLC 2 session:  a write, the IDS alert on it and the flow record (three steps, two links).
+    * PLC 1 session (~4 h): three severity-1 signatures in three different hours (``common_ids_high_severity_alert``);
+      the reads, the write and the closing flow record are context (no shipped rule reads them);
+    * PLC 2 session (~3 h): two severity-1 signatures 80 minutes apart;
+    * historian dump to an outside address (one TLS flow): two severity-1 signatures in two hours, then the flow
+      record written when it ends with 1.2 GiB to the outside (``common_large_outbound_flow``).
 
-The builder mints both ``flow_id`` values itself (``flow_kit``; no import of ``services/shared/causal_keys.py``)
-and the oracle's ``causal_links`` are DERIVED from them (``derive_causal_links``).
+Five links in all. The builder mints the ``flow_id`` values itself (``flow_kit``; no import of
+``services/shared/causal_keys.py``) and the oracle's ``causal_links`` are DERIVED from the TRIGGER records only
+(``derive_causal_links``).
+
+NO FOLDING, BY DESIGN. The IDS passthrough rule's alert id is (rule, flow_id, hour bucket) with a 3600 s window, so two
+hits on one flow in one bucket would upsert ONE alert. Every severity-1 hit on a flow here is more than one hour after
+the previous one, so each step owns a distinct alert id.
 
 THE SHARED-ENTITY NEGATIVE. ``bystander_historian_poll`` is a legitimate historian polling PLC 1 over its OWN
 connection (a different ``flow_id``, same sensor). The entity join sees one device; the flow key says two flows;
 the oracle forbids ``modbus_write_coil -> bystander_historian_poll``.
 
 WHAT IS HONEST ABOUT THE DETECTION SIDE. The sweep (ASA denies), the brute force (AD 4625), the lateral logons
-(4624) and the privileged-group add (4728) fire shipped rules, all keyed on the engineering workstation's
-address. No shipped rule reads a Suricata ``modbus`` record, an IDS alert or a flow record, so the seven Suricata
-steps are declared gaps and every link has two unalerted endpoints today.
+(4624) and the privileged-group add (4728) fire shipped rules, all keyed on the engineering workstation's address.
+``ot_write_unlisted_source`` is the rule that WOULD read the Modbus write records, but it is default-off (the
+authorised-writer allowlist ships empty) and the twin runs the default rule set, so the reads, the writes and the
+two PLC flow records are declared gaps whose records are context, not truth endpoints.
 
 TELEMETRY. Real parsers: ``cisco_asa`` (106023 Deny), ``active_directory`` (4625), ``windows_eventlog``
-(4624, 4728), ``suricata_eve`` (modbus / alert / flow). Simulation only: private addresses, a fixed calendar epoch.
+(4624, 4728), ``suricata_eve`` (modbus / alert / flow). Simulation only: private addresses, RFC 5737 documentation
+addresses outside, a fixed calendar epoch.
 """
 from __future__ import annotations
 
@@ -46,22 +58,36 @@ from scenario_kit import epoch_ms  # noqa: E402
 
 START_MS = epoch_ms(2025, 7, 17, 3, 0)       # Thu 2025-07-17 03:00 UTC
 _MIN = 60_000
+_GIB = 1024 ** 3
 
 TAP = Sensor("ot-tap-ids", "suricata", "10.50.0.250")
 
 STEPS: tuple[ChainStepSpec, ...] = (
-    ChainStepSpec("asa_sweep", "cisco_asa", True, 
+    ChainStepSpec("asa_sweep", "cisco_asa", True,
                   "the engineering workstation is denied on port 502 across 16-22 OT hosts"),
     ChainStepSpec("ad_bruteforce", "active_directory", True, "the workstation fails logon 11-13 times in under a minute"),
     ChainStepSpec("lateral_logons", "windows_eventlog", True, "the guessed account logs on to six hosts from the workstation"),
     ChainStepSpec("modbus_poll_recon", "suricata_eve", True, "five Modbus read requests on ONE long TCP session to PLC 1"),
     ChainStepSpec("priv_grant", "windows_eventlog", True, "the account adds a backdoor service account to a privileged group"),
     ChainStepSpec("modbus_write_coil", "suricata_eve", True, "a Modbus write-single-coil request on the SAME PLC 1 session"),
-    ChainStepSpec("modbus_ids_alert", "suricata_eve", True, "the IDS alert on that write, on the SAME flow_id"),
+    ChainStepSpec("modbus_ids_alert", "suricata_eve", True,
+                  "severity-1 IDS alert on that write, on the SAME flow_id (hour 1)"),
     ChainStepSpec("plc2_write", "suricata_eve", True, "a Modbus write-single-register request on ONE session to PLC 2"),
-    ChainStepSpec("plc2_ids_alert", "suricata_eve", True, "the IDS alert on that write, on the PLC 2 flow_id"),
+    ChainStepSpec("plc2_ids_alert", "suricata_eve", True, "severity-1 IDS alert on that write, on the PLC 2 flow_id"),
+    ChainStepSpec("modbus_ids_diag", "suricata_eve", True,
+                  "second severity-1 signature on the PLC 1 session, 75 minutes later (diagnostics function)"),
+    ChainStepSpec("plc2_ids_resume", "suricata_eve", True,
+                  "second severity-1 signature on the PLC 2 session, 80 minutes later"),
+    ChainStepSpec("hist_exfil_alert", "suricata_eve", True,
+                  "severity-1 IDS alert on one outbound TLS flow carrying a historian dump to an outside address"),
+    ChainStepSpec("modbus_ids_bulk", "suricata_eve", True,
+                  "third severity-1 signature on the PLC 1 session, 75 minutes later (bulk register write)"),
+    ChainStepSpec("hist_exfil_alert2", "suricata_eve", True,
+                  "second severity-1 signature on the SAME outbound historian-dump flow, 80 minutes later"),
     ChainStepSpec("plc2_close", "suricata_eve", True, "the PLC 2 flow record, written when that session ends"),
     ChainStepSpec("modbus_session_close", "suricata_eve", True, "the PLC 1 flow record, written when that session ends"),
+    ChainStepSpec("hist_exfil_close", "suricata_eve", True,
+                  "the historian-dump flow record (1.2 GiB to an outside address), written when it ends"),
 )
 STEP_ORDER = [s.label for s in STEPS]
 
@@ -86,12 +112,15 @@ def _make(seed: int, *, n_hosts: int | None = None):
     victim = rng.choice(_VICTIMS)
     ew = f"10.50.9.{30 + seed % 7}"
     plc1, plc2 = "10.50.1.10", "10.50.1.11"
+    hist_dst = "203.0.113.99"
     n_hosts = (16 + seed % 7) if n_hosts is None else n_hosts       # rule threshold: 15 distinct hosts / 60 s
     n_fail = 11 + seed % 3                                          # rule threshold: 10 failures / 60 s
     book = FlowBook(seed, "msb", STEPS + (BYSTANDER,) + DECOY_STEPS)
-    f1, f2, f_hist = book.flow_id(), book.flow_id(), book.flow_id()
+    f1, f2, f3, f_hist = book.flow_id(), book.flow_id(), book.flow_id(), book.flow_id()
     s1, d1 = (ew, 49701), (plc1, 502)
     s2, d2 = (ew, 49702), (plc2, 502)
+    s3, d3 = (ew, 50500), (hist_dst, 443)
+    modbus = {"category": "Potentially Bad Traffic", "severity": 1, "app_proto": "modbus"}
 
     for i in range(n_hosts):                                       # 2 s apart: 22 hosts span 42 s
         ts = START_MS + i * 2_000
@@ -112,7 +141,7 @@ def _make(seed: int, *, n_hosts: int | None = None):
                   "WorkstationName": "ew-" + ew.rsplit(".", 1)[1], "TimeCreated": ts}, ts, ew)
 
     t_recon = START_MS + 20 * _MIN
-    for i in range(5):                                             # one read every 20 s
+    for i in range(5):                                             # one read every 20 s (context: no shipped rule)
         book.eve_modbus("modbus_poll_recon", TAP, t_recon + i * 20_000, f1, s1, d1, function_raw=3,
                         function_code="RdHoldRegs", access_type="READ | HOLDING", address=100 + i, quantity=2,
                         unit_id=1, tx=i + 1)
@@ -125,23 +154,36 @@ def _make(seed: int, *, n_hosts: int | None = None):
     t_w1 = START_MS + 35 * _MIN
     book.eve_modbus("modbus_write_coil", TAP, t_w1, f1, s1, d1, function_raw=5, function_code="WrSingleCoil",
                     access_type="WRITE | COILS | SINGLE | WRITE_SINGLE", address=2, unit_id=1, tx=20)
-    book.eve_alert("modbus_ids_alert", TAP, t_w1 + 40_000, f1, s1, d1, signature="ET SCADA Modbus Write Single Coil from non-HMI host",
-                   sid=2200101, category="Potentially Bad Traffic", severity=1, app_proto="modbus")
+    book.eve_alert("modbus_ids_alert", TAP, t_w1 + 40_000, f1, s1, d1,
+                   signature="ET SCADA Modbus Write Single Coil from non-HMI host", sid=2200101, **modbus)
     t_w2 = START_MS + 45 * _MIN
     book.eve_modbus("plc2_write", TAP, t_w2, f2, s2, d2, function_raw=6, function_code="WrSingleReg",
                     access_type="WRITE | HOLDING | SINGLE | WRITE_SINGLE", address=5, unit_id=1, tx=1)
-    book.eve_alert("plc2_ids_alert", TAP, t_w2 + 30_000, f2, s2, d2, signature="ET SCADA Modbus Write Single Register from non-HMI host",  # noqa: E501
-                   sid=2200102, category="Potentially Bad Traffic", severity=1, app_proto="modbus")
-    book.eve_flow("plc2_close", TAP, t_w2 - 5_000, START_MS + 60 * _MIN, f2, s2, d2, app_proto="modbus",
+    book.eve_alert("plc2_ids_alert", TAP, t_w2 + 30_000, f2, s2, d2,
+                   signature="ET SCADA Modbus Write Single Register from non-HMI host", sid=2200102, **modbus)
+    book.eve_alert("modbus_ids_diag", TAP, START_MS + 110 * _MIN, f1, s1, d1,
+                   signature="ET SCADA Modbus Diagnostics Function Force Listen Only Mode", sid=2200103, **modbus)
+    book.eve_alert("plc2_ids_resume", TAP, START_MS + 125 * _MIN, f2, s2, d2,
+                   signature="ET SCADA Modbus Write Multiple Registers from non-HMI host", sid=2200104, **modbus)
+    book.eve_alert("hist_exfil_alert", TAP, START_MS + 140 * _MIN, f3, s3, d3,
+                   signature="ET POLICY Historian Archive Upload to External Host", sid=2200110,
+                   category="Potentially Bad Traffic", severity=1, app_proto="tls")
+    book.eve_alert("modbus_ids_bulk", TAP, START_MS + 185 * _MIN, f1, s1, d1,
+                   signature="ET SCADA Modbus Bulk Register Overwrite from non-HMI host", sid=2200105, **modbus)
+    book.eve_alert("hist_exfil_alert2", TAP, START_MS + 220 * _MIN, f3, s3, d3,
+                   signature="ET POLICY Historian Archive Upload Continuing to External Host", sid=2200111,
+                   category="Potentially Bad Traffic", severity=1, app_proto="tls")
+    book.eve_flow("plc2_close", TAP, t_w2 - 5_000, START_MS + 240 * _MIN, f2, s2, d2, app_proto="modbus",
                   bytes_ts=480, bytes_tc=410, alerted=True)
-    book.eve_flow("modbus_session_close", TAP, t_recon - 5_000, START_MS + 75 * _MIN, f1, s1, d1, app_proto="modbus",
+    book.eve_flow("modbus_session_close", TAP, t_recon - 5_000, START_MS + 250 * _MIN, f1, s1, d1, app_proto="modbus",
                   bytes_ts=1_900, bytes_tc=1_650, alerted=True)
+    book.eve_flow("hist_exfil_close", TAP, START_MS + 138 * _MIN, START_MS + 300 * _MIN, f3, s3, d3, app_proto="tls",
+                  bytes_ts=int(1.2 * _GIB), bytes_tc=190_000, alerted=True, trigger=True)
 
-    # the legitimate historian: same PLC 1, its own long connection (different flow_id), one read a minute, ending before the write
     for i in range(12):
-        book.eve_modbus("bystander_historian_poll", TAP, START_MS + 22 * _MIN + i * _MIN, f_hist, ("10.50.2.40", 50120), d1,
-                        function_raw=3, function_code="RdHoldRegs", access_type="READ | HOLDING", address=0, quantity=8,
-                        unit_id=1, tx=500 + i)
+        book.eve_modbus("bystander_historian_poll", TAP, START_MS + 22 * _MIN + i * _MIN, f_hist, ("10.50.2.40", 50120),
+                        d1, function_raw=3, function_code="RdHoldRegs", access_type="READ | HOLDING", address=0,
+                        quantity=8, unit_id=1, tx=500 + i)
     notes = {
         "asa_sweep": f"{ew} is denied on port 502 across {n_hosts} distinct OT hosts",
         "ad_bruteforce": f"{ew} fails logon for {victim} {n_fail} times",
@@ -162,8 +204,8 @@ def build(seed: int):
 
 
 def derive_causal_links(seed: int = 7) -> list:
-    """The network_flow truth links for ``seed``, derived from the flow_ids this builder minted (the historian's
-    flow_id is a different group, so the bystander yields no link)."""
+    """The network_flow truth links for ``seed``, derived from the flow_ids this builder minted on its TRIGGER
+    records (the historian's flow_id is a different group, so the bystander yields no link)."""
     book, _notes = _make(seed)
     return flow_kit.derive_links(book.notes, STEP_ORDER)
 
@@ -197,8 +239,9 @@ STORYLINE = ScenarioDef(
     steps=STEPS,
     build=build,
     oracle_path=TWIN / "oracle_flow_suricata_modbus_sabotage.yaml",
-    summary="an engineering workstation is swept, brute-forced and used laterally, then drives two Modbus/TCP "
-            "sessions that Suricata logs as modbus + alert + flow under one flow_id each (network_flow truth links)",
+    summary="an engineering workstation is swept, brute-forced and used laterally, then drives two long "
+            "Modbus/TCP sessions that Suricata alerts on in several different hours, and pushes a 1.2 GiB "
+            "historian dump out, each session or flow under one flow_id (network_flow truth links)",
     decoy=_build_decoys,
     decoy_steps=DECOY_STEPS + (BYSTANDER,),
     negatives=NEGATIVES,

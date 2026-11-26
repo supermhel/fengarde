@@ -31,6 +31,7 @@ for _p in (str(TWIN), str(ROOT / "services")):
         sys.path.insert(0, _p)
 
 import report  # noqa: E402  (pins ws4's `main` before anything else imports one)
+import causal_links  # noqa: E402
 import scenario_registry as reg  # noqa: E402
 
 # by file, NOT via sys.path: ws8-correlation/ on the path would shadow ws2's `main` the
@@ -72,9 +73,7 @@ def timeline_order_ok(items, expected_seq) -> tuple:
     rank = {s: i for i, s in enumerate(expected_seq)}
     # one alert_id can be minted by two steps (same Suricata flow_id inside one window); the alert belongs to the
     # first, matching build_timeline's earliest-time dedupe of duplicate ids
-    step_of: dict = {}
-    for i in sorted((i for i in items if i["step"] in rank), key=lambda i: i["alert"].get("time") or 0):
-        step_of.setdefault(i["alert"]["alert_id"], i["step"])
+    step_of: dict = causal_links.step_of_alert([i for i in items if i["step"] in rank])
     alerts = [i["alert"] for i in items]
     graded, ok = 0, True
     for inc in _correlate(items).values():

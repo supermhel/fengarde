@@ -339,8 +339,12 @@ def _test_real() -> dict:
               # 0.5: the ASA sweep evidences only an address, so the sweep -> spray pair has no edge.
               "win_credential_theft": (4, 0.75), "network_credential_abuse": (2, 0.5),
               # 2026-11-20, first run of the flow_* storylines (WP-D2; measured, not tuned)
-              "flow_suricata_c2_exfil": (12, 0.8333), "flow_suricata_modbus_sabotage": (10, 0.9),
-              "flow_zeek_ot_pivot": (11, 0.9091),
+              # 2026-11-24 (wp/flow-chains): the flow_* storylines were rebuilt so every flow step raises its own alert;
+              # RE-MEASURED on the new builders (seed 7), not tuned: more steps alert, so more pairs are graded and the
+              # fidelity rises (c2_exfil 12/0.8333 -> 12/0.9167, modbus 10/0.9 -> 16/0.9375, zeek 11/0.9091 -> 14/0.9286);
+              # flow_suricata_ci_runner_tunnels is new.
+              "flow_suricata_c2_exfil": (12, 0.9167), "flow_suricata_modbus_sabotage": (16, 0.9375),
+              "flow_zeek_ot_pivot": (14, 0.9286), "flow_suricata_ci_runner_tunnels": (12, 0.9167),
               # 2026-11-19, first run of the five process-tree-keyed storylines (measured, not tuned). 2026-11-21:
               # outlook_script_backdoor 0.8333 -> 1.0 (measured, not tuned): the EID 1 rules add an alert on the net.exe
               # process-creation record, which gives the graded pair that had no joining edge an edge.

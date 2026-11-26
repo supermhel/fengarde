@@ -9,8 +9,13 @@ flow BY CONSTRUCTION, independently of the code that will later extract the key.
   * writes the records in the sensors' own native shapes (an EVE JSON line, a Zeek JSON row) and mints the
     flow identifiers itself (``flow_id``: a 16-digit integer; ``uid``: ``C`` + 17 base62 characters, the shape in
     ``parsers/test_fixtures/zeek_json_real.json``);
-  * remembers, per emitted record, ``(step, namespace, scope, key, time)`` in a ``FlowBook``;
-  * derives the oracle's ``causal_links`` from that book (``derive_links``), never from the parsed events.
+  * remembers, per emitted record, ``(step, namespace, scope, key, time)`` in a ``FlowBook``: ``book.notes`` holds the
+    TRIGGER records (the records the builder declares alert-raising: a severity-1 IDS alert, a 1 GiB+ flow record, the
+    40th distinct name of a DNS burst) and ``book.context`` every other keyed record;
+  * derives the oracle's ``causal_links`` from the trigger notes only (``derive_links``), never from the parsed events.
+    ws4 builds an alert's causal keys from its trigger event ONLY, so a link between records that raise no alert is not
+    gradable and is not truth. ``test_flow_storylines`` cross-checks every trigger declaration against the real
+    detector's alerts.
 
 It deliberately does NOT import ``services/shared/causal_keys.py`` or any WS-2/WS-4/WS-8 module, and it reads no
 parsed event: truth (this file) and prediction (the future linker) share nothing but the raw record format, which
@@ -67,7 +72,8 @@ class FlowBook:
         self._used: set = set()
         self._idx = 0
         self.payloads: list = []
-        self.notes: list = []          # (step, namespace, scope, key, ts_ms)
+        self.notes: list = []          # (step, namespace, scope, key, ts_ms): TRIGGER records only
+        self.context: list = []        # same shape: keyed records the design says raise NO alert (context)
 
     # -- identifiers -------------------------------------------------------------------------------------------
     def flow_id(self) -> int:
@@ -96,13 +102,20 @@ class FlowBook:
         """A non-keyed record (an ASA line, an AD event, an sshd line) belonging to ``step``."""
         self._emit(step, source_type, raw, ts, ip)
 
-    def _key(self, step: str, sensor: Sensor, key, ts: int) -> None:
-        ns = BASIS
-        self.notes.append((step, ns, sensor.scope, str(key), ts))
+    def _key(self, step: str, sensor: Sensor, key, ts: int, trigger: bool) -> None:
+        """Record the key a raw record carries. ``trigger`` is the BUILDER's declaration that this record is an
+        alert-raising (trigger) record of its step; only trigger records become truth endpoints (ADR-012: the alert
+        carries the key of its trigger event ONLY). ``test_flow_storylines`` cross-checks every declaration against
+        the alerts the real detector raises, so the flag is a claim under test, never an assumption."""
+        (self.notes if trigger else self.context).append((step, BASIS, sensor.scope, str(key), ts))
 
     # -- Suricata EVE ------------------------------------------------------------------------------------------
     def eve_alert(self, step: str, sensor: Sensor, ts: int, flow_id: int, src: tuple, dst: tuple, *, signature: str,
-                  sid: int, category: str, severity: int = 1, proto: str = "TCP", app_proto: str | None = None) -> None:
+                  sid: int, category: str, severity: int = 1, proto: str = "TCP", app_proto: str | None = None,
+                  trigger: bool | None = None) -> None:
+        """``trigger`` defaults to ``severity == 1``: ``common_ids_high_severity_alert`` passes exactly the signature
+        severity-1 tier through (its own description), so a severity-1 alert record is a trigger record and a
+        severity 2/3 one is context."""
         rec = {"timestamp": _iso(ts), "flow_id": flow_id, "in_iface": "eth1", "event_type": "alert",
                "src_ip": src[0], "src_port": src[1], "dest_ip": dst[0], "dest_port": dst[1], "proto": proto,
                "alert": {"action": "allowed", "gid": 1, "signature_id": sid, "rev": 3, "signature": signature,
@@ -110,11 +123,11 @@ class FlowBook:
         if app_proto:
             rec["app_proto"] = app_proto
         self._emit(step, sensor.source_type, json.dumps(rec, sort_keys=True), ts, sensor.ip, sensor.ip)
-        self._key(step, sensor, flow_id, ts)
+        self._key(step, sensor, flow_id, ts, severity == 1 if trigger is None else trigger)
 
     def eve_flow(self, step: str, sensor: Sensor, start_ms: int, end_ms: int, flow_id: int, src: tuple, dst: tuple,
                  *, proto: str = "TCP", app_proto: str | None = None, bytes_ts: int = 0, bytes_tc: int = 0,
-                 alerted: bool = False) -> None:
+                 alerted: bool = False, trigger: bool = False) -> None:
         """A flow record: Suricata writes it when the flow ENDS and the parser stamps it ``flow.end``."""
         age = max(0, (end_ms - start_ms) // 1000)
         rec = {"timestamp": _iso(end_ms + 1000), "flow_id": flow_id, "event_type": "flow",
@@ -125,20 +138,20 @@ class FlowBook:
         if app_proto:
             rec["app_proto"] = app_proto
         self._emit(step, sensor.source_type, json.dumps(rec, sort_keys=True), end_ms, sensor.ip, sensor.ip)
-        self._key(step, sensor, flow_id, end_ms)
+        self._key(step, sensor, flow_id, end_ms, trigger)
 
     def eve_dns(self, step: str, sensor: Sensor, ts: int, flow_id: int, src: tuple, dst: tuple, name: str, *,
-                rrtype: str = "A", tx_id: int = 0) -> None:
+                rrtype: str = "A", tx_id: int = 0, proto: str = "UDP", trigger: bool = False) -> None:
         rec = {"timestamp": _iso(ts), "flow_id": flow_id, "event_type": "dns", "src_ip": src[0], "src_port": src[1],
-               "dest_ip": dst[0], "dest_port": dst[1], "proto": "UDP",
+               "dest_ip": dst[0], "dest_port": dst[1], "proto": proto,
                "dns": {"version": 3, "type": "request", "tx_id": tx_id, "id": 1000 + tx_id, "rd": True,
                        "rrname": name, "rrtype": rrtype, "queries": [{"rrname": name, "rrtype": rrtype}]}}
         self._emit(step, sensor.source_type, json.dumps(rec, sort_keys=True), ts, sensor.ip, sensor.ip)
-        self._key(step, sensor, flow_id, ts)
+        self._key(step, sensor, flow_id, ts, trigger)
 
     def eve_modbus(self, step: str, sensor: Sensor, ts: int, flow_id: int, src: tuple, dst: tuple, *, function_raw: int,
                    function_code: str, access_type: str, address: int, quantity: int | None = None,
-                   unit_id: int = 1, tx: int = 1) -> None:
+                   unit_id: int = 1, tx: int = 1, trigger: bool = False) -> None:
         side: dict = {"transaction_id": tx, "protocol_id": 0, "unit_id": unit_id, "function_raw": function_raw,
                       "function_code": function_code, "access_type": access_type,
                       "write" if "WRITE" in access_type else "read":
@@ -148,7 +161,7 @@ class FlowBook:
                "src_port": src[1], "dest_ip": dst[0], "dest_port": dst[1], "proto": "TCP",
                "modbus": {"id": tx, "request": side}}
         self._emit(step, sensor.source_type, json.dumps(rec, sort_keys=True), ts, sensor.ip, sensor.ip)
-        self._key(step, sensor, flow_id, ts)
+        self._key(step, sensor, flow_id, ts, trigger)
 
     # -- Zeek JSON ---------------------------------------------------------------------------------------------
     @staticmethod
@@ -158,7 +171,7 @@ class FlowBook:
 
     def zeek_conn(self, step: str, sensor: Sensor, start_ms: int, duration_s: float, uid: str, src: tuple,
                   dst: tuple, *, proto: str = "tcp", service: str | None = None, state: str = "SF",
-                  history: str = "ShADadFf", orig_bytes: int = 0, resp_bytes: int = 0) -> None:
+                  history: str = "ShADadFf", orig_bytes: int = 0, resp_bytes: int = 0, trigger: bool = False) -> None:
         """conn.log is written when the connection ENDS; the parser stamps it ``ts + duration``."""
         rec = {"ts": start_ms / 1000.0, **self._zeek_ids(uid, src, dst, proto), "duration": float(duration_s),
                "orig_bytes": orig_bytes, "resp_bytes": resp_bytes, "conn_state": state, "history": history,
@@ -167,24 +180,25 @@ class FlowBook:
             rec["service"] = service
         end_ms = start_ms + int(duration_s * 1000)
         self._emit(step, sensor.source_type, json.dumps(rec, sort_keys=True), end_ms, sensor.ip, sensor.ip)
-        self._key(step, sensor, uid, end_ms)
+        self._key(step, sensor, uid, end_ms, trigger)
 
     def zeek_dns(self, step: str, sensor: Sensor, ts: int, uid: str, src: tuple, dst: tuple, name: str, *,
-                 proto: str = "udp", qtype: str = "A", trans_id: int = 1) -> None:
+                 proto: str = "udp", qtype: str = "A", trans_id: int = 1, trigger: bool = False) -> None:
         rec = {"ts": ts / 1000.0, **self._zeek_ids(uid, src, dst, proto), "trans_id": trans_id, "query": name,
                "qclass": 1, "qclass_name": "C_INTERNET", "qtype": 1 if qtype == "A" else 16, "qtype_name": qtype,
                "rcode": 0, "rcode_name": "NOERROR", "answers": ["192.0.2.53"], "rejected": False}
         self._emit(step, sensor.source_type, json.dumps(rec, sort_keys=True), ts, sensor.ip, sensor.ip)
-        self._key(step, sensor, uid, ts)
+        self._key(step, sensor, uid, ts, trigger)
 
     def zeek_modbus(self, step: str, sensor: Sensor, ts: int, uid: str, src: tuple, dst: tuple, *, func: str,
-                    unit: int = 1, pdu_type: str = "REQ", tid: int = 1, address: int | None = None) -> None:
+                    unit: int = 1, pdu_type: str = "REQ", tid: int = 1, address: int | None = None,
+                    trigger: bool = False) -> None:
         rec = {"ts": ts / 1000.0, **self._zeek_ids(uid, src, dst, "tcp"), "tid": tid, "unit": unit, "func": func,
                "pdu_type": pdu_type}
         if address is not None:
             rec["address"] = address
         self._emit(step, sensor.source_type, json.dumps(rec, sort_keys=True), ts, sensor.ip, sensor.ip)
-        self._key(step, sensor, uid, ts)
+        self._key(step, sensor, uid, ts, trigger)
 
 
 # ---------------------------------------------------------------------------------------------------------------

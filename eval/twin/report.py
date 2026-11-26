@@ -171,6 +171,7 @@ import importlib.util  # noqa: E402
 import yaml  # noqa: E402
 
 import causal_order  # noqa: E402  (stdlib-only + import-pure: cannot collide on sys.modules['main'])
+import causal_links  # noqa: E402  (stdlib-only + import-pure; owns the ONE folded-alert attribution rule)
 import degradation  # noqa: E402
 import scenario  # noqa: E402
 from fingerprint import system_fingerprint  # noqa: E402
@@ -415,10 +416,9 @@ def _evidence_reconstruction(alerts_by_step: list[dict], by_id: dict,
     # (oracle step, alert time) -- graded by causal_order.story_order_ok.
     # Two chain events can mint ONE alert_id (a stateful rule grouped by a key two steps share, e.g. a Suricata
     # flow_id inside one window): the indexer holds one alert for the id, so the alert belongs to the FIRST step
-    # that raised it (the same earliest-wins rule ws8 timeline.build_timeline applies to duplicate ids).
-    step_of: dict = {}
-    for a in alerts_by_step:
-        step_of.setdefault(a["alert"].get("alert_id"), a.get("step"))
+    # that raised it (the same earliest-wins rule ws8 timeline.build_timeline applies to duplicate ids, and the
+    # one the causal-link grader uses: causal_links.step_of_alert).
+    step_of: dict = causal_links.step_of_alert(alerts_by_step)
     package_alert_order = [
         [step_of.get((b.get("content") or {}).get("alert_id")), (b.get("content") or {}).get("time")]
         for b in ((pkg or {}).get("blocks") or []) if b.get("type") == "alert"]

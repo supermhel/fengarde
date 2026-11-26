@@ -17,8 +17,13 @@ What is pinned, per storyline (``flow_suricata_c2_exfil``, ``flow_zeek_ot_pivot`
   (g) sender identity        every sensor ships under its own ``meta.shipper_ip``, distinct across sensors
   (h) scope                  the bystander control carries a key that a value comparison WOULD link
   (i) parser key carriage    which record kinds keep their flow key through the real parser (reported)
-  (j) ADR-012 n bar          links per storyline / share / total, against the ADR's >= 15 and <= 40 % bars
+  (j) ADR-012 n bar          links per storyline / share / total: >= 18 gradable links over >= 3 storylines, none above
+                             8 (20 % of the ADR 40-link total)
   (k) ADR-011 F4             >= 2 forbidden pairs per storyline survive to distinct timed edges (a1 funnel)
+  (l) trigger claims         every step the builder declares a TRIGGER step raises its own alert on the REAL detector,
+                             that alert carries a flow key, and no alert id is shared by two attack steps (no fold)
+  (m) graded links           the REAL ws4 -> ws8 pipeline emits the truth: every truth link gradable, matched, precision
+                             1.0 / recall 1.0 on seed 7, and the key_shuffle control collapses the pooled metrics
 """
 from __future__ import annotations
 
@@ -46,7 +51,8 @@ import scenario  # noqa: E402
 import scenario_registry as reg  # noqa: E402
 
 SEED = 7
-NAMES = ("flow_suricata_c2_exfil", "flow_zeek_ot_pivot", "flow_suricata_modbus_sabotage")
+NAMES = ("flow_suricata_c2_exfil", "flow_zeek_ot_pivot", "flow_suricata_modbus_sabotage",
+         "flow_suricata_ci_runner_tunnels")
 MODS = {n: importlib.import_module("storyline_" + n) for n in NAMES}
 SDEF = {n: reg.BY_NAME[n] for n in NAMES}
 _FAILURES: list = []
@@ -98,9 +104,11 @@ def test_bookkeeping() -> None:
     for n in NAMES:
         book, _notes = MODS[n]._make(SEED)
         raw_keys = sorted(k for _s, p in book.payloads if (k := _raw_key(p)) is not None)
-        noted = sorted(k for _st, _ns, _sc, k, _ts in book.notes)
-        _check(f"(c) {n}: the book's keys equal the keys read back from the raw records", raw_keys == noted,
-               f"{len(noted)} keyed records")
+        noted = sorted(k for _st, _ns, _sc, k, _ts in book.notes + book.context)
+        _check(f"(c) {n}: the book's keys (trigger + context) equal the keys read back from the RAW records",
+               raw_keys == noted, f"{len(noted)} keyed records")
+        _check(f"(c) {n}: trigger notes are a proper subset: every truth endpoint is a declared trigger record",
+               0 < len(book.notes) < len(noted))
         steps = {s.label for s in SDEF[n].steps} | {s.label for s in SDEF[n].decoy_steps}
         _check(f"(c) {n}: every payload belongs to a declared step", {s.label for s, _p in book.payloads} <= steps)
 
@@ -209,19 +217,21 @@ def test_sender_identity() -> None:
 
 
 def test_scope_bystander() -> None:
-    book, _x = MODS["flow_suricata_c2_exfil"]._make(SEED)
-    by_key: dict = {}
-    for _st, _ns, scope, key, _ts in book.notes:
-        by_key.setdefault(key, set()).add(scope)
-    shared = [k for k, sc in by_key.items() if len(sc) > 1]
-    _check("(h) flow_suricata_c2_exfil: one flow_id VALUE appears on two sensors (a value-only join would link)",
-           len(shared) == 1 and by_key[shared[0]] == {"suricata:perimeter-ids", "suricata:dmz-ids"}, str(shared))
-    _check("(h) ... and the derivation, scoped, gives that bystander no link",
-           not any("bystander" in lk["from"] + lk["to"] for lk in _links("flow_suricata_c2_exfil")))
+    for n, scopes in (("flow_suricata_c2_exfil", {"suricata:perimeter-ids", "suricata:dmz-ids"}),
+                      ("flow_suricata_ci_runner_tunnels", {"suricata:build-edge-ids", "suricata:ci-ids-b"})):
+        book, _x = MODS[n]._make(SEED)
+        by_key: dict = {}
+        for _st, _ns, scope, key, _ts in book.notes + book.context:
+            by_key.setdefault(key, set()).add(scope)
+        shared = [k for k, sc in by_key.items() if len(sc) > 1]
+        _check(f"(h) {n}: one flow_id VALUE appears on two sensors (a value-only join would link)",
+               len(shared) == 1 and by_key[shared[0]] == scopes, str(shared))
+        _check("(h) ... and the derivation, scoped, gives that bystander no link",
+               not any("bystander" in lk["from"] + lk["to"] for lk in _links(n)))
     for n, step in (("flow_zeek_ot_pivot", "bystander_hmi_poll"), ("flow_suricata_modbus_sabotage", "bystander_historian_poll")):
         book, _x = MODS[n]._make(SEED)
-        mine = {k for st, _ns, _sc, k, _ts in book.notes if st == step}
-        attack = {k for st, _ns, _sc, k, _ts in book.notes if st != step}
+        mine = {k for st, _ns, _sc, k, _ts in book.notes + book.context if st == step}
+        attack = {k for st, _ns, _sc, k, _ts in book.notes + book.context if st != step}
         _check(f"(h) {n}: the bystander polls the same PLC over its OWN flow key (shared entity, no shared key)",
                len(mine) == 1 and not (mine & attack))
 
@@ -253,16 +263,17 @@ def test_bar() -> dict:
     counts = {n: len(_links(n)) for n in NAMES}
     total = sum(counts.values())
     share = {n: round(100.0 * c / total, 1) for n, c in counts.items()}
-    print(f"      network_flow truth links: {counts} total={total} shares(%)={share}")
-    _check("(j) >= 15 network_flow truth links in total (ADR-012 per-basis n bar)", total >= 15, str(total))
-    _check("(j) across >= 2 storylines", sum(1 for c in counts.values() if c > 0) >= 2)
-    _check("(j) no storyline contributes more than 40 % of the basis's links", max(share.values()) <= 40.0, str(share))
-    gradable = {}
+    print(f"      network_flow truth links: {counts} total={total} shares of these(%)={share}")
+    _check("(j) >= 18 network_flow truth links in total (every one gradable: see (m))", total >= 18, str(total))
+    _check("(j) across >= 3 storylines", sum(1 for c in counts.values() if c > 0) >= 3)
+    _check("(j) no storyline holds more than 8 links (20 % of the ADR 40-link total)", max(counts.values()) <= 8,
+           str(counts))
     for n in NAMES:
         oracle = reg.load_oracle(SDEF[n])
         alert = {k for k, v in oracle["detection_points"].items() if v.get("expected_rules")}
-        gradable[n] = sum(1 for lk in oracle["causal_links"] if lk["from"] in alert and lk["to"] in alert)
-    print(f"      links with BOTH endpoints alert-raising today (gradable under ADR-012): {gradable}")
+        links = oracle["causal_links"]
+        _check(f"(j) {n}: every truth link has two alert-raising endpoints (trigger-level truth)",
+               all(lk["from"] in alert and lk["to"] in alert for lk in links), f"{len(links)} links")
     return counts
 
 
@@ -282,6 +293,68 @@ def test_f4() -> None:
         _check(f"(k) {n}: the bystander pair does not (it is unjoined and unalerted)", all(not r["F3"] for r in byst))
 
 
+def _pipeline(n: str, seed: int = SEED):
+    """Real parsers -> real ws4 alerts (``report._build_chain_alerts``), for storyline ``n``."""
+    import report  # noqa: PLC0415
+    sd = SDEF[n]
+    r = scenario.run_chain(seed, strict=True, steps=tuple(sd.steps) + tuple(sd.decoy_steps), payload_source=sd.build)
+    items_all = report._build_chain_alerts(r.events)
+    attack = {s.label for s in sd.steps}
+    return items_all, [i for i in items_all if i["step"] in attack]
+
+
+def test_trigger_claims() -> None:
+    for n in NAMES:
+        book, _x = MODS[n]._make(SEED)
+        trig_steps = {st for st, _ns, _sc, _k, _ts in book.notes}
+        items_all, items = _pipeline(n)
+        alerted = {i["step"] for i in items}
+        _check(f"(l) {n}: every declared trigger step raises an alert on the real detector",
+               trig_steps <= alerted, str(sorted(trig_steps - alerted)))
+        keyed = {i["step"] for i in items if i["alert"].get("causal_keys")}
+        _check(f"(l) {n}: ... and that alert carries a flow causal key (the trigger event's)", trig_steps <= keyed,
+               str(sorted(trig_steps - keyed)))
+        by_id: dict = {}
+        for i in items:
+            by_id.setdefault(i["alert"]["alert_id"], set()).add(i["step"])
+        folded = {k: v for k, v in by_id.items() if len(v) > 1}
+        _check(f"(l) {n}: NO alert id is shared by two attack steps (no fold: every step owns its alert)",
+               not folded, str(folded))
+        byst = {i["step"] for i in items_all if i["step"].startswith("bystander")}
+        _check(f"(l) {n}: the bystander raises no alert", not byst)
+
+
+def test_graded_links() -> None:
+    import causal_links as cl  # noqa: PLC0415
+    import key_controls as kc  # noqa: PLC0415
+    results, shuffled = [], []
+    for n in NAMES:
+        items_all, items = _pipeline(n)
+        alerts = [i["alert"] for i in items_all]
+        truth = reg.load_oracle(SDEF[n])["causal_links"]
+        g = cl.grade_storyline(n, kc.run_correlation(alerts), truth, items)
+        results.append(g)
+        _check(f"(m) {n}: every truth link is gradable (both endpoint steps alert)",
+               g["n_gradable"] == g["n_truth"] == len(truth) and not g["non_gradable"],
+               f"{g['n_gradable']}/{g['n_truth']}")
+        _check(f"(m) {n}: ws8 emits every gradable link and nothing else (precision 1.0, recall 1.0)",
+               g["matched"] == g["n_gradable"] and g["n_predicted"] == g["matched"] and g["unmapped"] == 0,
+               f"matched {g['matched']} predicted {g['n_predicted']} unmapped {g['unmapped']}")
+        _check(f"(m) {n}: every matched link points the way the truth does and is not order-conflicted",
+               g["direction_accuracy"]["value"] == 1.0)
+        case = {"name": n, "alerts": alerts, "items": items, "truth": truth}
+        shuffled.append(kc.run_controls(case, SEED)["key_shuffle"])
+    pooled, shuf = cl.combine(results), cl.combine(shuffled)
+    sc = cl.shuffle_collapsed(pooled, shuf)
+    print(f"      pooled: gradable {pooled['n_gradable']}, precision {pooled['precision']['value']}, recall "
+          f"{pooled['recall']['value']}; key_shuffle precision {shuf['precision']['value']} recall {shuf['recall']['value']}")
+    _check("(m) pooled: >= 18 gradable links, all matched",
+           pooled["n_gradable"] >= 18 and pooled["matched"] == pooled["n_gradable"])
+    _check("(m) pooled: key_shuffle collapses precision AND recall to <= 0.25 x baseline", sc["ok"], str(sc))
+    _check("(m) NEGATIVE: an uncollapsed 'shuffle' (the baseline itself) fails the collapse check",
+           not cl.shuffle_collapsed(pooled, pooled)["ok"])
+
+
 def main() -> int:
     results = test_determinism_and_parsers()
     test_bookkeeping()
@@ -293,6 +366,8 @@ def main() -> int:
     test_parser_key_carriage(results)
     test_bar()
     test_f4()
+    test_trigger_claims()
+    test_graded_links()
     print()
     if _FAILURES:
         print(f"FAILED {len(_FAILURES)} check(s): {_FAILURES}")

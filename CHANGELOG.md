@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (2026-11-25, network_flow causal-link storylines, eval only)
+
+- The four `flow_*` twin storylines (`flow_suricata_c2_exfil`, `flow_zeek_ot_pivot`, `flow_suricata_modbus_sabotage`, new `flow_suricata_ci_runner_tunnels`) now raise several DISTINCT alerts per network flow (different rules or different hour buckets), so 21 trigger-level `network_flow` truth links are gradable (was 3 of 17), none above 6 per storyline. ws8 emits every one (precision 1.0, recall 1.0, seeds 7 and 11); `key_shuffle` collapses pooled precision/recall to 0.15/0.14 (seed 7). No change to `services/`; the grade is below the ADR-012 minimum n (40, 4 storylines), so the claim stays `insufficient_n`.
+- Grader: ONE folded-alert attribution rule (`causal_links.step_of_alert` / `owner_items`: the earliest step owns an alert id that several steps mint), now shared by `causal_links`, `report.py` and `test_timeline_order`.
+
 ### Added (2026-11-26, spawn-chain `process_tree` truth for the keyed Sysmon storylines, PR #203)
 
 - The five process-tree-keyed storylines (`endpoint_macro_c2`, `excel_loader_domain_abuse`, `outlook_script_backdoor`, `pdf_exploit_lateral`, `reader_staged_loader`) are now real spawn chains with fan-out, and their `process_tree` truth is derived from the RAW records only (`eval/twin/sysmon_tree.py`): link A -> B exists when B's trigger record is a Sysmon EID 1 whose `ParentProcessGuid` equals the process guid behind A's trigger, on the same `Computer`. Each step marks its alert-raising record (`meta.twin_trigger`). `acting_process` and helper-record relations are no longer graded; they remain as non-graded `context_links`. Outlook's mislabelled `net user /add` record is removed.
